@@ -1,0 +1,80 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: "keystone"
+  labels:
+    app.kubernetes.io/name: "keystone"
+    app.kubernetes.io/component: "keystone"
+spec:
+  rules:
+    - host: "keystone.local"
+      http:
+        paths:
+          - backend:
+              service:
+                name: "keystone-rs"
+                port:
+                  number: 8080
+            path: "/"
+            pathType: "Prefix"
+          - backend:
+              service:
+                name: "keystone-rs"
+                port:
+                  number: 8080
+            path: "/v3/auth/tokens"
+            pathType: "Prefix"
+          - backend:
+              service:
+                name: "keystone-rs"
+                port:
+                  number: 8080
+            path: "/v4"
+            pathType: "Prefix"
+          - backend:
+              service:
+                name: "keystone-py"
+                port:
+                  number: 5000
+            path: "/v3"
+            pathType: "Prefix"
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: "keystone-py"
+  labels:
+    app.kubernetes.io/name: "keystone-py"
+    app.kubernetes.io/component: "keystone"
+spec:
+  rules:
+    - host: "keystone-py.local"
+      http:
+        paths:
+          - backend:
+              service:
+                name: "keystone-py"
+                port:
+                  number: 5000
+            path: "/"
+            pathType: "Prefix"
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: "keystone-rs"
+  labels:
+    app.kubernetes.io/name: "keystone-rs"
+    app.kubernetes.io/component: "keystone"
+spec:
+  rules:
+    - host: "keystone-rs.local"
+      http:
+        paths:
+          - backend:
+              service:
+                name: "keystone-rs"
+                port:
+                  number: 8080
+            path: "/"
+            pathType: "Prefix"

@@ -67,3 +67,7 @@ where
 pub fn default_sql_driver() -> String {
     "sql".into()
 }
+
+pub fn default_true() -> bool {
+    true
+}

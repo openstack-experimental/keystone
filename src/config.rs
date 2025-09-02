@@ -127,7 +127,13 @@ impl Config {
         let mut builder = config::Config::builder();
 
         if std::path::Path::new(&path).is_file() {
-            builder = builder.add_source(File::from(path).format(FileFormat::Ini));
+            builder = builder
+                .add_source(File::from(path).format(FileFormat::Ini))
+                .add_source(
+                    config::Environment::with_prefix("OS")
+                        .prefix_separator("_")
+                        .separator("__"),
+                );
         }
 
         builder.try_into()
@@ -146,6 +152,3 @@ impl TryFrom<config::ConfigBuilder<config::builder::DefaultState>> for Config {
             .wrap_err("Failed to parse configuration file")
     }
 }
-
-#[cfg(test)]
-mod tests {}

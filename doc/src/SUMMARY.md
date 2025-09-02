@@ -44,3 +44,4 @@
 
 [API](./swagger-ui.html)
 [Performance comparison](performance.md)
+[Developer's guide](developer.md)
