@@ -77,7 +77,7 @@ hyper-util = { version = "0.1", features = ["tokio", "http1"] }
 keycloak = { version = "26.4" }
 mockall = { version = "0.14" }
 reqwest = { version = "0.12", features = ["json", "multipart"] }
-sea-orm = { version = "1.1", features = ["mock"]}
+sea-orm = { version = "1.1", features = ["mock", "sqlx-sqlite" ]}
 serde_urlencoded = { version = "0.7" }
 tempfile = { version = "3.23" }
 thirtyfour = "0.36"
@@ -111,10 +111,14 @@ name = "github"
 path = "tests/github/main.rs"
 test = false
 
+[[test]]
+name = "integration"
+path = "tests/integration/main.rs"
+test = false
 
 [[test]]
-name = "functional"
-path = "tests/functional/main.rs"
+name = "api"
+path = "tests/api/main.rs"
 test = false
 
 [lints.rust]

@@ -135,24 +135,51 @@ pub struct PolicySection {
     pub opa_base_url: Option<Url>,
 }
 
-#[derive(Debug, Default, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct AssignmentSection {
+    #[serde(default = "default_sql_driver")]
     pub driver: String,
 }
 
-#[derive(Debug, Default, Deserialize, Clone)]
+impl Default for AssignmentSection {
+    fn default() -> Self {
+        Self {
+            driver: default_sql_driver(),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Clone)]
 pub struct CatalogSection {
+    #[serde(default = "default_sql_driver")]
     pub driver: String,
 }
 
-#[derive(Debug, Default, Deserialize, Clone)]
+impl Default for CatalogSection {
+    fn default() -> Self {
+        Self {
+            driver: default_sql_driver(),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Clone)]
 pub struct FederationSection {
+    #[serde(default = "default_sql_driver")]
     pub driver: String,
 }
 
-#[derive(Debug, Default, Deserialize, Clone)]
+impl Default for FederationSection {
+    fn default() -> Self {
+        Self {
+            driver: default_sql_driver(),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Clone)]
 pub struct IdentitySection {
-    #[serde(default = "default_identity_driver")]
+    #[serde(default = "default_sql_driver")]
     pub driver: String,
 
     #[serde(default)]
@@ -161,20 +188,50 @@ pub struct IdentitySection {
     pub password_hash_rounds: Option<usize>,
 }
 
-#[derive(Debug, Default, Deserialize, Clone)]
+impl Default for IdentitySection {
+    fn default() -> Self {
+        Self {
+            driver: default_sql_driver(),
+            password_hashing_algorithm: PasswordHashingAlgo::Bcrypt,
+            max_password_length: 4096,
+            password_hash_rounds: None,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Clone)]
 pub struct ResourceSection {
+    #[serde(default = "default_sql_driver")]
     pub driver: String,
 }
 
+impl Default for ResourceSection {
+    fn default() -> Self {
+        Self {
+            driver: default_sql_driver(),
+        }
+    }
+}
+
 /// Revoke provider configuration.
-#[derive(Debug, Default, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct RevokeSection {
     /// Entry point for the token revocation backend driver in the `keystone.revoke` namespace.
     /// Keystone only provides a `sql` driver.
+    #[serde(default = "default_sql_driver")]
     pub driver: String,
     /// The number of seconds after a token has expired before a corresponding revocation event may
     /// be purged from the backend.
     pub expiration_buffer: usize,
+}
+
+impl Default for RevokeSection {
+    fn default() -> Self {
+        Self {
+            driver: default_sql_driver(),
+            expiration_buffer: 1800,
+        }
+    }
 }
 
 #[derive(Debug, Default, Deserialize, Clone)]
@@ -189,7 +246,7 @@ pub struct SecurityComplianceSection {
     pub disable_user_account_days_inactive: Option<i16>,
 }
 
-fn default_identity_driver() -> String {
+fn default_sql_driver() -> String {
     "sql".into()
 }
 
@@ -250,11 +307,6 @@ impl TryFrom<config::ConfigBuilder<config::builder::DefaultState>> for Config {
             .set_default("identity.max_password_length", "4096")?
             .set_default("fernet_tokens.key_repository", "/etc/keystone/fernet-keys/")?
             .set_default("fernet_tokens.max_active_keys", "3")?
-            .set_default("assignment.driver", "sql")?
-            .set_default("catalog.driver", "sql")?
-            .set_default("federation.driver", "sql")?
-            .set_default("resource.driver", "sql")?
-            .set_default("revoke.driver", "sql")?
             .set_default("revoke.expiration_buffer", "1800")?
             .set_default("token.expiration", "3600")?;
 

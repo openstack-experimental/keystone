@@ -18,6 +18,7 @@ use crate::assignment::backend::error::*;
 use crate::assignment::types::assignment::RoleAssignmentListForMultipleActorTargetParametersBuilderError;
 use crate::assignment::types::*;
 use crate::identity::error::IdentityProviderError;
+use crate::resource::error::ResourceProviderError;
 
 #[derive(Error, Debug)]
 pub enum AssignmentProviderError {
@@ -43,11 +44,18 @@ pub enum AssignmentProviderError {
     #[error(transparent)]
     AssignmentDatabaseError { source: AssignmentDatabaseError },
 
-    /// Identity provider error
+    /// Identity provider error.
     #[error(transparent)]
     IdentityProvider {
         #[from]
         source: IdentityProviderError,
+    },
+
+    /// Resource provider error.
+    #[error(transparent)]
+    ResourceProvider {
+        #[from]
+        source: ResourceProviderError,
     },
 
     /// Invalid assignment type.

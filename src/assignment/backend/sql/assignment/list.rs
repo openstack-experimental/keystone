@@ -58,17 +58,20 @@ pub async fn list(
             .filter(db_assignment::Column::Type.is_in([
                 DbAssignmentType::UserProject,
                 DbAssignmentType::GroupProject,
-            ]));
+            ]))
+            .filter(db_assignment::Column::Inherited.eq(false));
     } else if let Some(val) = &params.domain_id {
         select_assignment = select_assignment
             .filter(db_assignment::Column::TargetId.eq(val))
             .filter(
                 db_assignment::Column::Type
                     .is_in([DbAssignmentType::UserDomain, DbAssignmentType::GroupDomain]),
-            );
+            )
+            .filter(db_assignment::Column::Inherited.eq(false));
     } else {
-        select_system_assignment =
-            select_system_assignment.filter(db_system_assignment::Column::TargetId.eq("system"));
+        select_system_assignment = select_system_assignment
+            .filter(db_system_assignment::Column::TargetId.eq("system"))
+            .filter(db_system_assignment::Column::Inherited.eq(false));
     }
 
     let results: Result<Vec<Assignment>, _> = if let Some(true) = &params.include_names {
@@ -254,8 +257,8 @@ mod tests {
                 ),
                 Transaction::from_sql_and_values(
                     DatabaseBackend::Postgres,
-                    r#"SELECT "system_assignment"."type", "system_assignment"."actor_id", "system_assignment"."target_id", "system_assignment"."role_id", "system_assignment"."inherited" FROM "system_assignment" WHERE "system_assignment"."target_id" = $1"#,
-                    ["system".into()]
+                    r#"SELECT "system_assignment"."type", "system_assignment"."actor_id", "system_assignment"."target_id", "system_assignment"."role_id", "system_assignment"."inherited" FROM "system_assignment" WHERE "system_assignment"."target_id" = $1 AND "system_assignment"."inherited" = $2"#,
+                    ["system".into(), false.into()]
                 ),
             ]
         );
@@ -310,8 +313,8 @@ mod tests {
                 ),
                 Transaction::from_sql_and_values(
                     DatabaseBackend::Postgres,
-                    r#"SELECT "system_assignment"."type", "system_assignment"."actor_id", "system_assignment"."target_id", "system_assignment"."role_id", "system_assignment"."inherited" FROM "system_assignment" WHERE "system_assignment"."role_id" = $1 AND "system_assignment"."target_id" = $2"#,
-                    ["1".into(), "system".into()]
+                    r#"SELECT "system_assignment"."type", "system_assignment"."actor_id", "system_assignment"."target_id", "system_assignment"."role_id", "system_assignment"."inherited" FROM "system_assignment" WHERE "system_assignment"."role_id" = $1 AND "system_assignment"."target_id" = $2 AND "system_assignment"."inherited" = $3"#,
+                    ["1".into(), "system".into(), false.into()]
                 ),
             ]
         );
@@ -349,8 +352,13 @@ mod tests {
             db.into_transaction_log(),
             [Transaction::from_sql_and_values(
                 DatabaseBackend::Postgres,
-                r#"SELECT CAST("assignment"."type" AS "text"), "assignment"."actor_id", "assignment"."target_id", "assignment"."role_id", "assignment"."inherited" FROM "assignment" WHERE "assignment"."target_id" = $1 AND "assignment"."type" IN (CAST($2 AS "type"), CAST($3 AS "type"))"#,
-                ["target".into(), "UserProject".into(), "GroupProject".into()]
+                r#"SELECT CAST("assignment"."type" AS "text"), "assignment"."actor_id", "assignment"."target_id", "assignment"."role_id", "assignment"."inherited" FROM "assignment" WHERE "assignment"."target_id" = $1 AND "assignment"."type" IN (CAST($2 AS "type"), CAST($3 AS "type")) AND "assignment"."inherited" = $4"#,
+                [
+                    "target".into(),
+                    "UserProject".into(),
+                    "GroupProject".into(),
+                    false.into()
+                ]
             ),]
         );
     }
@@ -404,8 +412,8 @@ mod tests {
                 ),
                 Transaction::from_sql_and_values(
                     DatabaseBackend::Postgres,
-                    r#"SELECT "system_assignment"."type" AS "A_type", "system_assignment"."actor_id" AS "A_actor_id", "system_assignment"."target_id" AS "A_target_id", "system_assignment"."role_id" AS "A_role_id", "system_assignment"."inherited" AS "A_inherited", "role"."id" AS "B_id", "role"."name" AS "B_name", "role"."extra" AS "B_extra", "role"."domain_id" AS "B_domain_id", "role"."description" AS "B_description" FROM "system_assignment" LEFT JOIN "role" ON "system_assignment"."role_id" = "role"."id" WHERE "system_assignment"."target_id" = $1"#,
-                    ["system".into()]
+                    r#"SELECT "system_assignment"."type" AS "A_type", "system_assignment"."actor_id" AS "A_actor_id", "system_assignment"."target_id" AS "A_target_id", "system_assignment"."role_id" AS "A_role_id", "system_assignment"."inherited" AS "A_inherited", "role"."id" AS "B_id", "role"."name" AS "B_name", "role"."extra" AS "B_extra", "role"."domain_id" AS "B_domain_id", "role"."description" AS "B_description" FROM "system_assignment" LEFT JOIN "role" ON "system_assignment"."role_id" = "role"."id" WHERE "system_assignment"."target_id" = $1 AND "system_assignment"."inherited" = $2"#,
+                    ["system".into(), false.into()]
                 ),
             ]
         );

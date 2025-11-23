@@ -29,9 +29,9 @@ pub struct Assignment {
     pub actor_id: String,
     /// The target id.
     pub target_id: String,
-    /// The assignment type
+    /// The assignment type.
     pub r#type: AssignmentType,
-    /// Inherited flag
+    /// Inherited flag.
     pub inherited: bool,
 }
 

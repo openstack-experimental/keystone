@@ -29,6 +29,7 @@ use crate::config::Config;
 use crate::identity::IdentityApi;
 use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManager;
+use crate::resource::ResourceApi;
 
 #[cfg(test)]
 pub use mock::MockAssignmentProvider;
@@ -51,9 +52,9 @@ impl AssignmentProvider {
         } else {
             match config.assignment.driver.as_str() {
                 "sql" => Box::new(SqlBackend::default()),
-                _ => {
+                other => {
                     return Err(AssignmentProviderError::UnsupportedDriver(
-                        config.assignment.driver.clone(),
+                        other.to_string(),
                     ));
                 }
             }
@@ -92,40 +93,54 @@ impl AssignmentApi for AssignmentProvider {
         state: &ServiceState,
         params: &RoleAssignmentListParameters,
     ) -> Result<impl IntoIterator<Item = Assignment>, AssignmentProviderError> {
-        if let Some(true) = &params.effective {
-            let mut request = RoleAssignmentListForMultipleActorTargetParametersBuilder::default();
-            let mut actors: Vec<String> = Vec::new();
-            let mut targets: Vec<RoleAssignmentTarget> = Vec::new();
-            if let Some(role_id) = &params.role_id {
-                request.role_id(role_id);
-            }
-            if let Some(uid) = &params.user_id {
-                actors.push(uid.into());
-            }
-            if let Some(true) = &params.effective
-                && let Some(uid) = &params.user_id
+        let mut request = RoleAssignmentListForMultipleActorTargetParametersBuilder::default();
+        let mut actors: Vec<String> = Vec::new();
+        let mut targets: Vec<RoleAssignmentTarget> = Vec::new();
+        if let Some(role_id) = &params.role_id {
+            request.role_id(role_id);
+        }
+        if let Some(uid) = &params.user_id {
+            actors.push(uid.into());
+        }
+        if let Some(true) = &params.effective
+            && let Some(uid) = &params.user_id
+        {
+            let users = state
+                .provider
+                .get_identity_provider()
+                .list_groups_of_user(state, uid)
+                .await?;
+            actors.extend(users.into_iter().map(|x| x.id));
+        };
+        if let Some(val) = &params.project_id {
+            targets.push(RoleAssignmentTarget {
+                target_id: val.clone(),
+                inherited: Some(false),
+            });
+            if let Some(parents) = state
+                .provider
+                .get_resource_provider()
+                .get_project_parents(state, val)
+                .await?
             {
-                let users = state
-                    .provider
-                    .get_identity_provider()
-                    .list_groups_of_user(state, uid)
-                    .await?;
-                actors.extend(users.into_iter().map(|x| x.id));
-            };
-            if let Some(val) = &params.project_id {
-                targets.push(RoleAssignmentTarget {
-                    target_id: val.clone(),
-                    ..Default::default()
+                parents.iter().for_each(|parent_project| {
+                    targets.push(RoleAssignmentTarget {
+                        target_id: parent_project.id.clone(),
+                        inherited: Some(true),
+                    });
                 });
             }
-            request.targets(targets);
-            request.actors(actors);
-            self.backend_driver
-                .list_assignments_for_multiple_actors_and_targets(state, &request.build()?)
-                .await
-        } else {
-            self.backend_driver.list_assignments(state, params).await
+        } else if let Some(val) = &params.domain_id {
+            targets.push(RoleAssignmentTarget {
+                target_id: val.clone(),
+                inherited: Some(false),
+            });
         }
+        request.targets(targets);
+        request.actors(actors);
+        self.backend_driver
+            .list_assignments_for_multiple_actors_and_targets(state, &request.build()?)
+            .await
     }
 
     /// Create assignment grant.

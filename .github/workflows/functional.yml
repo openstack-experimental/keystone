@@ -104,8 +104,8 @@ jobs:
           curl http://localhost:8080/v3/auth/tokens -H "X-Auth-Token: ${TOKEN2}" -H "X-Subject-Token: ${TOKEN2}" | jq
           curl http://localhost:5001/v3/auth/tokens -H "X-Auth-Token: ${TOKEN2}" -H "X-Subject-Token: ${TOKEN2}" | jq
 
-      - name: Run functional tests
-        run: cargo test --test functional
+      - name: Run api tests
+        run: cargo test --test api
 
       - name: Run interop tests
         run: cargo test --test interop

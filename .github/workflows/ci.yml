@@ -53,6 +53,9 @@ jobs:
       - name: Run tests
         run: cargo nextest run
 
+      - name: Run tests
+        run: cargo nextest run --test integration
+
       - name: Run Doc tests
         run: cargo test --doc
 
