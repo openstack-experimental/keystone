@@ -75,7 +75,7 @@ http-body-util = "0.1"
 hyper = { version = "1.8", features = ["http1"] }
 hyper-util = { version = "0.1", features = ["tokio", "http1"] }
 keycloak = { version = "26.4" }
-mockall = { version = "0.13" }
+mockall = { version = "0.14" }
 reqwest = { version = "0.12", features = ["json", "multipart"] }
 sea-orm = { version = "1.1", features = ["mock"]}
 serde_urlencoded = { version = "0.7" }
