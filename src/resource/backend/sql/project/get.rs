@@ -18,7 +18,7 @@ use sea_orm::query::*;
 
 use crate::db::entity::{prelude::Project as DbProject, project as db_project};
 use crate::resource::Config;
-use crate::resource::backends::error::{ResourceDatabaseError, db_err};
+use crate::resource::backend::error::{ResourceDatabaseError, db_err};
 use crate::resource::types::Project;
 
 pub async fn get_project<I: AsRef<str>>(

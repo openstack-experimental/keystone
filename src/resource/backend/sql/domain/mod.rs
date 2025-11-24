@@ -20,7 +20,7 @@ pub use get::get_domain_by_id;
 pub use get::get_domain_by_name;
 
 use crate::db::entity::project as db_project;
-use crate::resource::backends::error::ResourceDatabaseError;
+use crate::resource::backend::error::ResourceDatabaseError;
 use crate::resource::types::Domain;
 use crate::resource::types::DomainBuilder;
 

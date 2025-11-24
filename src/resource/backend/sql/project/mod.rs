@@ -15,12 +15,14 @@ use serde_json::Value;
 use tracing::error;
 
 mod get;
+mod tree;
 
 pub use get::get_project;
 pub use get::get_project_by_name;
+pub use tree::get_project_parents;
 
 use crate::db::entity::project as db_project;
-use crate::resource::backends::error::ResourceDatabaseError;
+use crate::resource::backend::error::ResourceDatabaseError;
 use crate::resource::types::Project;
 use crate::resource::types::ProjectBuilder;
 
@@ -30,6 +32,9 @@ impl TryFrom<db_project::Model> for Project {
     fn try_from(value: db_project::Model) -> Result<Self, Self::Error> {
         let mut project_builder = ProjectBuilder::default();
         project_builder.id(value.id.clone());
+        if let Some(parent_id) = &value.parent_id {
+            project_builder.parent_id(parent_id);
+        }
         project_builder.name(value.name.clone());
         project_builder.domain_id(value.domain_id.clone());
         if let Some(description) = &value.description {
@@ -39,7 +44,12 @@ impl TryFrom<db_project::Model> for Project {
         if let Some(extra) = &value.extra {
             project_builder.extra(
                 serde_json::from_str::<Value>(extra)
-                    .inspect_err(|e| error!("failed to deserialize project extra properties: {e}"))
+                    .inspect_err(|e| {
+                        error!(
+                            "failed to deserialize project [id: {}] extra properties: {e}",
+                            value.id
+                        )
+                    })
                     .unwrap_or_default(),
             );
         }

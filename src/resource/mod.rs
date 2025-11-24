@@ -16,14 +16,14 @@ use async_trait::async_trait;
 #[cfg(test)]
 use mockall::mock;
 
-pub mod backends;
+pub mod backend;
 pub mod error;
 pub(crate) mod types;
 
 use crate::config::Config;
 use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManager;
-use crate::resource::backends::sql::SqlBackend;
+use crate::resource::backend::sql::SqlBackend;
 use crate::resource::error::ResourceProviderError;
 use crate::resource::types::{Domain, Project, ResourceBackend};
 
@@ -58,6 +58,13 @@ pub trait ResourceApi: Send + Sync + Clone {
         name: &'a str,
         domain_id: &'a str,
     ) -> Result<Option<Project>, ResourceProviderError>;
+
+    /// Get project parents
+    async fn get_project_parents<'a>(
+        &self,
+        state: &ServiceState,
+        project_id: &'a str,
+    ) -> Result<Option<Vec<Project>>, ResourceProviderError>;
 }
 
 #[cfg(test)]
@@ -93,6 +100,11 @@ mock! {
             domain_id: &'a str,
         ) -> Result<Option<Project>, ResourceProviderError>;
 
+        async fn get_project_parents<'a>(
+            &self,
+            state: &ServiceState,
+            project_id: &'a str,
+        ) -> Result<Option<Vec<Project>>, ResourceProviderError>;
     }
 
     impl Clone for ResourceProvider {
@@ -168,6 +180,17 @@ impl ResourceApi for ResourceProvider {
     ) -> Result<Option<Project>, ResourceProviderError> {
         self.backend_driver
             .get_project_by_name(state, name, domain_id)
+            .await
+    }
+
+    /// Get project parents
+    async fn get_project_parents<'a>(
+        &self,
+        state: &ServiceState,
+        project_id: &'a str,
+    ) -> Result<Option<Vec<Project>>, ResourceProviderError> {
+        self.backend_driver
+            .get_project_parents(state, project_id)
             .await
     }
 }

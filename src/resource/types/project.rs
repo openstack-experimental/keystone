@@ -21,15 +21,19 @@ use serde_json::Value;
 pub struct Project {
     /// The project ID.
     pub id: String,
+    /// The ID of the parent for the project.
+    #[builder(default)]
+    pub parent_id: Option<String>,
     /// The project name.
     pub name: String,
     /// The project domain_id.
     pub domain_id: String,
+    /// If set to true, project is enabled. If set to false, project is disabled.
     pub enabled: bool,
-    /// The resource description
+    /// The description of the project.
     #[builder(default)]
     pub description: Option<String>,
-    /// Additional project properties
+    /// Additional project properties.
     #[builder(default)]
     pub extra: Option<Value>,
 }

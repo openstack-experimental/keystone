@@ -21,8 +21,6 @@ use super::super::types::*;
 use crate::config::Config;
 use crate::keystone::ServiceState;
 use crate::resource::ResourceProviderError;
-use crate::resource::backends::sql::domain::{get_domain_by_id, get_domain_by_name};
-use crate::resource::backends::sql::project::{get_project, get_project_by_name};
 
 #[derive(Clone, Debug, Default)]
 pub struct SqlBackend {
@@ -44,7 +42,7 @@ impl ResourceBackend for SqlBackend {
         state: &ServiceState,
         domain_id: &'a str,
     ) -> Result<Option<Domain>, ResourceProviderError> {
-        Ok(get_domain_by_id(&self.config, &state.db, domain_id).await?)
+        Ok(domain::get_domain_by_id(&self.config, &state.db, domain_id).await?)
     }
 
     /// Get single domain by Name
@@ -53,7 +51,7 @@ impl ResourceBackend for SqlBackend {
         state: &ServiceState,
         domain_name: &'a str,
     ) -> Result<Option<Domain>, ResourceProviderError> {
-        Ok(get_domain_by_name(&self.config, &state.db, domain_name).await?)
+        Ok(domain::get_domain_by_name(&self.config, &state.db, domain_name).await?)
     }
 
     /// Get single project by ID
@@ -62,7 +60,7 @@ impl ResourceBackend for SqlBackend {
         state: &ServiceState,
         project_id: &'a str,
     ) -> Result<Option<Project>, ResourceProviderError> {
-        Ok(get_project(&self.config, &state.db, project_id).await?)
+        Ok(project::get_project(&self.config, &state.db, project_id).await?)
     }
 
     /// Get single project by Name and Domain ID
@@ -72,7 +70,16 @@ impl ResourceBackend for SqlBackend {
         name: &'a str,
         domain_id: &'a str,
     ) -> Result<Option<Project>, ResourceProviderError> {
-        Ok(get_project_by_name(&self.config, &state.db, name, domain_id).await?)
+        Ok(project::get_project_by_name(&self.config, &state.db, name, domain_id).await?)
+    }
+
+    /// Get project parents
+    async fn get_project_parents<'a>(
+        &self,
+        state: &ServiceState,
+        project_id: &'a str,
+    ) -> Result<Option<Vec<Project>>, ResourceProviderError> {
+        Ok(project::get_project_parents(&state.db, project_id).await?)
     }
 }
 

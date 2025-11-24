@@ -18,7 +18,7 @@ use sea_orm::query::*;
 
 use crate::db::entity::{prelude::Project as DbProject, project as db_project};
 use crate::resource::Config;
-use crate::resource::backends::error::{ResourceDatabaseError, db_err};
+use crate::resource::backend::error::{ResourceDatabaseError, db_err};
 use crate::resource::types::Domain;
 
 pub async fn get_domain_by_id<I: AsRef<str>>(

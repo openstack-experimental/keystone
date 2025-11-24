@@ -14,7 +14,7 @@
 
 use thiserror::Error;
 
-use crate::resource::backends::error::*;
+use crate::resource::backend::error::*;
 use crate::resource::types::DomainBuilderError;
 
 #[derive(Error, Debug)]

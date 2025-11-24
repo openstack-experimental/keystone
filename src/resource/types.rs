@@ -58,6 +58,13 @@ pub trait ResourceBackend: DynClone + Send + Sync + std::fmt::Debug {
         name: &'a str,
         domain_id: &'a str,
     ) -> Result<Option<Project>, ResourceProviderError>;
+
+    /// Get project parents
+    async fn get_project_parents<'a>(
+        &self,
+        state: &ServiceState,
+        project_id: &'a str,
+    ) -> Result<Option<Vec<Project>>, ResourceProviderError>;
 }
 
 dyn_clone::clone_trait_object!(ResourceBackend);
