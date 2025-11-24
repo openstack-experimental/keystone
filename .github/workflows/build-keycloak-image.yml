@@ -27,7 +27,7 @@ jobs:
       id-token: write
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6.0.0
 
       - name: Log in to Docker Hub (or GHCR)
         uses: docker/login-action@v3

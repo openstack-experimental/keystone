@@ -22,7 +22,7 @@ jobs:
           egress-policy: audit
 
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6.0.0
 
       - name: Setup OPA
         uses: open-policy-agent/setup-opa@v2
@@ -48,7 +48,7 @@ jobs:
           egress-policy: audit
 
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6.0.0
 
       - name: Setup OPA
         uses: open-policy-agent/setup-opa@v2
