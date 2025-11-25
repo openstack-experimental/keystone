@@ -1,3 +1,3 @@
 style="conventional"
-ignore_author_re="(dependabot|renovate|gtema-release-plz)"
+ignore_author_re="(dependabot|renovate|openstack-experimental-release-plz)"
 merge_commit = false
