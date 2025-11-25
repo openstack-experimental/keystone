@@ -77,7 +77,9 @@ impl IdentityBackend for SqlBackend {
             {
                 let user_opts = user_option::get(&state.db, local_user.user_id.clone()).await?;
 
-                if password_hashing::verify_password(&self.config, auth.password, expected_hash)? {
+                if password_hashing::verify_password(&self.config, auth.password, expected_hash)
+                    .await?
+                {
                     if let Some(user) = user::get(&state.db, &local_user.user_id).await? {
                         // TODO: Check password is expired
                         // TODO: reset failed login attempt
@@ -574,7 +576,7 @@ async fn create_user(
             let password_entry = password::create(
                 db,
                 local_user.id,
-                password_hashing::hash_password(conf, password)?,
+                password_hashing::hash_password(conf, password).await?,
                 None,
             )
             .await?;

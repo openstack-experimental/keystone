@@ -15,6 +15,7 @@
 use config::{File, FileFormat};
 use eyre::{Report, WrapErr};
 use regex::Regex;
+use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Deserializer};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -111,14 +112,16 @@ pub struct FernetTokenSection {
 
 #[derive(Debug, Default, Deserialize, Clone)]
 pub struct DatabaseSection {
-    pub connection: String,
+    /// Database URL.
+    pub connection: SecretString,
 }
 
 impl DatabaseSection {
-    pub fn get_connection(&self) -> String {
-        if self.connection.contains("+") {
+    pub fn get_connection(&self) -> SecretString {
+        let val = self.connection.expose_secret();
+        if val.contains("+") {
             return Regex::new(r"(?<type>\w+)\+(\w+)://")
-                .map(|re| re.replace(&self.connection, "${type}://").to_string())
+                .map(|re| SecretString::from(re.replace(val, "${type}://").to_string()))
                 .unwrap_or(self.connection.clone());
         }
         self.connection.clone()
@@ -321,16 +324,17 @@ impl TryFrom<config::ConfigBuilder<config::builder::DefaultState>> for Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use secrecy::ExposeSecret;
 
     #[test]
     fn test_db_connection() {
         let sot = DatabaseSection {
             connection: "mysql://u:p@h".into(),
         };
-        assert_eq!("mysql://u:p@h", sot.get_connection());
+        assert_eq!("mysql://u:p@h", sot.get_connection().expose_secret());
         let sot = DatabaseSection {
             connection: "mysql+driver://u:p@h".into(),
         };
-        assert_eq!("mysql://u:p@h", sot.get_connection());
+        assert_eq!("mysql://u:p@h", sot.get_connection().expose_secret());
     }
 }

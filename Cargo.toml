@@ -48,8 +48,9 @@ regex = { version = "1.12" }
 reqwest = { version = "0.12", features = ["json", "http2", "gzip", "deflate"] }
 rmp = { version = "0.8" }
 schemars = { version = "1.1" }
-sea-orm = { version = "1.1", features = ["sqlx-mysql", "sqlx-postgres", "runtime-tokio", "runtime-tokio-native-tls"] }
+sea-orm = { version = "1.1", features = ["debug-print", "sqlx-mysql", "sqlx-postgres", "runtime-tokio", "runtime-tokio-native-tls"] }
 sea-orm-migration = { version = "1.1", features = ["sqlx-mysql", "sqlx-postgres", "runtime-tokio"] }
+secrecy = { version = "0.10", features = ["serde"] }
 serde = { version = "1.0" }
 serde_bytes = { version = "0.11" }
 serde_json = { version = "1.0" }
@@ -76,6 +77,7 @@ hyper = { version = "1.8", features = ["http1"] }
 hyper-util = { version = "0.1", features = ["tokio", "http1"] }
 keycloak = { version = "26.4" }
 mockall = { version = "0.14" }
+rand = "0.9"
 reqwest = { version = "0.12", features = ["json", "multipart"] }
 sea-orm = { version = "1.1", features = ["mock", "sqlx-sqlite" ]}
 serde_urlencoded = { version = "0.7" }

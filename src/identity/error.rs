@@ -107,11 +107,20 @@ impl From<IdentityDatabaseError> for IdentityProviderError {
     }
 }
 
+/// Password hashing related errors.
 #[derive(Error, Debug)]
 pub enum IdentityProviderPasswordHashError {
+    /// Bcrypt error.
     #[error(transparent)]
     BCrypt {
         #[from]
         source: bcrypt::BcryptError,
+    },
+
+    /// Async task join error.
+    #[error(transparent)]
+    Join {
+        #[from]
+        source: tokio::task::JoinError,
     },
 }

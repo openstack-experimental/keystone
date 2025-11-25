@@ -14,6 +14,7 @@
 use clap::{Parser, Subcommand};
 use color_eyre::Report;
 use eyre::WrapErr;
+use secrecy::ExposeSecret;
 use std::io;
 use std::path::PathBuf;
 use tracing::info;
@@ -87,12 +88,10 @@ async fn main() -> Result<(), Report> {
     // build the tracing registry
     tracing_subscriber::registry().with(log_layer).init();
     let cfg = Config::new(cli.config)?;
-    let db_url = cfg.database.get_connection();
-    let mut opt = ConnectOptions::new(db_url.clone());
-
-    if cli.verbose < 2 {
-        opt.sqlx_logging(false);
-    }
+    let opt: ConnectOptions = ConnectOptions::new(cfg.database.get_connection().expose_secret())
+        // Prevent dumping the password in plaintext.
+        .sqlx_logging(false)
+        .to_owned();
 
     info!("Establishing the database connection...");
     let conn = Database::connect(opt)

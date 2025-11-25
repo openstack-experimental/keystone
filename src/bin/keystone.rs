@@ -15,12 +15,13 @@
 //!
 //! This is the entry point of the `keystone` binary.
 
+use axum::extract::DefaultBodyLimit;
 use axum::http::{self, HeaderName, Request, header};
 use clap::{Parser, ValueEnum};
 use color_eyre::eyre::{Report, Result};
 use eyre::WrapErr;
-use sea_orm::ConnectOptions;
-use sea_orm::Database;
+use sea_orm::{ConnectOptions, Database};
+use secrecy::ExposeSecret;
 use std::io;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
@@ -36,6 +37,7 @@ use tower_http::{
 };
 use tracing::{Level, debug, error, info, info_span, trace};
 use tracing_subscriber::{
+    Layer,
     filter::{LevelFilter, Targets},
     prelude::*,
 };
@@ -52,6 +54,9 @@ use openstack_keystone::keystone::{Service, ServiceState};
 use openstack_keystone::plugin_manager::PluginManager;
 use openstack_keystone::policy::PolicyFactory;
 use openstack_keystone::provider::Provider;
+
+// Default body limit 256kB
+const DEFAULT_BODY_LIMIT: usize = 1024 * 256;
 
 /// `OpenStack` Keystone.
 ///
@@ -144,11 +149,10 @@ async fn main() -> Result<(), Report> {
     let cloned_token = token.clone();
 
     let cfg = Config::new(args.config)?;
-    let db_url = cfg.database.get_connection();
-    let mut opt = ConnectOptions::new(db_url.clone());
-    if args.verbose < 2 {
-        opt.sqlx_logging(false);
-    }
+    let opt: ConnectOptions = ConnectOptions::new(cfg.database.get_connection().expose_secret())
+        // Prevent dumping the password in plaintext.
+        .sqlx_logging(false)
+        .to_owned();
 
     debug!("Establishing the database connection...");
     let conn = Database::connect(opt)
@@ -192,6 +196,7 @@ async fn main() -> Result<(), Report> {
         ))
         //.layer(PropagateRequestIdLayer::new(x_request_id))
         .sensitive_request_headers(sensitive_headers.clone())
+        .layer(DefaultBodyLimit::max(DEFAULT_BODY_LIMIT))
         .layer(
             TraceLayer::new_for_http()
                 //.make_span_with(DefaultMakeSpan::new().include_headers(true))
