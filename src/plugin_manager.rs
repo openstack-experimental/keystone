@@ -17,7 +17,7 @@ use std::collections::HashMap;
 use crate::assignment::backend::AssignmentBackend;
 use crate::catalog::backends::CatalogBackend;
 use crate::federation::types::FederationBackend;
-use crate::identity::types::IdentityBackend;
+use crate::identity::backends::IdentityBackend;
 use crate::resource::types::ResourceBackend;
 use crate::revoke::backend::RevokeBackend;
 

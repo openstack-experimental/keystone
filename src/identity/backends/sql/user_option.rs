@@ -12,24 +12,12 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use sea_orm::DatabaseConnection;
-use sea_orm::entity::*;
-use sea_orm::query::*;
-
-use crate::db::entity::{prelude::UserOption as DbUserOptions, user_option};
-use crate::identity::backends::sql::{IdentityDatabaseError, db_err};
+use crate::db::entity::user_option;
 use crate::identity::types::*;
 
-pub async fn get<S: AsRef<str>>(
-    db: &DatabaseConnection,
-    user_id: S,
-) -> Result<impl IntoIterator<Item = user_option::Model>, IdentityDatabaseError> {
-    DbUserOptions::find()
-        .filter(user_option::Column::UserId.eq(user_id.as_ref()))
-        .all(db)
-        .await
-        .map_err(|err| db_err(err, "fetching options of the user"))
-}
+mod list;
+
+pub use list::list_by_user_id;
 
 impl FromIterator<user_option::Model> for UserOptions {
     fn from_iter<I: IntoIterator<Item = user_option::Model>>(iter: I) -> Self {

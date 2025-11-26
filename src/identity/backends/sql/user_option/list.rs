@@ -11,6 +11,21 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-mod create;
 
-pub use create::create;
+use sea_orm::DatabaseConnection;
+use sea_orm::entity::*;
+use sea_orm::query::*;
+
+use crate::db::entity::{prelude::UserOption as DbUserOptions, user_option};
+use crate::identity::backends::sql::{IdentityDatabaseError, db_err};
+
+pub async fn list_by_user_id<S: AsRef<str>>(
+    db: &DatabaseConnection,
+    user_id: S,
+) -> Result<impl IntoIterator<Item = user_option::Model>, IdentityDatabaseError> {
+    DbUserOptions::find()
+        .filter(user_option::Column::UserId.eq(user_id.as_ref()))
+        .all(db)
+        .await
+        .map_err(|err| db_err(err, "fetching options of the user"))
+}

@@ -65,17 +65,8 @@ where
 mod tests {
     use sea_orm::{DatabaseBackend, MockDatabase, MockExecResult, Transaction};
 
+    use super::super::tests::get_mock;
     use super::*;
-
-    fn get_mock<U: AsRef<str>, G: AsRef<str>>(
-        user_id: U,
-        group_id: G,
-    ) -> user_group_membership::Model {
-        user_group_membership::Model {
-            user_id: user_id.as_ref().into(),
-            group_id: group_id.as_ref().into(),
-        }
-    }
 
     #[tokio::test]
     async fn test_create() {

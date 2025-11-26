@@ -11,6 +11,19 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-mod create;
 
-pub use create::create;
+use super::user;
+use crate::db::entity::{
+    nonlocal_user as db_nonlocal_user, user as db_user, user_option as db_user_option,
+};
+use crate::identity::types::*;
+
+pub fn get_nonlocal_user_builder<O: IntoIterator<Item = db_user_option::Model>>(
+    user: &db_user::Model,
+    data: db_nonlocal_user::Model,
+    opts: O,
+) -> UserResponseBuilder {
+    let mut user_builder: UserResponseBuilder = user::get_user_builder(user, opts);
+    user_builder.name(data.name.clone());
+    user_builder
+}
