@@ -124,6 +124,7 @@ jobs:
 
   federation:
     runs-on: ubuntu-latest
+    if: "github.actor != 'openstack-experimental-release-plz'"
     needs:
       - build
     permissions:
@@ -202,6 +203,7 @@ jobs:
 
   loadtest:
     runs-on: ubuntu-latest
+    if: "github.actor != 'openstack-experimental-release-plz'"
     needs:
       - build
     permissions:
