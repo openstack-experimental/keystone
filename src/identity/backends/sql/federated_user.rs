@@ -12,47 +12,45 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use sea_orm::DatabaseConnection;
-use sea_orm::entity::*;
-use sea_orm::query::*;
+use super::user;
+use crate::db::entity::{
+    federated_user as db_federated_user, user as db_user, user_option as db_user_option,
+};
+use crate::identity::types::*;
 
-use crate::config::Config;
-use crate::db::entity::{federated_user, prelude::FederatedUser};
-use crate::identity::backends::sql::{IdentityDatabaseError, db_err};
+mod create;
+mod find;
 
-pub async fn create<A>(
-    _conf: &Config,
-    db: &DatabaseConnection,
-    federation: A,
-) -> Result<federated_user::Model, IdentityDatabaseError>
-where
-    A: Into<federated_user::ActiveModel>,
-{
-    let db_user: federated_user::Model = federation
-        .into()
-        .insert(db)
-        .await
-        .map_err(|err| db_err(err, "persisting federated user data"))?;
+pub use create::create;
+pub use find::find_by_idp_and_unique_id;
 
-    Ok(db_user)
+pub fn get_federated_user_builder<
+    O: IntoIterator<Item = db_user_option::Model>,
+    F: IntoIterator<Item = db_federated_user::Model>,
+>(
+    user: &db_user::Model,
+    data: F,
+    opts: O,
+) -> UserResponseBuilder {
+    let mut user_builder: UserResponseBuilder = user::get_user_builder(user, opts);
+    let mut feds: Vec<Federation> = Vec::new();
+    if let Some(first) = data.into_iter().next() {
+        if let Some(name) = first.display_name {
+            user_builder.name(name.clone());
+        }
+
+        let mut fed = FederationBuilder::default();
+        fed.idp_id(first.idp_id.clone());
+        fed.unique_id(first.unique_id.clone());
+        let protocol = FederationProtocol {
+            protocol_id: first.protocol_id.clone(),
+            unique_id: first.unique_id.clone(),
+        };
+        fed.protocols(vec![protocol]);
+        if let Ok(fed_obj) = fed.build() {
+            feds.push(fed_obj);
+        }
+    }
+    user_builder.federated(feds);
+    user_builder
 }
-
-/// Get federated user entry by the idp_id and the unique_id
-pub async fn find_by_idp_and_unique_id<I: AsRef<str>, U: AsRef<str>>(
-    _conf: &Config,
-    db: &DatabaseConnection,
-    idp_id: I,
-    unique_id: U,
-) -> Result<Option<federated_user::Model>, IdentityDatabaseError> {
-    Ok(FederatedUser::find()
-        .filter(federated_user::Column::IdpId.eq(idp_id.as_ref()))
-        .filter(federated_user::Column::UniqueId.eq(unique_id.as_ref()))
-        .all(db)
-        .await
-        .map_err(|err| db_err(err, "searching federated user by the idp and unique id"))?
-        .first()
-        .cloned())
-}
-
-#[cfg(test)]
-mod tests {}

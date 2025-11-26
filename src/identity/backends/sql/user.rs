@@ -12,114 +12,88 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use chrono::Local;
-use sea_orm::DatabaseConnection;
-use sea_orm::entity::*;
-use serde_json::json;
+use serde_json::Value;
+use tracing::error;
 
-use crate::config::Config;
-use crate::db::entity::{prelude::User as DbUser, user};
-use crate::identity::backends::sql::{IdentityDatabaseError, db_err};
-use crate::identity::types::UserCreate;
+use crate::db::entity::{user as db_user, user_option as db_user_option};
+use crate::identity::types::*;
 
-pub async fn get<U: AsRef<str>>(
-    db: &DatabaseConnection,
-    user_id: U,
-) -> Result<Option<user::Model>, IdentityDatabaseError> {
-    DbUser::find_by_id(user_id.as_ref())
-        .one(db)
-        .await
-        .map_err(|err| db_err(err, "fetching user by ID"))
-}
+mod create;
+mod delete;
+mod get;
+mod list;
 
-pub(super) async fn create(
-    conf: &Config,
-    db: &DatabaseConnection,
-    user: &UserCreate,
-) -> Result<user::Model, IdentityDatabaseError> {
-    let now = Local::now().naive_utc();
-    // Set last_active to now if compliance disabling is on
-    let last_active_at = if let Some(true) = &user.enabled {
-        if conf
-            .security_compliance
-            .disable_user_account_days_inactive
-            .is_some()
-        {
-            Set(Some(now.date()))
-        } else {
-            NotSet
-        }
-    } else {
-        NotSet
-    };
+pub use create::create;
+pub use delete::delete;
+pub use get::get;
+pub(super) use get::get_main_entry;
+pub use list::list;
 
-    let entry: user::ActiveModel = user::ActiveModel {
-        id: Set(user.id.clone()),
-        enabled: Set(user.enabled),
-        extra: Set(Some(serde_json::to_string(
-            // For keystone it is important to have at least "{}"
-            &user.extra.as_ref().or(Some(&json!({}))),
-        )?)),
-        default_project_id: Set(user.default_project_id.clone()),
-        last_active_at,
-        created_at: Set(Some(now)),
-        domain_id: Set(user.domain_id.clone()),
-    };
-    let db_user: user::Model = entry
-        .insert(db)
-        .await
-        .map_err(|err| db_err(err, "inserting user entry"))?;
-    Ok(db_user)
-}
-
-pub async fn delete<U: AsRef<str>>(
-    _conf: &Config,
-    db: &DatabaseConnection,
-    user_id: U,
-) -> Result<(), IdentityDatabaseError> {
-    let res = DbUser::delete_by_id(user_id.as_ref())
-        .exec(db)
-        .await
-        .map_err(|err| db_err(err, "deleting the user record"))?;
-    if res.rows_affected == 1 {
-        Ok(())
-    } else {
-        Err(IdentityDatabaseError::UserNotFound(
-            user_id.as_ref().to_string(),
-        ))
+pub fn get_user_builder<O: IntoIterator<Item = db_user_option::Model>>(
+    user: &db_user::Model,
+    opts: O,
+) -> UserResponseBuilder {
+    let mut user_builder: UserResponseBuilder = UserResponseBuilder::default();
+    user_builder.id(user.id.clone());
+    user_builder.domain_id(user.domain_id.clone());
+    // TODO: default enabled logic
+    user_builder.enabled(user.enabled.unwrap_or(false));
+    if let Some(extra) = &user.extra {
+        user_builder.extra(
+            serde_json::from_str::<Value>(extra)
+                .inspect_err(|e| error!("failed to deserialize user extra: {e}"))
+                .unwrap_or_default(),
+        );
     }
+
+    user_builder.options(UserOptions::from_iter(opts));
+
+    user_builder
 }
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::derivable_impls)]
+    use chrono::Local;
 
-    use sea_orm::{DatabaseBackend, MockDatabase, MockExecResult, Transaction};
+    use crate::db::entity::{
+        local_user as db_local_user, password as db_password, user as db_user,
+    };
 
-    use crate::identity::Config;
+    pub(super) fn get_user_mock<U: AsRef<str>>(user_id: U) -> db_user::Model {
+        db_user::Model {
+            id: user_id.as_ref().into(),
+            domain_id: "foo_domain".into(),
+            enabled: Some(true),
+            ..Default::default()
+        }
+    }
 
-    use super::*;
-
-    #[tokio::test]
-    async fn test_delete() {
-        // Create MockDatabase with mock query results
-        let db = MockDatabase::new(DatabaseBackend::Postgres)
-            .append_exec_results([MockExecResult {
-                rows_affected: 1,
-                ..Default::default()
-            }])
-            .into_connection();
-        let config = Config::default();
-
-        delete(&config, &db, "id").await.unwrap();
-        // Checking transaction log
-        assert_eq!(
-            db.into_transaction_log(),
-            [Transaction::from_sql_and_values(
-                DatabaseBackend::Postgres,
-                r#"DELETE FROM "user" WHERE "user"."id" = $1"#,
-                ["id".into()]
-            ),]
-        );
+    pub(super) fn get_local_user_with_password_mock<U: AsRef<str>>(
+        user_id: U,
+        cnt_password: usize,
+    ) -> Vec<(db_local_user::Model, db_password::Model)> {
+        let lu = db_local_user::Model {
+            user_id: user_id.as_ref().into(),
+            domain_id: "foo_domain".into(),
+            name: "Apple Cake".to_owned(),
+            ..Default::default()
+        };
+        let mut passwords: Vec<db_password::Model> = Vec::new();
+        for i in 0..cnt_password {
+            passwords.push(db_password::Model {
+                id: i as i32,
+                local_user_id: 1,
+                expires_at: None,
+                self_service: false,
+                password_hash: None,
+                created_at: Local::now().naive_utc(),
+                created_at_int: 12345,
+                expires_at_int: None,
+            });
+        }
+        passwords
+            .into_iter()
+            .map(|x| (lu.clone(), x.clone()))
+            .collect()
     }
 }
