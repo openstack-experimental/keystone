@@ -28,7 +28,8 @@ use crate::policy::Policy;
 ///
 /// Create the identity provider with the specified properties.
 ///
-/// It is expected that only admin user is able to create global identity providers.
+/// It is expected that only admin user is able to create global identity
+/// providers.
 #[utoipa::path(
     post,
     path = "/",

@@ -21,12 +21,16 @@ use serde_json::Value;
 pub struct Endpoint {
     /// The ID of the endpoint.
     pub id: String,
-    /// The interface type, which describes the visibility of the endpoint. Value is:
-    ///   - public. Visible by end users on a publicly available network interface.
+    /// The interface type, which describes the visibility of the endpoint.
+    /// Value is:
+    ///   - public. Visible by end users on a publicly available network
+    ///     interface.
     ///
-    ///   - internal. Visible by end users on an unmetered internal network interface.
+    ///   - internal. Visible by end users on an unmetered internal network
+    ///     interface.
     ///
-    ///   - admin. Visible by administrative users on a secure network interface.
+    ///   - admin. Visible by administrative users on a secure network
+    ///     interface.
     #[builder(default)]
     pub interface: String,
     /// The ID of the region that contains the service endpoint.
@@ -36,8 +40,9 @@ pub struct Endpoint {
     pub service_id: String,
     /// The endpoint URL.
     pub url: String,
-    /// Indicates whether the endpoint appears in the service catalog: - false. The endpoint does
-    /// not appear in the service catalog. - true. The endpoint appears in the service catalog.
+    /// Indicates whether the endpoint appears in the service catalog: - false.
+    /// The endpoint does not appear in the service catalog. - true. The
+    /// endpoint appears in the service catalog.
     pub enabled: bool,
     /// Additional endpoint properties
     #[builder(default)]

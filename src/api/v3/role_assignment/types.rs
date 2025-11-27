@@ -177,8 +177,8 @@ pub struct RoleAssignmentListParameters {
     #[serde(rename = "group.id")]
     pub group_id: Option<String>,
 
-    /// Returns the effective assignments, including any assignments gained by virtue of group
-    /// membership.
+    /// Returns the effective assignments, including any assignments gained by
+    /// virtue of group membership.
     pub effective: Option<bool>,
 
     /// Filters the response by a project ID.
@@ -193,8 +193,9 @@ pub struct RoleAssignmentListParameters {
     #[serde(rename = "user.id")]
     pub user_id: Option<String>,
 
-    /// If set to true, then the names of any entities returned will be include as well as their
-    /// IDs. Any value other than 0 (including no value) will be interpreted as true.
+    /// If set to true, then the names of any entities returned will be include
+    /// as well as their IDs. Any value other than 0 (including no value)
+    /// will be interpreted as true.
     ///
     /// New in version 3.6
     #[serde(default)]

@@ -52,10 +52,12 @@ pub(super) fn openapi_router() -> OpenApiRouter<ServiceState> {
 
 /// Authentication callback.
 ///
-/// This operation allows user to exchange the authorization code retrieved from the identity
-/// provider after calling the `/v4/federation/identity_providers/{idp_id}/auth` for the Keystone
-/// token. When desired scope was passed in that auth initialization call the scoped token is
-/// returned (assuming the user is having roles assigned on that scope).
+/// This operation allows user to exchange the authorization code retrieved from
+/// the identity provider after calling the
+/// `/v4/federation/identity_providers/{idp_id}/auth` for the Keystone
+/// token. When desired scope was passed in that auth initialization call the
+/// scoped token is returned (assuming the user is having roles assigned on that
+/// scope).
 #[utoipa::path(
     post,
     path = "/oidc/callback",
@@ -156,7 +158,8 @@ pub async fn callback(
         return Err(OidcError::ClientWithoutDiscoveryNotSupported)?;
     };
 
-    // Finish authorization request by exchanging the authorization code for the token.
+    // Finish authorization request by exchanging the authorization code for the
+    // token.
     let token_response = client
         .exchange_code(AuthorizationCode::new(query.code))
         .map_err(OidcError::from)?

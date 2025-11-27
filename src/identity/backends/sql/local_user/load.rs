@@ -60,8 +60,8 @@ pub async fn load_local_user_with_passwords<S1: AsRef<str>, S2: AsRef<str>, S3: 
 
 /// Fetch passwords for list of optional local user ids
 ///
-/// Returns vector of optional vectors with passwords in the same order as requested
-/// keeping None in place where local_user was empty.
+/// Returns vector of optional vectors with passwords in the same order as
+/// requested keeping None in place where local_user was empty.
 pub async fn load_local_users_passwords<L: IntoIterator<Item = Option<i32>>>(
     db: &DatabaseConnection,
     user_ids: L,
@@ -101,4 +101,93 @@ pub async fn load_local_users_passwords<L: IntoIterator<Item = Option<i32>>>(
         .collect();
 
     Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use sea_orm::{DatabaseBackend, MockDatabase, Transaction};
+
+    use super::super::tests::*;
+    use super::*;
+
+    #[tokio::test]
+    async fn test_load_local_user_with_passwords_user_id() {
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([get_local_user_with_password_mock("user_id", 5)])
+            .into_connection();
+        load_local_user_with_passwords(&db, Some("user_id"), None::<String>, None::<String>)
+            .await
+            .unwrap();
+
+        // Checking transaction log
+        assert_eq!(
+            db.into_transaction_log(),
+            [Transaction::from_sql_and_values(
+                DatabaseBackend::Postgres,
+                r#"SELECT "local_user"."id" AS "A_id", "local_user"."user_id" AS "A_user_id", "local_user"."domain_id" AS "A_domain_id", "local_user"."name" AS "A_name", "local_user"."failed_auth_count" AS "A_failed_auth_count", "local_user"."failed_auth_at" AS "A_failed_auth_at", "password"."id" AS "B_id", "password"."local_user_id" AS "B_local_user_id", "password"."self_service" AS "B_self_service", "password"."created_at" AS "B_created_at", "password"."expires_at" AS "B_expires_at", "password"."password_hash" AS "B_password_hash", "password"."created_at_int" AS "B_created_at_int", "password"."expires_at_int" AS "B_expires_at_int" FROM "local_user" LEFT JOIN "password" ON "local_user"."id" = "password"."local_user_id" WHERE "local_user"."user_id" = $1 ORDER BY "local_user"."id" ASC, "password"."created_at_int" DESC"#,
+                ["user_id".into(),]
+            ),]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_load_local_user_with_passwords_user_name_domain_ignored_for_user_id() {
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([get_local_user_with_password_mock("user_id", 5)])
+            .into_connection();
+        load_local_user_with_passwords(&db, Some("user_id"), Some("foo"), Some("bar"))
+            .await
+            .unwrap();
+
+        // Checking transaction log
+        assert_eq!(
+            db.into_transaction_log(),
+            [Transaction::from_sql_and_values(
+                DatabaseBackend::Postgres,
+                r#"SELECT "local_user"."id" AS "A_id", "local_user"."user_id" AS "A_user_id", "local_user"."domain_id" AS "A_domain_id", "local_user"."name" AS "A_name", "local_user"."failed_auth_count" AS "A_failed_auth_count", "local_user"."failed_auth_at" AS "A_failed_auth_at", "password"."id" AS "B_id", "password"."local_user_id" AS "B_local_user_id", "password"."self_service" AS "B_self_service", "password"."created_at" AS "B_created_at", "password"."expires_at" AS "B_expires_at", "password"."password_hash" AS "B_password_hash", "password"."created_at_int" AS "B_created_at_int", "password"."expires_at_int" AS "B_expires_at_int" FROM "local_user" LEFT JOIN "password" ON "local_user"."id" = "password"."local_user_id" WHERE "local_user"."user_id" = $1 ORDER BY "local_user"."id" ASC, "password"."created_at_int" DESC"#,
+                ["user_id".into(),]
+            ),]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_load_local_user_with_passwords_no_user_name_and_domain() {
+        let db = MockDatabase::new(DatabaseBackend::Postgres).into_connection();
+        match load_local_user_with_passwords(&db, None::<String>, Some("user_name"), None::<String>)
+            .await
+        {
+            Err(IdentityDatabaseError::UserIdOrNameWithDomain) => {}
+            _ => {
+                panic!("User name without ID should be rejected")
+            }
+        };
+        match load_local_user_with_passwords(&db, None::<String>, None::<String>, Some("domain_id"))
+            .await
+        {
+            Err(IdentityDatabaseError::UserIdOrNameWithDomain) => {}
+            _ => {
+                panic!("Domain ID without user name should be rejected")
+            }
+        };
+    }
+
+    #[tokio::test]
+    async fn test_load_local_user_with_passwords_user_name_domain() {
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([get_local_user_with_password_mock("user_id", 5)])
+            .into_connection();
+        load_local_user_with_passwords(&db, None::<String>, Some("foo"), Some("bar"))
+            .await
+            .unwrap();
+
+        // Checking transaction log
+        assert_eq!(
+            db.into_transaction_log(),
+            [Transaction::from_sql_and_values(
+                DatabaseBackend::Postgres,
+                r#"SELECT "local_user"."id" AS "A_id", "local_user"."user_id" AS "A_user_id", "local_user"."domain_id" AS "A_domain_id", "local_user"."name" AS "A_name", "local_user"."failed_auth_count" AS "A_failed_auth_count", "local_user"."failed_auth_at" AS "A_failed_auth_at", "password"."id" AS "B_id", "password"."local_user_id" AS "B_local_user_id", "password"."self_service" AS "B_self_service", "password"."created_at" AS "B_created_at", "password"."expires_at" AS "B_expires_at", "password"."password_hash" AS "B_password_hash", "password"."created_at_int" AS "B_created_at_int", "password"."expires_at_int" AS "B_expires_at_int" FROM "local_user" LEFT JOIN "password" ON "local_user"."id" = "password"."local_user_id" WHERE "local_user"."name" = $1 AND "local_user"."domain_id" = $2 ORDER BY "local_user"."id" ASC, "password"."created_at_int" DESC"#,
+                ["foo".into(), "bar".into()]
+            ),]
+        );
+    }
 }

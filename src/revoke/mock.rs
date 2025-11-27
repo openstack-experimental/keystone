@@ -12,7 +12,6 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //! Token revocation - internal mocking tools.
-//!
 use async_trait::async_trait;
 #[cfg(test)]
 use mockall::mock;

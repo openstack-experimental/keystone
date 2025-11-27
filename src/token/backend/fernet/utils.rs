@@ -146,9 +146,9 @@ pub fn read_str<R: Read>(rd: &mut R) -> Result<String, TokenProviderError> {
 }
 
 /// Read the UUID from the payload
-/// It is represented as an Array[bool, bytes] where first bool indicates whether following bytes
-/// are UUID or just bytes that should be treated as a string (for cases where ID is not a valid
-/// UUID)
+/// It is represented as an Array[bool, bytes] where first bool indicates
+/// whether following bytes are UUID or just bytes that should be treated as a
+/// string (for cases where ID is not a valid UUID)
 pub fn read_uuid(rd: &mut &[u8]) -> Result<String, TokenProviderError> {
     match read_marker(rd).map_err(ValueReadError::from)? {
         Marker::FixArray(_) => {
@@ -197,9 +197,9 @@ pub fn read_uuid(rd: &mut &[u8]) -> Result<String, TokenProviderError> {
 }
 
 /// Write the UUID to the payload
-/// It is represented as an Array[bool, bytes] where first bool indicates whether following bytes
-/// are UUID or just bytes that should be treated as a string (for cases where ID is not a valid
-/// UUID)
+/// It is represented as an Array[bool, bytes] where first bool indicates
+/// whether following bytes are UUID or just bytes that should be treated as a
+/// string (for cases where ID is not a valid UUID)
 pub fn write_uuid<W: RmpWrite>(wd: &mut W, uid: &str) -> Result<(), TokenProviderError> {
     match Uuid::parse_str(uid) {
         Ok(uuid) => {

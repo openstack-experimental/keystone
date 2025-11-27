@@ -413,12 +413,13 @@ impl TokenApi for TokenProvider {
         authz_info: AuthzInfo,
         token_restrictions: Option<&TokenRestriction>,
     ) -> Result<Token, TokenProviderError> {
-        // This should be executed already, but let's better repeat it as last line of defence.
-        // It is also necessary to call this before to stop before we start to resolve authz info.
+        // This should be executed already, but let's better repeat it as last line of
+        // defence. It is also necessary to call this before to stop before we
+        // start to resolve authz info.
         authentication_info.validate()?;
 
-        // TODO: Check whether it is allowed to change the scope of the token if AuthenticatedInfo
-        // already contains scope it was issued for.
+        // TODO: Check whether it is allowed to change the scope of the token if
+        // AuthenticatedInfo already contains scope it was issued for.
         let mut authentication_info = authentication_info;
         authentication_info.audit_ids.push(
             URL_SAFE

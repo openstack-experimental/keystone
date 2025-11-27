@@ -172,12 +172,13 @@ impl From<Vec<(Service, Vec<ProviderEndpoint>)>> for Catalog {
 
 /// The authorization scope, including the system, a project, or a domain.
 ///
-/// If multiple scopes are specified in the same request (e.g. project and domain or domain and
-/// system) an HTTP 400 Bad Request will be returned, as a token cannot be simultaneously scoped to
-/// multiple authorization targets. An ID is sufficient to uniquely identify a project but if a
-/// project is specified by name, then the domain of the project must also be specified in order to
-/// uniquely identify the project by name. A domain scope may be specified by either the domain’s
-/// ID or name with equivalent results.
+/// If multiple scopes are specified in the same request (e.g. project and
+/// domain or domain and system) an HTTP 400 Bad Request will be returned, as a
+/// token cannot be simultaneously scoped to multiple authorization targets. An
+/// ID is sufficient to uniquely identify a project but if a project is
+/// specified by name, then the domain of the project must also be specified in
+/// order to uniquely identify the project by name. A domain scope may be
+/// specified by either the domain’s ID or name with equivalent results.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum Scope {

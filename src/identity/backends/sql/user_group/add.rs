@@ -37,7 +37,8 @@ pub async fn add_user_to_group<U: AsRef<str>, G: AsRef<str>>(
     Ok(())
 }
 
-/// Add group user relations as specified by the tuples (user_id, group_id) iterator.
+/// Add group user relations as specified by the tuples (user_id, group_id)
+/// iterator.
 pub async fn add_users_to_groups<I, U, G>(
     db: &DatabaseConnection,
     iter: I,
@@ -65,14 +66,14 @@ where
 mod tests {
     use sea_orm::{DatabaseBackend, MockDatabase, MockExecResult, Transaction};
 
-    use super::super::tests::get_mock;
+    use super::super::tests::get_user_group_mock;
     use super::*;
 
     #[tokio::test]
     async fn test_create() {
         // Create MockDatabase with mock query results
         let db = MockDatabase::new(DatabaseBackend::Postgres)
-            .append_query_results([vec![get_mock("u1", "g1")]])
+            .append_query_results([vec![get_user_group_mock("u1", "g1")]])
             .into_connection();
 
         assert!(add_user_to_group(&db, "u1", "g1").await.is_ok());

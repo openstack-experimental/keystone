@@ -34,8 +34,8 @@ use crate::policy::Policy;
 ///
 /// Without `domain_id` specified global mappings are returned.
 ///
-/// It is expected that listing mappings belonging to the other domain is only allowed to the admin
-/// user.
+/// It is expected that listing mappings belonging to the other domain is only
+/// allowed to the admin user.
 #[utoipa::path(
     get,
     path = "/",

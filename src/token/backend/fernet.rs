@@ -165,7 +165,8 @@ impl FernetTokenProvider {
             .iter()
             .fold(0, |acc, (k, v)| acc + if me.contains(v) { *k } else { 0 });
 
-        // TODO: Improve unit tests to ensure unsupported auth method immediately raises error.
+        // TODO: Improve unit tests to ensure unsupported auth method immediately raises
+        // error.
         if res == 0 {
             return Err(TokenProviderError::UnsupportedAuthMethods(
                 me.iter().join(","),
@@ -312,8 +313,8 @@ impl FernetTokenProvider {
     /// 1. Decrypt as Fernet
     /// 2. Unpack MessagePack payload
     pub fn decrypt(&self, credential: &str) -> Result<Token, TokenProviderError> {
-        // TODO: Implement fernet keys change watching. Keystone loads them from FS on every
-        // request and in the best case it costs 15µs.
+        // TODO: Implement fernet keys change watching. Keystone loads them from FS on
+        // every request and in the best case it costs 15µs.
         let fernet = match &self.fernet {
             Some(f) => f,
             None => &self.get_fernet()?,
@@ -393,7 +394,8 @@ fn get_fernet_timestamp(payload: &str) -> Result<DateTime<Utc>, TokenProviderErr
         })
 }
 
-// Conditionally expose the function when the 'bench_internals' feature is enabled
+// Conditionally expose the function when the 'bench_internals' feature is
+// enabled
 #[cfg(feature = "bench_internals")]
 pub fn bench_get_fernet_timestamp(payload: &str) -> Result<DateTime<Utc>, TokenProviderError> {
     get_fernet_timestamp(payload)

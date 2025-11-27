@@ -31,8 +31,8 @@ use crate::token::TokenApi;
 
 /// Finish user passkey authentication.
 ///
-/// Exchange the challenge signed with one of the users passkeys or security devices for the
-/// unscoped Keystone API token.
+/// Exchange the challenge signed with one of the users passkeys or security
+/// devices for the unscoped Keystone API token.
 #[utoipa::path(
     post,
     path = "/finish",
@@ -64,8 +64,8 @@ pub(super) async fn finish(
         .get_user_webauthn_credential_authentication_state(&state, &user_id)
         .await?
     {
-        // We explicitly try to deserealize the request data directly into the underlying
-        // webauthn_rs type.
+        // We explicitly try to deserealize the request data directly into the
+        // underlying webauthn_rs type.
         match state
             .webauthn
             .finish_passkey_authentication(&req.try_into()?, &s)

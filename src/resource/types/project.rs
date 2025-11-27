@@ -28,7 +28,8 @@ pub struct Project {
     pub name: String,
     /// The project domain_id.
     pub domain_id: String,
-    /// If set to true, project is enabled. If set to false, project is disabled.
+    /// If set to true, project is enabled. If set to false, project is
+    /// disabled.
     pub enabled: bool,
     /// The description of the project.
     #[builder(default)]

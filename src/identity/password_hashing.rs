@@ -62,11 +62,20 @@ pub async fn verify_password<P: AsRef<[u8]>, H: AsRef<str>>(
             .to_owned();
             let password_hash = hash.as_ref().to_string();
             // Do not block the main thread with a definitely long running call.
-            let verify =
-                task::spawn_blocking(move || bcrypt::verify(password_bytes, &password_hash))
-                    .await??;
-            Ok(verify)
-            //Ok(bcrypt::verify(password_bytes, hash.as_ref())?)
+            match task::spawn_blocking(move || bcrypt::verify(password_bytes, &password_hash))
+                .await?
+            {
+                Ok(res) => Ok(res),
+                Err(bcrypt::BcryptError::InvalidHash(..)) => {
+                    // InvalidHash error contain the hash itself. We do not want to log it.
+                    warn!("Bcrypt hash verification error: bad hash");
+                    Ok(false)
+                }
+                other => {
+                    warn!("Bcrypt hash verification error: {other:?}");
+                    Ok(false)
+                }
+            }
         }
     }
 }
@@ -75,6 +84,7 @@ pub async fn verify_password<P: AsRef<[u8]>, H: AsRef<str>>(
 mod tests {
     use super::*;
     use rand::distr::{Alphanumeric, SampleString};
+    use tracing_test::traced_test;
 
     #[test]
     fn test_verify_length_and_trunc_password() {
@@ -94,6 +104,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[traced_test]
     async fn test_hash_bcrypt() {
         let builder = config::Config::builder()
             .set_override("auth.methods", "")
@@ -101,10 +112,14 @@ mod tests {
             .set_override("database.connection", "dummy")
             .unwrap();
         let conf: Config = Config::try_from(builder).expect("can build a valid config");
-        assert!(hash_password(&conf, "abcdefg").await.is_ok());
+        let pass = "abcdefg";
+        let hashed = hash_password(&conf, &pass).await.unwrap();
+        assert!(!logs_contain(pass));
+        assert!(!logs_contain(&hashed));
     }
 
     #[tokio::test]
+    #[traced_test]
     async fn test_roundtrip_bcrypt() {
         let builder = config::Config::builder()
             .set_override("auth.methods", "")
@@ -112,11 +127,15 @@ mod tests {
             .set_override("database.connection", "dummy")
             .unwrap();
         let conf: Config = Config::try_from(builder).expect("can build a valid config");
-        let hashed = hash_password(&conf, "abcdefg").await.unwrap();
-        assert!(verify_password(&conf, "abcdefg", hashed).await.unwrap());
+        let pass = "abcdefg";
+        let hashed = hash_password(&conf, &pass).await.unwrap();
+        assert!(verify_password(&conf, &pass, &hashed).await.unwrap());
+        assert!(!logs_contain(pass));
+        assert!(!logs_contain(&hashed));
     }
 
     #[tokio::test]
+    #[traced_test]
     async fn test_roundtrip_bcrypt_longer_than_72() {
         let builder = config::Config::builder()
             .set_override("auth.methods", "")
@@ -125,7 +144,40 @@ mod tests {
             .unwrap();
         let conf: Config = Config::try_from(builder).expect("can build a valid config");
         let pass = Alphanumeric.sample_string(&mut rand::rng(), 80);
-        let hashed = hash_password(&conf, pass.clone()).await.unwrap();
-        assert!(verify_password(&conf, pass, hashed).await.unwrap());
+        let hashed = hash_password(&conf, &pass).await.unwrap();
+        assert!(verify_password(&conf, &pass, &hashed).await.unwrap());
+        assert!(!logs_contain(&pass));
+        assert!(!logs_contain(&hashed));
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_roundtrip_bcrypt_mismatch() {
+        let builder = config::Config::builder()
+            .set_override("auth.methods", "")
+            .unwrap()
+            .set_override("database.connection", "dummy")
+            .unwrap();
+        let conf: Config = Config::try_from(builder).expect("can build a valid config");
+        let pass = Alphanumeric.sample_string(&mut rand::rng(), 80);
+        let hashed = hash_password(&conf, "other password").await.unwrap();
+        assert!(!verify_password(&conf, &pass, &hashed).await.unwrap());
+        assert!(!logs_contain(&pass));
+        assert!(!logs_contain(&hashed));
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_roundtrip_bcrypt_bad_hash() {
+        let builder = config::Config::builder()
+            .set_override("auth.methods", "")
+            .unwrap()
+            .set_override("database.connection", "dummy")
+            .unwrap();
+        let conf: Config = Config::try_from(builder).expect("can build a valid config");
+        let pass = Alphanumeric.sample_string(&mut rand::rng(), 80);
+        assert!(!verify_password(&conf, &pass, "foobar").await.unwrap());
+        assert!(!logs_contain("foobar"));
+        assert!(!logs_contain(&pass));
     }
 }

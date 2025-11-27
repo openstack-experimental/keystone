@@ -55,7 +55,8 @@ pub enum ResourceDatabaseError {
     },
 }
 
-/// Convert the DB error into the [ResourceDatabaseError] with the context information.
+/// Convert the DB error into the [ResourceDatabaseError] with the context
+/// information.
 pub fn db_err(e: sea_orm::DbErr, context: &str) -> ResourceDatabaseError {
     e.sql_err().map_or_else(
         || ResourceDatabaseError::Database {

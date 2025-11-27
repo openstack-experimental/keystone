@@ -28,7 +28,8 @@ use crate::token::TokenApi;
 ///
 /// Create the token restriction with the specified properties.
 ///
-/// It is expected that only admin user is able to create token restriction in other domain.
+/// It is expected that only admin user is able to create token restriction in
+/// other domain.
 #[utoipa::path(
     post,
     path = "/",

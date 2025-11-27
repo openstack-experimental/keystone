@@ -75,9 +75,29 @@ pub enum IdentityDatabaseError {
 
     #[error("either user id or user name with user domain id or name must be given")]
     UserIdOrNameWithDomain,
+
+    /// No data for local_user and passwords
+    #[error("no passwords for the user {0}")]
+    NoPasswordsForUser(String),
+
+    /// Row does not contain password hash.
+    #[error("no passwords hash on the row id: {0}")]
+    NoPasswordHash(String),
+
+    /// No entry in the `user` table for the user.
+    #[error("no entry in the `user` table found for user_id: {0}")]
+    NoMainUserEntry(String),
+
+    /// Supported authentication error.
+    #[error(transparent)]
+    AuthenticationInfo {
+        #[from]
+        source: crate::auth::AuthenticationError,
+    },
 }
 
-/// Convert the DB error into the [IdentityDatabaseError] with the context information.
+/// Convert the DB error into the [`IdentityDatabaseError`] with the context
+/// information.
 pub fn db_err(e: sea_orm::DbErr, context: &str) -> IdentityDatabaseError {
     e.sql_err().map_or_else(
         || IdentityDatabaseError::Database {

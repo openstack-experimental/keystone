@@ -67,9 +67,10 @@ type FullIdToken = IdToken<
 
 /// Authentication using the JWT.
 ///
-/// This operation allows user to exchange the JWT issued by the trusted identity provider for the
-/// regular Keystone session token. Request specifies the necessary authentication mapping, which
-/// is also used to validate expected claims.
+/// This operation allows user to exchange the JWT issued by the trusted
+/// identity provider for the regular Keystone session token. Request specifies
+/// the necessary authentication mapping, which is also used to validate
+/// expected claims.
 #[utoipa::path(
     post,
     //path = "/jwt/login",

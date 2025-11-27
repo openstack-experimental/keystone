@@ -38,15 +38,16 @@ pub struct Mapping {
 
     /// `domain_id` owning the attribute mapping.
     ///
-    /// Unset `domain_id` means the attribute mapping is shared and can be used by different
-    /// domains. This requires `domain_id_claim` to be present. Attribute mapping can be only
-    /// shared when the referred identity provider is also shared (does not set the `domain_id`
-    /// attribute).
+    /// Unset `domain_id` means the attribute mapping is shared and can be used
+    /// by different domains. This requires `domain_id_claim` to be present.
+    /// Attribute mapping can be only shared when the referred identity
+    /// provider is also shared (does not set the `domain_id` attribute).
     #[builder(default)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub domain_id: Option<String>,
 
-    /// ID of the federated identity provider for which this attribute mapping can be used.
+    /// ID of the federated identity provider for which this attribute mapping
+    /// can be used.
     pub idp_id: String,
 
     /// Attribute mapping type ([oidc, jwt]).
@@ -123,16 +124,17 @@ pub struct MappingCreate {
 
     /// `domain_id` owning the attribute mapping.
     ///
-    /// Unset `domain_id` means the attribute mapping is shared and can be used by different
-    /// domains. This requires `domain_id_claim` to be present. Attribute mapping can be only
-    /// shared when the referred identity provider is also shared (does not set the `domain_id`
-    /// attribute).
+    /// Unset `domain_id` means the attribute mapping is shared and can be used
+    /// by different domains. This requires `domain_id_claim` to be present.
+    /// Attribute mapping can be only shared when the referred identity
+    /// provider is also shared (does not set the `domain_id` attribute).
     #[builder(default)]
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schema(nullable = false)]
     pub domain_id: Option<String>,
 
-    /// ID of the federated identity provider for which this attribute mapping can be used.
+    /// ID of the federated identity provider for which this attribute mapping
+    /// can be used.
     pub idp_id: String,
 
     /// Attribute mapping type ([oidc, jwt]).
@@ -211,15 +213,16 @@ pub struct MappingUpdate {
 
     /// `domain_id` owning the attribute mapping.
     ///
-    /// Unset `domain_id` means the attribute mapping is shared and can be used by different
-    /// domains. This requires `domain_id_claim` to be present. Attribute mapping can be only
-    /// shared when the referred identity provider is also shared (does not set the `domain_id`
-    /// attribute).
+    /// Unset `domain_id` means the attribute mapping is shared and can be used
+    /// by different domains. This requires `domain_id_claim` to be present.
+    /// Attribute mapping can be only shared when the referred identity
+    /// provider is also shared (does not set the `domain_id` attribute).
     #[builder(default)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub domain_id: Option<Option<String>>,
 
-    /// ID of the federated identity provider for which this attribute mapping can be used.
+    /// ID of the federated identity provider for which this attribute mapping
+    /// can be used.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub idp_id: Option<String>,
 

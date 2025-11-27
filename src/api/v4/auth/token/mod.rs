@@ -12,8 +12,6 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //! Authentication API.
-//!
-//!
 use utoipa_axum::router::OpenApiRouter;
 
 use crate::api::v3::auth::token as v3_token;

@@ -45,9 +45,10 @@ pub(super) async fn get_project_info_builder(
     Ok(project_response)
 }
 
-/// Authenticate the user ignoring any scope information. It is important not to expose any
-/// hints that user, project, domain, etc might exist before we have authenticated them by
-/// taking different amount of time in case of certain validations.
+/// Authenticate the user ignoring any scope information. It is important not to
+/// expose any hints that user, project, domain, etc might exist before we have
+/// authenticated them by taking different amount of time in case of certain
+/// validations.
 pub(super) async fn authenticate_request(
     state: &ServiceState,
     req: &AuthRequest,
@@ -61,7 +62,7 @@ pub(super) async fn authenticate_request(
                     state
                         .provider
                         .get_identity_provider()
-                        .authenticate_by_password(state, req)
+                        .authenticate_by_password(state, &req)
                         .await?,
                 );
             }

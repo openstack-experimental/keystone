@@ -76,9 +76,9 @@ impl IdentityApi for IdentityProvider {
     async fn authenticate_by_password(
         &self,
         state: &ServiceState,
-        auth: UserPasswordAuthRequest,
+        auth: &UserPasswordAuthRequest,
     ) -> Result<AuthenticatedInfo, IdentityProviderError> {
-        let mut auth = auth;
+        let mut auth = auth.clone();
         if auth.id.is_none() {
             if auth.name.is_none() {
                 return Err(IdentityProviderError::UserIdOrNameWithDomain);
@@ -102,7 +102,7 @@ impl IdentityApi for IdentityProvider {
         }
 
         self.backend_driver
-            .authenticate_by_password(state, auth)
+            .authenticate_by_password(state, &auth)
             .await
     }
 

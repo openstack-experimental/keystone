@@ -24,9 +24,9 @@ use crate::keystone::ServiceState;
 
 /// Start passkey authentication for the user.
 ///
-/// Initiate a passkey login for the user. The user must have at least one passkey previously
-/// registered. When the user does not exist a fake challenge is being returned to prevent id
-/// scanning.
+/// Initiate a passkey login for the user. The user must have at least one
+/// passkey previously registered. When the user does not exist a fake challenge
+/// is being returned to prevent id scanning.
 #[utoipa::path(
     post,
     path = "/start",
@@ -46,7 +46,8 @@ pub(super) async fn start(
     State(state): State<ServiceState>,
     Json(req): Json<PasskeyAuthenticationStartRequest>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
-    // TODO: Check user existence and simulate the response when the user does not exist.
+    // TODO: Check user existence and simulate the response when the user does not
+    // exist.
     state
         .provider
         .get_identity_provider()

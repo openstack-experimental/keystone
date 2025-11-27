@@ -40,7 +40,8 @@ pub struct IdentityProviderAuthResponse {
     pub auth_url: String,
 }
 
-/// Authentication callback request the user is sending to complete the authentication request.
+/// Authentication callback request the user is sending to complete the
+/// authentication request.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
 pub struct AuthCallbackParameters {
     /// Authentication state.

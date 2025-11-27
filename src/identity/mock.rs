@@ -38,7 +38,7 @@ mock! {
         async fn authenticate_by_password(
             &self,
             state: &ServiceState,
-            auth: UserPasswordAuthRequest,
+            auth: &UserPasswordAuthRequest,
         ) -> Result<AuthenticatedInfo, IdentityProviderError>;
 
         async fn list_users(

@@ -14,21 +14,19 @@
 
 use sea_orm::DatabaseConnection;
 use sea_orm::entity::*;
-use sea_orm::query::*;
 
-use crate::db::entity::{prelude::UserOption as DbUserOptions, user_option};
+use crate::db::entity::local_user as db_local_user;
 use crate::identity::backends::sql::{IdentityDatabaseError, db_err};
-use crate::identity::types::UserOptions;
 
-pub async fn list_by_user_id<S: AsRef<str>>(
+pub async fn reset_failed_auth(
     db: &DatabaseConnection,
-    user_id: S,
-) -> Result<UserOptions, IdentityDatabaseError> {
-    Ok(UserOptions::from_iter(
-        DbUserOptions::find()
-            .filter(user_option::Column::UserId.eq(user_id.as_ref()))
-            .all(db)
-            .await
-            .map_err(|err| db_err(err, "fetching options of the user"))?,
-    ))
+    user: &db_local_user::Model,
+) -> Result<db_local_user::Model, IdentityDatabaseError> {
+    let mut update: db_local_user::ActiveModel = user.clone().into();
+    update.failed_auth_count = Set(None);
+    update.failed_auth_at = Set(None);
+    update
+        .update(db)
+        .await
+        .map_err(|err| db_err(err, "resetting local user failed auth counters"))
 }

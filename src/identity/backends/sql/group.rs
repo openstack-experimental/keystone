@@ -41,11 +41,11 @@ impl From<group::Model> for Group {
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     #![allow(clippy::derivable_impls)]
     use super::*;
 
-    pub(super) fn get_group_mock<S: AsRef<str>>(id: S) -> group::Model {
+    pub fn get_group_mock<S: AsRef<str>>(id: S) -> group::Model {
         group::Model {
             id: id.as_ref().to_string(),
             domain_id: "foo_domain".into(),

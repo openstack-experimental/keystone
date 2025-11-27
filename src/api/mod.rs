@@ -12,7 +12,6 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //! Keystone API
-//!
 use axum::{
     extract::State,
     http::{HeaderMap, header},

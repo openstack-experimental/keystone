@@ -24,9 +24,9 @@ use super::{add_users_to_groups, remove_user_from_groups};
 
 /// Set user group memberships.
 ///
-/// Add user to the groups it should be in and remove from the groups where the user is currently
-/// member of, but should not be. This is only incremental operation and is not deleting group
-/// membership where the user should stay.
+/// Add user to the groups it should be in and remove from the groups where the
+/// user is currently member of, but should not be. This is only incremental
+/// operation and is not deleting group membership where the user should stay.
 pub async fn set_user_groups<I, U, G>(
     db: &DatabaseConnection,
     user_id: U,
@@ -82,17 +82,17 @@ where
 mod tests {
     use sea_orm::{DatabaseBackend, MockDatabase, MockExecResult, Transaction};
 
-    use super::super::tests::get_mock;
+    use super::super::tests::get_user_group_mock;
     use super::*;
 
     #[tokio::test]
     async fn test_add_and_remove() {
         let db = MockDatabase::new(DatabaseBackend::Postgres)
             .append_query_results([vec![
-                get_mock("u1", "g1"),
-                get_mock("u1", "g2"),
-                get_mock("u1", "g3"),
-                get_mock("u1", "g4"),
+                get_user_group_mock("u1", "g1"),
+                get_user_group_mock("u1", "g2"),
+                get_user_group_mock("u1", "g3"),
+                get_user_group_mock("u1", "g4"),
             ]])
             .append_exec_results([MockExecResult {
                 rows_affected: 1,
@@ -135,10 +135,10 @@ mod tests {
     async fn test_only_add() {
         let db = MockDatabase::new(DatabaseBackend::Postgres)
             .append_query_results([vec![
-                get_mock("u1", "g1"),
-                get_mock("u1", "g2"),
-                get_mock("u1", "g3"),
-                get_mock("u1", "g4"),
+                get_user_group_mock("u1", "g1"),
+                get_user_group_mock("u1", "g2"),
+                get_user_group_mock("u1", "g3"),
+                get_user_group_mock("u1", "g4"),
             ]])
             .append_exec_results([MockExecResult {
                 rows_affected: 1,
@@ -172,10 +172,10 @@ mod tests {
     async fn test_only_delete() {
         let db = MockDatabase::new(DatabaseBackend::Postgres)
             .append_query_results([vec![
-                get_mock("u1", "g1"),
-                get_mock("u1", "g2"),
-                get_mock("u1", "g3"),
-                get_mock("u1", "g4"),
+                get_user_group_mock("u1", "g1"),
+                get_user_group_mock("u1", "g2"),
+                get_user_group_mock("u1", "g3"),
+                get_user_group_mock("u1", "g4"),
             ]])
             .append_exec_results([MockExecResult {
                 rows_affected: 1,
@@ -207,10 +207,10 @@ mod tests {
     async fn test_no_change() {
         let db = MockDatabase::new(DatabaseBackend::Postgres)
             .append_query_results([vec![
-                get_mock("u1", "g1"),
-                get_mock("u1", "g2"),
-                get_mock("u1", "g3"),
-                get_mock("u1", "g4"),
+                get_user_group_mock("u1", "g1"),
+                get_user_group_mock("u1", "g2"),
+                get_user_group_mock("u1", "g3"),
+                get_user_group_mock("u1", "g4"),
             ]])
             .into_connection();
 

@@ -12,7 +12,6 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //! Revoke the authentication token.
-//!
 
 use axum::{
     extract::State,
@@ -34,9 +33,9 @@ use crate::token::TokenApi;
 ///
 /// Revokes a token.
 ///
-/// This call is similar to the HEAD /auth/tokens call except that the `X-Subject-Token` token is
-/// immediately not valid, regardless of the expires_at attribute value. An additional
-/// `X-Auth-Token` is not required.
+/// This call is similar to the HEAD /auth/tokens call except that the
+/// `X-Subject-Token` token is immediately not valid, regardless of the
+/// expires_at attribute value. An additional `X-Auth-Token` is not required.
 #[utoipa::path(
     delete,
     path = "/",
@@ -63,8 +62,8 @@ pub(super) async fn delete(
         .map_err(|_| KeystoneApiError::InvalidHeader)?
         .to_string();
 
-    // Default behavior is to return 404 for expired tokens. It makes sense to log internally the
-    // error before mapping it.
+    // Default behavior is to return 404 for expired tokens. It makes sense to log
+    // internally the error before mapping it.
     let token = state
         .provider
         .get_token_provider()

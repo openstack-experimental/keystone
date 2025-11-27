@@ -32,8 +32,9 @@ use crate::token::{
 
 /// List token restrictions.
 ///
-/// List existing token restrictions. By default only admin user is allowed to leave `domain_id`
-/// query parameter empty, what means that token restrictions for all domains should be listed.
+/// List existing token restrictions. By default only admin user is allowed to
+/// leave `domain_id` query parameter empty, what means that token restrictions
+/// for all domains should be listed.
 #[utoipa::path(
     get,
     path = "/",

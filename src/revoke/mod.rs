@@ -13,16 +13,16 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Token revocation provider.
 //!
-//! Token revocation may be implemented in different ways, but in most cases would be represented
-//! by the presence of the revocation or the invalidation record matching the certain token
-//! parameters.
+//! Token revocation may be implemented in different ways, but in most cases
+//! would be represented by the presence of the revocation or the invalidation
+//! record matching the certain token parameters.
 //!
-//! Default backend is the [crate::revoke::backend::sql] and uses the database table
-//! [crate::db::entity::revocation_event::Model] for storing the revocation events. They have their
-//! own expiration.
+//! Default backend is the [crate::revoke::backend::sql] and uses the database
+//! table [crate::db::entity::revocation_event::Model] for storing the
+//! revocation events. They have their own expiration.
 //!
-//! Tokens are not invalidated by saving the exact value, but rather by saving certain attributes
-//! of the token.
+//! Tokens are not invalidated by saving the exact value, but rather by saving
+//! certain attributes of the token.
 //!
 //! Following attributes are used for matching of the regular fernet token:
 //!
@@ -32,9 +32,8 @@
 //!   - `project_id`
 //!   - `user_id`
 //!
-//! Additionally the `token.issued_at` is compared to be lower than the `issued_before` field of
-//! the revocation record.
-//!
+//! Additionally the `token.issued_at` is compared to be lower than the
+//! `issued_before` field of the revocation record.
 
 use async_trait::async_trait;
 
@@ -89,8 +88,8 @@ impl RevokeProvider {
 impl RevokeApi for RevokeProvider {
     /// Check whether the token has been revoked or not.
     ///
-    /// Checks revocation events matching the token parameters and return `false` if their count is
-    /// more than `0`.
+    /// Checks revocation events matching the token parameters and return
+    /// `false` if their count is more than `0`.
     #[tracing::instrument(level = "info", skip(self, state, token))]
     async fn is_token_revoked(
         &self,
@@ -103,7 +102,8 @@ impl RevokeApi for RevokeProvider {
 
     /// Revoke the token.
     ///
-    /// Mark the token as revoked to prohibit from being used even while not expired.
+    /// Mark the token as revoked to prohibit from being used even while not
+    /// expired.
     async fn revoke_token(
         &self,
         state: &ServiceState,

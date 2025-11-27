@@ -74,7 +74,8 @@ pub struct Mapping {
 
     //#[builder(default)]
     //pub claim_mappings: Option<Value>,
-    /// Fixed `project_id` scope of the token to issue for successful authentication.
+    /// Fixed `project_id` scope of the token to issue for successful
+    /// authentication.
     #[builder(default)]
     pub token_project_id: Option<String>,
 
@@ -134,7 +135,8 @@ pub struct MappingUpdate {
     #[builder(default)]
     pub oidc_scopes: Option<Option<Vec<String>>>,
 
-    /// Fixed `project_id` scope of the token to issue for successful authentication.
+    /// Fixed `project_id` scope of the token to issue for successful
+    /// authentication.
     #[builder(default)]
     pub token_project_id: Option<Option<String>>,
 

@@ -85,8 +85,8 @@ pub async fn create(
         .await
         .map_err(|err| db_err(err, "persisting new identity provider"))?;
 
-    // For compatibility reasons add entry for the IDP old-style as well as the protocol to keep
-    // constraints working
+    // For compatibility reasons add entry for the IDP old-style as well as the
+    // protocol to keep constraints working
     db_old_identity_provider::ActiveModel {
         id: Set(idp.id.clone()),
         enabled: Set(true),

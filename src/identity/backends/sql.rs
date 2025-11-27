@@ -53,9 +53,9 @@ impl IdentityBackend for SqlBackend {
     async fn authenticate_by_password(
         &self,
         state: &ServiceState,
-        auth: UserPasswordAuthRequest,
+        auth: &UserPasswordAuthRequest,
     ) -> Result<AuthenticatedInfo, IdentityProviderError> {
-        authenticate::authenticate_by_password(&self.config, &state.db, auth).await
+        Ok(authenticate::authenticate_by_password(&self.config, &state.db, auth).await?)
     }
 
     /// Fetch users from the database

@@ -33,11 +33,12 @@ use crate::policy::Policy;
 
 /// List identity providers.
 ///
-/// List identity providers. Without any filters only global identity providers are returned.
-/// With the `domain_id` identity providers owned by the specified identity provider are returned.
+/// List identity providers. Without any filters only global identity providers
+/// are returned. With the `domain_id` identity providers owned by the specified
+/// identity provider are returned.
 ///
-/// It is expected that only global or owned identity providers can be returned, while an admin
-/// user is able to list all providers.
+/// It is expected that only global or owned identity providers can be returned,
+/// while an admin user is able to list all providers.
 #[utoipa::path(
     get,
     path = "/",
@@ -295,8 +296,8 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_list_all() {
-        // Test listing ALL idps when the user does not specify the domain_id and is allowed to see
-        // IDP of other domains (admin)
+        // Test listing ALL idps when the user does not specify the domain_id and is
+        // allowed to see IDP of other domains (admin)
         let mut federation_mock = MockFederationProvider::default();
         federation_mock
             .expect_list_identity_providers()

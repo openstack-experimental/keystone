@@ -28,8 +28,8 @@ use crate::policy::Policy;
 use crate::policy::PolicyFactory;
 use crate::provider::Provider;
 
-// Placing ServiceState behind Arc is necessary to address DatabaseConnection not implementing
-// Clone
+// Placing ServiceState behind Arc is necessary to address DatabaseConnection
+// not implementing Clone.
 //#[derive(Clone)]
 #[derive(FromRef)]
 pub struct Service {

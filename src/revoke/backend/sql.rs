@@ -64,8 +64,8 @@ impl RevokeBackend for SqlBackend {
 
     /// Check the token for being revoked.
     ///
-    /// List not expired revocation records that invalidate the token and returns true if there is
-    /// at least one such record.
+    /// List not expired revocation records that invalidate the token and
+    /// returns true if there is at least one such record.
     async fn is_token_revoked(
         &self,
         state: &ServiceState,
@@ -81,7 +81,8 @@ impl RevokeBackend for SqlBackend {
 
     /// Revoke the token.
     ///
-    /// Mark the token as revoked to prohibit from being used even while not expired.
+    /// Mark the token as revoked to prohibit from being used even while not
+    /// expired.
     async fn revoke_token(
         &self,
         state: &ServiceState,

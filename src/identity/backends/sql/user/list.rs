@@ -92,11 +92,17 @@ pub async fn list(
             continue;
         }
         let user_builder: UserResponseBuilder = if let Some(local) = l {
-            local_user::get_local_user_builder(conf, &u, local, p.map(|x| x.into_iter()), o)
+            local_user::get_local_user_builder(
+                conf,
+                &u,
+                local,
+                p.map(|x| x.into_iter()),
+                UserOptions::from_iter(o),
+            )
         } else if let Some(nonlocal) = n {
-            nonlocal_user::get_nonlocal_user_builder(&u, nonlocal, o)
+            nonlocal_user::get_nonlocal_user_builder(&u, nonlocal, UserOptions::from_iter(o))
         } else if !f.is_empty() {
-            federated_user::get_federated_user_builder(&u, f, o)
+            federated_user::get_federated_user_builder(&u, f, UserOptions::from_iter(o))
         } else {
             return Err(IdentityDatabaseError::MalformedUser(u.id))?;
         };

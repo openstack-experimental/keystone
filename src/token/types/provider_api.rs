@@ -39,11 +39,14 @@ pub trait TokenApi: Send + Sync + Clone {
     ///
     /// * `state` - An application state.
     /// * `credential` - A token as a string.
-    /// * `allow_expired` - Indicates whether for the expired token the an error should be raised
+    /// * `allow_expired` - Indicates whether for the expired token the an error
+    ///   should be raised
     /// or not.
-    /// * `window_seconds` - An additional token expiration buffer that is added to the
+    /// * `window_seconds` - An additional token expiration buffer that is added
+    ///   to the
     /// `token.expires_at() during the expiration calculation.
-    /// * `expand` - Indicates whether the token information should be expanded or not. Defaults to
+    /// * `expand` - Indicates whether the token information should be expanded
+    ///   or not. Defaults to
     /// true.
     async fn validate_token<'a>(
         &self,
@@ -77,8 +80,8 @@ pub trait TokenApi: Send + Sync + Clone {
         token: &mut Token,
     ) -> Result<(), TokenProviderError>;
 
-    /// Populate additional information (project, domain, roles, etc) in the token that support
-    /// that information
+    /// Populate additional information (project, domain, roles, etc) in the
+    /// token that support that information
     async fn expand_token_information(
         &self,
         state: &ServiceState,

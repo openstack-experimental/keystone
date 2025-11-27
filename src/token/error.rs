@@ -241,7 +241,8 @@ pub enum TokenProviderError {
     AuditIdWrongFormat,
 }
 
-/// Convert the DB error into the TokenProviderError with the context information.
+/// Convert the DB error into the TokenProviderError with the context
+/// information.
 pub fn db_err(e: sea_orm::DbErr, context: &str) -> TokenProviderError {
     e.sql_err().map_or_else(
         || TokenProviderError::Database {

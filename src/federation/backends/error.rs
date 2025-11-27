@@ -67,7 +67,8 @@ pub enum FederationDatabaseError {
     },
 }
 
-/// Convert the DB error into the [FederationDatabaseError] with the context information.
+/// Convert the DB error into the [FederationDatabaseError] with the context
+/// information.
 pub fn db_err(e: sea_orm::DbErr, context: &str) -> FederationDatabaseError {
     e.sql_err().map_or_else(
         || FederationDatabaseError::Database {

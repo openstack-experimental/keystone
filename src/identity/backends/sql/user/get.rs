@@ -65,7 +65,9 @@ pub async fn get(
                 &user,
                 local_user_with_passwords.0,
                 Some(local_user_with_passwords.1),
-                user_opts.map_err(|err| db_err(err, "fetching user options"))?,
+                UserOptions::from_iter(
+                    user_opts.map_err(|err| db_err(err, "fetching user options"))?,
+                ),
             ),
             _ => match user
                 .find_related(NonlocalUser)
@@ -76,7 +78,9 @@ pub async fn get(
                 Some(nonlocal_user) => nonlocal_user::get_nonlocal_user_builder(
                     &user,
                     nonlocal_user,
-                    user_opts.map_err(|err| db_err(err, "fetching user options"))?,
+                    UserOptions::from_iter(
+                        user_opts.map_err(|err| db_err(err, "fetching user options"))?,
+                    ),
                 ),
                 _ => {
                     let federated_user = user
@@ -88,7 +92,9 @@ pub async fn get(
                         federated_user::get_federated_user_builder(
                             &user,
                             federated_user,
-                            user_opts.map_err(|err| db_err(err, "fetching user options"))?,
+                            UserOptions::from_iter(
+                                user_opts.map_err(|err| db_err(err, "fetching user options"))?,
+                            ),
                         )
                     } else {
                         return Err(IdentityDatabaseError::MalformedUser(user_id.to_string()))?;
@@ -153,7 +159,7 @@ mod tests {
             ])
             .append_query_results([
                 // Third query result - local user with passwords
-                get_local_user_with_password_mock("1", 1),
+                local_user::tests::get_local_user_with_password_mock("1", 1),
             ])
             .into_connection();
         let config = Config::default();

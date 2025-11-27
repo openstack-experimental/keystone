@@ -162,9 +162,6 @@ pub enum KeystoneApiError {
     #[error(transparent)]
     JsonExtractorRejection(#[from] JsonRejection),
 
-    #[error("the account is disabled for user: {0}")]
-    UserDisabled(String),
-
     /// Selected authentication is forbidden.
     #[error("selected authentication is forbidden")]
     SelectedAuthenticationForbidden,
@@ -186,9 +183,7 @@ impl IntoResponse for KeystoneApiError {
             KeystoneApiError::Conflict(_) => StatusCode::CONFLICT,
             KeystoneApiError::NotFound { .. } => StatusCode::NOT_FOUND,
             KeystoneApiError::BadRequest(..) => StatusCode::BAD_REQUEST,
-            KeystoneApiError::UserDisabled(..) => StatusCode::UNAUTHORIZED,
             KeystoneApiError::Unauthorized(..) => StatusCode::UNAUTHORIZED,
-            //            KeystoneApiError::AuthenticationInfo { .. } => StatusCode::UNAUTHORIZED,
             KeystoneApiError::Forbidden => StatusCode::FORBIDDEN,
             KeystoneApiError::Policy { .. } => StatusCode::FORBIDDEN,
             KeystoneApiError::SelectedAuthenticationForbidden
@@ -202,7 +197,11 @@ impl IntoResponse for KeystoneApiError {
             | KeystoneApiError::RevokeProvider { .. }
             | KeystoneApiError::Other(..) => StatusCode::INTERNAL_SERVER_ERROR,
             _ =>
-            // KeystoneApiError::SubjectTokenMissing | KeystoneApiError::InvalidHeader | KeystoneApiError::InvalidToken | KeystoneApiError::Token{..} | KeystoneApiError::WebAuthN{..} | KeystoneApiError::Uuid {..} | KeystoneApiError::Serde {..} | KeystoneApiError::DomainIdOrName | KeystoneApiError::ProjectIdOrName | KeystoneApiError::ProjectDomain =>
+            // KeystoneApiError::SubjectTokenMissing | KeystoneApiError::InvalidHeader |
+            // KeystoneApiError::InvalidToken | KeystoneApiError::Token{..} |
+            // KeystoneApiError::WebAuthN{..} | KeystoneApiError::Uuid {..} |
+            // KeystoneApiError::Serde {..} | KeystoneApiError::DomainIdOrName |
+            // KeystoneApiError::ProjectIdOrName | KeystoneApiError::ProjectDomain =>
             {
                 StatusCode::BAD_REQUEST
             }
@@ -341,7 +340,8 @@ impl IntoResponse for WebauthnError {
             WebauthnError::UserHasNoCredentials => "User Has No Credentials",
         };
 
-        // its often easiest to implement `IntoResponse` by calling other implementations
+        // its often easiest to implement `IntoResponse` by calling other
+        // implementations
         (StatusCode::INTERNAL_SERVER_ERROR, body).into_response()
     }
 }
@@ -352,7 +352,20 @@ impl From<AuthenticationError> for KeystoneApiError {
             AuthenticationError::AuthenticatedInfoBuilder { source } => {
                 KeystoneApiError::InternalError(source.to_string())
             }
-            AuthenticationError::UserDisabled(data) => KeystoneApiError::UserDisabled(data),
+            AuthenticationError::UserDisabled(user_id) => KeystoneApiError::Unauthorized(Some(
+                format!("The account is disabled for the user: {user_id}"),
+            )),
+            AuthenticationError::UserLocked(user_id) => KeystoneApiError::Unauthorized(Some(
+                format!("The account is locked for the user: {user_id}"),
+            )),
+            AuthenticationError::UserPasswordExpired(user_id) => {
+                KeystoneApiError::Unauthorized(Some(format!(
+                    "The password is expired and need to be changed for user: {user_id}"
+                )))
+            }
+            AuthenticationError::UserNameOrPasswordWrong => {
+                KeystoneApiError::Unauthorized(Some("Invalid username or password".to_string()))
+            }
             AuthenticationError::TokenRenewalForbidden => {
                 KeystoneApiError::SelectedAuthenticationForbidden
             }
@@ -365,9 +378,6 @@ impl From<IdentityProviderError> for KeystoneApiError {
     fn from(value: IdentityProviderError) -> Self {
         match value {
             IdentityProviderError::AuthenticationInfo { source } => source.into(),
-            IdentityProviderError::WrongUsernamePassword => {
-                Self::Unauthorized(Some("Invalid username or password".to_string()))
-            }
             _ => Self::IdentityError { source: value },
         }
     }

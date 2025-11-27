@@ -33,8 +33,9 @@ pub struct PasskeyUserAuthenticationRequest {
 
 /// Passkey Authorization challenge.
 ///
-/// A JSON serializable challenge which is issued to the user’s webbrowser for handling. This is
-/// meant to be opaque, that is, you should not need to inspect or alter the content of the struct
+/// A JSON serializable challenge which is issued to the user’s webbrowser for
+/// handling. This is meant to be opaque, that is, you should not need to
+/// inspect or alter the content of the struct
 /// - you should serialise it and transmit it to the client only.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
 pub struct PasskeyAuthenticationStartResponse {
@@ -70,11 +71,12 @@ pub struct PublicKeyCredentialRequestOptions {
     pub user_verification: UserVerificationPolicy,
 }
 
-/// Request in residentkey workflows that conditional mediation should be used in the UI, or not.
+/// Request in residentkey workflows that conditional mediation should be used
+/// in the UI, or not.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
 pub enum Mediation {
-    /// Discovered credentials are presented to the user in a dialog. Conditional UI is used. See
-    /// <https://github.com/w3c/webauthn/wiki/Explainer:-WebAuthn-Conditional-UI>
+    /// Discovered credentials are presented to the user in a dialog.
+    /// Conditional UI is used. See <https://github.com/w3c/webauthn/wiki/Explainer:-WebAuthn-Conditional-UI>
     /// <https://w3c.github.io/webappsec-credential-management/#enumdef-credentialmediationrequirement>
     Conditional,
 }
@@ -116,52 +118,58 @@ pub enum AuthenticatorTransport {
 /// <https://w3c.github.io/webauthn/#enumdef-userverificationrequirement>, and each variant lists
 /// it’s effects.
 ///
-/// To be clear, Verification means that the Authenticator perform extra or supplementary
-/// interaction with the user to verify who they are. An example of this is Apple Touch Id required
-/// a fingerprint to be verified, or a yubico device requiring a pin in addition to a touch event.
+/// To be clear, Verification means that the Authenticator perform extra or
+/// supplementary interaction with the user to verify who they are. An example
+/// of this is Apple Touch Id required a fingerprint to be verified, or a yubico
+/// device requiring a pin in addition to a touch event.
 ///
-/// An example of a non-verified interaction is a yubico device with no pin where touch is the only
-/// interaction - we only verify a user is present, but we don’t have extra details to the
-/// legitimacy of that user.
+/// An example of a non-verified interaction is a yubico device with no pin
+/// where touch is the only interaction - we only verify a user is present, but
+/// we don’t have extra details to the legitimacy of that user.
 ///
-/// As UserVerificationPolicy is only used in credential registration, this stores the verification
-/// state of the credential in the persisted credential. These persisted credentials define which
-/// UserVerificationPolicy is issued during authentications.
+/// As UserVerificationPolicy is only used in credential registration, this
+/// stores the verification state of the credential in the persisted credential.
+/// These persisted credentials define which UserVerificationPolicy is issued
+/// during authentications.
 ///
-/// IMPORTANT - Due to limitations of the webauthn specification, CTAP devices, and browser
-/// implementations, the only secure choice as an RP is required.
+/// IMPORTANT - Due to limitations of the webauthn specification, CTAP devices,
+/// and browser implementations, the only secure choice as an RP is required.
 ///
-///   ⚠️ WARNING - discouraged is marked with a warning, as some authenticators will FORCE
-///   verification during registration but NOT during authentication. This makes it impossible
-///   for a relying party to consistently enforce user verification, which can confuse users and
-///   lead them to distrust user verification is being enforced.
+///   ⚠️ WARNING - discouraged is marked with a warning, as some authenticators
+/// will FORCE   verification during registration but NOT during authentication.
+/// This makes it impossible   for a relying party to consistently enforce user
+/// verification, which can confuse users and   lead them to distrust user
+/// verification is being enforced.
 ///
-///   ⚠️ WARNING - preferred can lead to authentication errors in some cases due to browser
-///   peripheral exchange allowing authentication verification bypass. Webauthn RS is not
-///   vulnerable to these bypasses due to our tracking of UV during registration through
-///   authentication, however preferred can cause legitimate credentials to not prompt for UV
-///   correctly due to browser perhipheral exchange leading Webauthn RS to deny them in what
+///   ⚠️ WARNING - preferred can lead to authentication errors in some cases due
+/// to browser   peripheral exchange allowing authentication verification
+/// bypass. Webauthn RS is not   vulnerable to these bypasses due to our
+/// tracking of UV during registration through   authentication, however
+/// preferred can cause legitimate credentials to not prompt for UV   correctly
+/// due to browser perhipheral exchange leading Webauthn RS to deny them in what
 ///   should otherwise be legitimate operations.
-///
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
 pub enum UserVerificationPolicy {
-    /// Require user verification bit to be set, and fail the registration or authentication if
-    /// false. If the authenticator is not able to perform verification, it will not be usable with
-    /// this policy.
+    /// Require user verification bit to be set, and fail the registration or
+    /// authentication if false. If the authenticator is not able to perform
+    /// verification, it will not be usable with this policy.
     ///
-    /// This policy is the default as it is the only secure and consistent user verification
-    /// option.
+    /// This policy is the default as it is the only secure and consistent user
+    /// verification option.
     Required,
-    /// Prefer UV if possible, but ignore if not present. In other webauthn deployments this is
-    /// bypassable as it implies the library will not check UV is set correctly for this
-    /// credential. Webauthn-RS is not vulnerable to this as we check the UV state always based on
+    /// Prefer UV if possible, but ignore if not present. In other webauthn
+    /// deployments this is bypassable as it implies the library will not
+    /// check UV is set correctly for this credential. Webauthn-RS is not
+    /// vulnerable to this as we check the UV state always based on
     /// it’s presence at registration.
     ///
-    /// However, in some cases use of this policy can lead to some credentials failing to verify
-    /// correctly due to browser peripheral exchange bypasses.
+    /// However, in some cases use of this policy can lead to some credentials
+    /// failing to verify correctly due to browser peripheral exchange
+    /// bypasses.
     Preferred,
-    /// Discourage - but do not prevent - user verification from being supplied. Many CTAP devices
-    /// will attempt UV during registration but not authentication leading to user confusion.
+    /// Discourage - but do not prevent - user verification from being supplied.
+    /// Many CTAP devices will attempt UV during registration but not
+    /// authentication leading to user confusion.
     DiscouragedDoNotUse,
 }
 
@@ -212,11 +220,12 @@ pub struct HmacGetSecretInput {
     pub output2: Option<String>,
 }
 
-/// A client response to an authentication challenge. This contains all required information to
-/// asses and assert trust in a credentials legitimacy, followed by authentication to a user.
+/// A client response to an authentication challenge. This contains all required
+/// information to asses and assert trust in a credentials legitimacy, followed
+/// by authentication to a user.
 ///
-/// You should not need to handle the inner content of this structure - you should provide this to
-/// the correctly handling function of Webauthn only.
+/// You should not need to handle the inner content of this structure - you
+/// should provide this to the correctly handling function of Webauthn only.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
 pub struct PasskeyAuthenticationFinishRequest {
     /// The credential Id, likely base64.

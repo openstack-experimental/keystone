@@ -210,8 +210,8 @@ pub async fn ensure_user<T: AsRef<str>, U: AsRef<str>, D: AsRef<str>>(
     Ok(user.user)
 }
 
-/// Information for finishing the authorization request (received as a callback from `/authorize`
-/// call)
+/// Information for finishing the authorization request (received as a callback
+/// from `/authorize` call)
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 pub struct FederationAuthCodeCallbackResponse {
     /// Authorization code

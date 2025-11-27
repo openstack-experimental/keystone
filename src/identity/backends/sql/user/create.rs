@@ -115,8 +115,11 @@ pub async fn create(
             }
         }
 
-        let builder =
-            federated_user::get_federated_user_builder(&main_user, federated_entities, Vec::new());
+        let builder = federated_user::get_federated_user_builder(
+            &main_user,
+            federated_entities,
+            UserOptions::default(),
+        );
 
         Ok(builder.build()?)
     } else {
@@ -139,7 +142,7 @@ pub async fn create(
             &main_user,
             local_user,
             Some(passwords),
-            Vec::new(),
+            UserOptions::default(),
         )
         .build()?)
     }
@@ -150,5 +153,6 @@ pub async fn create(
 
 #[cfg(test)]
 mod tests {
-    // use sea_orm::{DatabaseBackend, MockDatabase, MockExecResult, Transaction};
+    // use sea_orm::{DatabaseBackend, MockDatabase, MockExecResult,
+    // Transaction};
 }

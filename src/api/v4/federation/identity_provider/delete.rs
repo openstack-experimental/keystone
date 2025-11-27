@@ -31,7 +31,8 @@ use crate::policy::Policy;
 ///
 /// Deletes the existing identity provider.
 ///
-/// It is expected that only admin user is allowed to delete the global identity provider
+/// It is expected that only admin user is allowed to delete the global identity
+/// provider
 #[utoipa::path(
     delete,
     path = "/{idp_id}",
@@ -73,7 +74,8 @@ pub(super) async fn remove(
         )
         .await?;
 
-    // TODO: decide what to do with the users provisioned using this IDP, mappings, ...
+    // TODO: decide what to do with the users provisioned using this IDP, mappings,
+    // ...
 
     if current.is_some() {
         state

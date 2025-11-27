@@ -18,7 +18,6 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 /// Passkey registration request.
-///
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
 pub struct UserPasskeyRegistrationStartRequest {
     /// The description for the passkey (name).
@@ -35,7 +34,6 @@ pub struct PasskeyCreate {
 }
 
 /// Passkey.
-///
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
 pub struct PasskeyResponse {
     /// The description for the passkey (name).
@@ -55,7 +53,8 @@ pub struct Passkey {
 
 /// Passkey challenge.
 ///
-/// This is the WebauthN challenge that need to be signed by the passkey/security device.
+/// This is the WebauthN challenge that need to be signed by the
+/// passkey/security device.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
 pub struct UserPasskeyRegistrationStartResponse {
     /// The options.
@@ -116,15 +115,16 @@ pub struct RelyingParty {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
 #[schema(as = PasskeyUser)]
 pub struct User {
-    /// The user’s id in base64 form. This MUST be a unique id, and must NOT contain personally
-    /// identifying information, as this value can NEVER be changed. If in doubt, use a UUID.
+    /// The user’s id in base64 form. This MUST be a unique id, and must NOT
+    /// contain personally identifying information, as this value can NEVER
+    /// be changed. If in doubt, use a UUID.
     #[schema(value_type = String, format = Binary, content_encoding = "base64")]
     pub id: String,
-    /// A detailed name for the account, such as an email address. This value can change, so must
-    /// not be used as a primary key.
+    /// A detailed name for the account, such as an email address. This value
+    /// can change, so must not be used as a primary key.
     pub name: String,
-    /// The user’s preferred name for display. This value can change, so must not be used as a
-    /// primary key.
+    /// The user’s preferred name for display. This value can change, so must
+    /// not be used as a primary key.
     pub display_name: String,
 }
 
@@ -145,18 +145,20 @@ pub struct PublicKeyCredentialDescriptor {
     /// The credential id.
     #[schema(value_type = String, format = Binary, content_encoding = "base64")]
     pub id: String,
-    /// The allowed transports for this credential. Note this is a hint, and is NOT enforced.
+    /// The allowed transports for this credential. Note this is a hint, and is
+    /// NOT enforced.
     #[schema(nullable = false)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub transports: Option<Vec<AuthenticatorTransport>>,
 }
 
 ///
-/// Request in residentkey workflows that conditional mediation should be used in the UI, or not.
+/// Request in residentkey workflows that conditional mediation should be used
+/// in the UI, or not.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
 pub enum Mediation {
-    /// Discovered credentials are presented to the user in a dialog. Conditional UI is used. See
-    /// <https://github.com/w3c/webauthn/wiki/Explainer:-WebAuthn-Conditional-UI>
+    /// Discovered credentials are presented to the user in a dialog.
+    /// Conditional UI is used. See <https://github.com/w3c/webauthn/wiki/Explainer:-WebAuthn-Conditional-UI>
     /// <https://w3c.github.io/webappsec-credential-management/#enumdef-credentialmediationrequirement>
     Conditional,
 }
@@ -180,8 +182,8 @@ pub struct AllowCredentials {
 pub enum AuthenticatorTransport {
     /// <https://www.w3.org/TR/webauthn/#dom-authenticatortransport-ble>
     Ble,
-    /// Hybrid transport, formerly caBLE. Part of the level 3 draft specification.
-    /// <https://w3c.github.io/webauthn/#dom-authenticatortransport-hybrid>
+    /// Hybrid transport, formerly caBLE. Part of the level 3 draft
+    /// specification. <https://w3c.github.io/webauthn/#dom-authenticatortransport-hybrid>
     Hybrid,
     /// <https://www.w3.org/TR/webauthn/#dom-authenticatortransport-internal>
     Internal,
@@ -198,30 +200,31 @@ pub enum AuthenticatorTransport {
 /// <https://www.w3.org/TR/webauthn/#dictdef-authenticatorselectioncriteria>
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
 pub struct AuthenticatorSelectionCriteria {
-    /// How the authenticator should be attached to the client machine. Note this is only a hint.
-    /// It is not enforced in anyway shape or form. <https://www.w3.org/TR/webauthn/#attachment>.
+    /// How the authenticator should be attached to the client machine. Note
+    /// this is only a hint. It is not enforced in anyway shape or form. <https://www.w3.org/TR/webauthn/#attachment>.
     #[schema(nullable = false)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub authenticator_attachment: Option<AuthenticatorAttachment>,
-    /// Hint to the credential to create a resident key. Note this value should be a member of
-    /// ResidentKeyRequirement, but client must ignore unknown values, treating an unknown value as
-    /// if the member does not exist.
-    /// <https://www.w3.org/TR/webauthn-2/#dom-authenticatorselectioncriteria-residentkey>.
+    /// Hint to the credential to create a resident key. Note this value should
+    /// be a member of ResidentKeyRequirement, but client must ignore
+    /// unknown values, treating an unknown value as if the member does not
+    /// exist. <https://www.w3.org/TR/webauthn-2/#dom-authenticatorselectioncriteria-residentkey>.
     #[schema(nullable = false)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resident_key: Option<ResidentKeyRequirement>,
-    /// Hint to the credential to create a resident key. Note this can not be enforced or
-    /// validated, so the authenticator may choose to ignore this parameter.
-    /// <https://www.w3.org/TR/webauthn/#resident-credential>.
+    /// Hint to the credential to create a resident key. Note this can not be
+    /// enforced or validated, so the authenticator may choose to ignore
+    /// this parameter. <https://www.w3.org/TR/webauthn/#resident-credential>.
     pub require_resident_key: bool,
-    /// The user verification level to request during registration. Depending on if this
-    /// authenticator provides verification may affect future interactions as this is associated to
-    /// the credential during registration.
+    /// The user verification level to request during registration. Depending on
+    /// if this authenticator provides verification may affect future
+    /// interactions as this is associated to the credential during
+    /// registration.
     pub user_verification: UserVerificationPolicy,
 }
 
-/// The authenticator attachment hint. This is NOT enforced, and is only used to help a user select
-/// a relevant authenticator type.
+/// The authenticator attachment hint. This is NOT enforced, and is only used to
+/// help a user select a relevant authenticator type.
 ///
 /// <https://www.w3.org/TR/webauthn/#attachment>
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
@@ -229,8 +232,8 @@ pub enum AuthenticatorAttachment {
     /// Request a device that is part of the machine aka inseparable.
     /// <https://www.w3.org/TR/webauthn/#attachment>.
     Platform,
-    /// Request a device that can be separated from the machine aka an external token.
-    /// <https://www.w3.org/TR/webauthn/#attachment>.
+    /// Request a device that can be separated from the machine aka an external
+    /// token. <https://www.w3.org/TR/webauthn/#attachment>.
     CrossPlatform,
 }
 
@@ -241,8 +244,8 @@ pub enum AuthenticatorAttachment {
 pub enum ResidentKeyRequirement {
     /// <https://www.w3.org/TR/webauthn-2/#dom-residentkeyrequirement-discouraged>.
     Discouraged,
-    /// ⚠️ In all major browsers preferred is identical in behaviour to required. You should use
-    /// required instead. <https://www.w3.org/TR/webauthn-2/#dom-residentkeyrequirement-preferred>.
+    /// ⚠️ In all major browsers preferred is identical in behaviour to
+    /// required. You should use required instead. <https://www.w3.org/TR/webauthn-2/#dom-residentkeyrequirement-preferred>.
     Preferred,
     /// <https://www.w3.org/TR/webauthn-2/#dom-residentkeyrequirement-required>.
     Required,
@@ -301,8 +304,9 @@ pub enum AttestationFormat {
 /// Implements `AuthenticatorExtensionsClientInputs` from the spec.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
 pub struct RequestRegistrationExtensions {
-    /// ⚠️ - This extension result is always unsigned, and only indicates if the browser requests a
-    /// residentKey to be created. It has no bearing on the true rk state of the credential.
+    /// ⚠️ - This extension result is always unsigned, and only indicates if the
+    /// browser requests a residentKey to be created. It has no bearing on
+    /// the true rk state of the credential.
     #[schema(nullable = false)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cred_props: Option<bool>,
@@ -310,8 +314,8 @@ pub struct RequestRegistrationExtensions {
     #[schema(nullable = false)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cred_protect: Option<CredProtect>,
-    /// ⚠️ - Browsers support the creation of the secret, but not the retrieval of it. CTAP2.1
-    /// create hmac secret.
+    /// ⚠️ - Browsers support the creation of the secret, but not the retrieval
+    /// of it. CTAP2.1 create hmac secret.
     #[schema(nullable = false)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hmac_create_secret: Option<bool>,
@@ -332,8 +336,9 @@ pub struct RequestRegistrationExtensions {
 pub struct CredProtect {
     /// The credential policy to enact.
     pub credential_protection_policy: CredentialProtectionPolicy,
-    /// Whether it is better for the authenticator to fail to create a credential rather than
-    /// ignore the protection policy If no value is provided, the client treats it as false.
+    /// Whether it is better for the authenticator to fail to create a
+    /// credential rather than ignore the protection policy If no value is
+    /// provided, the client treats it as false.
     #[schema(nullable = false)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub enforce_credential_protection_policy: Option<bool>,
@@ -343,15 +348,17 @@ pub struct CredProtect {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
 #[repr(u8)]
 pub enum CredentialProtectionPolicy {
-    /// This reflects “FIDO_2_0” semantics. In this configuration, performing some form of user
-    /// verification is optional with or without credentialID list. This is the default state of
-    /// the credential if the extension is not specified.
+    /// This reflects “FIDO_2_0” semantics. In this configuration, performing
+    /// some form of user verification is optional with or without
+    /// credentialID list. This is the default state of the credential if
+    /// the extension is not specified.
     UserVerificationOptional = 1,
-    /// In this configuration, credential is discovered only when its credentialID is provided by
-    /// the platform or when some form of user verification is performed.
+    /// In this configuration, credential is discovered only when its
+    /// credentialID is provided by the platform or when some form of user
+    /// verification is performed.
     UserVerificationOptionalWithCredentialIDList = 2,
-    /// This reflects that discovery and usage of the credential MUST be preceded by some form of
-    /// user verification.
+    /// This reflects that discovery and usage of the credential MUST be
+    /// preceded by some form of user verification.
     UserVerificationRequired = 3,
 }
 
@@ -359,60 +366,67 @@ pub enum CredentialProtectionPolicy {
 /// <https://w3c.github.io/webauthn/#enumdef-userverificationrequirement>, and each variant lists
 /// it’s effects.
 ///
-/// To be clear, Verification means that the Authenticator perform extra or supplementary
-/// interaction with the user to verify who they are. An example of this is Apple Touch Id required
-/// a fingerprint to be verified, or a yubico device requiring a pin in addition to a touch event.
+/// To be clear, Verification means that the Authenticator perform extra or
+/// supplementary interaction with the user to verify who they are. An example
+/// of this is Apple Touch Id required a fingerprint to be verified, or a yubico
+/// device requiring a pin in addition to a touch event.
 ///
-/// An example of a non-verified interaction is a yubico device with no pin where touch is the only
-/// interaction - we only verify a user is present, but we don’t have extra details to the
-/// legitimacy of that user.
+/// An example of a non-verified interaction is a yubico device with no pin
+/// where touch is the only interaction - we only verify a user is present, but
+/// we don’t have extra details to the legitimacy of that user.
 ///
-/// As UserVerificationPolicy is only used in credential registration, this stores the verification
-/// state of the credential in the persisted credential. These persisted credentials define which
-/// UserVerificationPolicy is issued during authentications.
+/// As UserVerificationPolicy is only used in credential registration, this
+/// stores the verification state of the credential in the persisted credential.
+/// These persisted credentials define which UserVerificationPolicy is issued
+/// during authentications.
 ///
-/// IMPORTANT - Due to limitations of the webauthn specification, CTAP devices, and browser
-/// implementations, the only secure choice as an RP is required.
+/// IMPORTANT - Due to limitations of the webauthn specification, CTAP devices,
+/// and browser implementations, the only secure choice as an RP is required.
 ///
-///   ⚠️ WARNING - discouraged is marked with a warning, as some authenticators will FORCE
-///   verification during registration but NOT during authentication. This makes it impossible
-///   for a relying party to consistently enforce user verification, which can confuse users and
-///   lead them to distrust user verification is being enforced.
+///   ⚠️ WARNING - discouraged is marked with a warning, as some authenticators
+/// will FORCE   verification during registration but NOT during authentication.
+/// This makes it impossible   for a relying party to consistently enforce user
+/// verification, which can confuse users and   lead them to distrust user
+/// verification is being enforced.
 ///
-///   ⚠️ WARNING - preferred can lead to authentication errors in some cases due to browser
-///   peripheral exchange allowing authentication verification bypass. Webauthn RS is not
-///   vulnerable to these bypasses due to our tracking of UV during registration through
-///   authentication, however preferred can cause legitimate credentials to not prompt for UV
-///   correctly due to browser perhipheral exchange leading Webauthn RS to deny them in what
+///   ⚠️ WARNING - preferred can lead to authentication errors in some cases due
+/// to browser   peripheral exchange allowing authentication verification
+/// bypass. Webauthn RS is not   vulnerable to these bypasses due to our
+/// tracking of UV during registration through   authentication, however
+/// preferred can cause legitimate credentials to not prompt for UV   correctly
+/// due to browser perhipheral exchange leading Webauthn RS to deny them in what
 ///   should otherwise be legitimate operations.
-///
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
 pub enum UserVerificationPolicy {
-    /// Require user verification bit to be set, and fail the registration or authentication if
-    /// false. If the authenticator is not able to perform verification, it will not be usable with
-    /// this policy.
+    /// Require user verification bit to be set, and fail the registration or
+    /// authentication if false. If the authenticator is not able to perform
+    /// verification, it will not be usable with this policy.
     ///
-    /// This policy is the default as it is the only secure and consistent user verification
-    /// option.
+    /// This policy is the default as it is the only secure and consistent user
+    /// verification option.
     Required,
-    /// Prefer UV if possible, but ignore if not present. In other webauthn deployments this is
-    /// bypassable as it implies the library will not check UV is set correctly for this
-    /// credential. Webauthn-RS is not vulnerable to this as we check the UV state always based on
+    /// Prefer UV if possible, but ignore if not present. In other webauthn
+    /// deployments this is bypassable as it implies the library will not
+    /// check UV is set correctly for this credential. Webauthn-RS is not
+    /// vulnerable to this as we check the UV state always based on
     /// it’s presence at registration.
     ///
-    /// However, in some cases use of this policy can lead to some credentials failing to verify
-    /// correctly due to browser peripheral exchange bypasses.
+    /// However, in some cases use of this policy can lead to some credentials
+    /// failing to verify correctly due to browser peripheral exchange
+    /// bypasses.
     Preferred,
-    /// Discourage - but do not prevent - user verification from being supplied. Many CTAP devices
-    /// will attempt UV during registration but not authentication leading to user confusion.
+    /// Discourage - but do not prevent - user verification from being supplied.
+    /// Many CTAP devices will attempt UV during registration but not
+    /// authentication leading to user confusion.
     DiscouragedDoNotUse,
 }
 
-/// A client response to a registration challenge. This contains all required information to assess
-/// and assert trust in a credential’s legitimacy, followed by registration to a user.
+/// A client response to a registration challenge. This contains all required
+/// information to assess and assert trust in a credential’s legitimacy,
+/// followed by registration to a user.
 ///
-/// You should not need to handle the inner content of this structure - you should provide this to
-/// the correctly handling function of Webauthn only.
+/// You should not need to handle the inner content of this structure - you
+/// should provide this to the correctly handling function of Webauthn only.
 /// <https://w3c.github.io/webauthn/#iface-pkcredential>
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
 pub struct UserPasskeyRegistrationFinishRequest {
@@ -422,13 +436,13 @@ pub struct UserPasskeyRegistrationFinishRequest {
     pub description: Option<String>,
     /// The id of the PublicKey credential, likely in base64.
     ///
-    /// This is NEVER actually used in a real registration, because the true credential ID is taken
-    /// from the attestation data.
+    /// This is NEVER actually used in a real registration, because the true
+    /// credential ID is taken from the attestation data.
     pub id: String,
     /// The id of the credential, as binary.
     ///
-    /// This is NEVER actually used in a real registration, because the true credential ID is taken
-    /// from the attestation data.
+    /// This is NEVER actually used in a real registration, because the true
+    /// credential ID is taken from the attestation data.
     #[schema(value_type = String, format = Binary, content_encoding = "base64")]
     pub raw_id: String,
     /// <https://w3c.github.io/webauthn/#dom-publickeycredential-response>.
@@ -462,8 +476,9 @@ pub struct RegistrationExtensionsClientOutputs {
     #[schema(nullable = false)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub appid: Option<bool>,
-    /// Indicates if the client believes it created a resident key. This property is managed by the
-    /// webbrowser, and is NOT SIGNED and CAN NOT be trusted!
+    /// Indicates if the client believes it created a resident key. This
+    /// property is managed by the webbrowser, and is NOT SIGNED and CAN NOT
+    /// be trusted!
     #[schema(nullable = false)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cred_props: Option<CredProps>,
@@ -471,7 +486,8 @@ pub struct RegistrationExtensionsClientOutputs {
     #[schema(nullable = false)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hmac_secret: Option<bool>,
-    /// Indicates if the client successfully applied a credential protection policy.
+    /// Indicates if the client successfully applied a credential protection
+    /// policy.
     #[schema(nullable = false)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cred_protect: Option<CredentialProtectionPolicy>,
@@ -484,11 +500,12 @@ pub struct RegistrationExtensionsClientOutputs {
 /// <https://www.w3.org/TR/webauthn-3/#sctn-authenticator-credential-properties-extension>
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
 pub struct CredProps {
-    /// A user agent supplied hint that this credential may have created a resident key. It is
-    /// returned from the user agent, not the authenticator meaning that this is an unreliable
-    /// signal.
+    /// A user agent supplied hint that this credential may have created a
+    /// resident key. It is returned from the user agent, not the
+    /// authenticator meaning that this is an unreliable signal.
     ///
-    /// Note that this extension is UNSIGNED and may have been altered by page javascript.
+    /// Note that this extension is UNSIGNED and may have been altered by page
+    /// javascript.
     pub rk: bool,
 }
 

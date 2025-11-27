@@ -30,7 +30,8 @@ fn build_query_filters(
     let mut select = DbRevocationEvent::find();
 
     //if let Some(val) = &params.access_token_id {
-    //    select = select.filter(db_revocation_event::Column::AccessTokenId.eq(val));
+    //    select =
+    // select.filter(db_revocation_event::Column::AccessTokenId.eq(val));
     //}
 
     //if let Some(val) = &params.audit_chain_id {

@@ -30,7 +30,8 @@ pub struct UserResponse {
     pub name: String,
     /// The ID of the domain.
     pub domain_id: String,
-    /// If the user is enabled, this value is true. If the user is disabled, this value is false.
+    /// If the user is enabled, this value is true. If the user is disabled,
+    /// this value is false.
     pub enabled: bool,
     /// The resource description
     #[builder(default)]
@@ -47,7 +48,10 @@ pub struct UserResponse {
     /// The resource options for the user.
     #[builder(default)]
     pub options: UserOptions,
-    /// List of federated objects associated with a user. Each object in the list contains the idp_id and protocols. protocols is a list of objects, each of which contains protocol_id and unique_id of the protocol and user respectively.
+    /// List of federated objects associated with a user. Each object in the
+    /// list contains the idp_id and protocols. protocols is a list of objects,
+    /// each of which contains protocol_id and unique_id of the protocol and
+    /// user respectively.
     #[builder(default)]
     pub federated: Option<Vec<Federation>>,
 }
@@ -60,7 +64,8 @@ pub struct UserCreate {
     pub name: String,
     /// The ID of the domain.
     pub domain_id: String,
-    /// If the user is enabled, this value is true. If the user is disabled, this value is false.
+    /// If the user is enabled, this value is true. If the user is disabled,
+    /// this value is false.
     pub enabled: Option<bool>,
     /// The ID of the default project for the user.
     #[builder(default)]
@@ -74,7 +79,10 @@ pub struct UserCreate {
     /// The resource options for the user.
     #[builder(default)]
     pub options: Option<UserOptions>,
-    /// List of federated objects associated with a user. Each object in the list contains the idp_id and protocols. protocols is a list of objects, each of which contains protocol_id and unique_id of the protocol and user respectively.
+    /// List of federated objects associated with a user. Each object in the
+    /// list contains the idp_id and protocols. protocols is a list of objects,
+    /// each of which contains protocol_id and unique_id of the protocol and
+    /// user respectively.
     #[builder(default)]
     pub federated: Option<Vec<Federation>>,
 }
@@ -85,7 +93,8 @@ pub struct UserUpdate {
     /// The user name. Must be unique within the owning domain.
     #[builder(default)]
     pub name: Option<Option<String>>,
-    /// If the user is enabled, this value is true. If the user is disabled, this value is false.
+    /// If the user is enabled, this value is true. If the user is disabled,
+    /// this value is false.
     #[builder(default)]
     pub enabled: Option<bool>,
     /// The resource description
@@ -103,7 +112,10 @@ pub struct UserUpdate {
     /// The resource options for the user.
     #[builder(default)]
     pub options: Option<UserOptions>,
-    /// List of federated objects associated with a user. Each object in the list contains the idp_id and protocols. protocols is a list of objects, each of which contains protocol_id and unique_id of the protocol and user respectively.
+    /// List of federated objects associated with a user. Each object in the
+    /// list contains the idp_id and protocols. protocols is a list of objects,
+    /// each of which contains protocol_id and unique_id of the protocol and
+    /// user respectively.
     #[builder(default)]
     pub federated: Option<Vec<Federation>>,
 }

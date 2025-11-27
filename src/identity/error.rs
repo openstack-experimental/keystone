@@ -90,9 +90,6 @@ pub enum IdentityProviderError {
     /// Conflict.
     #[error("conflict: {0}")]
     Conflict(String),
-
-    #[error("wrong username or password")]
-    WrongUsernamePassword,
 }
 
 impl From<IdentityDatabaseError> for IdentityProviderError {
@@ -102,6 +99,16 @@ impl From<IdentityDatabaseError> for IdentityProviderError {
             IdentityDatabaseError::UserNotFound(x) => Self::UserNotFound(x),
             IdentityDatabaseError::GroupNotFound(x) => Self::GroupNotFound(x),
             IdentityDatabaseError::Serde { source } => Self::Serde { source },
+            IdentityDatabaseError::PasswordHash { source } => Self::PasswordHash { source },
+            IdentityDatabaseError::NoPasswordHash(..) => Self::AuthenticationInfo {
+                source: crate::auth::AuthenticationError::UserNameOrPasswordWrong,
+            },
+            IdentityDatabaseError::AuthenticationInfo { source } => {
+                Self::AuthenticationInfo { source }
+            }
+            //IdentityDatabaseError::UserLocked(x) => Self::AuthenticationInfo {
+            //    source: crate::auth::AuthenticationError::UserLocked(x),
+            //},
             _ => Self::IdentityDatabase { source },
         }
     }

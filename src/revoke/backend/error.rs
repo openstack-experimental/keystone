@@ -55,7 +55,8 @@ pub enum RevokeDatabaseError {
     },
 }
 
-/// Convert the DB error into the [RevokeDatabaseError] with the context information.
+/// Convert the DB error into the [RevokeDatabaseError] with the context
+/// information.
 pub fn db_err(e: sea_orm::DbErr, context: &str) -> RevokeDatabaseError {
     e.sql_err().map_or_else(
         || RevokeDatabaseError::Database {

@@ -13,6 +13,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::db::entity::user_option;
+use crate::identity::error::IdentityProviderError;
 use crate::identity::types::*;
 
 mod list;
@@ -46,5 +47,81 @@ impl FromIterator<user_option::Model> for UserOptions {
             }
         }
         user_opts
+    }
+}
+
+#[allow(unused)]
+fn get_user_options_db_entries<U: AsRef<str>>(
+    user_id: U,
+    options: &UserOptions,
+) -> Result<impl IntoIterator<Item = user_option::Model>, IdentityProviderError> {
+    let mut res: Vec<user_option::Model> = Vec::new();
+    if let Some(val) = &options.ignore_change_password_upon_first_use {
+        res.push(user_option::Model {
+            user_id: user_id.as_ref().to_string(),
+            option_id: "1000".into(),
+            option_value: Some(val.to_string()),
+        });
+    }
+    if let Some(val) = &options.ignore_password_expiry {
+        res.push(user_option::Model {
+            user_id: user_id.as_ref().to_string(),
+            option_id: "1001".into(),
+            option_value: Some(val.to_string()),
+        });
+    }
+    if let Some(val) = &options.ignore_lockout_failure_attempts {
+        res.push(user_option::Model {
+            user_id: user_id.as_ref().to_string(),
+            option_id: "1002".into(),
+            option_value: Some(val.to_string()),
+        });
+    }
+    if let Some(val) = &options.lock_password {
+        res.push(user_option::Model {
+            user_id: user_id.as_ref().to_string(),
+            option_id: "1003".into(),
+            option_value: Some(val.to_string()),
+        });
+    }
+    if let Some(val) = &options.multi_factor_auth_rules {
+        res.push(user_option::Model {
+            user_id: user_id.as_ref().to_string(),
+            option_id: "MFAR".into(),
+            option_value: Some(serde_json::to_string(val)?),
+        });
+    }
+    if let Some(val) = &options.multi_factor_auth_enabled {
+        res.push(user_option::Model {
+            user_id: user_id.as_ref().to_string(),
+            option_id: "MFAE".into(),
+            option_value: Some(val.to_string()),
+        });
+    }
+    Ok(res)
+}
+
+#[cfg(test)]
+pub(super) mod tests {
+    use crate::db::entity::user_option;
+    use crate::identity::types::UserOptions;
+
+    use super::*;
+
+    impl Default for user_option::Model {
+        fn default() -> Self {
+            Self {
+                user_id: "1".into(),
+                option_id: "1000".into(),
+                option_value: None,
+            }
+        }
+    }
+
+    pub fn get_user_options_mock(options: &UserOptions) -> Vec<user_option::Model> {
+        get_user_options_db_entries("1", options)
+            .unwrap()
+            .into_iter()
+            .collect()
     }
 }

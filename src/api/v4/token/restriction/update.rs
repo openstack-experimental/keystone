@@ -32,7 +32,8 @@ use crate::token::TokenApi;
 ///
 /// Updates the existing token restriction.
 ///
-/// It is expected that only admin user is able to update token restriction in other domain.
+/// It is expected that only admin user is able to update token restriction in
+/// other domain.
 #[utoipa::path(
     put,
     path = "/{id}",

@@ -34,7 +34,8 @@ pub trait RevokeBackend: DynClone + Send + Sync + std::fmt::Debug {
 
     /// Check token revocation.
     ///
-    /// Check whether there are existing revocation records that invalidate the token.
+    /// Check whether there are existing revocation records that invalidate the
+    /// token.
     async fn is_token_revoked(
         &self,
         state: &ServiceState,
@@ -43,7 +44,8 @@ pub trait RevokeBackend: DynClone + Send + Sync + std::fmt::Debug {
 
     /// Revoke the token.
     ///
-    /// Mark the token as revoked to prohibit from being used even while not expired.
+    /// Mark the token as revoked to prohibit from being used even while not
+    /// expired.
     async fn revoke_token(
         &self,
         state: &ServiceState,

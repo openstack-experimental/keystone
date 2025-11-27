@@ -41,20 +41,23 @@ pub(super) fn openapi_router() -> OpenApiRouter<ServiceState> {
 
 /// Authenticate using identity provider.
 ///
-/// Initiate the authentication for the given identity provider. Mapping can be passed, otherwise
-/// the one which is set as a default on the identity provider level is used.
+/// Initiate the authentication for the given identity provider. Mapping can be
+/// passed, otherwise the one which is set as a default on the identity provider
+/// level is used.
 ///
-/// The API returns the link to the identity provider which must be open in the web browser. Once
-/// user authenticates in the identity provider UI a redirect to the url passed as a callback in
-/// the request is being done as a typical oauth2 authorization code callback. The client is
-/// responsible for serving this callback server and use received authorization code and state to
-/// exchange it for the Keystone token passing it to the `/v4/federation/oidc/callback`.
+/// The API returns the link to the identity provider which must be open in the
+/// web browser. Once user authenticates in the identity provider UI a redirect
+/// to the url passed as a callback in the request is being done as a typical
+/// oauth2 authorization code callback. The client is responsible for serving
+/// this callback server and use received authorization code and state to
+/// exchange it for the Keystone token passing it to the
+/// `/v4/federation/oidc/callback`.
 ///
-/// Desired scope (OpenStack) can be also passed to get immediately scoped token after the
-/// authentication completes instead of the unscoped token.
+/// Desired scope (OpenStack) can be also passed to get immediately scoped token
+/// after the authentication completes instead of the unscoped token.
 ///
-/// This is an unauthenticated API call. User, mapping, scope validation will happen when the
-/// callback is invoked.
+/// This is an unauthenticated API call. User, mapping, scope validation will
+/// happen when the callback is invoked.
 #[utoipa::path(
     post,
     path = "/identity_providers/{idp_id}/auth",

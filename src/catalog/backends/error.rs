@@ -56,7 +56,8 @@ pub enum CatalogDatabaseError {
     },
 }
 
-/// Convert the DB error into the [CatalogDatabaseError] with the context information.
+/// Convert the DB error into the [CatalogDatabaseError] with the context
+/// information.
 pub fn db_err(e: sea_orm::DbErr, context: &str) -> CatalogDatabaseError {
     e.sql_err().map_or_else(
         || CatalogDatabaseError::Database {

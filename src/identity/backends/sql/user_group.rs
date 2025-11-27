@@ -23,10 +23,10 @@ pub use remove::{remove_user_from_group, remove_user_from_groups};
 pub use set::set_user_groups;
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use crate::db::entity::user_group_membership;
 
-    pub(super) fn get_mock<U: AsRef<str>, G: AsRef<str>>(
+    pub fn get_user_group_mock<U: AsRef<str>, G: AsRef<str>>(
         user_id: U,
         group_id: G,
     ) -> user_group_membership::Model {

@@ -14,15 +14,17 @@
 
 //! Authorization and authentication information.
 //!
-//! Authentication and authorization types with corresponding validation. Authentication specific
-//! validation may stay in the corresponding provider (i.e. user password is expired), but general
-//! validation rules must be present here to be shared across different authentication methods. The
-//! same is valid for the authorization validation (project/domain must exist and be enabled).
+//! Authentication and authorization types with corresponding validation.
+//! Authentication specific validation may stay in the corresponding provider
+//! (i.e. user password is expired), but general validation rules must be
+//! present here to be shared across different authentication methods. The
+//! same is valid for the authorization validation (project/domain must exist
+//! and be enabled).
 
 use derive_builder::Builder;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use tracing::{error, warn};
+use tracing::warn;
 
 use crate::identity::types::{Group, UserResponse};
 use crate::resource::types::{Domain, Project};
@@ -43,6 +45,17 @@ pub enum AuthenticationError {
     /// User is disabled
     #[error("The account is disabled for user: {0}")]
     UserDisabled(String),
+
+    /// User is locked due to the multiple failed attempts.
+    #[error("The account is temporarily disabled for user: {0}")]
+    UserLocked(String),
+
+    /// User password is expired.
+    #[error("The password is expired for user: {0}")]
+    UserPasswordExpired(String),
+
+    #[error("wrong username or password")]
+    UserNameOrPasswordWrong,
 
     /// Token renewal is forbidden
     #[error("Token renewal (getting token from token) is prohibited.")]
@@ -100,8 +113,9 @@ impl AuthenticatedInfo {
     /// - User must be enabled
     /// - User object id must match user_id
     pub fn validate(&self) -> Result<(), AuthenticationError> {
-        // TODO: all validations (disabled user, locked, etc) should be placed here since every
-        // authentication method goes different way and we risk missing validations
+        // TODO: all validations (disabled user, locked, etc) should be placed here
+        // since every authentication method goes different way and we risk
+        // missing validations
         if let Some(user) = &self.user {
             if user.id != self.user_id {
                 warn!(

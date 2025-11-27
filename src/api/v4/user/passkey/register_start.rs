@@ -40,8 +40,9 @@ use crate::policy::Policy;
 
 /// Start passkey registration for the user.
 ///
-/// Generate a challenge that the user must sign with the passkey or security device. Signed
-/// challenge must be sent to the `/v4/users/{user_id}/passkey/register_finish` endpoint.
+/// Generate a challenge that the user must sign with the passkey or security
+/// device. Signed challenge must be sent to the
+/// `/v4/users/{user_id}/passkey/register_finish` endpoint.
 #[utoipa::path(
     post,
     path = "/register_start",

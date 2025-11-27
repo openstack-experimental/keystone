@@ -34,14 +34,17 @@ pub struct User {
     pub domain_id: String,
     /// User name
     pub name: String,
-    /// If the user is enabled, this value is true. If the user is disabled, this value is false.
+    /// If the user is enabled, this value is true. If the user is disabled,
+    /// this value is false.
     pub enabled: bool,
-    /// The ID of the default project for the user. A user’s default project must not be a domain.
-    /// Setting this attribute does not grant any actual authorization on the project, and is
-    /// merely provided for convenience. Therefore, the referenced project does not need to exist
-    /// within the user domain. (Since v3.1) If the user does not have authorization to their
-    /// default project, the default project is ignored at token creation. (Since v3.1)
-    /// Additionally, if your default project is not valid, a token is issued without an explicit
+    /// The ID of the default project for the user. A user’s default project
+    /// must not be a domain. Setting this attribute does not grant any
+    /// actual authorization on the project, and is merely provided for
+    /// convenience. Therefore, the referenced project does not need to exist
+    /// within the user domain. (Since v3.1) If the user does not have
+    /// authorization to their default project, the default project is
+    /// ignored at token creation. (Since v3.1) Additionally, if your
+    /// default project is not valid, a token is issued without an explicit
     /// scope of authorization.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub default_project_id: Option<String>,
@@ -52,8 +55,9 @@ pub struct User {
     pub password_expires_at: Option<DateTime<Utc>>,
     /// The resource options for the user. Available resource options are
     /// ignore_change_password_upon_first_use, ignore_password_expiry,
-    /// ignore_lockout_failure_attempts, lock_password, multi_factor_auth_enabled, and
-    /// multi_factor_auth_rules ignore_user_inactivity.
+    /// ignore_lockout_failure_attempts, lock_password,
+    /// multi_factor_auth_enabled, and multi_factor_auth_rules
+    /// ignore_user_inactivity.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub options: Option<UserOptions>,
 }
@@ -70,22 +74,26 @@ pub struct UserCreate {
     pub domain_id: String,
     /// The user name. Must be unique within the owning domain.
     pub name: String,
-    /// If the user is enabled, this value is true. If the user is disabled, this value is false.
+    /// If the user is enabled, this value is true. If the user is disabled,
+    /// this value is false.
     pub enabled: Option<bool>,
-    /// The ID of the default project for the user. A user’s default project must not be a domain.
-    /// Setting this attribute does not grant any actual authorization on the project, and is
-    /// merely provided for convenience. Therefore, the referenced project does not need to exist
-    /// within the user domain. (Since v3.1) If the user does not have authorization to their
-    /// default project, the default project is ignored at token creation. (Since v3.1)
-    /// Additionally, if your default project is not valid, a token is issued without an explicit
+    /// The ID of the default project for the user. A user’s default project
+    /// must not be a domain. Setting this attribute does not grant any
+    /// actual authorization on the project, and is merely provided for
+    /// convenience. Therefore, the referenced project does not need to exist
+    /// within the user domain. (Since v3.1) If the user does not have
+    /// authorization to their default project, the default project is
+    /// ignored at token creation. (Since v3.1) Additionally, if your
+    /// default project is not valid, a token is issued without an explicit
     /// scope of authorization.
     pub default_project_id: Option<String>,
     /// The password for the user.
     pub password: Option<String>,
     /// The resource options for the user. Available resource options are
     /// ignore_change_password_upon_first_use, ignore_password_expiry,
-    /// ignore_lockout_failure_attempts, lock_password, multi_factor_auth_enabled, and
-    /// multi_factor_auth_rules ignore_user_inactivity.
+    /// ignore_lockout_failure_attempts, lock_password,
+    /// multi_factor_auth_enabled, and multi_factor_auth_rules
+    /// ignore_user_inactivity.
     pub options: Option<UserOptions>,
     /// Additional user properties
     #[serde(flatten)]
@@ -96,22 +104,26 @@ pub struct UserCreate {
 pub struct UserUpdateRequest {
     /// The user name. Must be unique within the owning domain.
     pub name: Option<String>,
-    /// If the user is enabled, this value is true. If the user is disabled, this value is false.
+    /// If the user is enabled, this value is true. If the user is disabled,
+    /// this value is false.
     pub enabled: Option<bool>,
-    /// The ID of the default project for the user. A user’s default project must not be a domain.
-    /// Setting this attribute does not grant any actual authorization on the project, and is
-    /// merely provided for convenience. Therefore, the referenced project does not need to exist
-    /// within the user domain. (Since v3.1) If the user does not have authorization to their
-    /// default project, the default project is ignored at token creation. (Since v3.1)
-    /// Additionally, if your default project is not valid, a token is issued without an explicit
+    /// The ID of the default project for the user. A user’s default project
+    /// must not be a domain. Setting this attribute does not grant any
+    /// actual authorization on the project, and is merely provided for
+    /// convenience. Therefore, the referenced project does not need to exist
+    /// within the user domain. (Since v3.1) If the user does not have
+    /// authorization to their default project, the default project is
+    /// ignored at token creation. (Since v3.1) Additionally, if your
+    /// default project is not valid, a token is issued without an explicit
     /// scope of authorization.
     pub default_project_id: Option<String>,
     /// The password for the user.
     pub password: Option<String>,
     /// The resource options for the user. Available resource options are
     /// ignore_change_password_upon_first_use, ignore_password_expiry,
-    /// ignore_lockout_failure_attempts, lock_password, multi_factor_auth_enabled, and
-    /// multi_factor_auth_rules ignore_user_inactivity.
+    /// ignore_lockout_failure_attempts, lock_password,
+    /// multi_factor_auth_enabled, and multi_factor_auth_rules
+    /// ignore_user_inactivity.
     pub options: Option<UserOptions>,
     /// Additional user properties
     #[serde(flatten)]

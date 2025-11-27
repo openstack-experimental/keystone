@@ -86,19 +86,21 @@ pub struct RoleAssignmentListParameters {
 
     // #[builder(default)]
     // pub inherited: Option<bool>,
-    /// Query the effective assignments, including any assignments gained by virtue of group
-    /// membership.
+    /// Query the effective assignments, including any assignments gained by
+    /// virtue of group membership.
     #[builder(default)]
     pub effective: Option<bool>,
 
-    /// If set to true, then the names of any entities returned will be include as well as their
-    /// IDs. Any value other than 0 (including no value) will be interpreted as true.
+    /// If set to true, then the names of any entities returned will be include
+    /// as well as their IDs. Any value other than 0 (including no value)
+    /// will be interpreted as true.
     #[builder(default)]
     pub include_names: Option<bool>,
 }
 
-/// Querying effective role assignments for list of actors (typically user with all groups user is
-/// member of) on list of targets (exactl project + inherited from uppoer projects/domain).
+/// Querying effective role assignments for list of actors (typically user with
+/// all groups user is member of) on list of targets (exactl project + inherited
+/// from uppoer projects/domain).
 #[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 #[builder(setter(strip_option, into))]
 pub struct RoleAssignmentListForMultipleActorTargetParameters {
@@ -115,8 +117,8 @@ pub struct RoleAssignmentListForMultipleActorTargetParameters {
     pub targets: Vec<RoleAssignmentTarget>,
 }
 
-/// Role assignment target which is either target_id or target_id with explicit inherited
-/// parameter.
+/// Role assignment target which is either target_id or target_id with explicit
+/// inherited parameter.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub struct RoleAssignmentTarget {
     pub target_id: String,

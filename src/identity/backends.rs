@@ -35,7 +35,7 @@ pub trait IdentityBackend: DynClone + Send + Sync + std::fmt::Debug {
     async fn authenticate_by_password(
         &self,
         state: &ServiceState,
-        auth: UserPasswordAuthRequest,
+        auth: &UserPasswordAuthRequest,
     ) -> Result<AuthenticatedInfo, IdentityProviderError>;
 
     /// List Users.

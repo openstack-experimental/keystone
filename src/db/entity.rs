@@ -100,19 +100,6 @@ impl Default for user::Model {
     }
 }
 
-impl Default for local_user::Model {
-    fn default() -> Self {
-        Self {
-            id: 0,
-            user_id: String::new(),
-            domain_id: String::new(),
-            name: String::new(),
-            failed_auth_at: None,
-            failed_auth_count: None,
-        }
-    }
-}
-
 impl Default for service::Model {
     fn default() -> Self {
         Self {

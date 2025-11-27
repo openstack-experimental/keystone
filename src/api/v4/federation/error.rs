@@ -140,7 +140,8 @@ impl OidcError {
     }
 }
 
-/// Convert OIDC error into the [HTTP](KeystoneApiError) with the expected message
+/// Convert OIDC error into the [HTTP](KeystoneApiError) with the expected
+/// message
 impl From<OidcError> for KeystoneApiError {
     #[instrument(level = Level::ERROR)]
     fn from(value: OidcError) -> Self {

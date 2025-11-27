@@ -30,9 +30,10 @@ pub struct Service {
     /// The service name.
     #[builder(default)]
     pub name: Option<String>,
-    /// Defines whether the service and its endpoints appear in the service catalog: - false. The
-    /// service and its endpoints do not appear in the service catalog. - true. The service and its
-    /// endpoints appear in the service catalog.
+    /// Defines whether the service and its endpoints appear in the service
+    /// catalog: - false. The service and its endpoints do not appear in the
+    /// service catalog. - true. The service and its endpoints appear in the
+    /// service catalog.
     pub enabled: bool,
 }
 
@@ -41,6 +42,7 @@ pub struct Service {
 pub struct ServiceListParameters {
     /// Filters the response by a service name.
     pub name: Option<String>,
-    /// Filters the response by a service type. A valid value is compute, ec2, identity, image, network, or volume.
+    /// Filters the response by a service type. A valid value is compute, ec2,
+    /// identity, image, network, or volume.
     pub r#type: Option<String>,
 }

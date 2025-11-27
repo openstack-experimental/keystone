@@ -13,7 +13,9 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Validate token.
 //!
-//! Check the token whether it can be accepted as a valid. Additionally the token is being expanded returning information like the user_id, scope, roles, etc.
+//! Check the token whether it can be accepted as a valid. Additionally the
+//! token is being expanded returning information like the user_id, scope,
+//! roles, etc.
 //!
 //! Token validations:
 //!
@@ -41,12 +43,13 @@ use crate::token::TokenApi;
 
 /// Validate and show information for token.
 ///
-/// Validates and shows information for a token, including its expiration date and authorization
-/// scope.
+/// Validates and shows information for a token, including its expiration date
+/// and authorization scope.
 ///
 /// Pass your own token in the X-Auth-Token request header.
 ///
-/// Pass the token that you want to validate in the X-Subject-Token request header.
+/// Pass the token that you want to validate in the X-Subject-Token request
+/// header.
 #[utoipa::path(
     get,
     path = "/",
@@ -75,8 +78,8 @@ pub(super) async fn show(
         .map_err(|_| KeystoneApiError::InvalidHeader)?
         .to_string();
 
-    // Default behavior is to return 404 for expired tokens. It makes sense to log internally the
-    // error before mapping it.
+    // Default behavior is to return 404 for expired tokens. It makes sense to log
+    // internally the error before mapping it.
     let token = state
         .provider
         .get_token_provider()

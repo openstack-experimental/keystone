@@ -21,8 +21,8 @@ use crate::identity::backends::IdentityBackend;
 use crate::resource::types::ResourceBackend;
 use crate::revoke::backend::RevokeBackend;
 
-/// Plugin manager allowing to pass custom backend plugins implementing required trait during the
-/// service start.
+/// Plugin manager allowing to pass custom backend plugins implementing required
+/// trait during the service start.
 #[derive(Clone, Debug, Default)]
 pub struct PluginManager {
     /// Assignments backend plugin.
