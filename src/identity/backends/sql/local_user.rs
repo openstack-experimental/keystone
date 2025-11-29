@@ -12,11 +12,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use chrono::{DateTime, Days, Utc};
-
-use super::user;
-use crate::config::Config;
-use crate::db::entity::{local_user as db_local_user, password as db_password, user as db_user};
+use crate::db::entity::local_user as db_local_user;
 use crate::identity::types::*;
 
 mod create;
@@ -29,30 +25,11 @@ pub use load::load_local_user_with_passwords;
 pub use load::load_local_users_passwords;
 pub use set::reset_failed_auth;
 
-pub fn get_local_user_builder<P: IntoIterator<Item = db_password::Model>>(
-    conf: &Config,
-    user: &db_user::Model,
-    data: db_local_user::Model,
-    passwords: Option<P>,
-    opts: UserOptions,
-) -> UserResponseBuilder {
-    let mut user_builder: UserResponseBuilder = user::get_user_builder(user, opts);
-    user_builder.name(data.name.clone());
-    if let Some(password_expires_days) = conf.security_compliance.password_expires_days
-        && let Some(pass) = passwords
-        && let (Some(current_password), Some(options)) =
-            (pass.into_iter().next(), user_builder.get_options())
-        && let Some(false) = options.ignore_password_expiry.or(Some(false))
-        && let Some(dt) = DateTime::from_timestamp_micros(current_password.created_at_int)
-            .unwrap_or(DateTime::from_naive_utc_and_offset(
-                current_password.created_at,
-                Utc,
-            ))
-            .checked_add_days(Days::new(password_expires_days))
-    {
-        user_builder.password_expires_at(dt);
+impl UserResponseBuilder {
+    pub fn merge_local_user_data(&mut self, data: &db_local_user::Model) -> &mut Self {
+        self.name(data.name.clone());
+        self
     }
-    user_builder
 }
 
 #[cfg(test)]

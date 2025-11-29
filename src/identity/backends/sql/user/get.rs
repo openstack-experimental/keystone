@@ -14,18 +14,19 @@
 
 use sea_orm::DatabaseConnection;
 use sea_orm::entity::*;
+use sea_orm::query::*;
 
-use super::super::federated_user;
 use super::super::local_user;
-use super::super::nonlocal_user;
 use crate::config::Config;
 use crate::db::entity::{
+    nonlocal_user as db_nonlocal_user,
     prelude::{FederatedUser, NonlocalUser, User as DbUser, UserOption},
     user as db_user,
 };
 use crate::identity::backends::sql::{IdentityDatabaseError, db_err};
 use crate::identity::types::*;
 
+/// Get the `user` table entry by the `user_id`.
 pub async fn get_main_entry<U: AsRef<str>>(
     db: &DatabaseConnection,
     user_id: U,
@@ -41,12 +42,7 @@ pub async fn get(
     db: &DatabaseConnection,
     user_id: &str,
 ) -> Result<Option<UserResponse>, IdentityDatabaseError> {
-    let user_select = DbUser::find_by_id(user_id);
-
-    let user_entry: Option<db_user::Model> = user_select
-        .one(db)
-        .await
-        .map_err(|err| db_err(err, "fetching the user data"))?;
+    let user_entry: Option<db_user::Model> = get_main_entry(db, user_id).await?;
 
     if let Some(user) = user_entry {
         let (user_opts, local_user_with_passwords) = tokio::join!(
@@ -59,29 +55,27 @@ pub async fn get(
             )
         );
 
-        let user_builder: UserResponseBuilder = match local_user_with_passwords? {
-            Some(local_user_with_passwords) => local_user::get_local_user_builder(
-                conf,
-                &user,
-                local_user_with_passwords.0,
-                Some(local_user_with_passwords.1),
-                UserOptions::from_iter(
-                    user_opts.map_err(|err| db_err(err, "fetching user options"))?,
-                ),
-            ),
-            _ => match user
-                .find_related(NonlocalUser)
+        let mut user_builder = UserResponseBuilder::default();
+        user_builder.merge_user_data(
+            &user,
+            &UserOptions::from_iter(user_opts.map_err(|err| db_err(err, "fetching user options"))?),
+            conf.get_user_last_activity_cutof_date().as_ref(),
+        );
+
+        match local_user_with_passwords? {
+            Some(local_user_with_passwords) => {
+                user_builder.merge_local_user_data(&local_user_with_passwords.0);
+                user_builder.merge_passwords_data(local_user_with_passwords.1);
+            }
+            _ => match NonlocalUser::find()
+                .filter(db_nonlocal_user::Column::UserId.eq(&user.id))
                 .one(db)
                 .await
                 .map_err(|err| db_err(err, "fetching nonlocal user data"))?
             {
-                Some(nonlocal_user) => nonlocal_user::get_nonlocal_user_builder(
-                    &user,
-                    nonlocal_user,
-                    UserOptions::from_iter(
-                        user_opts.map_err(|err| db_err(err, "fetching user options"))?,
-                    ),
-                ),
+                Some(nonlocal_user) => {
+                    user_builder.merge_nonlocal_user_data(&nonlocal_user);
+                }
                 _ => {
                     let federated_user = user
                         .find_related(FederatedUser)
@@ -89,13 +83,7 @@ pub async fn get(
                         .await
                         .map_err(|err| db_err(err, "fetching federated user data"))?;
                     if !federated_user.is_empty() {
-                        federated_user::get_federated_user_builder(
-                            &user,
-                            federated_user,
-                            UserOptions::from_iter(
-                                user_opts.map_err(|err| db_err(err, "fetching user options"))?,
-                            ),
-                        )
+                        user_builder.merge_federated_user_data(federated_user);
                     } else {
                         return Err(IdentityDatabaseError::MalformedUser(user_id.to_string()))?;
                     }

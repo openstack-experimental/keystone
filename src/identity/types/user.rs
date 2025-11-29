@@ -120,12 +120,6 @@ pub struct UserUpdate {
     pub federated: Option<Vec<Federation>>,
 }
 
-impl UserResponseBuilder {
-    pub fn get_options(&self) -> Option<&UserOptions> {
-        self.options.as_ref()
-    }
-}
-
 #[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 #[builder(setter(strip_option, into))]
 pub struct UserOptions {

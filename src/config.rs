@@ -12,7 +12,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use chrono::TimeDelta;
+use chrono::{NaiveDate, TimeDelta, Utc};
 use config::{File, FileFormat};
 use eyre::{Report, WrapErr};
 use regex::Regex;
@@ -22,74 +22,73 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use url::Url;
 
+/// Keystone configuration.
+///
 #[derive(Debug, Default, Deserialize, Clone)]
 pub struct Config {
-    /// Global configuration options
+    /// Global configuration options.
     #[serde(rename = "DEFAULT")]
     pub default: Option<DefaultSection>,
     ///
-    /// Assignments (roles) related configuration
+    /// Assignments (roles) provider configuration.
     #[serde(default)]
-    pub assignment: AssignmentSection,
+    pub assignment: AssignmentProvider,
 
     /// Authentication configuration.
-    pub auth: AuthSection,
+    pub auth: AuthProvider,
 
-    /// Catalog
+    /// Catalog provider configuration.
     #[serde(default)]
-    pub catalog: CatalogSection,
+    pub catalog: CatalogProvider,
 
+    /// Federation provider configuration.
     #[serde(default)]
-    pub federation: FederationSection,
+    pub federation: FederationProvider,
 
-    /// Fernet tokens
+    /// Fernet tokens provider configuration.
     #[serde(default)]
-    pub fernet_tokens: FernetTokenSection,
+    pub fernet_tokens: FernetTokenProvider,
 
-    /// Database configuration
+    /// Database configuration.
     //#[serde(default)]
     pub database: DatabaseSection,
 
-    /// Identity provider related configuration
+    /// Identity provider configuration configuration.
     #[serde(default)]
-    pub identity: IdentitySection,
+    pub identity: IdentityProvider,
 
-    /// API policy enforcement
+    /// API policy enforcement.
     #[serde(default)]
-    pub api_policy: PolicySection,
+    pub api_policy: PolicyProvider,
 
-    /// Resource provider related configuration.
+    /// Resource provider configuration.
     #[serde(default)]
-    pub resource: ResourceSection,
+    pub resource: ResourceProvider,
 
     /// Revoke provider configuration.
     #[serde(default)]
-    pub revoke: RevokeSection,
+    pub revoke: RevokeProvider,
 
-    /// Security compliance
+    /// Security compliance configuration.
     #[serde(default)]
-    pub security_compliance: SecurityComplianceSection,
+    pub security_compliance: SecurityComplianceProvider,
 
-    /// Token
+    /// Token provider configuration.
     #[serde(default)]
-    pub token: TokenSection,
-
-    /// User options id to name mapping
-    #[serde(default = "default_user_options_mapping")]
-    pub user_options_id_name_mapping: HashMap<String, String>,
+    pub token: TokenProvider,
 }
 
 #[derive(Debug, Default, Deserialize, Clone)]
 pub struct DefaultSection {
-    /// Debug logging
+    /// Debug logging.
     pub debug: Option<bool>,
-    /// Public endpoint
+    /// Public endpoint.
     pub public_endpoint: Option<String>,
 }
 
 /// Authentication configuration.
 #[derive(Debug, Default, Deserialize, Clone)]
-pub struct AuthSection {
+pub struct AuthProvider {
     /// Authentication methods to be enabled and used for token validation.
     #[serde(deserialize_with = "csv")]
     pub methods: Vec<String>,
@@ -105,12 +104,16 @@ where
         .collect())
 }
 
+/// Fernet token provider.
 #[derive(Debug, Default, Deserialize, Clone)]
-pub struct FernetTokenSection {
+pub struct FernetTokenProvider {
+    /// Path to the fernet keys.
     pub key_repository: PathBuf,
+    /// Maximal number of fernet keys to keep as active.
     pub max_active_keys: usize,
 }
 
+/// Database configuration.
 #[derive(Debug, Default, Deserialize, Clone)]
 pub struct DatabaseSection {
     /// Database URL.
@@ -131,7 +134,7 @@ impl DatabaseSection {
 
 /// The configuration options for the API policy enforcement.
 #[derive(Clone, Debug, Default, Deserialize)]
-pub struct PolicySection {
+pub struct PolicyProvider {
     /// Whether the policy enforcement should be enforced or not.
     pub enable: bool,
 
@@ -139,13 +142,15 @@ pub struct PolicySection {
     pub opa_base_url: Option<Url>,
 }
 
+/// Assignment Provider.
 #[derive(Debug, Deserialize, Clone)]
-pub struct AssignmentSection {
+pub struct AssignmentProvider {
+    /// Assignment provider driver.
     #[serde(default = "default_sql_driver")]
     pub driver: String,
 }
 
-impl Default for AssignmentSection {
+impl Default for AssignmentProvider {
     fn default() -> Self {
         Self {
             driver: default_sql_driver(),
@@ -153,13 +158,15 @@ impl Default for AssignmentSection {
     }
 }
 
+/// Catalog provider.
 #[derive(Debug, Deserialize, Clone)]
-pub struct CatalogSection {
+pub struct CatalogProvider {
+    /// Catalog provider driver.
     #[serde(default = "default_sql_driver")]
     pub driver: String,
 }
 
-impl Default for CatalogSection {
+impl Default for CatalogProvider {
     fn default() -> Self {
         Self {
             driver: default_sql_driver(),
@@ -167,13 +174,15 @@ impl Default for CatalogSection {
     }
 }
 
+/// Federation provider.
 #[derive(Debug, Deserialize, Clone)]
-pub struct FederationSection {
+pub struct FederationProvider {
+    /// Federation provider backend.
     #[serde(default = "default_sql_driver")]
     pub driver: String,
 }
 
-impl Default for FederationSection {
+impl Default for FederationProvider {
     fn default() -> Self {
         Self {
             driver: default_sql_driver(),
@@ -181,35 +190,49 @@ impl Default for FederationSection {
     }
 }
 
+/// Identity provider.
 #[derive(Debug, Deserialize, Clone)]
-pub struct IdentitySection {
+pub struct IdentityProvider {
+    /// Identity provider driver.
     #[serde(default = "default_sql_driver")]
     pub driver: String,
 
+    /// Default password hashing algorithm.
     #[serde(default)]
     pub password_hashing_algorithm: PasswordHashingAlgo,
+
+    /// Maximal password length.
     pub max_password_length: usize,
+
+    /// Default number of password hashing rounds.
     pub password_hash_rounds: Option<usize>,
+
+    /// User options id to name mapping.
+    #[serde(default = "default_user_options_mapping")]
+    pub user_options_id_name_mapping: HashMap<String, String>,
 }
 
-impl Default for IdentitySection {
+impl Default for IdentityProvider {
     fn default() -> Self {
         Self {
             driver: default_sql_driver(),
             password_hashing_algorithm: PasswordHashingAlgo::Bcrypt,
             max_password_length: 4096,
             password_hash_rounds: None,
+            user_options_id_name_mapping: default_user_options_mapping(),
         }
     }
 }
 
+/// Resource provider (domain, project).
 #[derive(Debug, Deserialize, Clone)]
-pub struct ResourceSection {
+pub struct ResourceProvider {
+    /// Resource provider backend.
     #[serde(default = "default_sql_driver")]
     pub driver: String,
 }
 
-impl Default for ResourceSection {
+impl Default for ResourceProvider {
     fn default() -> Self {
         Self {
             driver: default_sql_driver(),
@@ -219,7 +242,7 @@ impl Default for ResourceSection {
 
 /// Revoke provider configuration.
 #[derive(Debug, Deserialize, Clone)]
-pub struct RevokeSection {
+pub struct RevokeProvider {
     /// Entry point for the token revocation backend driver in the
     /// `keystone.revoke` namespace. Keystone only provides a `sql` driver.
     #[serde(default = "default_sql_driver")]
@@ -229,7 +252,7 @@ pub struct RevokeSection {
     pub expiration_buffer: usize,
 }
 
-impl Default for RevokeSection {
+impl Default for RevokeProvider {
     fn default() -> Self {
         Self {
             driver: default_sql_driver(),
@@ -238,19 +261,21 @@ impl Default for RevokeSection {
     }
 }
 
+/// Password hashing algorithm.
 #[derive(Debug, Default, Deserialize, Clone)]
 pub enum PasswordHashingAlgo {
+    /// Bcrypt.
     #[default]
     Bcrypt,
 }
 
 /// Security compliance configuration.
 #[derive(Debug, Deserialize, Clone)]
-pub struct SecurityComplianceSection {
+pub struct SecurityComplianceProvider {
     /// The maximum number of days a user can go without authenticating before
     /// being considered "inactive" and automatically disabled (locked).
     /// This feature is disabled by default; set any value to enable
-    /// it. This feature depends on the sql backend for the [identity] driver.
+    /// it. This feature depends on the sql backend for the `[identity] driver`.
     /// When a user exceeds this threshold and is considered "inactive", the
     /// user's enabled attribute in the HTTP API may not match the value of
     /// the user’s enabled column in the user table.
@@ -263,12 +288,12 @@ pub struct SecurityComplianceSection {
     /// options attribute ignore_change_password_upon_first_use to True for the
     /// desired user via the update user API. This feature is disabled by
     /// default. This feature is only applicable with the sql backend for the
-    /// [identity] driver.
+    /// `[identity] driver`.
     #[serde(default)]
     pub change_password_upon_first_use: bool,
     /// If report_invalid_password_hash is configured, defines the hash function
-    /// to be used by HMAC. Possible values are names suitable to hashlib.new()
-    /// [https://docs.python.org/3/library/hashlib.html#hashlib.new].
+    /// to be used b`y HMAC. Possible values are names suitable to hashlib.new()
+    /// <https://docs.python.org/3/library/hashlib.html#hashlib.new>.
     #[serde(default)]
     pub invalid_password_hash_function: InvalidPasswordHashMethod,
     /// If report_invalid_password_hash is configured, uses provided secret key
@@ -294,20 +319,19 @@ pub struct SecurityComplianceSection {
 
     /// The maximum number of times that a user can fail to authenticate before
     /// the user account is locked for the number of seconds specified by
-    /// [security_compliance] lockout_duration. This feature is disabled by
-    /// default. If this feature is enabled and [security_compliance]
-    /// lockout_duration is not set, then users may be locked out indefinitely
+    /// `[security_compliance] lockout_duration`. This feature is disabled by
+    /// default. If this feature is enabled and `[security_compliance]
+    /// lockout_duration` is not set, then users may be locked out indefinitely
     /// until the user is explicitly enabled via the API. This feature depends
-    /// on the sql backend for the [identity] driver.
+    /// on the sql backend for the `[identity] driver`.
     #[serde(default)]
     pub lockout_failure_attempts: Option<u16>,
     /// The number of seconds a user account will be locked when the maximum
     /// number of failed authentication attempts (as specified by
-    /// [security_compliance] lockout_failure_attempts) is exceeded. Setting
+    /// `[security_compliance] lockout_failure_attempts`) is exceeded. Setting
     /// this option will have no effect unless you also set
-    /// [security_compliance] lockout_failure_attempts to a non-zero value. This
-    /// feature depends on the sql backend for the [identity] driver.
-    //#[serde(default = "AccountLockoutDuration::default")]
+    /// `[security_compliance] lockout_failure_attempts` to a non-zero value. This
+    /// feature depends on the sql backend for the `[identity]` driver.
     #[serde(
         deserialize_with = "optional_timedelta_from_seconds",
         default = "AccountLockoutDuration::default"
@@ -318,17 +342,17 @@ pub struct SecurityComplianceSection {
     /// in order to wipe out their password history and reuse an old password.
     /// This feature does not prevent administrators from manually resetting
     /// passwords. It is disabled by default and allows for immediate password
-    /// changes. This feature depends on the sql backend for the [identity]
-    /// driver. Note: If [security_compliance] password_expires_days is set,
-    /// then the value for this option should be less than the
-    /// password_expires_days.
+    /// changes. This feature depends on the sql backend for the `[identity]
+    /// driver` driver. Note: If `[security_compliance] password_expires_days`
+    /// is set, then the value for this option should be less than the
+    /// `password_expires_days`.
     #[serde(default)]
     pub minimum_password_age: u32,
     /// The number of days for which a password will be considered valid before
     /// requiring it to be changed. This feature is disabled by default. If
     /// enabled, new password changes will have an expiration date,
     /// however existing passwords would not be impacted. This feature depends
-    /// on the sql backend for the [identity] driver.
+    /// on the sql backend for the `[identity] driver`.
     #[serde(default)]
     pub password_expires_days: Option<u64>,
     /// The regular expression used to validate password strength requirements.
@@ -336,7 +360,7 @@ pub struct SecurityComplianceSection {
     /// following is an example of a pattern which requires at least 1 letter, 1
     /// digit, and have a minimum length of 7 characters:
     /// ^(?=.*\d)(?=.*[a-zA-Z]).{7,}$ This feature depends on the sql backend
-    /// for the [identity] driver.
+    /// for the `[identity] driver`.
     #[serde(default)]
     pub password_regex: Option<String>,
     /// Describe your password regular expression here in language for humans.
@@ -362,7 +386,7 @@ pub struct SecurityComplianceSection {
     /// The total number which includes the new password should not be greater
     /// or equal to this value. Setting the value to zero (the default) disables
     /// this feature. Thus, to enable this feature, values must be greater than
-    /// 0. This feature depends on the sql backend for the [identity] driver.
+    /// 0. This feature depends on the sql backend for the `[identity]` driver.
     #[serde(default)]
     pub unique_last_password_count: Option<u16>,
 }
@@ -381,7 +405,7 @@ pub struct SecurityComplianceSection {
 //         .ok_or_else(|| serde::de::Error::custom("TimeDelta overflow for seconds"))
 // }
 
-/// Deserializes an Option<i64> and interprets Some(i64) as total SECONDS for
+/// Deserializes an `Option<i64>` and interprets `Some(i64)` as total SECONDS for
 /// TimeDelta.
 fn optional_timedelta_from_seconds<'de, D>(deserializer: D) -> Result<Option<TimeDelta>, D::Error>
 where
@@ -402,7 +426,7 @@ where
     }
 }
 
-impl Default for SecurityComplianceSection {
+impl Default for SecurityComplianceProvider {
     fn default() -> Self {
         Self {
             disable_user_account_days_inactive: None,
@@ -463,10 +487,12 @@ fn default_user_options_mapping() -> HashMap<String, String> {
     ])
 }
 
+/// Token provider.
 #[derive(Debug, Default, Deserialize, Clone)]
-pub struct TokenSection {
+pub struct TokenProvider {
+    /// Token provider driver.
     #[serde(default)]
-    pub provider: TokenProvider,
+    pub provider: TokenProviderDriver,
     /// The amount of time that a token should remain valid (in seconds).
     /// Drastically reducing this value may break "long-running" operations
     /// that involve multiple services to coordinate together, and will
@@ -479,8 +505,10 @@ pub struct TokenSection {
     pub expiration: usize,
 }
 
+/// Token provider driver.
 #[derive(Debug, Default, Deserialize, Clone)]
-pub enum TokenProvider {
+pub enum TokenProviderDriver {
+    /// Fernet.
     #[default]
     #[serde(rename = "fernet")]
     Fernet,
@@ -495,6 +523,21 @@ impl Config {
         }
 
         builder.try_into()
+    }
+
+    /// Return oldest last_active_at date for the user to be considered active.
+    ///
+    /// When [`disable_user_account_days_inactive`](field@SecurityComplianceProvider::disable_user_account_days_inactive)
+    /// is set return the corresponding oldest user activity date for it to be considered as
+    /// disabled. When the option is not set returns `None`.
+    pub(crate) fn get_user_last_activity_cutof_date(&self) -> Option<NaiveDate> {
+        self.security_compliance
+            .disable_user_account_days_inactive
+            .and_then(|inactive_after_days| {
+                Utc::now()
+                    .checked_sub_signed(TimeDelta::days(inactive_after_days.into()))
+                    .map(|val| val.date_naive())
+            })
     }
 }
 

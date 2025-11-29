@@ -86,20 +86,6 @@ impl Default for role::Model {
     }
 }
 
-impl Default for user::Model {
-    fn default() -> Self {
-        Self {
-            id: String::new(),
-            extra: None,
-            enabled: None,
-            default_project_id: None,
-            created_at: None,
-            last_active_at: None,
-            domain_id: String::new(),
-        }
-    }
-}
-
 impl Default for service::Model {
     fn default() -> Self {
         Self {

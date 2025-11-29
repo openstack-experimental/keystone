@@ -31,7 +31,7 @@ use crate::assignment::{
     types::{Role, RoleAssignmentListParametersBuilder},
 };
 use crate::auth::{AuthenticatedInfo, AuthenticationError, AuthzInfo};
-use crate::config::{Config, TokenProvider as TokenProviderType};
+use crate::config::{Config, TokenProviderDriver};
 use crate::identity::IdentityApi;
 use crate::keystone::ServiceState;
 use crate::resource::{
@@ -55,7 +55,7 @@ pub struct TokenProvider {
 impl TokenProvider {
     pub fn new(config: &Config) -> Result<Self, TokenProviderError> {
         let backend_driver = match config.token.provider {
-            TokenProviderType::Fernet => FernetTokenProvider::new(config.clone()),
+            TokenProviderDriver::Fernet => FernetTokenProvider::new(config.clone()),
         };
         Ok(Self {
             config: config.clone(),
