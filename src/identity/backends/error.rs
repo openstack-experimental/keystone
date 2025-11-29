@@ -29,6 +29,9 @@ pub enum IdentityDatabaseError {
     #[error("{0}")]
     GroupNotFound(String),
 
+    #[error("Date calculation error")]
+    DateError,
+
     #[error(transparent)]
     Serde {
         #[from]

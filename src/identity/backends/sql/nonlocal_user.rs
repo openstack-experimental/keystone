@@ -13,11 +13,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::user;
-use crate::db::entity::{nonlocal_user as db_nonlocal_user, user as db_user};
+use crate::db::entity::{nonlocal_user as db_nonlocal_user};
 use crate::identity::types::*;
 
 pub fn get_nonlocal_user_builder(
-    user: &db_user::Model,
+    user: &user::ExtendedUserRow,
     data: db_nonlocal_user::Model,
     opts: UserOptions,
 ) -> UserResponseBuilder {

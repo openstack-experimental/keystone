@@ -12,25 +12,44 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use chrono::{DateTime, Days, Utc};
 use sea_orm::DatabaseConnection;
 use sea_orm::entity::*;
+use sea_orm::prelude::Expr;
+use sea_orm::query::*;
 
 use super::super::federated_user;
 use super::super::local_user;
 use super::super::nonlocal_user;
+use super::ExtendedUserRow;
 use crate::config::Config;
 use crate::db::entity::{
+    nonlocal_user as db_nonlocal_user,
     prelude::{FederatedUser, NonlocalUser, User as DbUser, UserOption},
-    user as db_user,
+    user as db_user, user_option as db_user_option, federated_user as db_federated_user
 };
 use crate::identity::backends::sql::{IdentityDatabaseError, db_err};
 use crate::identity::types::*;
 
 pub async fn get_main_entry<U: AsRef<str>>(
+    conf: &Config,
     db: &DatabaseConnection,
     user_id: U,
-) -> Result<Option<db_user::Model>, IdentityDatabaseError> {
+    earliest_last_active_cutof: Option<DateTime<Utc>>,
+) -> Result<Option<ExtendedUserRow>, IdentityDatabaseError> {
+    let earliest_last_active_at = earliest_last_active_cutof.unwrap_or(
+        conf.security_compliance
+            .disable_user_account_days_inactive
+            .and_then(|days| Utc::now().checked_sub_days(Days::new(days.into())))
+            .unwrap_or_else(|| DateTime::<Utc>::MIN_UTC),
+    );
+
     DbUser::find_by_id(user_id.as_ref())
+        .column_as(
+            Expr::col(db_user::Column::LastActiveAt).lt(earliest_last_active_at),
+            "is_inactive",
+        )
+        .into_model::<ExtendedUserRow>()
         .one(db)
         .await
         .map_err(|err| db_err(err, "fetching user by ID"))
@@ -41,16 +60,14 @@ pub async fn get(
     db: &DatabaseConnection,
     user_id: &str,
 ) -> Result<Option<UserResponse>, IdentityDatabaseError> {
-    let user_select = DbUser::find_by_id(user_id);
 
-    let user_entry: Option<db_user::Model> = user_select
-        .one(db)
-        .await
-        .map_err(|err| db_err(err, "fetching the user data"))?;
+    let user_entry: Option<ExtendedUserRow> = get_main_entry(conf, db, user_id, None).await?;
 
     if let Some(user) = user_entry {
         let (user_opts, local_user_with_passwords) = tokio::join!(
-            user.find_related(UserOption).all(db),
+            UserOption::find()
+                .filter(db_user_option::Column::UserId.eq(user.id))
+                .all(db),
             local_user::load_local_user_with_passwords(
                 db,
                 Some(&user_id),
@@ -69,8 +86,8 @@ pub async fn get(
                     user_opts.map_err(|err| db_err(err, "fetching user options"))?,
                 ),
             ),
-            _ => match user
-                .find_related(NonlocalUser)
+            _ => match NonlocalUser::find()
+                .filter(db_nonlocal_user::Column::UserId.eq(user.id))
                 .one(db)
                 .await
                 .map_err(|err| db_err(err, "fetching nonlocal user data"))?
@@ -83,8 +100,8 @@ pub async fn get(
                     ),
                 ),
                 _ => {
-                    let federated_user = user
-                        .find_related(FederatedUser)
+                    let federated_user = FederatedUser::find()
+                        .filter(db_federated_user::Column::UserId.eq(user.id))
                         .all(db)
                         .await
                         .map_err(|err| db_err(err, "fetching federated user data"))?;
@@ -111,7 +128,8 @@ pub async fn get(
 
 #[cfg(test)]
 mod tests {
-    use sea_orm::{DatabaseBackend, MockDatabase, Transaction};
+    use sea_orm::{DatabaseBackend, IntoMockRow, MockDatabase, Transaction};
+    use std::collections::BTreeMap;
 
     use crate::config::Config;
     use crate::db::entity::user_option as db_user_option;
@@ -141,6 +159,57 @@ mod tests {
         //);
     }
 
+    #[tokio::test]
+    async fn test_get_main2() {
+        // Create MockDatabase with mock query results
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([
+                // First query result - select user itself
+                vec![UserWithExpiration::default().into_mock_row()],
+            ])
+            .into_connection();
+        let mut config = Config::default();
+        //config.security_compliance.disable_user_account_days_inactive = Some(5);
+        //assert_eq!(
+        get_main_entry2(&config, &db, "1", None)
+            .await
+            .unwrap()
+            .unwrap();
+        //   UserResponse {
+        //       id: "1".into(),
+        //       domain_id: "foo_domain".into(),
+        //       name: "Apple Cake".to_owned(),
+        //       enabled: true,
+        //       options: UserOptions {
+        //           ignore_change_password_upon_first_use: Some(true),
+        //           ..Default::default()
+        //       },
+        //       ..Default::default()
+        //   }
+        //);
+
+        // Checking transaction log
+        assert_eq!(
+            db.into_transaction_log(),
+            [
+                Transaction::from_sql_and_values(
+                    DatabaseBackend::Postgres,
+                    r#"SELECT "user"."id", "user"."extra", "user"."enabled", "user"."default_project_id", "user"."created_at", "user"."last_active_at", "user"."domain_id" FROM "user" WHERE "user"."id" = $1 LIMIT $2"#,
+                    ["1".into(), 1u64.into()]
+                ),
+                Transaction::from_sql_and_values(
+                    DatabaseBackend::Postgres,
+                    r#"SELECT "user_option"."user_id", "user_option"."option_id", "user_option"."option_value" FROM "user_option" INNER JOIN "user" ON "user"."id" = "user_option"."user_id" WHERE "user"."id" = $1"#,
+                    ["1".into()]
+                ),
+                Transaction::from_sql_and_values(
+                    DatabaseBackend::Postgres,
+                    r#"SELECT "local_user"."id" AS "A_id", "local_user"."user_id" AS "A_user_id", "local_user"."domain_id" AS "A_domain_id", "local_user"."name" AS "A_name", "local_user"."failed_auth_count" AS "A_failed_auth_count", "local_user"."failed_auth_at" AS "A_failed_auth_at", "password"."id" AS "B_id", "password"."local_user_id" AS "B_local_user_id", "password"."self_service" AS "B_self_service", "password"."created_at" AS "B_created_at", "password"."expires_at" AS "B_expires_at", "password"."password_hash" AS "B_password_hash", "password"."created_at_int" AS "B_created_at_int", "password"."expires_at_int" AS "B_expires_at_int" FROM "local_user" LEFT JOIN "password" ON "local_user"."id" = "password"."local_user_id" WHERE "local_user"."user_id" = $1 ORDER BY "local_user"."id" ASC, "password"."created_at_int" DESC"#,
+                    ["1".into()]
+                ),
+            ]
+        );
+    }
     #[tokio::test]
     async fn test_get_user_local() {
         // Create MockDatabase with mock query results

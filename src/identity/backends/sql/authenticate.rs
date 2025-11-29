@@ -62,7 +62,7 @@ pub async fn authenticate_by_password(
     if !user_opts
         .ignore_lockout_failure_attempts
         .is_some_and(|val| val)
-        && is_account_locked(config, db, &local_user).await?
+        && should_lock(config, db, &local_user).await?
     {
         return Err(AuthenticationError::UserLocked(local_user.user_id.clone()))?;
     }
@@ -95,7 +95,7 @@ pub async fn authenticate_by_password(
         }
     }
 
-    let user = user::get_main_entry(db, &local_user.user_id).await?.ok_or(
+    let user = user::get_main_entry(config, db, &local_user.user_id, None).await?.ok_or(
         IdentityDatabaseError::NoMainUserEntry(local_user.user_id.clone()),
     )?;
     let user =
@@ -116,7 +116,7 @@ pub async fn authenticate_by_password(
 /// attempts as described by
 /// [ADR-10](https://openstack-experimental.github.io/keystone/adr/0010-pci-dss-failed-auth-protection.html)
 #[tracing::instrument(level = "debug", skip(config, db))]
-async fn is_account_locked(
+async fn should_lock(
     config: &Config,
     db: &DatabaseConnection,
     local_user: &db_local_user::Model,
@@ -164,11 +164,11 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn test_is_account_locked_default_config() {
+    async fn test_should_lock_default_config() {
         let db = MockDatabase::new(DatabaseBackend::Postgres).into_connection();
         let config = Config::default();
         assert!(
-            !is_account_locked(&config, &db, &db_local_user::Model::default(),)
+            !should_lock(&config, &db, &db_local_user::Model::default(),)
                 .await
                 .unwrap(),
             "Default config does not request any validation and user is not considered locked"
@@ -176,12 +176,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_is_account_locked_no_failed_auth_count() {
+    async fn test_should_lock_no_failed_auth_count() {
         let db = MockDatabase::new(DatabaseBackend::Postgres).into_connection();
         let mut config = Config::default();
         config.security_compliance.lockout_failure_attempts = Some(5);
         assert!(
-            !is_account_locked(
+            !should_lock(
                 &config,
                 &db,
                 &db_local_user::Model {
@@ -195,7 +195,7 @@ mod tests {
             "User with unset failed_auth props is not considered locked"
         );
         assert!(
-            !is_account_locked(
+            !should_lock(
                 &config,
                 &db,
                 &db_local_user::Model {
@@ -211,14 +211,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_is_account_locked_no_failed_auth_at() {
+    async fn test_should_lock_no_failed_auth_at() {
         let db = MockDatabase::new(DatabaseBackend::Postgres)
             .append_query_results([vec![db_local_user::Model::default()]])
             .into_connection();
         let mut config = Config::default();
         config.security_compliance.lockout_failure_attempts = Some(5);
         assert!(
-            !is_account_locked(
+            !should_lock(
                 &config,
                 &db,
                 &db_local_user::Model {
@@ -248,7 +248,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_is_account_locked_expired() {
+    async fn test_should_lock_expired() {
         let db = MockDatabase::new(DatabaseBackend::Postgres)
             .append_query_results([vec![db_local_user::Model::default()]])
             .into_connection();
@@ -256,7 +256,7 @@ mod tests {
         config.security_compliance.lockout_failure_attempts = Some(5);
         config.security_compliance.lockout_duration = Some(TimeDelta::seconds(100));
         assert!(
-            !is_account_locked(
+            !should_lock(
                 &config,
                 &db,
                 &db_local_user::Model {
@@ -291,12 +291,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_is_account_locked_lock() {
+    async fn test_should_lock_lock() {
         let db = MockDatabase::new(DatabaseBackend::Postgres).into_connection();
         let mut config = Config::default();
         config.security_compliance.lockout_failure_attempts = Some(5);
         assert!(
-            is_account_locked(
+            should_lock(
                 &config,
                 &db,
                 &db_local_user::Model {
@@ -309,7 +309,7 @@ mod tests {
             "User with failed_auth_count > lockout_failure_attempts is locked for lockout_duration",
         );
         assert!(
-            is_account_locked(
+            should_lock(
                 &config,
                 &db,
                 &db_local_user::Model {
@@ -322,7 +322,7 @@ mod tests {
             "User with failed_auth_count = lockout_failure_attempts is locked for lockout_duration",
         );
         assert!(
-            !is_account_locked(
+            !should_lock(
                 &config,
                 &db,
                 &db_local_user::Model {

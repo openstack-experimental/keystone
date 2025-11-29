@@ -16,7 +16,7 @@ use chrono::{DateTime, Days, Utc};
 
 use super::user;
 use crate::config::Config;
-use crate::db::entity::{local_user as db_local_user, password as db_password, user as db_user};
+use crate::db::entity::{local_user as db_local_user, password as db_password};
 use crate::identity::types::*;
 
 mod create;
@@ -31,7 +31,7 @@ pub use set::reset_failed_auth;
 
 pub fn get_local_user_builder<P: IntoIterator<Item = db_password::Model>>(
     conf: &Config,
-    user: &db_user::Model,
+    user: &user::ExtendedUserRow,
     data: db_local_user::Model,
     passwords: Option<P>,
     opts: UserOptions,

@@ -13,7 +13,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::user;
-use crate::db::entity::{federated_user as db_federated_user, user as db_user};
+use crate::db::entity::{federated_user as db_federated_user};
 use crate::identity::types::*;
 
 mod create;
@@ -23,7 +23,7 @@ pub use create::create;
 pub use find::find_by_idp_and_unique_id;
 
 pub fn get_federated_user_builder<F: IntoIterator<Item = db_federated_user::Model>>(
-    user: &db_user::Model,
+    user: &user::ExtendedUserRow,
     data: F,
     opts: UserOptions,
 ) -> UserResponseBuilder {
