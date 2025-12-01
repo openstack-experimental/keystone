@@ -71,7 +71,7 @@ webauthn-rs-proto = { version = "0.5" }
 
 [dev-dependencies]
 base64urlsafedata = "0.5"
-criterion = { version = "0.7", features = ["async_tokio"] }
+criterion = { version = "0.8", features = ["async_tokio"] }
 http-body-util = "0.1"
 hyper = { version = "1.8", features = ["http1"] }
 hyper-util = { version = "0.1", features = ["tokio", "http1"] }
