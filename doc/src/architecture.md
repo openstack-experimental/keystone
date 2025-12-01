@@ -32,8 +32,8 @@ between sqlalchemy and sea-orm. The later suggests doing database schema first.
 In the next step object types are created out of the database. That means that
 the database migration must be written first and cannot be automatically
 generated from the code (easily, but there is a way). Current migrations do not
-create database schema that is managed by the py-keystone. Therefore in order
-to get a fully populated database schema it is necessary to apply
+create database schema that is managed by the py-keystone. Therefore in order to
+get a fully populated database schema it is necessary to apply
 `keystone-manage db_sync` and `keystone-db up` independently.
 
 Target of the keystone-ng is to be deployed in pair with the python keystone of
@@ -41,17 +41,16 @@ Target of the keystone-ng is to be deployed in pair with the python keystone of
 database, nor to apply any changes to the schema manaaged by the py-keystone. A
 federation rework assumes model change. To keep it working with the
 python-keystone artificial table entries may be created (in the example when a
-new identity provider is being created automatically sanitized entries are
-being added for the legacy identity provider and necessary protocols) A
-federation rework assumes model change. To keep it working with the
-python-keystone artificial table entries may be created (in the example when a
-new identity provider is being created automatically sanitized entries are
-being added for the legacy identity provider together with necessary idp
-protocols).
+new identity provider is being created automatically sanitized entries are being
+added for the legacy identity provider and necessary protocols) A federation
+rework assumes model change. To keep it working with the python-keystone
+artificial table entries may be created (in the example when a new identity
+provider is being created automatically sanitized entries are being added for
+the legacy identity provider together with necessary idp protocols).
 
 ## Fernet
 
 keystone-ng uses the same mechanism for tokens to provide compatibility. The
-fernet-keys repository must be provided in the runtime (i.e. by mounting them
-as a volume into the container). There is no tooling to create or rotate keys
-as the py-keystone does.
+fernet-keys repository must be provided in the runtime (i.e. by mounting them as
+a volume into the container). There is no tooling to create or rotate keys as
+the py-keystone does.

@@ -61,9 +61,9 @@ authentication request must be rejected with `http.Unauthorized`.
 Additional background process must be implemented to deactivate inactive
 accounts. For this when
 `conf.security_compliance.disable_user_account_days_inactive` is set a process
-should loop over all user accounts. When the `user.last_active_at +
-disable_user_account_days_inactive < now()` presence of the
-`user.options.IGNORE_USER_INACTIVITY_OPT` should be checked. When absent the
+should loop over all user accounts. When the
+`user.last_active_at + disable_user_account_days_inactive < now()` presence of
+the `user.options.IGNORE_USER_INACTIVITY_OPT` should be checked. When absent the
 account must be updated setting `user.enabled` to `false`.
 
 Since it is technically possible that the background process is not running for
@@ -82,8 +82,8 @@ workflow the `user.last_active_at` should be set to the current date time.
 
 - Authentication with methods other than username password are not updating the
   `lst_active_at`. Due to that the account that used i.e. application
-  credentials for the activation for more than X days would become disabled. This
-  requires account to perform periodic login using the password.
+  credentials for the activation for more than X days would become disabled.
+  This requires account to perform periodic login using the password.
 
 - It should be considered to update application credentials workflow to update
   the `user.last_active_at` attribute after successful authentication.

@@ -29,12 +29,12 @@ authenticators.
   to the standard.
 
 - User should be able to request the desired scope in the authentication
-initialization request. In this case a scoped token is returned when user has
-the required access.
+  initialization request. In this case a scoped token is returned when user has
+  the required access.
 
 - To prevent attacks authentication requests for not existing users or users
-without registered authenticators MUST return fake (but valid) authentication
-state.
+  without registered authenticators MUST return fake (but valid) authentication
+  state.
 
 ## Consequences
 

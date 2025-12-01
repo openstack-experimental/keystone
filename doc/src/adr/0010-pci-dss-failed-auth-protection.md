@@ -68,12 +68,13 @@ must be applied part of the locked account verification:
 
 - When `user_options.IGNORE_LOCKOUT_ATTEMPT` is set user account is NOT locked
 
-- When `user.failed_auth_count >= conf.security_compliance.lockout_failure_attempts`
+- When
+  `user.failed_auth_count >= conf.security_compliance.lockout_failure_attempts`
   the account is locked.
 
-- When `user.failed_auth_at + conf.security_compliance.lockout_duration >
-now()` account is locked. When the time is `< now()` - reset the counters
-  in the database.
+- When `user.failed_auth_at + conf.security_compliance.lockout_duration > now()`
+  account is locked. When the time is `< now()` - reset the counters in the
+  database.
 
 - Otherwise the account is NOT locked.
 

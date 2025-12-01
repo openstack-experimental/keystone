@@ -19,9 +19,9 @@ for Keystone.
 
 ## Decision
 
-"Mapping" (attribute mapping) MUST describe how the information from OIDC
-claims need to be translated into the Keystone data model. It MUST also describe
-user defined bounds to allow use restriction.
+"Mapping" (attribute mapping) MUST describe how the information from OIDC claims
+need to be translated into the Keystone data model. It MUST also describe user
+defined bounds to allow use restriction.
 
 When `domain_id` is not being set on the IdP level it MUST be defined either on
 the mapping entry, or the mapping MUST define `domain_id_claim` to extract the
@@ -37,4 +37,4 @@ used.
 ## Consequences
 
 - Mappings MUST be configured carefully to prevent login of users across the
-domain borders. `bound_xxx` should be used extensively to guard this.
+  domain borders. `bound_xxx` should be used extensively to guard this.
