@@ -4,11 +4,11 @@ It is possible to authenticate with the JWT token issued by the federated IdP.
 More precisely it is possible to exchange a valid JWT for the Keystone token.
 There are few different use scenarios that are covered.
 
-Since the JWT was issued without any knowledge of the Keystone scopes it
-becomes hard to control scope. In the case of real human login the Keystone may
-issue unscoped token allowing user to further rescope it. In the case of the
-workflow federation that introduces a potential security vulnerability. As such
-in this scenario the attribute mapping is responsible to fix the scope.
+Since the JWT was issued without any knowledge of the Keystone scopes it becomes
+hard to control scope. In the case of real human login the Keystone may issue
+unscoped token allowing user to further rescope it. In the case of the workflow
+federation that introduces a potential security vulnerability. As such in this
+scenario the attribute mapping is responsible to fix the scope.
 
 Login request looks following:
 
@@ -20,8 +20,8 @@ Login request looks following:
 ## Regular user obtains JWT (ID token) at the IdP and presents it to Keystone
 
 In this scenario a real user (human) is obtaining the valid JWT from the IDP
-using any available method without any communication with Keystone. This may
-use authorization code grant, password grant, device grant or any other enabled
+using any available method without any communication with Keystone. This may use
+authorization code grant, password grant, device grant or any other enabled
 method. This JWT is then presented to the Keystone and an explicitly requested
 attribute mapping converts the JWT claims to the Keystone internal
 representation after verifying the JWT signature, expiration and further
@@ -30,13 +30,13 @@ restricted bound claims.
 ## Workload federation
 
 Automated workflows (Zuul job, GitHub workflows, GitLab CI, etc) are typical
-workloads not being bound to any specific user and are more regularly
-considered being triggered by certain services. Such workflows are usually in
-possession of a JWT token issued by the service owned IdP. Keystone allows
-exchange of such tokens to the regular Keystone token after validating token
-issuer signature, expiration and applying the configured attribute mapping.
-Since in such case there is no real human the mapping also need to be
-configured slightly different.
+workloads not being bound to any specific user and are more regularly considered
+being triggered by certain services. Such workflows are usually in possession of
+a JWT token issued by the service owned IdP. Keystone allows exchange of such
+tokens to the regular Keystone token after validating token issuer signature,
+expiration and applying the configured attribute mapping. Since in such case
+there is no real human the mapping also need to be configured slightly
+different.
 
 - It is strongly advised the attribute mapping must fill `token_user_id`,
   `token_project_id` (and soon `token_role_ids`). This allows strong control of
@@ -82,9 +82,11 @@ Mapping:
 }
 ```
 
-TODO: add more claims according to [docs](https://docs.github.com/en/actions/reference/security/oidc#oidc-token-claims)
+TODO: add more claims according to
+[docs](https://docs.github.com/en/actions/reference/security/oidc#oidc-token-claims)
 
-A way for the workflow to obtain the JWT [is described here](https://docs.github.com/en/actions/reference/security/oidc#methods-for-requesting-the-oidc-token).
+A way for the workflow to obtain the JWT
+[is described here](https://docs.github.com/en/actions/reference/security/oidc#methods-for-requesting-the-oidc-token).
 
 ```yaml
 ...

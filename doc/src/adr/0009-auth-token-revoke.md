@@ -65,9 +65,12 @@ Following conditions are combined with the AND condition:
   database record. When this list is empty an error is being returned.
 - `token.project_id` is compared against the database record when present.
 - `token.user_id` is compared against the database record when present.
-- `token.trustor_id` is compared against the database record `user_id` when present.
-- `token.trustee_id` is compared against the database record `user_id` when present.
-- `token.trust_id` is compared against the database record `trust_id` when present.
+- `token.trustor_id` is compared against the database record `user_id` when
+  present.
+- `token.trustee_id` is compared against the database record `user_id` when
+  present.
+- `token.trust_id` is compared against the database record `trust_id` when
+  present.
 - `token.issued_at` is compared against the database record with
   `revocation_event.issued_before >= token.issued_at`.
 
@@ -75,9 +78,9 @@ Python version of the Keystone applies additional match verification for the
 selected data on the server side and not in the database query.
 
 - When `revocation_event.domain_id` is set it is compared against
-`token.domain_id` and `token.identity_domain_id`.
+  `token.domain_id` and `token.identity_domain_id`.
 - When `revocation_event.role_id` is present it is compared against every of the
-`token.roles`.
+  `token.roles`.
 
 After the first non matching result further evaluation is being stopped.
 Logically there does not seem to be a reason for such handling and it looks to
@@ -88,7 +91,6 @@ fields when the column is not empty.
 While following checks allow much higher details of the revocation events in the
 context of the usual fernet token revocation it is only going to match on the
 `audit_id` and `issued_before`.
-
 
 ### Revocation table purge
 
@@ -105,9 +107,10 @@ try to delete expired records errors can occur. However, if only rust version is
 validating the tokens python version will not perform any backups. Additionally
 no errors were reported yet in installations with multiple Keystone instances.
 Therefore it is necessary for the rust implementation to do periodic cleanup. It
-should be exexcuted with the following query filter: `revoked_at < (now -
-(expiration + expiration_buffer))`. Such implementation must be made optional
-with possibility to disable this behavior using the config file.
+should be exexcuted with the following query filter:
+`revoked_at < (now - (expiration + expiration_buffer))`. Such implementation
+must be made optional with possibility to disable this behavior using the config
+file.
 
 ## Consequences
 
@@ -116,4 +119,4 @@ with possibility to disable this behavior using the config file.
 - Token validation processing time is increased with the database lookup.
 
 - Expired revocation records are optionally periodically cleaned by the rust
-implementation.
+  implementation.

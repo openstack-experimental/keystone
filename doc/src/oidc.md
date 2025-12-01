@@ -62,18 +62,19 @@ Authentication with the claim missing is going to be rejected.
 ## Using Okta as the Identity provider for a single domain
 
 Okta/Auth0 as an managed Identity provider can be easily integrated as a source
-of the users and groups for the customer dedicated domain. [A dedicated
-application](https://developer.okta.com/docs/guides/implement-grant-type/authcode/main/#set-up-your-app)
+of the users and groups for the customer dedicated domain.
+[A dedicated application](https://developer.okta.com/docs/guides/implement-grant-type/authcode/main/#set-up-your-app)
 need to be established on Okta (i.e. OpenStack) for the authentication
 delegation. There are many configuration options that can be used on the Okta
 side and will influence the interaction. It is not possible to describe every
 single one precisely, therefore only the basic setting are described here:
 
 - grant type: authorization code
-- sign in redirect uris (enable the cli login): [`http://localhost:8050/oidc/callback`].
+- sign in redirect uris (enable the cli login):
+  [`http://localhost:8050/oidc/callback`].
 
-Group memberships are not exposed by default and require [additional
-changes](https://developer.okta.com/docs/guides/customize-tokens-groups-claim/main/#add-a-groups-claim-for-a-custom-authorization-server)
+Group memberships are not exposed by default and require
+[additional changes](https://developer.okta.com/docs/guides/customize-tokens-groups-claim/main/#add-a-groups-claim-for-a-custom-authorization-server)
 
 On the Keystone side the following must be implemented:
 
@@ -98,13 +99,14 @@ On the Keystone side the following must be implemented:
 Afterwards `osc` can be used by users to authenticate.
 
 clouds.yaml
+
 ```yaml
 clouds:
   devstack-oidc-okta:
     auth_type: v4federation
     auth:
-        auth_url: <KEYSTONE_URL>
-        identity_provider: <IDP_ID>
+      auth_url: <KEYSTONE_URL>
+      identity_provider: <IDP_ID>
 ```
 
 ```console
@@ -123,7 +125,6 @@ A dedicated client must be created with following settings:
 - "standard flow" to allow the authorization code flow
 
 - valid_redirect_uris: [`http://localhost:8050/oidc/callback`]
-
 
 On the Keystone side the following must be implemented:
 
@@ -169,7 +170,6 @@ A dedicated client must be created with following settings:
 
 A dedicated (and default) client scope must be created with the user attribute
 claim mapper populating "domain_id" scope with the corresponding value.
-
 
 On the Keystone side the following must be implemented:
 
