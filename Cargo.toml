@@ -6,7 +6,7 @@ edition = "2024"
 license = "Apache-2.0"
 authors = ["Artem Goncharov (gtema)"]
 rust-version = "1.90"  # MSRV
-repository = "https://github.com/gtema/keystone"
+repository = "https://github.com/openstack-experimental/keystone"
 
 [package.metadata.clippy]
 warn = ["clippy::unused_results"]
@@ -96,6 +96,11 @@ bench_internals = []
 [profile.release]
 strip = true
 debug = false
+lto = "thin"
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
 lto = "thin"
 #codegen-units = 1
 
