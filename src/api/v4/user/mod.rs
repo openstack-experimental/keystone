@@ -264,6 +264,7 @@ mod tests {
                 UserListParameters {
                     domain_id: Some("domain".into()),
                     name: Some("name".into()),
+                    ..Default::default()
                 } == *qp
             })
             .returning(|_, _| Ok(Vec::new()));

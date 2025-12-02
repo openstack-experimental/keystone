@@ -25,15 +25,16 @@ use validator::Validate;
 
 use crate::identity::types as identity_types;
 
+/// User response object.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct User {
-    /// User ID
+    /// User ID.
     #[validate(length(max = 64))]
     pub id: String,
-    /// User domain ID
+    /// User domain ID.
     #[validate(length(max = 64))]
     pub domain_id: String,
-    /// User name
+    /// User name.
     #[validate(length(max = 255))]
     pub name: String,
     /// If the user is enabled, this value is true. If the user is disabled,
@@ -64,8 +65,13 @@ pub struct User {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[validate(nested)]
     pub options: Option<UserOptions>,
+    /// List of federated objects associated with a user. Each object in the list contains the idp_id and protocols. protocols is a list of objects, each of which contains protocol_id and unique_id of the protocol and user respectively.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[validate(nested)]
+    pub federated: Option<Vec<Federation>>,
 }
 
+/// Complete response with the user data.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct UserResponse {
     /// User object
@@ -73,9 +79,10 @@ pub struct UserResponse {
     pub user: User,
 }
 
+/// Create user data.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct UserCreate {
-    /// User domain ID
+    /// User domain ID.
     #[validate(length(max = 64))]
     pub domain_id: String,
     /// The user name. Must be unique within the owning domain.
@@ -110,6 +117,7 @@ pub struct UserCreate {
     pub extra: Option<Value>,
 }
 
+/// Update user data.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct UserUpdateRequest {
     /// The user name. Must be unique within the owning domain.
@@ -143,6 +151,7 @@ pub struct UserUpdateRequest {
     pub extra: Option<Value>,
 }
 
+/// User options.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct UserOptions {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -189,9 +198,10 @@ impl From<UserOptions> for identity_types::UserOptions {
     }
 }
 
+/// Complete create user request.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct UserCreateRequest {
-    /// User object
+    /// User object.
     #[validate(nested)]
     pub user: UserCreate,
 }
@@ -221,6 +231,9 @@ impl From<identity_types::UserResponse> for User {
             extra: value.extra,
             password_expires_at: value.password_expires_at,
             options: opts,
+            federated: value
+                .federated
+                .map(|val| val.into_iter().map(Into::into).collect()),
         }
     }
 }
@@ -238,6 +251,45 @@ impl From<UserCreateRequest> for identity_types::UserCreate {
             default_project_id: user.default_project_id,
             options: user.options.map(Into::into),
             federated: None,
+        }
+    }
+}
+
+/// User federation data.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+pub struct Federation {
+    /// Identity provider ID.
+    pub idp_id: String,
+    /// Protocols.
+    #[validate(nested)]
+    pub protocols: Vec<FederationProtocol>,
+}
+
+/// Federation protocol data.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+pub struct FederationProtocol {
+    /// Federation protocol ID
+    #[validate(length(max = 64))]
+    pub protocol_id: String,
+    // TODO: unique ID should potentially belong to the IDP and not to the protocol
+    /// Unique ID of the associated user
+    #[validate(length(max = 64))]
+    pub unique_id: String,
+}
+
+impl From<identity_types::Federation> for Federation {
+    fn from(value: identity_types::Federation) -> Self {
+        Self {
+            idp_id: value.idp_id,
+            protocols: value.protocols.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+impl From<identity_types::FederationProtocol> for FederationProtocol {
+    fn from(value: identity_types::FederationProtocol) -> Self {
+        Self {
+            protocol_id: value.protocol_id,
+            unique_id: value.unique_id,
         }
     }
 }
@@ -281,14 +333,18 @@ impl IntoResponse for UserList {
     }
 }
 
+/// User list parameters.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, IntoParams, Validate)]
 pub struct UserListParameters {
-    /// Filter users by Domain ID
+    /// Filter users by Domain ID.
     #[validate(length(max = 64))]
     pub domain_id: Option<String>,
-    /// Filter users by Name
+    /// Filter users by Name.
     #[validate(length(max = 255))]
     pub name: Option<String>,
+    /// Filter users by the federated unique ID.
+    #[validate(length(max = 64))]
+    pub unique_id: Option<String>,
 }
 
 impl From<UserListParameters> for identity_types::UserListParameters {
@@ -296,6 +352,7 @@ impl From<UserListParameters> for identity_types::UserListParameters {
         Self {
             domain_id: value.domain_id,
             name: value.name,
+            unique_id: value.unique_id,
             //    limit: value.limit,
         }
     }
