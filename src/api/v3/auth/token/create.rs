@@ -19,6 +19,7 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
+use validator::Validate;
 
 use crate::api::v3::auth::token::common::{authenticate_request, get_authz_info};
 use crate::api::v3::auth::token::types::{
@@ -46,6 +47,7 @@ pub(super) async fn create(
     State(state): State<ServiceState>,
     Json(req): Json<AuthRequest>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
+    req.validate()?;
     let authed_info = authenticate_request(&state, &req).await?;
     let authz_info = get_authz_info(&state, &req).await?;
     if let Some(restriction_id) = &authed_info.token_restriction_id {

@@ -19,6 +19,7 @@ use axum::{
     response::IntoResponse,
 };
 use mockall_double::double;
+use validator::Validate;
 
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
@@ -61,6 +62,7 @@ pub(super) async fn update(
     State(state): State<ServiceState>,
     Json(req): Json<TokenRestrictionUpdateRequest>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
+    req.validate()?;
     // Fetch the current resource to pass current object into the policy evaluation
     let current = state
         .provider

@@ -15,6 +15,7 @@
 use axum::{Json, extract::State, response::IntoResponse};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE};
 use tracing::debug;
+use validator::Validate;
 use webauthn_rs::prelude::*;
 
 use super::types::*;
@@ -46,6 +47,7 @@ pub(super) async fn start(
     State(state): State<ServiceState>,
     Json(req): Json<PasskeyAuthenticationStartRequest>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
+    req.validate()?;
     // TODO: Check user existence and simulate the response when the user does not
     // exist.
     state

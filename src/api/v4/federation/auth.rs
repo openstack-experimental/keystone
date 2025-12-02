@@ -21,6 +21,7 @@ use chrono::{Local, TimeDelta};
 use std::collections::HashSet;
 use tracing::debug;
 use utoipa_axum::{router::OpenApiRouter, routes};
+use validator::Validate;
 
 use openidconnect::core::{CoreAuthenticationFlow, CoreClient, CoreProviderMetadata};
 use openidconnect::reqwest;
@@ -80,6 +81,7 @@ pub async fn post(
     Path(idp_id): Path<String>,
     Json(req): Json<IdentityProviderAuthRequest>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
+    req.validate()?;
     state
         .config
         .auth
