@@ -19,6 +19,7 @@ use axum::{
     response::IntoResponse,
 };
 use mockall_double::double;
+use validator::Validate;
 
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
@@ -58,6 +59,7 @@ pub(super) async fn update(
     State(state): State<ServiceState>,
     Json(req): Json<MappingUpdateRequest>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
+    req.validate()?;
     let current = state
         .provider
         .get_federation_provider()

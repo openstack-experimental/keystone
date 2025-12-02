@@ -20,6 +20,7 @@ use axum::{
 use base64::{Engine as _, engine::general_purpose::URL_SAFE};
 use mockall_double::double;
 use tracing::debug;
+use validator::Validate;
 use webauthn_rs::prelude::*;
 
 use crate::api::auth::Auth;
@@ -70,6 +71,7 @@ pub(super) async fn start(
     State(state): State<ServiceState>,
     Json(req): Json<UserPasskeyRegistrationStartRequest>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
+    req.validate()?;
     let user = state
         .provider
         .get_identity_provider()

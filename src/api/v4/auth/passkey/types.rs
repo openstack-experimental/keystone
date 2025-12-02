@@ -16,16 +16,18 @@
 
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
+use validator::Validate;
 
 /// Request for initialization of the passkey authentication.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct PasskeyAuthenticationStartRequest {
     /// The user authentication data
+    #[validate(nested)]
     pub passkey: PasskeyUserAuthenticationRequest,
 }
 
 /// Request for initialization of the passkey authentication.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct PasskeyUserAuthenticationRequest {
     /// The ID of the user that is authenticating.
     pub user_id: String,
@@ -37,9 +39,10 @@ pub struct PasskeyUserAuthenticationRequest {
 /// handling. This is meant to be opaque, that is, you should not need to
 /// inspect or alter the content of the struct
 /// - you should serialise it and transmit it to the client only.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct PasskeyAuthenticationStartResponse {
     /// The options.
+    #[validate(nested)]
     pub public_key: PublicKeyCredentialRequestOptions,
     /// The mediation requested.
     #[schema(nullable = false)]
@@ -48,9 +51,10 @@ pub struct PasskeyAuthenticationStartResponse {
 }
 
 /// The requested options for the authentication.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct PublicKeyCredentialRequestOptions {
     /// The set of credentials that are allowed to sign this challenge.
+    #[validate(nested)]
     pub allow_credentials: Vec<AllowCredentials>,
     /// The challenge that should be signed by the authenticator.
     #[schema(value_type = String, format = Binary, content_encoding = "base64")]
@@ -58,12 +62,14 @@ pub struct PublicKeyCredentialRequestOptions {
     /// extensions.
     #[schema(nullable = false)]
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[validate(nested)]
     pub extensions: Option<RequestAuthenticationExtensions>,
     /// Hints defining which types credentials may be used in this operation.
     #[schema(nullable = false)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hints: Option<Vec<PublicKeyCredentialHint>>,
     /// The relying party ID.
+    #[validate(length(max = 64))]
     pub rp_id: String,
     /// The timeout for the authenticator in case of no interaction.
     pub timeout: Option<u32>,
@@ -82,7 +88,7 @@ pub enum Mediation {
 }
 
 /// A descriptor of a credential that can be used.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct AllowCredentials {
     /// The id of the credential.
     #[schema(value_type = String, format = Binary, content_encoding = "base64")]
@@ -189,7 +195,7 @@ pub enum PublicKeyCredentialHint {
 /// Extension option inputs for PublicKeyCredentialRequestOptions
 ///
 /// Implements AuthenticatorExtensionsClientInputs from the spec
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct RequestAuthenticationExtensions {
     /// The appid extension options.
     #[schema(nullable = false)]
@@ -199,6 +205,7 @@ pub struct RequestAuthenticationExtensions {
     /// <https://bugs.chromium.org/p/chromium/issues/detail?id=1023225> Hmac get secret.
     #[schema(nullable = false)]
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[validate(nested)]
     pub hmac_get_secret: Option<HmacGetSecretInput>,
     /// ⚠️ - Browsers do not support this! Uvm.
     #[schema(nullable = false)]
@@ -209,7 +216,7 @@ pub struct RequestAuthenticationExtensions {
 /// The inputs to the hmac secret if it was created during registration.
 ///
 /// <https://fidoalliance.org/specs/fido-v2.1-ps-20210615/fido-client-to-authenticator-protocol-v2.1-ps-20210615.html#sctn-hmac-secret-extension>
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct HmacGetSecretInput {
     /// Retrieve a symmetric secrets from the authenticator with this input.
     #[schema(value_type = String, format = Binary, content_encoding = "base64")]
@@ -226,25 +233,28 @@ pub struct HmacGetSecretInput {
 ///
 /// You should not need to handle the inner content of this structure - you
 /// should provide this to the correctly handling function of Webauthn only.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct PasskeyAuthenticationFinishRequest {
     /// The credential Id, likely base64.
     pub id: String,
     /// Unsigned Client processed extensions.
+    #[validate(nested)]
     pub extensions: AuthenticationExtensionsClientOutputs,
     /// The binary of the credential id.
     #[schema(value_type = String, format = Binary, content_encoding = "base64")]
     pub raw_id: String,
     /// The authenticator response.
+    #[validate(nested)]
     pub response: AuthenticatorAssertionResponseRaw,
     /// The authenticator type.
     pub type_: String,
     /// The ID of the user.
+    #[validate(length(max = 64))]
     pub user_id: String,
 }
 
 /// [AuthenticatorAssertionResponseRaw](https://w3c.github.io/webauthn/#authenticatorassertionresponse)
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct AuthenticatorAssertionResponseRaw {
     /// Raw authenticator data.
     #[schema(value_type = String, format = Binary, content_encoding = "base64")]
@@ -263,7 +273,7 @@ pub struct AuthenticatorAssertionResponseRaw {
 /// [AuthenticationExtensionsClientOutputs](https://w3c.github.io/webauthn/#dictdef-authenticationextensionsclientoutputs)
 ///
 /// The default option here for Options are None, so it can be derived
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct AuthenticationExtensionsClientOutputs {
     /// Indicates whether the client used the provided appid extension.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -272,11 +282,12 @@ pub struct AuthenticationExtensionsClientOutputs {
     /// The response to a hmac get secret request.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schema(nullable = false)]
+    #[validate(nested, required)]
     pub hmac_get_secret: Option<HmacGetSecretOutput>,
 }
 
 /// The response to a hmac get secret request.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct HmacGetSecretOutput {
     /// Output of HMAC(Salt 1 || Client Secret).
     #[schema(value_type = String, format = Binary, content_encoding = "base64")]
@@ -284,5 +295,6 @@ pub struct HmacGetSecretOutput {
     /// Output of HMAC(Salt 2 || Client Secret).
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schema(nullable = false, value_type = String, format = Binary, content_encoding = "base64")]
+    #[validate(required)]
     pub output2: Option<String>,
 }

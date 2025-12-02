@@ -21,6 +21,7 @@ use chrono::{DateTime, Utc};
 use derive_builder::Builder;
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
+use validator::Validate;
 
 use crate::api::error::TokenError;
 use crate::api::types::*;
@@ -29,7 +30,7 @@ use crate::identity::types as identity_types;
 use crate::token::Token as BackendToken;
 
 /// Authorization token
-#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema)]
+#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 #[builder(setter(strip_option, into))]
 pub struct Token {
     /// A list of one or two audit IDs. An audit ID is a unique, randomly
@@ -61,6 +62,7 @@ pub struct Token {
 
     /// A user object.
     //#[builder(default)]
+    #[validate(nested)]
     pub user: User,
 
     /// A project object including the id, name and domain object representing
@@ -68,6 +70,7 @@ pub struct Token {
     /// that are scoped to a project.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[builder(default)]
+    #[validate(nested)]
     pub project: Option<Project>,
 
     /// A domain object including the id and name representing the domain the
@@ -75,23 +78,27 @@ pub struct Token {
     /// to a domain.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[builder(default)]
+    #[validate(nested)]
     pub domain: Option<Domain>,
 
     /// A list of role objects
     #[serde(skip_serializing_if = "Option::is_none")]
     #[builder(default)]
+    #[validate(nested)]
     pub roles: Option<Vec<Role>>,
 
     /// A catalog object.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[builder(default)]
+    #[validate(nested)]
     pub catalog: Option<Catalog>,
 }
 
-#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema)]
+#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 #[builder(setter(strip_option, into))]
 pub struct TokenResponse {
     /// Token
+    #[validate(nested)]
     pub token: Token,
 }
 
@@ -102,16 +109,18 @@ impl IntoResponse for TokenResponse {
 }
 
 /// An authentication request.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct AuthRequest {
     /// An identity object.
+    #[validate(nested)]
     pub auth: AuthRequestInner,
 }
 
 /// An authentication request.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct AuthRequestInner {
     /// An identity object.
+    #[validate(nested)]
     pub identity: Identity,
 
     /// The authorization scope, including the system (Since v3.10), a project,
@@ -124,11 +133,12 @@ pub struct AuthRequestInner {
     /// specified in order to uniquely identify the project by name. A domain
     /// scope may be specified by either the domain’s ID or name with
     /// equivalent results.
+    #[validate(nested)]
     pub scope: Option<Scope>,
 }
 
 /// An identity object.
-#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema)]
+#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 #[builder(setter(into, strip_option))]
 pub struct Identity {
     /// The authentication method. For password authentication, specify
@@ -137,36 +147,43 @@ pub struct Identity {
 
     /// The password object, contains the authentication information.
     #[builder(default)]
+    #[validate(nested)]
     pub password: Option<PasswordAuth>,
 
     /// The token object, contains the authentication information.
     #[builder(default)]
+    #[validate(nested)]
     pub token: Option<TokenAuth>,
 }
 
 /// The password object, contains the authentication information.
-#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema)]
+#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 #[builder(setter(strip_option, into))]
 pub struct PasswordAuth {
     /// A user object.
     #[builder(default)]
+    #[validate(nested)]
     pub user: UserPassword,
 }
 
-/// User password information
-#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema)]
+/// User password information.
+#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 #[builder(setter(into, strip_option))]
 pub struct UserPassword {
-    /// User ID
+    /// User ID.
     #[builder(default)]
+    #[validate(length(max = 64))]
     pub id: Option<String>,
-    /// User Name
+    /// User Name.
     #[builder(default)]
+    #[validate(length(max = 255))]
     pub name: Option<String>,
-    /// User domain
+    /// User domain.
     #[builder(default)]
+    #[validate(nested)]
     pub domain: Option<Domain>,
-    /// User password expiry date
+    /// User password.
+    #[validate(length(max = 255))]
     pub password: String,
 }
 
@@ -196,16 +213,19 @@ impl TryFrom<UserPassword> for identity_types::UserPasswordAuthRequest {
     }
 }
 
-/// User information
-#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema)]
+/// User information.
+#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 #[builder(setter(into, strip_option))]
 pub struct User {
     /// User ID
+    #[validate(length(max = 64))]
     pub id: String,
     /// User Name
     #[builder(default)]
+    #[validate(length(max = 255))]
     pub name: Option<String>,
     /// User domain
+    #[validate(nested)]
     pub domain: Domain,
     /// User password expiry date
     #[builder(default)]
@@ -226,21 +246,22 @@ impl TryFrom<&BackendToken> for Token {
 }
 
 /// The token object, contains the authentication information.
-#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema)]
+#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 #[builder(setter(strip_option, into))]
 pub struct TokenAuth {
     /// An authentication token.
+    #[validate(length(max = 1024))]
     pub id: String,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Serialize, IntoParams)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize, IntoParams, Validate)]
 pub struct CreateTokenParameters {
     /// The authentication response excludes the service catalog. By default,
     /// the response includes the service catalog.
     pub nocatalog: Option<bool>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Serialize, IntoParams)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize, IntoParams, Validate)]
 pub struct ValidateTokenParameters {
     /// The authentication response excludes the service catalog. By default,
     /// the response includes the service catalog.

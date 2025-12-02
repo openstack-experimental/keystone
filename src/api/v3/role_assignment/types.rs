@@ -20,53 +20,65 @@ use axum::{
 use derive_builder::Builder;
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
+use validator::{Validate, ValidationErrors};
 
 use crate::api::error::KeystoneApiError;
 use crate::assignment::types;
 
-#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
+#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 #[builder(setter(strip_option, into))]
 pub struct Assignment {
     /// Role ID
+    #[validate(nested)]
     pub role: Role,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[builder(default)]
+    #[validate(nested)]
     pub user: Option<User>,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[builder(default)]
+    #[validate(nested)]
     pub group: Option<Group>,
+    #[validate(nested)]
     pub scope: Scope,
 }
 
-#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
+#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct Role {
+    #[validate(length(max = 64))]
     pub id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[validate(length(max = 64))]
     pub name: Option<String>,
 }
 
-#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
+#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct User {
+    #[validate(length(max = 64))]
     pub id: String,
 }
 
-#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
+#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct Group {
+    #[validate(length(max = 64))]
     pub id: String,
 }
 
-#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
+#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct Project {
+    #[validate(length(max = 64))]
     pub id: String,
 }
 
-#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
+#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct Domain {
+    #[validate(length(max = 64))]
     pub id: String,
 }
 
-#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
+#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct System {
+    #[validate(length(max = 64))]
     pub id: String,
 }
 
@@ -76,6 +88,16 @@ pub enum Scope {
     Project(Project),
     Domain(Domain),
     System(System),
+}
+
+impl Validate for Scope {
+    fn validate(&self) -> Result<(), ValidationErrors> {
+        match self {
+            Self::Project(project) => project.validate(),
+            Self::Domain(domain) => domain.validate(),
+            Self::System(system) => system.validate(),
+        }
+    }
 }
 
 impl TryFrom<types::Assignment> for Assignment {
@@ -154,9 +176,10 @@ impl From<types::RoleAssignmentListParametersBuilderError> for KeystoneApiError 
 }
 
 /// Assignments
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct AssignmentList {
     /// Collection of role assignment objects
+    #[validate(nested)]
     pub role_assignments: Vec<Assignment>,
 }
 
@@ -167,14 +190,16 @@ impl IntoResponse for AssignmentList {
 }
 
 /// List role assignments query parameters
-#[derive(Clone, Debug, Default, Deserialize, Serialize, IntoParams)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize, IntoParams, Validate)]
 pub struct RoleAssignmentListParameters {
     /// Filters the response by a domain ID.
     #[serde(rename = "scope.domain.id")]
+    #[validate(length(max = 64))]
     pub domain_id: Option<String>,
 
     /// Filters the response by a group ID.
     #[serde(rename = "group.id")]
+    #[validate(length(max = 64))]
     pub group_id: Option<String>,
 
     /// Returns the effective assignments, including any assignments gained by
@@ -183,14 +208,17 @@ pub struct RoleAssignmentListParameters {
 
     /// Filters the response by a project ID.
     #[serde(rename = "scope.project.id")]
+    #[validate(length(max = 64))]
     pub project_id: Option<String>,
 
     /// Filters the response by a role ID.
     #[serde(rename = "role.id")]
+    #[validate(length(max = 64))]
     pub role_id: Option<String>,
 
     /// Filters the response by a user ID.
     #[serde(rename = "user.id")]
+    #[validate(length(max = 64))]
     pub user_id: Option<String>,
 
     /// If set to true, then the names of any entities returned will be include

@@ -20,28 +20,34 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use utoipa::{IntoParams, ToSchema};
+use validator::Validate;
 
 use crate::assignment::types;
 
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct Role {
     /// Role ID
+    #[validate(length(max = 64))]
     pub id: String,
     /// Role domain ID
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[validate(length(max = 64))]
     pub domain_id: Option<String>,
     /// Role name
+    #[validate(length(max = 255))]
     pub name: String,
     /// Role description
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[validate(length(max = 255))]
     pub description: Option<String>,
     #[serde(flatten, skip_serializing_if = "Option::is_none")]
     pub extra: Option<Value>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct RoleResponse {
     /// Role object
+    #[validate(nested)]
     pub role: Role,
 }
 
@@ -76,9 +82,10 @@ impl IntoResponse for types::Role {
 }
 
 /// Roles
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct RoleList {
     /// Collection of role objects
+    #[validate(nested)]
     pub roles: Vec<Role>,
 }
 
@@ -95,11 +102,13 @@ impl IntoResponse for RoleList {
     }
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Serialize, IntoParams)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize, IntoParams, Validate)]
 pub struct RoleListParameters {
     /// Filter users by Domain ID
+    #[validate(length(max = 64))]
     pub domain_id: Option<String>,
     /// Filter users by Name
+    #[validate(length(max = 255))]
     pub name: Option<String>,
 }
 

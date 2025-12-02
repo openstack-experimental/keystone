@@ -16,32 +16,36 @@
 
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
+use validator::Validate;
 
 /// Passkey registration request.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct UserPasskeyRegistrationStartRequest {
     /// The description for the passkey (name).
+    #[validate(nested)]
     pub passkey: PasskeyCreate,
 }
 
 /// Passkey information.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct PasskeyCreate {
     /// Passkey description
     #[schema(nullable = false, max_length = 64)]
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[validate(length(max = 255))]
     pub description: Option<String>,
 }
 
 /// Passkey.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct PasskeyResponse {
     /// The description for the passkey (name).
+    #[validate(nested)]
     pub passkey: Passkey,
 }
 
 /// Passkey information.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct Passkey {
     /// Credential ID.
     pub credential_id: String,
@@ -55,14 +59,15 @@ pub struct Passkey {
 ///
 /// This is the WebauthN challenge that need to be signed by the
 /// passkey/security device.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct UserPasskeyRegistrationStartResponse {
     /// The options.
+    #[validate(nested)]
     pub public_key: PublicKeyCredentialCreationOptions,
 }
 
 /// The requested options for the authentication.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct PublicKeyCredentialCreationOptions {
     /// The requested attestation level from the device.
     #[schema(nullable = false)]
@@ -75,6 +80,7 @@ pub struct PublicKeyCredentialCreationOptions {
     /// Criteria defining which authenticators may be used in this operation.
     #[schema(nullable = false)]
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[validate(nested)]
     pub authenticator_selection: Option<AuthenticatorSelectionCriteria>,
     /// The challenge that should be signed by the authenticator.
     #[schema(value_type = String, format = Binary, content_encoding = "base64")]
@@ -82,37 +88,45 @@ pub struct PublicKeyCredentialCreationOptions {
     /// Credential ID’s that are excluded from being able to be registered.
     #[schema(nullable = false)]
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[validate(nested)]
     pub exclude_credentials: Option<Vec<PublicKeyCredentialDescriptor>>,
     /// extensions.
     #[schema(nullable = false)]
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[validate(nested)]
     pub extensions: Option<RequestRegistrationExtensions>,
     /// Hints defining which types credentials may be used in this operation.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hints: Option<Vec<PublicKeyCredentialHints>>,
     /// The set of cryptographic types allowed by this server.
+    #[validate(nested)]
     pub pub_key_cred_params: Vec<PubKeyCredParams>,
     /// The relying party
+    #[validate(nested)]
     pub rp: RelyingParty,
     /// The timeout for the authenticator in case of no interaction.
     #[schema(nullable = false)]
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[validate(range(min = 1))]
     pub timeout: Option<u32>,
     /// The user.
+    #[validate(nested)]
     pub user: User,
 }
 
 /// Relying Party Entity.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct RelyingParty {
     /// The id of the relying party.
+    #[validate(length(max = 64))]
     pub id: String,
     /// The name of the relying party.
+    #[validate(length(max = 255))]
     pub name: String,
 }
 
 /// User Entity.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 #[schema(as = PasskeyUser)]
 pub struct User {
     /// The user’s id in base64 form. This MUST be a unique id, and must NOT
@@ -122,14 +136,16 @@ pub struct User {
     pub id: String,
     /// A detailed name for the account, such as an email address. This value
     /// can change, so must not be used as a primary key.
+    #[validate(length(max = 255))]
     pub name: String,
     /// The user’s preferred name for display. This value can change, so must
     /// not be used as a primary key.
+    #[validate(length(max = 255))]
     pub display_name: String,
 }
 
 /// Public key cryptographic parameters
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct PubKeyCredParams {
     /// The algorithm in use defined by CASE.
     pub alg: i64,
@@ -138,7 +154,7 @@ pub struct PubKeyCredParams {
 }
 
 /// <https://www.w3.org/TR/webauthn/#dictdef-publickeycredentialdescriptor>
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct PublicKeyCredentialDescriptor {
     /// The type of credential.
     pub type_: String,
@@ -164,7 +180,7 @@ pub enum Mediation {
 }
 
 /// A descriptor of a credential that can be used.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct AllowCredentials {
     /// The type of credential.
     pub type_: String,
@@ -198,7 +214,7 @@ pub enum AuthenticatorTransport {
 }
 
 /// <https://www.w3.org/TR/webauthn/#dictdef-authenticatorselectioncriteria>
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct AuthenticatorSelectionCriteria {
     /// How the authenticator should be attached to the client machine. Note
     /// this is only a hint. It is not enforced in anyway shape or form. <https://www.w3.org/TR/webauthn/#attachment>.
@@ -302,7 +318,7 @@ pub enum AttestationFormat {
 /// Extension option inputs for PublicKeyCredentialCreationOptions.
 ///
 /// Implements `AuthenticatorExtensionsClientInputs` from the spec.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct RequestRegistrationExtensions {
     /// ⚠️ - This extension result is always unsigned, and only indicates if the
     /// browser requests a residentKey to be created. It has no bearing on
@@ -313,6 +329,7 @@ pub struct RequestRegistrationExtensions {
     /// The credProtect extension options.
     #[schema(nullable = false)]
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[validate(nested)]
     pub cred_protect: Option<CredProtect>,
     /// ⚠️ - Browsers support the creation of the secret, but not the retrieval
     /// of it. CTAP2.1 create hmac secret.
@@ -332,7 +349,7 @@ pub struct RequestRegistrationExtensions {
 /// The desired options for the client’s use of the credProtect extension
 ///
 /// <https://fidoalliance.org/specs/fido-v2.1-rd-20210309/fido-client-to-authenticator-protocol-v2.1-rd-20210309.html#sctn-credProtect-extension>
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct CredProtect {
     /// The credential policy to enact.
     pub credential_protection_policy: CredentialProtectionPolicy,
@@ -428,11 +445,12 @@ pub enum UserVerificationPolicy {
 /// You should not need to handle the inner content of this structure - you
 /// should provide this to the correctly handling function of Webauthn only.
 /// <https://w3c.github.io/webauthn/#iface-pkcredential>
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct UserPasskeyRegistrationFinishRequest {
     /// Optional credential description.
     #[schema(nullable = false, max_length = 64)]
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[validate(length(max = 64))]
     pub description: Option<String>,
     /// The id of the PublicKey credential, likely in base64.
     ///
@@ -454,7 +472,7 @@ pub struct UserPasskeyRegistrationFinishRequest {
 }
 
 /// <https://w3c.github.io/webauthn/#authenticatorattestationresponse>
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct AuthenticatorAttestationResponseRaw {
     /// <https://w3c.github.io/webauthn/#dom-authenticatorattestationresponse-attestationobject>.
     #[schema(value_type = String, format = Binary, content_encoding = "base64")]
@@ -470,7 +488,7 @@ pub struct AuthenticatorAttestationResponseRaw {
 
 /// <https://w3c.github.io/webauthn/#dictdef-authenticationextensionsclientoutputs> The default
 /// option here for Options are None, so it can be derived
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct RegistrationExtensionsClientOutputs {
     /// Indicates whether the client used the provided appid extension.
     #[schema(nullable = false)]
@@ -481,6 +499,7 @@ pub struct RegistrationExtensionsClientOutputs {
     /// be trusted!
     #[schema(nullable = false)]
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[validate(nested)]
     pub cred_props: Option<CredProps>,
     /// Indicates if the client successfully applied a HMAC Secret.
     #[schema(nullable = false)]
@@ -498,7 +517,7 @@ pub struct RegistrationExtensionsClientOutputs {
 }
 
 /// <https://www.w3.org/TR/webauthn-3/#sctn-authenticator-credential-properties-extension>
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct CredProps {
     /// A user agent supplied hint that this credential may have created a
     /// resident key. It is returned from the user agent, not the

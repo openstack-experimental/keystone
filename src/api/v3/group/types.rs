@@ -20,44 +20,54 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use utoipa::{IntoParams, ToSchema};
+use validator::Validate;
 
 use crate::identity::types;
 
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct Group {
     /// Group ID
+    #[validate(length(max = 64))]
     pub id: String,
     /// Group domain ID
+    #[validate(length(max = 64))]
     pub domain_id: String,
     /// Group name
+    #[validate(length(max = 64))]
     pub name: String,
     /// Group description
+    #[validate(length(max = 255))]
     pub description: Option<String>,
     #[serde(flatten, skip_serializing_if = "Option::is_none")]
     pub extra: Option<Value>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct GroupResponse {
     /// group object
+    #[validate(nested)]
     pub group: Group,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct GroupCreate {
     /// Group domain ID
+    #[validate(length(max = 64))]
     pub domain_id: String,
     /// Group name
+    #[validate(length(max = 64))]
     pub name: String,
     /// Group description
+    #[validate(length(max = 255))]
     pub description: Option<String>,
     #[serde(default, flatten, skip_serializing_if = "Option::is_none")]
     pub extra: Option<Value>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct GroupCreateRequest {
     /// Group object
+    #[validate(nested)]
     pub group: GroupCreate,
 }
 
@@ -105,9 +115,10 @@ impl IntoResponse for types::Group {
 }
 
 /// Groups
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct GroupList {
     /// Collection of group objects
+    #[validate(nested)]
     pub groups: Vec<Group>,
 }
 
@@ -124,11 +135,13 @@ impl IntoResponse for GroupList {
     }
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Serialize, IntoParams)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize, IntoParams, Validate)]
 pub struct GroupListParameters {
     /// Filter users by Domain ID
+    #[validate(length(max = 64))]
     pub domain_id: Option<String>,
     /// Filter users by Name
+    #[validate(length(max = 64))]
     pub name: Option<String>,
 }
 

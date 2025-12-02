@@ -170,6 +170,14 @@ pub enum KeystoneApiError {
     #[error("changing current authentication scope is forbidden")]
     AuthenticationRescopeForbidden,
 
+    /// Request validation error.
+    #[error("request validation failed: {source}")]
+    Validator {
+        /// The source of the error.
+        #[from]
+        source: validator::ValidationErrors,
+    },
+
     /// Others.
     #[error(transparent)]
     Other(#[from] eyre::Report),

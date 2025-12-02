@@ -21,16 +21,20 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use utoipa::{IntoParams, ToSchema};
+use validator::Validate;
 
 use crate::identity::types as identity_types;
 
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct User {
     /// User ID
+    #[validate(length(max = 64))]
     pub id: String,
     /// User domain ID
+    #[validate(length(max = 64))]
     pub domain_id: String,
     /// User name
+    #[validate(length(max = 255))]
     pub name: String,
     /// If the user is enabled, this value is true. If the user is disabled,
     /// this value is false.
@@ -45,6 +49,7 @@ pub struct User {
     /// default project is not valid, a token is issued without an explicit
     /// scope of authorization.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[validate(length(max = 64))]
     pub default_project_id: Option<String>,
     #[serde(flatten, skip_serializing_if = "Option::is_none")]
     pub extra: Option<Value>,
@@ -57,20 +62,24 @@ pub struct User {
     /// multi_factor_auth_enabled, and multi_factor_auth_rules
     /// ignore_user_inactivity.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[validate(nested)]
     pub options: Option<UserOptions>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct UserResponse {
     /// User object
+    #[validate(nested)]
     pub user: User,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct UserCreate {
     /// User domain ID
+    #[validate(length(max = 64))]
     pub domain_id: String,
     /// The user name. Must be unique within the owning domain.
+    #[validate(length(max = 255))]
     pub name: String,
     /// If the user is enabled, this value is true. If the user is disabled,
     /// this value is false.
@@ -84,23 +93,27 @@ pub struct UserCreate {
     /// ignored at token creation. (Since v3.1) Additionally, if your
     /// default project is not valid, a token is issued without an explicit
     /// scope of authorization.
+    #[validate(length(max = 64))]
     pub default_project_id: Option<String>,
     /// The password for the user.
+    #[validate(length(max = 72))]
     pub password: Option<String>,
     /// The resource options for the user. Available resource options are
     /// ignore_change_password_upon_first_use, ignore_password_expiry,
     /// ignore_lockout_failure_attempts, lock_password,
     /// multi_factor_auth_enabled, and multi_factor_auth_rules
     /// ignore_user_inactivity.
+    #[validate(nested)]
     pub options: Option<UserOptions>,
     /// Additional user properties
     #[serde(flatten)]
     pub extra: Option<Value>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct UserUpdateRequest {
     /// The user name. Must be unique within the owning domain.
+    #[validate(length(max = 255))]
     pub name: Option<String>,
     /// If the user is enabled, this value is true. If the user is disabled,
     /// this value is false.
@@ -114,6 +127,7 @@ pub struct UserUpdateRequest {
     /// ignored at token creation. (Since v3.1) Additionally, if your
     /// default project is not valid, a token is issued without an explicit
     /// scope of authorization.
+    #[validate(length(max = 64))]
     pub default_project_id: Option<String>,
     /// The password for the user.
     pub password: Option<String>,
@@ -122,13 +136,14 @@ pub struct UserUpdateRequest {
     /// ignore_lockout_failure_attempts, lock_password,
     /// multi_factor_auth_enabled, and multi_factor_auth_rules
     /// ignore_user_inactivity.
+    #[validate(nested)]
     pub options: Option<UserOptions>,
     /// Additional user properties
     #[serde(flatten)]
     pub extra: Option<Value>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct UserOptions {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ignore_change_password_upon_first_use: Option<bool>,
@@ -174,9 +189,10 @@ impl From<UserOptions> for identity_types::UserOptions {
     }
 }
 
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct UserCreateRequest {
     /// User object
+    #[validate(nested)]
     pub user: UserCreate,
 }
 
@@ -244,10 +260,11 @@ impl IntoResponse for identity_types::UserResponse {
     }
 }
 
-/// Users
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema)]
+/// List of users.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct UserList {
     /// Collection of user objects
+    #[validate(nested)]
     pub users: Vec<User>,
 }
 
@@ -264,11 +281,13 @@ impl IntoResponse for UserList {
     }
 }
 
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, IntoParams)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, IntoParams, Validate)]
 pub struct UserListParameters {
     /// Filter users by Domain ID
+    #[validate(length(max = 64))]
     pub domain_id: Option<String>,
     /// Filter users by Name
+    #[validate(length(max = 255))]
     pub name: Option<String>,
 }
 

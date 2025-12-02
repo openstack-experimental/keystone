@@ -15,6 +15,7 @@
 
 use axum::{Json, debug_handler, extract::State, http::StatusCode, response::IntoResponse};
 use mockall_double::double;
+use validator::Validate;
 
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
@@ -53,6 +54,7 @@ pub(super) async fn create(
     State(state): State<ServiceState>,
     Json(req): Json<TokenRestrictionCreateRequest>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
+    req.validate()?;
     policy
         .enforce(
             "identity/token_restriction/create",
