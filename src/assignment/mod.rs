@@ -12,6 +12,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use async_trait::async_trait;
+use validator::Validate;
 
 pub mod backend;
 pub mod error;
@@ -23,7 +24,8 @@ use crate::assignment::backend::{AssignmentBackend, SqlBackend};
 use crate::assignment::error::AssignmentProviderError;
 use crate::assignment::types::{
     Assignment, Role, RoleAssignmentListForMultipleActorTargetParametersBuilder,
-    RoleAssignmentListParameters, RoleAssignmentTarget, RoleListParameters,
+    RoleAssignmentListParameters, RoleAssignmentTarget, RoleAssignmentTargetType,
+    RoleListParameters,
 };
 use crate::config::Config;
 use crate::identity::IdentityApi;
@@ -93,6 +95,7 @@ impl AssignmentApi for AssignmentProvider {
         state: &ServiceState,
         params: &RoleAssignmentListParameters,
     ) -> Result<impl IntoIterator<Item = Assignment>, AssignmentProviderError> {
+        params.validate()?;
         let mut request = RoleAssignmentListForMultipleActorTargetParametersBuilder::default();
         let mut actors: Vec<String> = Vec::new();
         let mut targets: Vec<RoleAssignmentTarget> = Vec::new();
@@ -114,7 +117,8 @@ impl AssignmentApi for AssignmentProvider {
         };
         if let Some(val) = &params.project_id {
             targets.push(RoleAssignmentTarget {
-                target_id: val.clone(),
+                id: val.clone(),
+                r#type: RoleAssignmentTargetType::Project,
                 inherited: Some(false),
             });
             if let Some(parents) = state
@@ -125,14 +129,16 @@ impl AssignmentApi for AssignmentProvider {
             {
                 parents.iter().for_each(|parent_project| {
                     targets.push(RoleAssignmentTarget {
-                        target_id: parent_project.id.clone(),
+                        id: parent_project.id.clone(),
+                        r#type: RoleAssignmentTargetType::Project,
                         inherited: Some(true),
                     });
                 });
             }
         } else if let Some(val) = &params.domain_id {
             targets.push(RoleAssignmentTarget {
-                target_id: val.clone(),
+                id: val.clone(),
+                r#type: RoleAssignmentTargetType::Domain,
                 inherited: Some(false),
             });
         }

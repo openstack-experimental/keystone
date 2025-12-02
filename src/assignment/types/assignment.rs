@@ -15,19 +15,24 @@
 use derive_builder::Builder;
 use serde::{Deserialize, Serialize};
 use std::fmt;
+use validator::Validate;
 
-/// Role
-#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize)]
+/// The assignment object.
+#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
 #[builder(setter(strip_option, into))]
 pub struct Assignment {
     /// The role ID.
+    #[validate(length(max = 64))]
     pub role_id: String,
-    /// The role ID.
+    /// The role name.
     #[builder(default)]
+    #[validate(length(max = 64))]
     pub role_name: Option<String>,
     /// The actor id.
+    #[validate(length(max = 64))]
     pub actor_id: String,
     /// The target id.
+    #[validate(length(max = 64))]
     pub target_id: String,
     /// The assignment type.
     pub r#type: AssignmentType,
@@ -35,14 +40,20 @@ pub struct Assignment {
     pub inherited: bool,
 }
 
-/// Role assignment type
+/// Role assignment type.
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 pub enum AssignmentType {
+    /// Group to the domain.
     GroupDomain,
+    /// Group to the project.
     GroupProject,
+    /// User to the domain.
     UserDomain,
+    /// User to the project.
     UserProject,
+    /// User to the system.
     UserSystem,
+    /// Group to the system.
     GroupSystem,
 }
 
@@ -60,28 +71,35 @@ impl fmt::Display for AssignmentType {
 }
 
 /// Parameters for listing role assignments for role/target/actor.
-#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
 #[builder(setter(strip_option, into))]
 pub struct RoleAssignmentListParameters {
     /// Query role assignments filtering results by the role
     #[builder(default)]
+    #[validate(length(max = 64))]
     pub role_id: Option<String>,
 
-    /// Get role assignments for the user
+    /// Get role assignments for the user.
     #[builder(default)]
+    #[validate(length(max = 64))]
     pub user_id: Option<String>,
-    /// Get role assignments for the group
+
+    /// Get role assignments for the group.
     #[builder(default)]
+    #[validate(length(max = 64))]
     pub group_id: Option<String>,
 
-    /// Query role assignments on the project
+    /// Query role assignments on the project.
     #[builder(default)]
+    #[validate(length(max = 64))]
     pub project_id: Option<String>,
-    /// Query role assignments on the domain
+    /// Query role assignments on the domain.
     #[builder(default)]
+    #[validate(length(max = 64))]
     pub domain_id: Option<String>,
-    /// Query role assignments on the system
+    /// Query role assignments on the system.
     #[builder(default)]
+    #[validate(length(max = 64))]
     pub system: Option<String>,
 
     // #[builder(default)]
@@ -101,26 +119,45 @@ pub struct RoleAssignmentListParameters {
 /// Querying effective role assignments for list of actors (typically user with
 /// all groups user is member of) on list of targets (exactl project + inherited
 /// from uppoer projects/domain).
-#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
 #[builder(setter(strip_option, into))]
 pub struct RoleAssignmentListForMultipleActorTargetParameters {
     /// List of actors for which assignments are looked up.
     #[builder(default)]
+    #[validate(length(max = 64))]
     pub actors: Vec<String>,
 
     /// Optionally filter for the concrete role ID.
     #[builder(default)]
+    #[validate(length(max = 64))]
     pub role_id: Option<String>,
 
     /// List of targets for which assignments are looked up.
     #[builder(default)]
+    #[validate(nested)]
     pub targets: Vec<RoleAssignmentTarget>,
 }
 
 /// Role assignment target which is either target_id or target_id with explicit
 /// inherited parameter.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
 pub struct RoleAssignmentTarget {
-    pub target_id: String,
+    /// The role assignment target ID.
+    #[validate(length(max = 64))]
+    pub id: String,
+    /// The role assignment target type.
+    pub r#type: RoleAssignmentTargetType,
+    /// Specifies whether the target is only considered for inherited assignments.
     pub inherited: Option<bool>,
+}
+
+/// Role assignment target as Project(id), Domain(id) or System(id).
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub enum RoleAssignmentTargetType {
+    /// Project ID.
+    Project,
+    /// Domain ID.
+    Domain,
+    /// System ID.
+    System,
 }
