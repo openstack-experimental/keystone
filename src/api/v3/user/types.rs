@@ -65,7 +65,10 @@ pub struct User {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[validate(nested)]
     pub options: Option<UserOptions>,
-    /// List of federated objects associated with a user. Each object in the list contains the idp_id and protocols. protocols is a list of objects, each of which contains protocol_id and unique_id of the protocol and user respectively.
+    /// List of federated objects associated with a user. Each object in the
+    /// list contains the idp_id and protocols. protocols is a list of objects,
+    /// each of which contains protocol_id and unique_id of the protocol and
+    /// user respectively.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[validate(nested)]
     pub federated: Option<Vec<Federation>>,

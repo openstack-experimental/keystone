@@ -11,7 +11,9 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-
+//! # Keystone configuration
+//!
+//! Parsing of the Keystone configuration file implementation.
 use chrono::{NaiveDate, TimeDelta, Utc};
 use config::{File, FileFormat};
 use eyre::{Report, WrapErr};
@@ -23,7 +25,6 @@ use std::path::PathBuf;
 use url::Url;
 
 /// Keystone configuration.
-///
 #[derive(Debug, Default, Deserialize, Clone)]
 pub struct Config {
     /// Global configuration options.
@@ -78,6 +79,7 @@ pub struct Config {
     pub token: TokenProvider,
 }
 
+/// Default configuration section.
 #[derive(Debug, Default, Deserialize, Clone)]
 pub struct DefaultSection {
     /// Debug logging.
@@ -330,8 +332,8 @@ pub struct SecurityComplianceProvider {
     /// number of failed authentication attempts (as specified by
     /// `[security_compliance] lockout_failure_attempts`) is exceeded. Setting
     /// this option will have no effect unless you also set
-    /// `[security_compliance] lockout_failure_attempts` to a non-zero value. This
-    /// feature depends on the sql backend for the `[identity]` driver.
+    /// `[security_compliance] lockout_failure_attempts` to a non-zero value.
+    /// This feature depends on the sql backend for the `[identity]` driver.
     #[serde(
         deserialize_with = "optional_timedelta_from_seconds",
         default = "AccountLockoutDuration::default"
@@ -393,8 +395,8 @@ pub struct SecurityComplianceProvider {
 
 // /// Deserializes an i64 and interprets it as total SECONDS for
 // /// chrono::TimeDelta.
-// fn timedelta_from_seconds<'de, D>(deserializer: D) -> Result<TimeDelta, D::Error>
-// where
+// fn timedelta_from_seconds<'de, D>(deserializer: D) -> Result<TimeDelta,
+// D::Error> where
 //     D: Deserializer<'de>,
 // {
 //     // Read the input number from JSON as an i64
@@ -402,11 +404,11 @@ pub struct SecurityComplianceProvider {
 //
 //     // Convert the number into a TimeDelta representing seconds
 //     TimeDelta::try_seconds(seconds)
-//         .ok_or_else(|| serde::de::Error::custom("TimeDelta overflow for seconds"))
-// }
+//         .ok_or_else(|| serde::de::Error::custom("TimeDelta overflow for
+// seconds")) }
 
-/// Deserializes an `Option<i64>` and interprets `Some(i64)` as total SECONDS for
-/// TimeDelta.
+/// Deserializes an `Option<i64>` and interprets `Some(i64)` as total SECONDS
+/// for TimeDelta.
 fn optional_timedelta_from_seconds<'de, D>(deserializer: D) -> Result<Option<TimeDelta>, D::Error>
 where
     D: Deserializer<'de>,
@@ -527,9 +529,10 @@ impl Config {
 
     /// Return oldest last_active_at date for the user to be considered active.
     ///
-    /// When [`disable_user_account_days_inactive`](field@SecurityComplianceProvider::disable_user_account_days_inactive)
-    /// is set return the corresponding oldest user activity date for it to be considered as
-    /// disabled. When the option is not set returns `None`.
+    /// When [`disable_user_account_days_inactive`](field@
+    /// SecurityComplianceProvider::disable_user_account_days_inactive)
+    /// is set return the corresponding oldest user activity date for it to be
+    /// considered as disabled. When the option is not set returns `None`.
     pub(crate) fn get_user_last_activity_cutof_date(&self) -> Option<NaiveDate> {
         self.security_compliance
             .disable_user_account_days_inactive

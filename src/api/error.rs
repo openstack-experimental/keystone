@@ -11,7 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-
+//! # Keystone API error.
 use axum::{
     Json,
     extract::rejection::JsonRejection,

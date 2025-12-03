@@ -12,6 +12,27 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+//! # Identity provider
+//!
+//! Following identity concepts are covered by the identity provider:
+//!
+//! ## Group
+//!
+//! An Identity service API v3 entity. Groups are a collection of users
+//! owned by a domain. A group role, granted to a domain or project, applies to
+//! all users in the group. Adding or removing users to or from a group grants
+//! or revokes their role and authentication to the associated domain or
+//! project. OpenStackClient
+//!
+//! ## User
+//!
+//! A digital representation of a person, system, or service that uses
+//! OpenStack cloud services. The Identity service validates that incoming
+//! requests are made by the user who claims to be making the call. Users have a
+//! login and can access resources by using assigned tokens. Users can be
+//! directly assigned to a particular project and behave as if they are
+//! contained in that project.
+
 use async_trait::async_trait;
 use std::collections::HashSet;
 use uuid::Uuid;

@@ -11,7 +11,15 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-
+//! # Plugin manager
+//!
+//! A driver, also known as a backend, is an important architectural component
+//! of Keystone. It is an abstraction around the data access needed by a
+//! particular subsystem. This pluggable implementation is not only how Keystone
+//! implements its own data access, but how you can implement your own!
+//!
+//! The [PluginManager] is responsible for picking the proper backend driver for
+//! the provider.
 use std::collections::HashMap;
 
 use crate::assignment::backend::AssignmentBackend;

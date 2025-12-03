@@ -29,12 +29,14 @@ use crate::identity::types::*;
 
 /// Authenticate a user by a password.
 ///
-/// Verify whether the passed password matches the one recorded in the database and that the user
-/// is allowed to login (i.e. not locked).
+/// Verify whether the passed password matches the one recorded in the database
+/// and that the user is allowed to login (i.e. not locked).
 ///
-/// - Reads local user database entry with passwords sorted by the creation date (desc).
+/// - Reads local user database entry with passwords sorted by the creation date
+///   (desc).
 /// - Reads user options if the user has been found.
-/// - Checks whether the user is locked due to the amount of failed attempts (PCI-DSS).
+/// - Checks whether the user is locked due to the amount of failed attempts
+///   (PCI-DSS).
 /// - Verifies the password matches the most recent created hash.
 /// - Verifies the password is not expired.
 /// - Reads main user database entry.

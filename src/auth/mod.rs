@@ -12,7 +12,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! Authorization and authentication information.
+//! # Authorization and authentication information.
 //!
 //! Authentication and authorization types with corresponding validation.
 //! Authentication specific validation may stay in the corresponding provider

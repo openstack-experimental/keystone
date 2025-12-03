@@ -11,7 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-//! Common API helpers
+//! # Common API helpers
 use crate::api::error::KeystoneApiError;
 use crate::api::types::ProjectScope;
 use crate::keystone::ServiceState;

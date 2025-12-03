@@ -11,7 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-
+//! # Database migrations
 pub use sea_orm_migration::prelude::*;
 
 mod m20250301_000001_passkey;

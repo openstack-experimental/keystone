@@ -11,7 +11,10 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-
+//! # Policy enforcement
+//!
+//! Policy enforcement in Keystone is delegated to the Open Policy Agent. It can
+//! be invoked either with the HTTP request or as a WASM module.
 #[cfg(test)]
 use mockall::mock;
 #[cfg(feature = "wasm")]
@@ -34,6 +37,7 @@ use tracing::{Level, debug, trace};
 
 use crate::token::Token;
 
+/// Policy related error.
 #[derive(Debug, Error)]
 pub enum PolicyError {
     #[error("{}", .0.violations.as_ref().map(

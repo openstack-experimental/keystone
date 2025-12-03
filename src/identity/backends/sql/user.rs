@@ -33,17 +33,21 @@ pub use list::list;
 pub use set::reset_last_active;
 
 impl UserResponseBuilder {
-    /// Merge the `user` table entry with corresponding user options into the [`UserResponseBuilder`].
+    /// Merge the `user` table entry with corresponding user options into the
+    /// [`UserResponseBuilder`].
     ///
-    /// Update the [`UserResponseBuilder`] with the details from the main `user` table row and the
-    /// corresponding user options.
+    /// Update the [`UserResponseBuilder`] with the details from the main `user`
+    /// table row and the corresponding user options.
     ///
-    /// Calculates the [`UserResponse.enabled`](field@UserResponse::enabled) property according to
-    /// the following logic:
-    ///  - When [`user.enabled`](field@db_user::Model::enabled) is `false` => `false`
-    ///  - When [`ignore_user_inactivity`](field@UserOptions::ignore_user_inactivity) is true => `true`
-    ///  - Otherwise when both set returns [`user.last_active_at`](field@db_user::Model::last_active_at)
-    ///    `> last_activity_cutof_date`. Returns `true` when one or both are unset.
+    /// Calculates the [`UserResponse.enabled`](field@UserResponse::enabled)
+    /// property according to the following logic:
+    ///  - When [`user.enabled`](field@db_user::Model::enabled) is `false` =>
+    ///    `false`
+    ///  - When [`ignore_user_inactivity`](field@
+    ///    UserOptions::ignore_user_inactivity) is true => `true`
+    ///  - Otherwise when both set returns
+    ///    [`user.last_active_at`](field@db_user::Model::last_active_at) `>
+    ///    last_activity_cutof_date`. Returns `true` when one or both are unset.
     ///  - Defaults to `false`
     pub(super) fn merge_user_data(
         &mut self,

@@ -147,7 +147,8 @@ pub struct RoleAssignmentTarget {
     pub id: String,
     /// The role assignment target type.
     pub r#type: RoleAssignmentTargetType,
-    /// Specifies whether the target is only considered for inherited assignments.
+    /// Specifies whether the target is only considered for inherited
+    /// assignments.
     pub inherited: Option<bool>,
 }
 

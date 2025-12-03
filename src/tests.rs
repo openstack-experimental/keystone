@@ -11,6 +11,6 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-
+//! # Test related functionality
 pub(crate) mod api;
 pub(crate) mod token;
