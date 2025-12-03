@@ -11,7 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-
+//! Keystone API types
 use axum::{
     Json,
     http::StatusCode,
@@ -26,8 +26,10 @@ use validator::{Validate, ValidationErrors};
 use crate::catalog::types::{Endpoint as ProviderEndpoint, Service};
 use crate::resource::types as resource_provider_types;
 
+/// List of the supported API versionts as [Values].
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct Versions {
+    /// List of the versions.
     #[validate(nested)]
     pub versions: Values,
 }
@@ -38,14 +40,17 @@ impl IntoResponse for Versions {
     }
 }
 
+/// A container with the [Version] list.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct Values {
     #[validate(nested)]
     pub values: Vec<Version>,
 }
 
+/// Single API version container.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct SingleVersion {
+    /// The version.
     #[validate(nested)]
     pub version: Version,
 }
@@ -56,34 +61,46 @@ impl IntoResponse for SingleVersion {
     }
 }
 
+/// Single API version.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct Version {
+    /// Version id.
     #[validate(length(max = 5))]
     pub id: String,
+    /// Version status.
     pub status: VersionStatus,
+    /// Date of the version update.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub updated: Option<DateTime<Utc>>,
+    /// Links to the API version.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[validate(nested)]
     pub links: Option<Vec<Link>>,
+    /// Supported media types.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[validate(nested)]
     pub media_types: Option<Vec<MediaType>>,
 }
 
+/// Version status.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema)]
 pub enum VersionStatus {
+    /// Stable.
     #[default]
     #[serde(rename = "stable")]
     Stable,
+    /// Experimental.
     #[serde(rename = "experimental")]
     Experimental,
 }
 
+/// Link object.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct Link {
+    /// Link rel attribute.
     #[validate(length(max = 10))]
     pub rel: String,
+    /// link href attribute.
     #[validate(url)]
     pub href: String,
 }

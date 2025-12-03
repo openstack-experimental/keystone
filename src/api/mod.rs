@@ -11,7 +11,10 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-//! Keystone API
+//! # Keystone API
+//!
+//! Keystone is following the API first principles. The user or other services
+//! interact with it using the API.
 use axum::{
     extract::State,
     http::{HeaderMap, header},
@@ -38,6 +41,7 @@ pub mod v4;
 
 use crate::api::types::*;
 
+/// OpenApi specification.
 #[derive(OpenApi)]
 #[openapi(
     info(version = "4.0.1"),
@@ -85,6 +89,7 @@ impl Modify for SecurityAddon {
     }
 }
 
+/// Main API router.
 pub fn openapi_router() -> OpenApiRouter<ServiceState> {
     OpenApiRouter::new()
         .nest("/v3", v3::openapi_router())
@@ -92,7 +97,7 @@ pub fn openapi_router() -> OpenApiRouter<ServiceState> {
         .routes(routes!(version))
 }
 
-/// Versions
+/// Version discovery endpoint.
 #[utoipa::path(
     get,
     path = "/",

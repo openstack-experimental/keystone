@@ -11,7 +11,13 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-//! Token provider.
+//! # Token provider.
+//!
+//! A Keystone token is an alpha-numeric text string that enables access to
+//! OpenStack APIs and resources. A token may be revoked at any time and is
+//! valid for a finite duration. OpenStack Identity is an integration service
+//! that does not aspire to be a full-fledged identity store and management
+//! solution.
 
 use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::URL_SAFE};

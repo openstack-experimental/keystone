@@ -10,7 +10,41 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-
+//! # Assignments provider
+//!
+//! Assignments provider implements RBAC concept of granting an actor set of
+//! roles on the target. An actor could be a user or a group of users, in which
+//! case such roles are granted implicitly to the all users which are the member
+//! of the group. The target is the domain, project or the system.
+//!
+//! Keystone implements few additional features for the role assignments:
+//!
+//! ## Role inference
+//!
+//! Roles in Keystone may imply other roles building an inference chain. For
+//! example a role `manager` can imply the `member` role, which in turn implies
+//! the `reader` role. As such with a single assignment of the `manager` role
+//! the user will automatically get `manager`, `member` and `reader` roles. This
+//! helps limiting number of necessary direct assignments.
+//!
+//! ## Target assignment inheritance
+//!
+//! Keystone adds `inherited` parameter to the assignment of the role on the
+//! target. In such case an assignment actor gets this role assignment
+//! (including role inference) on the whole subtree targets excluding the target
+//! itself. This way for an assignment on the domain level the actor
+//! will get the role on the every project of the domain, but not the domain
+//! itself.
+//!
+//! Following Keystone concepts are covered by the provider:
+//!
+//! ## Role
+//!
+//! A personality with a defined set of user rights and privileges to perform a
+//! specific set of operations. The Identity service issues a token to a user
+//! that includes a list of roles. When a user calls a service, that service
+//! interprets the user role set, and determines to which operations or
+//! resources each role grants access.
 use async_trait::async_trait;
 use validator::Validate;
 

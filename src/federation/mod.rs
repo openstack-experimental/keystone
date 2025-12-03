@@ -11,7 +11,10 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-
+//! # Federation provider
+//!
+//! Federation provider implements the functionality necessary for the user
+//! fedefation.
 use async_trait::async_trait;
 #[cfg(test)]
 use mockall::mock;

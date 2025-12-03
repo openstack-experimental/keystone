@@ -11,7 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-
+//! # API authentication handling
 use axum::{
     extract::{FromRef, FromRequestParts},
     http::request::Parts,
