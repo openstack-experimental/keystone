@@ -54,6 +54,9 @@ pub struct Mapping {
     /// Attribute mapping type ([oidc, jwt]).
     pub r#type: MappingType,
 
+    /// Mapping enabled property. Inactive mappings can not be used for login.
+    pub enabled: bool,
+
     /// List of allowed redirect urls (only for `oidc` type).
     #[builder(default)]
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -148,6 +151,9 @@ pub struct MappingCreate {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schema(nullable = false)]
     pub r#type: Option<MappingType>,
+
+    /// Mapping enabled property. Inactive mappings can not be used for login.
+    pub enabled: bool,
 
     /// List of allowed redirect urls (only for `oidc` type).
     #[builder(default)]
@@ -248,6 +254,12 @@ pub struct MappingUpdate {
     #[schema(nullable = false)]
     pub r#type: Option<MappingType>,
 
+    /// Mapping enabled property. Inactive mappings can not be used for login.
+    #[builder(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
+    pub enabled: Option<bool>,
+
     /// List of allowed redirect urls (only for `oidc` type).
     #[builder(default)]
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -338,6 +350,7 @@ impl From<types::Mapping> for Mapping {
             domain_id: value.domain_id,
             idp_id: value.idp_id,
             r#type: value.r#type.into(),
+            enabled: value.enabled,
             allowed_redirect_uris: value.allowed_redirect_uris,
             user_id_claim: value.user_id_claim,
             user_name_claim: value.user_name_claim,
@@ -361,6 +374,7 @@ impl From<MappingCreateRequest> for types::Mapping {
             domain_id: value.mapping.domain_id,
             idp_id: value.mapping.idp_id,
             r#type: value.mapping.r#type.unwrap_or_default().into(),
+            enabled: value.mapping.enabled,
             allowed_redirect_uris: value.mapping.allowed_redirect_uris,
             user_id_claim: value.mapping.user_id_claim,
             user_name_claim: value.mapping.user_name_claim,
@@ -382,6 +396,7 @@ impl From<MappingUpdateRequest> for types::MappingUpdate {
             name: value.mapping.name,
             idp_id: value.mapping.idp_id,
             r#type: value.mapping.r#type.map(Into::into),
+            enabled: value.mapping.enabled,
             allowed_redirect_uris: value.mapping.allowed_redirect_uris,
             user_id_claim: value.mapping.user_id_claim,
             user_name_claim: value.mapping.user_name_claim,

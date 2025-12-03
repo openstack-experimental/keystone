@@ -43,6 +43,14 @@ pub enum OidcError {
     #[error("groups claim must be an array of strings")]
     GroupsClaimNotArrayOfStrings,
 
+    /// IdP is disabled.
+    #[error("identity provider is disabled")]
+    IdentityProviderDisabled,
+
+    /// Mapping is disabled.
+    #[error("mapping is disabled")]
+    MappingDisabled,
+
     #[error("request token error")]
     RequestToken { msg: String },
 
@@ -152,6 +160,12 @@ impl From<OidcError> for KeystoneApiError {
             }
             e @ OidcError::ClientWithoutDiscoveryNotSupported => {
                 KeystoneApiError::InternalError(e.to_string())
+            }
+            OidcError::IdentityProviderDisabled => {
+                KeystoneApiError::BadRequest("Federated Identity Provider is disabled.".to_string())
+            }
+            OidcError::MappingDisabled => {
+                KeystoneApiError::BadRequest("Federated Identity Provider mapping is disabled.".to_string())
             }
             OidcError::MappingRequired => {
                 KeystoneApiError::BadRequest("Federated authentication requires mapping being specified in the payload or default set on the identity provider.".to_string())

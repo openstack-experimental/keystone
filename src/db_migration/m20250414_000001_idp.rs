@@ -35,6 +35,7 @@ impl MigrationTrait for Migration {
                     .col(string_len(FederatedIdentityProvider::Id, 64).primary_key())
                     .col(string_len(FederatedIdentityProvider::Name, 255))
                     .col(string_len_null(FederatedIdentityProvider::DomainId, 64))
+                    .col(boolean(FederatedIdentityProvider::Enabled))
                     .col(string_len_null(
                         FederatedIdentityProvider::OidcDiscoveryUrl,
                         255,
@@ -111,6 +112,7 @@ impl MigrationTrait for Migration {
                         FederatedMappingType::FederatedMappingType,
                         [FederatedMappingType::Oidc, FederatedMappingType::Jwt],
                     ))
+                    .col(boolean(FederatedMapping::Enabled))
                     .col(string_len_null(FederatedMapping::AllowedRedirectUris, 1024))
                     .col(string_len(FederatedMapping::UserIdClaim, 64))
                     .col(string_len(FederatedMapping::UserNameClaim, 64))
@@ -242,6 +244,7 @@ enum FederatedIdentityProvider {
     Id,
     DomainId,
     Name,
+    Enabled,
     OidcDiscoveryUrl,
     OidcClientId,
     OidcClientSecret,
@@ -262,6 +265,7 @@ enum FederatedMapping {
     Name,
     IdpId,
     Type,
+    Enabled,
     AllowedRedirectUris,
     UserIdClaim,
     UserNameClaim,

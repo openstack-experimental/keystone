@@ -121,6 +121,14 @@ pub async fn callback(
             })
         })??;
 
+    // Check for IdP and mapping `enabled` state
+    if !idp.enabled {
+        return Err(OidcError::IdentityProviderDisabled)?;
+    }
+    if !mapping.enabled {
+        return Err(OidcError::MappingDisabled)?;
+    }
+
     let token_restrictions = if let Some(tr_id) = &mapping.token_restriction_id {
         state
             .provider

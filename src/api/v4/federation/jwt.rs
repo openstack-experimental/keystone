@@ -162,6 +162,14 @@ pub async fn login(
         })?
         .to_owned();
 
+    // Check for IdP and mapping `enabled` state
+    if !idp.enabled {
+        return Err(OidcError::IdentityProviderDisabled)?;
+    }
+    if !mapping.enabled {
+        return Err(OidcError::MappingDisabled)?;
+    }
+
     tracing::debug!("Mapping is {:?}", mapping);
     let token_restriction = if let Some(tr_id) = &mapping.token_restriction_id {
         state

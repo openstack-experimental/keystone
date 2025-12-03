@@ -43,6 +43,10 @@ pub struct IdentityProvider {
     #[builder(default)]
     pub domain_id: Option<String>,
 
+    /// Identity provider enabled prperty. Inactive Identity Providers can not
+    /// be used for login.
+    pub enabled: bool,
+
     /// OIDC discovery endpoint for the identity provider.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[builder(default)]
@@ -120,6 +124,10 @@ pub struct IdentityProviderCreate {
     #[schema(nullable = false)]
     #[validate(length(max = 64))]
     pub domain_id: Option<String>,
+
+    /// Identity provider enabled property. Inactive Identity Providers can not
+    /// be used for login.
+    pub enabled: bool,
 
     /// OIDC discovery endpoint for the identity provider.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -203,6 +211,11 @@ pub struct IdentityProviderUpdate {
     #[validate(length(max = 255))]
     pub name: Option<String>,
 
+    /// Identity provider enabled property. Inactive Identity Providers can not
+    /// be used for login.
+    #[builder(default)]
+    pub enabled: Option<bool>,
+
     /// The new OIDC discovery endpoint for the identity provider.
     #[builder(default)]
     #[validate(url, length(max = 255))]
@@ -281,6 +294,7 @@ impl From<types::IdentityProvider> for IdentityProvider {
             id: value.id,
             name: value.name,
             domain_id: value.domain_id,
+            enabled: value.enabled,
             oidc_discovery_url: value.oidc_discovery_url,
             oidc_client_id: value.oidc_client_id,
             oidc_response_mode: value.oidc_response_mode,
@@ -300,6 +314,7 @@ impl From<IdentityProviderCreateRequest> for types::IdentityProvider {
             id: String::new(),
             name: value.identity_provider.name,
             domain_id: value.identity_provider.domain_id,
+            enabled: value.identity_provider.enabled,
             oidc_discovery_url: value.identity_provider.oidc_discovery_url,
             oidc_client_id: value.identity_provider.oidc_client_id,
             oidc_client_secret: value.identity_provider.oidc_client_secret,
@@ -318,6 +333,7 @@ impl From<IdentityProviderUpdateRequest> for types::IdentityProviderUpdate {
     fn from(value: IdentityProviderUpdateRequest) -> Self {
         Self {
             name: value.identity_provider.name,
+            enabled: value.identity_provider.enabled,
             oidc_discovery_url: value.identity_provider.oidc_discovery_url,
             oidc_client_id: value.identity_provider.oidc_client_id,
             oidc_client_secret: value.identity_provider.oidc_client_secret,

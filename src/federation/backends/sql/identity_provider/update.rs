@@ -38,6 +38,9 @@ pub async fn update<S: AsRef<str>>(
         if let Some(val) = idp.name {
             entry.name = Set(val.to_owned());
         }
+        if let Some(val) = idp.enabled {
+            entry.enabled = Set(val.to_owned());
+        }
         if let Some(val) = idp.oidc_discovery_url {
             entry.oidc_discovery_url = Set(val.to_owned());
         }
@@ -105,6 +108,7 @@ mod tests {
 
         let req = IdentityProviderUpdate {
             name: Some("idp".into()),
+            enabled: Some(true),
             oidc_discovery_url: Some(Some("url".into())),
             oidc_client_id: Some(Some("oidccid".into())),
             oidc_client_secret: Some(Some("oidccs".into())),
@@ -127,14 +131,15 @@ mod tests {
             [
                 Transaction::from_sql_and_values(
                     DatabaseBackend::Postgres,
-                    r#"SELECT "federated_identity_provider"."id", "federated_identity_provider"."name", "federated_identity_provider"."domain_id", "federated_identity_provider"."oidc_discovery_url", "federated_identity_provider"."oidc_client_id", "federated_identity_provider"."oidc_client_secret", "federated_identity_provider"."oidc_response_mode", "federated_identity_provider"."oidc_response_types", "federated_identity_provider"."jwks_url", "federated_identity_provider"."jwt_validation_pubkeys", "federated_identity_provider"."bound_issuer", "federated_identity_provider"."default_mapping_name", "federated_identity_provider"."provider_config" FROM "federated_identity_provider" WHERE "federated_identity_provider"."id" = $1 LIMIT $2"#,
+                    r#"SELECT "federated_identity_provider"."id", "federated_identity_provider"."name", "federated_identity_provider"."domain_id", "federated_identity_provider"."enabled", "federated_identity_provider"."oidc_discovery_url", "federated_identity_provider"."oidc_client_id", "federated_identity_provider"."oidc_client_secret", "federated_identity_provider"."oidc_response_mode", "federated_identity_provider"."oidc_response_types", "federated_identity_provider"."jwks_url", "federated_identity_provider"."jwt_validation_pubkeys", "federated_identity_provider"."bound_issuer", "federated_identity_provider"."default_mapping_name", "federated_identity_provider"."provider_config" FROM "federated_identity_provider" WHERE "federated_identity_provider"."id" = $1 LIMIT $2"#,
                     ["1".into(), 1u64.into()]
                 ),
                 Transaction::from_sql_and_values(
                     DatabaseBackend::Postgres,
-                    r#"UPDATE "federated_identity_provider" SET "name" = $1, "oidc_discovery_url" = $2, "oidc_client_id" = $3, "oidc_client_secret" = $4, "oidc_response_mode" = $5, "oidc_response_types" = $6, "jwks_url" = $7, "jwt_validation_pubkeys" = $8, "bound_issuer" = $9, "default_mapping_name" = $10, "provider_config" = $11 WHERE "federated_identity_provider"."id" = $12 RETURNING "id", "name", "domain_id", "oidc_discovery_url", "oidc_client_id", "oidc_client_secret", "oidc_response_mode", "oidc_response_types", "jwks_url", "jwt_validation_pubkeys", "bound_issuer", "default_mapping_name", "provider_config""#,
+                    r#"UPDATE "federated_identity_provider" SET "name" = $1, "enabled" = $2, "oidc_discovery_url" = $3, "oidc_client_id" = $4, "oidc_client_secret" = $5, "oidc_response_mode" = $6, "oidc_response_types" = $7, "jwks_url" = $8, "jwt_validation_pubkeys" = $9, "bound_issuer" = $10, "default_mapping_name" = $11, "provider_config" = $12 WHERE "federated_identity_provider"."id" = $13 RETURNING "id", "name", "domain_id", "enabled", "oidc_discovery_url", "oidc_client_id", "oidc_client_secret", "oidc_response_mode", "oidc_response_types", "jwks_url", "jwt_validation_pubkeys", "bound_issuer", "default_mapping_name", "provider_config""#,
                     [
                         "idp".into(),
+                        true.into(),
                         "url".into(),
                         "oidccid".into(),
                         "oidccs".into(),

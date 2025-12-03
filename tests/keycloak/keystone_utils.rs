@@ -85,6 +85,7 @@ pub async fn setup_kecloak_idp<T: AsRef<str>, K: AsRef<str>, S: AsRef<str>>(
             "identity_provider": {
                 "id": "kc",
                 "name": "keycloak",
+                "enabled": true,
                 "oidc_discovery_url": format!("{}/realms/master", keycloak_url),
                 "oidc_client_id": client_id.as_ref(),
                 "oidc_client_secret": client_secret.as_ref(),
@@ -105,6 +106,7 @@ pub async fn setup_kecloak_idp<T: AsRef<str>, K: AsRef<str>, S: AsRef<str>>(
             "mapping": {
                 "id": "kc",
                 "name": "keycloak",
+                "enabled": true,
                 "idp_id": idp.identity_provider.id.clone(),
                 "allowed_redirect_uris": ["http://localhost:8080/v4/identity_providers/kc/callback"],
                 "user_id_claim": "sub",
@@ -134,6 +136,7 @@ pub async fn setup_kecloak_idp_jwt<T: AsRef<str>, K: AsRef<str>, S: AsRef<str>>(
             "identity_provider": {
                 "id": "kc_jwt",
                 "name": "keycloak_jwt",
+                "enabled": true,
                 "oidc_discovery_url": format!("{}/realms/master", keycloak_url),
                 "jwks_url": format!("{}/realms/master/protocol/openid-connect/certs", keycloak_url),
                 "bound_issuer": format!("{}/realms/master", keycloak_url)
@@ -156,6 +159,7 @@ pub async fn setup_kecloak_idp_jwt<T: AsRef<str>, K: AsRef<str>, S: AsRef<str>>(
                 "name": "keycloak_jwt",
                 "idp_id": idp.identity_provider.id.clone(),
                 "type": "jwt",
+                "enabled": true,
                 "user_id_claim": "sub",
                 "user_name_claim": "preferred_username",
                 "domain_id_claim": "domain_id"

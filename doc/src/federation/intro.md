@@ -59,19 +59,19 @@ Following tables are added:
 - federated_identity_provider
 
 ```rust
-{{#rustdoc_include ../../src/db/entity/federated_identity_provider.rs:9:22}}
+{{#rustdoc_include ../../../src/db/entity/federated_identity_provider.rs:15:30}}
 ```
 
 - federated_mapping
 
 ```rust
-{{#include ../../src/db/entity/federated_mapping.rs:10:26}}
+{{#include ../../../src/db/entity/federated_mapping.rs:15:32}}
 ```
 
 - federated_auth_state
 
 ```rust
-{{#include ../../src/db/entity/federated_auth_state.rs:8:16}}
+{{#include ../../../src/db/entity/federated_auth_state.rs:8:16}}
 ```
 
 ## Compatibility notes

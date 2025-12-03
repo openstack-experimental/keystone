@@ -63,6 +63,7 @@ impl TryFrom<db_federated_mapping::Model> for Mapping {
             db_mapping_type::Oidc => MappingType::Oidc,
             db_mapping_type::Jwt => MappingType::Jwt,
         });
+        builder.enabled(value.enabled);
         if let Some(val) = &value.allowed_redirect_uris
             && !val.is_empty()
         {
@@ -116,6 +117,7 @@ mod tests {
             domain_id: Some("did".into()),
             idp_id: "idp".into(),
             r#type: MappingType::default().into(),
+            enabled: true,
             allowed_redirect_uris: None,
             user_id_claim: "sub".into(),
             user_name_claim: "preferred_username".into(),

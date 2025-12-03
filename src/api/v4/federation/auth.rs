@@ -137,6 +137,14 @@ pub async fn post(
         return Err(OidcError::MappingRequired)?;
     };
 
+    // Check for IdP and mapping `enabled` state
+    if !idp.enabled {
+        return Err(OidcError::IdentityProviderDisabled)?;
+    }
+    if !mapping.enabled {
+        return Err(OidcError::MappingDisabled)?;
+    }
+
     let client = if let Some(discovery_url) = &idp.oidc_discovery_url {
         let http_client = reqwest::ClientBuilder::new()
             // Following redirects opens the client up to SSRF vulnerabilities.

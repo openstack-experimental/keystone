@@ -34,6 +34,7 @@ pub async fn create(
         id: Set(idp.id.clone()),
         domain_id: Set(idp.domain_id.clone()),
         name: Set(idp.name.clone()),
+        enabled: Set(idp.enabled),
         oidc_discovery_url: idp
             .oidc_discovery_url
             .clone()
@@ -167,6 +168,7 @@ mod tests {
             id: "1".into(),
             name: "idp".into(),
             domain_id: Some("foo_domain".into()),
+            enabled: true,
             oidc_discovery_url: Some("url".into()),
             oidc_client_id: Some("oidccid".into()),
             oidc_client_secret: Some("oidccs".into()),
@@ -189,11 +191,12 @@ mod tests {
             [
                 Transaction::from_sql_and_values(
                     DatabaseBackend::Postgres,
-                    r#"INSERT INTO "federated_identity_provider" ("id", "name", "domain_id", "oidc_discovery_url", "oidc_client_id", "oidc_client_secret", "oidc_response_mode", "oidc_response_types", "jwks_url", "jwt_validation_pubkeys", "bound_issuer", "default_mapping_name", "provider_config") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING "id", "name", "domain_id", "oidc_discovery_url", "oidc_client_id", "oidc_client_secret", "oidc_response_mode", "oidc_response_types", "jwks_url", "jwt_validation_pubkeys", "bound_issuer", "default_mapping_name", "provider_config""#,
+                    r#"INSERT INTO "federated_identity_provider" ("id", "name", "domain_id", "enabled", "oidc_discovery_url", "oidc_client_id", "oidc_client_secret", "oidc_response_mode", "oidc_response_types", "jwks_url", "jwt_validation_pubkeys", "bound_issuer", "default_mapping_name", "provider_config") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING "id", "name", "domain_id", "enabled", "oidc_discovery_url", "oidc_client_id", "oidc_client_secret", "oidc_response_mode", "oidc_response_types", "jwks_url", "jwt_validation_pubkeys", "bound_issuer", "default_mapping_name", "provider_config""#,
                     [
                         "1".into(),
                         "idp".into(),
                         "foo_domain".into(),
+                        true.into(),
                         "url".into(),
                         "oidccid".into(),
                         "oidccs".into(),
