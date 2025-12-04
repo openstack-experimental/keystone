@@ -127,6 +127,11 @@ path = "tests/github/main.rs"
 test = false
 
 [[test]]
+name = "dex"
+path = "tests/dex/main.rs"
+test = false
+
+[[test]]
 name = "integration"
 path = "tests/integration/main.rs"
 test = false

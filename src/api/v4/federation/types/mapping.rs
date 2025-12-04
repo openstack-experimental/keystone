@@ -153,6 +153,7 @@ pub struct MappingCreate {
     pub r#type: Option<MappingType>,
 
     /// Mapping enabled property. Inactive mappings can not be used for login.
+    #[serde(default = "crate::api::types::default_true")]
     pub enabled: bool,
 
     /// List of allowed redirect urls (only for `oidc` type).

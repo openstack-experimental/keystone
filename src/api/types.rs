@@ -310,3 +310,8 @@ impl From<&resource_provider_types::Domain> for Domain {
         }
     }
 }
+
+/// Default `true` for the Deserialize trait.
+pub(crate) fn default_true() -> bool {
+    true
+}

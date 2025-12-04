@@ -35,6 +35,7 @@
   - [JWT](federation/jwt.md)
   - [Keycloak](federation/keycloak.md)
   - [Okta](federation/okta.md)
+  - [Dex](federation/dex.md)
 - [Passkeys](passkey.md)
 
 ---

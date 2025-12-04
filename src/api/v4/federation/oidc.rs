@@ -151,7 +151,7 @@ pub async fn callback(
             &http_client,
         )
         .await
-        .map_err(|err| OidcError::discovery(&err))?;
+        .map_err(|err| OidcError::discovery(discovery_url, &err))?;
         OidcClient::from_provider_metadata(
             provider_metadata,
             ClientId::new(

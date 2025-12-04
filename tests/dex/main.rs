@@ -13,7 +13,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use reqwest::Client;
-use reqwest::header::AUTHORIZATION;
 use serde_json::json;
 use std::env;
 use std::sync::{Arc, Mutex};
@@ -21,37 +20,24 @@ use thirtyfour::prelude::*;
 use tokio::signal;
 use tokio_util::sync::CancellationToken;
 
-mod keycloak_utils;
 mod keystone_utils;
 
-use keycloak_utils::*;
 use keystone_utils::*;
 
 use openstack_keystone::api::v4::auth::token::types::TokenResponse;
 use openstack_keystone::api::v4::federation::types::*;
 
 #[tokio::test]
-async fn test_login_oidc_keycloak() {
+async fn test_login_oidc() {
     let keystone_url = env::var("KEYSTONE_URL").expect("KEYSTONE_URL is set");
     let client = Client::new();
-    let user_name = "test";
-    let user_password = "pass";
+    let user_name = "admin@example.com";
+    let user_password = "password";
     let client_id = "keystone_test";
     let client_secret = "keystone_test_secret";
 
-    let keycloak = get_keycloak_admin(&client).await.unwrap();
-
-    create_keycloak_client(&keycloak, client_id, client_secret)
-        .await
-        .unwrap();
-    create_keycloak_user(&keycloak, user_name, user_password)
-        .await
-        .unwrap();
-
     let token = auth().await;
-    let (idp, mapping) = setup_keycloak_idp(&token, client_id, client_secret)
-        .await
-        .unwrap();
+    let (idp, mapping) = setup_idp(&token, client_id, client_secret).await.unwrap();
 
     let auth_req: IdentityProviderAuthResponse = client
         .post(format!(
@@ -102,20 +88,26 @@ async fn test_login_oidc_keycloak() {
     .await
     .unwrap();
 
-    //let delay = Duration::new(5, 0);
-    //driver.set_implicit_wait_timeout(delay).await.unwrap();
-
     println!("Going to {:?}", auth_req.auth_url.clone());
     driver.goto(auth_req.auth_url).await.unwrap();
 
     println!("Page source is {:?}", driver.source().await.unwrap());
 
-    let username_input = driver.query(By::Id("username")).first().await.unwrap();
+    let username_input = driver.query(By::Id("login")).first().await.unwrap();
     username_input.send_keys(user_name).await.unwrap();
     let password_input = driver.query(By::Id("password")).first().await.unwrap();
     password_input.send_keys(user_password).await.unwrap();
-    let login = driver.find(By::Id("kc-login")).await.unwrap();
+    let login = driver.find(By::Id("submit-login")).await.unwrap();
     login.click().await.unwrap();
+
+    // Accept access request
+    let accept = driver
+        .find(By::ClassName("theme-btn--success"))
+        .await
+        .unwrap();
+    accept.click().await.unwrap();
+
+    println!("Page source is {:?}", driver.source().await.unwrap());
 
     driver.quit().await.unwrap();
 
@@ -138,47 +130,4 @@ async fn test_login_oidc_keycloak() {
         .unwrap();
 
     // TODO: Add checks for the response
-}
-
-#[tokio::test]
-async fn test_login_jwt_keycloak() {
-    let keystone_url = env::var("KEYSTONE_URL").expect("KEYSTONE_URL is set");
-    let client = Client::new();
-    let user_name = "test";
-    let user_password = "pass";
-    let client_id = "keystone_test";
-    let client_secret = "keystone_test_secret";
-
-    let keycloak = get_keycloak_admin(&client).await.unwrap();
-
-    create_keycloak_client(&keycloak, client_id, client_secret)
-        .await
-        .unwrap();
-    create_keycloak_user(&keycloak, user_name, user_password)
-        .await
-        .unwrap();
-    let jwt = generate_user_jwt(client_id, client_secret, user_name, user_password)
-        .await
-        .unwrap();
-    println!("jwt is {:?}", jwt);
-
-    let token = auth().await;
-    let user = ensure_user(&token, "jwt_user", "default").await.unwrap();
-    let (idp, mapping) = setup_kecloak_idp_jwt(&token, client_id, client_secret)
-        .await
-        .unwrap();
-
-    let _auth_rsp: TokenResponse = client
-        .post(format!(
-            "{}/v4/federation/identity_providers/{}/jwt",
-            keystone_url, idp.identity_provider.id
-        ))
-        .header(AUTHORIZATION, format!("bearer {jwt}"))
-        .header("openstack-mapping", mapping.mapping.name)
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
 }

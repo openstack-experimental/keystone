@@ -20,8 +20,14 @@ use crate::api::v4::federation::types::*;
 
 #[derive(Error, Debug)]
 pub enum OidcError {
-    #[error("discovery error: {msg}")]
-    Discovery { msg: String },
+    /// OIDC Discovery error.
+    #[error("discovery error for {url}: {msg}")]
+    Discovery {
+        /// IdP URL.
+        url: String,
+        /// Error message.
+        msg: String,
+    },
 
     #[error("client without discovery is not supported")]
     ClientWithoutDiscoveryNotSupported,
@@ -136,8 +142,9 @@ pub enum OidcError {
 }
 
 impl OidcError {
-    pub fn discovery<T: std::error::Error>(fail: &T) -> Self {
+    pub fn discovery<U: AsRef<str>, T: std::error::Error>(url: U, fail: &T) -> Self {
         Self::Discovery {
+            url: url.as_ref().to_string(),
             msg: fail.to_string(),
         }
     }
