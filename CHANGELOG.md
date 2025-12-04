@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.2](https://github.com/openstack-experimental/keystone/compare/v0.1.1...v0.1.2) - 2025-12-04
+
+### Added
+
+- Add `enabled` to federation resources ([#423](https://github.com/openstack-experimental/keystone/pull/423))
+
+### Other
+
+- Add federation functest with DexIDP ([#424](https://github.com/openstack-experimental/keystone/pull/424))
+- Expand code documentation ([#422](https://github.com/openstack-experimental/keystone/pull/422))
+- Remove unnecessary content from rust package ([#418](https://github.com/openstack-experimental/keystone/pull/418))
+
 ## [0.1.1](https://github.com/openstack-experimental/keystone/compare/v0.1.0...v0.1.1) - 2025-12-02
 
 ### Added
