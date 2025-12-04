@@ -12,16 +12,12 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use super::user;
-use crate::db::entity::{nonlocal_user as db_nonlocal_user, user as db_user};
-use crate::identity::types::*;
+use crate::db::entity::nonlocal_user as db_nonlocal_user;
+use crate::identity::types::UserResponseBuilder;
 
-pub fn get_nonlocal_user_builder(
-    user: &db_user::Model,
-    data: db_nonlocal_user::Model,
-    opts: UserOptions,
-) -> UserResponseBuilder {
-    let mut user_builder: UserResponseBuilder = user::get_user_builder(user, opts);
-    user_builder.name(data.name.clone());
-    user_builder
+impl UserResponseBuilder {
+    pub fn merge_nonlocal_user_data(&mut self, data: &db_nonlocal_user::Model) -> &mut Self {
+        self.name(data.name.clone());
+        self
+    }
 }

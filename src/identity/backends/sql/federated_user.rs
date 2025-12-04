@@ -12,8 +12,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use super::user;
-use crate::db::entity::{federated_user as db_federated_user, user as db_user};
+use crate::db::entity::federated_user as db_federated_user;
 use crate::identity::types::*;
 
 mod create;
@@ -22,30 +21,30 @@ mod find;
 pub use create::create;
 pub use find::find_by_idp_and_unique_id;
 
-pub fn get_federated_user_builder<F: IntoIterator<Item = db_federated_user::Model>>(
-    user: &db_user::Model,
-    data: F,
-    opts: UserOptions,
-) -> UserResponseBuilder {
-    let mut user_builder: UserResponseBuilder = user::get_user_builder(user, opts);
-    let mut feds: Vec<Federation> = Vec::new();
-    if let Some(first) = data.into_iter().next() {
-        if let Some(name) = first.display_name {
-            user_builder.name(name.clone());
-        }
+impl UserResponseBuilder {
+    pub fn merge_federated_user_data<I>(&mut self, data: I) -> &mut Self
+    where
+        I: IntoIterator<Item = db_federated_user::Model>,
+    {
+        let mut feds: Vec<Federation> = Vec::new();
+        if let Some(first) = data.into_iter().next() {
+            if let Some(name) = first.display_name {
+                self.name(name.clone());
+            }
 
-        let mut fed = FederationBuilder::default();
-        fed.idp_id(first.idp_id.clone());
-        fed.unique_id(first.unique_id.clone());
-        let protocol = FederationProtocol {
-            protocol_id: first.protocol_id.clone(),
-            unique_id: first.unique_id.clone(),
-        };
-        fed.protocols(vec![protocol]);
-        if let Ok(fed_obj) = fed.build() {
-            feds.push(fed_obj);
+            let mut fed = FederationBuilder::default();
+            fed.idp_id(first.idp_id.clone());
+            fed.unique_id(first.unique_id.clone());
+            let protocol = FederationProtocol {
+                protocol_id: first.protocol_id.clone(),
+                unique_id: first.unique_id.clone(),
+            };
+            fed.protocols(vec![protocol]);
+            if let Ok(fed_obj) = fed.build() {
+                feds.push(fed_obj);
+            }
         }
+        self.federated(feds);
+        self
     }
-    user_builder.federated(feds);
-    user_builder
 }

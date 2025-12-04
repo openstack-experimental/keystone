@@ -11,14 +11,14 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-//! Token revocation provider.
+//! # Token revocation provider.
 //!
 //! Token revocation may be implemented in different ways, but in most cases
 //! would be represented by the presence of the revocation or the invalidation
 //! record matching the certain token parameters.
 //!
-//! Default backend is the [crate::revoke::backend::sql] and uses the database
-//! table [crate::db::entity::revocation_event::Model] for storing the
+//! Default backend is the [`sql`](crate::revoke::backend::sql) and uses the
+//! database [table](crate::db::entity::revocation_event::Model) for storing the
 //! revocation events. They have their own expiration.
 //!
 //! Tokens are not invalidated by saving the exact value, but rather by saving

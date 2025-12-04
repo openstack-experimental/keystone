@@ -11,7 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-//! Authentication implementation.
+//! User account authentication implementation.
 use chrono::Utc;
 use sea_orm::DatabaseConnection;
 use tracing::info;
@@ -29,12 +29,14 @@ use crate::identity::types::*;
 
 /// Authenticate a user by a password.
 ///
-/// Verify whether the passed password matches the one recorded in the database and that the user
-/// is allowed to login (i.e. not locked).
+/// Verify whether the passed password matches the one recorded in the database
+/// and that the user is allowed to login (i.e. not locked).
 ///
-/// - Reads local user database entry with passwords sorted by the creation date (desc).
+/// - Reads local user database entry with passwords sorted by the creation date
+///   (desc).
 /// - Reads user options if the user has been found.
-/// - Checks whether the user is locked due to the amount of failed attempts (PCI-DSS).
+/// - Checks whether the user is locked due to the amount of failed attempts
+///   (PCI-DSS).
 /// - Verifies the password matches the most recent created hash.
 /// - Verifies the password is not expired.
 /// - Reads main user database entry.
@@ -62,7 +64,7 @@ pub async fn authenticate_by_password(
     if !user_opts
         .ignore_lockout_failure_attempts
         .is_some_and(|val| val)
-        && is_account_locked(config, db, &local_user).await?
+        && should_lock(config, db, &local_user).await?
     {
         return Err(AuthenticationError::UserLocked(local_user.user_id.clone()))?;
     }
@@ -95,15 +97,26 @@ pub async fn authenticate_by_password(
         }
     }
 
-    let user = user::get_main_entry(db, &local_user.user_id).await?.ok_or(
+    let user_entry = user::get_main_entry(db, &local_user.user_id).await?.ok_or(
         IdentityDatabaseError::NoMainUserEntry(local_user.user_id.clone()),
     )?;
-    let user =
-        local_user::get_local_user_builder(config, &user, local_user, Some(passwords), user_opts)
-            .build()?;
+
+    // Reset the last_active_at for the user that successfully authenticated.
+    user::reset_last_active(db, &user_entry).await?;
+
+    let user_entry = UserResponseBuilder::default()
+        .merge_user_data(
+            &user_entry,
+            &user_opts,
+            config.get_user_last_activity_cutof_date().as_ref(),
+        )
+        .merge_local_user_data(&local_user)
+        .merge_passwords_data(passwords)
+        .build()?;
+
     Ok(AuthenticatedInfo::builder()
-        .user_id(user.id.clone())
-        .user(user)
+        .user_id(user_entry.id.clone())
+        .user(user_entry)
         .methods(vec!["password".into()])
         .build()
         .map_err(AuthenticationError::from)?)
@@ -116,7 +129,7 @@ pub async fn authenticate_by_password(
 /// attempts as described by
 /// [ADR-10](https://openstack-experimental.github.io/keystone/adr/0010-pci-dss-failed-auth-protection.html)
 #[tracing::instrument(level = "debug", skip(config, db))]
-async fn is_account_locked(
+async fn should_lock(
     config: &Config,
     db: &DatabaseConnection,
     local_user: &db_local_user::Model,
@@ -164,11 +177,11 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn test_is_account_locked_default_config() {
+    async fn test_should_lock_default_config() {
         let db = MockDatabase::new(DatabaseBackend::Postgres).into_connection();
         let config = Config::default();
         assert!(
-            !is_account_locked(&config, &db, &db_local_user::Model::default(),)
+            !should_lock(&config, &db, &db_local_user::Model::default(),)
                 .await
                 .unwrap(),
             "Default config does not request any validation and user is not considered locked"
@@ -176,12 +189,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_is_account_locked_no_failed_auth_count() {
+    async fn test_should_lock_no_failed_auth_count() {
         let db = MockDatabase::new(DatabaseBackend::Postgres).into_connection();
         let mut config = Config::default();
         config.security_compliance.lockout_failure_attempts = Some(5);
         assert!(
-            !is_account_locked(
+            !should_lock(
                 &config,
                 &db,
                 &db_local_user::Model {
@@ -195,7 +208,7 @@ mod tests {
             "User with unset failed_auth props is not considered locked"
         );
         assert!(
-            !is_account_locked(
+            !should_lock(
                 &config,
                 &db,
                 &db_local_user::Model {
@@ -211,14 +224,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_is_account_locked_no_failed_auth_at() {
+    async fn test_should_lock_no_failed_auth_at() {
         let db = MockDatabase::new(DatabaseBackend::Postgres)
             .append_query_results([vec![db_local_user::Model::default()]])
             .into_connection();
         let mut config = Config::default();
         config.security_compliance.lockout_failure_attempts = Some(5);
         assert!(
-            !is_account_locked(
+            !should_lock(
                 &config,
                 &db,
                 &db_local_user::Model {
@@ -248,7 +261,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_is_account_locked_expired() {
+    async fn test_should_lock_expired() {
         let db = MockDatabase::new(DatabaseBackend::Postgres)
             .append_query_results([vec![db_local_user::Model::default()]])
             .into_connection();
@@ -256,7 +269,7 @@ mod tests {
         config.security_compliance.lockout_failure_attempts = Some(5);
         config.security_compliance.lockout_duration = Some(TimeDelta::seconds(100));
         assert!(
-            !is_account_locked(
+            !should_lock(
                 &config,
                 &db,
                 &db_local_user::Model {
@@ -291,12 +304,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_is_account_locked_lock() {
+    async fn test_should_lock_lock() {
         let db = MockDatabase::new(DatabaseBackend::Postgres).into_connection();
         let mut config = Config::default();
         config.security_compliance.lockout_failure_attempts = Some(5);
         assert!(
-            is_account_locked(
+            should_lock(
                 &config,
                 &db,
                 &db_local_user::Model {
@@ -309,7 +322,7 @@ mod tests {
             "User with failed_auth_count > lockout_failure_attempts is locked for lockout_duration",
         );
         assert!(
-            is_account_locked(
+            should_lock(
                 &config,
                 &db,
                 &db_local_user::Model {
@@ -322,7 +335,7 @@ mod tests {
             "User with failed_auth_count = lockout_failure_attempts is locked for lockout_duration",
         );
         assert!(
-            !is_account_locked(
+            !should_lock(
                 &config,
                 &db,
                 &db_local_user::Model {
@@ -361,7 +374,8 @@ mod tests {
             .append_query_results([user_option::tests::get_user_options_mock(
                 &UserOptions::default(),
             )])
-            .append_query_results([vec![user::tests::get_user_mock("1")]])
+            .append_query_results([vec![user::tests::get_user_mock("user_id")]])
+            .append_query_results([vec![user::tests::get_user_mock("user_id")]])
             .into_connection();
         assert!(
             authenticate_by_password(
@@ -376,6 +390,33 @@ mod tests {
             .await
             .is_ok(),
             "unlocked user with correct password should be allowed to login"
+        );
+
+        // Checking transaction log
+        assert_eq!(
+            db.into_transaction_log(),
+            [
+                Transaction::from_sql_and_values(
+                    DatabaseBackend::Postgres,
+                    r#"SELECT "local_user"."id" AS "A_id", "local_user"."user_id" AS "A_user_id", "local_user"."domain_id" AS "A_domain_id", "local_user"."name" AS "A_name", "local_user"."failed_auth_count" AS "A_failed_auth_count", "local_user"."failed_auth_at" AS "A_failed_auth_at", "password"."id" AS "B_id", "password"."local_user_id" AS "B_local_user_id", "password"."self_service" AS "B_self_service", "password"."created_at" AS "B_created_at", "password"."expires_at" AS "B_expires_at", "password"."password_hash" AS "B_password_hash", "password"."created_at_int" AS "B_created_at_int", "password"."expires_at_int" AS "B_expires_at_int" FROM "local_user" LEFT JOIN "password" ON "local_user"."id" = "password"."local_user_id" WHERE "local_user"."user_id" = $1 ORDER BY "local_user"."id" ASC, "password"."created_at_int" DESC"#,
+                    ["user_id".into()]
+                ),
+                Transaction::from_sql_and_values(
+                    DatabaseBackend::Postgres,
+                    r#"SELECT "user_option"."user_id", "user_option"."option_id", "user_option"."option_value" FROM "user_option" WHERE "user_option"."user_id" = $1"#,
+                    ["user_id".into()]
+                ),
+                Transaction::from_sql_and_values(
+                    DatabaseBackend::Postgres,
+                    r#"SELECT "user"."id", "user"."extra", "user"."enabled", "user"."default_project_id", "user"."created_at", "user"."last_active_at", "user"."domain_id" FROM "user" WHERE "user"."id" = $1 LIMIT $2"#,
+                    ["user_id".into(), 1u64.into()]
+                ),
+                Transaction::from_sql_and_values(
+                    DatabaseBackend::Postgres,
+                    r#"UPDATE "user" SET "last_active_at" = $1 WHERE "user"."id" = $2 RETURNING "id", "extra", "enabled", "default_project_id", "created_at", "last_active_at", "domain_id""#,
+                    [Utc::now().date_naive().into(), "user_id".into()]
+                ),
+            ]
         );
     }
 
@@ -453,7 +494,8 @@ mod tests {
                 ignore_lockout_failure_attempts: Some(true),
                 ..Default::default()
             })])
-            .append_query_results([vec![user::tests::get_user_mock("1")]])
+            .append_query_results([vec![user::tests::get_user_mock("user_id")]])
+            .append_query_results([vec![user::tests::get_user_mock("user_id")]])
             .into_connection();
         assert!(
             authenticate_by_password(
@@ -573,7 +615,8 @@ mod tests {
                 ignore_password_expiry: Some(true),
                 ..Default::default()
             })])
-            .append_query_results([vec![user::tests::get_user_mock("1")]])
+            .append_query_results([vec![user::tests::get_user_mock("user_id")]])
+            .append_query_results([vec![user::tests::get_user_mock("user_id")]])
             .into_connection();
         assert!(
             authenticate_by_password(

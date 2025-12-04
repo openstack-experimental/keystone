@@ -43,6 +43,9 @@ pub async fn update<S: AsRef<str>>(
         if let Some(val) = mapping.r#type {
             entry.r#type = Set(val.into());
         }
+        if let Some(val) = mapping.enabled {
+            entry.enabled = Set(val);
+        }
         if let Some(val) = mapping.allowed_redirect_uris {
             entry.allowed_redirect_uris = Set(val.clone().map(|x| x.join(",")));
         }
@@ -114,6 +117,7 @@ mod tests {
             name: Some("name".into()),
             idp_id: Some("idp".into()),
             r#type: MappingType::default().into(),
+            enabled: Some(true),
             allowed_redirect_uris: Some(Some(vec!["url".into()])),
             user_id_claim: Some("sub".into()),
             user_name_claim: Some("preferred_username".into()),
@@ -137,16 +141,17 @@ mod tests {
             [
                 Transaction::from_sql_and_values(
                     DatabaseBackend::Postgres,
-                    r#"SELECT "federated_mapping"."id", "federated_mapping"."name", "federated_mapping"."idp_id", "federated_mapping"."domain_id", CAST("federated_mapping"."type" AS "text"), "federated_mapping"."allowed_redirect_uris", "federated_mapping"."user_id_claim", "federated_mapping"."user_name_claim", "federated_mapping"."domain_id_claim", "federated_mapping"."groups_claim", "federated_mapping"."bound_audiences", "federated_mapping"."bound_subject", "federated_mapping"."bound_claims", "federated_mapping"."oidc_scopes", "federated_mapping"."token_project_id", "federated_mapping"."token_restriction_id" FROM "federated_mapping" WHERE "federated_mapping"."id" = $1 LIMIT $2"#,
+                    r#"SELECT "federated_mapping"."id", "federated_mapping"."name", "federated_mapping"."idp_id", "federated_mapping"."domain_id", CAST("federated_mapping"."type" AS "text"), "federated_mapping"."enabled", "federated_mapping"."allowed_redirect_uris", "federated_mapping"."user_id_claim", "federated_mapping"."user_name_claim", "federated_mapping"."domain_id_claim", "federated_mapping"."groups_claim", "federated_mapping"."bound_audiences", "federated_mapping"."bound_subject", "federated_mapping"."bound_claims", "federated_mapping"."oidc_scopes", "federated_mapping"."token_project_id", "federated_mapping"."token_restriction_id" FROM "federated_mapping" WHERE "federated_mapping"."id" = $1 LIMIT $2"#,
                     ["1".into(), 1u64.into()]
                 ),
                 Transaction::from_sql_and_values(
                     DatabaseBackend::Postgres,
-                    r#"UPDATE "federated_mapping" SET "name" = $1, "idp_id" = $2, "type" = CAST($3 AS "federated_mapping_type"), "allowed_redirect_uris" = $4, "user_id_claim" = $5, "user_name_claim" = $6, "domain_id_claim" = $7, "groups_claim" = $8, "bound_audiences" = $9, "bound_subject" = $10, "bound_claims" = $11, "oidc_scopes" = $12, "token_project_id" = $13, "token_restriction_id" = $14 WHERE "federated_mapping"."id" = $15 RETURNING "id", "name", "idp_id", "domain_id", CAST("type" AS "text"), "allowed_redirect_uris", "user_id_claim", "user_name_claim", "domain_id_claim", "groups_claim", "bound_audiences", "bound_subject", "bound_claims", "oidc_scopes", "token_project_id", "token_restriction_id""#,
+                    r#"UPDATE "federated_mapping" SET "name" = $1, "idp_id" = $2, "type" = CAST($3 AS "federated_mapping_type"), "enabled" = $4, "allowed_redirect_uris" = $5, "user_id_claim" = $6, "user_name_claim" = $7, "domain_id_claim" = $8, "groups_claim" = $9, "bound_audiences" = $10, "bound_subject" = $11, "bound_claims" = $12, "oidc_scopes" = $13, "token_project_id" = $14, "token_restriction_id" = $15 WHERE "federated_mapping"."id" = $16 RETURNING "id", "name", "idp_id", "domain_id", CAST("type" AS "text"), "enabled", "allowed_redirect_uris", "user_id_claim", "user_name_claim", "domain_id_claim", "groups_claim", "bound_audiences", "bound_subject", "bound_claims", "oidc_scopes", "token_project_id", "token_restriction_id""#,
                     [
                         "name".into(),
                         "idp".into(),
                         "oidc".into(),
+                        true.into(),
                         "url".into(),
                         "sub".into(),
                         "preferred_username".into(),

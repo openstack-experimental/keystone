@@ -11,7 +11,9 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-
+//! # Error
+//!
+//! Diverse errors that can occur during the Keystone processing (not the API).
 use thiserror::Error;
 
 use crate::assignment::error::*;
@@ -23,6 +25,7 @@ use crate::resource::error::*;
 use crate::revoke::error::*;
 use crate::token::TokenProviderError;
 
+/// Keystone error.
 #[derive(Debug, Error)]
 pub enum KeystoneError {
     #[error(transparent)]

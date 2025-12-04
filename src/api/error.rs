@@ -11,7 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-
+//! # Keystone API error.
 use axum::{
     Json,
     extract::rejection::JsonRejection,
@@ -169,6 +169,14 @@ pub enum KeystoneApiError {
     /// Selected authentication is forbidden.
     #[error("changing current authentication scope is forbidden")]
     AuthenticationRescopeForbidden,
+
+    /// Request validation error.
+    #[error("request validation failed: {source}")]
+    Validator {
+        /// The source of the error.
+        #[from]
+        source: validator::ValidationErrors,
+    },
 
     /// Others.
     #[error(transparent)]

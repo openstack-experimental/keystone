@@ -21,6 +21,7 @@ use chrono::{Local, TimeDelta};
 use std::collections::HashSet;
 use tracing::debug;
 use utoipa_axum::{router::OpenApiRouter, routes};
+use validator::Validate;
 
 use openidconnect::core::{CoreAuthenticationFlow, CoreClient, CoreProviderMetadata};
 use openidconnect::reqwest;
@@ -80,6 +81,7 @@ pub async fn post(
     Path(idp_id): Path<String>,
     Json(req): Json<IdentityProviderAuthRequest>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
+    req.validate()?;
     state
         .config
         .auth
@@ -135,6 +137,14 @@ pub async fn post(
         return Err(OidcError::MappingRequired)?;
     };
 
+    // Check for IdP and mapping `enabled` state
+    if !idp.enabled {
+        return Err(OidcError::IdentityProviderDisabled)?;
+    }
+    if !mapping.enabled {
+        return Err(OidcError::MappingDisabled)?;
+    }
+
     let client = if let Some(discovery_url) = &idp.oidc_discovery_url {
         let http_client = reqwest::ClientBuilder::new()
             // Following redirects opens the client up to SSRF vulnerabilities.
@@ -147,7 +157,7 @@ pub async fn post(
             &http_client,
         )
         .await
-        .map_err(|err| OidcError::discovery(&err))?;
+        .map_err(|err| OidcError::discovery(discovery_url, &err))?;
         CoreClient::from_provider_metadata(
             provider_metadata,
             ClientId::new(idp.oidc_client_id.ok_or(OidcError::ClientIdRequired)?),
@@ -162,12 +172,12 @@ pub async fn post(
 
     let (pkce_challenge, pkce_verifier) = PkceCodeChallenge::new_random_sha256();
 
-    let mut oidc_scopes: HashSet<Scope> = if let Some(mapping_scopes) = mapping.oidc_scopes {
-        HashSet::from_iter(mapping_scopes.into_iter().map(Scope::new))
-    } else {
-        HashSet::new()
-    };
-    oidc_scopes.insert(Scope::new("openid".to_string()));
+    // `oidc` scope is the default in the openidconnect crate and do not need to be added
+    // explicitly.
+    let oidc_scopes: HashSet<Scope> = mapping
+        .oidc_scopes
+        .map(|scopes| HashSet::from_iter(scopes.into_iter().map(Scope::new)))
+        .unwrap_or_default();
 
     // Generate the full authorization URL.
     let (auth_url, csrf_token, nonce) = client

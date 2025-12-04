@@ -71,6 +71,7 @@ pub async fn setup_github_idp<T: AsRef<str>>(
             "identity_provider": {
                 "id": "github",
                 "name": "github",
+                "enabled": true,
                 "bound_issuer": "https://token.actions.githubusercontent.com",
                 "jwks_url": "https://token.actions.githubusercontent.com/.well-known/jwks",
              }
@@ -88,6 +89,7 @@ pub async fn setup_github_idp<T: AsRef<str>>(
                 "id": "github",
                 "name": "github",
                 "type": "jwt",
+                "enabled": true,
                 "idp_id": idp.identity_provider.id.clone(),
                 "domain_id": user.domain_id,
                 "bound_audiences": vec!["https://github.com"],

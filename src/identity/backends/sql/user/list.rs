@@ -16,9 +16,7 @@ use sea_orm::DatabaseConnection;
 use sea_orm::entity::*;
 use sea_orm::query::*;
 
-use super::super::federated_user;
 use super::super::local_user;
-use super::super::nonlocal_user;
 use crate::config::Config;
 use crate::db::entity::{
     federated_user as db_federated_user, local_user as db_local_user,
@@ -68,6 +66,8 @@ pub async fn list(
         local_user::load_local_users_passwords(db, locals.iter().cloned().map(|u| u.map(|x| x.id)))
             .await?;
 
+    let last_activity_cutof_date = conf.get_user_last_activity_cutof_date();
+
     let mut results: Vec<UserResponse> = Vec::new();
     for (u, (o, (l, (p, (n, f))))) in db_users.into_iter().zip(
         user_opts
@@ -91,18 +91,23 @@ pub async fn list(
         if l.is_none() && n.is_none() && f.is_empty() {
             continue;
         }
-        let user_builder: UserResponseBuilder = if let Some(local) = l {
-            local_user::get_local_user_builder(
-                conf,
-                &u,
-                local,
-                p.map(|x| x.into_iter()),
-                UserOptions::from_iter(o),
-            )
+
+        let mut user_builder = UserResponseBuilder::default();
+        user_builder.merge_user_data(
+            &u,
+            &UserOptions::from_iter(o),
+            last_activity_cutof_date.as_ref(),
+        );
+        //user_builder.merge_options(&UserOptions::from_iter(o));
+        if let Some(local) = l {
+            user_builder.merge_local_user_data(&local);
+            if let Some(pass) = p {
+                user_builder.merge_passwords_data(pass.into_iter());
+            }
         } else if let Some(nonlocal) = n {
-            nonlocal_user::get_nonlocal_user_builder(&u, nonlocal, UserOptions::from_iter(o))
+            user_builder.merge_nonlocal_user_data(&nonlocal);
         } else if !f.is_empty() {
-            federated_user::get_federated_user_builder(&u, f, UserOptions::from_iter(o))
+            user_builder.merge_federated_user_data(f);
         } else {
             return Err(IdentityDatabaseError::MalformedUser(u.id))?;
         };

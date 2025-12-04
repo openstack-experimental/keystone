@@ -20,8 +20,14 @@ use crate::api::v4::federation::types::*;
 
 #[derive(Error, Debug)]
 pub enum OidcError {
-    #[error("discovery error: {msg}")]
-    Discovery { msg: String },
+    /// OIDC Discovery error.
+    #[error("discovery error for {url}: {msg}")]
+    Discovery {
+        /// IdP URL.
+        url: String,
+        /// Error message.
+        msg: String,
+    },
 
     #[error("client without discovery is not supported")]
     ClientWithoutDiscoveryNotSupported,
@@ -42,6 +48,14 @@ pub enum OidcError {
 
     #[error("groups claim must be an array of strings")]
     GroupsClaimNotArrayOfStrings,
+
+    /// IdP is disabled.
+    #[error("identity provider is disabled")]
+    IdentityProviderDisabled,
+
+    /// Mapping is disabled.
+    #[error("mapping is disabled")]
+    MappingDisabled,
 
     #[error("request token error")]
     RequestToken { msg: String },
@@ -128,8 +142,9 @@ pub enum OidcError {
 }
 
 impl OidcError {
-    pub fn discovery<T: std::error::Error>(fail: &T) -> Self {
+    pub fn discovery<U: AsRef<str>, T: std::error::Error>(url: U, fail: &T) -> Self {
         Self::Discovery {
+            url: url.as_ref().to_string(),
             msg: fail.to_string(),
         }
     }
@@ -152,6 +167,12 @@ impl From<OidcError> for KeystoneApiError {
             }
             e @ OidcError::ClientWithoutDiscoveryNotSupported => {
                 KeystoneApiError::InternalError(e.to_string())
+            }
+            OidcError::IdentityProviderDisabled => {
+                KeystoneApiError::BadRequest("Federated Identity Provider is disabled.".to_string())
+            }
+            OidcError::MappingDisabled => {
+                KeystoneApiError::BadRequest("Federated Identity Provider mapping is disabled.".to_string())
             }
             OidcError::MappingRequired => {
                 KeystoneApiError::BadRequest("Federated authentication requires mapping being specified in the payload or default set on the identity provider.".to_string())

@@ -11,7 +11,13 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-//! Token provider.
+//! # Token provider.
+//!
+//! A Keystone token is an alpha-numeric text string that enables access to
+//! OpenStack APIs and resources. A token may be revoked at any time and is
+//! valid for a finite duration. OpenStack Identity is an integration service
+//! that does not aspire to be a full-fledged identity store and management
+//! solution.
 
 use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::URL_SAFE};
@@ -31,7 +37,7 @@ use crate::assignment::{
     types::{Role, RoleAssignmentListParametersBuilder},
 };
 use crate::auth::{AuthenticatedInfo, AuthenticationError, AuthzInfo};
-use crate::config::{Config, TokenProvider as TokenProviderType};
+use crate::config::{Config, TokenProviderDriver};
 use crate::identity::IdentityApi;
 use crate::keystone::ServiceState;
 use crate::resource::{
@@ -55,7 +61,7 @@ pub struct TokenProvider {
 impl TokenProvider {
     pub fn new(config: &Config) -> Result<Self, TokenProviderError> {
         let backend_driver = match config.token.provider {
-            TokenProviderType::Fernet => FernetTokenProvider::new(config.clone()),
+            TokenProviderDriver::Fernet => FernetTokenProvider::new(config.clone()),
         };
         Ok(Self {
             config: config.clone(),
@@ -328,138 +334,88 @@ impl TokenProvider {
         }
         Ok(())
     }
-}
 
-#[async_trait]
-impl TokenApi for TokenProvider {
-    /// Authenticate by token
-    #[tracing::instrument(level = "info", skip(self, state, credential))]
-    async fn authenticate_by_token<'a>(
+    /// Expand the target scope information in the token.
+    async fn expand_scope_information(
         &self,
         state: &ServiceState,
-        credential: &'a str,
-        allow_expired: Option<bool>,
-        window_seconds: Option<i64>,
-    ) -> Result<AuthenticatedInfo, TokenProviderError> {
-        // TODO: is the expand really false?
-        let token = self
-            .validate_token(
-                state,
-                credential,
-                allow_expired,
-                window_seconds,
-                Some(false),
-            )
-            .await?;
-        if let Token::Restricted(restriction) = &token
-            && !restriction.allow_renew
-        {
-            return Err(AuthenticationError::TokenRenewalForbidden)?;
-        }
-        let mut auth_info_builder = AuthenticatedInfo::builder();
-        auth_info_builder.user_id(token.user_id());
-        auth_info_builder.methods(token.methods().clone());
-        auth_info_builder.audit_ids(token.audit_ids().clone());
-        if let Token::Restricted(restriction) = &token {
-            auth_info_builder.token_restriction_id(restriction.token_restriction_id.clone());
-        }
-        Ok(auth_info_builder
-            .build()
-            .map_err(AuthenticationError::from)?)
-    }
+        token: &mut Token,
+    ) -> Result<(), TokenProviderError> {
+        match token {
+            Token::ProjectScope(data) => {
+                if data.project.is_none() {
+                    let project = state
+                        .provider
+                        .get_resource_provider()
+                        .get_project(state, &data.project_id)
+                        .await?;
 
-    /// Validate token
-    #[tracing::instrument(level = "info", skip(self, state, credential))]
-    async fn validate_token<'a>(
-        &self,
-        state: &ServiceState,
-        credential: &'a str,
-        allow_expired: Option<bool>,
-        window_seconds: Option<i64>,
-        expand: Option<bool>,
-    ) -> Result<Token, TokenProviderError> {
-        let mut token = self.backend_driver.decode(credential)?;
-        if Local::now().to_utc()
-            > token
-                .expires_at()
-                .checked_add_signed(TimeDelta::seconds(window_seconds.unwrap_or(0)))
-                .unwrap_or_else(|| *token.expires_at())
-            && !allow_expired.unwrap_or(false)
-        {
-            return Err(TokenProviderError::Expired);
-        }
-
-        // Expand the token unless `expand = Some(false)`
-        if expand.is_none_or(|v| v) {
-            token = self.expand_token_information(state, &token).await?;
-        }
-
-        if state
-            .provider
-            .get_revoke_provider()
-            .is_token_revoked(state, &token)
-            .await?
-        {
-            return Err(TokenProviderError::TokenRevoked);
-        }
-
-        Ok(token)
-    }
-
-    #[tracing::instrument(level = "debug", skip(self))]
-    fn issue_token(
-        &self,
-        authentication_info: AuthenticatedInfo,
-        authz_info: AuthzInfo,
-        token_restrictions: Option<&TokenRestriction>,
-    ) -> Result<Token, TokenProviderError> {
-        // This should be executed already, but let's better repeat it as last line of
-        // defence. It is also necessary to call this before to stop before we
-        // start to resolve authz info.
-        authentication_info.validate()?;
-
-        // TODO: Check whether it is allowed to change the scope of the token if
-        // AuthenticatedInfo already contains scope it was issued for.
-        let mut authentication_info = authentication_info;
-        authentication_info.audit_ids.push(
-            URL_SAFE
-                .encode(Uuid::new_v4().as_bytes())
-                .trim_end_matches('=')
-                .to_string(),
-        );
-        if let Some(token_restrictions) = &token_restrictions {
-            self.create_restricted_token(&authentication_info, &authz_info, token_restrictions)
-        } else if authentication_info.idp_id.is_some() && authentication_info.protocol_id.is_some()
-        {
-            match &authz_info {
-                AuthzInfo::Project(project) => {
-                    self.create_federated_project_scope_token(&authentication_info, project)
+                    data.project = project;
                 }
-                AuthzInfo::Domain(domain) => {
-                    self.create_federated_domain_scope_token(&authentication_info, domain)
-                }
-                AuthzInfo::Unscoped => self.create_federated_unscoped_token(&authentication_info),
             }
-        } else {
-            match &authz_info {
-                AuthzInfo::Project(project) => {
-                    self.create_project_scope_token(&authentication_info, project)
+            Token::ApplicationCredential(data) => {
+                if data.project.is_none() {
+                    let project = state
+                        .provider
+                        .get_resource_provider()
+                        .get_project(state, &data.project_id)
+                        .await?;
+
+                    data.project = project;
                 }
-                AuthzInfo::Domain(domain) => {
-                    self.create_domain_scope_token(&authentication_info, domain)
-                }
-                AuthzInfo::Unscoped => self.create_unscoped_token(&authentication_info),
             }
-        }
+            Token::FederationProjectScope(data) => {
+                if data.project.is_none() {
+                    let project = state
+                        .provider
+                        .get_resource_provider()
+                        .get_project(state, &data.project_id)
+                        .await?;
+
+                    data.project = project;
+                }
+            }
+            Token::DomainScope(data) => {
+                if data.domain.is_none() {
+                    let domain = state
+                        .provider
+                        .get_resource_provider()
+                        .get_domain(state, &data.domain_id)
+                        .await?;
+
+                    data.domain = domain;
+                }
+            }
+            Token::FederationDomainScope(data) => {
+                if data.domain.is_none() {
+                    let domain = state
+                        .provider
+                        .get_resource_provider()
+                        .get_domain(state, &data.domain_id)
+                        .await?;
+
+                    data.domain = domain;
+                }
+            }
+            Token::Restricted(data) => {
+                if data.project.is_none() {
+                    let project = state
+                        .provider
+                        .get_resource_provider()
+                        .get_project(state, &data.project_id)
+                        .await?;
+
+                    data.project = project;
+                }
+            }
+
+            _ => {}
+        };
+        Ok(())
     }
 
-    /// Validate token
-    fn encode_token(&self, token: &Token) -> Result<String, TokenProviderError> {
-        self.backend_driver.encode(token)
-    }
-
-    /// Populate role assignments in the token that support that information
-    async fn populate_role_assignments(
+    /// Populate role assignments in the token that support that information.
+    async fn _populate_role_assignments(
         &self,
         state: &ServiceState,
         token: &mut Token,
@@ -618,84 +574,159 @@ impl TokenApi for TokenProvider {
 
         Ok(())
     }
+}
 
+#[async_trait]
+impl TokenApi for TokenProvider {
+    /// Authenticate by token.
+    #[tracing::instrument(level = "info", skip(self, state, credential))]
+    async fn authenticate_by_token<'a>(
+        &self,
+        state: &ServiceState,
+        credential: &'a str,
+        allow_expired: Option<bool>,
+        window_seconds: Option<i64>,
+    ) -> Result<AuthenticatedInfo, TokenProviderError> {
+        // TODO: is the expand really false?
+        let token = self
+            .validate_token(
+                state,
+                credential,
+                allow_expired,
+                window_seconds,
+                Some(false),
+            )
+            .await?;
+        if let Token::Restricted(restriction) = &token
+            && !restriction.allow_renew
+        {
+            return Err(AuthenticationError::TokenRenewalForbidden)?;
+        }
+        let mut auth_info_builder = AuthenticatedInfo::builder();
+        auth_info_builder.user_id(token.user_id());
+        auth_info_builder.methods(token.methods().clone());
+        auth_info_builder.audit_ids(token.audit_ids().clone());
+        if let Token::Restricted(restriction) = &token {
+            auth_info_builder.token_restriction_id(restriction.token_restriction_id.clone());
+        }
+        Ok(auth_info_builder
+            .build()
+            .map_err(AuthenticationError::from)?)
+    }
+
+    /// Validate token.
+    #[tracing::instrument(level = "info", skip(self, state, credential))]
+    async fn validate_token<'a>(
+        &self,
+        state: &ServiceState,
+        credential: &'a str,
+        allow_expired: Option<bool>,
+        window_seconds: Option<i64>,
+        expand: Option<bool>,
+    ) -> Result<Token, TokenProviderError> {
+        let mut token = self.backend_driver.decode(credential)?;
+        if Local::now().to_utc()
+            > token
+                .expires_at()
+                .checked_add_signed(TimeDelta::seconds(window_seconds.unwrap_or(0)))
+                .unwrap_or_else(|| *token.expires_at())
+            && !allow_expired.unwrap_or(false)
+        {
+            return Err(TokenProviderError::Expired);
+        }
+
+        // Expand the token unless `expand = Some(false)`
+        if expand.is_none_or(|v| v) {
+            token = self.expand_token_information(state, &token).await?;
+        }
+
+        if state
+            .provider
+            .get_revoke_provider()
+            .is_token_revoked(state, &token)
+            .await?
+        {
+            return Err(TokenProviderError::TokenRevoked);
+        }
+
+        Ok(token)
+    }
+
+    #[tracing::instrument(level = "debug", skip(self))]
+    fn issue_token(
+        &self,
+        authentication_info: AuthenticatedInfo,
+        authz_info: AuthzInfo,
+        token_restrictions: Option<&TokenRestriction>,
+    ) -> Result<Token, TokenProviderError> {
+        // This should be executed already, but let's better repeat it as last line of
+        // defence. It is also necessary to call this before to stop before we
+        // start to resolve authz info.
+        authentication_info.validate()?;
+
+        // TODO: Check whether it is allowed to change the scope of the token if
+        // AuthenticatedInfo already contains scope it was issued for.
+        let mut authentication_info = authentication_info;
+        authentication_info.audit_ids.push(
+            URL_SAFE
+                .encode(Uuid::new_v4().as_bytes())
+                .trim_end_matches('=')
+                .to_string(),
+        );
+        if let Some(token_restrictions) = &token_restrictions {
+            self.create_restricted_token(&authentication_info, &authz_info, token_restrictions)
+        } else if authentication_info.idp_id.is_some() && authentication_info.protocol_id.is_some()
+        {
+            match &authz_info {
+                AuthzInfo::Project(project) => {
+                    self.create_federated_project_scope_token(&authentication_info, project)
+                }
+                AuthzInfo::Domain(domain) => {
+                    self.create_federated_domain_scope_token(&authentication_info, domain)
+                }
+                AuthzInfo::Unscoped => self.create_federated_unscoped_token(&authentication_info),
+            }
+        } else {
+            match &authz_info {
+                AuthzInfo::Project(project) => {
+                    self.create_project_scope_token(&authentication_info, project)
+                }
+                AuthzInfo::Domain(domain) => {
+                    self.create_domain_scope_token(&authentication_info, domain)
+                }
+                AuthzInfo::Unscoped => self.create_unscoped_token(&authentication_info),
+            }
+        }
+    }
+
+    /// Encode the token into a `String` representation.
+    ///
+    /// Encode the [`Token`] into the `String` to be used as a http header.
+    fn encode_token(&self, token: &Token) -> Result<String, TokenProviderError> {
+        self.backend_driver.encode(token)
+    }
+
+    /// Populate role assignments in the token that support that information.
+    async fn populate_role_assignments(
+        &self,
+        state: &ServiceState,
+        token: &mut Token,
+    ) -> Result<(), TokenProviderError> {
+        self._populate_role_assignments(state, token).await
+    }
+
+    /// Expand the token information.
+    ///
+    /// Query and expand information about the user, scope and the role
+    /// assignments into the token.
     async fn expand_token_information(
         &self,
         state: &ServiceState,
         token: &Token,
     ) -> Result<Token, TokenProviderError> {
         let mut new_token = token.clone();
-        match new_token {
-            Token::ProjectScope(ref mut data) => {
-                if data.project.is_none() {
-                    let project = state
-                        .provider
-                        .get_resource_provider()
-                        .get_project(state, &data.project_id)
-                        .await?;
-
-                    data.project = project;
-                }
-            }
-            Token::ApplicationCredential(ref mut data) => {
-                if data.project.is_none() {
-                    let project = state
-                        .provider
-                        .get_resource_provider()
-                        .get_project(state, &data.project_id)
-                        .await?;
-
-                    data.project = project;
-                }
-            }
-            Token::FederationProjectScope(ref mut data) => {
-                if data.project.is_none() {
-                    let project = state
-                        .provider
-                        .get_resource_provider()
-                        .get_project(state, &data.project_id)
-                        .await?;
-
-                    data.project = project;
-                }
-            }
-            Token::DomainScope(ref mut data) => {
-                if data.domain.is_none() {
-                    let domain = state
-                        .provider
-                        .get_resource_provider()
-                        .get_domain(state, &data.domain_id)
-                        .await?;
-
-                    data.domain = domain;
-                }
-            }
-            Token::FederationDomainScope(ref mut data) => {
-                if data.domain.is_none() {
-                    let domain = state
-                        .provider
-                        .get_resource_provider()
-                        .get_domain(state, &data.domain_id)
-                        .await?;
-
-                    data.domain = domain;
-                }
-            }
-            Token::Restricted(ref mut data) => {
-                if data.project.is_none() {
-                    let project = state
-                        .provider
-                        .get_resource_provider()
-                        .get_project(state, &data.project_id)
-                        .await?;
-
-                    data.project = project;
-                }
-            }
-
-            _ => {}
-        };
         self.expand_user_information(state, &mut new_token).await?;
+        self.expand_scope_information(state, &mut new_token).await?;
         self.populate_role_assignments(state, &mut new_token)
             .await?;
         Ok(new_token)

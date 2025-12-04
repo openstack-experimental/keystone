@@ -133,6 +133,7 @@ jobs:
       packages: read
     env:
       KEYCLOAK_URL: http://localhost:8082
+      BROWSERDRIVER_PORT: 4444
     services:
       postgres:
         image: postgres:17
@@ -163,11 +164,14 @@ jobs:
       - name: Start geckodriver for selenium
         run: /snap/bin/geckodriver --port=4444 > seleniumdriver.log 2>&1 &
 
+      - name: Start DexIDP container
+        run:
+          docker run -d -p 5556:5556 -d -v $PWD/tools/dex.config.yaml:/etc/dex/config.docker.yaml --name dex ghcr.io/dexidp/dex:latest
+
       - name: Run keycloak tests
         env:
           KEYCLOAK_USER: admin
           KEYCLOAK_PASSWORD: password
-          BROWSERDRIVER_PORT: 4444
         run: cargo test --test keycloak
 
       - name: Get GitHub JWT token
@@ -185,6 +189,11 @@ jobs:
           GITHUB_SUB: "repo:openstack-experimental/keystone:pull_request"
         run: cargo test --test github -- --nocapture
 
+      - name: Run dex tests
+        env:
+          DEX_URL: http://localhost:5556
+        run: cargo test --test dex
+
       - name: Dump seleniumdriver log
         if: failure()
         run: cat seleniumdriver.log
@@ -196,6 +205,10 @@ jobs:
       - name: Dump rust keystone log
         if: failure()
         run: cat rust.log
+
+      - name: Dump dex log
+        if: failure()
+        run: docker logs dex
 
       - name: Dump OPA log
         if: failure()

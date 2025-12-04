@@ -151,7 +151,7 @@ pub async fn list_for_multiple_actors_and_targets(
         for target in params.targets.iter() {
             cond = cond.add(
                 Condition::all()
-                    .add(db_assignment::Column::TargetId.eq(&target.target_id))
+                    .add(db_assignment::Column::TargetId.eq(&target.id))
                     .add_option(
                         target
                             .inherited
@@ -438,7 +438,8 @@ mod tests {
                 &RoleAssignmentListForMultipleActorTargetParameters {
                     actors: vec!["uid1".into(), "gid1".into(), "gid2".into()],
                     targets: vec![RoleAssignmentTarget {
-                        target_id: "pid1".into(),
+                        id: "pid1".into(),
+                        r#type: RoleAssignmentTargetType::Project,
                         inherited: None
                     }],
                     role_id: Some("rid".into())
@@ -516,11 +517,13 @@ mod tests {
                     actors: vec!["uid1".into(), "gid1".into(), "gid2".into()],
                     targets: vec![
                         RoleAssignmentTarget {
-                            target_id: "pid1".into(),
+                            id: "pid1".into(),
+                            r#type: RoleAssignmentTargetType::Project,
                             inherited: None
                         },
                         RoleAssignmentTarget {
-                            target_id: "pid2".into(),
+                            id: "pid2".into(),
+                            r#type: RoleAssignmentTargetType::Project,
                             inherited: Some(true)
                         }
                     ],
@@ -635,11 +638,13 @@ mod tests {
                     actors: vec![],
                     targets: vec![
                         RoleAssignmentTarget {
-                            target_id: "pid1".into(),
+                            id: "pid1".into(),
+                            r#type: RoleAssignmentTargetType::Project,
                             inherited: None
                         },
                         RoleAssignmentTarget {
-                            target_id: "pid2".into(),
+                            id: "pid2".into(),
+                            r#type: RoleAssignmentTargetType::Project,
                             inherited: Some(true)
                         }
                     ],
@@ -692,11 +697,13 @@ mod tests {
                     actors: vec![],
                     targets: vec![
                         RoleAssignmentTarget {
-                            target_id: "pid1".into(),
+                            id: "pid1".into(),
+                            r#type: RoleAssignmentTargetType::Project,
                             inherited: Some(false)
                         },
                         RoleAssignmentTarget {
-                            target_id: "pid2".into(),
+                            id: "pid2".into(),
+                            r#type: RoleAssignmentTargetType::Project,
                             inherited: Some(true)
                         }
                     ],

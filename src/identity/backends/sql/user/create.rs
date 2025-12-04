@@ -75,6 +75,8 @@ pub async fn create(
     user: UserCreate,
 ) -> Result<UserResponse, IdentityDatabaseError> {
     let main_user = create_main(conf, db, &user).await?;
+    let mut response_builder = UserResponseBuilder::default();
+    response_builder.merge_user_data(&main_user, &UserOptions::default(), None);
     if let Some(federation_data) = &user.federated {
         let mut federated_entities: Vec<db_federated_user::Model> = Vec::new();
         for federated_user in federation_data {
@@ -115,13 +117,7 @@ pub async fn create(
             }
         }
 
-        let builder = federated_user::get_federated_user_builder(
-            &main_user,
-            federated_entities,
-            UserOptions::default(),
-        );
-
-        Ok(builder.build()?)
+        response_builder.merge_federated_user_data(federated_entities);
     } else {
         // Local user
         let local_user = local_user::create(conf, db, &user).await?;
@@ -137,18 +133,12 @@ pub async fn create(
 
             passwords.push(password_entry);
         }
-        Ok(local_user::get_local_user_builder(
-            conf,
-            &main_user,
-            local_user,
-            Some(passwords),
-            UserOptions::default(),
-        )
-        .build()?)
+        response_builder
+            .merge_local_user_data(&local_user)
+            .merge_passwords_data(passwords);
     }
-    // let ub = common::get_user_builder(&main_user, Vec::new()).build()?;
 
-    // Ok(ub)
+    Ok(response_builder.build()?)
 }
 
 #[cfg(test)]

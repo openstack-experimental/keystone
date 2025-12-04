@@ -79,6 +79,13 @@ pub enum AssignmentProviderError {
         #[from]
         source: RoleBuilderError,
     },
+
+    #[error("request validation error: {}", source)]
+    Validation {
+        /// The source of the error.
+        #[from]
+        source: validator::ValidationErrors,
+    },
 }
 
 impl From<AssignmentDatabaseError> for AssignmentProviderError {

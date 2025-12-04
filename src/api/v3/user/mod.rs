@@ -19,6 +19,7 @@ use axum::{
     response::IntoResponse,
 };
 use utoipa_axum::{router::OpenApiRouter, routes};
+use validator::Validate;
 
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
@@ -54,6 +55,7 @@ async fn list(
     Query(query): Query<UserListParameters>,
     State(state): State<ServiceState>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
+    query.validate()?;
     let users: Vec<User> = state
         .provider
         .get_identity_provider()
@@ -262,6 +264,7 @@ mod tests {
                 UserListParameters {
                     domain_id: Some("domain".into()),
                     name: Some("name".into()),
+                    ..Default::default()
                 } == *qp
             })
             .returning(|_, _| Ok(Vec::new()));

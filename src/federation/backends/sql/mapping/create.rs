@@ -31,6 +31,7 @@ pub async fn create(
         name: Set(mapping.name.clone()),
         idp_id: Set(mapping.idp_id.clone()),
         r#type: Set(mapping.r#type.into()),
+        enabled: Set(mapping.enabled),
         allowed_redirect_uris: mapping
             .allowed_redirect_uris
             .clone()
@@ -118,6 +119,7 @@ mod tests {
             name: "mapping".into(),
             domain_id: Some("foo_domain".into()),
             r#type: MappingType::default(),
+            enabled: true,
             idp_id: "idp".into(),
             allowed_redirect_uris: Some(vec!["url".into()]),
             user_id_claim: "sub".into(),
@@ -141,13 +143,14 @@ mod tests {
             db.into_transaction_log(),
             [Transaction::from_sql_and_values(
                 DatabaseBackend::Postgres,
-                r#"INSERT INTO "federated_mapping" ("id", "name", "idp_id", "domain_id", "type", "allowed_redirect_uris", "user_id_claim", "user_name_claim", "domain_id_claim", "groups_claim", "bound_audiences", "bound_subject", "bound_claims", "oidc_scopes", "token_project_id", "token_restriction_id") VALUES ($1, $2, $3, $4, CAST($5 AS "federated_mapping_type"), $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16) RETURNING "id", "name", "idp_id", "domain_id", CAST("type" AS "text"), "allowed_redirect_uris", "user_id_claim", "user_name_claim", "domain_id_claim", "groups_claim", "bound_audiences", "bound_subject", "bound_claims", "oidc_scopes", "token_project_id", "token_restriction_id""#,
+                r#"INSERT INTO "federated_mapping" ("id", "name", "idp_id", "domain_id", "type", "enabled", "allowed_redirect_uris", "user_id_claim", "user_name_claim", "domain_id_claim", "groups_claim", "bound_audiences", "bound_subject", "bound_claims", "oidc_scopes", "token_project_id", "token_restriction_id") VALUES ($1, $2, $3, $4, CAST($5 AS "federated_mapping_type"), $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17) RETURNING "id", "name", "idp_id", "domain_id", CAST("type" AS "text"), "enabled", "allowed_redirect_uris", "user_id_claim", "user_name_claim", "domain_id_claim", "groups_claim", "bound_audiences", "bound_subject", "bound_claims", "oidc_scopes", "token_project_id", "token_restriction_id""#,
                 [
                     "1".into(),
                     "mapping".into(),
                     "idp".into(),
                     "foo_domain".into(),
                     "oidc".into(),
+                    true.into(),
                     "url".into(),
                     "sub".into(),
                     "preferred_username".into(),

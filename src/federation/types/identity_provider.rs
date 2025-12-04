@@ -11,23 +11,30 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-
+//! # Federated identity provider types
 use derive_builder::Builder;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+/// Identity provider resource.
 #[derive(Builder, Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
 #[builder(setter(strip_option, into))]
 pub struct IdentityProvider {
-    /// Federation provider ID
+    /// Federation provider ID.
     pub id: String,
 
-    /// Provider name
+    /// Provider name.
     pub name: String,
 
+    /// Domain ID,
     #[builder(default)]
     pub domain_id: Option<String>,
 
+    /// Whether the identity provider is enabled.
+    #[builder(default)]
+    pub enabled: bool,
+
+    /// OIDC discovery url.
     #[builder(default)]
     pub oidc_discovery_url: Option<String>,
 
@@ -59,11 +66,15 @@ pub struct IdentityProvider {
     pub provider_config: Option<Value>,
 }
 
+/// Identity provider update data.
 #[derive(Builder, Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
 #[builder(setter(into))]
 pub struct IdentityProviderUpdate {
     /// Provider name
     pub name: Option<String>,
+
+    /// Enabled flag.
+    pub enabled: Option<bool>,
 
     #[builder(default)]
     pub oidc_discovery_url: Option<Option<String>>,
@@ -96,6 +107,7 @@ pub struct IdentityProviderUpdate {
     pub provider_config: Option<Option<Value>>,
 }
 
+/// Identity provider list request.
 #[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 #[builder(setter(strip_option, into))]
 pub struct IdentityProviderListParameters {

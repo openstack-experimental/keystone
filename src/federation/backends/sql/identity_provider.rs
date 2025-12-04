@@ -35,6 +35,7 @@ impl TryFrom<db_federated_identity_provider::Model> for IdentityProvider {
         let mut builder = IdentityProviderBuilder::default();
         builder.id(value.id.clone());
         builder.name(value.name.clone());
+        builder.enabled(value.enabled);
         if let Some(val) = &value.domain_id {
             builder.domain_id(val);
         }

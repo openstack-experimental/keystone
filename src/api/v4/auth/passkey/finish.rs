@@ -15,6 +15,7 @@
 use axum::{Json, extract::State, http::StatusCode, response::IntoResponse};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE};
 use tracing::debug;
+use validator::Validate;
 
 use crate::api::v4::auth::passkey::types::{
     AuthenticationExtensionsClientOutputs, AuthenticatorAssertionResponseRaw, HmacGetSecretOutput,
@@ -56,6 +57,7 @@ pub(super) async fn finish(
     State(state): State<ServiceState>,
     Json(req): Json<PasskeyAuthenticationFinishRequest>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
+    req.validate()?;
     let user_id = req.user_id.clone();
     // TODO: Wrap all errors into the Unauthorized, but log the error
     if let Some(s) = state

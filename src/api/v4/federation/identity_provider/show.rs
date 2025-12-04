@@ -115,6 +115,7 @@ mod tests {
                     id: "bar".into(),
                     name: "name".into(),
                     domain_id: Some("did".into()),
+                    enabled: true,
                     default_mapping_name: Some("dummy".into()),
                     ..Default::default()
                 }))
@@ -161,6 +162,7 @@ mod tests {
                 id: "bar".into(),
                 name: "name".into(),
                 domain_id: Some("did".into()),
+                enabled: true,
                 oidc_discovery_url: None,
                 oidc_client_id: None,
                 oidc_response_mode: None,

@@ -11,7 +11,25 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-
+//! # Catalog provider
+//!
+//! Catalog provider takes care of returning the list of the service endpoints
+//! that the API user is able to use according to the valid authentication.
+//!
+//! Following Keystone concepts are covered:
+//!
+//! ## Endpoint
+//!
+//! A network-accessible address, usually a URL, through which you can access a
+//! service. If you are using an extension for templates, you can create an
+//! endpoint template that represents the templates of all consumable services
+//! that are available across the regions.
+//!
+//! ## Service
+//!
+//! An OpenStack service, such as Compute (nova), Object Storage (swift), or
+//! Image service (glance), that provides one or more endpoints through which
+//! users can access resources and perform operations.
 use async_trait::async_trait;
 
 pub mod backends;

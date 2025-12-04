@@ -162,6 +162,14 @@ pub async fn login(
         })?
         .to_owned();
 
+    // Check for IdP and mapping `enabled` state
+    if !idp.enabled {
+        return Err(OidcError::IdentityProviderDisabled)?;
+    }
+    if !mapping.enabled {
+        return Err(OidcError::MappingDisabled)?;
+    }
+
     tracing::debug!("Mapping is {:?}", mapping);
     let token_restriction = if let Some(tr_id) = &mapping.token_restriction_id {
         state
@@ -197,7 +205,7 @@ pub async fn login(
                 &http_client,
             )
             .await
-            .map_err(|err| OidcError::discovery(&err))?,
+            .map_err(|err| OidcError::discovery(discovery_url, &err))?,
         )
     } else {
         None
@@ -223,7 +231,7 @@ pub async fn login(
 
     let jwks: JsonWebKeySet<CoreJsonWebKey> = JsonWebKeySet::fetch_async(&jwks_url, &http_client)
         .await
-        .map_err(|err| OidcError::discovery(&err))?;
+        .map_err(|err| OidcError::discovery(jwks_url.as_str(), &err))?;
 
     // TODO: client_id should match the audience. How to get that?
     let audience = "keystone";

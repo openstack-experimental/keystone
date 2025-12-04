@@ -121,6 +121,14 @@ pub async fn callback(
             })
         })??;
 
+    // Check for IdP and mapping `enabled` state
+    if !idp.enabled {
+        return Err(OidcError::IdentityProviderDisabled)?;
+    }
+    if !mapping.enabled {
+        return Err(OidcError::MappingDisabled)?;
+    }
+
     let token_restrictions = if let Some(tr_id) = &mapping.token_restriction_id {
         state
             .provider
@@ -143,7 +151,7 @@ pub async fn callback(
             &http_client,
         )
         .await
-        .map_err(|err| OidcError::discovery(&err))?;
+        .map_err(|err| OidcError::discovery(discovery_url, &err))?;
         OidcClient::from_provider_metadata(
             provider_metadata,
             ClientId::new(

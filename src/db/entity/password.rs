@@ -19,6 +19,7 @@ use derive_builder::Builder;
 use sea_orm::entity::prelude::*;
 
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Eq)]
+#[cfg_attr(test, derive(Default))]
 #[cfg_attr(test, derive(Builder))]
 #[cfg_attr(test, builder(setter(strip_option, into)))]
 #[sea_orm(table_name = "password")]

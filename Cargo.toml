@@ -1,12 +1,19 @@
 [package]
 name = "openstack_keystone"
 description = "OpenStack Keystone service"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 license = "Apache-2.0"
 authors = ["Artem Goncharov (gtema)"]
 rust-version = "1.90"  # MSRV
-repository = "https://github.com/gtema/keystone"
+repository = "https://github.com/openstack-experimental/keystone"
+# Exclude content not relevant for the package
+exclude = [
+  ".github",
+  "doc",
+  "tests",
+  "tools"
+]
 
 [package.metadata.clippy]
 warn = ["clippy::unused_results"]
@@ -66,12 +73,13 @@ utoipa = { version = "5.4", features = ["axum_extras", "chrono", "yaml"] }
 utoipa-axum = { version = "0.2" }
 utoipa-swagger-ui = { version = "9.0", features = ["axum", "vendored"], default-features = false }
 uuid = { version = "1.18", features = ["v4"] }
+validator = { version = "0.20", features = ["derive"] }
 webauthn-rs = { version = "0.5", features = ["danger-allow-state-serialisation"] }
 webauthn-rs-proto = { version = "0.5" }
 
 [dev-dependencies]
 base64urlsafedata = "0.5"
-criterion = { version = "0.7", features = ["async_tokio"] }
+criterion = { version = "0.8", features = ["async_tokio"] }
 http-body-util = "0.1"
 hyper = { version = "1.8", features = ["http1"] }
 hyper-util = { version = "0.1", features = ["tokio", "http1"] }
@@ -96,6 +104,11 @@ bench_internals = []
 strip = true
 debug = false
 lto = "thin"
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"
 #codegen-units = 1
 
 [[test]]
@@ -111,6 +124,11 @@ test = false
 [[test]]
 name = "github"
 path = "tests/github/main.rs"
+test = false
+
+[[test]]
+name = "dex"
+path = "tests/dex/main.rs"
 test = false
 
 [[test]]

@@ -21,12 +21,13 @@ use derive_builder::Builder;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use utoipa::{IntoParams, ToSchema};
+use validator::Validate;
 
 use crate::api::error::KeystoneApiError;
 use crate::federation::types;
 
 /// Identity provider data
-#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
+#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 #[builder(setter(strip_option, into))]
 pub struct IdentityProvider {
     /// The ID of the federated identity provider.
@@ -41,6 +42,10 @@ pub struct IdentityProvider {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[builder(default)]
     pub domain_id: Option<String>,
+
+    /// Identity provider `enabled` property. Inactive Identity Providers can not
+    /// be used for login.
+    pub enabled: bool,
 
     /// OIDC discovery endpoint for the identity provider.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -95,18 +100,20 @@ pub struct IdentityProvider {
 }
 
 /// Identity provider response.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct IdentityProviderResponse {
     /// Identity provider object.
+    #[validate(nested)]
     pub identity_provider: IdentityProvider,
 }
 
 /// Identity provider data.
-#[derive(Builder, Clone, Default, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
+#[derive(Builder, Clone, Default, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 #[builder(setter(strip_option, into))]
 pub struct IdentityProviderCreate {
     // TODO: add ID
     /// Identity provider name.
+    #[validate(length(max = 255))]
     pub name: String,
 
     /// The ID of the domain this identity provider belongs to. Empty value
@@ -115,18 +122,26 @@ pub struct IdentityProviderCreate {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[builder(default)]
     #[schema(nullable = false)]
+    #[validate(length(max = 64))]
     pub domain_id: Option<String>,
+
+    /// Identity provider `enabled` property. Inactive Identity Providers can not
+    /// be used for login.
+    #[serde(default = "crate::api::types::default_true")]
+    pub enabled: bool,
 
     /// OIDC discovery endpoint for the identity provider.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[builder(default)]
     #[schema(nullable = false)]
+    #[validate(url, length(max = 255))]
     pub oidc_discovery_url: Option<String>,
 
     /// The oidc `client_id` to use for the private client.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[builder(default)]
     #[schema(nullable = false)]
+    #[validate(length(max = 255))]
     pub oidc_client_id: Option<String>,
 
     /// The oidc `client_secret` to use for the private client. It is never
@@ -134,12 +149,14 @@ pub struct IdentityProviderCreate {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[builder(default)]
     #[schema(nullable = false)]
+    #[validate(length(max = 255))]
     pub oidc_client_secret: Option<String>,
 
     /// The oidc response mode.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[builder(default)]
     #[schema(nullable = false)]
+    #[validate(length(max = 64))]
     pub oidc_response_mode: Option<String>,
 
     /// List of supported response types.
@@ -154,6 +171,7 @@ pub struct IdentityProviderCreate {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[builder(default)]
     #[schema(nullable = false)]
+    #[validate(url)]
     pub jwks_url: Option<String>,
 
     /// List of the jwt validation public keys.
@@ -166,6 +184,7 @@ pub struct IdentityProviderCreate {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[builder(default)]
     #[schema(nullable = false)]
+    #[validate(length(max = 255))]
     pub bound_issuer: Option<String>,
 
     /// Default attribute mapping name which is automatically used when no
@@ -174,6 +193,7 @@ pub struct IdentityProviderCreate {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[builder(default)]
     #[schema(nullable = false)]
+    #[validate(length(max = 255))]
     pub default_mapping_name: Option<String>,
 
     /// Additional special provider specific configuration
@@ -185,26 +205,36 @@ pub struct IdentityProviderCreate {
 }
 
 /// New identity provider data.
-#[derive(Builder, Clone, Default, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
+#[derive(Builder, Clone, Default, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 #[builder(setter(strip_option, into))]
 pub struct IdentityProviderUpdate {
     /// The new name of the federated identity provider.
+    #[validate(length(max = 255))]
     pub name: Option<String>,
+
+    /// Identity provider `enabled` property. Inactive Identity Providers can not
+    /// be used for login.
+    #[builder(default)]
+    pub enabled: Option<bool>,
 
     /// The new OIDC discovery endpoint for the identity provider.
     #[builder(default)]
+    #[validate(url, length(max = 255))]
     pub oidc_discovery_url: Option<Option<String>>,
 
     /// The new oidc `client_id` to use for the private client.
     #[builder(default)]
+    #[validate(length(max = 255))]
     pub oidc_client_id: Option<Option<String>>,
 
     /// The new oidc `client_secret` to use for the private client.
     #[builder(default)]
+    #[validate(length(max = 255))]
     pub oidc_client_secret: Option<Option<String>>,
 
     /// The new oidc response mode.
     #[builder(default)]
+    #[validate(length(max = 255))]
     pub oidc_response_mode: Option<Option<String>>,
 
     /// The new oidc response mode.
@@ -215,6 +245,7 @@ pub struct IdentityProviderUpdate {
     /// the provider does not provide discovery endpoint or when it is not
     /// standard compliant.
     #[builder(default)]
+    #[validate(url)]
     pub jwks_url: Option<Option<String>>,
 
     /// The list of the jwt validation public keys.
@@ -223,6 +254,7 @@ pub struct IdentityProviderUpdate {
 
     /// The new bound issuer that is verified when using the identity provider.
     #[builder(default)]
+    #[validate(length(max = 255))]
     pub bound_issuer: Option<Option<String>>,
 
     /// New default attribute mapping name which is automatically used when no
@@ -230,6 +262,7 @@ pub struct IdentityProviderUpdate {
     /// exist.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[builder(default)]
+    #[validate(length(max = 255))]
     pub default_mapping_name: Option<Option<String>>,
 
     /// New additional provider configuration.
@@ -239,18 +272,20 @@ pub struct IdentityProviderUpdate {
 }
 
 /// Identity provider create request
-#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
+#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 #[builder(setter(strip_option, into))]
 pub struct IdentityProviderCreateRequest {
-    /// Identity provider object
+    /// Identity provider object.
+    #[validate(nested)]
     pub identity_provider: IdentityProviderCreate,
 }
 
 /// Identity provider update request
-#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
+#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 #[builder(setter(strip_option, into))]
 pub struct IdentityProviderUpdateRequest {
-    /// Identity provider object
+    /// Identity provider object.
+    #[validate(nested)]
     pub identity_provider: IdentityProviderUpdate,
 }
 
@@ -260,6 +295,7 @@ impl From<types::IdentityProvider> for IdentityProvider {
             id: value.id,
             name: value.name,
             domain_id: value.domain_id,
+            enabled: value.enabled,
             oidc_discovery_url: value.oidc_discovery_url,
             oidc_client_id: value.oidc_client_id,
             oidc_response_mode: value.oidc_response_mode,
@@ -279,6 +315,7 @@ impl From<IdentityProviderCreateRequest> for types::IdentityProvider {
             id: String::new(),
             name: value.identity_provider.name,
             domain_id: value.identity_provider.domain_id,
+            enabled: value.identity_provider.enabled,
             oidc_discovery_url: value.identity_provider.oidc_discovery_url,
             oidc_client_id: value.identity_provider.oidc_client_id,
             oidc_client_secret: value.identity_provider.oidc_client_secret,
@@ -297,6 +334,7 @@ impl From<IdentityProviderUpdateRequest> for types::IdentityProviderUpdate {
     fn from(value: IdentityProviderUpdateRequest) -> Self {
         Self {
             name: value.identity_provider.name,
+            enabled: value.identity_provider.enabled,
             oidc_discovery_url: value.identity_provider.oidc_discovery_url,
             oidc_client_id: value.identity_provider.oidc_client_id,
             oidc_client_secret: value.identity_provider.oidc_client_secret,
@@ -330,9 +368,10 @@ impl From<IdentityProviderBuilderError> for KeystoneApiError {
 }
 
 /// List of Identity Providers.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct IdentityProviderList {
     /// Collection of identity provider objects.
+    #[validate(nested)]
     pub identity_providers: Vec<IdentityProvider>,
 }
 
@@ -343,14 +382,16 @@ impl IntoResponse for IdentityProviderList {
 }
 
 /// Query parameters for listing federated identity providers.
-#[derive(Clone, Debug, Default, Deserialize, Serialize, IntoParams)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize, IntoParams, Validate)]
 pub struct IdentityProviderListParameters {
     /// Filters the response by IDP name.
     #[param(nullable = false)]
+    #[validate(length(max = 255))]
     pub name: Option<String>,
 
     /// Filters the response by a domain ID.
     #[param(nullable = false)]
+    #[validate(length(max = 64))]
     pub domain_id: Option<String>,
 }
 

@@ -11,9 +11,11 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+use chrono::{DateTime, Utc};
+
 use crate::db::entity::password as db_password;
 use crate::identity::backends::error::IdentityDatabaseError;
-use chrono::{DateTime, Utc};
+use crate::identity::types::UserResponseBuilder;
 
 mod create;
 
@@ -32,6 +34,24 @@ pub(super) fn is_password_expired(
         return Ok(expires <= Utc::now());
     }
     Ok(false)
+}
+
+impl UserResponseBuilder {
+    pub fn merge_passwords_data<I>(&mut self, passwords: I) -> &mut Self
+    where
+        I: IntoIterator<Item = db_password::Model>,
+    {
+        if let Some(latest_password) = passwords.into_iter().next() {
+            if let Some(microseconds) = latest_password.expires_at_int
+                && let Some(ts) = DateTime::from_timestamp_micros(microseconds)
+            {
+                self.password_expires_at(ts);
+            } else if let Some(expires_at) = latest_password.expires_at {
+                self.password_expires_at(expires_at.and_utc());
+            }
+        }
+        self
+    }
 }
 
 #[cfg(test)]

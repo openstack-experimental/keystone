@@ -20,13 +20,7 @@ use async_trait::async_trait;
 use crate::assignment::AssignmentProviderError;
 use crate::keystone::ServiceState;
 
-pub use crate::assignment::types::assignment::{
-    Assignment, AssignmentBuilder, AssignmentBuilderError, AssignmentType,
-    RoleAssignmentListForMultipleActorTargetParameters,
-    RoleAssignmentListForMultipleActorTargetParametersBuilder, RoleAssignmentListParameters,
-    RoleAssignmentListParametersBuilder, RoleAssignmentListParametersBuilderError,
-    RoleAssignmentTarget,
-};
+pub use crate::assignment::types::assignment::*;
 pub use crate::assignment::types::role::{Role, RoleBuilder, RoleBuilderError, RoleListParameters};
 
 #[async_trait]

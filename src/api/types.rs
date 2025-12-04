@@ -11,7 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-
+//! Keystone API types
 use axum::{
     Json,
     http::StatusCode,
@@ -21,12 +21,16 @@ use chrono::{DateTime, Utc};
 use derive_builder::Builder;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
+use validator::{Validate, ValidationErrors};
 
 use crate::catalog::types::{Endpoint as ProviderEndpoint, Service};
 use crate::resource::types as resource_provider_types;
 
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema)]
+/// List of the supported API versionts as [Values].
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct Versions {
+    /// List of the versions.
+    #[validate(nested)]
     pub versions: Values,
 }
 
@@ -36,13 +40,18 @@ impl IntoResponse for Versions {
     }
 }
 
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema)]
+/// A container with the [Version] list.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct Values {
+    #[validate(nested)]
     pub values: Vec<Version>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema)]
+/// Single API version container.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct SingleVersion {
+    /// The version.
+    #[validate(nested)]
     pub version: Version,
 }
 
@@ -52,30 +61,47 @@ impl IntoResponse for SingleVersion {
     }
 }
 
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema)]
+/// Single API version.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct Version {
+    /// Version id.
+    #[validate(length(max = 5))]
     pub id: String,
+    /// Version status.
     pub status: VersionStatus,
+    /// Date of the version update.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub updated: Option<DateTime<Utc>>,
+    /// Links to the API version.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[validate(nested)]
     pub links: Option<Vec<Link>>,
+    /// Supported media types.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[validate(nested)]
     pub media_types: Option<Vec<MediaType>>,
 }
 
+/// Version status.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema)]
 pub enum VersionStatus {
+    /// Stable.
     #[default]
     #[serde(rename = "stable")]
     Stable,
+    /// Experimental.
     #[serde(rename = "experimental")]
     Experimental,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema)]
+/// Link object.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct Link {
+    /// Link rel attribute.
+    #[validate(length(max = 10))]
     pub rel: String,
+    /// link href attribute.
+    #[validate(url)]
     pub href: String,
 }
 
@@ -88,7 +114,7 @@ impl Link {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct MediaType {
     pub base: String,
     pub r#type: String,
@@ -107,6 +133,12 @@ impl Default for MediaType {
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema)]
 pub struct Catalog(Vec<CatalogService>);
 
+impl Validate for Catalog {
+    fn validate(&self) -> Result<(), ValidationErrors> {
+        self.0.validate()
+    }
+}
+
 impl IntoResponse for Catalog {
     fn into_response(self) -> Response {
         (StatusCode::OK, Json(self)).into_response()
@@ -114,12 +146,15 @@ impl IntoResponse for Catalog {
 }
 
 /// A catalog object.
-#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema)]
+#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 #[builder(setter(strip_option, into))]
 pub struct CatalogService {
     pub r#type: Option<String>,
+    #[validate(length(max = 255))]
     pub name: Option<String>,
+    #[validate(length(max = 64))]
     pub id: String,
+    #[validate(nested)]
     pub endpoints: Vec<Endpoint>,
 }
 
@@ -135,15 +170,20 @@ impl From<(Service, Vec<ProviderEndpoint>)> for CatalogService {
 }
 
 /// A Catalog Endpoint.
-#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema)]
+#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 #[builder(setter(strip_option, into))]
 pub struct Endpoint {
+    #[validate(length(max = 64))]
     pub id: String,
+    #[validate(url)]
     pub url: String,
+    #[validate(length(max = 64))]
     pub interface: String,
     #[builder(default)]
+    #[validate(length(max = 64))]
     pub region: Option<String>,
     #[builder(default)]
+    #[validate(length(max = 64))]
     pub region_id: Option<String>,
 }
 
@@ -190,15 +230,27 @@ pub enum Scope {
     System(System),
 }
 
+impl Validate for Scope {
+    fn validate(&self) -> Result<(), ValidationErrors> {
+        match self {
+            Self::Project(project) => project.validate(),
+            Self::Domain(domain) => domain.validate(),
+            Self::System(system) => system.validate(),
+        }
+    }
+}
+
 /// Project scope information.
-#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema)]
+#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 #[builder(setter(into, strip_option))]
 pub struct ProjectScope {
     /// Project ID.
     #[builder(default)]
+    #[validate(length(max = 64))]
     pub id: Option<String>,
     /// Project Name.
     #[builder(default)]
+    #[validate(length(max = 64))]
     pub name: Option<String>,
     /// Project domain.
     #[builder(default)]
@@ -206,30 +258,34 @@ pub struct ProjectScope {
 }
 
 /// Domain information.
-#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema)]
+#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 #[builder(setter(into, strip_option))]
 pub struct Domain {
     /// Domain ID.
     #[builder(default)]
+    #[validate(length(max = 64))]
     pub id: Option<String>,
     /// Domain Name.
     #[builder(default)]
+    #[validate(length(max = 64))]
     pub name: Option<String>,
 }
 
 /// Project information.
-#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema)]
+#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct Project {
     /// Project ID.
+    #[validate(length(max = 64))]
     pub id: String,
     /// Project Name.
+    #[validate(length(max = 64))]
     pub name: String,
     /// project domain.
     pub domain: Domain,
 }
 
 /// System scope.
-#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema)]
+#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 #[builder(setter(into, strip_option))]
 pub struct System {
     /// All systems access.
@@ -253,4 +309,9 @@ impl From<&resource_provider_types::Domain> for Domain {
             name: Some(value.name.clone()),
         }
     }
+}
+
+/// Default `true` for the Deserialize trait.
+pub(crate) fn default_true() -> bool {
+    true
 }

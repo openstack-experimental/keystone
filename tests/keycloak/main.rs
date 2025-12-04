@@ -49,7 +49,7 @@ async fn test_login_oidc_keycloak() {
         .unwrap();
 
     let token = auth().await;
-    let (idp, mapping) = setup_kecloak_idp(&token, client_id, client_secret)
+    let (idp, mapping) = setup_keycloak_idp(&token, client_id, client_secret)
         .await
         .unwrap();
 

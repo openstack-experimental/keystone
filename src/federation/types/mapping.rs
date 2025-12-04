@@ -36,6 +36,9 @@ pub struct Mapping {
     /// Mapping type.
     pub r#type: MappingType,
 
+    /// Enabled attribute.
+    pub enabled: bool,
+
     /// List of allowed redirect_uri for the oidc mapping.
     #[builder(default)]
     pub allowed_redirect_uris: Option<Vec<String>>,
@@ -98,6 +101,9 @@ pub struct MappingUpdate {
     /// Mapping type.
     #[builder(default)]
     pub r#type: Option<MappingType>,
+
+    /// Enabled attribute.
+    pub enabled: Option<bool>,
 
     /// List of allowed redirect_uri for the oidc mapping.
     #[builder(default)]
