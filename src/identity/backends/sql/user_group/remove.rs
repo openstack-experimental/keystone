@@ -16,7 +16,11 @@ use sea_orm::DatabaseConnection;
 use sea_orm::entity::*;
 use sea_orm::query::*;
 
-use crate::db::entity::{prelude::UserGroupMembership, user_group_membership};
+use crate::db::entity::{
+    expiring_user_group_membership,
+    prelude::{ExpiringUserGroupMembership, UserGroupMembership},
+    user_group_membership,
+};
 use crate::identity::backends::sql::{IdentityDatabaseError, db_err};
 
 /// Remove the user from the group.
@@ -52,6 +56,55 @@ where
                     user_group_membership::Column::GroupId
                         .is_in(group_ids.into_iter().map(|grp| grp.as_ref().to_string())),
                 ),
+        )
+        .exec(db)
+        .await
+        .map_err(|e| db_err(e, "Deleting user<->group membership relations"))?;
+
+    Ok(())
+}
+
+/// Remove the user from the group with expiration.
+pub async fn remove_user_from_group_expiring<U: AsRef<str>, G: AsRef<str>, IDP: AsRef<str>>(
+    db: &DatabaseConnection,
+    user_id: U,
+    group_id: G,
+    idp_id: IDP,
+) -> Result<(), IdentityDatabaseError> {
+    ExpiringUserGroupMembership::delete_by_id((
+        user_id.as_ref().into(),
+        group_id.as_ref().into(),
+        idp_id.as_ref().into(),
+    ))
+    .exec(db)
+    .await
+    .map_err(|e| db_err(e, "Deleting expiring user<->group membership relation"))?;
+
+    Ok(())
+}
+
+/// Remove the user from multiple groups.
+pub async fn remove_user_from_groups_expiring<I, U, G, IDP>(
+    db: &DatabaseConnection,
+    user_id: U,
+    group_ids: I,
+    idp_id: IDP,
+) -> Result<(), IdentityDatabaseError>
+where
+    I: IntoIterator<Item = G>,
+    U: AsRef<str>,
+    G: AsRef<str>,
+    IDP: AsRef<str>,
+{
+    ExpiringUserGroupMembership::delete_many()
+        .filter(
+            Condition::all()
+                .add(expiring_user_group_membership::Column::UserId.eq(user_id.as_ref()))
+                .add(
+                    expiring_user_group_membership::Column::GroupId
+                        .is_in(group_ids.into_iter().map(|grp| grp.as_ref().to_string())),
+                )
+                .add(expiring_user_group_membership::Column::IdpId.eq(idp_id.as_ref())),
         )
         .exec(db)
         .await
@@ -108,6 +161,60 @@ mod tests {
                 DatabaseBackend::Postgres,
                 r#"DELETE FROM "user_group_membership" WHERE "user_group_membership"."user_id" = $1 AND "user_group_membership"."group_id" IN ($2, $3, $4)"#,
                 ["u1".into(), "g1".into(), "g2".into(), "g3".into()]
+            ),]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_remove_expiring_single() {
+        // Create MockDatabase with mock query results
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_exec_results([MockExecResult {
+                rows_affected: 1,
+                ..Default::default()
+            }])
+            .into_connection();
+
+        remove_user_from_group_expiring(&db, "u1", "g1", "idp_id")
+            .await
+            .unwrap();
+        // Checking transaction log
+        assert_eq!(
+            db.into_transaction_log(),
+            [Transaction::from_sql_and_values(
+                DatabaseBackend::Postgres,
+                r#"DELETE FROM "expiring_user_group_membership" WHERE "expiring_user_group_membership"."user_id" = $1 AND "expiring_user_group_membership"."group_id" = $2 AND "expiring_user_group_membership"."idp_id" = $3"#,
+                ["u1".into(), "g1".into(), "idp_id".into()]
+            ),]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_remove_expiring_from_groups() {
+        // Create MockDatabase with mock query results
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_exec_results([MockExecResult {
+                rows_affected: 1,
+                ..Default::default()
+            }])
+            .into_connection();
+
+        remove_user_from_groups_expiring(&db, "u1", vec!["g1", "g2", "g3"], "idp_id")
+            .await
+            .unwrap();
+        // Checking transaction log
+        assert_eq!(
+            db.into_transaction_log(),
+            [Transaction::from_sql_and_values(
+                DatabaseBackend::Postgres,
+                r#"DELETE FROM "expiring_user_group_membership" WHERE "expiring_user_group_membership"."user_id" = $1 AND "expiring_user_group_membership"."group_id" IN ($2, $3, $4) AND "expiring_user_group_membership"."idp_id" = $5"#,
+                [
+                    "u1".into(),
+                    "g1".into(),
+                    "g2".into(),
+                    "g3".into(),
+                    "idp_id".into()
+                ]
             ),]
         );
     }

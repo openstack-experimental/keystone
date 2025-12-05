@@ -25,6 +25,7 @@ pub struct Model {
     pub group_id: String,
     #[sea_orm(primary_key, auto_increment = false)]
     pub idp_id: String,
+    #[sea_orm(default_expr = "Expr::current_timestamp()")]
     pub last_verified: DateTime,
 }
 

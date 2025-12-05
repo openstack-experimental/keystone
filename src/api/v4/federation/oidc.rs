@@ -278,10 +278,11 @@ pub async fn callback(
             state
                 .provider
                 .get_identity_provider()
-                .set_user_groups(
+                .set_user_groups_expiring(
                     &state,
                     &user.id,
                     HashSet::from_iter(group_ids.iter().map(|i| i.as_str())),
+                    idp.id.as_ref(),
                 )
                 .await?;
         }

@@ -117,11 +117,28 @@ pub trait IdentityBackend: DynClone + Send + Sync + std::fmt::Debug {
         group_id: &'a str,
     ) -> Result<(), IdentityProviderError>;
 
+    /// Add the user to the group with expiration.
+    async fn add_user_to_group_expiring<'a>(
+        &self,
+        state: &ServiceState,
+        user_id: &'a str,
+        group_id: &'a str,
+        idp_id: &'a str,
+    ) -> Result<(), IdentityProviderError>;
+
     /// Add user group membership relations.
     async fn add_users_to_groups<'a>(
         &self,
         state: &ServiceState,
         memberships: Vec<(&'a str, &'a str)>,
+    ) -> Result<(), IdentityProviderError>;
+
+    /// Add expiring user group membership relations.
+    async fn add_users_to_groups_expiring<'a>(
+        &self,
+        state: &ServiceState,
+        memberships: Vec<(&'a str, &'a str)>,
+        idp_id: &'a str,
     ) -> Result<(), IdentityProviderError>;
 
     /// Remove the user from the group.
@@ -132,6 +149,15 @@ pub trait IdentityBackend: DynClone + Send + Sync + std::fmt::Debug {
         group_id: &'a str,
     ) -> Result<(), IdentityProviderError>;
 
+    /// Remove the user from the group with expiration.
+    async fn remove_user_from_group_expiring<'a>(
+        &self,
+        state: &ServiceState,
+        user_id: &'a str,
+        group_id: &'a str,
+        idp_id: &'a str,
+    ) -> Result<(), IdentityProviderError>;
+
     /// Remove the user from multiple groups.
     async fn remove_user_from_groups<'a>(
         &self,
@@ -140,12 +166,30 @@ pub trait IdentityBackend: DynClone + Send + Sync + std::fmt::Debug {
         group_ids: HashSet<&'a str>,
     ) -> Result<(), IdentityProviderError>;
 
+    /// Remove the user from multiple expiring groups.
+    async fn remove_user_from_groups_expiring<'a>(
+        &self,
+        state: &ServiceState,
+        user_id: &'a str,
+        group_ids: HashSet<&'a str>,
+        idp_id: &'a str,
+    ) -> Result<(), IdentityProviderError>;
+
     /// Set group memberships for the user.
     async fn set_user_groups<'a>(
         &self,
         state: &ServiceState,
         user_id: &'a str,
         group_ids: HashSet<&'a str>,
+    ) -> Result<(), IdentityProviderError>;
+
+    /// Set expiring group memberships for the user.
+    async fn set_user_groups_expiring<'a>(
+        &self,
+        state: &ServiceState,
+        user_id: &'a str,
+        group_ids: HashSet<&'a str>,
+        idp_id: &'a str,
     ) -> Result<(), IdentityProviderError>;
 
     /// List user passkeys.

@@ -11,28 +11,50 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-
 mod add;
 mod list;
 mod remove;
 mod set;
 
-pub use add::{add_user_to_group, add_users_to_groups};
-pub use list::list_user_groups;
-pub use remove::{remove_user_from_group, remove_user_from_groups};
-pub use set::set_user_groups;
+pub use add::*;
+pub use list::*;
+pub use remove::*;
+pub use set::*;
 
 #[cfg(test)]
 pub(super) mod tests {
-    use crate::db::entity::user_group_membership;
+    use chrono::{DateTime, Utc};
 
-    pub fn get_user_group_mock<U: AsRef<str>, G: AsRef<str>>(
+    use crate::db::entity::{expiring_user_group_membership, user_group_membership};
+
+    pub(super) fn get_user_group_membership_mock<U, G>(
         user_id: U,
         group_id: G,
-    ) -> user_group_membership::Model {
+    ) -> user_group_membership::Model
+    where
+        U: AsRef<str>,
+        G: AsRef<str>,
+    {
         user_group_membership::Model {
             user_id: user_id.as_ref().to_string(),
             group_id: group_id.as_ref().to_string(),
+        }
+    }
+
+    pub(super) fn get_expiring_user_group_membership_mock<U, G>(
+        user_id: U,
+        group_id: G,
+        last_verified: DateTime<Utc>,
+    ) -> expiring_user_group_membership::Model
+    where
+        U: AsRef<str>,
+        G: AsRef<str>,
+    {
+        expiring_user_group_membership::Model {
+            user_id: user_id.as_ref().to_string(),
+            group_id: group_id.as_ref().to_string(),
+            idp_id: "idp_id".to_string(),
+            last_verified: last_verified.naive_utc(),
         }
     }
 }
