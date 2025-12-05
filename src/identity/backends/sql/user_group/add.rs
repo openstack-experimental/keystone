@@ -15,7 +15,11 @@
 use sea_orm::DatabaseConnection;
 use sea_orm::entity::*;
 
-use crate::db::entity::{prelude::UserGroupMembership, user_group_membership};
+use crate::db::entity::{
+    expiring_user_group_membership,
+    prelude::{ExpiringUserGroupMembership, UserGroupMembership},
+    user_group_membership,
+};
 use crate::identity::backends::sql::{IdentityDatabaseError, db_err};
 
 /// Add the user to the single group.
@@ -62,18 +66,73 @@ where
     Ok(())
 }
 
+/// Add the user to the single group with expiring membership.
+pub async fn add_user_to_group_expiring<U: AsRef<str>, G: AsRef<str>, IDP: AsRef<str>>(
+    db: &DatabaseConnection,
+    user_id: U,
+    group_id: G,
+    idp_id: IDP,
+) -> Result<(), IdentityDatabaseError> {
+    let entry = expiring_user_group_membership::ActiveModel {
+        user_id: Set(user_id.as_ref().into()),
+        group_id: Set(group_id.as_ref().into()),
+        idp_id: Set(idp_id.as_ref().into()),
+        last_verified: NotSet,
+    };
+
+    entry
+        .insert(db)
+        .await
+        .map_err(|e| db_err(e, "adding user to single group with expiration"))?;
+
+    Ok(())
+}
+
+/// Add expiring group user relations as specified by the tuples (user_id, group_id)
+/// iterator.
+pub async fn add_users_to_groups_expiring<I, U, G, IDP>(
+    db: &DatabaseConnection,
+    iter: I,
+    idp_id: IDP,
+) -> Result<(), IdentityDatabaseError>
+where
+    I: IntoIterator<Item = (U, G)>,
+    U: AsRef<str>,
+    G: AsRef<str>,
+    IDP: AsRef<str>,
+{
+    //let last_verified = Utc::now().naive_utc();
+    ExpiringUserGroupMembership::insert_many(iter.into_iter().map(|(u, g)| {
+        expiring_user_group_membership::ActiveModel {
+            user_id: Set(u.as_ref().into()),
+            group_id: Set(g.as_ref().into()),
+            idp_id: Set(idp_id.as_ref().into()),
+            last_verified: NotSet,
+        }
+    }))
+    .on_empty_do_nothing()
+    .exec(db)
+    .await
+    .map_err(|e| db_err(e, "adding user to groups with expiration"))?;
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
+    use chrono::Utc;
     use sea_orm::{DatabaseBackend, MockDatabase, MockExecResult, Transaction};
 
-    use super::super::tests::get_user_group_mock;
+    use super::super::tests::{
+        get_expiring_user_group_membership_mock, get_user_group_membership_mock,
+    };
     use super::*;
 
     #[tokio::test]
-    async fn test_create() {
+    async fn test_add() {
         // Create MockDatabase with mock query results
         let db = MockDatabase::new(DatabaseBackend::Postgres)
-            .append_query_results([vec![get_user_group_mock("u1", "g1")]])
+            .append_query_results([vec![get_user_group_membership_mock("u1", "g1")]])
             .into_connection();
 
         assert!(add_user_to_group(&db, "u1", "g1").await.is_ok());
@@ -87,6 +146,7 @@ mod tests {
             ),]
         );
     }
+
     #[tokio::test]
     async fn test_bulk() {
         // Create MockDatabase with mock query results
@@ -115,6 +175,70 @@ mod tests {
                     "u2".into(),
                     "g2".into()
                 ]
+            ),]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_add_expiring() {
+        // Create MockDatabase with mock query results
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([vec![get_expiring_user_group_membership_mock(
+                "u1",
+                "g1",
+                Utc::now(),
+            )]])
+            .into_connection();
+
+        assert!(
+            add_user_to_group_expiring(&db, "u1", "g1", "idp_id")
+                .await
+                .is_ok()
+        );
+        assert_eq!(
+            db.into_transaction_log(),
+            [Transaction::from_sql_and_values(
+                DatabaseBackend::Postgres,
+                r#"INSERT INTO "expiring_user_group_membership" ("user_id", "group_id", "idp_id") VALUES ($1, $2, $3) RETURNING "user_id", "group_id", "idp_id", "last_verified""#,
+                ["u1".into(), "g1".into(), "idp_id".into()]
+            ),]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_bulk_expiring() {
+        // Create MockDatabase with mock query results
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_exec_results([MockExecResult {
+                rows_affected: 1,
+                ..Default::default()
+            }])
+            .into_connection();
+
+        add_users_to_groups_expiring(
+            &db,
+            vec![("u1", "g1"), ("u1", "g2"), ("u2", "g2")],
+            "idp_id",
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            db.into_transaction_log(),
+            [Transaction::from_sql_and_values(
+                DatabaseBackend::Postgres,
+                r#"INSERT INTO "expiring_user_group_membership" ("user_id", "group_id", "idp_id") VALUES ($1, $2, $3), ($4, $5, $6), ($7, $8, $9) RETURNING "user_id", "group_id", "idp_id""#,
+                [
+                    "u1".into(),
+                    "g1".into(),
+                    "idp_id".into(),
+                    "u1".into(),
+                    "g2".into(),
+                    "idp_id".into(),
+                    "u2".into(),
+                    "g2".into(),
+                    "idp_id".into(),
+                ],
             ),]
         );
     }

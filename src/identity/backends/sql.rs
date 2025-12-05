@@ -162,7 +162,15 @@ impl IdentityBackend for SqlBackend {
         state: &ServiceState,
         user_id: &'a str,
     ) -> Result<Vec<Group>, IdentityProviderError> {
-        Ok(user_group::list_user_groups(&state.db, user_id).await?)
+        Ok(user_group::list_user_groups(
+            &state.db,
+            user_id,
+            &self
+                .config
+                .federation
+                .get_expiring_user_group_membership_cutof_datetime(),
+        )
+        .await?)
     }
 
     /// Add the user into the group.
@@ -176,6 +184,18 @@ impl IdentityBackend for SqlBackend {
         Ok(user_group::add_user_to_group(&state.db, user_id, group_id).await?)
     }
 
+    /// Add the user to the group with expiration.
+    #[tracing::instrument(level = "debug", skip(self, state))]
+    async fn add_user_to_group_expiring<'a>(
+        &self,
+        state: &ServiceState,
+        user_id: &'a str,
+        group_id: &'a str,
+        idp_id: &'a str,
+    ) -> Result<(), IdentityProviderError> {
+        Ok(user_group::add_user_to_group_expiring(&state.db, user_id, group_id, idp_id).await?)
+    }
+
     /// Add user group membership relations.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn add_users_to_groups<'a>(
@@ -184,6 +204,17 @@ impl IdentityBackend for SqlBackend {
         memberships: Vec<(&'a str, &'a str)>,
     ) -> Result<(), IdentityProviderError> {
         Ok(user_group::add_users_to_groups(&state.db, memberships).await?)
+    }
+
+    /// Add expiring user group membership relations.
+    #[tracing::instrument(level = "debug", skip(self, state))]
+    async fn add_users_to_groups_expiring<'a>(
+        &self,
+        state: &ServiceState,
+        memberships: Vec<(&'a str, &'a str)>,
+        idp_id: &'a str,
+    ) -> Result<(), IdentityProviderError> {
+        Ok(user_group::add_users_to_groups_expiring(&state.db, memberships, idp_id).await?)
     }
 
     /// Remove the user from the group.
@@ -197,6 +228,21 @@ impl IdentityBackend for SqlBackend {
         Ok(user_group::remove_user_from_group(&state.db, user_id, group_id).await?)
     }
 
+    /// Remove the user from the group with expiration.
+    #[tracing::instrument(level = "debug", skip(self, state))]
+    async fn remove_user_from_group_expiring<'a>(
+        &self,
+        state: &ServiceState,
+        user_id: &'a str,
+        group_id: &'a str,
+        idp_id: &'a str,
+    ) -> Result<(), IdentityProviderError> {
+        Ok(
+            user_group::remove_user_from_group_expiring(&state.db, user_id, group_id, idp_id)
+                .await?,
+        )
+    }
+
     /// Remove the user from multiple groups.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn remove_user_from_groups<'a>(
@@ -208,6 +254,21 @@ impl IdentityBackend for SqlBackend {
         Ok(user_group::remove_user_from_groups(&state.db, user_id, group_ids).await?)
     }
 
+    /// Remove the user from multiple expiring groups.
+    #[tracing::instrument(level = "debug", skip(self, state))]
+    async fn remove_user_from_groups_expiring<'a>(
+        &self,
+        state: &ServiceState,
+        user_id: &'a str,
+        group_ids: HashSet<&'a str>,
+        idp_id: &'a str,
+    ) -> Result<(), IdentityProviderError> {
+        Ok(
+            user_group::remove_user_from_groups_expiring(&state.db, user_id, group_ids, idp_id)
+                .await?,
+        )
+    }
+
     /// Set group memberships of the user.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn set_user_groups<'a>(
@@ -217,6 +278,18 @@ impl IdentityBackend for SqlBackend {
         group_ids: HashSet<&'a str>,
     ) -> Result<(), IdentityProviderError> {
         Ok(user_group::set_user_groups(&state.db, user_id, group_ids).await?)
+    }
+
+    /// Set expiring group memberships for the user.
+    #[tracing::instrument(level = "debug", skip(self, state))]
+    async fn set_user_groups_expiring<'a>(
+        &self,
+        state: &ServiceState,
+        user_id: &'a str,
+        group_ids: HashSet<&'a str>,
+        idp_id: &'a str,
+    ) -> Result<(), IdentityProviderError> {
+        Ok(user_group::set_user_groups_expiring(&state.db, user_id, group_ids, idp_id).await?)
     }
 
     /// Create webauthn credential for the user.

@@ -16,7 +16,7 @@ use derive_builder::Builder;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-#[derive(Builder, Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
+#[derive(Builder, Clone, Debug, Default, Deserialize, Eq, Hash, Serialize, PartialEq)]
 #[builder(setter(strip_option, into))]
 pub struct Group {
     /// The description of the group.
