@@ -11,38 +11,60 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-
+use chrono::{DateTime, Utc};
 use sea_orm::DatabaseConnection;
 use sea_orm::entity::*;
 use sea_orm::query::*;
+use sea_orm::sea_query::*;
 
 use crate::db::entity::{
-    group,
-    prelude::{Group as DbGroup, UserGroupMembership as DbUserGroupMembership},
+    expiring_user_group_membership, group as db_group, prelude::Group as DbGroup,
     user_group_membership,
 };
 use crate::identity::backends::sql::{IdentityDatabaseError, db_err};
 use crate::identity::types::Group;
 
 /// List all groups the user is member of.
+///
+/// Selects all groups with the ID in the list of user group memberships and expiring group
+/// memberships.
 pub async fn list_user_groups<S: AsRef<str>>(
     db: &DatabaseConnection,
     user_id: S,
+    last_verified_cutof: &DateTime<Utc>,
 ) -> Result<Vec<Group>, IdentityDatabaseError> {
-    let groups: Vec<(user_group_membership::Model, Vec<group::Model>)> =
-        DbUserGroupMembership::find()
-            .filter(user_group_membership::Column::UserId.eq(user_id.as_ref()))
-            .find_with_related(DbGroup)
-            .all(db)
-            .await
-            .map_err(|e| db_err(e, "listing groups the user is currently in"))?;
-
-    let results: Vec<Group> = groups
+    let groups: Vec<Group> = DbGroup::find()
+        .filter(
+            db_group::Column::Id.in_subquery(
+                Query::select()
+                    .column(user_group_membership::Column::GroupId)
+                    .from(user_group_membership::Entity)
+                    .and_where(user_group_membership::Column::UserId.eq(user_id.as_ref()))
+                    .union(
+                        UnionType::All,
+                        Query::select()
+                            .column(expiring_user_group_membership::Column::GroupId)
+                            .from(expiring_user_group_membership::Entity)
+                            .and_where(
+                                expiring_user_group_membership::Column::UserId.eq(user_id.as_ref()),
+                            )
+                            .and_where(
+                                expiring_user_group_membership::Column::LastVerified
+                                    .gt(last_verified_cutof.naive_utc()),
+                            )
+                            .to_owned(),
+                    )
+                    .to_owned(),
+            ),
+        )
+        .distinct()
+        .all(db)
+        .await
+        .map_err(|e| db_err(e, "listing groups the user is currently in"))?
         .into_iter()
-        .flat_map(|(_, x)| x.into_iter())
         .map(Into::into)
         .collect();
-    Ok(results)
+    Ok(groups)
 }
 
 #[cfg(test)]
@@ -50,31 +72,35 @@ mod tests {
     use sea_orm::{DatabaseBackend, MockDatabase, Transaction};
 
     use super::*;
-
-    fn get_group_mock<S: AsRef<str>>(id: S) -> group::Model {
-        group::Model {
-            id: id.as_ref().to_string(),
-            domain_id: "foo_domain".into(),
-            name: "group".into(),
-            description: Some("fake".into()),
-            extra: Some("{\"foo\": \"bar\"}".into()),
-        }
-    }
+    use crate::config::Config;
+    use crate::identity::backends::sql::group::tests::get_group_mock;
 
     #[tokio::test]
     async fn test_list() {
         let db = MockDatabase::new(DatabaseBackend::Postgres)
-            .append_query_results([vec![], vec![get_group_mock("1"), get_group_mock("2")]])
+            .append_query_results([vec![get_group_mock("1"), get_group_mock("2")]])
             .into_connection();
-        assert_eq!(list_user_groups(&db, "foo").await.unwrap(), vec![]);
+        let expiring_datetime = Config::default()
+            .federation
+            .get_expiring_user_group_membership_cutof_datetime();
+        assert_eq!(
+            list_user_groups(&db, "foo", &expiring_datetime)
+                .await
+                .unwrap(),
+            vec![get_group_mock("1").into(), get_group_mock("2").into()]
+        );
 
         // Checking transaction log
         assert_eq!(
             db.into_transaction_log(),
             [Transaction::from_sql_and_values(
                 DatabaseBackend::Postgres,
-                r#"SELECT "user_group_membership"."user_id" AS "A_user_id", "user_group_membership"."group_id" AS "A_group_id", "group"."id" AS "B_id", "group"."domain_id" AS "B_domain_id", "group"."name" AS "B_name", "group"."description" AS "B_description", "group"."extra" AS "B_extra" FROM "user_group_membership" LEFT JOIN "group" ON "user_group_membership"."group_id" = "group"."id" WHERE "user_group_membership"."user_id" = $1 ORDER BY "user_group_membership"."user_id" ASC, "user_group_membership"."group_id" ASC"#,
-                ["foo".into()]
+                r#"SELECT DISTINCT "group"."id", "group"."domain_id", "group"."name", "group"."description", "group"."extra" FROM "group" WHERE "group"."id" IN (SELECT "group_id" FROM "user_group_membership" WHERE "user_group_membership"."user_id" = $1 UNION ALL (SELECT "group_id" FROM "expiring_user_group_membership" WHERE "expiring_user_group_membership"."user_id" = $2 AND "expiring_user_group_membership"."last_verified" > $3))"#,
+                [
+                    "foo".into(),
+                    "foo".into(),
+                    expiring_datetime.naive_utc().into()
+                ]
             ),]
         );
     }

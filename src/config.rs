@@ -14,7 +14,7 @@
 //! # Keystone configuration
 //!
 //! Parsing of the Keystone configuration file implementation.
-use chrono::{NaiveDate, TimeDelta, Utc};
+use chrono::{DateTime, NaiveDate, TimeDelta, Utc};
 use config::{File, FileFormat};
 use eyre::{Report, WrapErr};
 use regex::Regex;
@@ -182,16 +182,30 @@ pub struct FederationProvider {
     /// Federation provider backend.
     #[serde(default = "default_sql_driver")]
     pub driver: String,
+    /// Default time in minutes for the validity of group memberships carried over from a mapping. Default is 0, which means disabled.
+    #[serde(default)]
+    pub default_authorization_ttl: u32,
 }
 
 impl Default for FederationProvider {
     fn default() -> Self {
         Self {
             driver: default_sql_driver(),
+            default_authorization_ttl: 0,
         }
     }
 }
-
+impl FederationProvider {
+    /// Return oldest `last_verified` date for the expiring user group membership.
+    ///
+    /// Calculate the oldest time for the expiring user group membership to not be considered as
+    /// valid.
+    pub(crate) fn get_expiring_user_group_membership_cutof_datetime(&self) -> DateTime<Utc> {
+        Utc::now()
+            .checked_sub_signed(TimeDelta::seconds(self.default_authorization_ttl.into()))
+            .unwrap_or(Utc::now())
+    }
+}
 /// Identity provider.
 #[derive(Debug, Deserialize, Clone)]
 pub struct IdentityProvider {

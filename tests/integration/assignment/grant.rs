@@ -29,6 +29,7 @@ async fn setup_schema(db: &DbConn) -> Result<(), Report> {
     let stmts: Vec<TableCreateStatement> = vec![
         schema.create_table_from_entity(Assignment),
         schema.create_table_from_entity(Group),
+        schema.create_table_from_entity(ExpiringUserGroupMembership),
         schema.create_table_from_entity(ImpliedRole),
         schema.create_table_from_entity(Project),
         schema.create_table_from_entity(Role),

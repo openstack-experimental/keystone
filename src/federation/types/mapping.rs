@@ -103,6 +103,7 @@ pub struct MappingUpdate {
     pub r#type: Option<MappingType>,
 
     /// Enabled attribute.
+    #[builder(default)]
     pub enabled: Option<bool>,
 
     /// List of allowed redirect_uri for the oidc mapping.
