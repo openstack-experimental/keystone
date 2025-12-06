@@ -139,16 +139,26 @@ pub async fn list_for_multiple_actors_and_targets(
     params: &RoleAssignmentListForMultipleActorTargetParameters,
 ) -> Result<Vec<Assignment>, AssignmentDatabaseError> {
     let mut select = DbAssignment::find();
+    let mut select_system = DbSystemAssignment::find();
+    // flags of actors and role ID matches as boolean expressions
+    let mut include_system = false; // Track if we should query system table
 
     if !params.actors.is_empty() {
         select = select.filter(db_assignment::Column::ActorId.is_in(params.actors.clone()));
+        select_system = select_system
+            .filter(db_system_assignment::Column::ActorId.is_in(params.actors.clone()));
     }
     if let Some(rid) = &params.role_id {
         select = select.filter(db_assignment::Column::RoleId.eq(rid));
+        select_system = select_system.filter(db_system_assignment::Column::RoleId.eq(rid));
     }
     if !params.targets.is_empty() {
         let mut cond = Condition::any();
         for target in params.targets.iter() {
+            if let RoleAssignmentTargetType::System = &target.r#type {
+                include_system = true;
+                continue;
+            }
             cond = cond.add(
                 Condition::all()
                     .add(db_assignment::Column::TargetId.eq(&target.id))
@@ -160,49 +170,70 @@ pub async fn list_for_multiple_actors_and_targets(
             );
         }
         select = select.filter(cond);
+    } else {
+        include_system = true;
     }
+    // System query always filters by target_id = "system"
+    select_system = select_system.filter(db_system_assignment::Column::TargetId.eq("system"));
 
     // Get all implied rules
     let imply_rules = implied_role::list_rules(db, true).await?;
 
-    let mut db_assignments: BTreeMap<String, db_assignment::Model> = BTreeMap::new();
-    // Get assignments resolving the roles inference
-    for assignment in select.all(db).await.map_err(|err| {
-        db_err(
-            err,
-            "fetching role assignments for multiple actors and targets",
-        )
-    })? {
-        db_assignments.insert(assignment.role_id.clone(), assignment.clone());
+    // Query both tables in parallel (if needed)
+    let (db_assignments, db_system_assignments) = if include_system {
+        tokio::join!(select.all(db), select_system.all(db))
+    } else {
+        (select.all(db).await, Ok(Vec::new()))
+    };
+    // Convert to Assignment type
+    let assignments: Vec<Assignment> = db_assignments
+        .map_err(|err| db_err(err, "fetching role assignments"))?
+        .into_iter()
+        .map(TryInto::<Assignment>::try_into)
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let system_assignments: Vec<Assignment> = db_system_assignments
+        .map_err(|err| db_err(err, "fetching system assignments"))?
+        .into_iter()
+        .map(TryInto::<Assignment>::try_into)
+        .collect::<Result<Vec<_>, _>>()?;
+
+    // Merge and apply role implications
+    let mut result_map: BTreeMap<String, Assignment> = BTreeMap::new();
+
+    for assignment in assignments.into_iter().chain(system_assignments) {
+        result_map.insert(assignment.role_id.clone(), assignment.clone());
+
         if let Some(implies) = imply_rules.get(&assignment.role_id) {
-            let mut implied_assignment = assignment.clone();
-            for implied in implies.iter() {
-                implied_assignment.role_id = implied.clone();
-                db_assignments.insert(implied.clone(), implied_assignment.clone());
+            for implied_role_id in implies.iter() {
+                let mut implied_assignment = assignment.clone();
+                implied_assignment.role_id = implied_role_id.clone();
+                result_map.insert(implied_role_id.clone(), implied_assignment);
             }
         }
     }
 
-    if !db_assignments.is_empty() {
-        // Get roles for the found IDs
+    // Fetch and update role names
+    if !result_map.is_empty() {
         let roles: HashMap<String, String> = HashMap::from_iter(
             DbRole::find()
                 .select_only()
                 .columns([db_role::Column::Id, db_role::Column::Name])
-                .filter(Expr::col(db_role::Column::Id).is_in(db_assignments.keys()))
+                .filter(Expr::col(db_role::Column::Id).is_in(result_map.keys()))
                 .into_tuple()
                 .all(db)
                 .await
                 .map_err(|err| db_err(err, "fetching roles by ids"))?,
         );
-        let results: Result<Vec<Assignment>, _> = db_assignments
-            .values()
-            .map(|item| TryInto::<Assignment>::try_into((item, roles.get(&item.role_id))))
-            .collect();
-        results
-    } else {
-        Ok(Vec::new())
+
+        for assignment in result_map.values_mut() {
+            if let Some(name) = roles.get(&assignment.role_id) {
+                assignment.role_name = Some(name.clone());
+            }
+        }
     }
+
+    Ok(result_map.into_values().collect())
 }
 
 #[cfg(test)]
@@ -571,6 +602,7 @@ mod tests {
         let db = MockDatabase::new(DatabaseBackend::Postgres)
             .append_query_results([get_implied_rules_mock()])
             .append_query_results([vec![get_role_assignment_mock("1")]])
+            .append_query_results([vec![get_role_system_assignment_mock("2")]])
             .append_query_results([vec![
                 get_role_mock("1", "rname"),
                 get_role_mock("2", "rname2"),
@@ -605,6 +637,11 @@ mod tests {
                     DatabaseBackend::Postgres,
                     r#"SELECT CAST("assignment"."type" AS "text"), "assignment"."actor_id", "assignment"."target_id", "assignment"."role_id", "assignment"."inherited" FROM "assignment""#,
                     []
+                ),
+                Transaction::from_sql_and_values(
+                    DatabaseBackend::Postgres,
+                    r#"SELECT "system_assignment"."type", "system_assignment"."actor_id", "system_assignment"."target_id", "system_assignment"."role_id", "system_assignment"."inherited" FROM "system_assignment" WHERE "system_assignment"."target_id" = $1"#,
+                    ["system".into()]
                 ),
                 Transaction::from_sql_and_values(
                     DatabaseBackend::Postgres,

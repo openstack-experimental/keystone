@@ -175,6 +175,12 @@ impl AssignmentApi for AssignmentProvider {
                 r#type: RoleAssignmentTargetType::Domain,
                 inherited: Some(false),
             });
+        } else if let Some(val) = &params.system {
+            targets.push(RoleAssignmentTarget {
+                id: val.clone(),
+                r#type: RoleAssignmentTargetType::System,
+                inherited: Some(false),
+            })
         }
         request.targets(targets);
         request.actors(actors);
