@@ -127,10 +127,6 @@ jobs:
     if: "github.actor != 'openstack-experimental-release-plz'"
     needs:
       - build
-    permissions:
-      id-token: write
-      contents: read
-      packages: read
     env:
       KEYCLOAK_URL: http://localhost:8082
       BROWSERDRIVER_PORT: 4444
@@ -174,21 +170,6 @@ jobs:
           KEYCLOAK_PASSWORD: password
         run: cargo test --test keycloak
 
-      - name: Get GitHub JWT token
-        id: get_token
-        run: |
-          TOKEN_JSON=$(curl -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-          "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=https://github.com")
-
-          TOKEN=$(echo $TOKEN_JSON | jq -r .value)
-          echo "token=$TOKEN" >> $GITHUB_OUTPUT
-
-      - name: Run github tests
-        env:
-          GITHUB_JWT: ${{ steps.get_token.outputs.token }}
-          GITHUB_SUB: "repo:openstack-experimental/keystone:pull_request"
-        run: cargo test --test github -- --nocapture
-
       - name: Run dex tests
         env:
           DEX_URL: http://localhost:5556
@@ -214,13 +195,71 @@ jobs:
         if: failure()
         run: docker logs opa
 
+  federation-github:
+    runs-on: ubuntu-latest
+    if: "github.actor != 'openstack-experimental-release-plz'"
+    needs:
+      - build
+    permissions:
+      id-token: write
+      contents: read
+      packages: read
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: keystone
+          POSTGRES_PASSWORD: '1234'
+        ports:
+          - 5432:5432
+        options: --health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5
+      keycloak:
+        image: ghcr.io/openstack-experimental/keystone/keycloak-ci-service:26.2
+        env:
+          KC_BOOTSTRAP_ADMIN_USERNAME: admin
+          KC_BOOTSTRAP_ADMIN_PASSWORD: password
+        ports:
+          - 8082:8080
+    steps:
+      - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
+
+      - uses: ./.github/actions/deploy_keystone
+
+      - name: Get GitHub JWT token
+        id: get_token
+        run: |
+          TOKEN_JSON=$(curl -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+          "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=https://github.com")
+
+          TOKEN=$(echo $TOKEN_JSON | jq -r .value)
+          echo "token=$TOKEN" >> $GITHUB_OUTPUT
+
+      - name: Run github tests
+        env:
+          GITHUB_JWT: ${{ steps.get_token.outputs.token }}
+          GITHUB_SUB: "repo:openstack-experimental/keystone:pull_request"
+        run: cargo test --test github -- --nocapture
+
+      - name: Dump py-keystone logs
+        if: failure()
+        run: docker logs keystone
+
+      - name: Dump rust keystone log
+        if: failure()
+        run: cat rust.log
+
+      - name: Dump OPA log
+        if: failure()
+        run: docker logs opa
+
   loadtest:
     runs-on: ubuntu-latest
     if: "github.actor != 'openstack-experimental-release-plz'"
     needs:
       - build
     permissions:
-      pull-requests: write
+      contents: read
+      packages: read
     services:
       postgres:
         image: postgres:17
@@ -259,32 +298,11 @@ jobs:
             --report-file reports/loadtest-report-python.html \
             --report-file reports/loadtest-report-python.md
 
-      - name: Extract report
-        id: metrics
-        working-directory: loadtest
-        run: |
-          SUMMARY=$(cat reports/loadtest-report-rust.md || echo "No summary found")
-          echo "summary<<EOF" >> $GITHUB_OUTPUT
-          echo "$SUMMARY" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
-
       - name: Upload report
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
           name: loadtest-report
           path: loadtest/reports/
-
-      - name: Post Loadtest results to PR
-        if: github.event_name == 'pull_request'
-        uses: marocchino/sticky-pull-request-comment@v2
-        with:
-          header: loadtest
-          message: |
-            🦢 **Load Test Results**
-
-            ${{ steps.metrics.outputs.summary }}
-
-            [View full report](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
 
       - name: Dump py-keystone logs
         if: failure()
@@ -297,3 +315,36 @@ jobs:
       - name: Dump OPA log
         if: failure()
         run: docker logs opa
+
+  loadtest-track:
+    if: "github.actor != 'openstack-experimental-release-plz'"
+    runs-on: ubuntu-latest
+    needs:
+      - loadtest
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Fetch pre-built artifacts
+        uses: actions/download-artifact@abefc31eafcfbdf6c5336127c1346fdae79ff41c # v5.0.0
+        with:
+          name: loadtest-report
+
+      - name: Extract report
+        id: metrics
+        run: |
+          SUMMARY=$(cat loadtest-report-rust.md || echo "No summary found")
+          echo "summary<<EOF" >> $GITHUB_OUTPUT
+          echo "$SUMMARY" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Post Loadtest results to PR
+        if: github.event_name == 'pull_request'
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: loadtest
+          message: |
+            🦢 **Load Test Results**
+
+            ${{ steps.metrics.outputs.summary }}
+
+            [View full report](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
