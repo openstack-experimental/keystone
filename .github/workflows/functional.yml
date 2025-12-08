@@ -197,7 +197,7 @@ jobs:
 
   federation-github:
     runs-on: ubuntu-latest
-    if: "github.actor != 'openstack-experimental-release-plz'"
+    if: "github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'openstack-experimental-release-plz'"
     needs:
       - build
     permissions:
@@ -317,7 +317,7 @@ jobs:
         run: docker logs opa
 
   loadtest-track:
-    if: "github.actor != 'openstack-experimental-release-plz'"
+    if: "github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'openstack-experimental-release-plz'"
     runs-on: ubuntu-latest
     needs:
       - loadtest
