@@ -44,9 +44,11 @@ async fn test_login_oidc_keycloak() {
     create_keycloak_client(&keycloak, client_id, client_secret)
         .await
         .unwrap();
-    create_keycloak_user(&keycloak, user_name, user_password)
+    let user = create_keycloak_user(&keycloak, user_name, user_password)
         .await
         .unwrap();
+    let group = create_keycloak_group(&keycloak, "group1").await.unwrap();
+    put_user_to_group(&keycloak, user, group).await.unwrap();
 
     let token = auth().await;
     let (idp, mapping) = setup_keycloak_idp(&token, client_id, client_secret)

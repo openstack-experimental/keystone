@@ -22,6 +22,7 @@
     - [PCI-DSS: Failed Auth Protection](adr/0010-pci-dss-failed-auth-protection.md)
     - [PCI-DSS: Inactive Account Deactivation](adr/0011-pci-dss-inactive-account-deactivation.md)
     - [PCI-DSS: Account Password Expiration](adr/0012-pci-dss-account-password-expiry.md)
+    - [Federation OIDC: Expiring Group Membership](adr/0013-federation-oidc-expiring-group-membership.md)
 - [Policy enforcement](policy.md)
 - [Fernet token]()
   - [Token payloads]()

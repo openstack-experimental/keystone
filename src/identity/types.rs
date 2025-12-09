@@ -12,6 +12,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use chrono::{DateTime, Utc};
 use std::collections::HashSet;
 
 pub mod group;
@@ -104,11 +105,28 @@ pub trait IdentityApi: Send + Sync + Clone {
         group_id: &'a str,
     ) -> Result<(), IdentityProviderError>;
 
+    /// Add the user to the single group with expiration.
+    async fn add_user_to_group_expiring<'a>(
+        &self,
+        state: &ServiceState,
+        user_id: &'a str,
+        group_id: &'a str,
+        idp_id: &'a str,
+    ) -> Result<(), IdentityProviderError>;
+
     /// Add user group memberships as specified by (uid, gid) tuples.
     async fn add_users_to_groups<'a>(
         &self,
         state: &ServiceState,
         memberships: Vec<(&'a str, &'a str)>,
+    ) -> Result<(), IdentityProviderError>;
+
+    /// Add expiring user group memberships as specified by (uid, gid) tuples.
+    async fn add_users_to_groups_expiring<'a>(
+        &self,
+        state: &ServiceState,
+        memberships: Vec<(&'a str, &'a str)>,
+        idp_id: &'a str,
     ) -> Result<(), IdentityProviderError>;
 
     /// Remove the user from the single group.
@@ -119,6 +137,15 @@ pub trait IdentityApi: Send + Sync + Clone {
         group_id: &'a str,
     ) -> Result<(), IdentityProviderError>;
 
+    /// Remove the user from the single group with expiration.
+    async fn remove_user_from_group_expiring<'a>(
+        &self,
+        state: &ServiceState,
+        user_id: &'a str,
+        group_id: &'a str,
+        idp_id: &'a str,
+    ) -> Result<(), IdentityProviderError>;
+
     /// Remove the user from specified groups.
     async fn remove_user_from_groups<'a>(
         &self,
@@ -127,12 +154,31 @@ pub trait IdentityApi: Send + Sync + Clone {
         group_ids: HashSet<&'a str>,
     ) -> Result<(), IdentityProviderError>;
 
+    /// Remove the user from specified groups with expiration.
+    async fn remove_user_from_groups_expiring<'a>(
+        &self,
+        state: &ServiceState,
+        user_id: &'a str,
+        group_ids: HashSet<&'a str>,
+        idp_id: &'a str,
+    ) -> Result<(), IdentityProviderError>;
+
     /// Set group memberships of the user.
     async fn set_user_groups<'a>(
         &self,
         state: &ServiceState,
         user_id: &'a str,
         group_ids: HashSet<&'a str>,
+    ) -> Result<(), IdentityProviderError>;
+
+    /// Set expiring group memberships of the user.
+    async fn set_user_groups_expiring<'a>(
+        &self,
+        state: &ServiceState,
+        user_id: &'a str,
+        group_ids: HashSet<&'a str>,
+        idp_id: &'a str,
+        last_verified: Option<&'a DateTime<Utc>>,
     ) -> Result<(), IdentityProviderError>;
 
     async fn list_user_webauthn_credentials<'a>(

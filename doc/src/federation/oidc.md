@@ -58,3 +58,25 @@ The ultimate flexibility of having a single IdP for multiple domains is by
 specifying the claim attribute that specifies domain the user should belong to.
 This is implemented by using the `domain-id-claim` attribute of the mapping.
 Authentication with the claim missing is going to be rejected.
+
+## User group membership
+
+When a user authenticates using the OIDC the group memberships are persisted in
+the database with the expiration in addition to the list of group ids being also
+saved in the token. This mechanism intends preventing continuous use of the
+roles granted through the group memberships (i.e. with application credentials).
+`conf.federation.default_authorization_ttl` configuration variable defines the
+expiration for such group memberships. Every time the user authenticates with
+the OIDC the group memberships are renewed (their `last_verified` property is
+reset to the login timestamp). Groups the user is not member of anymore would be
+unassigned.
+
+The major consequence of this when using the application credentials that rely
+on the roles assigned through the group memberships is that the user need to
+periodically login using the OIDC (no other authentication method is renewing
+the group memberships since Keystone has currently no mechanism of querying the
+IdP for the current groups.
+
+This is going to be changed soon since Keystone now has the means of
+communication with the IdP. Additionally the SCIM support is going to be added
+allowing the IdP to push updates to the Keystone.

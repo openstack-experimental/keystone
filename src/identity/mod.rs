@@ -34,6 +34,7 @@
 //! contained in that project.
 
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use std::collections::HashSet;
 use uuid::Uuid;
 use webauthn_rs::prelude::{Passkey, PasskeyAuthentication, PasskeyRegistration};
@@ -252,6 +253,19 @@ impl IdentityApi for IdentityProvider {
     }
 
     #[tracing::instrument(level = "info", skip(self, state))]
+    async fn add_user_to_group_expiring<'a>(
+        &self,
+        state: &ServiceState,
+        user_id: &'a str,
+        group_id: &'a str,
+        idp_id: &'a str,
+    ) -> Result<(), IdentityProviderError> {
+        self.backend_driver
+            .add_user_to_group_expiring(state, user_id, group_id, idp_id)
+            .await
+    }
+
+    #[tracing::instrument(level = "info", skip(self, state))]
     async fn add_users_to_groups<'a>(
         &self,
         state: &ServiceState,
@@ -259,6 +273,18 @@ impl IdentityApi for IdentityProvider {
     ) -> Result<(), IdentityProviderError> {
         self.backend_driver
             .add_users_to_groups(state, memberships)
+            .await
+    }
+
+    #[tracing::instrument(level = "info", skip(self, state))]
+    async fn add_users_to_groups_expiring<'a>(
+        &self,
+        state: &ServiceState,
+        memberships: Vec<(&'a str, &'a str)>,
+        idp_id: &'a str,
+    ) -> Result<(), IdentityProviderError> {
+        self.backend_driver
+            .add_users_to_groups_expiring(state, memberships, idp_id)
             .await
     }
 
@@ -275,6 +301,19 @@ impl IdentityApi for IdentityProvider {
     }
 
     #[tracing::instrument(level = "info", skip(self, state))]
+    async fn remove_user_from_group_expiring<'a>(
+        &self,
+        state: &ServiceState,
+        user_id: &'a str,
+        group_id: &'a str,
+        idp_id: &'a str,
+    ) -> Result<(), IdentityProviderError> {
+        self.backend_driver
+            .remove_user_from_group_expiring(state, user_id, group_id, idp_id)
+            .await
+    }
+
+    #[tracing::instrument(level = "info", skip(self, state))]
     async fn remove_user_from_groups<'a>(
         &self,
         state: &ServiceState,
@@ -283,6 +322,19 @@ impl IdentityApi for IdentityProvider {
     ) -> Result<(), IdentityProviderError> {
         self.backend_driver
             .remove_user_from_groups(state, user_id, group_ids)
+            .await
+    }
+
+    #[tracing::instrument(level = "info", skip(self, state))]
+    async fn remove_user_from_groups_expiring<'a>(
+        &self,
+        state: &ServiceState,
+        user_id: &'a str,
+        group_ids: HashSet<&'a str>,
+        idp_id: &'a str,
+    ) -> Result<(), IdentityProviderError> {
+        self.backend_driver
+            .remove_user_from_groups_expiring(state, user_id, group_ids, idp_id)
             .await
     }
 
@@ -295,6 +347,20 @@ impl IdentityApi for IdentityProvider {
     ) -> Result<(), IdentityProviderError> {
         self.backend_driver
             .set_user_groups(state, user_id, group_ids)
+            .await
+    }
+
+    #[tracing::instrument(level = "debug", skip(self, state))]
+    async fn set_user_groups_expiring<'a>(
+        &self,
+        state: &ServiceState,
+        user_id: &'a str,
+        group_ids: HashSet<&'a str>,
+        idp_id: &'a str,
+        last_verified: Option<&'a DateTime<Utc>>,
+    ) -> Result<(), IdentityProviderError> {
+        self.backend_driver
+            .set_user_groups_expiring(state, user_id, group_ids, idp_id, last_verified)
             .await
     }
 

@@ -13,6 +13,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use mockall::mock;
 use std::collections::HashSet;
 use webauthn_rs::prelude::{Passkey, PasskeyAuthentication, PasskeyRegistration};
@@ -109,10 +110,25 @@ mock! {
             group_id: &'a str,
         ) -> Result<(), IdentityProviderError>;
 
+        async fn add_user_to_group_expiring<'a>(
+            &self,
+            state: &ServiceState,
+            user_id: &'a str,
+            group_id: &'a str,
+            idp_id: &'a str
+        ) -> Result<(), IdentityProviderError>;
+
         async fn add_users_to_groups<'a>(
             &self,
             state: &ServiceState,
             memberships: Vec<(&'a str, &'a str)>
+        ) -> Result<(), IdentityProviderError>;
+
+        async fn add_users_to_groups_expiring<'a>(
+            &self,
+            state: &ServiceState,
+            memberships: Vec<(&'a str, &'a str)>,
+            idp_id: &'a str
         ) -> Result<(), IdentityProviderError>;
 
         async fn remove_user_from_group<'a>(
@@ -122,6 +138,14 @@ mock! {
             group_id: &'a str,
         ) -> Result<(), IdentityProviderError>;
 
+        async fn remove_user_from_group_expiring<'a>(
+            &self,
+            state: &ServiceState,
+            user_id: &'a str,
+            group_id: &'a str,
+            idp_id: &'a str,
+        ) -> Result<(), IdentityProviderError>;
+
         async fn remove_user_from_groups<'a>(
             &self,
             state: &ServiceState,
@@ -129,11 +153,28 @@ mock! {
             group_ids: HashSet<&'a str>,
         ) -> Result<(), IdentityProviderError>;
 
+        async fn remove_user_from_groups_expiring<'a>(
+            &self,
+            state: &ServiceState,
+            user_id: &'a str,
+            group_ids: HashSet<&'a str>,
+            idp_id: &'a str
+        ) -> Result<(), IdentityProviderError>;
+
         async fn set_user_groups<'a>(
             &self,
             state: &ServiceState,
             user_id: &'a str,
             group_ids: HashSet<&'a str>,
+        ) -> Result<(), IdentityProviderError>;
+
+        async fn set_user_groups_expiring<'a>(
+            &self,
+            state: &ServiceState,
+            user_id: &'a str,
+            group_ids: HashSet<&'a str>,
+            idp_id: &'a str,
+            last_verified: Option<&'a DateTime<Utc>>,
         ) -> Result<(), IdentityProviderError>;
 
         async fn list_user_webauthn_credentials<'a>(

@@ -111,7 +111,8 @@ pub async fn setup_keycloak_idp<T: AsRef<str>, K: AsRef<str>, S: AsRef<str>>(
                 "allowed_redirect_uris": ["http://localhost:8080/v4/identity_providers/kc/callback"],
                 "user_id_claim": "sub",
                 "user_name_claim": "preferred_username",
-                "domain_id_claim": "domain_id"
+                "domain_id_claim": "domain_id",
+                "groups_claim": "groups"
              }
         }))
         .send()
