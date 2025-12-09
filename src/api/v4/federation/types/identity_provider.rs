@@ -393,6 +393,13 @@ pub struct IdentityProviderListParameters {
     #[param(nullable = false)]
     #[validate(length(max = 64))]
     pub domain_id: Option<String>,
+
+    /// Limit number of entries on the single response page.
+    #[serde(default = "default_list_limit")]
+    pub limit: Option<u64>,
+
+    /// Page marker (id of the last entry on the previous page.
+    pub marker: Option<String>,
 }
 
 impl From<types::IdentityProviderListParametersBuilderError> for KeystoneApiError {
@@ -401,13 +408,17 @@ impl From<types::IdentityProviderListParametersBuilderError> for KeystoneApiErro
     }
 }
 
-impl TryFrom<IdentityProviderListParameters> for types::IdentityProviderListParameters {
-    type Error = KeystoneApiError;
+fn default_list_limit() -> Option<u64> {
+    Some(20)
+}
 
-    fn try_from(value: IdentityProviderListParameters) -> Result<Self, Self::Error> {
-        Ok(Self {
+impl From<IdentityProviderListParameters> for types::IdentityProviderListParameters {
+    fn from(value: IdentityProviderListParameters) -> Self {
+        Self {
             name: value.name,
             domain_ids: None, //value.domain_id,
-        })
+            limit: value.limit,
+            marker: value.marker,
+        }
     }
 }

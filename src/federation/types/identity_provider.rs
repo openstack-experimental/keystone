@@ -113,8 +113,17 @@ pub struct IdentityProviderUpdate {
 pub struct IdentityProviderListParameters {
     /// Filters the response by IDP name.
     pub name: Option<String>,
+
     /// Filters the response by a domain_id ID. It is an optional list of
     /// optional strings to represent fetching of null and non-null values
     /// in a single request.
     pub domain_ids: Option<std::collections::HashSet<Option<String>>>,
+
+    /// Limit number of entries on the single response page.
+    #[builder(default)]
+    pub limit: Option<u64>,
+
+    /// Page marker (id of the last entry on the previous page.
+    #[builder(default)]
+    pub marker: Option<String>,
 }

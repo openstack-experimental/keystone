@@ -20,6 +20,7 @@ use axum::{
 use mockall_double::double;
 use serde_json::to_value;
 use std::collections::HashSet;
+use validator::Validate;
 
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
@@ -63,6 +64,7 @@ pub(super) async fn list(
     Query(query): Query<IdentityProviderListParameters>,
     State(state): State<ServiceState>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
+    query.validate()?;
     let res = policy
         .enforce(
             "identity/identity_provider_list",
@@ -72,22 +74,23 @@ pub(super) async fn list(
         )
         .await?;
 
-    let mut provider_list_params = ProviderIdentityProviderListParameters {
-        name: query.name,
-        ..Default::default()
-    };
-    if query.domain_id.as_ref().is_none() {
+    let domain_ids = if query.domain_id.as_ref().is_none() {
         if !res.can_see_other_domain_resources.is_some_and(|x| x) {
             let domain_ids: HashSet<Option<String>> = HashSet::from([
                 None,
                 // TODO: perhaps we should first look at the domain_scope and than user domain.
                 user_auth.user().as_ref().map(|val| val.domain_id.clone()),
             ]);
-            provider_list_params.domain_ids = Some(domain_ids);
+            Some(domain_ids)
+        } else {
+            // User can see other domain's resources and query is empty - leave it empty
+            None
         }
     } else {
-        provider_list_params.domain_ids = Some(HashSet::from([query.domain_id]));
-    }
+        Some(HashSet::from([query.domain_id.clone()]))
+    };
+    let mut provider_list_params = ProviderIdentityProviderListParameters::from(query);
+    provider_list_params.domain_ids = domain_ids;
 
     let identity_providers: Vec<IdentityProvider> = state
         .provider
@@ -190,6 +193,8 @@ mod tests {
                 provider_types::IdentityProviderListParameters {
                     name: Some("name".into()),
                     domain_ids: Some(HashSet::from([Some("did".into())])),
+                    limit: Some(1),
+                    marker: Some("marker".into()),
                 } == *qp
             })
             .returning(|_, _| {
@@ -211,7 +216,7 @@ mod tests {
             .as_service()
             .oneshot(
                 Request::builder()
-                    .uri("/?name=name&domain_id=did")
+                    .uri("/?name=name&domain_id=did&limit=1&marker=marker")
                     .header("x-auth-token", "foo")
                     .body(Body::empty())
                     .unwrap(),
@@ -260,6 +265,8 @@ mod tests {
                 provider_types::IdentityProviderListParameters {
                     name: Some("name".into()),
                     domain_ids: Some(HashSet::from([None, Some("udid".into())])),
+                    limit: Some(20),
+                    marker: None,
                 } == *qp
             })
             .returning(|_, _| {
@@ -307,6 +314,8 @@ mod tests {
                 provider_types::IdentityProviderListParameters {
                     name: Some("name".into()),
                     domain_ids: None,
+                    limit: Some(20),
+                    marker: None,
                 } == *qp
             })
             .returning(|_, _| {
