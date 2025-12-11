@@ -239,6 +239,9 @@ pub enum TokenProviderError {
     /// AuditID must be urlsafe base64 encoded value.
     #[error("audit_id must be urlsafe base64 encoded value")]
     AuditIdWrongFormat,
+
+    #[error("Token validation error: {0}")]
+    Validation(#[from] validator::ValidationErrors),
 }
 
 /// Convert the DB error into the TokenProviderError with the context
