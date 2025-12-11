@@ -28,6 +28,7 @@ use std::collections::HashSet;
 use std::fmt;
 use std::io::{Cursor, Write};
 use tracing::trace;
+use validator::Validate;
 
 use crate::config::Config;
 use crate::token::backend::TokenBackend;
@@ -231,6 +232,7 @@ impl FernetTokenProvider {
 
     /// Encode Token as binary blob as MessagePack
     fn encode(&self, token: &Token) -> Result<Bytes, TokenProviderError> {
+        token.validate()?;
         let mut buf = vec![];
         match token {
             Token::Unscoped(data) => {

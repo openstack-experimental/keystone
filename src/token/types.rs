@@ -15,6 +15,7 @@
 
 use chrono::{DateTime, Utc};
 use serde::Serialize;
+use validator::Validate;
 
 use crate::assignment::types::Role;
 use crate::identity::types::UserResponse;
@@ -202,6 +203,21 @@ impl Token {
             Self::FederationDomainScope(x) => x.roles.as_ref(),
             Self::Restricted(x) => x.roles.as_ref(),
             _ => None,
+        }
+    }
+}
+
+impl Validate for Token {
+    fn validate(&self) -> Result<(), validator::ValidationErrors> {
+        match self {
+            Self::Unscoped(x) => x.validate(),
+            Self::DomainScope(x) => Ok(()),        // x.validate(),
+            Self::ProjectScope(x) => Ok(()),       // x.validate(),
+            Self::FederationUnscoped(x) => Ok(()), // x.validate(),
+            Self::FederationProjectScope(x) => Ok(()), // x.validate(),
+            Self::FederationDomainScope(x) => Ok(()), // x.validate(),
+            Self::ApplicationCredential(x) => Ok(()), // x.validate(),
+            Self::Restricted(x) => Ok(()),         // x.validate(),
         }
     }
 }
