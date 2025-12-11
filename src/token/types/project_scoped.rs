@@ -17,7 +17,9 @@ use derive_builder::Builder;
 use rmp::{decode::read_pfix, encode::write_pfix};
 use serde::Serialize;
 use std::io::Write;
+use validator::Validate;
 
+use crate::token::types::validators;
 use crate::assignment::types::Role;
 use crate::identity::types::UserResponse;
 use crate::resource::types::Project;
@@ -27,19 +29,30 @@ use crate::token::{
     types::Token,
 };
 
-#[derive(Builder, Clone, Debug, Default, PartialEq, Serialize)]
+#[derive(Builder, Clone, Debug, Default, PartialEq, Serialize, Validate)]
 #[builder(setter(into))]
 pub struct ProjectScopePayload {
+    #[validate(length(min = 1, max = 64))]
     pub user_id: String,
+    
     #[builder(default, setter(name = _methods))]
+    #[validate(length(min = 1))]
     pub methods: Vec<String>,
+
     #[builder(default, setter(name = _audit_ids))]
+    #[validate(custom(function = "validators::validate_audit_ids"))]
     pub audit_ids: Vec<String>,
+    
+    #[validate(custom(function = "validators::validate_future_datetime"))]
     pub expires_at: DateTime<Utc>,
+    
+    #[validate(length(min = 1, max = 64))]
     pub project_id: String,
 
     #[builder(default)]
+    #[validate(custom(function = "validators::validate_issued_datetime"))]
     pub issued_at: DateTime<Utc>,
+   
     #[builder(default)]
     pub user: Option<UserResponse>,
     #[builder(default)]

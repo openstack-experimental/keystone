@@ -12,8 +12,6 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use base64::prelude::BASE64_URL_SAFE_NO_PAD;
-use base64::{Engine as _, engine::general_purpose};
 use chrono::{DateTime, Utc};
 use derive_builder::Builder;
 use rmp::{decode::read_pfix, encode::write_pfix};
@@ -21,6 +19,7 @@ use serde::Serialize;
 use std::io::Write;
 use validator::Validate;
 
+use crate::token::types::validators;
 use crate::identity::types::UserResponse;
 use crate::token::{
     backend::fernet::{FernetTokenProvider, MsgPackToken, utils},
@@ -39,58 +38,18 @@ pub struct UnscopedPayload {
     pub methods: Vec<String>,
 
     #[builder(default, setter(name = _audit_ids))]
-    #[validate(custom(function = "validate_audit_ids"))]
+    #[validate(custom(function = "validators::validate_audit_ids"))]
     pub audit_ids: Vec<String>,
 
-    #[validate(custom(function = "validate_future_datetime"))]
+    #[validate(custom(function = "validators::validate_future_datetime"))]
     pub expires_at: DateTime<Utc>,
 
     #[builder(default)]
-    #[validate(custom(function = "validate_issued_datetime"))]
+    #[validate(custom(function = "validators::validate_issued_datetime"))]
     pub issued_at: DateTime<Utc>,
 
     #[builder(default)]
     pub user: Option<UserResponse>,
-}
-
-// Custom validators
-fn validate_audit_ids(audit_ids: &[String]) -> Result<(), validator::ValidationError> {
-    for audit_id in audit_ids {
-        match BASE64_URL_SAFE_NO_PAD.decode(audit_id) {
-            Ok(decoded) => {
-                if decoded.is_empty() {
-                    let mut err = validator::ValidationError::new("invalid_audit_id");
-                    err.message = Some("Audit ID cannot be empty".into());
-                    return Err(err);
-                }
-            }
-            Err(_) => {
-                let mut err = validator::ValidationError::new("invalid_audit_id");
-                err.message =
-                    Some("Audit ID must be valid base64 URL-safe string without padding".into());
-                return Err(err);
-            }
-        }
-    }
-    Ok(())
-}
-
-fn validate_future_datetime(expires_at: &DateTime<Utc>) -> Result<(), validator::ValidationError> {
-    if *expires_at <= Utc::now() {
-        let mut err = validator::ValidationError::new("expires_in_past");
-        err.message = Some("Token expiration must be in the future".into());
-        return Err(err);
-    }
-    Ok(())
-}
-
-fn validate_issued_datetime(issued_at: &DateTime<Utc>) -> Result<(), validator::ValidationError> {
-    if *issued_at > Utc::now() {
-        let mut err = validator::ValidationError::new("issued_in_future");
-        err.message = Some("Token issued_at cannot be in the future".into());
-        return Err(err);
-    }
-    Ok(())
 }
 
 impl UnscopedPayloadBuilder {
