@@ -20,7 +20,7 @@
 //! solution.
 
 use async_trait::async_trait;
-use base64::{Engine as _, engine::general_purpose::URL_SAFE};
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::{Local, TimeDelta};
 use uuid::Uuid;
 
@@ -667,12 +667,9 @@ impl TokenApi for TokenProvider {
         // TODO: Check whether it is allowed to change the scope of the token if
         // AuthenticatedInfo already contains scope it was issued for.
         let mut authentication_info = authentication_info;
-        authentication_info.audit_ids.push(
-            URL_SAFE
-                .encode(Uuid::new_v4().as_bytes())
-                .trim_end_matches('=')
-                .to_string(),
-        );
+        authentication_info
+            .audit_ids
+            .push(URL_SAFE_NO_PAD.encode(Uuid::new_v4().as_bytes()));
         if let Some(token_restrictions) = &token_restrictions {
             self.create_restricted_token(&authentication_info, &authz_info, token_restrictions)
         } else if authentication_info.idp_id.is_some() && authentication_info.protocol_id.is_some()

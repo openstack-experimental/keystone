@@ -12,7 +12,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use base64::{Engine as _, engine::general_purpose::URL_SAFE};
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::{DateTime, Utc};
 use fernet::Fernet;
 use rmp::{
@@ -240,7 +240,7 @@ pub fn read_audit_ids(
         for _ in 0..len {
             if let Marker::Bin8 = read_marker(rd).map_err(ValueReadError::from)? {
                 let dt = read_bin_data(read_pfix(rd)?.into(), rd)?;
-                let audit_id: String = URL_SAFE.encode(dt).trim_end_matches('=').to_string();
+                let audit_id: String = URL_SAFE_NO_PAD.encode(dt);
                 result.push(audit_id);
             } else {
                 return Err(TokenProviderError::InvalidToken);
@@ -256,16 +256,13 @@ pub fn write_audit_ids<W: RmpWrite, I: IntoIterator<Item = String>>(
     wd: &mut W,
     data: I,
 ) -> Result<(), TokenProviderError> {
-    let vals = Vec::from_iter(data.into_iter().map(|mut x| {
-        x.push_str("==");
-        x
-    }));
+    let vals = Vec::from_iter(data);
     write_array_len(wd, vals.len() as u32)
         .map_err(|x| TokenProviderError::RmpEncode(x.to_string()))?;
     for val in vals.iter() {
         write_bin(
             wd,
-            &URL_SAFE
+            &URL_SAFE_NO_PAD
                 .decode(val)
                 .map_err(|_| TokenProviderError::AuditIdWrongFormat)?,
         )
