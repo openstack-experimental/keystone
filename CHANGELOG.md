@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.2](https://github.com/openstack-experimental/keystone/compare/v0.1.1...v0.1.2) - 2025-12-12
+
+### Added
+
+- Implement application credential provider ([#447](https://github.com/openstack-experimental/keystone/pull/447))
+- Add pagination to listing idp ([#438](https://github.com/openstack-experimental/keystone/pull/438))
+- Include system assignments in the list ([#426](https://github.com/openstack-experimental/keystone/pull/426))
+- Add `enabled` to federation resources ([#423](https://github.com/openstack-experimental/keystone/pull/423))
+
+### Fixed
+
+- User expiring membership for federated users ([#425](https://github.com/openstack-experimental/keystone/pull/425))
+- Resolve system_assignment query issue ([#434](https://github.com/openstack-experimental/keystone/pull/434))
+
+### Other
+
+- Reorg functests ([#453](https://github.com/openstack-experimental/keystone/pull/453))
+- Replace URL_SAFE with URL_SAFE_NO_PAD for audit_id ([#446](https://github.com/openstack-experimental/keystone/pull/446))
+- *(deps)* bump uuid from 1.18.1 to 1.19.0 ([#429](https://github.com/openstack-experimental/keystone/pull/429))
+- Add federation functest with DexIDP ([#424](https://github.com/openstack-experimental/keystone/pull/424))
+- Expand code documentation ([#422](https://github.com/openstack-experimental/keystone/pull/422))
+- Remove unnecessary content from rust package ([#418](https://github.com/openstack-experimental/keystone/pull/418))
+
 ## [0.1.1](https://github.com/openstack-experimental/keystone/compare/v0.1.0...v0.1.1) - 2025-12-02
 
 ### Added
