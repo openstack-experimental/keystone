@@ -57,9 +57,24 @@ impl Related<super::access_rule::Entity> for Entity {
     fn to() -> RelationDef {
         super::application_credential_access_rule::Relation::AccessRule.def()
     }
+
     fn via() -> Option<RelationDef> {
         Some(
             super::application_credential_access_rule::Relation::ApplicationCredential
+                .def()
+                .rev(),
+        )
+    }
+}
+
+impl Related<super::role::Entity> for Entity {
+    fn to() -> RelationDef {
+        super::application_credential_role::Relation::Role.def()
+    }
+
+    fn via() -> Option<RelationDef> {
+        Some(
+            super::application_credential_role::Relation::ApplicationCredential
                 .def()
                 .rev(),
         )

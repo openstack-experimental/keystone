@@ -20,11 +20,11 @@ use super::local_user;
 use super::user;
 use super::user_option;
 use crate::auth::{AuthenticatedInfo, AuthenticationError};
+use crate::common::password_hashing;
 use crate::config::Config;
 use crate::db::entity::{local_user as db_local_user, password as db_password};
 use crate::identity::backends::error::IdentityDatabaseError;
 use crate::identity::backends::sql::password;
-use crate::identity::password_hashing;
 use crate::identity::types::*;
 
 /// Authenticate a user by a password.

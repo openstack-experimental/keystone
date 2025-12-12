@@ -50,7 +50,6 @@ fn get_list_query(
 
     let mut cursor = select.cursor_by(db_federated_identity_provider::Column::Id);
     if let Some(limit) = params.limit {
-        println!("here");
         cursor.first(limit);
     }
     if let Some(marker) = &params.marker {

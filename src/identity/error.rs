@@ -17,6 +17,7 @@ use thiserror::Error;
 use crate::identity::backends::error::*;
 use crate::identity::types::*;
 //{DomainBuilderError, UserResponseBuilderError};
+use crate::common::password_hashing::PasswordHashError;
 use crate::resource::error::ResourceProviderError;
 
 #[derive(Error, Debug)]
@@ -72,7 +73,7 @@ pub enum IdentityProviderError {
     #[error("password hashing error")]
     PasswordHash {
         #[from]
-        source: IdentityProviderPasswordHashError,
+        source: PasswordHashError,
     },
 
     #[error(transparent)]
@@ -112,22 +113,4 @@ impl From<IdentityDatabaseError> for IdentityProviderError {
             _ => Self::IdentityDatabase { source },
         }
     }
-}
-
-/// Password hashing related errors.
-#[derive(Error, Debug)]
-pub enum IdentityProviderPasswordHashError {
-    /// Bcrypt error.
-    #[error(transparent)]
-    BCrypt {
-        #[from]
-        source: bcrypt::BcryptError,
-    },
-
-    /// Async task join error.
-    #[error(transparent)]
-    Join {
-        #[from]
-        source: tokio::task::JoinError,
-    },
 }

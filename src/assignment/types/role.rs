@@ -15,30 +15,39 @@
 use derive_builder::Builder;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use validator::Validate;
 
-#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+/// Role representation.
+#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
 #[builder(setter(strip_option, into))]
 pub struct Role {
     /// The role ID.
+    #[validate(length(max = 64))]
     pub id: String,
     /// The role name.
+    #[validate(length(max = 255))]
     pub name: String,
     /// The role domain_id.
     #[builder(default)]
+    #[validate(length(max = 64))]
     pub domain_id: Option<String>,
-    /// The role description
+    /// The role description.
     #[builder(default)]
+    #[validate(length(max = 255))]
     pub description: Option<String>,
-    /// Additional role properties
+    /// Additional role properties.
     #[builder(default)]
     pub extra: Option<Value>,
 }
 
-#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+/// Query parameters for listing roles.
+#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
 #[builder(setter(strip_option, into))]
 pub struct RoleListParameters {
-    /// Filter roles by the domain
+    /// Filter roles by the domain.
+    #[validate(length(max = 64))]
     pub domain_id: Option<String>,
-    /// Filter roles by the name attribute
+    /// Filter roles by the name attribute.
+    #[validate(length(max = 255))]
     pub name: Option<String>,
 }

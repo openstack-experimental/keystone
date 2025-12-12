@@ -26,8 +26,8 @@ use crate::identity::types::Group;
 
 /// List all groups the user is member of.
 ///
-/// Selects all groups with the ID in the list of user group memberships and expiring group
-/// memberships.
+/// Selects all groups with the ID in the list of user group memberships and
+/// expiring group memberships.
 pub async fn list_user_groups<S: AsRef<str>>(
     db: &DatabaseConnection,
     user_id: S,

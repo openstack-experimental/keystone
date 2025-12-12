@@ -91,7 +91,7 @@ impl TryFrom<db_role::Model> for Role {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use sea_orm::{DatabaseBackend, MockDatabase, Transaction};
 
     use crate::config::Config;
@@ -99,7 +99,7 @@ mod tests {
 
     use super::*;
 
-    fn get_role_mock(id: String) -> role::Model {
+    pub(crate) fn get_role_mock(id: String) -> role::Model {
         role::Model {
             id: id.clone(),
             domain_id: "foo_domain".into(),

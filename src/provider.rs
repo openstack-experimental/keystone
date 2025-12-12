@@ -12,9 +12,17 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //! # Provider manager
+//!
+//! Provider manager provides access to the individual service providers. This
+//! gives an easy interact for passing overall manager down to the individual
+//! providers that might need to call other providers while also allowing an
+//! easy injection of mocked providers.
 use derive_builder::Builder;
 use mockall_double::double;
 
+use crate::application_credential::ApplicationCredentialApi;
+#[double]
+use crate::application_credential::ApplicationCredentialProvider;
 use crate::assignment::AssignmentApi;
 #[double]
 use crate::assignment::AssignmentProvider;
@@ -51,19 +59,30 @@ use crate::token::TokenProvider;
 // confuses mockall used in tests
 #[builder(pattern = "owned")]
 pub struct Provider {
+    /// Configuration.
     pub config: Config,
+    /// Application credential provider.
+    application_credential: ApplicationCredentialProvider,
+    /// Assignment provider.
     assignment: AssignmentProvider,
+    /// Catalog provider.
     catalog: CatalogProvider,
+    /// Federation provider.
     federation: FederationProvider,
+    /// Identity provider.
     identity: IdentityProvider,
+    /// Resource provider.
     resource: ResourceProvider,
     /// Revoke provider.
     revoke: RevokeProvider,
+    /// Token provider.
     token: TokenProvider,
 }
 
 impl Provider {
     pub fn new(cfg: Config, plugin_manager: PluginManager) -> Result<Self, KeystoneError> {
+        let application_credential_provider =
+            ApplicationCredentialProvider::new(&cfg, &plugin_manager)?;
         let assignment_provider = AssignmentProvider::new(&cfg, &plugin_manager)?;
         let catalog_provider = CatalogProvider::new(&cfg, &plugin_manager)?;
         let federation_provider = FederationProvider::new(&cfg, &plugin_manager)?;
@@ -74,6 +93,7 @@ impl Provider {
 
         Ok(Self {
             config: cfg,
+            application_credential: application_credential_provider,
             assignment: assignment_provider,
             catalog: catalog_provider,
             federation: federation_provider,
@@ -84,30 +104,42 @@ impl Provider {
         })
     }
 
+    /// Get the application credential provider.
+    pub fn get_application_credential_provider(&self) -> &impl ApplicationCredentialApi {
+        &self.application_credential
+    }
+
+    /// Get the assignment provider.
     pub fn get_assignment_provider(&self) -> &impl AssignmentApi {
         &self.assignment
     }
 
+    /// Get the catalog provider.
     pub fn get_catalog_provider(&self) -> &impl CatalogApi {
         &self.catalog
     }
 
+    /// Get the federation provider.
     pub fn get_federation_provider(&self) -> &impl FederationApi {
         &self.federation
     }
 
+    /// Get the identity provider.
     pub fn get_identity_provider(&self) -> &impl IdentityApi {
         &self.identity
     }
 
+    /// Get the resource provider.
     pub fn get_resource_provider(&self) -> &impl ResourceApi {
         &self.resource
     }
 
+    /// Get the revocation provider.
     pub fn get_revoke_provider(&self) -> &impl RevokeApi {
         &self.revoke
     }
 
+    /// Get the token provider.
     pub fn get_token_provider(&self) -> &impl TokenApi {
         &self.token
     }
@@ -117,16 +149,19 @@ impl Provider {
 impl Provider {
     pub fn mocked_builder() -> ProviderBuilder {
         let config = Config::default();
-        let identity_mock = crate::identity::MockIdentityProvider::default();
-        let resource_mock = crate::resource::MockResourceProvider::default();
-        let token_mock = crate::token::MockTokenProvider::default();
+        let application_credential_mock =
+            crate::application_credential::MockApplicationCredentialProvider::default();
         let assignment_mock = crate::assignment::MockAssignmentProvider::default();
         let catalog_mock = crate::catalog::MockCatalogProvider::default();
+        let identity_mock = crate::identity::MockIdentityProvider::default();
         let federation_mock = crate::federation::MockFederationProvider::default();
+        let resource_mock = crate::resource::MockResourceProvider::default();
         let revoke_mock = crate::revoke::MockRevokeProvider::default();
+        let token_mock = crate::token::MockTokenProvider::default();
 
         ProviderBuilder::default()
             .config(config.clone())
+            .application_credential(application_credential_mock)
             .assignment(assignment_mock)
             .catalog(catalog_mock)
             .identity(identity_mock)

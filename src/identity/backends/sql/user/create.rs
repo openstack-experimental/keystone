@@ -17,12 +17,12 @@ use sea_orm::DatabaseConnection;
 use sea_orm::entity::*;
 use serde_json::json;
 
+use crate::common::password_hashing;
 use crate::config::Config;
 use crate::db::entity::{
     federated_user as db_federated_user, password as db_password, user as db_user,
 };
 use crate::identity::backends::sql::{IdentityDatabaseError, db_err};
-use crate::identity::password_hashing;
 use crate::identity::types::*;
 
 use super::super::federated_user;

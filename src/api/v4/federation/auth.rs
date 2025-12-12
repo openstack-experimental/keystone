@@ -172,8 +172,8 @@ pub async fn post(
 
     let (pkce_challenge, pkce_verifier) = PkceCodeChallenge::new_random_sha256();
 
-    // `oidc` scope is the default in the openidconnect crate and do not need to be added
-    // explicitly.
+    // `oidc` scope is the default in the openidconnect crate and do not need to be
+    // added explicitly.
     let oidc_scopes: HashSet<Scope> = mapping
         .oidc_scopes
         .map(|scopes| HashSet::from_iter(scopes.into_iter().map(Scope::new)))

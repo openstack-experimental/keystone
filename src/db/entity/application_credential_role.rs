@@ -35,11 +35,25 @@ pub enum Relation {
         on_delete = "Cascade"
     )]
     ApplicationCredential,
+    #[sea_orm(
+        belongs_to = "super::role::Entity",
+        from = "Column::RoleId",
+        to = "super::role::Column::Id",
+        on_update = "NoAction",
+        on_delete = "Cascade"
+    )]
+    Role,
 }
 
 impl Related<super::application_credential::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::ApplicationCredential.def()
+    }
+}
+
+impl Related<super::role::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::Role.def()
     }
 }
 

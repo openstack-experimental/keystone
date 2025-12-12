@@ -43,8 +43,8 @@ pub struct IdentityProvider {
     #[builder(default)]
     pub domain_id: Option<String>,
 
-    /// Identity provider `enabled` property. Inactive Identity Providers can not
-    /// be used for login.
+    /// Identity provider `enabled` property. Inactive Identity Providers can
+    /// not be used for login.
     pub enabled: bool,
 
     /// OIDC discovery endpoint for the identity provider.
@@ -125,8 +125,8 @@ pub struct IdentityProviderCreate {
     #[validate(length(max = 64))]
     pub domain_id: Option<String>,
 
-    /// Identity provider `enabled` property. Inactive Identity Providers can not
-    /// be used for login.
+    /// Identity provider `enabled` property. Inactive Identity Providers can
+    /// not be used for login.
     #[serde(default = "crate::api::types::default_true")]
     pub enabled: bool,
 
@@ -212,8 +212,8 @@ pub struct IdentityProviderUpdate {
     #[validate(length(max = 255))]
     pub name: Option<String>,
 
-    /// Identity provider `enabled` property. Inactive Identity Providers can not
-    /// be used for login.
+    /// Identity provider `enabled` property. Inactive Identity Providers can
+    /// not be used for login.
     #[builder(default)]
     pub enabled: Option<bool>,
 

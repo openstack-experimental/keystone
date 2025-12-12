@@ -43,7 +43,6 @@ pub mod backends;
 pub mod error;
 #[cfg(test)]
 pub mod mock;
-pub mod password_hashing;
 pub mod types;
 #[cfg(test)]
 pub use mock::MockIdentityProvider;

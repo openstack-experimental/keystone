@@ -56,7 +56,7 @@ pub async fn delete_expired(
 
 #[cfg(test)]
 mod tests {
-    use chrono::NaiveDateTime;
+
     use sea_orm::{DatabaseBackend, MockDatabase, MockExecResult, Transaction};
 
     use crate::config::Config;
@@ -98,7 +98,7 @@ mod tests {
         for (l,r) in db.into_transaction_log().iter().zip([Transaction::from_sql_and_values(
                 DatabaseBackend::Postgres,
                 r#"DELETE FROM "federated_auth_state" WHERE "federated_auth_state"."expires_at" < $1"#,
-                [NaiveDateTime::default().into()]
+                []
             ),]) {
             assert_eq!(
                 l.statements().iter().map(|x| x.sql.clone()).collect::<Vec<_>>(),
