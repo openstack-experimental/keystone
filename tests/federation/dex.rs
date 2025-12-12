@@ -11,47 +11,88 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+#![allow(clippy::expect_used)]
+#![allow(clippy::unwrap_used)]
 
-use reqwest::Client;
-use serde_json::json;
+use eyre::Report;
 use std::env;
 use std::sync::{Arc, Mutex};
 use thirtyfour::prelude::*;
 use tokio::signal;
 use tokio_util::sync::CancellationToken;
+use tracing::debug;
+use tracing_test::traced_test;
 
 mod keystone_utils;
 
 use keystone_utils::*;
 
-use openstack_keystone::api::v4::auth::token::types::TokenResponse;
 use openstack_keystone::api::v4::federation::types::*;
 
+pub async fn setup_idp<T: AsRef<str>, K: AsRef<str>, S: AsRef<str>>(
+    token: T,
+    client_id: K,
+    client_secret: S,
+) -> Result<(IdentityProvider, Mapping), Report> {
+    let config = get_config();
+    let dex_url = env::var("DEX_URL").expect("DEX_URL is set");
+
+    let idp = create_idp(
+        &config,
+        token.as_ref(),
+        IdentityProviderCreateRequest {
+            identity_provider: IdentityProviderCreate {
+                name: "dex".into(),
+                enabled: true,
+                domain_id: Some("default".into()),
+                default_mapping_name: Some("default".into()),
+                oidc_discovery_url: Some(format!("{}/dex", dex_url)),
+                oidc_client_id: Some(client_id.as_ref().into()),
+                oidc_client_secret: Some(client_secret.as_ref().into()),
+                ..Default::default()
+            },
+        },
+    )
+    .await?;
+
+    let mapping = create_mapping(
+        &config,
+        token.as_ref(),
+        MappingCreateRequest {
+            mapping: MappingCreate {
+                id: Some("dex".into()),
+                name: "default".into(),
+                enabled: true,
+                domain_id: Some("default".into()),
+                idp_id: idp.id.clone(),
+                allowed_redirect_uris: Some(vec![
+                    "http://localhost:8080/v4/identity_providers/dex/callback".into(),
+                ]),
+                user_id_claim: "sub".into(),
+                user_name_claim: "name".into(),
+                oidc_scopes: Some(vec!["email".into(), "profile".into()]),
+                ..Default::default()
+            },
+        },
+    )
+    .await?;
+
+    Ok((idp, mapping))
+}
+
 #[tokio::test]
+#[traced_test]
 async fn test_login_oidc() {
-    let keystone_url = env::var("KEYSTONE_URL").expect("KEYSTONE_URL is set");
-    let client = Client::new();
+    let config = get_config();
     let user_name = "admin@example.com";
     let user_password = "password";
     let client_id = "keystone_test";
     let client_secret = "keystone_test_secret";
 
-    let token = auth().await;
+    let token = auth(&config).await;
     let (idp, mapping) = setup_idp(&token, client_id, client_secret).await.unwrap();
 
-    let auth_req: IdentityProviderAuthResponse = client
-        .post(format!(
-            "{}/v4/federation/identity_providers/{}/auth",
-            keystone_url, idp.identity_provider.id
-        ))
-        .json(&json!({
-            "redirect_uri": "http://localhost:8050/oidc/callback",
-            "mapping_id": mapping.mapping.id,
-        }))
-        .send()
-        .await
-        .unwrap()
-        .json()
+    let auth_req = initialize_oidc_auth(&config, &idp.id, &mapping.id)
         .await
         .unwrap();
 
@@ -88,10 +129,10 @@ async fn test_login_oidc() {
     .await
     .unwrap();
 
-    println!("Going to {:?}", auth_req.auth_url.clone());
+    debug!("Going to {:?}", auth_req.auth_url.clone());
     driver.goto(auth_req.auth_url).await.unwrap();
 
-    println!("Page source is {:?}", driver.source().await.unwrap());
+    debug!("Page source is {:?}", driver.source().await.unwrap());
 
     let username_input = driver.query(By::Id("login")).first().await.unwrap();
     username_input.send_keys(user_name).await.unwrap();
@@ -107,7 +148,7 @@ async fn test_login_oidc() {
         .unwrap();
     accept.click().await.unwrap();
 
-    println!("Page source is {:?}", driver.source().await.unwrap());
+    debug!("Page source is {:?}", driver.source().await.unwrap());
 
     driver.quit().await.unwrap();
 
@@ -116,18 +157,8 @@ async fn test_login_oidc() {
     let guard = state.lock().expect("poisoned guard");
     let res: FederationAuthCodeCallbackResponse = guard.clone().unwrap();
 
-    let _auth_rsp: TokenResponse = client
-        .post(format!("{}/v4/federation/oidc/callback", keystone_url))
-        .json(&json!({
-            "state": res.state,
-            "code": res.code
-        }))
-        .send()
-        .await
-        .unwrap()
-        .json()
+    let _auth_rsp = exchange_authorization_code(&config, res.state, res.code)
         .await
         .unwrap();
-
     // TODO: Add checks for the response
 }

@@ -104,6 +104,7 @@ impl MakeRequestId for OpenStackRequestId {
     }
 }
 
+#[allow(clippy::print_stdout)]
 #[tokio::main]
 async fn main() -> Result<(), Report> {
     let args = Args::parse();

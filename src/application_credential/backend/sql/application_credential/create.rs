@@ -156,7 +156,6 @@ where
             .await
             .map_err(|err| db_err(err, "searching matching access rules"))?;
         let existing_rule = if existing_rules.is_empty() {
-            println!("no existing rules");
             Some(
                 db_access_rule::ActiveModel {
                     id: NotSet,

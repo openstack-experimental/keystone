@@ -118,17 +118,17 @@ test = false
 
 [[test]]
 name = "keycloak"
-path = "tests/keycloak/main.rs"
+path = "tests/federation/keycloak.rs"
 test = false
 
 [[test]]
 name = "github"
-path = "tests/github/main.rs"
+path = "tests/federation/github.rs"
 test = false
 
 [[test]]
 name = "dex"
-path = "tests/dex/main.rs"
+path = "tests/federation/dex.rs"
 test = false
 
 [[test]]
@@ -145,6 +145,7 @@ test = false
 unsafe_code = "forbid"
 
 [lints.clippy]
-unwrap_used = "deny"
-expect_used = "deny"
 enum_glob_use = "deny"
+expect_used = "deny"
+print_stdout = "deny"
+unwrap_used = "deny"

@@ -70,6 +70,7 @@ enum Commands {
     Reset,
 }
 
+#[allow(clippy::print_stdout)]
 #[tokio::main]
 async fn main() -> Result<(), Report> {
     let cli = Cli::parse();

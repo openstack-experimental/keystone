@@ -11,33 +11,62 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+#![allow(unused)]
 
 use bytes::Bytes;
-use eyre::{Report, eyre};
+use eyre::Report;
 use http_body_util::{BodyExt, Empty, combinators::BoxBody};
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::{Method, Request, Response, StatusCode, body::Incoming as IncomingBody};
 use hyper_util::rt::TokioIo;
 use reqwest::Client;
+use reqwest::header::AUTHORIZATION;
 use serde::Deserialize;
 use serde_json::json;
 use std::convert::Infallible;
 use std::env;
 use std::net::SocketAddr;
+use std::sync::OnceLock;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;
 
+use openstack_keystone::api::v4::auth::token::types::TokenResponse;
 use openstack_keystone::api::v4::federation::types::*;
 use openstack_keystone::api::v4::user::types::*;
 
-pub async fn auth() -> String {
-    let keystone_url = env::var("KEYSTONE_URL").expect("KEYSTONE_URL is set");
+static CONFIG: OnceLock<TestConfig> = OnceLock::new();
+
+#[derive(Debug)]
+pub struct TestConfig {
+    pub client: Client,
+    pub keystone_url: String,
+}
+
+fn load_config() -> TestConfig {
+    // We use .expect() here because if these are missing, the application
+    // cannot start correctly, so we crash immediately.
+    let keystone_url =
+        env::var("KEYSTONE_URL").expect("FATAL: Environment variable KEYSTONE_URL must be set");
     let client = Client::new();
-    client
-        .post(format!("{}/v3/auth/tokens", keystone_url,))
+
+    // Return the loaded configuration
+    TestConfig {
+        client,
+        keystone_url,
+    }
+}
+
+pub fn get_config() -> &'static TestConfig {
+    CONFIG.get_or_init(|| load_config())
+}
+
+pub async fn auth(config: &TestConfig) -> String {
+    config
+        .client
+        .post(format!("{}/v3/auth/tokens", &config.keystone_url))
         .json(&json!({"auth": {"identity": {
             "methods": [
                 "password"
@@ -67,111 +96,6 @@ pub async fn auth() -> String {
         .to_str()
         .unwrap()
         .to_string()
-}
-
-pub async fn setup_keycloak_idp<T: AsRef<str>, K: AsRef<str>, S: AsRef<str>>(
-    token: T,
-    client_id: K,
-    client_secret: S,
-) -> Result<(IdentityProviderResponse, MappingResponse), Report> {
-    let keystone_url = env::var("KEYSTONE_URL").expect("KEYSTONE_URL is set");
-    let keycloak_url = env::var("KEYCLOAK_URL").expect("KEYCLOAK_URL is set");
-    let client = Client::new();
-
-    let idp: IdentityProviderResponse = client
-        .post(format!("{}/v4/federation/identity_providers", keystone_url))
-        .header("x-auth-token", token.as_ref())
-        .json(&json!({
-            "identity_provider": {
-                "id": "kc",
-                "name": "keycloak",
-                "enabled": true,
-                "oidc_discovery_url": format!("{}/realms/master", keycloak_url),
-                "oidc_client_id": client_id.as_ref(),
-                "oidc_client_secret": client_secret.as_ref(),
-             }
-        }))
-        .send()
-        .await?
-        .json()
-        .await?;
-
-    let mapping: MappingResponse = client
-        .post(format!(
-            "{}/v4/federation/mappings",
-            keystone_url,
-        ))
-        .header("x-auth-token", token.as_ref())
-        .json(&json!({
-            "mapping": {
-                "id": "kc",
-                "name": "keycloak",
-                "enabled": true,
-                "idp_id": idp.identity_provider.id.clone(),
-                "allowed_redirect_uris": ["http://localhost:8080/v4/identity_providers/kc/callback"],
-                "user_id_claim": "sub",
-                "user_name_claim": "preferred_username",
-                "domain_id_claim": "domain_id",
-                "groups_claim": "groups"
-             }
-        }))
-        .send()
-        .await?.json().await?;
-
-    Ok((idp, mapping))
-}
-
-pub async fn setup_kecloak_idp_jwt<T: AsRef<str>, K: AsRef<str>, S: AsRef<str>>(
-    token: T,
-    _client_id: K,
-    _client_secret: S,
-) -> Result<(IdentityProviderResponse, MappingResponse), Report> {
-    let keystone_url = env::var("KEYSTONE_URL").expect("KEYSTONE_URL is set");
-    let keycloak_url = env::var("KEYCLOAK_URL").expect("KEYCLOAK_URL is set");
-    let client = Client::new();
-
-    let idp_rsp = client
-        .post(format!("{}/v4/federation/identity_providers", keystone_url))
-        .header("x-auth-token", token.as_ref())
-        .json(&json!({
-            "identity_provider": {
-                "id": "kc_jwt",
-                "name": "keycloak_jwt",
-                "enabled": true,
-                "oidc_discovery_url": format!("{}/realms/master", keycloak_url),
-                "jwks_url": format!("{}/realms/master/protocol/openid-connect/certs", keycloak_url),
-                "bound_issuer": format!("{}/realms/master", keycloak_url)
-             }
-        }))
-        .send()
-        .await?;
-    if !idp_rsp.status().is_success() {
-        return Err(eyre!("{:?}", idp_rsp.text().await?));
-    }
-
-    let idp: IdentityProviderResponse = idp_rsp.json().await?;
-
-    let mapping: MappingResponse = client
-        .post(format!("{}/v4/federation/mappings", keystone_url,))
-        .header("x-auth-token", token.as_ref())
-        .json(&json!({
-            "mapping": {
-                "id": "kc_jwt",
-                "name": "keycloak_jwt",
-                "idp_id": idp.identity_provider.id.clone(),
-                "type": "jwt",
-                "enabled": true,
-                "user_id_claim": "sub",
-                "user_name_claim": "preferred_username",
-                "domain_id_claim": "domain_id"
-             }
-        }))
-        .send()
-        .await?
-        .json()
-        .await?;
-
-    Ok((idp, mapping))
 }
 
 pub async fn ensure_user<T: AsRef<str>, U: AsRef<str>, D: AsRef<str>>(
@@ -213,6 +137,112 @@ pub async fn ensure_user<T: AsRef<str>, U: AsRef<str>, D: AsRef<str>>(
     let user: UserResponse = user_rsp.json().await?;
 
     Ok(user.user)
+}
+
+pub async fn create_idp<T: AsRef<str>>(
+    config: &TestConfig,
+    token: T,
+    idp: IdentityProviderCreateRequest,
+) -> Result<IdentityProvider, Report> {
+    Ok(config
+        .client
+        .post(format!(
+            "{}/v4/federation/identity_providers",
+            &config.keystone_url
+        ))
+        .header("x-auth-token", token.as_ref())
+        .json(&serde_json::to_value(idp)?)
+        .send()
+        .await?
+        .json::<IdentityProviderResponse>()
+        .await?
+        .identity_provider)
+}
+
+pub async fn create_mapping<T: AsRef<str>>(
+    config: &TestConfig,
+    token: T,
+    mapping: MappingCreateRequest,
+) -> Result<Mapping, Report> {
+    Ok(config
+        .client
+        .post(format!("{}/v4/federation/mappings", &config.keystone_url))
+        .header("x-auth-token", token.as_ref())
+        .json(&serde_json::to_value(mapping)?)
+        .send()
+        .await?
+        .json::<MappingResponse>()
+        .await?
+        .mapping)
+}
+
+pub async fn exchange_authorization_code(
+    config: &TestConfig,
+    state: Option<String>,
+    code: Option<String>,
+) -> Result<TokenResponse, Report> {
+    Ok(config
+        .client
+        .post(format!(
+            "{}/v4/federation/oidc/callback",
+            &config.keystone_url
+        ))
+        .json(&json!({
+            "state": state,
+            "code": code
+        }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await?)
+}
+
+pub async fn auth_jwt(
+    config: &TestConfig,
+    jwt: String,
+    idp_id: String,
+    mapping_name: String,
+) -> Result<TokenResponse, Report> {
+    Ok(config
+        .client
+        .post(format!(
+            "{}/v4/federation/identity_providers/{}/jwt",
+            &config.keystone_url, idp_id
+        ))
+        .header(AUTHORIZATION, format!("bearer {jwt}"))
+        .header("openstack-mapping", mapping_name)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await?)
+}
+
+pub async fn initialize_oidc_auth<IDP, MAPPING>(
+    config: &TestConfig,
+    idp_id: IDP,
+    mapping_name: MAPPING,
+) -> Result<IdentityProviderAuthResponse, Report>
+where
+    IDP: AsRef<str> + std::fmt::Display,
+    MAPPING: AsRef<str> + std::fmt::Display,
+{
+    Ok(config
+        .client
+        .post(format!(
+            "{}/v4/federation/identity_providers/{}/auth",
+            &config.keystone_url, idp_id
+        ))
+        .json(&json!({
+            "redirect_uri": "http://localhost:8050/oidc/callback",
+            "mapping_id": mapping_name.as_ref(),
+        }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await?)
 }
 
 /// Information for finishing the authorization request (received as a callback
@@ -277,7 +307,6 @@ async fn handle_request(
     state: Arc<Mutex<Option<FederationAuthCodeCallbackResponse>>>,
     cancel_token: CancellationToken,
 ) -> Result<Response<BoxBody<Bytes, Infallible>>, Report> {
-    println!("Got request {:?}", req);
     match (req.method(), req.uri().path()) {
         (&Method::GET, "/oidc/callback") => {
             if let Some(query) = req.uri().query() {
