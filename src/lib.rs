@@ -73,9 +73,11 @@
 //! Rust service as the complement.
 
 pub mod api;
+pub mod application_credential;
 pub mod assignment;
 pub mod auth;
 pub mod catalog;
+pub mod common;
 pub mod config;
 pub mod db;
 pub mod db_migration;

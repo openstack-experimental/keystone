@@ -86,8 +86,8 @@ pub async fn add_user_to_group_expiring<U: AsRef<str>, G: AsRef<str>, IDP: AsRef
     Ok(())
 }
 
-/// Add expiring group user relations as specified by the tuples (user_id, group_id)
-/// iterator.
+/// Add expiring group user relations as specified by the tuples (user_id,
+/// group_id) iterator.
 pub async fn add_users_to_groups_expiring<I, U, G, IDP>(
     db: &DatabaseConnection,
     iter: I,

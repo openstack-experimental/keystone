@@ -30,7 +30,11 @@ pub struct Config {
     /// Global configuration options.
     #[serde(rename = "DEFAULT")]
     pub default: Option<DefaultSection>,
-    ///
+
+    /// Application credentials provider configuration.
+    #[serde(default)]
+    pub application_credential: ApplicationCredentialProvider,
+
     /// Assignments (roles) provider configuration.
     #[serde(default)]
     pub assignment: AssignmentProvider,
@@ -144,6 +148,22 @@ pub struct PolicyProvider {
     pub opa_base_url: Option<Url>,
 }
 
+/// Application Credential Provider.
+#[derive(Debug, Deserialize, Clone)]
+pub struct ApplicationCredentialProvider {
+    /// Application credentials provider driver.
+    #[serde(default = "default_sql_driver")]
+    pub driver: String,
+}
+
+impl Default for ApplicationCredentialProvider {
+    fn default() -> Self {
+        Self {
+            driver: default_sql_driver(),
+        }
+    }
+}
+
 /// Assignment Provider.
 #[derive(Debug, Deserialize, Clone)]
 pub struct AssignmentProvider {
@@ -182,7 +202,8 @@ pub struct FederationProvider {
     /// Federation provider backend.
     #[serde(default = "default_sql_driver")]
     pub driver: String,
-    /// Default time in minutes for the validity of group memberships carried over from a mapping. Default is 0, which means disabled.
+    /// Default time in minutes for the validity of group memberships carried
+    /// over from a mapping. Default is 0, which means disabled.
     #[serde(default)]
     pub default_authorization_ttl: u32,
 }
@@ -196,10 +217,11 @@ impl Default for FederationProvider {
     }
 }
 impl FederationProvider {
-    /// Return oldest `last_verified` date for the expiring user group membership.
+    /// Return oldest `last_verified` date for the expiring user group
+    /// membership.
     ///
-    /// Calculate the oldest time for the expiring user group membership to not be considered as
-    /// valid.
+    /// Calculate the oldest time for the expiring user group membership to not
+    /// be considered as valid.
     pub(crate) fn get_expiring_user_group_membership_cutof_datetime(&self) -> DateTime<Utc> {
         Utc::now()
             .checked_sub_signed(TimeDelta::seconds(self.default_authorization_ttl.into()))
@@ -283,6 +305,9 @@ pub enum PasswordHashingAlgo {
     /// Bcrypt.
     #[default]
     Bcrypt,
+    #[cfg(test)]
+    /// None. Should not be used outside of testing where expected value is necessary.
+    None,
 }
 
 /// Security compliance configuration.

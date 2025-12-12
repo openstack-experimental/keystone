@@ -22,6 +22,7 @@
 //! the provider.
 use std::collections::HashMap;
 
+use crate::application_credential::backend::ApplicationCredentialBackend;
 use crate::assignment::backend::AssignmentBackend;
 use crate::catalog::backends::CatalogBackend;
 use crate::federation::types::FederationBackend;
@@ -33,6 +34,8 @@ use crate::revoke::backend::RevokeBackend;
 /// trait during the service start.
 #[derive(Clone, Debug, Default)]
 pub struct PluginManager {
+    /// Application credentials backend plugin.
+    application_credential_backends: HashMap<String, Box<dyn ApplicationCredentialBackend>>,
     /// Assignments backend plugin.
     assignment_backends: HashMap<String, Box<dyn AssignmentBackend>>,
     /// Catalog backend plugins.
@@ -56,6 +59,15 @@ impl PluginManager {
     ) {
         self.identity_backends
             .insert(name.as_ref().to_string(), plugin);
+    }
+
+    /// Get registered application credential backend.
+    #[allow(clippy::borrowed_box)]
+    pub fn get_application_credential_backend<S: AsRef<str>>(
+        &self,
+        name: S,
+    ) -> Option<&Box<dyn ApplicationCredentialBackend>> {
+        self.application_credential_backends.get(name.as_ref())
     }
 
     /// Get registered assignment backend.

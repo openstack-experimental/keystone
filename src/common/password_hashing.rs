@@ -13,11 +13,40 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::cmp::max;
+use std::str;
+use thiserror::Error;
 use tokio::task;
 use tracing::warn;
 
 use crate::config::{Config, PasswordHashingAlgo};
-use crate::identity::error::IdentityProviderPasswordHashError;
+
+/// Password hashing related errors.
+#[derive(Error, Debug)]
+pub enum PasswordHashError {
+    /// Bcrypt error.
+    #[error(transparent)]
+    BCrypt {
+        /// The source of the error.
+        #[from]
+        source: bcrypt::BcryptError,
+    },
+
+    /// Async task join error.
+    #[error(transparent)]
+    Join {
+        /// The source of the error.
+        #[from]
+        source: tokio::task::JoinError,
+    },
+
+    /// Non UTF8 data.
+    #[error(transparent)]
+    Utf8 {
+        /// The source of the error.
+        #[from]
+        source: str::Utf8Error,
+    },
+}
 
 fn verify_length_and_trunc_password(password: &[u8], max_length: usize) -> &[u8] {
     if password.len() > max_length {
@@ -31,7 +60,7 @@ fn verify_length_and_trunc_password(password: &[u8], max_length: usize) -> &[u8]
 pub async fn hash_password<S: AsRef<[u8]>>(
     conf: &Config,
     password: S,
-) -> Result<String, IdentityProviderPasswordHashError> {
+) -> Result<String, PasswordHashError> {
     match conf.identity.password_hashing_algorithm {
         PasswordHashingAlgo::Bcrypt => {
             let password_bytes = verify_length_and_trunc_password(
@@ -44,6 +73,8 @@ pub async fn hash_password<S: AsRef<[u8]>>(
                 task::spawn_blocking(move || bcrypt::hash(password_bytes, rounds as u32)).await??;
             Ok(hash)
         }
+        #[cfg(test)]
+        PasswordHashingAlgo::None => Ok(str::from_utf8(password.as_ref())?.to_string()),
     }
 }
 
@@ -52,7 +83,7 @@ pub async fn verify_password<P: AsRef<[u8]>, H: AsRef<str>>(
     conf: &Config,
     password: P,
     hash: H,
-) -> Result<bool, IdentityProviderPasswordHashError> {
+) -> Result<bool, PasswordHashError> {
     match conf.identity.password_hashing_algorithm {
         PasswordHashingAlgo::Bcrypt => {
             let password_bytes = verify_length_and_trunc_password(
@@ -77,6 +108,8 @@ pub async fn verify_password<P: AsRef<[u8]>, H: AsRef<str>>(
                 }
             }
         }
+        #[cfg(test)]
+        PasswordHashingAlgo::None => Ok(str::from_utf8(password.as_ref())?.eq(hash.as_ref())),
     }
 }
 

@@ -15,7 +15,7 @@
 use sea_orm::SqlErr;
 use thiserror::Error;
 
-use crate::identity::error::IdentityProviderPasswordHashError;
+use crate::common::password_hashing::PasswordHashError;
 use crate::identity::types::*;
 
 #[derive(Error, Debug)]
@@ -70,10 +70,12 @@ pub enum IdentityDatabaseError {
         context: String,
     },
 
+    /// Password hashing error.
     #[error("password hashing error")]
     PasswordHash {
+        /// The source of the error.
         #[from]
-        source: IdentityProviderPasswordHashError,
+        source: PasswordHashError,
     },
 
     #[error("either user id or user name with user domain id or name must be given")]

@@ -11,7 +11,5 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-
-mod application_credential;
-mod assignment;
-mod identity;
+//! # Common functionality
+pub mod password_hashing;

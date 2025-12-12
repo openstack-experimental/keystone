@@ -19,9 +19,9 @@ use crate::assignment::{AssignmentProviderError, backend::AssignmentBackend};
 use crate::config::Config;
 use crate::keystone::ServiceState;
 
-mod assignment;
-mod implied_role;
-mod role;
+pub(crate) mod assignment;
+pub(crate) mod implied_role;
+pub(crate) mod role;
 
 #[derive(Clone, Debug, Default)]
 pub struct SqlBackend {
