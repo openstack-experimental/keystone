@@ -16,29 +16,37 @@
 use chrono::{DateTime, Utc};
 use derive_builder::Builder;
 use serde::{Deserialize, Serialize};
+use validator::Validate;
 
 use crate::assignment::types::Role;
 use crate::identity::types::UserResponse;
 use crate::resource::types::Project;
 use crate::token::types::Token;
+use crate::token::types::common;
 
 /// Restricted token payload.
-#[derive(Builder, Clone, Debug, Default, PartialEq, Serialize)]
+#[derive(Builder, Clone, Debug, Default, PartialEq, Serialize, Validate)]
 #[builder(setter(into))]
 pub struct RestrictedPayload {
     /// User ID.
+    #[validate(length(min = 1, max = 64))]
     pub user_id: String,
+
     /// Authentication methods used to obtain the token.
     #[builder(default, setter(name = _methods))]
+    #[validate(length(min = 1))]
     pub methods: Vec<String>,
     /// Token audit IDs.
     #[builder(default, setter(name = _audit_ids))]
+    #[validate(custom(function = "common::validate_audit_ids"))]
     pub audit_ids: Vec<String>,
     /// Token expiration datetime in UTC.
     pub expires_at: DateTime<Utc>,
     /// ID of the token restrictions.
+    #[validate(length(min = 1, max = 64))]
     pub token_restriction_id: String,
     /// Project ID scope for the token.
+    #[validate(length(min = 1, max = 64))]
     pub project_id: String,
     /// Whether the token can be renewed.
     pub allow_renew: bool,

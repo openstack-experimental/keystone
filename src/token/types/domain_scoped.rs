@@ -17,29 +17,39 @@ use derive_builder::Builder;
 use rmp::{decode::read_pfix, encode::write_pfix};
 use serde::Serialize;
 use std::io::Write;
+use validator::Validate;
 
 use crate::assignment::types::Role;
 use crate::identity::types::UserResponse;
 use crate::resource::types::Domain;
+use crate::token::types::common;
 use crate::token::{
     backend::fernet::{FernetTokenProvider, MsgPackToken, utils},
     error::TokenProviderError,
     types::Token,
 };
 
-#[derive(Builder, Clone, Debug, Default, PartialEq, Serialize)]
+#[derive(Builder, Clone, Debug, Default, PartialEq, Serialize, Validate)]
 #[builder(setter(into))]
 pub struct DomainScopePayload {
+    #[validate(length(min = 1, max = 64))]
     pub user_id: String,
+
     #[builder(default, setter(name = _methods))]
+    #[validate(length(min = 1))]
     pub methods: Vec<String>,
+
     #[builder(default, setter(name = _audit_ids))]
+    #[validate(custom(function = "common::validate_audit_ids"))]
     pub audit_ids: Vec<String>,
     pub expires_at: DateTime<Utc>,
+
+    #[validate(length(min = 1, max = 64))]
     pub domain_id: String,
 
     #[builder(default)]
     pub issued_at: DateTime<Utc>,
+
     #[builder(default)]
     pub user: Option<UserResponse>,
     #[builder(default)]
