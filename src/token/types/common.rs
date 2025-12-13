@@ -12,21 +12,20 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use base64::{Engine as _, engine::general_purpose::URL_SAFE};
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use validator::ValidationError;
 
 /// Validate audit_ids are valid URL-safe base64 strings without padding
 pub fn validate_audit_ids(audit_ids: &[String]) -> Result<(), ValidationError> {
     for audit_id in audit_ids {
-        // Check if empty
         if audit_id.is_empty() {
             let mut err = ValidationError::new("empty_audit_id");
             err.message = Some("Audit ID cannot be empty".into());
             return Err(err);
         }
 
-        // Check if valid base64
-        if URL_SAFE.decode(audit_id).is_err() {
+        // Use NO_PAD decoder to match Python's [:-2] behavior
+        if URL_SAFE_NO_PAD.decode(audit_id).is_err() {
             let mut err = ValidationError::new("invalid_audit_id");
             err.message =
                 Some(format!("Audit ID '{}' is not valid URL-safe base64", audit_id).into());
@@ -39,14 +38,15 @@ pub fn validate_audit_ids(audit_ids: &[String]) -> Result<(), ValidationError> {
 #[cfg(test)]
 mod tests {
     use super::validate_audit_ids;
-    use base64::{Engine as _, engine::general_purpose::URL_SAFE};
+    use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 
     #[test]
     fn test_validate_audit_ids_valid() {
         let valid_audit_ids = vec![
-            URL_SAFE.encode(b"audit1"),
-            URL_SAFE.encode(b"audit2"),
-            URL_SAFE.encode(b"some-longer-audit-id-123"),
+            // retrieved from github test
+            "popWT1EoRVufGoLJttW_zw".to_string(),
+            URL_SAFE_NO_PAD.encode(b"audit2"),
+            URL_SAFE_NO_PAD.encode(b"some-longer-audit-id-123"),
         ];
 
         assert!(validate_audit_ids(&valid_audit_ids).is_ok());
@@ -55,7 +55,7 @@ mod tests {
     #[test]
     fn test_validate_audit_ids_empty_string() {
         let invalid_audit_ids = vec![
-            URL_SAFE.encode(b"valid"),
+            URL_SAFE_NO_PAD.encode(b"valid"),
             "".to_string(), // Empty string
         ];
 
@@ -79,9 +79,9 @@ mod tests {
     #[test]
     fn test_validate_audit_ids_mixed_valid_invalid() {
         let mixed_audit_ids = vec![
-            URL_SAFE.encode(b"valid1"),
+            URL_SAFE_NO_PAD.encode(b"valid1"),
             "invalid!@#".to_string(),
-            URL_SAFE.encode(b"valid2"),
+            URL_SAFE_NO_PAD.encode(b"valid2"),
         ];
 
         // Should fail on first invalid
