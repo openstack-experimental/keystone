@@ -15,6 +15,7 @@
 use async_trait::async_trait;
 
 use super::super::types::*;
+use crate::assignment::backend::RoleCreate;
 use crate::assignment::{AssignmentProviderError, backend::AssignmentBackend};
 use crate::config::Config;
 use crate::keystone::ServiceState;
@@ -44,6 +45,7 @@ impl AssignmentBackend for SqlBackend {
         state: &ServiceState,
         params: &RoleListParameters,
     ) -> Result<Vec<Role>, AssignmentProviderError> {
+        // Ok(role::ge)
         Ok(role::list(&self.config, &state.db, params).await?)
     }
 
@@ -57,6 +59,15 @@ impl AssignmentBackend for SqlBackend {
         Ok(role::get(&self.config, &state.db, id).await?)
     }
 
+    /// Create role
+    #[tracing::instrument(level = "info", skip(self, state))]
+    async fn create_role(
+        &self,
+        state: &ServiceState,
+        params: RoleCreate,
+    ) -> Result<Role, AssignmentProviderError> {
+        Ok(role::create(&self.config, &state.db, &params).await?)
+    }
     /// List role assignments
     #[tracing::instrument(level = "info", skip(self, state))]
     async fn list_assignments(

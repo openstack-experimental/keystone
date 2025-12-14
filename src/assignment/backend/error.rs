@@ -58,6 +58,10 @@ pub enum AssignmentDatabaseError {
         source: sea_orm::DbErr,
         context: String,
     },
+
+    /// Serilaization error
+    #[error("Serialization error: {0}")]
+    SerializationError(String),
 }
 
 /// Convert the DB error into the [AssignmentDatabaseError] with the context

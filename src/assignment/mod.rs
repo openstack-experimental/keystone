@@ -59,7 +59,7 @@ use crate::assignment::error::AssignmentProviderError;
 use crate::assignment::types::{
     Assignment, Role, RoleAssignmentListForMultipleActorTargetParametersBuilder,
     RoleAssignmentListParameters, RoleAssignmentTarget, RoleAssignmentTargetType,
-    RoleListParameters,
+    RoleListParameters,RoleCreate,
 };
 use crate::config::Config;
 use crate::identity::IdentityApi;
@@ -120,6 +120,16 @@ impl AssignmentApi for AssignmentProvider {
         id: &'a str,
     ) -> Result<Option<Role>, AssignmentProviderError> {
         self.backend_driver.get_role(state, id).await
+    }
+
+    /// Create role
+    #[tracing::instrument(level = "info", skip(self, state))]
+    async fn create_role(
+        &self,
+        state: &ServiceState,
+        params: RoleCreate,
+    ) -> Result<Role, AssignmentProviderError> {
+        self.backend_driver.create_role(state, params).await
     }
 
     /// List role assignments
