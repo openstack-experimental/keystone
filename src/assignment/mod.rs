@@ -131,16 +131,12 @@ impl AssignmentApi for AssignmentProvider {
     ) -> Result<Role, AssignmentProviderError> {
         params.validate()?;
 
-        // mod_user.id = Uuid::new_v4().simple().to_string();
+        let mut new_params = params;
 
-        // Create Role ID
-        let role_id = params
-            .id
-            .clone()
-            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-
-        // Check
-        self.backend_driver.create_role(state, params).await
+        if new_params.id.is_none() {
+            new_params.id = Some(uuid::Uuid::new_v4().to_string());
+        }
+        self.backend_driver.create_role(state, new_params).await
     }
 
     /// List role assignments

@@ -15,7 +15,6 @@
 use sea_orm::DatabaseConnection;
 use sea_orm::entity::*;
 use serde_json::json;
-use uuid::Uuid;
 
 use crate::assignment::backend::error::{AssignmentDatabaseError, db_err};
 use crate::assignment::types::role::{Role, RoleCreate};
@@ -26,10 +25,14 @@ pub async fn create(
     db: &DatabaseConnection,
     role: &RoleCreate, // ← Using RoleCreate instead of Role
 ) -> Result<Role, AssignmentDatabaseError> {
-    let role_id = Uuid::new_v4().simple().to_string();
+    let role_id = role.id.as_ref().ok_or_else(|| {
+        AssignmentDatabaseError::InvalidAssignmentType(
+            "BUG: Role ID must be set by provider before calling backend".to_string(),
+        )
+    })?;
 
     let entry = db_role::ActiveModel {
-        id: Set(role_id),
+        id: Set(role_id.clone()),
         name: Set(role.name.clone()),
         domain_id: Set(role
             .domain_id
@@ -58,32 +61,34 @@ mod tests {
     use serde_json::json;
 
     #[tokio::test]
-    async fn test_create_without_id() {
-        // When id is None, a UUID should be generated
+    async fn test_create() {
         let db = MockDatabase::new(DatabaseBackend::Postgres)
             .append_query_results([vec![db_role::Model {
-                id: uuid::Uuid::new_v4().to_string(),
+                id: "role-123".into(),
                 domain_id: "default".into(),
-                name: "Auto ID Role".into(),
-                description: None,
-                extra: None,
+                name: "Test Role".into(),
+                description: Some("A role for testing".into()),
+                extra: Some(r#"{"key":"value"}"#.into()),
             }]])
             .into_connection();
 
         let role_create = RoleCreate {
-            id: None, // ← No ID provided
-            name: "Auto ID Role".to_string(),
+            id: Some("role-123".to_string()),
+            name: "Test Role".to_string(),
             domain_id: Some("default".to_string()),
-            description: None,
-            extra: None,
+            description: Some("A role for testing".to_string()),
+            extra: Some(json!({"key": "value"})),
         };
 
         let created = create(&db, &role_create).await.unwrap();
 
-        assert_eq!(created.name, "Auto ID Role");
-        assert!(!created.id.is_empty()); // ID should be generated
+        assert_eq!(created.id, "role-123");
+        assert_eq!(created.name, "Test Role");
+        assert_eq!(created.domain_id.as_deref(), Some("default"));
+        assert_eq!(created.description.as_deref(), Some("A role for testing"));
+        assert!(created.extra.is_some());
+        assert_eq!(created.extra.as_ref().unwrap()["key"], "value");
     }
-
     #[tokio::test]
     async fn test_create_without_domain() {
         // When domain_id is None, NULL_DOMAIN_ID should be used
