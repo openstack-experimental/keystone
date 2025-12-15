@@ -12,23 +12,22 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+//! # Finish passkey authentication process
 use axum::{Json, extract::State, http::StatusCode, response::IntoResponse};
-use base64::{Engine as _, engine::general_purpose::URL_SAFE};
 use tracing::debug;
 use validator::Validate;
 
-use crate::api::v4::auth::passkey::types::{
-    AuthenticationExtensionsClientOutputs, AuthenticatorAssertionResponseRaw, HmacGetSecretOutput,
-    PasskeyAuthenticationFinishRequest,
-};
 use crate::api::{
-    error::{KeystoneApiError, WebauthnError},
+    KeystoneApiError,
     v4::auth::token::types::{Token as ApiResponseToken, TokenResponse},
 };
 use crate::auth::{AuthenticatedInfo, AuthenticationError, AuthzInfo};
 use crate::identity::IdentityApi;
-use crate::keystone::ServiceState;
 use crate::token::TokenApi;
+use crate::webauthn::{
+    WebauthnApi,
+    api::types::{CombinedExtensionState, auth::*},
+};
 
 /// Finish user passkey authentication.
 ///
@@ -53,22 +52,23 @@ use crate::token::TokenApi;
     level = "debug",
     skip(state, req)
 )]
-pub(super) async fn finish(
-    State(state): State<ServiceState>,
+pub async fn finish(
+    State(state): State<CombinedExtensionState>,
     Json(req): Json<PasskeyAuthenticationFinishRequest>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
     req.validate()?;
     let user_id = req.user_id.clone();
     // TODO: Wrap all errors into the Unauthorized, but log the error
     if let Some(s) = state
+        .extension
         .provider
-        .get_identity_provider()
-        .get_user_webauthn_credential_authentication_state(&state, &user_id)
+        .get_user_webauthn_credential_authentication_state(&state.core, &user_id)
         .await?
     {
         // We explicitly try to deserealize the request data directly into the
         // underlying webauthn_rs type.
         match state
+            .extension
             .webauthn
             .finish_passkey_authentication(&req.try_into()?, &s)
         {
@@ -77,22 +77,25 @@ pub(super) async fn finish(
             }
             Err(e) => {
                 debug!("challenge_register -> {:?}", e);
-                return Err(WebauthnError::Unknown)?;
+                return Err(KeystoneApiError::InternalError(
+                    "unexpected error in the webauthn extension".into(),
+                ));
             }
         };
         state
+            .extension
             .provider
-            .get_identity_provider()
-            .delete_user_webauthn_credential_authentication_state(&state, &user_id)
+            .delete_user_webauthn_credential_authentication_state(&state.core, &user_id)
             .await?;
     }
     let authed_info = AuthenticatedInfo::builder()
         .user_id(user_id.clone())
         .user(
             state
+                .core
                 .provider
                 .get_identity_provider()
-                .get_user(&state, &user_id)
+                .get_user(&state.core, &user_id)
                 .await
                 .map(|x| {
                     x.ok_or_else(|| KeystoneApiError::NotFound {
@@ -101,85 +104,32 @@ pub(super) async fn finish(
                     })
                 })??,
         )
-        // Unless Keystone support passkey auth method we use x509 (which it technically IS).
+        // Unless Keystone support passkey auth method we use x509 (which it technically is close to).
         .methods(vec!["x509".into()])
         .build()
         .map_err(AuthenticationError::from)?;
     authed_info.validate()?;
 
-    let token =
-        state
-            .provider
-            .get_token_provider()
-            .issue_token(authed_info, AuthzInfo::Unscoped, None)?;
+    let token = state.core.provider.get_token_provider().issue_token(
+        authed_info,
+        AuthzInfo::Unscoped,
+        None,
+    )?;
 
     let api_token = TokenResponse {
-        token: ApiResponseToken::from_provider_token(&state, &token).await?,
+        token: ApiResponseToken::from_provider_token(&state.core, &token).await?,
     };
     Ok((
         StatusCode::OK,
         [(
             "X-Subject-Token",
-            state.provider.get_token_provider().encode_token(&token)?,
+            state
+                .core
+                .provider
+                .get_token_provider()
+                .encode_token(&token)?,
         )],
         Json(api_token),
     )
         .into_response())
-}
-
-impl TryFrom<HmacGetSecretOutput> for webauthn_rs_proto::extensions::HmacGetSecretOutput {
-    type Error = KeystoneApiError;
-    fn try_from(val: HmacGetSecretOutput) -> Result<Self, Self::Error> {
-        Ok(Self {
-            output1: URL_SAFE.decode(val.output1)?.into(),
-            output2: val
-                .output2
-                .map(|s2| URL_SAFE.decode(s2))
-                .transpose()?
-                .map(Into::into),
-        })
-    }
-}
-
-impl TryFrom<AuthenticationExtensionsClientOutputs>
-    for webauthn_rs_proto::extensions::AuthenticationExtensionsClientOutputs
-{
-    type Error = KeystoneApiError;
-    fn try_from(val: AuthenticationExtensionsClientOutputs) -> Result<Self, Self::Error> {
-        Ok(Self {
-            appid: val.appid,
-            hmac_get_secret: val.hmac_get_secret.map(TryInto::try_into).transpose()?,
-        })
-    }
-}
-
-impl TryFrom<AuthenticatorAssertionResponseRaw>
-    for webauthn_rs_proto::auth::AuthenticatorAssertionResponseRaw
-{
-    type Error = KeystoneApiError;
-    fn try_from(val: AuthenticatorAssertionResponseRaw) -> Result<Self, Self::Error> {
-        Ok(Self {
-            authenticator_data: URL_SAFE.decode(val.authenticator_data)?.into(),
-            client_data_json: URL_SAFE.decode(val.client_data_json)?.into(),
-            signature: URL_SAFE.decode(val.signature)?.into(),
-            user_handle: val
-                .user_handle
-                .map(|uh| URL_SAFE.decode(uh))
-                .transpose()?
-                .map(Into::into),
-        })
-    }
-}
-
-impl TryFrom<PasskeyAuthenticationFinishRequest> for webauthn_rs::prelude::PublicKeyCredential {
-    type Error = KeystoneApiError;
-    fn try_from(req: PasskeyAuthenticationFinishRequest) -> Result<Self, Self::Error> {
-        Ok(webauthn_rs::prelude::PublicKeyCredential {
-            id: req.id,
-            extensions: req.extensions.try_into()?,
-            raw_id: URL_SAFE.decode(req.raw_id)?.into(),
-            response: req.response.try_into()?,
-            type_: req.type_,
-        })
-    }
 }

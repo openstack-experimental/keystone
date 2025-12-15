@@ -11,6 +11,18 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+//! # Passkey authentication API
 
-pub mod credential;
-pub mod state;
+use utoipa_axum::{router::OpenApiRouter, routes};
+
+use crate::webauthn::api::types::CombinedExtensionState;
+
+pub mod finish;
+pub mod start;
+
+/// Api router for the /auth/passkey methods.
+pub(super) fn openapi_router() -> OpenApiRouter<CombinedExtensionState> {
+    OpenApiRouter::new()
+        .routes(routes!(start::start))
+        .routes(routes!(finish::finish))
+}

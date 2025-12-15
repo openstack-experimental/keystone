@@ -12,8 +12,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use super::super::types::WebauthnCredential;
 use crate::db::entity::webauthn_credential;
-use crate::identity::types::WebauthnCredential;
 
 mod create;
 mod list;

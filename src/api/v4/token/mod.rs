@@ -12,6 +12,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use utoipa::OpenApi;
 use utoipa_axum::router::OpenApiRouter;
 
 use crate::keystone::ServiceState;
@@ -19,9 +20,17 @@ use crate::keystone::ServiceState;
 pub mod restriction;
 pub mod types;
 
-pub(crate) static DESCRIPTION: &str = r#"Token API.
-
-"#;
+/// OpenApi specification for the token api.
+#[derive(OpenApi)]
+#[openapi(
+    nest(
+        (path = "token_restrictions", api = restriction::ApiDoc),
+    ),
+    tags(
+        (name = "token", description = r#"Token API"#),
+    )
+)]
+pub struct ApiDoc;
 
 pub(super) fn openapi_router() -> OpenApiRouter<ServiceState> {
     OpenApiRouter::new().nest("/restrictions", restriction::openapi_router())

@@ -13,11 +13,22 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Token restrictions API
+use utoipa::OpenApi;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
 use crate::keystone::ServiceState;
 
-pub(crate) static DESCRIPTION: &str = r#"Token restrictions API.
+mod create;
+mod delete;
+mod list;
+mod show;
+mod update;
+
+/// OpenApi specification for the token restriction api.
+#[derive(OpenApi)]
+#[openapi(
+    tags(
+        (name="token_restriction", description=r#"Token restrictions API.
 
 Token restrictions allow controlling multiple aspects of the authentication and authorization.
 
@@ -30,13 +41,11 @@ Token restrictions allow controlling multiple aspects of the authentication and 
 - `user_id` may specify the fixed user_id that will be used when issuing the token independently of the authentication. This is useful for Service Accounts.
 
 - `roles` binds the roles of the issued token on the scope. Using this bypasses necessity to grant the roles explicitly to the user.
-"#;
 
-mod create;
-mod delete;
-mod list;
-mod show;
-mod update;
+        "#),
+    )
+)]
+pub struct ApiDoc;
 
 pub(super) fn openapi_router() -> OpenApiRouter<ServiceState> {
     OpenApiRouter::new()

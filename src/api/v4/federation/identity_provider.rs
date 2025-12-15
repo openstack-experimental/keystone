@@ -12,22 +12,10 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! Identity providers API
+//! # Identity providers API
 use utoipa_axum::{router::OpenApiRouter, routes};
 
 use crate::keystone::ServiceState;
-
-pub(crate) static DESCRIPTION: &str = r#"Identity providers API.
-
-Identity provider resource allows to federate users from an external Identity Provider (i.e.
-Keycloak, Azure AD, etc.).
-
-Using the Identity provider requires creation of the mapping, which describes how to map attributes
-of the remote Idp to local users.
-
-Identity provider with an empty domain_id are considered globals and every domain may use it with
-appropriate mapping.
-"#;
 
 mod create;
 mod delete;

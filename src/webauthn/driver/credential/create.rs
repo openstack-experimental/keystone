@@ -18,8 +18,7 @@ use sea_orm::entity::*;
 use webauthn_rs::prelude::Passkey;
 
 use crate::db::entity::webauthn_credential;
-use crate::identity::backends::sql::{IdentityDatabaseError, db_err};
-use crate::identity::types::WebauthnCredential;
+use crate::webauthn::{WebauthnError, db_err, types::WebauthnCredential};
 
 pub async fn create<U: AsRef<str>, D: AsRef<str>>(
     db: &DatabaseConnection,
@@ -27,7 +26,7 @@ pub async fn create<U: AsRef<str>, D: AsRef<str>>(
     passkey: &Passkey,
     description: Option<D>,
     created_at: Option<DateTime<Utc>>,
-) -> Result<WebauthnCredential, IdentityDatabaseError> {
+) -> Result<WebauthnCredential, WebauthnError> {
     //let now = createLocal::now().naive_utc();
     let entry = webauthn_credential::ActiveModel {
         id: NotSet,

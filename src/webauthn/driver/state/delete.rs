@@ -16,12 +16,12 @@ use sea_orm::DatabaseConnection;
 use sea_orm::entity::*;
 
 use crate::db::entity::prelude::WebauthnState as DbPasskeyState;
-use crate::identity::backends::sql::{IdentityDatabaseError, db_err};
+use crate::webauthn::{WebauthnError, db_err};
 
 pub async fn delete<U: AsRef<str>>(
     db: &DatabaseConnection,
     user_id: U,
-) -> Result<(), IdentityDatabaseError> {
+) -> Result<(), WebauthnError> {
     DbPasskeyState::delete_by_id(user_id.as_ref())
         .exec(db)
         .await

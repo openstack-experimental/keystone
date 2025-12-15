@@ -15,6 +15,7 @@
 //!
 //! This is the entry point of the `keystone` binary.
 
+use axum::Router;
 use axum::extract::DefaultBodyLimit;
 use axum::http::{self, HeaderName, Request, header};
 use clap::{Parser, ValueEnum};
@@ -42,7 +43,6 @@ use tracing_subscriber::{
     prelude::*,
 };
 use utoipa::OpenApi;
-use utoipa_axum::router::OpenApiRouter;
 use utoipa_swagger_ui::SwaggerUi;
 use uuid::Uuid;
 
@@ -54,6 +54,7 @@ use openstack_keystone::keystone::{Service, ServiceState};
 use openstack_keystone::plugin_manager::PluginManager;
 use openstack_keystone::policy::PolicyFactory;
 use openstack_keystone::provider::Provider;
+use openstack_keystone::webauthn;
 
 // Default body limit 256kB
 const DEFAULT_BODY_LIMIT: usize = 1024 * 256;
@@ -130,18 +131,18 @@ async fn main() -> Result<(), Report> {
 
     info!("Starting Keystone...");
 
-    let openapi = api::ApiDoc::openapi();
-
-    let (router, api) = OpenApiRouter::with_openapi(openapi.clone())
-        .merge(api::openapi_router())
-        .split_for_parts();
+    let mut openapi = api::ApiDoc::openapi();
+    let webauthn_openapi = webauthn::api::openapi_router();
+    let (main_router, main_api) = api::openapi_router().split_for_parts();
+    openapi.merge(main_api);
+    openapi.merge(webauthn_openapi.into_openapi());
 
     if let Some(dump_format) = &args.dump_openapi {
         println!(
             "{}",
             match dump_format {
-                OpenApiFormat::Yaml => api.to_yaml()?,
-                OpenApiFormat::Json => api.to_pretty_json()?,
+                OpenApiFormat::Yaml => openapi.to_yaml()?,
+                OpenApiFormat::Json => openapi.to_pretty_json()?,
             }
         );
         return Ok(());
@@ -224,10 +225,12 @@ async fn main() -> Result<(), Report> {
         // propagate the header to the response before the response reaches `TraceLayer`
         .layer(PropagateRequestIdLayer::new(x_request_id));
 
-    let app = router
-        .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", api))
-        .layer(middleware)
-        .with_state(shared_state.clone());
+    let webauthn_extension = webauthn::api::init_extension(shared_state.clone())?;
+    let app = Router::new()
+        .merge(main_router.with_state(shared_state.clone()))
+        .merge(webauthn_extension)
+        .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", openapi))
+        .layer(middleware);
 
     let address = SocketAddr::from((Ipv4Addr::UNSPECIFIED, 8080));
     let listener = TcpListener::bind(&address).await?;

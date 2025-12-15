@@ -12,9 +12,16 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+//! # WebAuthN Extension types
+
 use derive_builder::Builder;
 use serde::{Deserialize, Serialize};
 
+mod provider;
+
+pub use provider::WebauthnApi;
+
+/// WebAuthN credential of a user.
 #[derive(Builder, Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
 #[builder(setter(strip_option, into))]
 pub struct WebauthnCredential {

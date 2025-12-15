@@ -45,7 +45,7 @@ use crate::token::{
         (status = 500, description = "Internal error.", example = json!(KeystoneApiError::InternalError(String::from("id = 1"))))
     ),
     security(("x-auth" = [])),
-    tag="token_restrictions"
+    tag="token_restriction"
 )]
 #[tracing::instrument(
     name = "api::token_restriction::list",

@@ -17,7 +17,6 @@ use mockall_double::double;
 use sea_orm::DatabaseConnection;
 use std::sync::Arc;
 use tracing::info;
-use webauthn_rs::{Webauthn, WebauthnBuilder, prelude::Url};
 
 use crate::api::error::KeystoneApiError;
 use crate::config::Config;
@@ -33,21 +32,20 @@ use crate::provider::Provider;
 //#[derive(Clone)]
 #[derive(FromRef)]
 pub struct Service {
-    /// Config file
+    /// Config file.
     pub config: Config,
-    /// Service/resource Provider
-    pub provider: Provider,
-    /// Database connection
+
+    /// Database connection.
     #[from_ref(skip)]
     pub db: DatabaseConnection,
 
-    /// Policy factory
+    /// Policy factory.
     pub policy_factory: Arc<PolicyFactory>,
 
-    /// WebAuthN provider
-    pub webauthn: Webauthn,
+    /// Service/resource Provider.
+    pub provider: Provider,
 
-    /// Shutdown flag
+    /// Shutdown flag.
     pub shutdown: bool,
 }
 
@@ -60,28 +58,11 @@ impl Service {
         provider: Provider,
         policy_factory: PolicyFactory,
     ) -> Result<Self, KeystoneError> {
-        // Effective domain name.
-        let rp_id = "localhost";
-        // Url containing the effective domain name
-        // TODO: This must come from the configuration file.
-        // MUST include the port number!
-        let rp_origin = Url::parse("http://localhost:8080")?;
-        let builder = WebauthnBuilder::new(rp_id, &rp_origin)?;
-
-        // Now, with the builder you can define other options.
-        // Set a "nice" relying party name. Has no security properties and
-        // may be changed in the future.
-        let builder = builder.rp_name("Keystone");
-
-        // Consume the builder and create our webauthn instance.
-        let webauthn = builder.build()?;
-
         Ok(Self {
             config: cfg.clone(),
             provider,
             db,
             policy_factory: Arc::new(policy_factory),
-            webauthn,
             shutdown: false,
         })
     }

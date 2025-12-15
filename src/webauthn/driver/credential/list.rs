@@ -18,12 +18,12 @@ use sea_orm::query::*;
 use webauthn_rs::prelude::Passkey;
 
 use crate::db::entity::{prelude::WebauthnCredential as DbCred, webauthn_credential};
-use crate::identity::backends::sql::{IdentityDatabaseError, db_err};
+use crate::webauthn::{WebauthnError, db_err};
 
 pub async fn list<U: AsRef<str>>(
     db: &DatabaseConnection,
     user_id: U,
-) -> Result<Vec<Passkey>, IdentityDatabaseError> {
+) -> Result<Vec<Passkey>, WebauthnError> {
     let res: Result<Vec<Passkey>, _> = DbCred::find()
         .filter(webauthn_credential::Column::UserId.eq(user_id.as_ref()))
         .all(db)

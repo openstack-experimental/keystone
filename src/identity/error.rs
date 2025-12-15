@@ -14,10 +14,9 @@
 
 use thiserror::Error;
 
+use crate::common::password_hashing::PasswordHashError;
 use crate::identity::backends::error::*;
 use crate::identity::types::*;
-//{DomainBuilderError, UserResponseBuilderError};
-use crate::common::password_hashing::PasswordHashError;
 use crate::resource::error::ResourceProviderError;
 
 #[derive(Error, Debug)]

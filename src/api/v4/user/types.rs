@@ -13,8 +13,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //! User resource types.
 
-pub mod passkey;
-
 pub use crate::api::v3::user::types::{
     Federation, FederationProtocol, User, UserCreate, UserCreateRequest, UserList,
     UserListParameters, UserOptions, UserResponse, UserUpdateRequest,
