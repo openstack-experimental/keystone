@@ -16,11 +16,8 @@ use utoipa_axum::router::OpenApiRouter;
 
 use crate::keystone::ServiceState;
 
-pub mod passkey;
 pub mod token;
 
 pub(super) fn openapi_router() -> OpenApiRouter<ServiceState> {
-    OpenApiRouter::new()
-        .nest("/tokens", token::openapi_router())
-        .nest("/passkey", passkey::openapi_router())
+    OpenApiRouter::new().nest("/tokens", token::openapi_router())
 }

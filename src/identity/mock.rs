@@ -16,7 +16,6 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use mockall::mock;
 use std::collections::HashSet;
-use webauthn_rs::prelude::{Passkey, PasskeyAuthentication, PasskeyRegistration};
 
 use crate::auth::AuthenticatedInfo;
 use crate::config::Config;
@@ -24,7 +23,7 @@ use crate::identity::IdentityApi;
 use crate::identity::error::IdentityProviderError;
 use crate::identity::types::{
     Group, GroupCreate, GroupListParameters, UserCreate, UserListParameters,
-    UserPasswordAuthRequest, UserResponse, WebauthnCredential,
+    UserPasswordAuthRequest, UserResponse,
 };
 use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManager;
@@ -175,58 +174,6 @@ mock! {
             group_ids: HashSet<&'a str>,
             idp_id: &'a str,
             last_verified: Option<&'a DateTime<Utc>>,
-        ) -> Result<(), IdentityProviderError>;
-
-        async fn list_user_webauthn_credentials<'a>(
-            &self,
-            state: &ServiceState,
-            user_id: &'a str,
-        ) -> Result<Vec<Passkey>, IdentityProviderError>;
-
-        async fn create_user_webauthn_credential<'a>(
-            &self,
-            state: &ServiceState,
-            user_id: &'a str,
-            passkey: &Passkey,
-            description: Option<&'a str>
-        ) -> Result<WebauthnCredential, IdentityProviderError>;
-
-        async fn save_user_webauthn_credential_registration_state<'a>(
-            &self,
-            state: &ServiceState,
-            user_id: &'a str,
-            auth_state: PasskeyRegistration,
-        ) -> Result<(), IdentityProviderError>;
-
-        async fn save_user_webauthn_credential_authentication_state<'a>(
-            &self,
-            state: &ServiceState,
-            user_id: &'a str,
-            auth_state: PasskeyAuthentication,
-        ) -> Result<(), IdentityProviderError>;
-
-        async fn get_user_webauthn_credential_registration_state<'a>(
-            &self,
-            state: &ServiceState,
-            user_id: &'a str,
-        ) -> Result<Option<PasskeyRegistration>, IdentityProviderError>;
-
-        async fn get_user_webauthn_credential_authentication_state<'a>(
-            &self,
-            state: &ServiceState,
-            user_id: &'a str,
-        ) -> Result<Option<PasskeyAuthentication>, IdentityProviderError>;
-
-        async fn delete_user_webauthn_credential_registration_state<'a>(
-            &self,
-            state: &ServiceState,
-            user_id: &'a str,
-        ) -> Result<(), IdentityProviderError>;
-
-        async fn delete_user_webauthn_credential_authentication_state<'a>(
-            &self,
-            state: &ServiceState,
-            user_id: &'a str,
         ) -> Result<(), IdentityProviderError>;
     }
 

@@ -11,16 +11,17 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-
+//! # Passkey registration API
 use utoipa_axum::{router::OpenApiRouter, routes};
 
-use crate::keystone::ServiceState;
+use crate::webauthn::api::types::CombinedExtensionState;
 
-mod register_finish;
-mod register_start;
+mod finish;
+mod start;
 
-pub(super) fn openapi_router() -> OpenApiRouter<ServiceState> {
+/// OpenAPI router.
+pub(super) fn openapi_router() -> OpenApiRouter<CombinedExtensionState> {
     OpenApiRouter::new()
-        .routes(routes!(register_start::start))
-        .routes(routes!(register_finish::finish))
+        .routes(routes!(start::start))
+        .routes(routes!(finish::finish))
 }

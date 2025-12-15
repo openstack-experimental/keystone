@@ -27,7 +27,6 @@ use crate::identity::IdentityApi;
 use crate::keystone::ServiceState;
 use types::{User, UserCreateRequest, UserList, UserListParameters, UserResponse};
 
-pub mod passkey;
 pub mod types;
 
 pub(super) fn openapi_router() -> OpenApiRouter<ServiceState> {
@@ -35,7 +34,6 @@ pub(super) fn openapi_router() -> OpenApiRouter<ServiceState> {
         .routes(routes!(list, create))
         .routes(routes!(show, remove))
         .routes(routes!(groups))
-        .nest("/{user_id}/passkeys", passkey::openapi_router())
 }
 
 /// List users

@@ -19,6 +19,7 @@ use axum::{
     http::{HeaderMap, header},
     response::IntoResponse,
 };
+use utoipa::OpenApi;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
 use crate::api::error::KeystoneApiError;
@@ -33,6 +34,16 @@ pub mod token;
 pub mod user;
 
 use crate::api::types::*;
+
+/// OpenApi specification for v4.
+#[derive(OpenApi)]
+#[openapi(
+    nest(
+      (path = "federation", api = federation::ApiDoc),
+      (path = "tokens", api = token::ApiDoc),
+    ),
+)]
+pub struct ApiDoc;
 
 pub(super) fn openapi_router() -> OpenApiRouter<ServiceState> {
     OpenApiRouter::new()

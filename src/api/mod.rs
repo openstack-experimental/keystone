@@ -22,14 +22,11 @@ use axum::{
 };
 use utoipa::{
     Modify, OpenApi,
-    openapi::security::{
-        ApiKey, ApiKeyValue, AuthorizationCode, Flow, HttpAuthScheme, HttpBuilder, OAuth2, Scopes,
-        SecurityScheme,
-    },
+    openapi::security::{ApiKey, ApiKeyValue, SecurityScheme},
 };
 use utoipa_axum::{router::OpenApiRouter, routes};
 
-use crate::api::error::KeystoneApiError;
+pub use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
 
 pub mod auth;
@@ -46,12 +43,10 @@ use crate::api::types::*;
 #[openapi(
     info(version = "4.0.1"),
     modifiers(&SecurityAddon),
-    tags(
-        (name="identity_providers", description=v4::federation::identity_provider::DESCRIPTION),
-        (name="mappings", description=v4::federation::mapping::DESCRIPTION),
-        (name="token", description=v4::token::DESCRIPTION),
-        (name="token_restrictions", description=v4::token::restriction::DESCRIPTION),
-    )
+    nest(
+      (path = "v3", api = v3::ApiDoc),
+      (path = "v4", api = v4::ApiDoc),
+    ),
 )]
 pub struct ApiDoc;
 
@@ -63,27 +58,6 @@ impl Modify for SecurityAddon {
             components.add_security_scheme(
                 "x-auth",
                 SecurityScheme::ApiKey(ApiKey::Header(ApiKeyValue::new("x-auth-token"))),
-            );
-            components.add_security_scheme(
-                "jwt",
-                SecurityScheme::Http(
-                    HttpBuilder::new()
-                        .scheme(HttpAuthScheme::Bearer)
-                        .bearer_format("JWT")
-                        .description(Some("JWT (ID) Token issued by the federated IDP"))
-                        .build(),
-                ),
-            );
-            // TODO: This must be dynamic
-            components.add_security_scheme(
-                "oauth2",
-                SecurityScheme::OAuth2(OAuth2::new([Flow::AuthorizationCode(
-                    AuthorizationCode::new(
-                        "https://localhost/authorization/token",
-                        "https://localhost/token/url",
-                        Scopes::from_iter([("openid", "default scope")]),
-                    ),
-                )])),
             );
         }
     }

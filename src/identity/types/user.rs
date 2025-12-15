@@ -18,10 +18,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use validator::Validate;
 
-mod webauthn_credential;
-
-pub use webauthn_credential::WebauthnCredential;
-
 #[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
 #[builder(setter(strip_option, into))]
 pub struct UserResponse {

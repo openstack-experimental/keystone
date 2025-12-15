@@ -16,7 +16,6 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use dyn_clone::DynClone;
 use std::collections::HashSet;
-use webauthn_rs::prelude::{Passkey, PasskeyAuthentication, PasskeyRegistration};
 
 use crate::auth::AuthenticatedInfo;
 use crate::config::Config;
@@ -192,66 +191,6 @@ pub trait IdentityBackend: DynClone + Send + Sync + std::fmt::Debug {
         group_ids: HashSet<&'a str>,
         idp_id: &'a str,
         last_verified: Option<&DateTime<Utc>>,
-    ) -> Result<(), IdentityProviderError>;
-
-    /// List user passkeys.
-    async fn list_user_webauthn_credentials<'a>(
-        &self,
-        state: &ServiceState,
-        user_id: &'a str,
-    ) -> Result<Vec<Passkey>, IdentityProviderError>;
-
-    /// Create passkey.
-    async fn create_user_webauthn_credential<'a>(
-        &self,
-        state: &ServiceState,
-        user_id: &'a str,
-        passkey: &Passkey,
-        description: Option<&'a str>,
-    ) -> Result<WebauthnCredential, IdentityProviderError>;
-
-    /// Save passkey registration state.
-    async fn create_user_webauthn_credential_registration_state<'a>(
-        &self,
-        state: &ServiceState,
-        user_id: &'a str,
-        state: PasskeyRegistration,
-    ) -> Result<(), IdentityProviderError>;
-
-    /// Save passkey auth state.
-    async fn create_user_webauthn_credential_authentication_state<'a>(
-        &self,
-        state: &ServiceState,
-        user_id: &'a str,
-        state: PasskeyAuthentication,
-    ) -> Result<(), IdentityProviderError>;
-
-    /// Get passkey registration state.
-    async fn get_user_webauthn_credential_registration_state<'a>(
-        &self,
-        state: &ServiceState,
-        user_id: &'a str,
-    ) -> Result<Option<PasskeyRegistration>, IdentityProviderError>;
-
-    /// Get passkey authentication state.
-    async fn get_user_webauthn_credential_authentication_state<'a>(
-        &self,
-        state: &ServiceState,
-        user_id: &'a str,
-    ) -> Result<Option<PasskeyAuthentication>, IdentityProviderError>;
-
-    /// Delete passkey registration state of a user.
-    async fn delete_user_webauthn_credential_registration_state<'a>(
-        &self,
-        state: &ServiceState,
-        user_id: &'a str,
-    ) -> Result<(), IdentityProviderError>;
-
-    /// Delete passkey authentication state of a user.
-    async fn delete_user_webauthn_credential_authentication_state<'a>(
-        &self,
-        state: &ServiceState,
-        user_id: &'a str,
     ) -> Result<(), IdentityProviderError>;
 }
 

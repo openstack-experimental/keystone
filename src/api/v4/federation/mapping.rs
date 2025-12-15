@@ -12,19 +12,10 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! Federation attribute mappings API
+//! # Federation attribute mappings API
 use utoipa_axum::{router::OpenApiRouter, routes};
 
 use crate::keystone::ServiceState;
-
-pub(crate) static DESCRIPTION: &str = r#"Federation mappings API.
-
-Mappings define how the user attributes on the remote IDP are mapped to the local user.
-
-Mappings with an empty domain_id are considered globals and every domain may use it. Such mappings
-require the `domain_id_claim` attribute to be set to identify the domain_id for the respective
-user.
-"#;
 
 mod create;
 mod delete;

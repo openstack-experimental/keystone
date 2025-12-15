@@ -11,20 +11,17 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+//! # WebauthN extension.
+//!
+//! This extension adds WebAuthN functionality to Keystone:
+//!
+//! - Users can register and manage their WebAuthN credentials
+//! - Users can authenticate using their registered credentials.
 
-//! Authenticate with the passkeys.
-
-use utoipa_axum::{router::OpenApiRouter, routes};
-
-use crate::keystone::ServiceState;
-
-pub mod finish;
-pub mod start;
+pub mod api;
+mod driver;
+mod error;
 pub mod types;
 
-/// Api router for the /auth/passkey methods
-pub(super) fn openapi_router() -> OpenApiRouter<ServiceState> {
-    OpenApiRouter::new()
-        .routes(routes!(start::start))
-        .routes(routes!(finish::finish))
-}
+pub use error::*;
+pub use types::*;

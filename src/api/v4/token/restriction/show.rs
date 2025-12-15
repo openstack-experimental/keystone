@@ -42,7 +42,7 @@ use crate::token::TokenApi;
         (status = 404, description = "Resource not found", example = json!(KeystoneApiError::NotFound(String::from("id = 1"))))
     ),
     security(("x-auth" = [])),
-    tag="token_restrictions"
+    tag="token_restriction"
 )]
 #[tracing::instrument(
     name = "api::token_restriction::get",

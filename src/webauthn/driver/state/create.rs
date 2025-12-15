@@ -18,13 +18,13 @@ use sea_orm::entity::*;
 use webauthn_rs::prelude::{PasskeyAuthentication, PasskeyRegistration};
 
 use crate::db::entity::webauthn_state;
-use crate::identity::backends::sql::{IdentityDatabaseError, db_err};
+use crate::webauthn::{WebauthnError, db_err};
 
 pub async fn create_register<U: AsRef<str>>(
     db: &DatabaseConnection,
     user_id: U,
     state: PasskeyRegistration,
-) -> Result<(), IdentityDatabaseError> {
+) -> Result<(), WebauthnError> {
     let now = Local::now().naive_utc();
     let entry = webauthn_state::ActiveModel {
         user_id: Set(user_id.as_ref().to_string()),
@@ -44,7 +44,7 @@ pub async fn create_auth<U: AsRef<str>>(
     db: &DatabaseConnection,
     user_id: U,
     state: PasskeyAuthentication,
-) -> Result<(), IdentityDatabaseError> {
+) -> Result<(), WebauthnError> {
     let now = Local::now().naive_utc();
     let entry = webauthn_state::ActiveModel {
         user_id: Set(user_id.as_ref().to_string()),

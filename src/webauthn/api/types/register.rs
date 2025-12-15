@@ -11,12 +11,16 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-
+//! # Passkey registration API types
+//!
 //! Embedded type webauthn_rs::prelude::CreationChallengeResponse
 
+use base64::{Engine as _, engine::general_purpose::URL_SAFE};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use validator::Validate;
+
+use crate::api::KeystoneApiError;
 
 /// Passkey registration request.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
@@ -168,30 +172,30 @@ pub struct PublicKeyCredentialDescriptor {
     pub transports: Option<Vec<AuthenticatorTransport>>,
 }
 
-///
-/// Request in residentkey workflows that conditional mediation should be used
-/// in the UI, or not.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
-pub enum Mediation {
-    /// Discovered credentials are presented to the user in a dialog.
-    /// Conditional UI is used. See <https://github.com/w3c/webauthn/wiki/Explainer:-WebAuthn-Conditional-UI>
-    /// <https://w3c.github.io/webappsec-credential-management/#enumdef-credentialmediationrequirement>
-    Conditional,
-}
-
-/// A descriptor of a credential that can be used.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
-pub struct AllowCredentials {
-    /// The type of credential.
-    pub type_: String,
-    /// The id of the credential.
-    #[schema(value_type = String, format = Binary, content_encoding = "base64")]
-    pub id: String,
-    /// <https://www.w3.org/TR/webauthn/#transport> may be usb, nfc, ble, internal
-    #[schema(nullable = false)]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub transports: Option<Vec<AuthenticatorTransport>>,
-}
+// ///
+// /// Request in residentkey workflows that conditional mediation should be used
+// /// in the UI, or not.
+// #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
+// pub enum Mediation {
+//     /// Discovered credentials are presented to the user in a dialog.
+//     /// Conditional UI is used. See <https://github.com/w3c/webauthn/wiki/Explainer:-WebAuthn-Conditional-UI>
+//     /// <https://w3c.github.io/webappsec-credential-management/#enumdef-credentialmediationrequirement>
+//     Conditional,
+// }
+//
+// /// A descriptor of a credential that can be used.
+// #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+// pub struct AllowCredentials {
+//     /// The type of credential.
+//     pub type_: String,
+//     /// The id of the credential.
+//     #[schema(value_type = String, format = Binary, content_encoding = "base64")]
+//     pub id: String,
+//     /// <https://www.w3.org/TR/webauthn/#transport> may be usb, nfc, ble, internal
+//     #[schema(nullable = false)]
+//     #[serde(skip_serializing_if = "Option::is_none")]
+//     pub transports: Option<Vec<AuthenticatorTransport>>,
+// }
 
 /// <https://www.w3.org/TR/webauthn/#enumdef-authenticatortransport>
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
@@ -369,14 +373,14 @@ pub enum CredentialProtectionPolicy {
     /// some form of user verification is optional with or without
     /// credentialID list. This is the default state of the credential if
     /// the extension is not specified.
-    UserVerificationOptional = 1,
+    Optional = 1,
     /// In this configuration, credential is discovered only when its
     /// credentialID is provided by the platform or when some form of user
     /// verification is performed.
-    UserVerificationOptionalWithCredentialIDList = 2,
+    OptionalWithCredentialIDList = 2,
     /// This reflects that discovery and usage of the credential MUST be
     /// preceded by some form of user verification.
-    UserVerificationRequired = 3,
+    Required = 3,
 }
 
 /// Defines the User Authenticator Verification policy. This is documented
@@ -528,19 +532,199 @@ pub struct CredProps {
     pub rk: bool,
 }
 
-impl From<crate::identity::types::WebauthnCredential> for PasskeyResponse {
-    fn from(value: crate::identity::types::WebauthnCredential) -> Self {
+impl From<crate::webauthn::types::WebauthnCredential> for PasskeyResponse {
+    fn from(value: crate::webauthn::types::WebauthnCredential) -> Self {
         Self {
             passkey: value.into(),
         }
     }
 }
 
-impl From<crate::identity::types::WebauthnCredential> for Passkey {
-    fn from(value: crate::identity::types::WebauthnCredential) -> Self {
+impl From<crate::webauthn::types::WebauthnCredential> for Passkey {
+    fn from(value: crate::webauthn::types::WebauthnCredential) -> Self {
         Self {
             credential_id: value.credential_id,
             description: value.description,
         }
+    }
+}
+
+impl TryFrom<UserPasskeyRegistrationFinishRequest>
+    for webauthn_rs::prelude::RegisterPublicKeyCredential
+{
+    type Error = KeystoneApiError;
+    fn try_from(val: UserPasskeyRegistrationFinishRequest) -> Result<Self, Self::Error> {
+        Ok(webauthn_rs::prelude::RegisterPublicKeyCredential {
+            id: val.id,
+            raw_id: URL_SAFE.decode(val.raw_id)?.into(),
+            type_: val.type_,
+            response: webauthn_rs_proto::attest::AuthenticatorAttestationResponseRaw {
+                attestation_object: URL_SAFE.decode(val.response.attestation_object)?.into(),
+                client_data_json: URL_SAFE.decode(val.response.client_data_json)?.into(),
+                transports: val.response.transports.map(|i| {
+                    i.into_iter()
+                        .map(|t| match t {
+                            AuthenticatorTransport::Ble => webauthn_rs_proto::options::AuthenticatorTransport::Ble,
+                            AuthenticatorTransport::Hybrid => webauthn_rs_proto::options::AuthenticatorTransport::Hybrid,
+                            AuthenticatorTransport::Internal => webauthn_rs_proto::options::AuthenticatorTransport::Internal,
+                            AuthenticatorTransport::Nfc => webauthn_rs_proto::options::AuthenticatorTransport::Nfc,
+                            AuthenticatorTransport::Test => webauthn_rs_proto::options::AuthenticatorTransport::Test,
+                            AuthenticatorTransport::Unknown => webauthn_rs_proto::options::AuthenticatorTransport::Unknown,
+                            AuthenticatorTransport::Usb => webauthn_rs_proto::options::AuthenticatorTransport::Usb,
+
+                        })
+                        .collect::<Vec<_>>()
+                }),
+            },
+            extensions: webauthn_rs_proto::extensions::RegistrationExtensionsClientOutputs {
+                appid: val.extensions.appid,
+                cred_props: val
+                    .extensions
+                    .cred_props
+                    .map(|x| webauthn_rs_proto::extensions::CredProps { rk: x.rk }),
+                hmac_secret: val.extensions.hmac_secret,
+                cred_protect: val.extensions.cred_protect.map(|x| {
+                    match x {
+                        CredentialProtectionPolicy::Optional => webauthn_rs_proto::extensions::CredentialProtectionPolicy::UserVerificationOptional,
+                        CredentialProtectionPolicy::OptionalWithCredentialIDList => webauthn_rs_proto::extensions::CredentialProtectionPolicy::UserVerificationOptionalWithCredentialIDList,
+                        CredentialProtectionPolicy::Required => webauthn_rs_proto::extensions::CredentialProtectionPolicy::UserVerificationRequired
+                    }
+                }),
+                min_pin_length: val.extensions.min_pin_length,
+            },
+        })
+    }
+}
+
+impl TryFrom<webauthn_rs::prelude::CreationChallengeResponse>
+    for UserPasskeyRegistrationStartResponse
+{
+    type Error = KeystoneApiError;
+    fn try_from(val: webauthn_rs::prelude::CreationChallengeResponse) -> Result<Self, Self::Error> {
+        Ok(UserPasskeyRegistrationStartResponse {
+            public_key: PublicKeyCredentialCreationOptions {
+                attestation: val.public_key.attestation.map(|att| match att {
+                    webauthn_rs_proto::options::AttestationConveyancePreference::Direct => {
+                        AttestationConveyancePreference::Direct
+                    }
+                    webauthn_rs_proto::options::AttestationConveyancePreference::Indirect => {
+                        AttestationConveyancePreference::Indirect
+                    }
+                    webauthn_rs_proto::options::AttestationConveyancePreference::None => {
+                        AttestationConveyancePreference::None
+                    }
+                }),
+                attestation_formats: val
+                    .public_key
+                    .attestation_formats
+                    .map(|afs| {
+                        afs.into_iter().map(|fmt| match fmt {
+                            webauthn_rs_proto::options::AttestationFormat::AndroidKey => {
+                                AttestationFormat::AndroidKey
+                            }
+                            webauthn_rs_proto::options::AttestationFormat::AndroidSafetyNet => {
+                                AttestationFormat::AndroidSafetyNet
+                            }
+                            webauthn_rs_proto::options::AttestationFormat::AppleAnonymous => {
+                                AttestationFormat::AppleAnonymous
+                            }
+                            webauthn_rs_proto::options::AttestationFormat::FIDOU2F => {
+                                AttestationFormat::FIDOU2F
+                            }
+                            webauthn_rs_proto::options::AttestationFormat::None => {
+                                AttestationFormat::None
+                            }
+                            webauthn_rs_proto::options::AttestationFormat::Packed => {
+                                AttestationFormat::Packed
+                            }
+                            webauthn_rs_proto::options::AttestationFormat::Tpm => {
+                                AttestationFormat::Tpm
+                            }
+                        })
+                            .collect::<Vec<_>>()
+                    }),
+                authenticator_selection: val.public_key.authenticator_selection.map(|authn| {
+                    AuthenticatorSelectionCriteria {
+                        authenticator_attachment: authn.authenticator_attachment.map(|attach| {
+                            match attach {
+                                webauthn_rs_proto::options::AuthenticatorAttachment::CrossPlatform => AuthenticatorAttachment::CrossPlatform,
+                                webauthn_rs_proto::options::AuthenticatorAttachment::Platform => AuthenticatorAttachment::Platform,
+                            }
+                        }),
+                        require_resident_key: authn.require_resident_key,
+                        resident_key: authn.resident_key.map(|rk|
+                            match rk {
+                                webauthn_rs_proto::options::ResidentKeyRequirement::Discouraged => ResidentKeyRequirement::Discouraged,
+                                webauthn_rs_proto::options::ResidentKeyRequirement::Preferred => ResidentKeyRequirement::Preferred,
+                                webauthn_rs_proto::options::ResidentKeyRequirement::Required => ResidentKeyRequirement::Required,
+                            }
+                        ),
+                        user_verification: match authn.user_verification {
+                            webauthn_rs_proto::options::UserVerificationPolicy::Preferred => UserVerificationPolicy::Preferred,
+                            webauthn_rs_proto::options::UserVerificationPolicy::Required => UserVerificationPolicy::Required,
+                            webauthn_rs_proto::options::UserVerificationPolicy::Discouraged_DO_NOT_USE => UserVerificationPolicy::DiscouragedDoNotUse,
+                        }
+                    }
+                }),
+                challenge: URL_SAFE.encode(&val.public_key.challenge),
+                exclude_credentials: val.public_key.exclude_credentials.map(|ecs| ecs.into_iter().map(|descr| {
+                    PublicKeyCredentialDescriptor{
+                        type_: descr.type_,
+                        id: URL_SAFE.encode(&descr.id),
+                        transports: descr.transports.map(|transports| transports.into_iter().map(|tr|{
+                            match tr {
+                                webauthn_rs_proto::options::AuthenticatorTransport::Ble => AuthenticatorTransport::Ble,
+                                webauthn_rs_proto::options::AuthenticatorTransport::Hybrid => AuthenticatorTransport::Hybrid,
+                                webauthn_rs_proto::options::AuthenticatorTransport::Internal => AuthenticatorTransport::Internal,
+                                webauthn_rs_proto::options::AuthenticatorTransport::Nfc => AuthenticatorTransport::Nfc,
+                                webauthn_rs_proto::options::AuthenticatorTransport::Usb => AuthenticatorTransport::Usb,
+                                webauthn_rs_proto::options::AuthenticatorTransport::Test => AuthenticatorTransport::Test,
+                                webauthn_rs_proto::options::AuthenticatorTransport::Unknown => AuthenticatorTransport::Unknown,
+                            }
+                        }).collect::<Vec<_>>())
+                    }
+                }).collect::<Vec<_>>()),
+                extensions: val.public_key.extensions.map(|ext| RequestRegistrationExtensions{
+                    cred_props: ext.cred_props,
+                    cred_protect: ext.cred_protect.map(|cp|
+                        {
+                            CredProtect {
+                                credential_protection_policy: match cp.credential_protection_policy {
+                                    webauthn_rs_proto::extensions::CredentialProtectionPolicy::UserVerificationOptional => CredentialProtectionPolicy::Optional,
+                                    webauthn_rs_proto::extensions::CredentialProtectionPolicy::UserVerificationOptionalWithCredentialIDList => CredentialProtectionPolicy::OptionalWithCredentialIDList,
+                                    webauthn_rs_proto::extensions::CredentialProtectionPolicy::UserVerificationRequired => CredentialProtectionPolicy::Required,
+
+                                },
+                                enforce_credential_protection_policy: cp.enforce_credential_protection_policy,
+                            }
+                        }),
+                    hmac_create_secret: ext.hmac_create_secret,
+                    min_pin_length: ext.min_pin_length,
+                    uvm: ext.uvm,
+                }),
+                hints: val.public_key.hints.map(|hints| hints.into_iter().map(|hint|{
+                    match hint {
+                        webauthn_rs_proto::options::PublicKeyCredentialHints::ClientDevice => PublicKeyCredentialHints::ClientDevice,
+                        webauthn_rs_proto::options::PublicKeyCredentialHints::Hybrid => PublicKeyCredentialHints::Hybrid,
+                        webauthn_rs_proto::options::PublicKeyCredentialHints::SecurityKey => PublicKeyCredentialHints::SecurityKey,
+                    } }).collect::<Vec<_>>()),
+                pub_key_cred_params: val.public_key.pub_key_cred_params.into_iter().map(|pkcp| {
+                    PubKeyCredParams{
+                        alg: pkcp.alg,
+                        type_: pkcp.type_
+                    }
+                }).collect::<Vec<_>>(),
+                rp: RelyingParty{
+                    id: val.public_key.rp.id,
+                    name: val.public_key.rp.name,
+                },
+                timeout: val.public_key.timeout,
+                user: User {
+                    id: URL_SAFE.encode(&val.public_key.user.id),
+                    name: val.public_key.user.name,
+                    display_name: val.public_key.user.display_name,
+                }
+            },
+        })
     }
 }

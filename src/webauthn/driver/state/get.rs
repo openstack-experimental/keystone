@@ -18,12 +18,12 @@ use sea_orm::query::*;
 use webauthn_rs::prelude::{PasskeyAuthentication, PasskeyRegistration};
 
 use crate::db::entity::{prelude::WebauthnState as DbPasskeyState, webauthn_state};
-use crate::identity::backends::sql::{IdentityDatabaseError, db_err};
+use crate::webauthn::error::{WebauthnError, db_err};
 
 pub async fn get_register<U: AsRef<str>>(
     db: &DatabaseConnection,
     user_id: U,
-) -> Result<Option<PasskeyRegistration>, IdentityDatabaseError> {
+) -> Result<Option<PasskeyRegistration>, WebauthnError> {
     match DbPasskeyState::find_by_id(user_id.as_ref())
         .filter(webauthn_state::Column::Type.eq("register"))
         .one(db)
@@ -38,7 +38,7 @@ pub async fn get_register<U: AsRef<str>>(
 pub async fn get_auth<U: AsRef<str>>(
     db: &DatabaseConnection,
     user_id: U,
-) -> Result<Option<PasskeyAuthentication>, IdentityDatabaseError> {
+) -> Result<Option<PasskeyAuthentication>, WebauthnError> {
     match DbPasskeyState::find_by_id(user_id.as_ref())
         .filter(webauthn_state::Column::Type.eq("auth"))
         .one(db)

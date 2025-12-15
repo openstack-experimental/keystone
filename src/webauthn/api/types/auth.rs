@@ -11,17 +11,19 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+//! # Passkey authentication types
 
-//! Passkey authentication types.
-
+use base64::{Engine as _, engine::general_purpose::URL_SAFE};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use validator::Validate;
 
+use crate::api::KeystoneApiError;
+
 /// Request for initialization of the passkey authentication.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct PasskeyAuthenticationStartRequest {
-    /// The user authentication data
+    /// The user authentication data.
     #[validate(nested)]
     pub passkey: PasskeyUserAuthenticationRequest,
 }
@@ -297,4 +299,164 @@ pub struct HmacGetSecretOutput {
     #[schema(nullable = false, value_type = String, format = Binary, content_encoding = "base64")]
     #[validate(required)]
     pub output2: Option<String>,
+}
+
+impl TryFrom<HmacGetSecretOutput> for webauthn_rs_proto::extensions::HmacGetSecretOutput {
+    type Error = KeystoneApiError;
+    fn try_from(val: HmacGetSecretOutput) -> Result<Self, Self::Error> {
+        Ok(Self {
+            output1: URL_SAFE.decode(val.output1)?.into(),
+            output2: val
+                .output2
+                .map(|s2| URL_SAFE.decode(s2))
+                .transpose()?
+                .map(Into::into),
+        })
+    }
+}
+
+impl TryFrom<AuthenticationExtensionsClientOutputs>
+    for webauthn_rs_proto::extensions::AuthenticationExtensionsClientOutputs
+{
+    type Error = KeystoneApiError;
+    fn try_from(val: AuthenticationExtensionsClientOutputs) -> Result<Self, Self::Error> {
+        Ok(Self {
+            appid: val.appid,
+            hmac_get_secret: val.hmac_get_secret.map(TryInto::try_into).transpose()?,
+        })
+    }
+}
+
+impl TryFrom<AuthenticatorAssertionResponseRaw>
+    for webauthn_rs_proto::auth::AuthenticatorAssertionResponseRaw
+{
+    type Error = KeystoneApiError;
+    fn try_from(val: AuthenticatorAssertionResponseRaw) -> Result<Self, Self::Error> {
+        Ok(Self {
+            authenticator_data: URL_SAFE.decode(val.authenticator_data)?.into(),
+            client_data_json: URL_SAFE.decode(val.client_data_json)?.into(),
+            signature: URL_SAFE.decode(val.signature)?.into(),
+            user_handle: val
+                .user_handle
+                .map(|uh| URL_SAFE.decode(uh))
+                .transpose()?
+                .map(Into::into),
+        })
+    }
+}
+
+impl TryFrom<PasskeyAuthenticationFinishRequest> for webauthn_rs::prelude::PublicKeyCredential {
+    type Error = KeystoneApiError;
+    fn try_from(req: PasskeyAuthenticationFinishRequest) -> Result<Self, Self::Error> {
+        Ok(webauthn_rs::prelude::PublicKeyCredential {
+            id: req.id,
+            extensions: req.extensions.try_into()?,
+            raw_id: URL_SAFE.decode(req.raw_id)?.into(),
+            response: req.response.try_into()?,
+            type_: req.type_,
+        })
+    }
+}
+
+impl From<webauthn_rs_proto::extensions::HmacGetSecretInput> for HmacGetSecretInput {
+    fn from(val: webauthn_rs_proto::extensions::HmacGetSecretInput) -> Self {
+        Self {
+            output1: URL_SAFE.encode(val.output1),
+            output2: val.output2.map(|s2| URL_SAFE.encode(s2)),
+        }
+    }
+}
+
+impl From<webauthn_rs_proto::extensions::RequestAuthenticationExtensions>
+    for RequestAuthenticationExtensions
+{
+    fn from(val: webauthn_rs_proto::extensions::RequestAuthenticationExtensions) -> Self {
+        Self {
+            appid: val.appid,
+            hmac_get_secret: val.hmac_get_secret.map(Into::into),
+            uvm: val.uvm,
+        }
+    }
+}
+
+impl From<webauthn_rs_proto::options::AuthenticatorTransport> for AuthenticatorTransport {
+    fn from(val: webauthn_rs_proto::options::AuthenticatorTransport) -> Self {
+        match val {
+            webauthn_rs_proto::options::AuthenticatorTransport::Ble => Self::Ble,
+            webauthn_rs_proto::options::AuthenticatorTransport::Hybrid => Self::Hybrid,
+            webauthn_rs_proto::options::AuthenticatorTransport::Internal => Self::Internal,
+            webauthn_rs_proto::options::AuthenticatorTransport::Nfc => Self::Nfc,
+            webauthn_rs_proto::options::AuthenticatorTransport::Test => Self::Test,
+            webauthn_rs_proto::options::AuthenticatorTransport::Unknown => Self::Unknown,
+            webauthn_rs_proto::options::AuthenticatorTransport::Usb => Self::Usb,
+        }
+    }
+}
+impl From<webauthn_rs_proto::options::UserVerificationPolicy> for UserVerificationPolicy {
+    fn from(val: webauthn_rs_proto::options::UserVerificationPolicy) -> Self {
+        match val {
+            webauthn_rs_proto::options::UserVerificationPolicy::Required => Self::Required,
+            webauthn_rs_proto::options::UserVerificationPolicy::Preferred => Self::Preferred,
+            webauthn_rs_proto::options::UserVerificationPolicy::Discouraged_DO_NOT_USE => {
+                Self::DiscouragedDoNotUse
+            }
+        }
+    }
+}
+
+impl From<webauthn_rs_proto::options::PublicKeyCredentialHints> for PublicKeyCredentialHint {
+    fn from(val: webauthn_rs_proto::options::PublicKeyCredentialHints) -> Self {
+        match val {
+            webauthn_rs_proto::options::PublicKeyCredentialHints::ClientDevice => {
+                Self::ClientDevice
+            }
+            webauthn_rs_proto::options::PublicKeyCredentialHints::Hybrid => Self::Hybrid,
+            webauthn_rs_proto::options::PublicKeyCredentialHints::SecurityKey => Self::SecurityKey,
+        }
+    }
+}
+
+impl From<webauthn_rs_proto::options::AllowCredentials> for AllowCredentials {
+    fn from(val: webauthn_rs_proto::options::AllowCredentials) -> Self {
+        Self {
+            id: URL_SAFE.encode(val.id),
+            transports: val
+                .transports
+                .map(|tr| tr.into_iter().map(Into::into).collect::<Vec<_>>()),
+            type_: val.type_,
+        }
+    }
+}
+
+impl From<webauthn_rs_proto::auth::PublicKeyCredentialRequestOptions>
+    for PublicKeyCredentialRequestOptions
+{
+    fn from(val: webauthn_rs_proto::auth::PublicKeyCredentialRequestOptions) -> Self {
+        Self {
+            allow_credentials: val
+                .allow_credentials
+                .into_iter()
+                .map(Into::into)
+                .collect::<Vec<_>>(),
+            challenge: URL_SAFE.encode(val.challenge),
+            extensions: val.extensions.map(Into::into),
+            hints: val
+                .hints
+                .map(|hints| hints.into_iter().map(Into::into).collect::<Vec<_>>()),
+            rp_id: val.rp_id,
+            timeout: val.timeout,
+            user_verification: val.user_verification.into(),
+        }
+    }
+}
+
+impl From<webauthn_rs::prelude::RequestChallengeResponse> for PasskeyAuthenticationStartResponse {
+    fn from(val: webauthn_rs::prelude::RequestChallengeResponse) -> Self {
+        Self {
+            public_key: val.public_key.into(),
+            mediation: val.mediation.map(|med| match med {
+                webauthn_rs_proto::auth::Mediation::Conditional => Mediation::Conditional,
+            }),
+        }
+    }
 }
