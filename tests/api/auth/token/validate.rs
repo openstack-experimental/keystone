@@ -34,7 +34,7 @@ async fn test_validate_own() {
         )
         .expect("can't prepare password auth"),
         Some(Scope::Project(
-            ProjectScopeBuilder::default()
+            ScopeProjectBuilder::default()
                 .name("admin")
                 .domain(DomainBuilder::default().id("default").build().unwrap())
                 .build()
@@ -44,12 +44,11 @@ async fn test_validate_own() {
     .await
     .expect("no token");
 
-    let auth_rsp: TokenResponse =
+    let _auth_rsp: TokenResponse =
         check_token(&client, keystone_url.clone(), token.clone(), token.clone())
             .await
             .unwrap()
             .json()
             .await
             .unwrap();
-    println!("Token: {:?}", auth_rsp);
 }

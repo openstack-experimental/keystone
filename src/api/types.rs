@@ -24,6 +24,7 @@ use utoipa::ToSchema;
 use validator::{Validate, ValidationErrors};
 
 use crate::catalog::types::{Endpoint as ProviderEndpoint, Service};
+use crate::common::types as provider_types;
 use crate::resource::types as resource_provider_types;
 
 /// List of the supported API versionts as [Values].
@@ -223,7 +224,7 @@ impl From<Vec<(Service, Vec<ProviderEndpoint>)>> for Catalog {
 #[serde(rename_all = "lowercase")]
 pub enum Scope {
     /// Project scope.
-    Project(ProjectScope),
+    Project(ScopeProject),
     /// Domain scope.
     Domain(Domain),
     /// System scope.
@@ -243,7 +244,7 @@ impl Validate for Scope {
 /// Project scope information.
 #[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 #[builder(setter(into, strip_option))]
-pub struct ProjectScope {
+pub struct ScopeProject {
     /// Project ID.
     #[builder(default)]
     #[validate(length(max = 64))]
@@ -278,6 +279,7 @@ pub struct Project {
     #[validate(length(max = 64))]
     pub id: String,
     /// Project Name.
+    #[builder(default)]
     #[validate(length(max = 64))]
     pub name: String,
     /// project domain.
@@ -296,8 +298,8 @@ pub struct System {
 impl From<resource_provider_types::Domain> for Domain {
     fn from(value: resource_provider_types::Domain) -> Self {
         Self {
-            id: Some(value.id.clone()),
-            name: Some(value.name.clone()),
+            id: Some(value.id),
+            name: Some(value.name),
         }
     }
 }
@@ -314,4 +316,64 @@ impl From<&resource_provider_types::Domain> for Domain {
 /// Default `true` for the Deserialize trait.
 pub(crate) fn default_true() -> bool {
     true
+}
+
+impl From<Domain> for provider_types::Domain {
+    fn from(value: Domain) -> Self {
+        Self {
+            id: value.id,
+            name: value.name,
+        }
+    }
+}
+
+impl From<provider_types::Domain> for Domain {
+    fn from(value: provider_types::Domain) -> Self {
+        Self {
+            id: value.id,
+            name: value.name,
+        }
+    }
+}
+
+impl From<ScopeProject> for provider_types::Project {
+    fn from(value: ScopeProject) -> Self {
+        Self {
+            id: value.id,
+            name: value.name,
+            domain: value.domain.map(Into::into),
+        }
+    }
+}
+
+impl From<provider_types::Project> for ScopeProject {
+    fn from(value: provider_types::Project) -> Self {
+        Self {
+            id: value.id,
+            name: value.name,
+            domain: value.domain.map(Into::into),
+        }
+    }
+}
+
+impl From<&provider_types::Project> for ScopeProject {
+    fn from(value: &provider_types::Project) -> Self {
+        Self::from(value.clone())
+    }
+}
+
+impl From<System> for provider_types::System {
+    fn from(value: System) -> Self {
+        Self { all: value.all }
+    }
+}
+
+impl From<Scope> for provider_types::Scope {
+    fn from(value: Scope) -> Self {
+        match value {
+            Scope::Project(scope) => Self::Project(scope.into()),
+            Scope::Domain(scope) => Self::Domain(scope.into()),
+            Scope::System(scope) => Self::System(scope.into()),
+        }
+    }
 }

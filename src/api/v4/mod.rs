@@ -23,10 +23,10 @@ use utoipa::OpenApi;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
 use crate::api::error::KeystoneApiError;
+use crate::federation::api as federation;
 use crate::keystone::ServiceState;
 
 pub mod auth;
-pub mod federation;
 pub mod group;
 pub mod role;
 pub mod role_assignment;

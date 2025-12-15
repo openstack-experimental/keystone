@@ -36,7 +36,7 @@ async fn test_revoke() {
         )
         .expect("can't prepare password auth"),
         Some(Scope::Project(
-            ProjectScopeBuilder::default()
+            ScopeProjectBuilder::default()
                 .name("admin")
                 .domain(DomainBuilder::default().id("default").build().unwrap())
                 .build()
@@ -55,7 +55,7 @@ async fn test_revoke() {
         )
         .expect("can't prepare password auth"),
         Some(Scope::Project(
-            ProjectScopeBuilder::default()
+            ScopeProjectBuilder::default()
                 .name("admin")
                 .domain(DomainBuilder::default().id("default").build().unwrap())
                 .build()
@@ -111,7 +111,7 @@ async fn test_revoke_parent_invalidates_child() {
         )
         .expect("can't prepare password auth"),
         Some(Scope::Project(
-            ProjectScopeBuilder::default()
+            ScopeProjectBuilder::default()
                 .name("admin")
                 .domain(DomainBuilder::default().id("default").build().unwrap())
                 .build()
@@ -130,7 +130,7 @@ async fn test_revoke_parent_invalidates_child() {
         )
         .expect("can't prepare password auth"),
         Some(Scope::Project(
-            ProjectScopeBuilder::default()
+            ScopeProjectBuilder::default()
                 .name("admin")
                 .domain(DomainBuilder::default().id("default").build().unwrap())
                 .build()
@@ -144,7 +144,7 @@ async fn test_revoke_parent_invalidates_child() {
         &keystone_url,
         &parent_token,
         Some(Scope::Project(
-            ProjectScopeBuilder::default()
+            ScopeProjectBuilder::default()
                 .name("admin")
                 .domain(DomainBuilder::default().id("default").build().unwrap())
                 .build()

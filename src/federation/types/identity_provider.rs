@@ -66,6 +66,56 @@ pub struct IdentityProvider {
     pub provider_config: Option<Value>,
 }
 
+/// New Identity provider data.
+#[derive(Builder, Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
+#[builder(setter(strip_option, into))]
+pub struct IdentityProviderCreate {
+    /// Federation provider ID.
+    pub id: Option<String>,
+
+    /// Provider name.
+    pub name: String,
+
+    /// Domain ID,
+    #[builder(default)]
+    pub domain_id: Option<String>,
+
+    /// Whether the identity provider is enabled.
+    #[builder(default)]
+    pub enabled: bool,
+
+    /// OIDC discovery url.
+    #[builder(default)]
+    pub oidc_discovery_url: Option<String>,
+
+    #[builder(default)]
+    pub oidc_client_id: Option<String>,
+
+    #[builder(default)]
+    pub oidc_client_secret: Option<String>,
+
+    #[builder(default)]
+    pub oidc_response_mode: Option<String>,
+
+    #[builder(default)]
+    pub oidc_response_types: Option<Vec<String>>,
+
+    #[builder(default)]
+    pub jwks_url: Option<String>,
+
+    #[builder(default)]
+    pub jwt_validation_pubkeys: Option<Vec<String>>,
+
+    #[builder(default)]
+    pub bound_issuer: Option<String>,
+
+    #[builder(default)]
+    pub default_mapping_name: Option<String>,
+
+    #[builder(default)]
+    pub provider_config: Option<Value>,
+}
+
 /// Identity provider update data.
 #[derive(Builder, Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
 #[builder(setter(into))]

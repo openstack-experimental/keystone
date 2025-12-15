@@ -31,7 +31,7 @@ mod keycloak {
 use keycloak::utils::*;
 use keystone_utils::*;
 
-use openstack_keystone::api::v4::federation::types::*;
+use openstack_keystone::federation::api::types::*;
 
 pub async fn setup_keycloak_idp<T: AsRef<str>, K: AsRef<str>, S: AsRef<str>>(
     token: T,
@@ -42,7 +42,7 @@ pub async fn setup_keycloak_idp<T: AsRef<str>, K: AsRef<str>, S: AsRef<str>>(
     let keycloak_url = env::var("KEYCLOAK_URL").expect("KEYCLOAK_URL is set");
 
     let idp = create_idp(
-        &config,
+        config,
         token.as_ref(),
         IdentityProviderCreateRequest {
             identity_provider: IdentityProviderCreate {
@@ -58,7 +58,7 @@ pub async fn setup_keycloak_idp<T: AsRef<str>, K: AsRef<str>, S: AsRef<str>>(
     .await?;
 
     let mapping = create_mapping(
-        &config,
+        config,
         token.as_ref(),
         MappingCreateRequest {
             mapping: MappingCreate {
@@ -91,7 +91,7 @@ pub async fn setup_kecloak_idp_jwt<T: AsRef<str>, K: AsRef<str>, S: AsRef<str>>(
     let keycloak_url = env::var("KEYCLOAK_URL").expect("KEYCLOAK_URL is set");
 
     let idp = create_idp(
-        &config,
+        config,
         token.as_ref(),
         IdentityProviderCreateRequest {
             identity_provider: IdentityProviderCreate {
@@ -110,7 +110,7 @@ pub async fn setup_kecloak_idp_jwt<T: AsRef<str>, K: AsRef<str>, S: AsRef<str>>(
     .await?;
 
     let mapping = create_mapping(
-        &config,
+        config,
         token.as_ref(),
         MappingCreateRequest {
             mapping: MappingCreate {
@@ -151,12 +151,12 @@ async fn test_login_oidc_keycloak() {
     let group = create_keycloak_group(&keycloak, "group1").await.unwrap();
     put_user_to_group(&keycloak, user, group).await.unwrap();
 
-    let token = auth(&config).await;
+    let token = auth(config).await;
     let (idp, mapping) = setup_keycloak_idp(&token, client_id, client_secret)
         .await
         .unwrap();
 
-    let auth_req = initialize_oidc_auth(&config, &idp.id, &mapping.id)
+    let auth_req = initialize_oidc_auth(config, &idp.id, &mapping.id)
         .await
         .unwrap();
 
@@ -215,7 +215,7 @@ async fn test_login_oidc_keycloak() {
     let guard = state.lock().expect("poisoned guard");
     let res: FederationAuthCodeCallbackResponse = guard.clone().unwrap();
 
-    let _auth_rsp = exchange_authorization_code(&config, res.state, res.code)
+    let _auth_rsp = exchange_authorization_code(config, res.state, res.code)
         .await
         .unwrap();
 
@@ -243,11 +243,11 @@ async fn test_login_jwt_keycloak() {
         .await
         .unwrap();
 
-    let token = auth(&config).await;
+    let token = auth(config).await;
     ensure_user(&token, "jwt_user", "default").await.unwrap();
     let (idp, mapping) = setup_kecloak_idp_jwt(&token, client_id, client_secret)
         .await
         .unwrap();
 
-    let _auth_rsp = auth_jwt(&config, jwt, idp.id, mapping.name).await.unwrap();
+    let _auth_rsp = auth_jwt(config, jwt, idp.id, mapping.name).await.unwrap();
 }

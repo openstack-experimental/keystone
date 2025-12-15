@@ -27,7 +27,7 @@ mod keystone_utils;
 
 use keystone_utils::*;
 
-use openstack_keystone::api::v4::federation::types::*;
+use openstack_keystone::federation::api::types::*;
 
 pub async fn setup_idp<T: AsRef<str>, K: AsRef<str>, S: AsRef<str>>(
     token: T,
@@ -38,7 +38,7 @@ pub async fn setup_idp<T: AsRef<str>, K: AsRef<str>, S: AsRef<str>>(
     let dex_url = env::var("DEX_URL").expect("DEX_URL is set");
 
     let idp = create_idp(
-        &config,
+        config,
         token.as_ref(),
         IdentityProviderCreateRequest {
             identity_provider: IdentityProviderCreate {
@@ -56,7 +56,7 @@ pub async fn setup_idp<T: AsRef<str>, K: AsRef<str>, S: AsRef<str>>(
     .await?;
 
     let mapping = create_mapping(
-        &config,
+        config,
         token.as_ref(),
         MappingCreateRequest {
             mapping: MappingCreate {
@@ -89,10 +89,10 @@ async fn test_login_oidc() {
     let client_id = "keystone_test";
     let client_secret = "keystone_test_secret";
 
-    let token = auth(&config).await;
+    let token = auth(config).await;
     let (idp, mapping) = setup_idp(&token, client_id, client_secret).await.unwrap();
 
-    let auth_req = initialize_oidc_auth(&config, &idp.id, &mapping.id)
+    let auth_req = initialize_oidc_auth(config, &idp.id, &mapping.id)
         .await
         .unwrap();
 
@@ -157,7 +157,7 @@ async fn test_login_oidc() {
     let guard = state.lock().expect("poisoned guard");
     let res: FederationAuthCodeCallbackResponse = guard.clone().unwrap();
 
-    let _auth_rsp = exchange_authorization_code(&config, res.state, res.code)
+    let _auth_rsp = exchange_authorization_code(config, res.state, res.code)
         .await
         .unwrap();
     // TODO: Add checks for the response

@@ -11,16 +11,37 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-
+//! # Federation provider error
 use thiserror::Error;
 
-use crate::federation::backends::error::*;
+use crate::federation::backend::error::*;
 
+/// Federation provider error.
 #[derive(Error, Debug)]
 pub enum FederationProviderError {
-    /// Unsupported driver.
-    #[error("unsupported driver {0}")]
-    UnsupportedDriver(String),
+    /// Conflict.
+    #[error("conflict: {0}")]
+    Conflict(String),
+
+    /// Database backend error.
+    #[error(transparent)]
+    DatabaseBackend { source: FederationDatabaseError },
+
+    /// IDP not found.
+    #[error("identity provider {0} not found")]
+    IdentityProviderNotFound(String),
+
+    /// Mapping not found.
+    #[error("mapping {0} not found")]
+    MappingNotFound(String),
+
+    /// Use of token_project_id requires domain_id to be set.
+    #[error("`mapping.domain_id` must be set")]
+    MappingTokenProjectDomainUnset,
+
+    /// Use of token_user_id requires domain_id to be set.
+    #[error("`mapping.domain_id` must be set")]
+    MappingTokenUserDomainUnset,
 
     /// Identity provider error.
     #[error("data serialization error")]
@@ -29,29 +50,9 @@ pub enum FederationProviderError {
         source: serde_json::Error,
     },
 
-    /// IDP not found.
-    #[error("identity provider {0} not found")]
-    IdentityProviderNotFound(String),
-
-    /// IDP mapping not found.
-    #[error("mapping {0} not found")]
-    MappingNotFound(String),
-
-    /// Use of token_user_id requires domain_id to be set.
-    #[error("`mapping.domain_id` must be set")]
-    MappingTokenUserDomainUnset,
-
-    /// Use of token_project_id requires domain_id to be set.
-    #[error("`mapping.domain_id` must be set")]
-    MappingTokenProjectDomainUnset,
-
-    /// Conflict.
-    #[error("conflict: {0}")]
-    Conflict(String),
-
-    /// Identity provider error.
-    #[error(transparent)]
-    FederationDatabase { source: FederationDatabaseError },
+    /// Unsupported driver.
+    #[error("unsupported driver {0}")]
+    UnsupportedDriver(String),
 }
 
 impl From<FederationDatabaseError> for FederationProviderError {
@@ -61,9 +62,9 @@ impl From<FederationDatabaseError> for FederationProviderError {
                 Self::IdentityProviderNotFound(x)
             }
             FederationDatabaseError::MappingNotFound(x) => Self::MappingNotFound(x),
-            FederationDatabaseError::Conflict { message, .. } => Self::Conflict(message),
+            ref err @ FederationDatabaseError::Conflict { .. } => Self::Conflict(err.to_string()),
             FederationDatabaseError::Serde { source } => Self::Serde { source },
-            _ => Self::FederationDatabase { source },
+            _ => Self::DatabaseBackend { source },
         }
     }
 }

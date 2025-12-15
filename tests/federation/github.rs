@@ -23,8 +23,8 @@ mod keystone_utils;
 
 use keystone_utils::*;
 
-use openstack_keystone::api::v4::federation::types::*;
 use openstack_keystone::api::v4::user::types::*;
+use openstack_keystone::federation::api::types::*;
 
 pub async fn setup_github_idp<T: AsRef<str>>(
     token: T,
@@ -34,7 +34,7 @@ pub async fn setup_github_idp<T: AsRef<str>>(
     let github_sub = env::var("GITHUB_SUB").expect("GITHUB_SUB is set");
 
     let idp = create_idp(
-        &config,
+        config,
         token.as_ref(),
         IdentityProviderCreateRequest {
             identity_provider: IdentityProviderCreate {
@@ -51,7 +51,7 @@ pub async fn setup_github_idp<T: AsRef<str>>(
     .await?;
 
     let mapping = create_mapping(
-        &config,
+        config,
         token.as_ref(),
         MappingCreateRequest {
             mapping: MappingCreate {
@@ -83,9 +83,9 @@ async fn test_login_jwt() {
     let config = get_config();
     let jwt = env::var("GITHUB_JWT").expect("GITHUB_JWT is set");
 
-    let token = auth(&config).await;
+    let token = auth(config).await;
     let user = ensure_user(&token, "jwt_user", "default").await.unwrap();
     let (idp, mapping) = setup_github_idp(&token, &user).await.unwrap();
 
-    let _auth_rsp = auth_jwt(&config, jwt, idp.id, mapping.name).await.unwrap();
+    let _auth_rsp = auth_jwt(config, jwt, idp.id, mapping.name).await.unwrap();
 }

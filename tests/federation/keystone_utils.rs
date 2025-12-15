@@ -34,8 +34,8 @@ use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;
 
 use openstack_keystone::api::v4::auth::token::types::TokenResponse;
-use openstack_keystone::api::v4::federation::types::*;
 use openstack_keystone::api::v4::user::types::*;
+use openstack_keystone::federation::api::types::*;
 
 static CONFIG: OnceLock<TestConfig> = OnceLock::new();
 
@@ -60,7 +60,7 @@ fn load_config() -> TestConfig {
 }
 
 pub fn get_config() -> &'static TestConfig {
-    CONFIG.get_or_init(|| load_config())
+    CONFIG.get_or_init(load_config)
 }
 
 pub async fn auth(config: &TestConfig) -> String {

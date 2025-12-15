@@ -13,7 +13,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! # Common API helpers
 use crate::api::error::KeystoneApiError;
-use crate::api::types::ProjectScope;
+use crate::api::types::ScopeProject;
 use crate::keystone::ServiceState;
 use crate::resource::{
     ResourceApi,
@@ -69,7 +69,7 @@ pub async fn get_domain<I: AsRef<str>, N: AsRef<str>>(
 /// The resolved project.
 pub async fn find_project_from_scope(
     state: &ServiceState,
-    scope: &ProjectScope,
+    scope: &ScopeProject,
 ) -> Result<Option<Project>, KeystoneApiError> {
     let project = if let Some(pid) = &scope.id {
         state

@@ -25,7 +25,6 @@ use tracing::error;
 use crate::assignment::error::AssignmentProviderError;
 use crate::auth::AuthenticationError;
 use crate::catalog::error::CatalogProviderError;
-use crate::federation::error::FederationProviderError;
 use crate::identity::error::IdentityProviderError;
 use crate::policy::PolicyError;
 use crate::resource::error::ResourceProviderError;
@@ -91,17 +90,6 @@ pub enum KeystoneApiError {
         source: CatalogProviderError,
     },
 
-    #[error(transparent)]
-    Federation {
-        #[from]
-        source: FederationProviderError,
-    },
-
-    //    #[error(transparent)]
-    //    Oidc {
-    //        #[from]
-    //        source: OidcError,
-    //    },
     #[error(transparent)]
     IdentityError { source: IdentityProviderError },
 
@@ -195,7 +183,6 @@ impl IntoResponse for KeystoneApiError {
             | KeystoneApiError::ResourceError { .. }
             | KeystoneApiError::AssignmentError { .. }
             | KeystoneApiError::TokenError { .. }
-            | KeystoneApiError::Federation { .. }
             | KeystoneApiError::RevokeProvider { .. }
             | KeystoneApiError::Other(..) => StatusCode::INTERNAL_SERVER_ERROR,
             _ =>
@@ -227,20 +214,7 @@ impl KeystoneApiError {
             _ => source.into(),
         }
     }
-    pub fn federation(source: FederationProviderError) -> Self {
-        match source {
-            FederationProviderError::IdentityProviderNotFound(x) => Self::NotFound {
-                resource: "identity provider".into(),
-                identifier: x,
-            },
-            FederationProviderError::MappingNotFound(x) => Self::NotFound {
-                resource: "mapping provider".into(),
-                identifier: x,
-            },
-            FederationProviderError::Conflict(x) => Self::Conflict(x),
-            _ => source.into(),
-        }
-    }
+
     pub fn identity(source: IdentityProviderError) -> Self {
         match source {
             IdentityProviderError::UserNotFound(x) => Self::NotFound {
@@ -254,6 +228,7 @@ impl KeystoneApiError {
             _ => source.into(),
         }
     }
+
     pub fn resource(source: ResourceProviderError) -> Self {
         match source {
             ResourceProviderError::DomainNotFound(x) => Self::NotFound {
