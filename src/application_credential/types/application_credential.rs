@@ -42,17 +42,17 @@ pub struct ApplicationCredential {
     pub expires_at: Option<DateTime<Utc>>,
 
     /// The ID of the application credential.
-    #[validate(length(max = 64))]
+    #[validate(length(min = 1, max = 64))]
     pub id: String,
 
     /// The name of the application credential.
-    #[validate(length(max = 255))]
+    #[validate(length(min = 1, max = 255))]
     pub name: String,
 
     /// The ID of the project the application credential was created for and
     /// that authentication requests using this application credential will
     /// be scoped to.
-    #[validate(length(max = 64))]
+    #[validate(length(min = 1, max = 64))]
     pub project_id: String,
 
     /// A list of one or more roles that this application credential has
@@ -66,7 +66,7 @@ pub struct ApplicationCredential {
     pub unrestricted: bool,
 
     /// The ID of the user who owns the application credential.
-    #[validate(length(max = 64))]
+    #[validate(length(min = 1, max = 64))]
     pub user_id: String,
 }
 
