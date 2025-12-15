@@ -21,6 +21,26 @@ use thiserror::Error;
 /// Token provider error.
 #[derive(Error, Debug)]
 pub enum TokenProviderError {
+    /// Application Credential used in the token is not found.
+    #[error("application credential with id: {0} not found")]
+    ApplicationCredentialNotFound(String),
+
+    /// Application Credential has expired.
+    #[error("application credential has expired")]
+    ApplicationCredentialExpired,
+
+    /// Application credential provider error.
+    #[error(transparent)]
+    ApplicationCredentialProvider {
+        /// The source of the error.
+        #[from]
+        source: crate::application_credential::error::ApplicationCredentialProviderError,
+    },
+
+    /// Application Credential is bound to the other project.
+    #[error("application credential is bound to another project")]
+    ApplicationCredentialScopeMismatch,
+
     /// IO error.
     #[error("io error: {}", source)]
     Io {

@@ -21,7 +21,8 @@
 
 use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
-use chrono::{Local, TimeDelta};
+use chrono::{Local, TimeDelta, Utc};
+use std::collections::HashSet;
 use uuid::Uuid;
 
 pub mod backend;
@@ -31,11 +32,6 @@ mod mock;
 mod token_restriction;
 pub mod types;
 
-use crate::assignment::{
-    AssignmentApi,
-    error::AssignmentProviderError,
-    types::{Role, RoleAssignmentListParametersBuilder},
-};
 use crate::auth::{AuthenticatedInfo, AuthenticationError, AuthzInfo};
 use crate::config::{Config, TokenProviderDriver};
 use crate::identity::IdentityApi;
@@ -45,6 +41,14 @@ use crate::resource::{
     types::{Domain, Project},
 };
 use crate::revoke::RevokeApi;
+use crate::{
+    application_credential::ApplicationCredentialApi,
+    assignment::{
+        AssignmentApi,
+        error::AssignmentProviderError,
+        types::{Role, RoleAssignmentListParametersBuilder},
+    },
+};
 use backend::{TokenBackend, fernet::FernetTokenProvider};
 pub use error::TokenProviderError;
 
@@ -354,6 +358,20 @@ impl TokenProvider {
                 }
             }
             Token::ApplicationCredential(data) => {
+                if data.application_credential.is_none() {
+                    data.application_credential = Some(
+                        state
+                            .provider
+                            .get_application_credential_provider()
+                            .get_application_credential(state, &data.application_credential_id)
+                            .await?
+                            .ok_or_else(|| {
+                                TokenProviderError::ApplicationCredentialNotFound(
+                                    data.application_credential_id.clone(),
+                                )
+                            })?,
+                    );
+                }
                 if data.project.is_none() {
                     let project = state
                         .provider
@@ -478,30 +496,44 @@ impl TokenProvider {
                 }
             }
             Token::ApplicationCredential(data) => {
-                data.roles = state
-                    .provider
-                    .get_assignment_provider()
-                    .list_role_assignments(
-                        state,
-                        &RoleAssignmentListParametersBuilder::default()
-                            .user_id(&data.user_id)
-                            .project_id(&data.project_id)
-                            .include_names(true)
-                            .effective(true)
-                            .build()
-                            .map_err(AssignmentProviderError::from)?,
-                    )
-                    .await?
-                    .into_iter()
-                    .map(|x| Role {
-                        id: x.role_id.clone(),
-                        name: x.role_name.clone().unwrap_or_default(),
-                        ..Default::default()
-                    })
-                    .collect();
-                if data.roles.is_empty() {
-                    return Err(TokenProviderError::ActorHasNoRolesOnTarget);
+                if data.application_credential.is_none() {
+                    data.application_credential = Some(
+                        state
+                            .provider
+                            .get_application_credential_provider()
+                            .get_application_credential(state, &data.application_credential_id)
+                            .await?
+                            .ok_or_else(|| {
+                                TokenProviderError::ApplicationCredentialNotFound(
+                                    data.application_credential_id.clone(),
+                                )
+                            })?,
+                    );
                 }
+                if let Some(ref mut ac) = data.application_credential {
+                    let user_role_ids: HashSet<String> = state
+                        .provider
+                        .get_assignment_provider()
+                        .list_role_assignments(
+                            state,
+                            &RoleAssignmentListParametersBuilder::default()
+                                .user_id(&data.user_id)
+                                .project_id(&ac.project_id)
+                                .include_names(false)
+                                .effective(true)
+                                .build()
+                                .map_err(AssignmentProviderError::from)?,
+                        )
+                        .await?
+                        .into_iter()
+                        .map(|x| x.role_id.clone())
+                        .collect();
+                    // Filter out roles referred in the AC that the user does not have anymore.
+                    ac.roles.retain(|role| user_role_ids.contains(&role.id));
+                    if ac.roles.is_empty() {
+                        return Err(TokenProviderError::ActorHasNoRolesOnTarget);
+                    }
+                };
             }
             Token::FederationProjectScope(data) => {
                 data.roles = Some(
@@ -625,13 +657,10 @@ impl TokenApi for TokenProvider {
         expand: Option<bool>,
     ) -> Result<Token, TokenProviderError> {
         let mut token = self.backend_driver.decode(credential)?;
-        if Local::now().to_utc()
-            > token
-                .expires_at()
-                .checked_add_signed(TimeDelta::seconds(window_seconds.unwrap_or(0)))
-                .unwrap_or_else(|| *token.expires_at())
-            && !allow_expired.unwrap_or(false)
-        {
+        let latest_expiration_cutof = Utc::now()
+            .checked_add_signed(TimeDelta::seconds(window_seconds.unwrap_or(0)))
+            .unwrap_or(Utc::now());
+        if !allow_expired.unwrap_or_default() && *token.expires_at() < latest_expiration_cutof {
             return Err(TokenProviderError::Expired);
         }
 
@@ -647,6 +676,19 @@ impl TokenApi for TokenProvider {
             .await?
         {
             return Err(TokenProviderError::TokenRevoked);
+        }
+
+        if let Token::ApplicationCredential(ref data) = token {
+            data.is_valid()?;
+            if !allow_expired.unwrap_or_default()
+                && data
+                    .application_credential
+                    .as_ref()
+                    .and_then(|ac| ac.expires_at)
+                    .is_some_and(|expiry| expiry < latest_expiration_cutof)
+            {
+                return Err(TokenProviderError::Expired);
+            }
         }
 
         Ok(token)
@@ -794,6 +836,9 @@ mod tests {
     use uuid::Uuid;
 
     use super::*;
+    use crate::application_credential::{
+        MockApplicationCredentialProvider, types::ApplicationCredential,
+    };
     use crate::assignment::{
         MockAssignmentProvider,
         types::{Assignment, AssignmentType, Role, RoleAssignmentListParameters},
@@ -804,7 +849,6 @@ mod tests {
     use crate::provider::Provider;
     use crate::resource::{MockResourceProvider, types::Project};
     use crate::revoke::MockRevokeProvider;
-    use crate::token::{DomainScopePayload, ProjectScopePayload, Token, UnscopedPayload};
 
     pub(super) fn setup_config() -> Config {
         let keys_dir = tempdir().unwrap();
@@ -1033,6 +1077,179 @@ mod tests {
             _ => {
                 panic!("token must be revoked")
             }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_populate_role_assignments_application_credential() {
+        let token_provider = TokenProvider::new(&Config::default()).unwrap();
+        let mut assignment_mock = MockAssignmentProvider::default();
+        assignment_mock
+            .expect_list_role_assignments()
+            .withf(|_, q: &RoleAssignmentListParameters| {
+                q.project_id == Some("project_id".to_string())
+                    && q.user_id == Some("bar".to_string())
+            })
+            .returning(|_, q: &RoleAssignmentListParameters| {
+                Ok(vec![Assignment {
+                    role_id: "role_1".into(),
+                    role_name: Some("role_name".into()),
+                    actor_id: q.user_id.clone().unwrap(),
+                    target_id: q.project_id.clone().unwrap(),
+                    r#type: AssignmentType::UserProject,
+                    inherited: false,
+                }])
+            });
+        assignment_mock
+            .expect_list_role_assignments()
+            .withf(|_, q: &RoleAssignmentListParameters| {
+                q.domain_id == Some("domain_id".to_string())
+            })
+            .returning(|_, q: &RoleAssignmentListParameters| {
+                Ok(vec![Assignment {
+                    role_id: "rid".into(),
+                    role_name: Some("role_name".into()),
+                    actor_id: q.user_id.clone().unwrap(),
+                    target_id: q.domain_id.clone().unwrap(),
+                    r#type: AssignmentType::UserProject,
+                    inherited: false,
+                }])
+            });
+        let mut ac_mock = MockApplicationCredentialProvider::default();
+        ac_mock
+            .expect_get_application_credential()
+            .withf(|_, id: &'_ str| id == "app_cred_id")
+            .returning(|_, id: &'_ str| {
+                Ok(Some(ApplicationCredential {
+                    access_rules: None,
+                    description: None,
+                    expires_at: None,
+                    id: id.into(),
+                    name: "foo".into(),
+                    project_id: "project_id".into(),
+                    roles: vec![
+                        Role {
+                            id: "role_1".into(),
+                            name: "role_name_1".into(),
+                            ..Default::default()
+                        },
+                        Role {
+                            id: "role_2".into(),
+                            name: "role_name_2".into(),
+                            ..Default::default()
+                        },
+                    ],
+                    unrestricted: false,
+                    user_id: "bar".into(),
+                }))
+            });
+        ac_mock
+            .expect_get_application_credential()
+            .withf(|_, id: &'_ str| id == "app_cred_bad_roles")
+            .returning(|_, id: &'_ str| {
+                Ok(Some(ApplicationCredential {
+                    access_rules: None,
+                    description: None,
+                    expires_at: None,
+                    id: id.into(),
+                    name: "foo".into(),
+                    project_id: "project_id".into(),
+                    roles: vec![
+                        Role {
+                            id: "-role_1".into(),
+                            name: "-role_name_1".into(),
+                            ..Default::default()
+                        },
+                        Role {
+                            id: "-role_2".into(),
+                            name: "-role_name_2".into(),
+                            ..Default::default()
+                        },
+                    ],
+                    unrestricted: false,
+                    user_id: "bar".into(),
+                }))
+            });
+        ac_mock
+            .expect_get_application_credential()
+            .withf(|_, id: &'_ str| id == "missing")
+            .returning(|_, _| Ok(None));
+        let provider = Provider::mocked_builder()
+            .application_credential(ac_mock)
+            .assignment(assignment_mock)
+            .build()
+            .unwrap();
+
+        let state = Arc::new(
+            Service::new(
+                Config::default(),
+                DatabaseConnection::Disconnected,
+                provider,
+                crate::policy::MockPolicyFactory::new(),
+            )
+            .unwrap(),
+        );
+
+        let mut token = Token::ApplicationCredential(ApplicationCredentialPayload {
+            user_id: "bar".into(),
+            project_id: "project_id".into(),
+            application_credential_id: "app_cred_id".into(),
+            ..Default::default()
+        });
+        token_provider
+            .populate_role_assignments(&state, &mut token)
+            .await
+            .unwrap();
+
+        if let Token::ApplicationCredential(..) = &token {
+            assert_eq!(
+                token.roles().unwrap(),
+                &vec![Role {
+                    id: "role_1".into(),
+                    name: "role_name_1".into(),
+                    ..Default::default()
+                }],
+                "only still active role assignment is returned"
+            );
+        } else {
+            panic!("Not application credential scope");
+        }
+
+        // Try populating role assignments for not existing appcred
+        if let Err(TokenProviderError::ApplicationCredentialNotFound(id)) = token_provider
+            .populate_role_assignments(
+                &state,
+                &mut Token::ApplicationCredential(ApplicationCredentialPayload {
+                    user_id: "bar".into(),
+                    project_id: "project_id".into(),
+                    application_credential_id: "missing".into(),
+                    ..Default::default()
+                }),
+            )
+            .await
+        {
+            assert_eq!(id, "missing");
+        } else {
+            panic!("role expansion for missing application credential should fail");
+        }
+
+        // No roles remain after subtracting current user roles
+        if let Err(TokenProviderError::ActorHasNoRolesOnTarget) = token_provider
+            .populate_role_assignments(
+                &state,
+                &mut Token::ApplicationCredential(ApplicationCredentialPayload {
+                    user_id: "bar".into(),
+                    project_id: "project_id".into(),
+                    application_credential_id: "app_cred_bad_roles".into(),
+                    ..Default::default()
+                }),
+            )
+            .await
+        {
+        } else {
+            panic!(
+                "role expansion for application credential with roles the user does not have anymore should fail"
+            );
         }
     }
 }

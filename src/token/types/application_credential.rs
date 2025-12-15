@@ -17,9 +17,10 @@ use derive_builder::Builder;
 use serde::Serialize;
 use validator::Validate;
 
-use crate::assignment::types::Role;
+use crate::application_credential::types::ApplicationCredential;
 use crate::identity::types::UserResponse;
 use crate::resource::types::Project;
+use crate::token::TokenProviderError;
 use crate::token::types::Token;
 use crate::token::types::common;
 
@@ -50,7 +51,7 @@ pub struct ApplicationCredentialPayload {
     #[builder(default)]
     pub user: Option<UserResponse>,
     #[builder(default)]
-    pub roles: Vec<Role>,
+    pub application_credential: Option<ApplicationCredential>,
     #[builder(default)]
     pub project: Option<Project>,
 }
@@ -82,5 +83,18 @@ impl ApplicationCredentialPayloadBuilder {
 impl From<ApplicationCredentialPayload> for Token {
     fn from(value: ApplicationCredentialPayload) -> Self {
         Self::ApplicationCredential(value)
+    }
+}
+
+impl ApplicationCredentialPayload {
+    pub fn is_valid(&self) -> Result<bool, TokenProviderError> {
+        if self
+            .application_credential
+            .as_ref()
+            .is_none_or(|ac| ac.project_id != self.project_id)
+        {
+            return Err(TokenProviderError::ApplicationCredentialScopeMismatch);
+        }
+        Ok(true)
     }
 }
