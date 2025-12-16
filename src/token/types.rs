@@ -32,7 +32,7 @@ pub mod provider_api;
 pub mod restricted;
 pub mod unscoped;
 
-pub use application_credential::ApplicationCredentialPayload;
+pub use application_credential::*;
 pub use domain_scoped::{DomainScopePayload, DomainScopePayloadBuilder};
 pub use federation_domain_scoped::{
     FederationDomainScopePayload, FederationDomainScopePayloadBuilder,

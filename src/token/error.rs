@@ -41,6 +41,14 @@ pub enum TokenProviderError {
     #[error("application credential is bound to another project")]
     ApplicationCredentialScopeMismatch,
 
+    /// Builder error.
+    #[error(transparent)]
+    Builder {
+        /// The source of the error.
+        #[from]
+        source: crate::error::BuilderError,
+    },
+
     /// IO error.
     #[error("io error: {}", source)]
     Io {
@@ -102,6 +110,23 @@ pub enum TokenProviderError {
     /// Expired token
     #[error("token expiry calculation failed")]
     ExpiryCalculation,
+
+    /// Nix errno.
+    #[error("unix error {source} while {context}")]
+    NixErrno {
+        /// Context.
+        context: String,
+        /// The source of the error.
+        source: nix::errno::Errno,
+    },
+
+    /// tempfile persisting error
+    #[error(transparent)]
+    Persist {
+        /// The source of the error.
+        #[from]
+        source: tempfile::PersistError,
+    },
 
     /// MSGPack Decryption
     #[error("rmp value error")]

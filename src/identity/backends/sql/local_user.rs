@@ -34,20 +34,18 @@ impl UserResponseBuilder {
 
 #[cfg(test)]
 pub(super) mod tests {
-    use chrono::{Local, Utc};
+    use chrono::Utc;
 
     use crate::db::entity::{local_user as db_local_user, password as db_password};
 
-    impl Default for db_local_user::Model {
-        fn default() -> Self {
-            Self {
-                id: 1,
-                user_id: "user_id".into(),
-                domain_id: "foo_domain".into(),
-                name: "foo_domain".into(),
-                failed_auth_count: Some(0),
-                failed_auth_at: Some(Utc::now().naive_utc()),
-            }
+    pub fn get_local_user_mock() -> db_local_user::Model {
+        db_local_user::Model {
+            id: 1,
+            user_id: "user_id".into(),
+            domain_id: "foo_domain".into(),
+            name: "foo_domain".into(),
+            failed_auth_count: Some(0),
+            failed_auth_at: Some(Utc::now().naive_utc()),
         }
     }
 
@@ -56,10 +54,12 @@ pub(super) mod tests {
         cnt_password: usize,
     ) -> Vec<(db_local_user::Model, db_password::Model)> {
         let lu = db_local_user::Model {
+            id: 1,
             user_id: user_id.as_ref().into(),
             domain_id: "foo_domain".into(),
             name: "Apple Cake".to_owned(),
-            ..Default::default()
+            failed_auth_count: Some(0),
+            failed_auth_at: Some(Utc::now().naive_utc()),
         };
         let mut passwords: Vec<db_password::Model> = Vec::new();
         for i in 0..cnt_password {
@@ -69,7 +69,7 @@ pub(super) mod tests {
                 expires_at: None,
                 self_service: false,
                 password_hash: None,
-                created_at: Local::now().naive_utc(),
+                created_at: Utc::now().naive_utc(),
                 created_at_int: 12345,
                 expires_at_int: None,
             });

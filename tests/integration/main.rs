@@ -11,7 +11,11 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-
+//! # Integration tests
+//!
+//! Test the functionality on the provider level (not through the API).
 mod application_credential;
 mod assignment;
+mod common;
 mod identity;
+mod token;

@@ -26,6 +26,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tracing::warn;
 
+use crate::application_credential::types::ApplicationCredential;
 use crate::identity::types::{Group, UserResponse};
 use crate::resource::types::{Domain, Project};
 
@@ -66,6 +67,10 @@ pub enum AuthenticationError {
 #[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 #[builder(setter(into, strip_option))]
 pub struct AuthenticatedInfo {
+    /// Application credential.
+    #[builder(default)]
+    pub application_credential: Option<ApplicationCredential>,
+
     /// User id.
     pub user_id: String,
 

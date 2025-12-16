@@ -18,6 +18,7 @@ use serde::Serialize;
 use validator::Validate;
 
 use crate::application_credential::types::ApplicationCredential;
+use crate::error::BuilderError;
 use crate::identity::types::UserResponse;
 use crate::resource::types::Project;
 use crate::token::TokenProviderError;
@@ -26,6 +27,7 @@ use crate::token::types::common;
 
 #[derive(Builder, Clone, Debug, Default, PartialEq, Serialize, Validate)]
 #[builder(setter(into))]
+#[builder(build_fn(error = "BuilderError"))]
 pub struct ApplicationCredentialPayload {
     #[validate(length(min = 1, max = 64))]
     pub user_id: String,

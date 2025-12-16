@@ -49,6 +49,7 @@ fernet = { version = "0.2", default-features = false, features = ["rustcrypto"] 
 futures-util = { version = "0.3" }
 itertools = { version = "0.14" }
 mockall_double = { version = "0.3" }
+nix = { version = "0.30", default-features = false, features = ["fs", "user"] }
 opa-wasm = { version = "^0.1", optional = true }
 openidconnect = { version = "4.0" }
 rand = { version = "0.9" }
@@ -56,12 +57,14 @@ regex = { version = "1.12" }
 reqwest = { version = "0.12", features = ["json", "http2", "gzip", "deflate"] }
 rmp = { version = "0.8" }
 schemars = { version = "1.1" }
+scopeguard = "1.2.0"
 sea-orm = { version = "1.1", features = ["debug-print", "sqlx-mysql", "sqlx-postgres", "runtime-tokio", "runtime-tokio-native-tls"] }
 sea-orm-migration = { version = "1.1", features = ["sqlx-mysql", "sqlx-postgres", "runtime-tokio"] }
 secrecy = { version = "0.10", features = ["serde"] }
 serde = { version = "1.0" }
 serde_bytes = { version = "0.11" }
 serde_json = { version = "1.0" }
+tempfile = { version = "3.23" }
 thiserror = { version = "2.0" }
 tokio = { version = "1.48", features = ["fs", "macros", "signal", "rt-multi-thread"] }
 tokio-util = { version = "0.7" }
@@ -89,7 +92,6 @@ mockall = { version = "0.14" }
 reqwest = { version = "0.12", features = ["json", "multipart"] }
 sea-orm = { version = "1.1", features = ["mock", "sqlx-sqlite" ]}
 serde_urlencoded = { version = "0.7" }
-tempfile = { version = "3.23" }
 thirtyfour = "0.36"
 tracing-test = { version = "0.2", features = ["no-env-filter"] }
 url = { version = "2.5" }

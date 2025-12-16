@@ -15,22 +15,27 @@
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::{DateTime, Utc};
 use fernet::Fernet;
+use nix::sys::stat::{Mode, umask};
+use nix::unistd::{Gid, Uid, getegid, geteuid, setegid, seteuid};
 use rmp::{
     Marker,
     decode::{self, *},
     encode::{self, *},
 };
+use secrecy::{ExposeSecret, SecretString};
 use std::collections::BTreeMap;
 use std::fs;
-use std::io;
-use std::io::Read;
+//use std::io;
+use std::io::{self, Read, Write};
 use std::path::PathBuf;
+use tempfile::NamedTempFile;
 use tokio::fs as fs_async;
-use tracing::{trace, warn};
+use tracing::{error, info, trace, warn};
 use uuid::Uuid;
 
 use crate::token::error::TokenProviderError;
 
+/// Fernet utils.
 #[derive(Clone, Debug, Default)]
 pub struct FernetUtils {
     pub key_repository: PathBuf,
@@ -42,7 +47,92 @@ impl FernetUtils {
         Ok(self.key_repository.exists())
     }
 
+    /// Securely create a new tmp encryption key.
+    ///
+    /// This created key is not effective until `become_valid_new_key()`.
+    fn create_tmp_new_key(
+        &self,
+        user_id: Option<u32>,
+        group_id: Option<u32>,
+    ) -> Result<(), TokenProviderError> {
+        // 1. Generate key and wrap in a secret-protecting type
+        let key = SecretString::new(Fernet::generate_key().into());
+        let target_path = self.key_repository.join("0.tmp");
+
+        // 2. Set umask and handle privilege escalation using scope_guard
+        let old_umask = umask(Mode::from_bits_truncate(0o177));
+        let _umask_guard = scopeguard::guard(old_umask, |old| {
+            umask(old);
+        });
+
+        if let (Some(uid), Some(gid)) = (user_id, group_id) {
+            let (old_euid, old_egid) = (geteuid(), getegid());
+
+            setegid(Gid::from_raw(gid)).map_err(|e| TokenProviderError::NixErrno {
+                context: "setting effective process GID".into(),
+                source: e,
+            })?;
+            seteuid(Uid::from_raw(uid)).map_err(|e| TokenProviderError::NixErrno {
+                context: "setting effective process UID".into(),
+                source: e,
+            })?;
+
+            // This guard ensures IDs are restored even if the function returns early
+            let _id_guard = scopeguard::guard((old_euid, old_egid), |(u, g)| {
+                let _ = seteuid(u);
+                let _ = setegid(g);
+            });
+        }
+
+        // 3. Atomic Write: Create a temp file in the same directory
+        // This handles the "cleanup on failure" automatically.
+        let mut tmp_file = NamedTempFile::new_in(self.key_repository.clone())?;
+
+        // Write the actual secret data
+        tmp_file.write_all(key.expose_secret().as_bytes())?;
+        tmp_file.flush()?;
+
+        // 4. Atomically persist the file to "0"
+        // If persist() isn't called, the file is deleted when tmp_file goes out of scope.
+        info!("Created new Fernet key at {:?}", target_path);
+        tmp_file.persist(&target_path)?;
+
+        Ok(())
+    }
+
+    /// Make the tmp new key a valid new key.
+    /// Renames '0.tmp' to '0' atomically.
+    fn become_valid_new_key(&self) -> Result<(), TokenProviderError> {
+        let tmp_key_file = self.key_repository.join("0.tmp");
+        let valid_key_file = self.key_repository.join("0");
+
+        // Check if the source exists before attempting rename to provide better errors
+        if !tmp_key_file.exists() {
+            error!("Temporary key file not found: {:?}", tmp_key_file);
+            return Err(TokenProviderError::FernetKeysMissing);
+        }
+
+        // std::fs::rename is atomic on most Unix-like systems.
+        // If '0' already exists, it will be overwritten in a single operation.
+        fs::rename(&tmp_key_file, &valid_key_file)?;
+
+        // Sync the directory to ensure the rename is persisted to disk
+        // This is a "pro" Rust move for high-reliability systems.
+        let dir = fs::File::open(&self.key_repository)?;
+        dir.sync_all()?;
+
+        info!("Become a valid new key: {:?}", valid_key_file);
+        Ok(())
+    }
+
+    pub fn initialize_key_repository(&self) -> Result<(), TokenProviderError> {
+        self.create_tmp_new_key(None, None)?;
+        self.become_valid_new_key()?;
+        Ok(())
+    }
+
     pub fn load_keys(&self) -> Result<impl IntoIterator<Item = Fernet>, TokenProviderError> {
+        info!("loading keys from {:?}", self.key_repository);
         let mut keys: BTreeMap<i8, Fernet> = BTreeMap::new();
         if self.validate_key_repository()? {
             for entry in fs::read_dir(&self.key_repository)? {

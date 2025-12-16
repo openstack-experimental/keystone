@@ -11,26 +11,21 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+//
+mod application_credential;
 
 use eyre::Report;
 use sea_orm::{ConnectOptions, Database, DbConn, entity::*};
 use std::sync::Arc;
-use uuid::Uuid;
+use tempfile::TempDir;
 
-use openstack_keystone::application_credential::ApplicationCredentialApi;
-use openstack_keystone::application_credential::types;
-use openstack_keystone::assignment::types as as_types;
 use openstack_keystone::config::Config;
 use openstack_keystone::db::entity::prelude::*;
-use openstack_keystone::db::entity::{project, user};
+use openstack_keystone::db::entity::project;
 use openstack_keystone::keystone::Service;
 use openstack_keystone::plugin_manager::PluginManager;
 use openstack_keystone::policy::PolicyFactory;
 use openstack_keystone::provider::Provider;
-
-mod create;
-mod get;
-mod list;
 
 use crate::common::{bootstrap, setup_schema};
 
@@ -62,23 +57,10 @@ async fn setup_data(db: &DbConn) -> Result<(), Report> {
     .exec(db)
     .await?;
 
-    // User
-    user::ActiveModel {
-        id: Set("user_a".into()),
-        extra: NotSet,
-        enabled: Set(Some(true)),
-        default_project_id: NotSet,
-        last_active_at: NotSet,
-        created_at: NotSet,
-        domain_id: Set("domain_a".into()),
-    }
-    .insert(db)
-    .await?;
-
     Ok(())
 }
 
-async fn get_state() -> Result<Arc<Service>, Report> {
+async fn get_state() -> Result<(Arc<Service>, TempDir), Report> {
     let opt: ConnectOptions = ConnectOptions::new("sqlite::memory:")
         .sqlx_logging(false)
         .to_owned();
@@ -86,55 +68,21 @@ async fn get_state() -> Result<Arc<Service>, Report> {
     setup_schema(&db).await?;
     setup_data(&db).await?;
 
-    let cfg: Config = Config::default();
+    let tmp_fernet_repo = TempDir::new()?;
+
+    let mut cfg: Config = Config::default();
+    cfg.auth.methods = vec!["application_credential".into()];
+    cfg.fernet_tokens.key_repository = tmp_fernet_repo.path().to_path_buf();
+    let fernet_utils = openstack_keystone::token::backend::fernet::utils::FernetUtils {
+        key_repository: cfg.fernet_tokens.key_repository.clone(),
+        max_active_keys: cfg.fernet_tokens.max_active_keys,
+    };
+    fernet_utils.initialize_key_repository()?;
 
     let plugin_manager = PluginManager::default();
     let provider = Provider::new(cfg.clone(), plugin_manager)?;
-    Ok(Arc::new(Service::new(
-        cfg,
-        db,
-        provider,
-        PolicyFactory::default(),
-    )?))
-}
 
-async fn create_ac<S>(
-    state: &Arc<Service>,
-    name: Option<S>,
-) -> Result<types::ApplicationCredentialCreateResponse, Report>
-where
-    S: AsRef<str>,
-{
-    Ok(state
-        .provider
-        .get_application_credential_provider()
-        .create_application_credential(
-            state,
-            types::ApplicationCredentialCreate {
-                access_rules: Some(vec![types::AccessRuleCreate {
-                    id: None,
-                    path: Some("path1".into()),
-                    method: Some("method".into()),
-                    service: Some("service".into()),
-                }]),
-                description: Some("description".into()),
-                name: name
-                    .map(|v| v.as_ref().to_string())
-                    .unwrap_or(Uuid::new_v4().to_string()),
-                project_id: "project_a".into(),
-                roles: vec![
-                    as_types::Role {
-                        id: "role_a".into(),
-                        ..Default::default()
-                    },
-                    as_types::Role {
-                        id: "role_b".into(),
-                        ..Default::default()
-                    },
-                ],
-                user_id: "user_a".into(),
-                ..Default::default()
-            },
-        )
-        .await?)
+    let state = Arc::new(Service::new(cfg, db, provider, PolicyFactory::default())?);
+
+    Ok((state, tmp_fernet_repo))
 }

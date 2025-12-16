@@ -15,6 +15,7 @@
 use chrono::Local;
 use sea_orm::DatabaseConnection;
 use sea_orm::entity::*;
+use sea_orm::{ConnectionTrait, TransactionTrait};
 use serde_json::json;
 
 use crate::common::password_hashing;
@@ -29,11 +30,14 @@ use super::super::federated_user;
 use super::super::local_user;
 use super::super::password;
 
-async fn create_main(
+async fn create_main<C>(
     conf: &Config,
-    db: &DatabaseConnection,
+    db: &C,
     user: &UserCreate,
-) -> Result<db_user::Model, IdentityDatabaseError> {
+) -> Result<db_user::Model, IdentityDatabaseError>
+where
+    C: ConnectionTrait,
+{
     let now = Local::now().naive_utc();
     // Set last_active to now if compliance disabling is on
     let last_active_at = if let Some(true) = &user.enabled {
@@ -74,7 +78,13 @@ pub async fn create(
     db: &DatabaseConnection,
     user: UserCreate,
 ) -> Result<UserResponse, IdentityDatabaseError> {
-    let main_user = create_main(conf, db, &user).await?;
+    // Do a lot of stuff in a transaction
+
+    let txn = db
+        .begin()
+        .await
+        .map_err(|err| db_err(err, "starting transaction for persisting user"))?;
+    let main_user = create_main(conf, &txn, &user).await?;
     let mut response_builder = UserResponseBuilder::default();
     response_builder.merge_user_data(&main_user, &UserOptions::default(), None);
     if let Some(federation_data) = &user.federated {
@@ -84,7 +94,7 @@ pub async fn create(
                 federated_entities.push(
                     federated_user::create(
                         conf,
-                        db,
+                        &txn,
                         db_federated_user::ActiveModel {
                             id: NotSet,
                             user_id: Set(user.id.clone()),
@@ -101,7 +111,7 @@ pub async fn create(
                     federated_entities.push(
                         federated_user::create(
                             conf,
-                            db,
+                            &txn,
                             db_federated_user::ActiveModel {
                                 id: NotSet,
                                 user_id: Set(user.id.clone()),
@@ -120,11 +130,11 @@ pub async fn create(
         response_builder.merge_federated_user_data(federated_entities);
     } else {
         // Local user
-        let local_user = local_user::create(conf, db, &user).await?;
+        let local_user = local_user::create(conf, &txn, &user).await?;
         let mut passwords: Vec<db_password::Model> = Vec::new();
         if let Some(password) = &user.password {
             let password_entry = password::create(
-                db,
+                &txn,
                 local_user.id,
                 password_hashing::hash_password(conf, password).await?,
                 None,
@@ -137,6 +147,9 @@ pub async fn create(
             .merge_local_user_data(&local_user)
             .merge_passwords_data(passwords);
     }
+    txn.commit()
+        .await
+        .map_err(|err| db_err(err, "committing the user creation transaction"))?;
 
     Ok(response_builder.build()?)
 }

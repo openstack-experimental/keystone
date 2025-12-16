@@ -36,7 +36,7 @@ use mockall::mock;
 
 pub mod backend;
 pub mod error;
-pub(crate) mod types;
+pub mod types;
 
 use crate::config::Config;
 use crate::keystone::ServiceState;

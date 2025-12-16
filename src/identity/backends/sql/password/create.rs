@@ -12,37 +12,35 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use chrono::{DateTime, Local, Utc};
-use sea_orm::DatabaseConnection;
+use chrono::{DateTime, Utc};
+use sea_orm::ConnectionTrait;
 use sea_orm::entity::*;
 
 use crate::db::entity::password;
 use crate::identity::backends::sql::{IdentityDatabaseError, db_err};
 
-pub async fn create<S: AsRef<str>>(
-    db: &DatabaseConnection,
+pub async fn create<C: ConnectionTrait, S: AsRef<str>>(
+    db: &C,
     local_user_id: i32,
     password_hash: S,
     expires_at: Option<DateTime<Utc>>,
 ) -> Result<password::Model, IdentityDatabaseError> {
-    let now = Local::now().naive_utc();
-    let mut entry = password::ActiveModel {
+    let now = Utc::now().naive_utc();
+    password::ActiveModel {
         id: NotSet,
         local_user_id: Set(local_user_id),
         self_service: Set(false),
-        expires_at: NotSet,
+        expires_at: expires_at
+            .map(|expires| Set(Some(expires.naive_utc())))
+            .unwrap_or(NotSet),
         password_hash: Set(Some(password_hash.as_ref().into())),
         created_at: Set(now),
         created_at_int: Set(now.and_utc().timestamp_micros()),
-        expires_at_int: NotSet,
-    };
-    if let Some(expire) = expires_at {
-        entry.expires_at = Set(Some(expire.naive_utc()));
-        entry.expires_at_int = Set(Some(expire.timestamp_micros()));
+        expires_at_int: expires_at
+            .map(|expires| Set(Some(expires.timestamp_micros())))
+            .unwrap_or(NotSet),
     }
-    let db_entry: password::Model = entry
-        .insert(db)
-        .await
-        .map_err(|err| db_err(err, "inserting new password record"))?;
-    Ok(db_entry)
+    .insert(db)
+    .await
+    .map_err(|err| db_err(err, "inserting new password record"))
 }

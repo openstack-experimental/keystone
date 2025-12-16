@@ -11,29 +11,4 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-
-use sea_orm::ConnectionTrait;
-use sea_orm::entity::*;
-
-use crate::config::Config;
-use crate::db::entity::federated_user;
-use crate::identity::backends::sql::{IdentityDatabaseError, db_err};
-
-pub async fn create<A, C>(
-    _conf: &Config,
-    db: &C,
-    federation: A,
-) -> Result<federated_user::Model, IdentityDatabaseError>
-where
-    A: Into<federated_user::ActiveModel>,
-    C: ConnectionTrait,
-{
-    federation
-        .into()
-        .insert(db)
-        .await
-        .map_err(|err| db_err(err, "persisting federated user data"))
-}
-
-#[cfg(test)]
-mod tests {}
+mod validate;

@@ -111,12 +111,31 @@ where
 }
 
 /// Fernet token provider.
-#[derive(Debug, Default, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct FernetTokenProvider {
     /// Path to the fernet keys.
+    #[serde(default = "default_fernet_key_repository")]
     pub key_repository: PathBuf,
     /// Maximal number of fernet keys to keep as active.
+    #[serde(default = "default_fernet_max_active_keys")]
     pub max_active_keys: usize,
+}
+
+fn default_fernet_key_repository() -> PathBuf {
+    PathBuf::from("/etc/keystone/fernet-keys/")
+}
+
+fn default_fernet_max_active_keys() -> usize {
+    3
+}
+
+impl Default for FernetTokenProvider {
+    fn default() -> Self {
+        Self {
+            key_repository: default_fernet_key_repository(),
+            max_active_keys: default_fernet_max_active_keys(),
+        }
+    }
 }
 
 /// Database configuration.
@@ -529,7 +548,7 @@ fn default_user_options_mapping() -> HashMap<String, String> {
 }
 
 /// Token provider.
-#[derive(Debug, Default, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct TokenProvider {
     /// Token provider driver.
     #[serde(default)]
@@ -542,8 +561,21 @@ pub struct TokenProvider {
     /// simultaneously valid. Keystone tokens are also bearer tokens, so a
     /// shorter duration will also reduce the potential security impact of a
     /// compromised token.
-    #[serde(default)]
+    #[serde(default = "default_token_expiration")]
     pub expiration: usize,
+}
+
+fn default_token_expiration() -> usize {
+    3600
+}
+
+impl Default for TokenProvider {
+    fn default() -> Self {
+        Self {
+            provider: TokenProviderDriver::Fernet,
+            expiration: default_token_expiration(),
+        }
+    }
 }
 
 /// Token provider driver.

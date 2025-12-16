@@ -21,8 +21,9 @@
 
 use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
-use chrono::{Local, TimeDelta, Utc};
+use chrono::{DateTime, TimeDelta, Utc};
 use std::collections::HashSet;
+use tracing::trace;
 use uuid::Uuid;
 
 pub mod backend;
@@ -73,6 +74,12 @@ impl TokenProvider {
         })
     }
 
+    fn get_new_token_expiry(&self) -> Result<DateTime<Utc>, TokenProviderError> {
+        Utc::now()
+            .checked_add_signed(TimeDelta::seconds(self.config.token.expiration as i64))
+            .ok_or(TokenProviderError::ExpiryCalculation)
+    }
+
     fn create_unscoped_token(
         &self,
         authentication_info: &AuthenticatedInfo,
@@ -83,37 +90,52 @@ impl TokenProvider {
                 .user(authentication_info.user.clone())
                 .methods(authentication_info.methods.clone().iter())
                 .audit_ids(authentication_info.audit_ids.clone().iter())
-                .expires_at(
-                    Local::now()
-                        .to_utc()
-                        .checked_add_signed(TimeDelta::seconds(self.config.token.expiration as i64))
-                        .ok_or(TokenProviderError::ExpiryCalculation)?,
-                )
+                .expires_at(self.get_new_token_expiry()?)
                 .build()?,
         ))
     }
 
+    /// Create project scoped token
     fn create_project_scope_token(
         &self,
         authentication_info: &AuthenticatedInfo,
         project: &Project,
     ) -> Result<Token, TokenProviderError> {
-        Ok(Token::ProjectScope(
-            ProjectScopePayloadBuilder::default()
-                .user_id(authentication_info.user_id.clone())
-                .user(authentication_info.user.clone())
-                .methods(authentication_info.methods.clone().iter())
-                .audit_ids(authentication_info.audit_ids.clone().iter())
-                .expires_at(
-                    Local::now()
-                        .to_utc()
-                        .checked_add_signed(TimeDelta::seconds(self.config.token.expiration as i64))
-                        .ok_or(TokenProviderError::ExpiryCalculation)?,
-                )
-                .project_id(project.id.clone())
-                .project(project.clone())
-                .build()?,
-        ))
+        let token_expiry = self.get_new_token_expiry()?;
+        if let Some(application_credential) = &authentication_info.application_credential {
+            // Token for the application credential authentication
+            Ok(Token::ApplicationCredential(
+                ApplicationCredentialPayloadBuilder::default()
+                    .application_credential_id(application_credential.id.clone())
+                    .application_credential(application_credential.clone())
+                    .user_id(authentication_info.user_id.clone())
+                    .user(authentication_info.user.clone())
+                    .methods(authentication_info.methods.clone().iter())
+                    .audit_ids(authentication_info.audit_ids.clone().iter())
+                    .expires_at(
+                        application_credential
+                            .expires_at
+                            .map(|ac_expiry| std::cmp::min(token_expiry, ac_expiry))
+                            .unwrap_or(token_expiry),
+                    )
+                    .project_id(project.id.clone())
+                    .project(project.clone())
+                    .build()?,
+            ))
+        } else {
+            // General project scoped token
+            Ok(Token::ProjectScope(
+                ProjectScopePayloadBuilder::default()
+                    .user_id(authentication_info.user_id.clone())
+                    .user(authentication_info.user.clone())
+                    .methods(authentication_info.methods.clone().iter())
+                    .audit_ids(authentication_info.audit_ids.clone().iter())
+                    .expires_at(token_expiry)
+                    .project_id(project.id.clone())
+                    .project(project.clone())
+                    .build()?,
+            ))
+        }
     }
 
     fn create_domain_scope_token(
@@ -127,12 +149,7 @@ impl TokenProvider {
                 .user(authentication_info.user.clone())
                 .methods(authentication_info.methods.clone().iter())
                 .audit_ids(authentication_info.audit_ids.clone().iter())
-                .expires_at(
-                    Local::now()
-                        .to_utc()
-                        .checked_add_signed(TimeDelta::seconds(self.config.token.expiration as i64))
-                        .ok_or(TokenProviderError::ExpiryCalculation)?,
-                )
+                .expires_at(self.get_new_token_expiry()?)
                 .domain_id(domain.id.clone())
                 .domain(domain.clone())
                 .build()?,
@@ -153,14 +170,7 @@ impl TokenProvider {
                     .user(authentication_info.user.clone())
                     .methods(authentication_info.methods.clone().iter())
                     .audit_ids(authentication_info.audit_ids.clone().iter())
-                    .expires_at(
-                        Local::now()
-                            .to_utc()
-                            .checked_add_signed(TimeDelta::seconds(
-                                self.config.token.expiration as i64,
-                            ))
-                            .ok_or(TokenProviderError::ExpiryCalculation)?,
-                    )
+                    .expires_at(self.get_new_token_expiry()?)
                     .idp_id(idp_id)
                     .protocol_id(protocol_id)
                     .group_ids(vec![])
@@ -186,14 +196,7 @@ impl TokenProvider {
                     .user(authentication_info.user.clone())
                     .methods(authentication_info.methods.clone().iter())
                     .audit_ids(authentication_info.audit_ids.clone().iter())
-                    .expires_at(
-                        Local::now()
-                            .to_utc()
-                            .checked_add_signed(TimeDelta::seconds(
-                                self.config.token.expiration as i64,
-                            ))
-                            .ok_or(TokenProviderError::ExpiryCalculation)?,
-                    )
+                    .expires_at(self.get_new_token_expiry()?)
                     .idp_id(idp_id)
                     .protocol_id(protocol_id)
                     .group_ids(
@@ -228,14 +231,7 @@ impl TokenProvider {
                     .user(authentication_info.user.clone())
                     .methods(authentication_info.methods.clone().iter())
                     .audit_ids(authentication_info.audit_ids.clone().iter())
-                    .expires_at(
-                        Local::now()
-                            .to_utc()
-                            .checked_add_signed(TimeDelta::seconds(
-                                self.config.token.expiration as i64,
-                            ))
-                            .ok_or(TokenProviderError::ExpiryCalculation)?,
-                    )
+                    .expires_at(self.get_new_token_expiry()?)
                     .idp_id(idp_id)
                     .protocol_id(protocol_id)
                     .group_ids(
@@ -273,12 +269,7 @@ impl TokenProvider {
                 .user(authentication_info.user.clone())
                 .methods(authentication_info.methods.clone().iter())
                 .audit_ids(authentication_info.audit_ids.clone().iter())
-                .expires_at(
-                    Local::now()
-                        .to_utc()
-                        .checked_add_signed(TimeDelta::seconds(self.config.token.expiration as i64))
-                        .ok_or(TokenProviderError::ExpiryCalculation)?,
-                )
+                .expires_at(self.get_new_token_expiry()?)
                 .token_restriction_id(restriction.id.clone())
                 .project_id(
                     restriction
@@ -661,6 +652,11 @@ impl TokenApi for TokenProvider {
             .checked_add_signed(TimeDelta::seconds(window_seconds.unwrap_or(0)))
             .unwrap_or(Utc::now());
         if !allow_expired.unwrap_or_default() && *token.expires_at() < latest_expiration_cutof {
+            trace!(
+                "Token has expired at {:?} with cutof: {:?}",
+                token.expires_at(),
+                latest_expiration_cutof
+            );
             return Err(TokenProviderError::Expired);
         }
 
