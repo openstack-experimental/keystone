@@ -40,6 +40,13 @@ pub trait AssignmentBackend: DynClone + Send + Sync + std::fmt::Debug {
     /// Set config
     fn set_config(&mut self, config: Config);
 
+    /// Create Role
+    async fn create_role(
+        &self,
+        state: &ServiceState,
+        params: RoleCreate,
+    ) -> Result<Role, AssignmentProviderError>;
+
     /// List Roles
     async fn list_roles(
         &self,
@@ -53,13 +60,6 @@ pub trait AssignmentBackend: DynClone + Send + Sync + std::fmt::Debug {
         state: &ServiceState,
         id: &'a str,
     ) -> Result<Option<Role>, AssignmentProviderError>;
-
-    /// Create Role
-    async fn create_role(
-        &self,
-        state: &ServiceState,
-        params: RoleCreate,
-    ) -> Result<Role, AssignmentProviderError>;
 
     /// List Role assignments
     async fn list_assignments(

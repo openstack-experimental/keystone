@@ -23,7 +23,7 @@ use crate::db::entity::role as db_role;
 /// Create a new role
 pub async fn create(
     db: &DatabaseConnection,
-    role: &RoleCreate, // ← Using RoleCreate instead of Role
+    role: RoleCreate, // ← Using RoleCreate instead of Role
 ) -> Result<Role, AssignmentDatabaseError> {
     let role_id = role.id.as_ref().ok_or_else(|| {
         AssignmentDatabaseError::InvalidAssignmentType(
@@ -80,7 +80,7 @@ mod tests {
             extra: Some(json!({"key": "value"})),
         };
 
-        let created = create(&db, &role_create).await.unwrap();
+        let created = create(&db, role_create).await.unwrap();
 
         assert_eq!(created.id, "role-123");
         assert_eq!(created.name, "Test Role");
@@ -110,7 +110,7 @@ mod tests {
             extra: None,
         };
 
-        let created = create(&db, &role_create).await.unwrap();
+        let created = create(&db, role_create).await.unwrap();
 
         assert_eq!(created.name, "Global Role");
         // domain_id should be None in the returned Role (because TryFrom filters NULL_DOMAIN_ID)
@@ -140,7 +140,7 @@ mod tests {
             })),
         };
 
-        let created = create(&db, &role_create).await.unwrap();
+        let created = create(&db, role_create).await.unwrap();
 
         assert_eq!(created.name, "Role With Extra");
         assert!(created.extra.is_some());

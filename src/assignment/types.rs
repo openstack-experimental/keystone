@@ -27,6 +27,13 @@ pub use crate::assignment::types::role::{
 
 #[async_trait]
 pub trait AssignmentApi: Send + Sync + Clone {
+    /// Create Role.
+    async fn create_role(
+        &self,
+        state: &ServiceState,
+        params: RoleCreate,
+    ) -> Result<Role, AssignmentProviderError>;
+
     /// List Roles.
     async fn list_roles(
         &self,
@@ -40,13 +47,6 @@ pub trait AssignmentApi: Send + Sync + Clone {
         state: &ServiceState,
         role_id: &'a str,
     ) -> Result<Option<Role>, AssignmentProviderError>;
-
-    /// Create Role.
-    async fn create_role(
-        &self,
-        state: &ServiceState,
-        params: RoleCreate,
-    ) -> Result<Role, AssignmentProviderError>;
 
     /// List role assignments for given target/role/actor.
     async fn list_role_assignments(

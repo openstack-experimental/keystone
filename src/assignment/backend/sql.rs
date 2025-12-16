@@ -38,6 +38,16 @@ impl AssignmentBackend for SqlBackend {
         self.config = config;
     }
 
+    /// Create role
+    #[tracing::instrument(level = "info", skip(self, state))]
+    async fn create_role(
+        &self,
+        state: &ServiceState,
+        params: RoleCreate,
+    ) -> Result<Role, AssignmentProviderError> {
+        Ok(role::create(&state.db, params).await?)
+    }
+
     /// List roles
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn list_roles(
@@ -59,15 +69,6 @@ impl AssignmentBackend for SqlBackend {
         Ok(role::get(&self.config, &state.db, id).await?)
     }
 
-    /// Create role
-    #[tracing::instrument(level = "info", skip(self, state))]
-    async fn create_role(
-        &self,
-        state: &ServiceState,
-        params: RoleCreate,
-    ) -> Result<Role, AssignmentProviderError> {
-        Ok(role::create(&state.db, &params).await?)
-    }
     /// List role assignments
     #[tracing::instrument(level = "info", skip(self, state))]
     async fn list_assignments(
