@@ -22,6 +22,11 @@ jobs:
         with:
           fetch-depth: 0  # get all commits
 
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@6d653acede28d24f02e3cd41383119e8b1b35921 # stable
+        with:
+          toolchain: stable
+
       - name: Get the codegenerator
         run: git clone https://opendev.org/openstack/codegenerator
 
@@ -33,8 +38,8 @@ jobs:
       - name: Prepare the work dir
         run: mkdir -p codegenerator/wrk/openapi_specs/identity
 
-      - name: Get the fresh openapi for the codegenerator
-        run: curl https://openstack-experimental.github.io/keystone/openapi.yaml -o codegenerator/wrk/openapi_specs/identity/keystone_rust.yaml
+      - name: Generate OpenAPI
+        run: cargo run --bin keystone -- --dump-openapi yaml > codegenerator/wrk/openapi_specs/identity/keystone_rust.yaml
 
       - name: Install the codegenerator
         working-directory: codegenerator
