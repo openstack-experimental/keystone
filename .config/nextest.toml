@@ -1,0 +1,25 @@
+experimental = ["setup-scripts"]
+
+[profile.default]
+# Global default settings
+#
+[scripts.setup.setup-pg]
+command = { command-line = [ "tools/setup-db.sh", "postgres" ] }
+
+[scripts.setup.setup-mysql]
+command = { command-line = [ "tools/setup-db.sh", "mysql" ] }
+
+[scripts.setup.teardown]
+command = { command-line = [ "tools/teardown-db.sh" ] }
+
+# --- POSTGRES PROFILE ---
+[profile.postgres]
+[[profile.postgres.scripts]]
+filter = "binary(integration)"
+setup = "setup-pg"
+
+# --- MYSQL PROFILE ---
+[profile.mysql]
+[[profile.mysql.scripts]]
+filter = "binary(integration)"
+setup = "setup-mysql"

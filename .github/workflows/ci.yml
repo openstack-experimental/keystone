@@ -53,8 +53,14 @@ jobs:
       - name: Run tests
         run: cargo nextest run
 
-      - name: Run tests
+      - name: Run tests (sqlite)
         run: cargo nextest run --test integration
+
+      - name: Run tests for mysql
+        run: cargo nextest run --test integration --profile mysql --no-capture
+
+      - name: Run tests for postgres
+        run: cargo nextest run --test integration --profile postgres --no-capture
 
       - name: Run Doc tests
         run: cargo test --doc

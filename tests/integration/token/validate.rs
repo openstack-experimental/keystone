@@ -15,7 +15,7 @@
 mod application_credential;
 
 use eyre::Report;
-use sea_orm::{ConnectOptions, Database, DbConn, entity::*};
+use sea_orm::{DbConn, entity::*};
 use std::sync::Arc;
 use tempfile::TempDir;
 
@@ -27,7 +27,7 @@ use openstack_keystone::plugin_manager::PluginManager;
 use openstack_keystone::policy::PolicyFactory;
 use openstack_keystone::provider::Provider;
 
-use crate::common::{bootstrap, setup_schema};
+use crate::common::{bootstrap, get_isolated_database};
 
 async fn setup_data(db: &DbConn) -> Result<(), Report> {
     bootstrap(db).await?;
@@ -61,11 +61,7 @@ async fn setup_data(db: &DbConn) -> Result<(), Report> {
 }
 
 async fn get_state() -> Result<(Arc<Service>, TempDir), Report> {
-    let opt: ConnectOptions = ConnectOptions::new("sqlite::memory:")
-        .sqlx_logging(false)
-        .to_owned();
-    let db = Database::connect(opt).await?;
-    setup_schema(&db).await?;
+    let db = get_isolated_database().await?;
     setup_data(&db).await?;
 
     let tmp_fernet_repo = TempDir::new()?;

@@ -15,7 +15,7 @@
 mod list;
 
 use eyre::Report;
-use sea_orm::{Database, DbConn, entity::*};
+use sea_orm::{DbConn, entity::*};
 use std::sync::Arc;
 
 use openstack_keystone::config::Config;
@@ -29,7 +29,7 @@ use openstack_keystone::policy::PolicyFactory;
 use openstack_keystone::provider::Provider;
 
 //use super::setup_schema;
-use crate::common::{bootstrap, setup_schema};
+use crate::common::{bootstrap, get_isolated_database};
 
 async fn setup_assignment_data(db: &DbConn) -> Result<(), Report> {
     bootstrap(db).await?;
@@ -224,8 +224,7 @@ async fn setup_assignment_data(db: &DbConn) -> Result<(), Report> {
 }
 
 async fn get_state() -> Result<Arc<Service>, Report> {
-    let db = Database::connect("sqlite::memory:").await?;
-    setup_schema(&db).await?;
+    let db = get_isolated_database().await?;
     setup_assignment_data(&db).await?;
 
     let cfg: Config = Config::default();

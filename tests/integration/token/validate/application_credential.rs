@@ -38,7 +38,7 @@ async fn create_user(state: &Arc<Service>) -> Result<UserResponse, Report> {
         .provider
         .get_identity_provider()
         .create_user(
-            &state,
+            state,
             UserCreateBuilder::default()
                 .id("user_a")
                 .name("user_a")
