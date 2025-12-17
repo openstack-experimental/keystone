@@ -13,7 +13,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use eyre::Report;
-use sea_orm::{ConnectOptions, Database, DbConn, entity::*};
+use sea_orm::{DbConn, entity::*};
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -32,7 +32,7 @@ mod create;
 mod get;
 mod list;
 
-use crate::common::{bootstrap, setup_schema};
+use crate::common::{bootstrap, get_isolated_database};
 
 async fn setup_data(db: &DbConn) -> Result<(), Report> {
     bootstrap(db).await?;
@@ -79,11 +79,7 @@ async fn setup_data(db: &DbConn) -> Result<(), Report> {
 }
 
 async fn get_state() -> Result<Arc<Service>, Report> {
-    let opt: ConnectOptions = ConnectOptions::new("sqlite::memory:")
-        .sqlx_logging(false)
-        .to_owned();
-    let db = Database::connect(opt).await?;
-    setup_schema(&db).await?;
+    let db = get_isolated_database().await?;
     setup_data(&db).await?;
 
     let cfg: Config = Config::default();

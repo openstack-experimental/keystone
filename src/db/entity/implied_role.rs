@@ -30,6 +30,7 @@ pub enum Relation {
     #[sea_orm(
         belongs_to = "super::role::Entity",
         from = "Column::ImpliedRoleId",
+        fk_name = "implied_role_prior_role_id_fkey",
         to = "super::role::Column::Id",
         on_update = "NoAction",
         on_delete = "Cascade"
@@ -38,29 +39,12 @@ pub enum Relation {
     #[sea_orm(
         belongs_to = "super::role::Entity",
         from = "Column::PriorRoleId",
+        fk_name = "implied_role_implied_role_id_fkey",
         to = "super::role::Column::Id",
         on_update = "NoAction",
         on_delete = "Cascade"
     )]
     Role1,
-    #[sea_orm(
-        belongs_to = "Entity",
-        from = "Column::ImpliedRoleId",
-        to = "Column::PriorRoleId"
-    )]
-    SelfReferencing,
 }
 
 impl ActiveModelBehavior for ActiveModel {}
-
-pub struct SelfReferencingLink;
-
-impl Linked for SelfReferencingLink {
-    type FromEntity = Entity;
-
-    type ToEntity = Entity;
-
-    fn link(&self) -> Vec<RelationDef> {
-        vec![Relation::SelfReferencing.def()]
-    }
-}

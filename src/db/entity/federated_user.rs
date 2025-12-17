@@ -34,6 +34,7 @@ pub enum Relation {
         belongs_to = "super::federation_protocol::Entity",
         from = "(Column::ProtocolId, Column::IdpId)",
         to = "(super::federation_protocol::Column::Id, super::federation_protocol::Column::IdpId)",
+        fk_name = "federated_user_protocol_id_fkey",
         on_update = "NoAction",
         on_delete = "Cascade"
     )]

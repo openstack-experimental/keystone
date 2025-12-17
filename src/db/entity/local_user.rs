@@ -36,6 +36,7 @@ pub enum Relation {
         belongs_to = "super::user::Entity",
         from = "(Column::UserId, Column::DomainId)",
         to = "(super::user::Column::Id, super::user::Column::DomainId)",
+        fk_name = "local_user_user_id_fkey",
         on_update = "Cascade",
         on_delete = "Cascade"
     )]
