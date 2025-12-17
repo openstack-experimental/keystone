@@ -219,7 +219,6 @@ pub async fn callback(
             unique_id: mapped_user_data.unique_id.clone(),
         }]);
         let mut user_builder: UserCreateBuilder = UserCreateBuilder::default();
-        user_builder.id(String::new());
         user_builder.domain_id(mapped_user_data.domain_id);
         user_builder.enabled(true);
         user_builder.name(mapped_user_data.user_name);

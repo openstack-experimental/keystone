@@ -173,8 +173,8 @@ pub struct PublicKeyCredentialDescriptor {
 }
 
 // ///
-// /// Request in residentkey workflows that conditional mediation should be used
-// /// in the UI, or not.
+// /// Request in residentkey workflows that conditional mediation should be
+// used /// in the UI, or not.
 // #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
 // pub enum Mediation {
 //     /// Discovered credentials are presented to the user in a dialog.
@@ -184,13 +184,13 @@ pub struct PublicKeyCredentialDescriptor {
 // }
 //
 // /// A descriptor of a credential that can be used.
-// #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
-// pub struct AllowCredentials {
+// #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema,
+// Validate)] pub struct AllowCredentials {
 //     /// The type of credential.
 //     pub type_: String,
 //     /// The id of the credential.
-//     #[schema(value_type = String, format = Binary, content_encoding = "base64")]
-//     pub id: String,
+//     #[schema(value_type = String, format = Binary, content_encoding =
+// "base64")]     pub id: String,
 //     /// <https://www.w3.org/TR/webauthn/#transport> may be usb, nfc, ble, internal
 //     #[schema(nullable = false)]
 //     #[serde(skip_serializing_if = "Option::is_none")]

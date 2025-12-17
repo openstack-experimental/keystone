@@ -13,21 +13,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use eyre::Report;
-use sea_orm::{
-    ConnectOptions, Database, DatabaseBackend, DbConn, entity::*, query::*, schema::Schema,
-    sea_query::*,
-};
+use sea_orm::{DbConn, entity::*};
 use std::sync::Arc;
 
 use openstack_keystone::config::Config;
-//use openstack_keystone::db::entity::prelude::*;
 use openstack_keystone::db::entity::{
     group, identity_provider as db_identity_provider,
-    prelude::{
-        ExpiringUserGroupMembership as DbExpiringUserGroupMembership, Group as DbGroup,
-        IdentityProvider as DbIdentityProvider, Project as DbProject, User as DbUser,
-        UserGroupMembership as DbUserGroupMembership,
-    },
+    prelude::{Group as DbGroup, IdentityProvider as DbIdentityProvider},
     project, user, user_group_membership,
 };
 use openstack_keystone::identity::IdentityApi;
@@ -37,47 +29,14 @@ use openstack_keystone::plugin_manager::PluginManager;
 use openstack_keystone::policy::PolicyFactory;
 use openstack_keystone::provider::Provider;
 
+use crate::common::{bootstrap, get_isolated_database};
+
 mod add;
 mod list;
 
-async fn setup_schema(db: &DbConn) -> Result<(), Report> {
-    // TODO: with sea-orm 2.0 it can be improved
-    //db.get_schema_registry("crate::db::entity::*").sync(db).await?;
-    // Setup Schema helper
-    let schema = Schema::new(DatabaseBackend::Sqlite);
-
-    // Derive from Entity
-    let stmts: Vec<TableCreateStatement> = vec![
-        schema.create_table_from_entity(DbGroup),
-        schema.create_table_from_entity(DbExpiringUserGroupMembership),
-        schema.create_table_from_entity(DbIdentityProvider),
-        schema.create_table_from_entity(DbProject),
-        schema.create_table_from_entity(DbUser),
-        schema.create_table_from_entity(DbUserGroupMembership),
-    ];
-
-    // Execute create table statement
-    for stmt in stmts.iter() {
-        db.execute(db.get_database_backend().build(stmt)).await?;
-    }
-
-    Ok(())
-}
-
 async fn setup_data(db: &DbConn) -> Result<(), Report> {
+    bootstrap(db).await?;
     // Domain/project data
-    let root_domain = project::ActiveModel {
-        is_domain: Set(true),
-        id: Set("<<keystone.domain.root>>".into()),
-        name: Set("<<keystone.domain.root>>".into()),
-        extra: NotSet,
-        description: NotSet,
-        enabled: Set(Some(true)),
-        domain_id: Set("<<keystone.domain.root>>".into()),
-        parent_id: NotSet,
-    }
-    .insert(db)
-    .await?;
     let domain_a = project::ActiveModel {
         is_domain: Set(true),
         id: Set("domain_a".into()),
@@ -85,7 +44,7 @@ async fn setup_data(db: &DbConn) -> Result<(), Report> {
         extra: NotSet,
         description: NotSet,
         enabled: Set(Some(true)),
-        domain_id: Set(root_domain.id.clone()),
+        domain_id: Set("<<keystone.domain.root>>".into()),
         parent_id: NotSet,
     }
     .insert(db)
@@ -149,11 +108,7 @@ async fn setup_data(db: &DbConn) -> Result<(), Report> {
 }
 
 async fn get_state() -> Result<Arc<Service>, Report> {
-    let opt: ConnectOptions = ConnectOptions::new("sqlite::memory:")
-        .sqlx_logging(true)
-        .to_owned();
-    let db = Database::connect(opt).await?;
-    setup_schema(&db).await?;
+    let db = get_isolated_database().await?;
     setup_data(&db).await?;
 
     let mut cfg: Config = Config::default();

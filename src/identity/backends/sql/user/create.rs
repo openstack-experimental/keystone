@@ -17,17 +17,18 @@ use sea_orm::DatabaseConnection;
 use sea_orm::entity::*;
 use sea_orm::{ConnectionTrait, TransactionTrait};
 use serde_json::json;
+use uuid::Uuid;
 
 use crate::common::password_hashing;
 use crate::config::Config;
 use crate::db::entity::{
-    federated_user as db_federated_user, password as db_password, user as db_user,
+    federated_user as db_federated_user, local_user as db_local_user, password as db_password,
+    user as db_user,
 };
 use crate::identity::backends::sql::{IdentityDatabaseError, db_err};
 use crate::identity::types::*;
 
 use super::super::federated_user;
-use super::super::local_user;
 use super::super::password;
 
 async fn create_main<C>(
@@ -54,8 +55,11 @@ where
         NotSet
     };
 
-    let entry: db_user::ActiveModel = db_user::ActiveModel {
-        id: Set(user.id.clone()),
+    db_user::ActiveModel {
+        id: Set(user
+            .id
+            .clone()
+            .unwrap_or(Uuid::new_v4().simple().to_string())),
         enabled: Set(user.enabled),
         extra: Set(Some(serde_json::to_string(
             // For keystone it is important to have at least "{}"
@@ -65,12 +69,10 @@ where
         last_active_at,
         created_at: Set(Some(now)),
         domain_id: Set(user.domain_id.clone()),
-    };
-    let db_user: db_user::Model = entry
-        .insert(db)
-        .await
-        .map_err(|err| db_err(err, "inserting user entry"))?;
-    Ok(db_user)
+    }
+    .insert(db)
+    .await
+    .map_err(|err| db_err(err, "inserting user entry"))
 }
 
 pub async fn create(
@@ -97,7 +99,7 @@ pub async fn create(
                         &txn,
                         db_federated_user::ActiveModel {
                             id: NotSet,
-                            user_id: Set(user.id.clone()),
+                            user_id: Set(main_user.id.clone()),
                             idp_id: Set(federated_user.idp_id.clone()),
                             protocol_id: Set("oidc".into()),
                             unique_id: Set(federated_user.unique_id.clone()),
@@ -114,7 +116,7 @@ pub async fn create(
                             &txn,
                             db_federated_user::ActiveModel {
                                 id: NotSet,
-                                user_id: Set(user.id.clone()),
+                                user_id: Set(main_user.id.clone()),
                                 idp_id: Set(federated_user.idp_id.clone()),
                                 protocol_id: Set(proto.protocol_id.clone()),
                                 unique_id: Set(proto.unique_id.clone()),
@@ -130,7 +132,27 @@ pub async fn create(
         response_builder.merge_federated_user_data(federated_entities);
     } else {
         // Local user
-        let local_user = local_user::create(conf, &txn, &user).await?;
+        let local_user = db_local_user::ActiveModel {
+            id: NotSet,
+            user_id: Set(main_user.id.clone()),
+            domain_id: Set(user.domain_id.clone()),
+            name: Set(user.name.clone()),
+            failed_auth_count: if user.enabled.is_some_and(|x| x)
+                && conf
+                    .security_compliance
+                    .disable_user_account_days_inactive
+                    .is_some()
+            {
+                Set(Some(0))
+            } else {
+                NotSet
+            },
+            failed_auth_at: NotSet,
+        }
+        .insert(&txn)
+        .await
+        .map_err(|err| db_err(err, "inserting new user record"))?;
+
         let mut passwords: Vec<db_password::Model> = Vec::new();
         if let Some(password) = &user.password {
             let password_entry = password::create(

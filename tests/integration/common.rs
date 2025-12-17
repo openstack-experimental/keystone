@@ -165,7 +165,8 @@ pub async fn bootstrap(db: &DbConn) -> Result<()> {
 
 /// Prepare the isolated Database
 ///
-/// Based on the `DATABASE_URL` environment variable prepare the database for the tests:
+/// Based on the `DATABASE_URL` environment variable prepare the database for
+/// the tests:
 ///
 /// - `postgres` - create a unique schema
 /// - `mysql` - create a unique database on the instance

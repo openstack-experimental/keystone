@@ -23,7 +23,8 @@ use crate::keystone::ServiceState;
 
 mod application_credential;
 
-/// SQL backend provider implementing the ApplicationCredentialBackend interface.
+/// SQL backend provider implementing the ApplicationCredentialBackend
+/// interface.
 #[derive(Clone, Debug, Default)]
 pub struct SqlBackend {
     /// Config.

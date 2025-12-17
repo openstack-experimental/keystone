@@ -70,12 +70,17 @@ impl UserResponseBuilder {
         } else {
             false
         });
-        if let Some(extra) = &user.extra {
-            self.extra(
-                serde_json::from_str::<Value>(extra)
-                    .inspect_err(|e| error!("failed to deserialize user extra: {e}"))
-                    .unwrap_or_default(),
-            );
+        if let Some(extra) = &user.extra
+            && extra != "{}"
+        {
+            match serde_json::from_str::<Value>(extra) {
+                Ok(extras) => {
+                    self.extra(extras);
+                }
+                Err(e) => {
+                    error!("failed to deserialize user extra: {e}");
+                }
+            };
         }
         self.options(options.clone());
         self

@@ -90,6 +90,14 @@ pub enum IdentityProviderError {
     /// Conflict.
     #[error("conflict: {0}")]
     Conflict(String),
+
+    /// Request validation error.
+    #[error("request validation error: {}", source)]
+    Validation {
+        /// The source of the error.
+        #[from]
+        source: validator::ValidationErrors,
+    },
 }
 
 impl From<IdentityDatabaseError> for IdentityProviderError {

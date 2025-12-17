@@ -37,6 +37,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use std::collections::HashSet;
 use uuid::Uuid;
+use validator::Validate;
 
 pub mod backends;
 pub mod error;
@@ -167,10 +168,13 @@ impl IdentityApi for IdentityProvider {
         user: UserCreate,
     ) -> Result<UserResponse, IdentityProviderError> {
         let mut mod_user = user;
-        mod_user.id = Uuid::new_v4().simple().to_string();
+        if mod_user.id.is_none() {
+            mod_user.id = Some(Uuid::new_v4().simple().to_string());
+        }
         if mod_user.enabled.is_none() {
             mod_user.enabled = Some(true);
         }
+        mod_user.validate()?;
         self.backend_driver.create_user(state, mod_user).await
     }
 

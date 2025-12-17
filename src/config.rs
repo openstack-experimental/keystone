@@ -325,7 +325,8 @@ pub enum PasswordHashingAlgo {
     #[default]
     Bcrypt,
     #[cfg(test)]
-    /// None. Should not be used outside of testing where expected value is necessary.
+    /// None. Should not be used outside of testing where expected value is
+    /// necessary.
     None,
 }
 

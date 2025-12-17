@@ -52,7 +52,7 @@ async fn test_expiring_groups() -> Result<(), Report> {
             user_id: Set("user_a".to_string()),
             group_id: Set("group_c".to_string()),
             idp_id: Set("idp_id".to_string()),
-            last_verified: Set(DateTime::<Utc>::MIN_UTC.naive_utc()),
+            last_verified: Set(DateTime::<Utc>::default().naive_utc()),
         },
         // non expired membership
         expiring_user_group_membership::ActiveModel {

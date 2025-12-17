@@ -61,7 +61,8 @@ pub enum WebauthnError {
     },
 }
 
-/// Convert the [`sea_orm::DbErr`] into the [`WebauthnError`] with the context information.
+/// Convert the [`sea_orm::DbErr`] into the [`WebauthnError`] with the context
+/// information.
 pub fn db_err(e: sea_orm::DbErr, context: &str) -> WebauthnError {
     e.sql_err().map_or_else(
         || WebauthnError::Database {

@@ -12,7 +12,6 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //! # Mock provider
-//!
 use async_trait::async_trait;
 use mockall::mock;
 

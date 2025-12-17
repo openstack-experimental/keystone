@@ -104,7 +104,8 @@ pub async fn finish(
                     })
                 })??,
         )
-        // Unless Keystone support passkey auth method we use x509 (which it technically is close to).
+        // Unless Keystone support passkey auth method we use x509 (which it technically is close
+        // to).
         .methods(vec!["x509".into()])
         .build()
         .map_err(AuthenticationError::from)?;

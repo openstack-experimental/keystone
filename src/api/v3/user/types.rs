@@ -28,35 +28,38 @@ use crate::identity::types as identity_types;
 /// User response object.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct User {
-    /// User ID.
-    #[validate(length(max = 64))]
-    pub id: String,
-    /// User domain ID.
-    #[validate(length(max = 64))]
-    pub domain_id: String,
-    /// User name.
-    #[validate(length(max = 255))]
-    pub name: String,
-    /// If the user is enabled, this value is true. If the user is disabled,
-    /// this value is false.
-    pub enabled: bool,
     /// The ID of the default project for the user. A user’s default project
-    /// must not be a domain. Setting this attribute does not grant any
-    /// actual authorization on the project, and is merely provided for
-    /// convenience. Therefore, the referenced project does not need to exist
-    /// within the user domain. (Since v3.1) If the user does not have
-    /// authorization to their default project, the default project is
-    /// ignored at token creation. (Since v3.1) Additionally, if your
-    /// default project is not valid, a token is issued without an explicit
-    /// scope of authorization.
+    /// must not be a domain. Setting this attribute does not grant any actual
+    /// authorization on the project, and is merely provided for convenience.
+    /// Therefore, the referenced project does not need to exist within the user
+    /// domain. If the user does not have authorization to their default
+    /// project, the default project is ignored at token creation. Additionally,
+    /// if your default project is not valid, a token is issued without an
+    /// explicit scope of authorization.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[validate(length(max = 64))]
     pub default_project_id: Option<String>,
+    /// User domain ID.
+    #[validate(length(max = 64))]
+    pub domain_id: String,
+    /// If the user is enabled, this value is true. If the user is disabled,
+    /// this value is false.
+    pub enabled: bool,
     #[serde(flatten, skip_serializing_if = "Option::is_none")]
     pub extra: Option<Value>,
-    /// The date and time when the password expires. The time zone is UTC.
+    /// List of federated objects associated with a user. Each object in the
+    /// list contains the idp_id and protocols. protocols is a list of objects,
+    /// each of which contains protocol_id and unique_id of the protocol and
+    /// user respectively.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub password_expires_at: Option<DateTime<Utc>>,
+    #[validate(nested)]
+    pub federated: Option<Vec<Federation>>,
+    /// User ID.
+    #[validate(length(max = 64))]
+    pub id: String,
+    /// User name.
+    #[validate(length(max = 255))]
+    pub name: String,
     /// The resource options for the user. Available resource options are
     /// ignore_change_password_upon_first_use, ignore_password_expiry,
     /// ignore_lockout_failure_attempts, lock_password,
@@ -65,13 +68,9 @@ pub struct User {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[validate(nested)]
     pub options: Option<UserOptions>,
-    /// List of federated objects associated with a user. Each object in the
-    /// list contains the idp_id and protocols. protocols is a list of objects,
-    /// each of which contains protocol_id and unique_id of the protocol and
-    /// user respectively.
+    /// The date and time when the password expires. The time zone is UTC.
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[validate(nested)]
-    pub federated: Option<Vec<Federation>>,
+    pub password_expires_at: Option<DateTime<Utc>>,
 }
 
 /// Complete response with the user data.
@@ -85,29 +84,28 @@ pub struct UserResponse {
 /// Create user data.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct UserCreate {
+    /// The ID of the default project for the user. A user’s default project
+    /// must not be a domain. Setting this attribute does not grant any actual
+    /// authorization on the project, and is merely provided for convenience.
+    /// Therefore, the referenced project does not need to exist within the user
+    /// domain. If the user does not have authorization to their default
+    /// project, the default project is ignored at token creation. Additionally,
+    /// if your default project is not valid, a token is issued without an
+    /// explicit scope of authorization.
+    #[validate(length(min = 1, max = 64))]
+    pub default_project_id: Option<String>,
     /// User domain ID.
-    #[validate(length(max = 64))]
+    #[validate(length(min = 1, max = 64))]
     pub domain_id: String,
-    /// The user name. Must be unique within the owning domain.
-    #[validate(length(max = 255))]
-    pub name: String,
     /// If the user is enabled, this value is true. If the user is disabled,
     /// this value is false.
     pub enabled: Option<bool>,
-    /// The ID of the default project for the user. A user’s default project
-    /// must not be a domain. Setting this attribute does not grant any
-    /// actual authorization on the project, and is merely provided for
-    /// convenience. Therefore, the referenced project does not need to exist
-    /// within the user domain. (Since v3.1) If the user does not have
-    /// authorization to their default project, the default project is
-    /// ignored at token creation. (Since v3.1) Additionally, if your
-    /// default project is not valid, a token is issued without an explicit
-    /// scope of authorization.
-    #[validate(length(max = 64))]
-    pub default_project_id: Option<String>,
-    /// The password for the user.
-    #[validate(length(max = 72))]
-    pub password: Option<String>,
+    /// Additional user properties
+    #[serde(flatten)]
+    pub extra: Option<Value>,
+    /// The user name. Must be unique within the owning domain.
+    #[validate(length(min = 1, max = 255))]
+    pub name: String,
     /// The resource options for the user. Available resource options are
     /// ignore_change_password_upon_first_use, ignore_password_expiry,
     /// ignore_lockout_failure_attempts, lock_password,
@@ -115,33 +113,33 @@ pub struct UserCreate {
     /// ignore_user_inactivity.
     #[validate(nested)]
     pub options: Option<UserOptions>,
-    /// Additional user properties
-    #[serde(flatten)]
-    pub extra: Option<Value>,
+    /// The password for the user.
+    #[validate(length(min = 1, max = 72))]
+    pub password: Option<String>,
 }
 
 /// Update user data.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct UserUpdateRequest {
-    /// The user name. Must be unique within the owning domain.
-    #[validate(length(max = 255))]
-    pub name: Option<String>,
+    /// The ID of the default project for the user. A user’s default project
+    /// must not be a domain. Setting this attribute does not grant any actual
+    /// authorization on the project, and is merely provided for convenience.
+    /// Therefore, the referenced project does not need to exist within the user
+    /// domain. If the user does not have authorization to their default
+    /// project, the default project is ignored at token creation. Additionally,
+    /// if your default project is not valid, a token is issued without an
+    /// explicit scope of authorization.
+    #[validate(length(max = 64))]
+    pub default_project_id: Option<Option<String>>,
     /// If the user is enabled, this value is true. If the user is disabled,
     /// this value is false.
     pub enabled: Option<bool>,
-    /// The ID of the default project for the user. A user’s default project
-    /// must not be a domain. Setting this attribute does not grant any
-    /// actual authorization on the project, and is merely provided for
-    /// convenience. Therefore, the referenced project does not need to exist
-    /// within the user domain. (Since v3.1) If the user does not have
-    /// authorization to their default project, the default project is
-    /// ignored at token creation. (Since v3.1) Additionally, if your
-    /// default project is not valid, a token is issued without an explicit
-    /// scope of authorization.
-    #[validate(length(max = 64))]
-    pub default_project_id: Option<String>,
-    /// The password for the user.
-    pub password: Option<String>,
+    /// Additional user properties
+    #[serde(flatten)]
+    pub extra: Option<Value>,
+    /// The user name. Must be unique within the owning domain.
+    #[validate(length(max = 255))]
+    pub name: Option<String>,
     /// The resource options for the user. Available resource options are
     /// ignore_change_password_upon_first_use, ignore_password_expiry,
     /// ignore_lockout_failure_attempts, lock_password,
@@ -149,9 +147,8 @@ pub struct UserUpdateRequest {
     /// ignore_user_inactivity.
     #[validate(nested)]
     pub options: Option<UserOptions>,
-    /// Additional user properties
-    #[serde(flatten)]
-    pub extra: Option<Value>,
+    /// The password for the user.
+    pub password: Option<String>,
 }
 
 /// User options.
@@ -226,17 +223,17 @@ impl From<identity_types::UserResponse> for User {
             None
         };
         Self {
-            id: value.id,
-            domain_id: value.domain_id,
-            name: value.name,
-            enabled: value.enabled,
             default_project_id: value.default_project_id,
+            domain_id: value.domain_id,
+            enabled: value.enabled,
             extra: value.extra,
-            password_expires_at: value.password_expires_at,
-            options: opts,
             federated: value
                 .federated
                 .map(|val| val.into_iter().map(Into::into).collect()),
+            id: value.id,
+            name: value.name,
+            options: opts,
+            password_expires_at: value.password_expires_at,
         }
     }
 }
@@ -245,15 +242,15 @@ impl From<UserCreateRequest> for identity_types::UserCreate {
     fn from(value: UserCreateRequest) -> Self {
         let user = value.user;
         Self {
-            id: String::new(),
-            name: user.name,
+            default_project_id: user.default_project_id,
             domain_id: user.domain_id,
             enabled: user.enabled,
-            password: user.password,
             extra: user.extra,
-            default_project_id: user.default_project_id,
-            options: user.options.map(Into::into),
+            id: None,
             federated: None,
+            name: user.name,
+            options: user.options.map(Into::into),
+            password: user.password,
         }
     }
 }

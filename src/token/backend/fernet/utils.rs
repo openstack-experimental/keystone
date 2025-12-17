@@ -93,7 +93,8 @@ impl FernetUtils {
         tmp_file.flush()?;
 
         // 4. Atomically persist the file to "0"
-        // If persist() isn't called, the file is deleted when tmp_file goes out of scope.
+        // If persist() isn't called, the file is deleted when tmp_file goes out of
+        // scope.
         info!("Created new Fernet key at {:?}", target_path);
         tmp_file.persist(&target_path)?;
 
