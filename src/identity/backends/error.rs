@@ -12,74 +12,41 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use sea_orm::SqlErr;
 use thiserror::Error;
 
 use crate::common::password_hashing::PasswordHashError;
-use crate::identity::types::*;
+use crate::error::{BuilderError, DatabaseError};
 
 #[derive(Error, Debug)]
 pub enum IdentityDatabaseError {
-    #[error("corrupted database entries for user {0}")]
-    MalformedUser(String),
+    /// Supported authentication error.
+    #[error(transparent)]
+    AuthenticationInfo {
+        #[from]
+        source: crate::auth::AuthenticationError,
+    },
 
-    #[error("{0}")]
-    UserNotFound(String),
-
-    #[error("{0}")]
-    GroupNotFound(String),
+    /// Database error.
+    #[error(transparent)]
+    Database {
+        #[from]
+        source: DatabaseError,
+    },
 
     #[error("Date calculation error")]
     DateError,
 
-    #[error(transparent)]
-    Serde {
-        #[from]
-        source: serde_json::Error,
-    },
+    #[error("{0}")]
+    GroupNotFound(String),
+
+    #[error("corrupted database entries for user {0}")]
+    MalformedUser(String),
 
     #[error(transparent)]
     Join {
         #[from]
         source: tokio::task::JoinError,
     },
-
-    #[error("building user response data")]
-    UserBuilderError {
-        #[from]
-        source: UserResponseBuilderError,
-    },
-
-    #[error("building user federation")]
-    FederatedUserBuilderError {
-        #[from]
-        source: FederationBuilderError,
-    },
-
-    /// Conflict
-    #[error("{message}")]
-    Conflict { message: String, context: String },
-
-    /// SqlError
-    #[error("{message}")]
-    Sql { message: String, context: String },
-
-    #[error("Database error while {context}")]
-    Database {
-        source: sea_orm::DbErr,
-        context: String,
-    },
-
-    /// Password hashing error.
-    #[error("password hashing error")]
-    PasswordHash {
-        /// The source of the error.
-        #[from]
-        source: PasswordHashError,
-    },
-
-    #[error("either user id or user name with user domain id or name must be given")]
-    UserIdOrNameWithDomain,
 
     /// No data for local_user and passwords
     #[error("no passwords for the user {0}")]
@@ -93,35 +60,31 @@ pub enum IdentityDatabaseError {
     #[error("no entry in the `user` table found for user_id: {0}")]
     NoMainUserEntry(String),
 
-    /// Supported authentication error.
-    #[error(transparent)]
-    AuthenticationInfo {
+    /// Password hashing error.
+    #[error("password hashing error")]
+    PasswordHash {
+        /// The source of the error.
         #[from]
-        source: crate::auth::AuthenticationError,
+        source: PasswordHashError,
     },
-}
 
-/// Convert the DB error into the [`IdentityDatabaseError`] with the context
-/// information.
-pub fn db_err(e: sea_orm::DbErr, context: &str) -> IdentityDatabaseError {
-    e.sql_err().map_or_else(
-        || IdentityDatabaseError::Database {
-            source: e,
-            context: context.to_string(),
-        },
-        |err| match err {
-            SqlErr::UniqueConstraintViolation(descr) => IdentityDatabaseError::Conflict {
-                message: descr.to_string(),
-                context: context.to_string(),
-            },
-            SqlErr::ForeignKeyConstraintViolation(descr) => IdentityDatabaseError::Conflict {
-                message: descr.to_string(),
-                context: context.to_string(),
-            },
-            other => IdentityDatabaseError::Sql {
-                message: other.to_string(),
-                context: context.to_string(),
-            },
-        },
-    )
+    #[error(transparent)]
+    Serde {
+        #[from]
+        source: serde_json::Error,
+    },
+
+    /// Structures builder error.
+    #[error(transparent)]
+    StructBuilder {
+        /// The source of the error.
+        #[from]
+        source: BuilderError,
+    },
+
+    #[error("either user id or user name with user domain id or name must be given")]
+    UserIdOrNameWithDomain,
+
+    #[error("{0}")]
+    UserNotFound(String),
 }

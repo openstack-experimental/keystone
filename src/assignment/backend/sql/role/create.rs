@@ -17,9 +17,10 @@ use sea_orm::entity::*;
 use serde_json::json;
 use uuid::Uuid;
 
-use crate::assignment::backend::error::{AssignmentDatabaseError, db_err};
+use crate::assignment::backend::error::AssignmentDatabaseError;
 use crate::assignment::types::role::{Role, RoleCreate};
 use crate::db::entity::role as db_role;
+use crate::error::DbContextExt;
 
 /// Create a new role
 pub async fn create(
@@ -44,7 +45,7 @@ pub async fn create(
     }
     .insert(db)
     .await
-    .map_err(|err| db_err(err, "creating role"))?
+    .context("creating role")?
     .try_into()
 }
 

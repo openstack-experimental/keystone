@@ -18,7 +18,8 @@ use sea_orm::entity::*;
 use webauthn_rs::prelude::{PasskeyAuthentication, PasskeyRegistration};
 
 use crate::db::entity::webauthn_state;
-use crate::webauthn::{WebauthnError, db_err};
+use crate::error::DbContextExt;
+use crate::webauthn::WebauthnError;
 
 pub async fn create_register<U: AsRef<str>>(
     db: &DatabaseConnection,
@@ -35,7 +36,7 @@ pub async fn create_register<U: AsRef<str>>(
     let _ = entry
         .insert(db)
         .await
-        .map_err(|e| db_err(e, "inserting webauthn registration state record"))?;
+        .context("inserting webauthn registration state record")?;
 
     Ok(())
 }
@@ -55,7 +56,7 @@ pub async fn create_auth<U: AsRef<str>>(
     let _ = entry
         .insert(db)
         .await
-        .map_err(|e| db_err(e, "inserting webauthn auth state record"))?;
+        .context("inserting webauthn auth state record")?;
     Ok(())
 }
 

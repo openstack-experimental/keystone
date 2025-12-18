@@ -20,7 +20,8 @@ use crate::db::entity::{
     federated_mapping as db_federated_mapping, prelude::FederatedMapping as DbFederatedMapping,
     sea_orm_active_enums::MappingType as db_mapping_type,
 };
-use crate::federation::backend::error::{FederationDatabaseError, db_err};
+use crate::error::DbContextExt;
+use crate::federation::backend::error::FederationDatabaseError;
 use crate::federation::types::*;
 
 pub async fn list(
@@ -45,10 +46,8 @@ pub async fn list(
         select = select.filter(db_federated_mapping::Column::r#Type.eq(db_mapping_type::from(val)));
     }
 
-    let db_entities: Vec<db_federated_mapping::Model> = select
-        .all(db)
-        .await
-        .map_err(|err| db_err(err, "fetching mappings"))?;
+    let db_entities: Vec<db_federated_mapping::Model> =
+        select.all(db).await.context("fetching mappings")?;
     let results: Result<Vec<Mapping>, _> = db_entities
         .into_iter()
         .map(TryInto::<Mapping>::try_into)

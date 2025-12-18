@@ -17,8 +17,9 @@ use sea_orm::entity::*;
 use serde_json::json;
 
 use crate::db::entity::group;
+use crate::error::DbContextExt;
 use crate::identity::Config;
-use crate::identity::backends::sql::{IdentityDatabaseError, db_err};
+use crate::identity::backends::sql::IdentityDatabaseError;
 use crate::identity::types::{Group, GroupCreate};
 
 pub async fn create(
@@ -39,7 +40,7 @@ pub async fn create(
     let db_entry: group::Model = entry
         .insert(db)
         .await
-        .map_err(|err| db_err(err, "persisting new group record"))?;
+        .context("persisting new group record")?;
 
     Ok(db_entry.into())
 }

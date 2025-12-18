@@ -18,7 +18,8 @@ use sea_orm::DatabaseConnection;
 use sea_orm::entity::*;
 
 use crate::db::entity::user as db_user;
-use crate::identity::backends::sql::{IdentityDatabaseError, db_err};
+use crate::error::DbContextExt;
+use crate::identity::backends::sql::IdentityDatabaseError;
 
 /// Reset the `user.last_active_at` to the current date.
 pub async fn reset_last_active(
@@ -27,10 +28,10 @@ pub async fn reset_last_active(
 ) -> Result<db_user::Model, IdentityDatabaseError> {
     let mut update: db_user::ActiveModel = user.clone().into();
     update.last_active_at = Set(Some(Utc::now().date_naive()));
-    update
+    Ok(update
         .update(db)
         .await
-        .map_err(|err| db_err(err, "resetting user's last_active_at"))
+        .context("resetting user's last_active_at")?)
 }
 
 #[cfg(test)]

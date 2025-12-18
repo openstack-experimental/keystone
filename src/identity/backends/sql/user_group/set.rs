@@ -24,7 +24,8 @@ use crate::db::entity::{
     prelude::{ExpiringUserGroupMembership, UserGroupMembership},
     user_group_membership,
 };
-use crate::identity::backends::sql::{IdentityDatabaseError, db_err};
+use crate::error::DbContextExt;
+use crate::identity::backends::sql::IdentityDatabaseError;
 
 use super::*;
 
@@ -51,7 +52,7 @@ where
             .filter(user_group_membership::Column::UserId.eq(user_id.as_ref()))
             .all(db)
             .await
-            .map_err(|e| db_err(e, "selecting group memberships of the user"))?
+            .context("selecting group memberships of the user")?
             .into_iter()
             .map(|item| item.group_id),
     );
@@ -111,7 +112,7 @@ where
             .filter(expiring_user_group_membership::Column::IdpId.eq(idp_id.as_ref()))
             .all(db)
             .await
-            .map_err(|e| db_err(e, "selecting expiring group memberships of the user"))?
+            .context("selecting expiring group memberships of the user")?
             .into_iter()
             .map(|item| item.group_id),
     );
@@ -167,7 +168,7 @@ where
         )
         .exec(db)
         .await
-        .map_err(|e| db_err(e, "renewing expiring group memberships of the user"))?;
+        .context("renewing expiring group memberships of the user")?;
 
     Ok(())
 }

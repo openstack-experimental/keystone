@@ -16,8 +16,9 @@ use sea_orm::DatabaseConnection;
 use sea_orm::entity::*;
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::assignment::backend::error::{AssignmentDatabaseError, db_err};
+use crate::assignment::backend::error::AssignmentDatabaseError;
 use crate::db::entity::prelude::ImpliedRole as DbImpliedRole;
+use crate::error::DbContextExt;
 
 /// Build a resolved tree of role inference
 fn expand_implied_roles(
@@ -55,7 +56,7 @@ pub async fn list_rules(
     for imply in DbImpliedRole::find()
         .all(db)
         .await
-        .map_err(|err| db_err(err, "fetching implied roles"))?
+        .context("fetching implied roles")?
     {
         implied_rules
             .entry(imply.prior_role_id)

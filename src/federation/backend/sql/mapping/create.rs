@@ -16,14 +16,15 @@ use sea_orm::DatabaseConnection;
 use sea_orm::entity::*;
 
 use crate::db::entity::federated_mapping as db_federated_mapping;
-use crate::federation::backend::error::{FederationDatabaseError, db_err};
+use crate::error::DbContextExt;
+use crate::federation::backend::error::FederationDatabaseError;
 use crate::federation::types::*;
 
 pub async fn create(
     db: &DatabaseConnection,
     mapping: Mapping,
 ) -> Result<Mapping, FederationDatabaseError> {
-    let entry = db_federated_mapping::ActiveModel {
+    db_federated_mapping::ActiveModel {
         id: Set(mapping.id.clone()),
         domain_id: Set(mapping.domain_id.clone()),
         name: Set(mapping.name.clone()),
@@ -85,14 +86,11 @@ pub async fn create(
             .map(Set)
             .unwrap_or(NotSet)
             .into(),
-    };
-
-    let db_entry: db_federated_mapping::Model = entry
-        .insert(db)
-        .await
-        .map_err(|err| db_err(err, "persisting new federation mapping"))?;
-
-    db_entry.try_into()
+    }
+    .insert(db)
+    .await
+    .context("persisting new federation mapping")?
+    .try_into()
 }
 
 #[cfg(test)]

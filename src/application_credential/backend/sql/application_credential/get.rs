@@ -16,7 +16,7 @@ use sea_orm::DatabaseConnection;
 use sea_orm::entity::*;
 use sea_orm::query::*;
 
-use crate::application_credential::backend::error::{ApplicationCredentialDatabaseError, db_err};
+use crate::application_credential::backend::error::ApplicationCredentialDatabaseError;
 use crate::application_credential::types::*;
 use crate::assignment::types::Role;
 use crate::db::entity::{
@@ -26,6 +26,7 @@ use crate::db::entity::{
         Role as DbRole,
     },
 };
+use crate::error::DbContextExt;
 
 /// Get application credential by the ID.
 pub async fn get<I: AsRef<str>>(
@@ -38,7 +39,7 @@ pub async fn get<I: AsRef<str>>(
     if let Some(ref entry) = select
         .one(db)
         .await
-        .map_err(|err| db_err(err, "fetching application credential by id"))?
+        .context("fetching application credential by id")?
     {
         let mut builder: ApplicationCredentialBuilder = entry.try_into()?;
         // Query roles and rules in parallel
@@ -48,12 +49,12 @@ pub async fn get<I: AsRef<str>>(
         );
 
         let roles = roles_handle
-            .map_err(|err| db_err(err, "fetching application credential roles"))?
+            .context("fetching application credential roles")?
             .into_iter()
             .map(TryInto::<Role>::try_into)
             .collect::<Result<Vec<Role>, _>>()?;
         let rules = rules_handle
-            .map_err(|err| db_err(err, "fetching application credential rules"))?
+            .context("fetching application credential rules")?
             .into_iter()
             .map(TryInto::<AccessRule>::try_into)
             .collect::<Result<Vec<AccessRule>, _>>()?;

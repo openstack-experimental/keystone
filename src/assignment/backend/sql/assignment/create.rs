@@ -15,12 +15,13 @@
 use sea_orm::DatabaseConnection;
 use sea_orm::entity::*;
 
-use crate::assignment::backend::error::{AssignmentDatabaseError, db_err};
+use crate::assignment::backend::error::AssignmentDatabaseError;
 use crate::assignment::types::*;
 use crate::db::entity::{
     assignment as db_assignment, sea_orm_active_enums::Type as DbAssignmentType,
     system_assignment as db_system_assignment,
 };
+use crate::error::DbContextExt;
 
 /// Create assignment grant.
 pub async fn create(
@@ -31,7 +32,7 @@ pub async fn create(
         AssignmentType::GroupDomain
         | AssignmentType::GroupProject
         | AssignmentType::UserDomain
-        | AssignmentType::UserProject => Assignment::try_from(
+        | AssignmentType::UserProject => Ok(Assignment::from(
             db_assignment::ActiveModel {
                 r#type: Set(DbAssignmentType::try_from(&assignment.r#type)?),
                 role_id: Set(assignment.role_id),
@@ -41,8 +42,8 @@ pub async fn create(
             }
             .insert(db)
             .await
-            .map_err(|err| db_err(err, "persisting assignment"))?,
-        ),
+            .context("persisting assignment")?,
+        )),
         other => Assignment::try_from(
             db_system_assignment::ActiveModel {
                 r#type: Set(other.to_string()),
@@ -53,7 +54,7 @@ pub async fn create(
             }
             .insert(db)
             .await
-            .map_err(|err| db_err(err, "persisting system assignment"))?,
+            .context("persisting system assignment")?,
         ),
     }
 }

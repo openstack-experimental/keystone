@@ -20,39 +20,37 @@ use crate::revoke::backend::error::RevokeDatabaseError;
 /// Revoke provider error.
 #[derive(Error, Debug)]
 pub enum RevokeProviderError {
-    /// Unsupported driver.
-    #[error("unsupported driver {0}")]
-    UnsupportedDriver(String),
+    /// SQL backend error.
+    #[error(transparent)]
+    Backend {
+        /// The source of the error.
+        source: RevokeDatabaseError,
+    },
 
     /// Conflict.
     #[error("conflict: {0}")]
     Conflict(String),
 
-    /// Data (de)serialization error.
-    #[error("data serialization error")]
-    Serde {
-        /// The source of the error.
-        #[from]
-        source: serde_json::Error,
-    },
-
-    /// Database provider error.
-    #[error(transparent)]
-    RevokeDatabase {
-        /// The source of the error.
-        source: RevokeDatabaseError,
-    },
-
     /// No audit ID in the token.
     #[error("token does not have the audit_id set")]
     TokenHasNoAuditId,
+
+    /// Unsupported driver.
+    #[error("unsupported driver {0}")]
+    UnsupportedDriver(String),
 }
 
 impl From<RevokeDatabaseError> for RevokeProviderError {
     fn from(source: RevokeDatabaseError) -> Self {
         match source {
-            RevokeDatabaseError::Conflict { message, .. } => Self::Conflict(message),
-            _ => Self::RevokeDatabase { source },
+            RevokeDatabaseError::Database { source } => match source {
+                cfl @ crate::error::DatabaseError::Conflict { .. } => {
+                    Self::Conflict(cfl.to_string())
+                }
+                other => Self::Backend {
+                    source: RevokeDatabaseError::Database { source: other },
+                },
+            },
         }
     }
 }

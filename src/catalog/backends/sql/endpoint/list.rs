@@ -16,9 +16,10 @@ use sea_orm::DatabaseConnection;
 use sea_orm::entity::*;
 use sea_orm::query::*;
 
-use crate::catalog::backends::error::{CatalogDatabaseError, db_err};
+use crate::catalog::backends::error::CatalogDatabaseError;
 use crate::catalog::types::*;
 use crate::db::entity::{endpoint as db_endpoint, prelude::Endpoint as DbEndpoint};
+use crate::error::DbContextExt;
 
 pub async fn list(
     db: &DatabaseConnection,
@@ -36,16 +37,13 @@ pub async fn list(
         select = select.filter(db_endpoint::Column::RegionId.eq(val));
     }
 
-    let db_entities: Vec<db_endpoint::Model> = select
+    select
         .all(db)
         .await
-        .map_err(|err| db_err(err, "fetching endpoints"))?;
-    let results: Result<Vec<Endpoint>, _> = db_entities
+        .context("fetching endpoints")?
         .into_iter()
         .map(TryInto::<Endpoint>::try_into)
-        .collect();
-
-    results
+        .collect()
 }
 
 #[cfg(test)]

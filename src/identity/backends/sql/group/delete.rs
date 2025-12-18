@@ -16,8 +16,9 @@ use sea_orm::DatabaseConnection;
 use sea_orm::entity::*;
 
 use crate::db::entity::prelude::Group as DbGroup;
+use crate::error::DbContextExt;
 use crate::identity::Config;
-use crate::identity::backends::sql::{IdentityDatabaseError, db_err};
+use crate::identity::backends::sql::IdentityDatabaseError;
 
 pub async fn delete<S: AsRef<str>>(
     _conf: &Config,
@@ -27,7 +28,7 @@ pub async fn delete<S: AsRef<str>>(
     let res = DbGroup::delete_by_id(group_id.as_ref())
         .exec(db)
         .await
-        .map_err(|err| db_err(err, "removing group record"))?;
+        .context("removing group record")?;
     if res.rows_affected == 1 {
         Ok(())
     } else {

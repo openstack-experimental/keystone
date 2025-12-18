@@ -16,7 +16,8 @@ use sea_orm::DatabaseConnection;
 use sea_orm::entity::*;
 
 use crate::db::entity::prelude::FederatedMapping as DbFederatedMapping;
-use crate::federation::backend::error::{FederationDatabaseError, db_err};
+use crate::error::DbContextExt;
+use crate::federation::backend::error::FederationDatabaseError;
 
 pub async fn delete<S: AsRef<str>>(
     db: &DatabaseConnection,
@@ -25,7 +26,7 @@ pub async fn delete<S: AsRef<str>>(
     let res = DbFederatedMapping::delete_by_id(id.as_ref())
         .exec(db)
         .await
-        .map_err(|err| db_err(err, "deleting federation mapping by id"))?;
+        .context("deleting federation mapping by id")?;
     if res.rows_affected == 1 {
         Ok(())
     } else {

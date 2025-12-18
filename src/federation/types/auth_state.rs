@@ -17,8 +17,10 @@ use derive_builder::Builder;
 use serde::{Deserialize, Serialize};
 
 use crate::common::types::Scope;
+use crate::error::BuilderError;
 
 #[derive(Builder, Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
+#[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct AuthState {
     /// Timestamp when the auth will expire.

@@ -17,8 +17,9 @@ use sea_orm::entity::*;
 use sea_orm::query::*;
 
 use crate::db::entity::{prelude::Project as DbProject, project as db_project};
+use crate::error::DbContextExt;
 use crate::resource::Config;
-use crate::resource::backend::error::{ResourceDatabaseError, db_err};
+use crate::resource::backend::error::ResourceDatabaseError;
 use crate::resource::types::Domain;
 
 pub async fn get_domain_by_id<I: AsRef<str>>(
@@ -32,7 +33,7 @@ pub async fn get_domain_by_id<I: AsRef<str>>(
     let domain_entry: Option<db_project::Model> = domain_select
         .one(db)
         .await
-        .map_err(|err| db_err(err, "fetching domain by id"))?;
+        .context("fetching domain by id")?;
     domain_entry.map(TryInto::try_into).transpose()
 }
 
@@ -48,6 +49,6 @@ pub async fn get_domain_by_name<N: AsRef<str>>(
     let domain_entry: Option<db_project::Model> = domain_select
         .one(db)
         .await
-        .map_err(|err| db_err(err, "fetching domain by name"))?;
+        .context("fetching domain by name")?;
     domain_entry.map(TryInto::try_into).transpose()
 }

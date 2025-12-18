@@ -18,7 +18,8 @@ use sea_orm::entity::*;
 use crate::db::entity::{
     federated_mapping as db_federated_mapping, prelude::FederatedMapping as DbFederatedMapping,
 };
-use crate::federation::backend::error::{FederationDatabaseError, db_err};
+use crate::error::DbContextExt;
+use crate::federation::backend::error::FederationDatabaseError;
 use crate::federation::types::*;
 
 pub async fn update<S: AsRef<str>>(
@@ -29,7 +30,7 @@ pub async fn update<S: AsRef<str>>(
     if let Some(current) = DbFederatedMapping::find_by_id(id.as_ref())
         .one(db)
         .await
-        .map_err(|err| db_err(err, "fetching mapping by id for update"))?
+        .context("fetching mapping by id for update")?
     {
         let mut entry: db_federated_mapping::ActiveModel = current.into();
         if let Some(val) = mapping.name {
@@ -78,10 +79,8 @@ pub async fn update<S: AsRef<str>>(
             entry.token_restriction_id = Set(Some(val.to_owned()));
         }
 
-        let db_entry: db_federated_mapping::Model = entry
-            .update(db)
-            .await
-            .map_err(|err| db_err(err, "updating the mapping"))?;
+        let db_entry: db_federated_mapping::Model =
+            entry.update(db).await.context("updating the mapping")?;
         db_entry.try_into()
     } else {
         Err(FederationDatabaseError::MappingNotFound(

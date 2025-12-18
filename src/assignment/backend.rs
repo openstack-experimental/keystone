@@ -22,17 +22,7 @@ use crate::assignment::AssignmentProviderError;
 use crate::config::Config;
 use crate::keystone::ServiceState;
 
-pub use crate::assignment::types::assignment::{
-    Assignment, AssignmentBuilder, AssignmentBuilderError, AssignmentType,
-    RoleAssignmentListForMultipleActorTargetParameters,
-    RoleAssignmentListForMultipleActorTargetParametersBuilder, RoleAssignmentListParameters,
-    RoleAssignmentListParametersBuilder, RoleAssignmentListParametersBuilderError,
-    RoleAssignmentTarget,
-};
-pub use crate::assignment::types::role::{
-    Role, RoleBuilder, RoleBuilderError, RoleCreate, RoleListParameters,
-};
-
+use crate::assignment::types::{assignment::*, role::*};
 pub use sql::SqlBackend;
 
 #[async_trait]

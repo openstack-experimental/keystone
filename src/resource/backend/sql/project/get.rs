@@ -17,8 +17,9 @@ use sea_orm::entity::*;
 use sea_orm::query::*;
 
 use crate::db::entity::{prelude::Project as DbProject, project as db_project};
+use crate::error::DbContextExt;
 use crate::resource::Config;
-use crate::resource::backend::error::{ResourceDatabaseError, db_err};
+use crate::resource::backend::error::ResourceDatabaseError;
 use crate::resource::types::Project;
 
 pub async fn get_project<I: AsRef<str>>(
@@ -32,7 +33,7 @@ pub async fn get_project<I: AsRef<str>>(
     let project_entry: Option<db_project::Model> = project_select
         .one(db)
         .await
-        .map_err(|err| db_err(err, "fetching project by id"))?;
+        .context("fetching project by id")?;
     project_entry.map(TryInto::try_into).transpose()
 }
 
@@ -50,6 +51,6 @@ pub async fn get_project_by_name<N: AsRef<str>, D: AsRef<str>>(
     let project_entry: Option<db_project::Model> = project_select
         .one(db)
         .await
-        .map_err(|err| db_err(err, "fetching project by name and domain"))?;
+        .context("fetching project by name and domain")?;
     project_entry.map(TryInto::try_into).transpose()
 }

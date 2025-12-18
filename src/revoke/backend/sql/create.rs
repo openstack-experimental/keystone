@@ -18,7 +18,8 @@ use sea_orm::entity::*;
 
 use super::{RevocationEvent, RevocationEventCreate};
 use crate::db::entity::revocation_event as db_revocation_event;
-use crate::revoke::backend::error::{RevokeDatabaseError, db_err};
+use crate::error::DbContextExt;
+use crate::revoke::backend::error::RevokeDatabaseError;
 
 /// Create token revocation record.
 ///
@@ -27,7 +28,7 @@ pub async fn create(
     db: &DatabaseConnection,
     revocation: RevocationEventCreate,
 ) -> Result<RevocationEvent, RevokeDatabaseError> {
-    let entry = db_revocation_event::ActiveModel {
+    db_revocation_event::ActiveModel {
         id: NotSet,
         access_token_id: revocation
             .access_token_id
@@ -79,14 +80,11 @@ pub async fn create(
             .unwrap_or(NotSet)
             .into(),
         user_id: revocation.user_id.clone().map(Set).unwrap_or(NotSet).into(),
-    };
-
-    let db_entry: db_revocation_event::Model = entry
-        .insert(db)
-        .await
-        .map_err(|err| db_err(err, "creating token revocation event"))?;
-
-    db_entry.try_into()
+    }
+    .insert(db)
+    .await
+    .context("creating token revocation event")?
+    .try_into()
 }
 
 #[cfg(test)]

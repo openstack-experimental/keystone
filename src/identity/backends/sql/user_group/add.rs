@@ -21,7 +21,8 @@ use crate::db::entity::{
     prelude::{ExpiringUserGroupMembership, UserGroupMembership},
     user_group_membership,
 };
-use crate::identity::backends::sql::{IdentityDatabaseError, db_err};
+use crate::error::DbContextExt;
+use crate::identity::backends::sql::IdentityDatabaseError;
 
 /// Add the user to the single group.
 pub async fn add_user_to_group<U: AsRef<str>, G: AsRef<str>>(
@@ -35,7 +36,7 @@ pub async fn add_user_to_group<U: AsRef<str>, G: AsRef<str>>(
     }
     .insert(db)
     .await
-    .map_err(|e| db_err(e, "adding user to single group"))?;
+    .context("adding user to single group")?;
 
     Ok(())
 }
@@ -60,7 +61,7 @@ where
     .on_empty_do_nothing()
     .exec(db)
     .await
-    .map_err(|e| db_err(e, "adding user to groups"))?;
+    .context("adding user to groups")?;
 
     Ok(())
 }
@@ -81,7 +82,7 @@ pub async fn add_user_to_group_expiring<U: AsRef<str>, G: AsRef<str>, IDP: AsRef
     }
     .insert(db)
     .await
-    .map_err(|e| db_err(e, "adding user to single group with expiration"))?;
+    .context("adding user to single group with expiration")?;
 
     Ok(())
 }
@@ -112,7 +113,7 @@ where
     .on_empty_do_nothing()
     .exec(db)
     .await
-    .map_err(|e| db_err(e, "adding user to groups with expiration"))?;
+    .context("adding user to groups with expiration")?;
 
     Ok(())
 }

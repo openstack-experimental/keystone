@@ -22,7 +22,8 @@ use crate::db::entity::{
     federation_protocol as db_old_federation_protocol,
     identity_provider as db_old_identity_provider, mapping as db_old_mapping,
 };
-use crate::federation::backend::error::{FederationDatabaseError, db_err};
+use crate::error::DbContextExt;
+use crate::federation::backend::error::FederationDatabaseError;
 use crate::federation::types::*;
 
 pub async fn create(
@@ -83,7 +84,7 @@ pub async fn create(
     let db_entry: db_federated_identity_provider::Model = entry
         .insert(db)
         .await
-        .map_err(|err| db_err(err, "persisting new identity provider"))?;
+        .context("persisting new identity provider")?;
 
     // For compatibility reasons add entry for the IDP old-style as well as the
     // protocol to keep constraints working
@@ -96,7 +97,7 @@ pub async fn create(
     }
     .insert(db)
     .await
-    .map_err(|err| db_err(err, "persisting v3 identity provider"))?;
+    .context("persisting v3 identity provider")?;
 
     db_old_federation_protocol::ActiveModel {
         id: Set("oidc".into()),
@@ -106,7 +107,7 @@ pub async fn create(
     }
     .insert(db)
     .await
-    .map_err(|err| db_err(err, "persisting v3 federation oidc protocol"))?;
+    .context("persisting v3 federation oidc protocol")?;
 
     db_old_federation_protocol::ActiveModel {
         id: Set("jwt".into()),
@@ -116,7 +117,7 @@ pub async fn create(
     }
     .insert(db)
     .await
-    .map_err(|err| db_err(err, "persisting v3 federation jwt protocol"))?;
+    .context("persisting v3 federation jwt protocol")?;
 
     db_old_mapping::Entity::insert(db_old_mapping::ActiveModel {
         id: Set("dummy".into()),
@@ -133,7 +134,7 @@ pub async fn create(
     .on_empty_do_nothing()
     .exec(db)
     .await
-    .map_err(|err| db_err(err, "persisting v3 federation mapping"))?;
+    .context("persisting v3 federation mapping")?;
 
     db_entry.try_into()
 }

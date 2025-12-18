@@ -16,7 +16,10 @@ use derive_builder::Builder;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::error::BuilderError;
+
 #[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct Domain {
     /// The domain ID.

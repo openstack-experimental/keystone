@@ -20,7 +20,8 @@ use sea_orm::query::*;
 use crate::db::entity::{
     prelude::RevocationEvent as DbRevocationEvent, revocation_event as db_revocation_event,
 };
-use crate::revoke::backend::error::{RevokeDatabaseError, db_err};
+use crate::error::DbContextExt;
+use crate::revoke::backend::error::RevokeDatabaseError;
 use crate::revoke::types::{RevocationEvent, RevocationEventListParameters};
 
 fn build_query_filters(
@@ -113,10 +114,10 @@ pub async fn count(
     db: &DatabaseConnection,
     params: &RevocationEventListParameters,
 ) -> Result<u64, RevokeDatabaseError> {
-    build_query_filters(params)?
+    Ok(build_query_filters(params)?
         .count(db)
         .await
-        .map_err(|err| db_err(err, "counting revocation events for the token"))
+        .context("counting revocation events for the token")?)
 }
 
 /// List token revocation events.
@@ -131,7 +132,7 @@ pub async fn list(
         build_query_filters(params)?
             .all(db)
             .await
-            .map_err(|err| db_err(err, "listing revocation events for the token"))?;
+            .context("listing revocation events for the token")?;
 
     let results: Result<Vec<RevocationEvent>, _> = db_entities
         .into_iter()

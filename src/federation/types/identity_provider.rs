@@ -16,8 +16,11 @@ use derive_builder::Builder;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::error::BuilderError;
+
 /// Identity provider resource.
 #[derive(Builder, Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
+#[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct IdentityProvider {
     /// Federation provider ID.
@@ -68,6 +71,7 @@ pub struct IdentityProvider {
 
 /// New Identity provider data.
 #[derive(Builder, Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
+#[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct IdentityProviderCreate {
     /// Federation provider ID.
@@ -118,6 +122,7 @@ pub struct IdentityProviderCreate {
 
 /// Identity provider update data.
 #[derive(Builder, Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
+#[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(into))]
 pub struct IdentityProviderUpdate {
     /// Provider name
@@ -159,6 +164,7 @@ pub struct IdentityProviderUpdate {
 
 /// Identity provider list request.
 #[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct IdentityProviderListParameters {
     /// Filters the response by IDP name.

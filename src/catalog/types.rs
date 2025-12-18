@@ -18,13 +18,10 @@ pub mod endpoint;
 pub mod service;
 
 use crate::catalog::CatalogProviderError;
-pub use crate::catalog::types::endpoint::{
-    Endpoint, EndpointBuilder, EndpointBuilderError, EndpointListParameters,
-};
-pub use crate::catalog::types::service::{
-    Service, ServiceBuilder, ServiceBuilderError, ServiceListParameters,
-};
 use crate::keystone::ServiceState;
+
+pub use endpoint::*;
+pub use service::*;
 
 #[async_trait]
 pub trait CatalogApi: Send + Sync + Clone {

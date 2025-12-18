@@ -18,7 +18,8 @@ use sea_orm::entity::*;
 use webauthn_rs::prelude::Passkey;
 
 use crate::db::entity::webauthn_credential;
-use crate::webauthn::{WebauthnError, db_err, types::WebauthnCredential};
+use crate::error::DbContextExt;
+use crate::webauthn::{WebauthnError, types::WebauthnCredential};
 
 pub async fn create<U: AsRef<str>, D: AsRef<str>>(
     db: &DatabaseConnection,
@@ -51,7 +52,7 @@ pub async fn create<U: AsRef<str>, D: AsRef<str>>(
     let cred = entry
         .insert(db)
         .await
-        .map_err(|e| db_err(e, "inserting webauth credential"))?
+        .context("inserting webauthn credential")?
         .into();
     Ok(cred)
 }

@@ -12,6 +12,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::error::BuilderError;
 use derive_builder::Builder;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -19,6 +20,7 @@ use validator::Validate;
 
 /// Role representation.
 #[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
+#[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct Role {
     /// The role ID.
@@ -42,6 +44,7 @@ pub struct Role {
 
 /// Query parameters for listing roles.
 #[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
+#[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct RoleListParameters {
     /// Filter roles by the domain.
@@ -53,6 +56,7 @@ pub struct RoleListParameters {
 }
 
 #[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
+#[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct RoleCreate {
     /// The role ID.

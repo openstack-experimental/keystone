@@ -24,7 +24,8 @@ use crate::db::entity::{
     prelude::{FederatedUser, LocalUser, NonlocalUser, User as DbUser, UserOption},
     user as db_user,
 };
-use crate::identity::backends::error::{IdentityDatabaseError, db_err};
+use crate::error::DbContextExt;
+use crate::identity::backends::error::IdentityDatabaseError;
 use crate::identity::types::*;
 
 pub async fn list(
@@ -48,10 +49,7 @@ pub async fn list(
             federated_user_select.filter(db_federated_user::Column::DisplayName.eq(name));
     }
 
-    let db_users: Vec<db_user::Model> = user_select
-        .all(db)
-        .await
-        .map_err(|err| db_err(err, "fetching users data"))?;
+    let db_users: Vec<db_user::Model> = user_select.all(db).await.context("fetching users data")?;
 
     let (user_opts, local_users, nonlocal_users, federated_users) = tokio::join!(
         db_users.load_many(UserOption, db),
@@ -60,7 +58,7 @@ pub async fn list(
         db_users.load_many(federated_user_select, db)
     );
 
-    let locals = local_users.map_err(|err| db_err(err, "fetching local users data"))?;
+    let locals = local_users.context("fetching local users data")?;
 
     let local_users_passwords: Vec<Option<Vec<db_password::Model>>> =
         local_user::load_local_users_passwords(db, locals.iter().cloned().map(|u| u.map(|x| x.id)))
@@ -70,23 +68,20 @@ pub async fn list(
 
     let mut results: Vec<UserResponse> = Vec::new();
     for (u, (o, (l, (p, (n, f))))) in db_users.into_iter().zip(
-        user_opts
-            .map_err(|err| db_err(err, "fetching user options"))?
-            .into_iter()
-            .zip(
-                locals.into_iter().zip(
-                    local_users_passwords.into_iter().zip(
-                        nonlocal_users
-                            .map_err(|err| db_err(err, "fetching nonlocal users data"))?
-                            .into_iter()
-                            .zip(
-                                federated_users
-                                    .map_err(|err| db_err(err, "fetching federated users data"))?
-                                    .into_iter(),
-                            ),
-                    ),
+        user_opts.context("fetching user options")?.into_iter().zip(
+            locals.into_iter().zip(
+                local_users_passwords.into_iter().zip(
+                    nonlocal_users
+                        .context("fetching nonlocal users data")?
+                        .into_iter()
+                        .zip(
+                            federated_users
+                                .context("fetching federated users data")?
+                                .into_iter(),
+                        ),
                 ),
             ),
+        ),
     ) {
         if l.is_none() && n.is_none() && f.is_empty() {
             continue;

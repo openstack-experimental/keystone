@@ -17,16 +17,17 @@ use sea_orm::DatabaseConnection;
 use sea_orm::entity::*;
 use sea_orm::query::*;
 
-use super::super::types::*;
 use crate::catalog::CatalogProviderError;
 use crate::catalog::backends::CatalogBackend;
-use crate::catalog::backends::error::{CatalogDatabaseError, db_err};
+use crate::catalog::backends::error::CatalogDatabaseError;
+use crate::catalog::types::*;
 use crate::config::Config;
 use crate::db::entity::{
     endpoint as db_endpoint,
     prelude::{Endpoint as DbEndpoint, Service as DbService},
     service as db_service,
 };
+use crate::error::DbContextExt;
 use crate::keystone::ServiceState;
 
 mod endpoint;
@@ -107,7 +108,7 @@ async fn get_catalog(
         .filter(db_endpoint::Column::Enabled.eq(enabled))
         .all(db)
         .await
-        .map_err(|err| db_err(err, "fetching catalog"))?;
+        .context("fetching catalog")?;
 
     let mut res: Vec<(Service, Vec<Endpoint>)> = Vec::new();
     for (srv, db_endpoints) in db_entities.into_iter() {

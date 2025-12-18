@@ -19,7 +19,7 @@ pub mod error;
 pub mod sql;
 
 use crate::catalog::error::CatalogProviderError;
-use crate::catalog::{Endpoint, EndpointListParameters, Service, ServiceListParameters};
+use crate::catalog::types::{Endpoint, EndpointListParameters, Service, ServiceListParameters};
 use crate::config::Config;
 use crate::keystone::ServiceState;
 

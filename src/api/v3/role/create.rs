@@ -52,8 +52,7 @@ pub(super) async fn create(
         .provider
         .get_assignment_provider()
         .create_role(&state, payload.into())
-        .await
-        .map_err(KeystoneApiError::assignment)?;
+        .await?;
 
     // Return response with 201 Created status
     Ok((

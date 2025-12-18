@@ -16,7 +16,10 @@ use derive_builder::Builder;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::error::BuilderError;
+
 #[derive(Builder, Clone, Debug, Default, Deserialize, Eq, Hash, Serialize, PartialEq)]
+#[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct Group {
     /// The description of the group.
@@ -33,6 +36,7 @@ pub struct Group {
 }
 
 #[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct GroupListParameters {
     /// Filter groups by the domain
@@ -42,6 +46,7 @@ pub struct GroupListParameters {
 }
 
 #[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct GroupCreate {
     /// The description of the group.

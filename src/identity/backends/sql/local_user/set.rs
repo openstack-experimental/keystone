@@ -16,7 +16,8 @@ use sea_orm::DatabaseConnection;
 use sea_orm::entity::*;
 
 use crate::db::entity::local_user as db_local_user;
-use crate::identity::backends::sql::{IdentityDatabaseError, db_err};
+use crate::error::DbContextExt;
+use crate::identity::backends::sql::IdentityDatabaseError;
 
 pub async fn reset_failed_auth(
     db: &DatabaseConnection,
@@ -25,8 +26,8 @@ pub async fn reset_failed_auth(
     let mut update: db_local_user::ActiveModel = user.clone().into();
     update.failed_auth_count = Set(None);
     update.failed_auth_at = Set(None);
-    update
+    Ok(update
         .update(db)
         .await
-        .map_err(|err| db_err(err, "resetting local user failed auth counters"))
+        .context("resetting local user failed auth counters")?)
 }

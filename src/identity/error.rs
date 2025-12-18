@@ -15,81 +15,63 @@
 use thiserror::Error;
 
 use crate::common::password_hashing::PasswordHashError;
+use crate::error::BuilderError;
 use crate::identity::backends::error::*;
-use crate::identity::types::*;
 use crate::resource::error::ResourceProviderError;
 
+/// Identity provider error.
 #[derive(Error, Debug)]
 pub enum IdentityProviderError {
-    /// Unsupported driver
-    #[error("unsupported driver {0}")]
-    UnsupportedDriver(String),
-
-    /// Identity provider error
-    #[error("data serialization error")]
-    Serde {
-        #[from]
-        source: serde_json::Error,
-    },
-
-    #[error("user {0} not found")]
-    UserNotFound(String),
-
-    #[error("group {0} not found")]
-    GroupNotFound(String),
-
-    /// Identity provider error
-    #[error(transparent)]
-    IdentityDatabase { source: IdentityDatabaseError },
-
-    #[error(transparent)]
-    UserBuilder {
-        #[from]
-        source: UserResponseBuilderError,
-    },
-
-    #[error(transparent)]
-    UserCreateBuilder {
-        #[from]
-        source: UserCreateBuilderError,
-    },
-
-    #[error(transparent)]
-    FederatedUserBuilder {
-        #[from]
-        source: FederationBuilderError,
-    },
-
-    #[error(transparent)]
-    DomainBuilder {
-        #[from]
-        source: DomainBuilderError,
-    },
-
-    #[error("either user id or user name with user domain id or name must be given")]
-    UserIdOrNameWithDomain,
-
-    #[error("password hashing error")]
-    PasswordHash {
-        #[from]
-        source: PasswordHashError,
-    },
-
+    /// Authentication error.
     #[error(transparent)]
     AuthenticationInfo {
         #[from]
         source: crate::auth::AuthenticationError,
     },
 
+    /// SQL backend error.
+    #[error(transparent)]
+    Backend {
+        /// The source of the error.
+        source: IdentityDatabaseError,
+    },
+
+    /// Conflict.
+    #[error("conflict: {0}")]
+    Conflict(String),
+
+    /// The group has not been found.
+    #[error("group {0} not found")]
+    GroupNotFound(String),
+
+    /// Password hashing error.
+    #[error("password hashing error")]
+    PasswordHash {
+        #[from]
+        source: PasswordHashError,
+    },
+
+    /// Resource provider error.
     #[error(transparent)]
     ResourceProvider {
         #[from]
         source: ResourceProviderError,
     },
 
-    /// Conflict.
-    #[error("conflict: {0}")]
-    Conflict(String),
+    /// (de)serialization error.
+    #[error("data serialization error")]
+    Serde {
+        #[from]
+        source: serde_json::Error,
+    },
+
+    /// Structures builder error.
+    #[error(transparent)]
+    StructBuilder {
+        /// The source of the error.
+        #[from]
+        source: BuilderError,
+    },
 
     /// Request validation error.
     #[error("request validation error: {}", source)]
@@ -98,15 +80,35 @@ pub enum IdentityProviderError {
         #[from]
         source: validator::ValidationErrors,
     },
+
+    /// Unsupported driver.
+    #[error("unsupported driver {0}")]
+    UnsupportedDriver(String),
+
+    /// User ID or Name with Domain must be specified.
+    #[error("either user id or user name with user domain id or name must be given")]
+    UserIdOrNameWithDomain,
+
+    /// The user has not been found.
+    #[error("user {0} not found")]
+    UserNotFound(String),
 }
 
 impl From<IdentityDatabaseError> for IdentityProviderError {
     fn from(source: IdentityDatabaseError) -> Self {
         match source {
-            IdentityDatabaseError::Conflict { message, .. } => Self::Conflict(message),
+            IdentityDatabaseError::Database { source } => match source {
+                cfl @ crate::error::DatabaseError::Conflict { .. } => {
+                    Self::Conflict(cfl.to_string())
+                }
+                other => Self::Backend {
+                    source: IdentityDatabaseError::Database { source: other },
+                },
+            },
             IdentityDatabaseError::UserNotFound(x) => Self::UserNotFound(x),
             IdentityDatabaseError::GroupNotFound(x) => Self::GroupNotFound(x),
             IdentityDatabaseError::Serde { source } => Self::Serde { source },
+            IdentityDatabaseError::StructBuilder { source } => Self::StructBuilder { source },
             IdentityDatabaseError::PasswordHash { source } => Self::PasswordHash { source },
             IdentityDatabaseError::NoPasswordHash(..) => Self::AuthenticationInfo {
                 source: crate::auth::AuthenticationError::UserNameOrPasswordWrong,
@@ -114,10 +116,7 @@ impl From<IdentityDatabaseError> for IdentityProviderError {
             IdentityDatabaseError::AuthenticationInfo { source } => {
                 Self::AuthenticationInfo { source }
             }
-            //IdentityDatabaseError::UserLocked(x) => Self::AuthenticationInfo {
-            //    source: crate::auth::AuthenticationError::UserLocked(x),
-            //},
-            _ => Self::IdentityDatabase { source },
+            _ => Self::Backend { source },
         }
     }
 }

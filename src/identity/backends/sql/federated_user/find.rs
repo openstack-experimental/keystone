@@ -18,7 +18,8 @@ use sea_orm::query::*;
 
 use crate::config::Config;
 use crate::db::entity::{federated_user, prelude::FederatedUser};
-use crate::identity::backends::sql::{IdentityDatabaseError, db_err};
+use crate::error::DbContextExt;
+use crate::identity::backends::sql::IdentityDatabaseError;
 
 /// Get federated user entry by the idp_id and the unique_id
 pub async fn find_by_idp_and_unique_id<I: AsRef<str>, U: AsRef<str>>(
@@ -32,7 +33,7 @@ pub async fn find_by_idp_and_unique_id<I: AsRef<str>, U: AsRef<str>>(
         .filter(federated_user::Column::UniqueId.eq(unique_id.as_ref()))
         .all(db)
         .await
-        .map_err(|err| db_err(err, "searching federated user by the idp and unique id"))?
+        .context("searching federated user by the idp and unique id")?
         .first()
         .cloned())
 }

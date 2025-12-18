@@ -169,12 +169,6 @@ impl From<AssignmentBuilderError> for KeystoneApiError {
     }
 }
 
-impl From<types::RoleAssignmentListParametersBuilderError> for KeystoneApiError {
-    fn from(err: types::RoleAssignmentListParametersBuilderError) -> Self {
-        Self::InternalError(err.to_string())
-    }
-}
-
 /// Assignments
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct AssignmentList {

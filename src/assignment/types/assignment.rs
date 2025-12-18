@@ -12,6 +12,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::error::BuilderError;
 use derive_builder::Builder;
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -19,23 +20,29 @@ use validator::Validate;
 
 /// The assignment object.
 #[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct Assignment {
+    /// The actor id.
+    #[validate(length(max = 64))]
+    pub actor_id: String,
+
     /// The role ID.
     #[validate(length(max = 64))]
     pub role_id: String,
+
     /// The role name.
     #[builder(default)]
     #[validate(length(max = 64))]
     pub role_name: Option<String>,
-    /// The actor id.
-    #[validate(length(max = 64))]
-    pub actor_id: String,
+
     /// The target id.
     #[validate(length(max = 64))]
     pub target_id: String,
+
     /// The assignment type.
     pub r#type: AssignmentType,
+
     /// Inherited flag.
     pub inherited: bool,
 }
@@ -72,6 +79,7 @@ impl fmt::Display for AssignmentType {
 
 /// Parameters for listing role assignments for role/target/actor.
 #[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
+#[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct RoleAssignmentListParameters {
     /// Query role assignments filtering results by the role
@@ -117,9 +125,10 @@ pub struct RoleAssignmentListParameters {
 }
 
 /// Querying effective role assignments for list of actors (typically user with
-/// all groups user is member of) on list of targets (exactl project + inherited
-/// from uppoer projects/domain).
+/// all groups user is member of) on list of targets (exact project + inherited
+/// from upper projects/domain).
 #[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
+#[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct RoleAssignmentListForMultipleActorTargetParameters {
     /// List of actors for which assignments are looked up.

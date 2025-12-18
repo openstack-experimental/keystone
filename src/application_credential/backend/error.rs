@@ -12,11 +12,10 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use sea_orm::SqlErr;
 use thiserror::Error;
 
 use crate::common::password_hashing::PasswordHashError;
-use crate::error::BuilderError;
+use crate::error::{BuilderError, DatabaseError};
 
 /// Application credential database backend error.
 #[derive(Error, Debug)]
@@ -26,38 +25,19 @@ pub enum ApplicationCredentialDatabaseError {
     #[error("more than one access rule matching the ID and parameters found")]
     AccessRuleConflict,
 
-    /// Structures builder error.
-    #[error(transparent)]
-    StructBuilder {
-        /// The source of the error.
-        #[from]
-        source: BuilderError,
-    },
-
     /// Assignment Database error.
     #[error(transparent)]
-    AssignmentDatabaseError {
+    Assignment {
         /// The source of the error.
         #[from]
         source: crate::assignment::backend::error::AssignmentDatabaseError,
     },
 
-    /// Conflict.
-    #[error("{message} while {context}")]
-    Conflict {
-        /// Human readable error.
-        message: String,
-        /// Error context.
-        context: String,
-    },
-
     /// Database error.
-    #[error("Database error while {context}")]
+    #[error(transparent)]
     Database {
-        /// The source of the error.
-        source: sea_orm::DbErr,
-        /// Error context.
-        context: String,
+        #[from]
+        source: DatabaseError,
     },
 
     /// DateTime parsing error.
@@ -72,6 +52,10 @@ pub enum ApplicationCredentialDatabaseError {
         source: PasswordHashError,
     },
 
+    /// Secret is missing.
+    #[error("secret missing")]
+    SecretMissing,
+
     /// (de)serialization error.
     #[error(transparent)]
     Serde {
@@ -79,40 +63,11 @@ pub enum ApplicationCredentialDatabaseError {
         source: serde_json::Error,
     },
 
-    /// Secret is missing.
-    #[error("secret missing")]
-    SecretMissing,
-
-    /// SqlError
-    #[error("{message}")]
-    Sql { message: String, context: String },
-}
-
-/// Convert the DB error into the [ApplicationCredentialDatabaseError] with the
-/// context information.
-pub fn db_err(e: sea_orm::DbErr, context: &str) -> ApplicationCredentialDatabaseError {
-    e.sql_err().map_or_else(
-        || ApplicationCredentialDatabaseError::Database {
-            source: e,
-            context: context.to_string(),
-        },
-        |err| match err {
-            SqlErr::UniqueConstraintViolation(descr) => {
-                ApplicationCredentialDatabaseError::Conflict {
-                    message: descr.to_string(),
-                    context: context.to_string(),
-                }
-            }
-            SqlErr::ForeignKeyConstraintViolation(descr) => {
-                ApplicationCredentialDatabaseError::Conflict {
-                    message: descr.to_string(),
-                    context: context.to_string(),
-                }
-            }
-            other => ApplicationCredentialDatabaseError::Sql {
-                message: other.to_string(),
-                context: context.to_string(),
-            },
-        },
-    )
+    /// Structures builder error.
+    #[error(transparent)]
+    StructBuilder {
+        /// The source of the error.
+        #[from]
+        source: BuilderError,
+    },
 }

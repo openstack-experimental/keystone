@@ -16,7 +16,8 @@ use sea_orm::DatabaseConnection;
 use sea_orm::entity::*;
 
 use crate::db::entity::prelude::Project as DbProject;
-use crate::resource::backend::error::{ResourceDatabaseError, db_err};
+use crate::error::DbContextExt;
+use crate::resource::backend::error::ResourceDatabaseError;
 use crate::resource::types::Project;
 
 pub async fn get_project_parents<I: AsRef<str>>(
@@ -29,7 +30,7 @@ pub async fn get_project_parents<I: AsRef<str>>(
         let project = DbProject::find_by_id(pid.clone())
             .one(db)
             .await
-            .map_err(|err| db_err(err, "resolving project parents"))?;
+            .context("resolving project parents")?;
         if pid == id.as_ref() && project.is_none() {
             return Ok(None);
         }

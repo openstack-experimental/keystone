@@ -22,8 +22,8 @@ use crate::config::Config;
 use crate::keystone::ServiceState;
 use crate::resource::ResourceProviderError;
 
-pub use crate::resource::types::domain::{Domain, DomainBuilder, DomainBuilderError};
-pub use crate::resource::types::project::{Project, ProjectBuilder, ProjectBuilderError};
+pub use crate::resource::types::domain::{Domain, DomainBuilder};
+pub use crate::resource::types::project::{Project, ProjectBuilder};
 
 #[async_trait]
 pub trait ResourceBackend: DynClone + Send + Sync + std::fmt::Debug {

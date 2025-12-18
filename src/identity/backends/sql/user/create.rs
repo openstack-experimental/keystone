@@ -25,7 +25,8 @@ use crate::db::entity::{
     federated_user as db_federated_user, local_user as db_local_user, password as db_password,
     user as db_user,
 };
-use crate::identity::backends::sql::{IdentityDatabaseError, db_err};
+use crate::error::DbContextExt;
+use crate::identity::backends::sql::IdentityDatabaseError;
 use crate::identity::types::*;
 
 use super::super::federated_user;
@@ -55,7 +56,7 @@ where
         NotSet
     };
 
-    db_user::ActiveModel {
+    Ok(db_user::ActiveModel {
         id: Set(user
             .id
             .clone()
@@ -72,7 +73,7 @@ where
     }
     .insert(db)
     .await
-    .map_err(|err| db_err(err, "inserting user entry"))
+    .context("inserting user entry")?)
 }
 
 pub async fn create(
@@ -85,7 +86,7 @@ pub async fn create(
     let txn = db
         .begin()
         .await
-        .map_err(|err| db_err(err, "starting transaction for persisting user"))?;
+        .context("starting transaction for persisting user")?;
     let main_user = create_main(conf, &txn, &user).await?;
     let mut response_builder = UserResponseBuilder::default();
     response_builder.merge_user_data(&main_user, &UserOptions::default(), None);
@@ -151,7 +152,7 @@ pub async fn create(
         }
         .insert(&txn)
         .await
-        .map_err(|err| db_err(err, "inserting new user record"))?;
+        .context("inserting new user record")?;
 
         let mut passwords: Vec<db_password::Model> = Vec::new();
         if let Some(password) = &user.password {
@@ -171,7 +172,7 @@ pub async fn create(
     }
     txn.commit()
         .await
-        .map_err(|err| db_err(err, "committing the user creation transaction"))?;
+        .context("committing the user creation transaction")?;
 
     Ok(response_builder.build()?)
 }
