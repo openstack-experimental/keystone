@@ -13,24 +13,23 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use axum::{
-    extract::{Json, Path, Query, State},
-    http::StatusCode,
+    extract::{Path, Query, State},
     response::IntoResponse,
 };
 use utoipa_axum::{router::OpenApiRouter, routes};
-use validator::Validate;
 
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
 use crate::assignment::AssignmentApi;
 use crate::keystone::ServiceState;
-use types::{Role, RoleCreate, RoleList, RoleListParameters, RoleResponse};
+use types::{Role, RoleList, RoleListParameters, RoleResponse};
 
+mod create;
 pub mod types;
 
 pub(crate) fn openapi_router() -> OpenApiRouter<ServiceState> {
     OpenApiRouter::new()
-        .routes(routes!(list, create))
+        .routes(routes!(list, create::create))
         .routes(routes!(show))
 }
 
@@ -95,48 +94,6 @@ async fn show(
         })?
 }
 
-/// Create Role
-#[utoipa::path(
-    post,
-    path = "/",
-    request_body = RoleCreate,
-    description = "Create a new role",
-    responses(
-        (status = CREATED, description = "Role created", body = RoleResponse),
-        (status = 400, description = "Invalid input"),
-        (status = 500, description = "Internal error")
-    ),
-    tag="roles"
-)]
-#[tracing::instrument(name = "api::role_create", level = "debug", skip(state))]
-async fn create(
-    Auth(user_auth): Auth,
-    State(state): State<ServiceState>,
-    Json(payload): Json<RoleCreate>,
-) -> Result<impl IntoResponse, KeystoneApiError> {
-    // Validate the request
-    payload
-        .validate()
-        .map_err(|e| KeystoneApiError::BadRequest(e.to_string()))?;
-
-    // Create the role
-    let created_role = state
-        .provider
-        .get_assignment_provider()
-        .create_role(&state, payload.into())
-        .await
-        .map_err(KeystoneApiError::assignment)?;
-
-    // Return response with 201 Created status
-    Ok((
-        StatusCode::CREATED,
-        Json(RoleResponse {
-            role: created_role.into(),
-        }),
-    )
-        .into_response())
-}
-
 #[cfg(test)]
 mod tests {
     use axum::{
@@ -158,7 +115,7 @@ mod tests {
     };
     use crate::assignment::{
         MockAssignmentProvider,
-        types::{Role, RoleCreate, RoleListParameters},
+        types::{Role, RoleListParameters},
     };
 
     use crate::config::Config;
@@ -171,7 +128,7 @@ mod tests {
 
     use crate::tests::api::get_mocked_state_unauthed;
 
-    fn get_mocked_state(assignment_mock: MockAssignmentProvider) -> ServiceState {
+    pub fn get_mocked_state(assignment_mock: MockAssignmentProvider) -> ServiceState {
         let mut token_mock = MockTokenProvider::default();
         token_mock
             .expect_validate_token()
@@ -369,70 +326,6 @@ mod tests {
                 id: "bar".into(),
                 extra: Some(json!({})),
                 ..Default::default()
-            },
-            res.role,
-        );
-    }
-
-    #[tokio::test]
-    async fn test_create() {
-        let mut assignment_mock = MockAssignmentProvider::default();
-        assignment_mock
-            .expect_create_role()
-            .withf(|_, role_create: &RoleCreate| {
-                role_create.name == "new_role"
-                    && role_create.domain_id.as_deref() == Some("domain1")
-                    && role_create.description.as_deref() == Some("A new role")
-            })
-            .returning(|_, _| {
-                Ok(Role {
-                    id: "new_role_id".into(),
-                    name: "new_role".into(),
-                    domain_id: Some("domain1".into()),
-                    description: Some("A new role".into()),
-                    ..Default::default()
-                })
-            });
-
-        let state = get_mocked_state(assignment_mock);
-
-        let mut api = openapi_router()
-            .layer(TraceLayer::new_for_http())
-            .with_state(state.clone());
-
-        let payload = json!({
-            "id": "",
-            "name": "new_role",
-            "domain_id": "domain1",
-            "description": "A new role",
-            "extra": {}
-        });
-
-        let response = api
-            .as_service()
-            .oneshot(
-                Request::builder()
-                    .uri("/")
-                    .header("x-auth-token", "foo")
-                    .header("Content-Type", "application/json")
-                    .method("POST")
-                    .body(Body::from(payload.to_string()))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(response.status(), StatusCode::CREATED);
-
-        let body = response.into_body().collect().await.unwrap().to_bytes();
-        let res: RoleResponse = serde_json::from_slice(&body).unwrap();
-        assert_eq!(
-            ApiRole {
-                id: "new_role_id".into(),
-                name: "new_role".into(),
-                domain_id: Some("domain1".into()),
-                description: Some("A new role".into()),
-                extra: Some(json!({}))
             },
             res.role,
         );

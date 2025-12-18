@@ -26,9 +26,9 @@ pub async fn create(
     db: &DatabaseConnection,
     role: RoleCreate, // ← Using RoleCreate instead of Role
 ) -> Result<Role, AssignmentDatabaseError> {
-    // Use provided ID or generate a new UUID as fallback
-    let entry = db_role::ActiveModel {
+    db_role::ActiveModel {
         id: Set(role
+            // Use provided ID or generate a new UUID as fallback
             .id
             .clone()
             .unwrap_or_else(|| Uuid::new_v4().simple().to_string())),
@@ -41,16 +41,11 @@ pub async fn create(
         extra: Set(Some(serde_json::to_string(
             &role.extra.as_ref().or(Some(&json!({}))),
         )?)),
-    };
-
-    // Insert into database
-    let created: db_role::Model = entry
-        .insert(db)
-        .await
-        .map_err(|err| db_err(err, "creating role"))?;
-
-    // Convert to domain type
-    created.try_into()
+    }
+    .insert(db)
+    .await
+    .map_err(|err| db_err(err, "creating role"))?
+    .try_into()
 }
 
 #[cfg(test)]
@@ -88,6 +83,7 @@ mod tests {
         assert!(created.extra.is_some());
         assert_eq!(created.extra.as_ref().unwrap()["key"], "value");
     }
+
     #[tokio::test]
     async fn test_create_without_domain() {
         // When domain_id is None, NULL_DOMAIN_ID should be used

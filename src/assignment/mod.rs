@@ -103,6 +103,23 @@ impl AssignmentProvider {
 
 #[async_trait]
 impl AssignmentApi for AssignmentProvider {
+    /// Create role.
+    #[tracing::instrument(level = "info", skip(self, state))]
+    async fn create_role(
+        &self,
+        state: &ServiceState,
+        params: RoleCreate,
+    ) -> Result<Role, AssignmentProviderError> {
+        params.validate()?;
+
+        let mut new_params = params;
+
+        if new_params.id.is_none() {
+            new_params.id = Some(Uuid::new_v4().simple().to_string());
+        }
+        self.backend_driver.create_role(state, new_params).await
+    }
+
     /// List roles
     #[tracing::instrument(level = "info", skip(self, state))]
     async fn list_roles(
@@ -121,23 +138,6 @@ impl AssignmentApi for AssignmentProvider {
         id: &'a str,
     ) -> Result<Option<Role>, AssignmentProviderError> {
         self.backend_driver.get_role(state, id).await
-    }
-
-    /// Create role
-    #[tracing::instrument(level = "info", skip(self, state))]
-    async fn create_role(
-        &self,
-        state: &ServiceState,
-        params: RoleCreate,
-    ) -> Result<Role, AssignmentProviderError> {
-        params.validate()?;
-
-        let mut new_params = params;
-
-        if new_params.id.is_none() {
-            new_params.id = Some(Uuid::new_v4().simple().to_string());
-        }
-        self.backend_driver.create_role(state, new_params).await
     }
 
     /// List role assignments

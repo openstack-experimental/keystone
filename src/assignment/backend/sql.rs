@@ -38,7 +38,7 @@ impl AssignmentBackend for SqlBackend {
         self.config = config;
     }
 
-    /// Create role
+    /// Create role.
     #[tracing::instrument(level = "info", skip(self, state))]
     async fn create_role(
         &self,

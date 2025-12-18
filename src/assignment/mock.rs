@@ -30,6 +30,12 @@ mock! {
 
     #[async_trait]
     impl AssignmentApi for AssignmentProvider {
+        async fn create_role(
+            &self,
+            state: &ServiceState,
+            params: RoleCreate,
+        ) -> Result<Role, AssignmentProviderError>;
+
         async fn list_roles(
             &self,
             state: &ServiceState,
@@ -41,11 +47,7 @@ mock! {
             state: &ServiceState,
             id: &'a str,
         ) -> Result<Option<Role>, AssignmentProviderError>;
-        async fn create_role(
-            &self,
-            state: &ServiceState,
-            params: RoleCreate,
-        ) -> Result<Role, AssignmentProviderError>;
+
         async fn list_role_assignments(
             &self,
             state: &ServiceState,
