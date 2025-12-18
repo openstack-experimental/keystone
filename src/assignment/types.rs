@@ -21,10 +21,19 @@ use crate::assignment::AssignmentProviderError;
 use crate::keystone::ServiceState;
 
 pub use crate::assignment::types::assignment::*;
-pub use crate::assignment::types::role::{Role, RoleBuilder, RoleBuilderError, RoleListParameters};
+pub use crate::assignment::types::role::{
+    Role, RoleBuilder, RoleBuilderError, RoleCreate, RoleListParameters,
+};
 
 #[async_trait]
 pub trait AssignmentApi: Send + Sync + Clone {
+    /// Create Role.
+    async fn create_role(
+        &self,
+        state: &ServiceState,
+        params: RoleCreate,
+    ) -> Result<Role, AssignmentProviderError>;
+
     /// List Roles.
     async fn list_roles(
         &self,

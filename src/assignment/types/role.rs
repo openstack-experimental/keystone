@@ -51,3 +51,25 @@ pub struct RoleListParameters {
     #[validate(length(max = 255))]
     pub name: Option<String>,
 }
+
+#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
+#[builder(setter(strip_option, into))]
+pub struct RoleCreate {
+    /// The role ID.
+    #[validate(length(max = 64))]
+    pub id: Option<String>,
+    /// The role name.
+    #[validate(length(max = 255))]
+    pub name: String,
+    /// The role domain_id.
+    #[builder(default)]
+    #[validate(length(min = 1, max = 64))]
+    pub domain_id: Option<String>,
+    /// The role description
+    #[builder(default)]
+    #[validate(length(max = 255))]
+    pub description: Option<String>,
+    /// Additional role properties
+    #[builder(default)]
+    pub extra: Option<Value>,
+}

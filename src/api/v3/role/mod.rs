@@ -24,11 +24,12 @@ use crate::assignment::AssignmentApi;
 use crate::keystone::ServiceState;
 use types::{Role, RoleList, RoleListParameters, RoleResponse};
 
+mod create;
 pub mod types;
 
 pub(crate) fn openapi_router() -> OpenApiRouter<ServiceState> {
     OpenApiRouter::new()
-        .routes(routes!(list))
+        .routes(routes!(list, create::create))
         .routes(routes!(show))
 }
 
@@ -127,7 +128,7 @@ mod tests {
 
     use crate::tests::api::get_mocked_state_unauthed;
 
-    fn get_mocked_state(assignment_mock: MockAssignmentProvider) -> ServiceState {
+    pub fn get_mocked_state(assignment_mock: MockAssignmentProvider) -> ServiceState {
         let mut token_mock = MockTokenProvider::default();
         token_mock
             .expect_validate_token()

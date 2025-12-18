@@ -12,49 +12,57 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use serde_json::Value;
-use tracing::error;
+use sea_orm::DatabaseConnection;
+use sea_orm::entity::*;
+use sea_orm::query::*;
 
-mod create;
-mod list;
-
-pub use create::create;
-pub use list::get;
-pub use list::list;
-
-use crate::assignment::backend::error::AssignmentDatabaseError;
+use crate::assignment::backend::error::{AssignmentDatabaseError, db_err};
 use crate::assignment::types::*;
-use crate::db::entity::role as db_role;
+use crate::config::Config;
+use crate::db::entity::{prelude::Role as DbRole, role as db_role};
 
-static NULL_DOMAIN_ID: &str = "<<null>>";
+pub async fn get<I: AsRef<str>>(
+    _conf: &Config,
+    db: &DatabaseConnection,
+    id: I,
+) -> Result<Option<Role>, AssignmentDatabaseError> {
+    let role_select = DbRole::find_by_id(id.as_ref());
 
-impl TryFrom<db_role::Model> for Role {
-    type Error = AssignmentDatabaseError;
+    let entry: Option<db_role::Model> = role_select
+        .one(db)
+        .await
+        .map_err(|err| db_err(err, "fetching role by id"))?;
+    entry.map(TryInto::try_into).transpose()
+}
 
-    fn try_from(value: db_role::Model) -> Result<Self, Self::Error> {
-        let mut builder = RoleBuilder::default();
-        builder.id(value.id.clone());
-        builder.name(value.name.clone());
-        if value.domain_id != NULL_DOMAIN_ID {
-            builder.domain_id(value.domain_id.clone());
-        }
-        if let Some(description) = &value.description {
-            builder.description(description.clone());
-        }
-        if let Some(extra) = &value.extra {
-            builder.extra(
-                serde_json::from_str::<Value>(extra)
-                    .inspect_err(|e| error!("failed to deserialize role extra: {e}"))
-                    .unwrap_or_default(),
-            );
-        }
+pub async fn list(
+    _conf: &Config,
+    db: &DatabaseConnection,
+    params: &RoleListParameters,
+) -> Result<Vec<Role>, AssignmentDatabaseError> {
+    let mut select = DbRole::find();
 
-        Ok(builder.build()?)
+    if let Some(domain_id) = &params.domain_id {
+        select = select.filter(db_role::Column::DomainId.eq(domain_id));
     }
+    if let Some(name) = &params.name {
+        select = select.filter(db_role::Column::Name.eq(name));
+    }
+
+    let db_roles: Vec<db_role::Model> = select
+        .all(db)
+        .await
+        .map_err(|err| db_err(err, "listing roles"))?;
+    let results: Result<Vec<Role>, _> = db_roles
+        .into_iter()
+        .map(TryInto::<Role>::try_into)
+        .collect();
+
+    results
 }
 
 #[cfg(test)]
-pub(crate) mod tests {
+pub(super) mod tests {
     use sea_orm::{DatabaseBackend, MockDatabase, Transaction};
 
     use crate::config::Config;
@@ -62,12 +70,18 @@ pub(crate) mod tests {
 
     use super::*;
 
-    pub(crate) fn get_role_mock(id: String) -> role::Model {
+    pub(crate) fn get_role_mock<I>(id: I) -> role::Model
+    where
+        I: AsRef<str>,
+    {
+        let id_str = id.as_ref();
+
         role::Model {
-            id: id.clone(),
+            id: id_str.to_string(),
             domain_id: "foo_domain".into(),
             name: "foo".into(),
-            ..Default::default()
+            description: None,
+            extra: None,
         }
     }
 
@@ -77,7 +91,7 @@ pub(crate) mod tests {
         let db = MockDatabase::new(DatabaseBackend::Postgres)
             .append_query_results([
                 // First query result - select user itself
-                vec![get_role_mock("1".into())],
+                vec![get_role_mock("1")],
             ])
             .into_connection();
         let config = Config::default();
@@ -108,15 +122,15 @@ pub(crate) mod tests {
         let db = MockDatabase::new(DatabaseBackend::Postgres)
             .append_query_results([
                 // First query result - select user itself
-                vec![get_role_mock("1".into())],
+                vec![get_role_mock("1")],
             ])
             .append_query_results([
                 // First query result - select user itself
-                vec![get_role_mock("1".into())],
+                vec![get_role_mock("1")],
             ])
             .append_query_results([
                 // First query result - select user itself
-                vec![get_role_mock("1".into())],
+                vec![get_role_mock("1")],
             ])
             .into_connection();
         let config = Config::default();

@@ -46,6 +46,7 @@
 //! interprets the user role set, and determines to which operations or
 //! resources each role grants access.
 use async_trait::async_trait;
+use uuid::Uuid;
 use validator::Validate;
 
 pub mod backend;
@@ -58,7 +59,7 @@ use crate::assignment::backend::{AssignmentBackend, SqlBackend};
 use crate::assignment::error::AssignmentProviderError;
 use crate::assignment::types::{
     Assignment, Role, RoleAssignmentListForMultipleActorTargetParametersBuilder,
-    RoleAssignmentListParameters, RoleAssignmentTarget, RoleAssignmentTargetType,
+    RoleAssignmentListParameters, RoleAssignmentTarget, RoleAssignmentTargetType, RoleCreate,
     RoleListParameters,
 };
 use crate::config::Config;
@@ -102,6 +103,23 @@ impl AssignmentProvider {
 
 #[async_trait]
 impl AssignmentApi for AssignmentProvider {
+    /// Create role.
+    #[tracing::instrument(level = "info", skip(self, state))]
+    async fn create_role(
+        &self,
+        state: &ServiceState,
+        params: RoleCreate,
+    ) -> Result<Role, AssignmentProviderError> {
+        params.validate()?;
+
+        let mut new_params = params;
+
+        if new_params.id.is_none() {
+            new_params.id = Some(Uuid::new_v4().simple().to_string());
+        }
+        self.backend_driver.create_role(state, new_params).await
+    }
+
     /// List roles
     #[tracing::instrument(level = "info", skip(self, state))]
     async fn list_roles(

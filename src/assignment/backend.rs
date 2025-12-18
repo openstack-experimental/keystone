@@ -29,7 +29,9 @@ pub use crate::assignment::types::assignment::{
     RoleAssignmentListParametersBuilder, RoleAssignmentListParametersBuilderError,
     RoleAssignmentTarget,
 };
-pub use crate::assignment::types::role::{Role, RoleBuilder, RoleBuilderError, RoleListParameters};
+pub use crate::assignment::types::role::{
+    Role, RoleBuilder, RoleBuilderError, RoleCreate, RoleListParameters,
+};
 
 pub use sql::SqlBackend;
 
@@ -37,6 +39,13 @@ pub use sql::SqlBackend;
 pub trait AssignmentBackend: DynClone + Send + Sync + std::fmt::Debug {
     /// Set config
     fn set_config(&mut self, config: Config);
+
+    /// Create Role.
+    async fn create_role(
+        &self,
+        state: &ServiceState,
+        params: RoleCreate,
+    ) -> Result<Role, AssignmentProviderError>;
 
     /// List Roles
     async fn list_roles(

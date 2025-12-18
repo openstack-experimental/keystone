@@ -17,7 +17,7 @@ use mockall::mock;
 use crate::assignment::AssignmentApi;
 use crate::assignment::AssignmentProviderError;
 use crate::assignment::types::{
-    Assignment, Role, RoleAssignmentListParameters, RoleListParameters,
+    Assignment, Role, RoleAssignmentListParameters, RoleCreate, RoleListParameters,
 };
 use crate::config::Config;
 use crate::keystone::ServiceState;
@@ -30,6 +30,12 @@ mock! {
 
     #[async_trait]
     impl AssignmentApi for AssignmentProvider {
+        async fn create_role(
+            &self,
+            state: &ServiceState,
+            params: RoleCreate,
+        ) -> Result<Role, AssignmentProviderError>;
+
         async fn list_roles(
             &self,
             state: &ServiceState,

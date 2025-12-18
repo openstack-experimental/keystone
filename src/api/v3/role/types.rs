@@ -120,3 +120,37 @@ impl From<RoleListParameters> for types::RoleListParameters {
         }
     }
 }
+
+/// Role create request body.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+pub struct RoleCreate {
+    /// The role description.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[validate(length(min = 1, max = 255))]
+    pub description: Option<String>,
+
+    /// The domain ID of the role.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[validate(length(min = 1, max = 64))]
+    pub domain_id: Option<String>,
+
+    /// The role name.
+    #[validate(length(min = 1, max = 255))]
+    pub name: String,
+
+    /// Extra attributes for the role.
+    #[serde(flatten, skip_serializing_if = "Option::is_none")]
+    pub extra: Option<Value>,
+}
+
+impl From<RoleCreate> for types::RoleCreate {
+    fn from(value: RoleCreate) -> Self {
+        Self {
+            description: value.description,
+            domain_id: value.domain_id,
+            extra: value.extra,
+            id: None,
+            name: value.name,
+        }
+    }
+}
