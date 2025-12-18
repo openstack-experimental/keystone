@@ -16,10 +16,11 @@ use sea_orm::DatabaseConnection;
 use sea_orm::entity::*;
 use sea_orm::query::*;
 
-use crate::assignment::backend::error::{AssignmentDatabaseError, db_err};
+use crate::assignment::backend::error::AssignmentDatabaseError;
 use crate::assignment::types::*;
 use crate::config::Config;
 use crate::db::entity::{prelude::Role as DbRole, role as db_role};
+use crate::error::DbContextExt;
 
 pub async fn get<I: AsRef<str>>(
     _conf: &Config,
@@ -28,10 +29,7 @@ pub async fn get<I: AsRef<str>>(
 ) -> Result<Option<Role>, AssignmentDatabaseError> {
     let role_select = DbRole::find_by_id(id.as_ref());
 
-    let entry: Option<db_role::Model> = role_select
-        .one(db)
-        .await
-        .map_err(|err| db_err(err, "fetching role by id"))?;
+    let entry: Option<db_role::Model> = role_select.one(db).await.context("fetching role by id")?;
     entry.map(TryInto::try_into).transpose()
 }
 
@@ -49,10 +47,7 @@ pub async fn list(
         select = select.filter(db_role::Column::Name.eq(name));
     }
 
-    let db_roles: Vec<db_role::Model> = select
-        .all(db)
-        .await
-        .map_err(|err| db_err(err, "listing roles"))?;
+    let db_roles: Vec<db_role::Model> = select.all(db).await.context("listing roles")?;
     let results: Result<Vec<Role>, _> = db_roles
         .into_iter()
         .map(TryInto::<Role>::try_into)

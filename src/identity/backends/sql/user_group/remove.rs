@@ -21,7 +21,8 @@ use crate::db::entity::{
     prelude::{ExpiringUserGroupMembership, UserGroupMembership},
     user_group_membership,
 };
-use crate::identity::backends::sql::{IdentityDatabaseError, db_err};
+use crate::error::DbContextExt;
+use crate::identity::backends::sql::IdentityDatabaseError;
 
 /// Remove the user from the group.
 pub async fn remove_user_from_group<U: AsRef<str>, G: AsRef<str>>(
@@ -32,7 +33,7 @@ pub async fn remove_user_from_group<U: AsRef<str>, G: AsRef<str>>(
     UserGroupMembership::delete_by_id((user_id.as_ref().into(), group_id.as_ref().into()))
         .exec(db)
         .await
-        .map_err(|e| db_err(e, "Deleting user<->group membership relation"))?;
+        .context("Deleting user<->group membership relation")?;
 
     Ok(())
 }
@@ -59,7 +60,7 @@ where
         )
         .exec(db)
         .await
-        .map_err(|e| db_err(e, "Deleting user<->group membership relations"))?;
+        .context("Deleting user<->group membership relations")?;
 
     Ok(())
 }
@@ -78,7 +79,7 @@ pub async fn remove_user_from_group_expiring<U: AsRef<str>, G: AsRef<str>, IDP: 
     ))
     .exec(db)
     .await
-    .map_err(|e| db_err(e, "Deleting expiring user<->group membership relation"))?;
+    .context("Deleting expiring user<->group membership relation")?;
 
     Ok(())
 }
@@ -108,7 +109,7 @@ where
         )
         .exec(db)
         .await
-        .map_err(|e| db_err(e, "Deleting user<->group membership relations"))?;
+        .context("Deleting user<->group membership relations")?;
 
     Ok(())
 }

@@ -25,10 +25,12 @@ use uuid::Uuid;
 use validator::Validate;
 
 use crate::api::KeystoneApiError;
+use crate::error::BuilderError;
 use crate::federation::types;
 
 /// OIDC/JWT mapping data.
 #[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct Mapping {
     /// Attribute mapping ID for federated logins.
@@ -119,6 +121,7 @@ pub struct MappingResponse {
 
 /// OIDC/JWT attribute mapping create data.
 #[derive(Builder, Clone, Default, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct MappingCreate {
     /// Attribute mapping ID for federated logins.
@@ -225,6 +228,7 @@ pub struct MappingCreate {
 
 /// OIDC/JWT attribute mapping update data.
 #[derive(Builder, Clone, Default, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(into))]
 pub struct MappingUpdate {
     /// Attribute mapping name for federated logins.
@@ -327,6 +331,7 @@ pub struct MappingUpdate {
 
 /// OIDC/JWT attribute mapping create request.
 #[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct MappingCreateRequest {
     /// Mapping object
@@ -336,6 +341,7 @@ pub struct MappingCreateRequest {
 
 /// OIDC/JWT attribute mapping update request.
 #[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct MappingUpdateRequest {
     /// Mapping object
@@ -425,12 +431,6 @@ impl IntoResponse for types::Mapping {
     }
 }
 
-impl From<MappingBuilderError> for KeystoneApiError {
-    fn from(err: MappingBuilderError) -> Self {
-        Self::InternalError(err.to_string())
-    }
-}
-
 /// Attribute mapping type.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema)]
 #[serde(rename_all = "lowercase")]
@@ -494,12 +494,6 @@ pub struct MappingListParameters {
     /// Filters the response by a mapping type.
     #[param(nullable = false)]
     pub r#type: Option<MappingType>,
-}
-
-impl From<types::MappingListParametersBuilderError> for KeystoneApiError {
-    fn from(err: types::MappingListParametersBuilderError) -> Self {
-        Self::InternalError(err.to_string())
-    }
 }
 
 impl TryFrom<MappingListParameters> for types::MappingListParameters {

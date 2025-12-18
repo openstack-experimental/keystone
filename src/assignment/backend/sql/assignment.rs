@@ -30,18 +30,16 @@ pub use create::create;
 pub use list::list;
 pub use list::list_for_multiple_actors_and_targets;
 
-impl TryFrom<db_assignment::Model> for Assignment {
-    type Error = AssignmentDatabaseError;
-
-    fn try_from(value: db_assignment::Model) -> Result<Self, Self::Error> {
-        let mut builder = AssignmentBuilder::default();
-        builder.role_id(value.role_id.clone());
-        builder.actor_id(value.actor_id.clone());
-        builder.target_id(value.target_id.clone());
-        builder.inherited(value.inherited);
-        builder.r#type(AssignmentType::try_from(value.r#type)?);
-
-        Ok(builder.build()?)
+impl From<db_assignment::Model> for Assignment {
+    fn from(value: db_assignment::Model) -> Self {
+        Self {
+            role_id: value.role_id,
+            role_name: None,
+            actor_id: value.actor_id,
+            target_id: value.target_id,
+            inherited: value.inherited,
+            r#type: value.r#type.into(),
+        }
     }
 }
 
@@ -50,9 +48,9 @@ impl TryFrom<db_system_assignment::Model> for Assignment {
 
     fn try_from(value: db_system_assignment::Model) -> Result<Self, Self::Error> {
         let mut builder = AssignmentBuilder::default();
-        builder.role_id(value.role_id.clone());
-        builder.actor_id(value.actor_id.clone());
-        builder.target_id(value.target_id.clone());
+        builder.role_id(value.role_id);
+        builder.actor_id(value.actor_id);
+        builder.target_id(value.target_id);
         builder.inherited(value.inherited);
         builder.r#type(AssignmentType::try_from(value.r#type.as_ref())?);
 
@@ -60,56 +58,29 @@ impl TryFrom<db_system_assignment::Model> for Assignment {
     }
 }
 
-impl TryFrom<&db_assignment::Model> for Assignment {
-    type Error = AssignmentDatabaseError;
-
-    fn try_from(value: &db_assignment::Model) -> Result<Self, Self::Error> {
-        let mut builder = AssignmentBuilder::default();
-        builder.role_id(value.role_id.clone());
-        builder.actor_id(value.actor_id.clone());
-        builder.target_id(value.target_id.clone());
-        builder.inherited(value.inherited);
-        builder.r#type(AssignmentType::try_from(value.r#type.clone())?);
-
-        Ok(builder.build()?)
+impl From<&db_assignment::Model> for Assignment {
+    fn from(value: &db_assignment::Model) -> Self {
+        Self::from(value.clone())
     }
 }
 
-impl TryFrom<(&db_assignment::Model, Option<&String>)> for Assignment {
-    type Error = AssignmentDatabaseError;
-
-    fn try_from(value: (&db_assignment::Model, Option<&String>)) -> Result<Self, Self::Error> {
-        let mut builder = AssignmentBuilder::default();
-        builder.role_id(value.0.role_id.clone());
-        builder.actor_id(value.0.actor_id.clone());
-        builder.target_id(value.0.target_id.clone());
-        builder.inherited(value.0.inherited);
-        builder.r#type(AssignmentType::try_from(value.0.r#type.clone())?);
+impl From<(&db_assignment::Model, Option<&String>)> for Assignment {
+    fn from(value: (&db_assignment::Model, Option<&String>)) -> Self {
+        let mut assignment = Assignment::from(value.0.clone());
         if let Some(val) = value.1 {
-            builder.role_name(val.clone());
+            assignment.role_name = Some(val.clone());
         }
-
-        Ok(builder.build()?)
+        assignment
     }
 }
 
-impl TryFrom<(db_assignment::Model, Option<db_role::Model>)> for Assignment {
-    type Error = AssignmentDatabaseError;
-
-    fn try_from(
-        value: (db_assignment::Model, Option<db_role::Model>),
-    ) -> Result<Self, Self::Error> {
-        let mut builder = AssignmentBuilder::default();
-        builder.role_id(value.0.role_id.clone());
-        builder.actor_id(value.0.actor_id.clone());
-        builder.target_id(value.0.target_id.clone());
-        builder.inherited(value.0.inherited);
-        builder.r#type(AssignmentType::try_from(value.0.r#type)?);
-        if let Some(val) = &value.1 {
-            builder.role_name(val.name.clone());
+impl From<(db_assignment::Model, Option<db_role::Model>)> for Assignment {
+    fn from(value: (db_assignment::Model, Option<db_role::Model>)) -> Self {
+        let mut assignment = Assignment::from(value.0);
+        if let Some(val) = value.1 {
+            assignment.role_name = Some(val.name);
         }
-
-        Ok(builder.build()?)
+        assignment
     }
 }
 
@@ -119,28 +90,21 @@ impl TryFrom<(db_system_assignment::Model, Option<db_role::Model>)> for Assignme
     fn try_from(
         value: (db_system_assignment::Model, Option<db_role::Model>),
     ) -> Result<Self, Self::Error> {
-        let mut builder = AssignmentBuilder::default();
-        builder.role_id(value.0.role_id.clone());
-        builder.actor_id(value.0.actor_id.clone());
-        builder.target_id(value.0.target_id.clone());
-        builder.inherited(value.0.inherited);
-        builder.r#type(AssignmentType::try_from(value.0.r#type.as_ref())?);
-        if let Some(val) = &value.1 {
-            builder.role_name(val.name.clone());
+        let mut assignment = Assignment::try_from(value.0)?;
+        if let Some(val) = value.1 {
+            assignment.role_name = Some(val.name);
         }
-
-        Ok(builder.build()?)
+        Ok(assignment)
     }
 }
 
-impl TryFrom<DbAssignmentType> for AssignmentType {
-    type Error = AssignmentDatabaseError;
-    fn try_from(value: DbAssignmentType) -> Result<Self, Self::Error> {
+impl From<DbAssignmentType> for AssignmentType {
+    fn from(value: DbAssignmentType) -> Self {
         match value {
-            DbAssignmentType::GroupDomain => Ok(Self::GroupDomain),
-            DbAssignmentType::GroupProject => Ok(Self::GroupProject),
-            DbAssignmentType::UserDomain => Ok(Self::UserDomain),
-            DbAssignmentType::UserProject => Ok(Self::UserProject),
+            DbAssignmentType::GroupDomain => Self::GroupDomain,
+            DbAssignmentType::GroupProject => Self::GroupProject,
+            DbAssignmentType::UserDomain => Self::UserDomain,
+            DbAssignmentType::UserProject => Self::UserProject,
         }
     }
 }

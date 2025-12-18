@@ -17,7 +17,8 @@ use sea_orm::entity::*;
 
 use crate::config::Config;
 use crate::db::entity::prelude::User as DbUser;
-use crate::identity::backends::sql::{IdentityDatabaseError, db_err};
+use crate::error::DbContextExt;
+use crate::identity::backends::sql::IdentityDatabaseError;
 
 pub async fn delete<U: AsRef<str>>(
     _conf: &Config,
@@ -27,7 +28,7 @@ pub async fn delete<U: AsRef<str>>(
     let res = DbUser::delete_by_id(user_id.as_ref())
         .exec(db)
         .await
-        .map_err(|err| db_err(err, "deleting the user record"))?;
+        .context("deleting the user record")?;
     if res.rows_affected == 1 {
         Ok(())
     } else {

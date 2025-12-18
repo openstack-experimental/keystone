@@ -35,14 +35,21 @@ impl TryFrom<db_service::Model> for Service {
             builder.r#type(typ);
         }
         builder.enabled(value.enabled);
-        if let Some(extra) = &value.extra {
-            let extra = serde_json::from_str::<Value>(extra)
-                .inspect_err(|e| error!("failed to deserialize service extra: {e}"))
-                .unwrap_or_default();
-            if let Some(name) = extra.get("name").and_then(|x| x.as_str()) {
-                builder.name(name);
+
+        if let Some(extra) = &value.extra
+            && extra != "{}"
+        {
+            match serde_json::from_str::<Value>(extra) {
+                Ok(val) => {
+                    if let Some(name) = val.get("name").and_then(|x| x.as_str()) {
+                        builder.name(name);
+                    }
+                    builder.extra(val);
+                }
+                Err(e) => {
+                    error!("failed to deserialize service extra: {e}");
+                }
             }
-            builder.extra(extra);
         }
 
         Ok(builder.build()?)

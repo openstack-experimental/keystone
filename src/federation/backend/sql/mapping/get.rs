@@ -18,7 +18,8 @@ use sea_orm::entity::*;
 use crate::db::entity::{
     federated_mapping as db_federated_mapping, prelude::FederatedMapping as DbFederatedMapping,
 };
-use crate::federation::backend::error::{FederationDatabaseError, db_err};
+use crate::error::DbContextExt;
+use crate::federation::backend::error::FederationDatabaseError;
 use crate::federation::types::*;
 
 pub async fn get<I: AsRef<str>>(
@@ -30,7 +31,7 @@ pub async fn get<I: AsRef<str>>(
     let entry: Option<db_federated_mapping::Model> = select
         .one(db)
         .await
-        .map_err(|err| db_err(err, "fetching federation mapping by id"))?;
+        .context("fetching federation mapping by id")?;
     entry.map(TryInto::try_into).transpose()
 }
 

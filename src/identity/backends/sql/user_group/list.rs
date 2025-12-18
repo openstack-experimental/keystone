@@ -21,7 +21,8 @@ use crate::db::entity::{
     expiring_user_group_membership, group as db_group, prelude::Group as DbGroup,
     user_group_membership,
 };
-use crate::identity::backends::sql::{IdentityDatabaseError, db_err};
+use crate::error::DbContextExt;
+use crate::identity::backends::sql::IdentityDatabaseError;
 use crate::identity::types::Group;
 
 /// List all groups the user is member of.
@@ -60,7 +61,7 @@ pub async fn list_user_groups<S: AsRef<str>>(
         .distinct()
         .all(db)
         .await
-        .map_err(|e| db_err(e, "listing groups the user is currently in"))?
+        .context("listing groups the user is currently in")?
         .into_iter()
         .map(Into::into)
         .collect();

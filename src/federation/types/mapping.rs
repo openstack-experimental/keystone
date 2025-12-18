@@ -16,8 +16,11 @@ use derive_builder::Builder;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::error::BuilderError;
+
 /// Attribute mapping data.
 #[derive(Builder, Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
+#[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct Mapping {
     /// Federation IDP attribute mapping ID.
@@ -89,6 +92,7 @@ pub struct Mapping {
 
 /// Update attribute mapping data.
 #[derive(Builder, Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
+#[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(into))]
 pub struct MappingUpdate {
     /// Attribute mapping name.
@@ -164,6 +168,7 @@ pub enum MappingType {
 
 /// List attribute mappings request.
 #[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct MappingListParameters {
     /// Filters the response by Mapping name.

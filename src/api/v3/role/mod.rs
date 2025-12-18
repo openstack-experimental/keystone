@@ -55,8 +55,7 @@ async fn list(
         .provider
         .get_assignment_provider()
         .list_roles(&state, &query.into())
-        .await
-        .map_err(KeystoneApiError::assignment)?
+        .await?
         .into_iter()
         .map(Into::into)
         .collect();

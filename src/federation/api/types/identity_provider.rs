@@ -23,11 +23,12 @@ use serde_json::Value;
 use utoipa::{IntoParams, ToSchema};
 use validator::Validate;
 
-use crate::api::KeystoneApiError;
+use crate::error::BuilderError;
 use crate::federation::types;
 
 /// Identity provider data
 #[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct IdentityProvider {
     /// The ID of the federated identity provider.
@@ -109,6 +110,7 @@ pub struct IdentityProviderResponse {
 
 /// Identity provider data.
 #[derive(Builder, Clone, Default, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct IdentityProviderCreate {
     // TODO: add ID
@@ -206,6 +208,7 @@ pub struct IdentityProviderCreate {
 
 /// New identity provider data.
 #[derive(Builder, Clone, Default, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct IdentityProviderUpdate {
     /// The new name of the federated identity provider.
@@ -273,6 +276,7 @@ pub struct IdentityProviderUpdate {
 
 /// Identity provider create request
 #[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct IdentityProviderCreateRequest {
     /// Identity provider object.
@@ -282,6 +286,7 @@ pub struct IdentityProviderCreateRequest {
 
 /// Identity provider update request
 #[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct IdentityProviderUpdateRequest {
     /// Identity provider object.
@@ -361,12 +366,6 @@ impl IntoResponse for types::IdentityProvider {
     }
 }
 
-impl From<IdentityProviderBuilderError> for KeystoneApiError {
-    fn from(err: IdentityProviderBuilderError) -> Self {
-        Self::InternalError(err.to_string())
-    }
-}
-
 /// List of Identity Providers.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct IdentityProviderList {
@@ -400,12 +399,6 @@ pub struct IdentityProviderListParameters {
 
     /// Page marker (id of the last entry on the previous page.
     pub marker: Option<String>,
-}
-
-impl From<types::IdentityProviderListParametersBuilderError> for KeystoneApiError {
-    fn from(err: types::IdentityProviderListParametersBuilderError) -> Self {
-        Self::InternalError(err.to_string())
-    }
 }
 
 fn default_list_limit() -> Option<u64> {

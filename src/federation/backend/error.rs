@@ -12,36 +12,21 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use sea_orm::SqlErr;
 use thiserror::Error;
 
-use crate::federation::types::*;
+use crate::error::{BuilderError, DatabaseError};
 
+/// Database backend error for the database driver.
 #[derive(Error, Debug)]
 pub enum FederationDatabaseError {
+    #[error("{0}")]
+    AuthStateNotFound(String),
+
+    /// Database error.
     #[error(transparent)]
-    Serde {
-        #[from]
-        source: serde_json::Error,
-    },
-
-    /// Conflict.
-    #[error("{message} while {context}")]
-    Conflict {
-        /// Human readable error.
-        message: String,
-        /// Error context.
-        context: String,
-    },
-
-    /// SqlError
-    #[error("{message}")]
-    Sql { message: String, context: String },
-
-    #[error("Database error while {context}")]
     Database {
-        source: sea_orm::DbErr,
-        context: String,
+        #[from]
+        source: DatabaseError,
     },
 
     #[error("{0}")]
@@ -50,49 +35,17 @@ pub enum FederationDatabaseError {
     #[error("{0}")]
     MappingNotFound(String),
 
-    #[error("{0}")]
-    AuthStateNotFound(String),
-
     #[error(transparent)]
-    AuthStateBuilder {
+    Serde {
         #[from]
-        source: AuthStateBuilderError,
+        source: serde_json::Error,
     },
 
+    /// Structures builder error.
     #[error(transparent)]
-    IdentityProviderBuilder {
+    StructBuilder {
+        /// The source of the error.
         #[from]
-        source: IdentityProviderBuilderError,
+        source: BuilderError,
     },
-
-    #[error(transparent)]
-    MappingBuilder {
-        #[from]
-        source: MappingBuilderError,
-    },
-}
-
-/// Convert the DB error into the [FederationDatabaseError] with the context
-/// information.
-pub fn db_err(e: sea_orm::DbErr, context: &str) -> FederationDatabaseError {
-    e.sql_err().map_or_else(
-        || FederationDatabaseError::Database {
-            source: e,
-            context: context.to_string(),
-        },
-        |err| match err {
-            SqlErr::UniqueConstraintViolation(descr) => FederationDatabaseError::Conflict {
-                message: descr.to_string(),
-                context: context.to_string(),
-            },
-            SqlErr::ForeignKeyConstraintViolation(descr) => FederationDatabaseError::Conflict {
-                message: descr.to_string(),
-                context: context.to_string(),
-            },
-            other => FederationDatabaseError::Sql {
-                message: other.to_string(),
-                context: context.to_string(),
-            },
-        },
-    )
 }

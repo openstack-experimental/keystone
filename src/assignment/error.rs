@@ -11,38 +11,23 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-
+//! # Assignment provider error types
 use thiserror::Error;
 
 use crate::assignment::backend::error::*;
-use crate::assignment::types::assignment::RoleAssignmentListForMultipleActorTargetParametersBuilderError;
-use crate::assignment::types::*;
 use crate::identity::error::IdentityProviderError;
 use crate::resource::error::ResourceProviderError;
 
+/// Assignment provider error.
 #[derive(Error, Debug)]
 pub enum AssignmentProviderError {
-    /// Unsupported driver
-    #[error("unsupported driver {0}")]
-    UnsupportedDriver(String),
-
-    /// Identity provider error
-    #[error("data serialization error: {}", source)]
-    Serde {
-        #[from]
-        source: serde_json::Error,
-    },
+    /// Assignment provider error
+    #[error(transparent)]
+    Backend { source: AssignmentDatabaseError },
 
     /// Conflict.
     #[error("conflict: {0}")]
     Conflict(String),
-
-    #[error("role {0} not found")]
-    RoleNotFound(String),
-
-    /// Assignment provider error
-    #[error(transparent)]
-    AssignmentDatabaseError { source: AssignmentDatabaseError },
 
     /// Identity provider error.
     #[error(transparent)]
@@ -58,28 +43,23 @@ pub enum AssignmentProviderError {
         source: ResourceProviderError,
     },
 
-    /// Invalid assignment type.
-    #[error("{0}")]
-    InvalidAssignmentType(String),
+    /// Role not found.
+    #[error("role {0} not found")]
+    RoleNotFound(String),
 
-    #[error("building role assignment query: {}", source)]
-    RoleAssignmentParametersBuilder {
+    /// Structures builder error.
+    #[error(transparent)]
+    StructBuilder {
+        /// The source of the error.
         #[from]
-        source: RoleAssignmentListForMultipleActorTargetParametersBuilderError,
+        source: crate::error::BuilderError,
     },
 
-    #[error("building role assignment query: {}", source)]
-    RoleAssignmentListParametersBuilder {
-        #[from]
-        source: RoleAssignmentListParametersBuilderError,
-    },
+    /// Unsupported driver.
+    #[error("unsupported driver {0}")]
+    UnsupportedDriver(String),
 
-    #[error("building role data: {}", source)]
-    RoleBuilderError {
-        #[from]
-        source: RoleBuilderError,
-    },
-
+    /// Validation error.
     #[error("request validation error: {}", source)]
     Validation {
         /// The source of the error.
@@ -91,11 +71,17 @@ pub enum AssignmentProviderError {
 impl From<AssignmentDatabaseError> for AssignmentProviderError {
     fn from(source: AssignmentDatabaseError) -> Self {
         match source {
-            AssignmentDatabaseError::Conflict { message, .. } => Self::Conflict(message),
+            AssignmentDatabaseError::Database { source } => match source {
+                cfl @ crate::error::DatabaseError::Conflict { .. } => {
+                    Self::Conflict(cfl.to_string())
+                }
+                other => Self::Backend {
+                    source: AssignmentDatabaseError::Database { source: other },
+                },
+            },
             AssignmentDatabaseError::RoleNotFound(x) => Self::RoleNotFound(x),
-            AssignmentDatabaseError::Serde { source } => Self::Serde { source },
-            AssignmentDatabaseError::InvalidAssignmentType(x) => Self::InvalidAssignmentType(x),
-            _ => Self::AssignmentDatabaseError { source },
+            AssignmentDatabaseError::StructBuilder { source } => Self::StructBuilder { source },
+            _ => Self::Backend { source },
         }
     }
 }

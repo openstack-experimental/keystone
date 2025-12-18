@@ -19,13 +19,16 @@ use crate::federation::backend::error::*;
 /// Federation provider error.
 #[derive(Error, Debug)]
 pub enum FederationProviderError {
+    /// SQL backend error.
+    #[error(transparent)]
+    Backend {
+        /// The source of the error.
+        source: FederationDatabaseError,
+    },
+
     /// Conflict.
     #[error("conflict: {0}")]
     Conflict(String),
-
-    /// Database backend error.
-    #[error(transparent)]
-    DatabaseBackend { source: FederationDatabaseError },
 
     /// IDP not found.
     #[error("identity provider {0} not found")]
@@ -58,13 +61,20 @@ pub enum FederationProviderError {
 impl From<FederationDatabaseError> for FederationProviderError {
     fn from(source: FederationDatabaseError) -> Self {
         match source {
+            FederationDatabaseError::Database { source } => match source {
+                cfl @ crate::error::DatabaseError::Conflict { .. } => {
+                    Self::Conflict(cfl.to_string())
+                }
+                other => Self::Backend {
+                    source: FederationDatabaseError::Database { source: other },
+                },
+            },
             FederationDatabaseError::IdentityProviderNotFound(x) => {
                 Self::IdentityProviderNotFound(x)
             }
             FederationDatabaseError::MappingNotFound(x) => Self::MappingNotFound(x),
-            ref err @ FederationDatabaseError::Conflict { .. } => Self::Conflict(err.to_string()),
             FederationDatabaseError::Serde { source } => Self::Serde { source },
-            _ => Self::DatabaseBackend { source },
+            _ => Self::Backend { source },
         }
     }
 }

@@ -23,7 +23,7 @@ pub use list::get;
 pub use list::list;
 
 use crate::assignment::backend::error::AssignmentDatabaseError;
-use crate::assignment::types::*;
+use crate::assignment::types::role::*;
 use crate::db::entity::role as db_role;
 
 static NULL_DOMAIN_ID: &str = "<<null>>";

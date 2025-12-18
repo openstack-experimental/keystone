@@ -17,7 +17,8 @@ use sea_orm::ConnectionTrait;
 use sea_orm::entity::*;
 
 use crate::db::entity::password;
-use crate::identity::backends::sql::{IdentityDatabaseError, db_err};
+use crate::error::DbContextExt;
+use crate::identity::backends::sql::IdentityDatabaseError;
 
 pub async fn create<C: ConnectionTrait, S: AsRef<str>>(
     db: &C,
@@ -26,7 +27,7 @@ pub async fn create<C: ConnectionTrait, S: AsRef<str>>(
     expires_at: Option<DateTime<Utc>>,
 ) -> Result<password::Model, IdentityDatabaseError> {
     let now = Utc::now().naive_utc();
-    password::ActiveModel {
+    Ok(password::ActiveModel {
         id: NotSet,
         local_user_id: Set(local_user_id),
         self_service: Set(false),
@@ -42,5 +43,5 @@ pub async fn create<C: ConnectionTrait, S: AsRef<str>>(
     }
     .insert(db)
     .await
-    .map_err(|err| db_err(err, "inserting new password record"))
+    .context("inserting new password record")?)
 }

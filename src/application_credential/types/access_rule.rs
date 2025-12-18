@@ -17,8 +17,11 @@ use derive_builder::Builder;
 use serde::{Deserialize, Serialize};
 use validator::Validate;
 
+use crate::error::BuilderError;
+
 /// The application credential access rule object.
 #[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct AccessRule {
     /// The ID of the access rule.
@@ -50,6 +53,7 @@ pub struct AccessRule {
 
 /// The application credential access rule object to be created.
 #[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
+#[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct AccessRuleCreate {
     /// The ID of the access rule.

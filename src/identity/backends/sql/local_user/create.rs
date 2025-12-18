@@ -18,7 +18,8 @@ use uuid::Uuid;
 
 use crate::config::Config;
 use crate::db::entity::local_user;
-use crate::identity::backends::sql::{IdentityDatabaseError, db_err};
+use crate::error::DbContextExt;
+use crate::identity::backends::sql::IdentityDatabaseError;
 use crate::identity::types::UserCreate;
 
 pub async fn create<C>(
@@ -29,7 +30,7 @@ pub async fn create<C>(
 where
     C: ConnectionTrait,
 {
-    local_user::ActiveModel {
+    Ok(local_user::ActiveModel {
         id: NotSet,
         user_id: Set(user
             .id
@@ -51,5 +52,5 @@ where
     }
     .insert(db)
     .await
-    .map_err(|err| db_err(err, "inserting new user record"))
+    .context("inserting new user record")?)
 }

@@ -17,7 +17,7 @@ use sea_orm::DatabaseConnection;
 use sea_orm::entity::*;
 use sea_orm::query::*;
 
-use crate::assignment::backend::error::{AssignmentDatabaseError, db_err};
+use crate::assignment::backend::error::AssignmentDatabaseError;
 use crate::assignment::types::*;
 use crate::db::entity::{
     assignment as db_assignment,
@@ -25,6 +25,7 @@ use crate::db::entity::{
     sea_orm_active_enums::Type as DbAssignmentType,
     system_assignment as db_system_assignment,
 };
+use crate::error::DbContextExt;
 
 /// Check whether the grant exists.
 ///
@@ -48,7 +49,7 @@ pub async fn check(
             .filter(db_assignment::Column::Inherited.eq(grant.inherited))
             .count(db)
             .await
-            .map_err(|err| db_err(err, "checking grant"))?,
+            .context("checking grant")?,
         t @ AssignmentType::GroupSystem | t @ AssignmentType::UserSystem => {
             DbSystemAssignment::find()
                 .filter(db_system_assignment::Column::RoleId.eq(grant.role_id.as_str()))
@@ -58,7 +59,7 @@ pub async fn check(
                 .filter(db_system_assignment::Column::Inherited.eq(grant.inherited))
                 .count(db)
                 .await
-                .map_err(|err| db_err(err, "checking system grant"))?
+                .context("checking system grant")?
         }
     };
     Ok(count > 0)

@@ -23,7 +23,8 @@ use crate::db::entity::{
     prelude::{FederatedUser, NonlocalUser, User as DbUser, UserOption},
     user as db_user,
 };
-use crate::identity::backends::sql::{IdentityDatabaseError, db_err};
+use crate::error::DbContextExt;
+use crate::identity::backends::sql::IdentityDatabaseError;
 use crate::identity::types::*;
 
 /// Get the `user` table entry by the `user_id`.
@@ -31,10 +32,10 @@ pub async fn get_main_entry<U: AsRef<str>>(
     db: &DatabaseConnection,
     user_id: U,
 ) -> Result<Option<db_user::Model>, IdentityDatabaseError> {
-    DbUser::find_by_id(user_id.as_ref())
+    Ok(DbUser::find_by_id(user_id.as_ref())
         .one(db)
         .await
-        .map_err(|err| db_err(err, "fetching user by ID"))
+        .context("fetching user by ID")?)
 }
 
 pub async fn get(
@@ -58,7 +59,7 @@ pub async fn get(
         let mut user_builder = UserResponseBuilder::default();
         user_builder.merge_user_data(
             &user,
-            &UserOptions::from_iter(user_opts.map_err(|err| db_err(err, "fetching user options"))?),
+            &UserOptions::from_iter(user_opts.context("fetching user options")?),
             conf.get_user_last_activity_cutof_date().as_ref(),
         );
 
@@ -71,7 +72,7 @@ pub async fn get(
                 .filter(db_nonlocal_user::Column::UserId.eq(&user.id))
                 .one(db)
                 .await
-                .map_err(|err| db_err(err, "fetching nonlocal user data"))?
+                .context("fetching nonlocal user data")?
             {
                 Some(nonlocal_user) => {
                     user_builder.merge_nonlocal_user_data(&nonlocal_user);
@@ -81,7 +82,7 @@ pub async fn get(
                         .find_related(FederatedUser)
                         .all(db)
                         .await
-                        .map_err(|err| db_err(err, "fetching federated user data"))?;
+                        .context("fetching federated user data")?;
                     if !federated_user.is_empty() {
                         user_builder.merge_federated_user_data(federated_user);
                     } else {

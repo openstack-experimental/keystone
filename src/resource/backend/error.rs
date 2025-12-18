@@ -12,70 +12,35 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use sea_orm::SqlErr;
 use thiserror::Error;
 
-use crate::resource::types::*;
+use crate::error::{BuilderError, DatabaseError};
 
 #[derive(Error, Debug)]
 pub enum ResourceDatabaseError {
+    /// Database error.
+    #[error(transparent)]
+    Database {
+        #[from]
+        source: DatabaseError,
+    },
+
     #[error("{0}")]
     DomainNotFound(String),
 
+    /// (De)Ser error.
     #[error(transparent)]
     Serde {
+        /// The source of the error.
         #[from]
         source: serde_json::Error,
     },
 
+    /// Structures builder error.
     #[error(transparent)]
-    DomainBuilderError {
+    StructBuilder {
+        /// The source of the error.
         #[from]
-        source: DomainBuilderError,
+        source: BuilderError,
     },
-
-    #[error(transparent)]
-    ProjectBuilderError {
-        #[from]
-        source: ProjectBuilderError,
-    },
-
-    /// Conflict
-    #[error("{message}")]
-    Conflict { message: String, context: String },
-
-    /// SqlError
-    #[error("{message}")]
-    Sql { message: String, context: String },
-
-    #[error("Database error while {context}")]
-    Database {
-        source: sea_orm::DbErr,
-        context: String,
-    },
-}
-
-/// Convert the DB error into the [ResourceDatabaseError] with the context
-/// information.
-pub fn db_err(e: sea_orm::DbErr, context: &str) -> ResourceDatabaseError {
-    e.sql_err().map_or_else(
-        || ResourceDatabaseError::Database {
-            source: e,
-            context: context.to_string(),
-        },
-        |err| match err {
-            SqlErr::UniqueConstraintViolation(descr) => ResourceDatabaseError::Conflict {
-                message: descr.to_string(),
-                context: context.to_string(),
-            },
-            SqlErr::ForeignKeyConstraintViolation(descr) => ResourceDatabaseError::Conflict {
-                message: descr.to_string(),
-                context: context.to_string(),
-            },
-            other => ResourceDatabaseError::Sql {
-                message: other.to_string(),
-                context: context.to_string(),
-            },
-        },
-    )
 }

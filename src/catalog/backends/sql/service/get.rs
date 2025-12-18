@@ -14,9 +14,10 @@
 use sea_orm::DatabaseConnection;
 use sea_orm::entity::*;
 
-use crate::catalog::backends::error::{CatalogDatabaseError, db_err};
+use crate::catalog::backends::error::CatalogDatabaseError;
 use crate::catalog::types::*;
-use crate::db::entity::{prelude::Service as DbService, service as db_service};
+use crate::db::entity::prelude::Service as DbService;
+use crate::error::DbContextExt;
 
 pub async fn get<I: AsRef<str>>(
     db: &DatabaseConnection,
@@ -24,11 +25,12 @@ pub async fn get<I: AsRef<str>>(
 ) -> Result<Option<Service>, CatalogDatabaseError> {
     let select = DbService::find_by_id(id.as_ref());
 
-    let entry: Option<db_service::Model> = select
+    select
         .one(db)
         .await
-        .map_err(|err| db_err(err, "fetching service by ID"))?;
-    entry.map(TryInto::try_into).transpose()
+        .context("fetching service by ID")?
+        .map(TryInto::try_into)
+        .transpose()
 }
 
 #[cfg(test)]

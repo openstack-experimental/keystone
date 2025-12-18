@@ -17,7 +17,7 @@ use sea_orm::entity::*;
 use sea_orm::query::*;
 use sea_orm::{Cursor, SelectModel};
 
-use crate::application_credential::backend::error::{ApplicationCredentialDatabaseError, db_err};
+use crate::application_credential::backend::error::ApplicationCredentialDatabaseError;
 use crate::application_credential::types::*;
 use crate::assignment::types::Role;
 use crate::db::entity::{
@@ -28,6 +28,7 @@ use crate::db::entity::{
         ApplicationCredentialRole as DbApplicationCredentialRole, Role as DbRole,
     },
 };
+use crate::error::DbContextExt;
 
 /// Prepare the paginated query for listing application credentials.
 fn get_list_query(
@@ -59,14 +60,14 @@ pub async fn list(
     let db_entities: Vec<db_application_credential::Model> = get_list_query(params)?
         .all(db)
         .await
-        .map_err(|err| db_err(err, "listing application credentials"))?;
+        .context("listing application credentials")?;
 
     let (roles_handle, rules_handle) = tokio::join!(
         db_entities.load_many_to_many(DbRole, DbApplicationCredentialRole, db),
         db_entities.load_many_to_many(DbAccessRule, DbApplicationCredentialRule, db)
     );
     let roles = roles_handle
-        .map_err(|err| db_err(err, "fetching roles for application credential list"))?
+        .context("fetching roles for application credential list")?
         .into_iter()
         .map(|apc| {
             apc.into_iter()
@@ -75,7 +76,7 @@ pub async fn list(
         })
         .collect::<Result<Vec<Vec<_>>, _>>()?;
     let rules = rules_handle
-        .map_err(|err| db_err(err, "fetching access rules for application credential list"))?
+        .context("fetching access rules for application credential list")?
         .into_iter()
         .map(|apc| {
             apc.into_iter()

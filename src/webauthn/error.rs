@@ -12,8 +12,9 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //! # WebAuthN Error
-use sea_orm::SqlErr;
 use thiserror::Error;
+
+use crate::error::DatabaseError;
 
 /// WebAuthN extension error.
 #[derive(Error, Debug)]
@@ -26,62 +27,23 @@ pub enum WebauthnError {
         source: crate::auth::AuthenticationError,
     },
 
-    /// Generic database backend error.
-    #[error("Database error {:?}", source)]
+    /// Conflict.
+    #[error("conflict: {0}")]
+    Conflict(String),
+
+    /// Database error.
+    #[error(transparent)]
     Database {
         /// The source of the error.
-        source: sea_orm::DbErr,
-        /// The error context.
-        context: String,
-    },
-
-    /// Conflict.
-    #[error("{message}")]
-    Conflict {
-        /// The error message.
-        message: String,
-        /// The error context.
-        context: String,
+        #[from]
+        source: DatabaseError,
     },
 
     /// (de)serialization error.
     #[error(transparent)]
     Serde {
+        /// The source of the error.
         #[from]
         source: serde_json::Error,
     },
-
-    /// SqlError.
-    #[error("{message}")]
-    Sql {
-        /// The error message.
-        message: String,
-        /// The error context.
-        context: String,
-    },
-}
-
-/// Convert the [`sea_orm::DbErr`] into the [`WebauthnError`] with the context
-/// information.
-pub fn db_err(e: sea_orm::DbErr, context: &str) -> WebauthnError {
-    e.sql_err().map_or_else(
-        || WebauthnError::Database {
-            source: e,
-            context: context.to_string(),
-        },
-        |err| match err {
-            SqlErr::UniqueConstraintViolation(descr) => WebauthnError::Conflict {
-                message: descr.to_string(),
-                context: context.to_string(),
-            },
-            SqlErr::ForeignKeyConstraintViolation(descr) => WebauthnError::Conflict {
-                message: descr.to_string(),
-                context: context.to_string(),
-            },
-            other => WebauthnError::Sql {
-                message: other.to_string(),
-                context: context.to_string(),
-            },
-        },
-    )
 }

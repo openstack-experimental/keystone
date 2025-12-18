@@ -56,8 +56,7 @@ async fn list(
         .provider
         .get_assignment_provider()
         .list_role_assignments(&state, &query.try_into()?)
-        .await
-        .map_err(KeystoneApiError::assignment)?
+        .await?
         .into_iter()
         .map(TryInto::try_into)
         .collect();

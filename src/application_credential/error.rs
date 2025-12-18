@@ -14,33 +14,21 @@
 //! # Application credential provider error.
 use thiserror::Error;
 
-use crate::application_credential::backend::error::*;
+use crate::application_credential::backend::error::ApplicationCredentialDatabaseError;
 
 /// Application credential provider error.
 #[derive(Error, Debug)]
 pub enum ApplicationCredentialProviderError {
-    /// Unsupported driver.
-    #[error("unsupported driver {0}")]
-    UnsupportedDriver(String),
-
-    /// (de)serialization error.
-    #[error("data serialization error: {}", source)]
-    Serde {
+    /// SQL backend error.
+    #[error(transparent)]
+    Backend {
         /// The source of the error.
-        #[from]
-        source: serde_json::Error,
+        source: ApplicationCredentialDatabaseError,
     },
 
     /// Conflict.
     #[error("conflict: {0}")]
     Conflict(String),
-
-    /// Application credential SQL backend error.
-    #[error(transparent)]
-    ApplicationCredentialDatabaseError {
-        /// The source of the error.
-        source: ApplicationCredentialDatabaseError,
-    },
 
     /// Request validation error.
     #[error("request validation error: {}", source)]
@@ -49,15 +37,24 @@ pub enum ApplicationCredentialProviderError {
         #[from]
         source: validator::ValidationErrors,
     },
+
+    /// Unsupported driver.
+    #[error("unsupported driver {0}")]
+    UnsupportedDriver(String),
 }
 
 impl From<ApplicationCredentialDatabaseError> for ApplicationCredentialProviderError {
     fn from(source: ApplicationCredentialDatabaseError) -> Self {
         match source {
-            ref e @ ApplicationCredentialDatabaseError::Conflict { .. } => {
-                Self::Conflict(e.to_string())
-            }
-            _ => Self::ApplicationCredentialDatabaseError { source },
+            ApplicationCredentialDatabaseError::Database { source } => match source {
+                cfl @ crate::error::DatabaseError::Conflict { .. } => {
+                    Self::Conflict(cfl.to_string())
+                }
+                other => Self::Backend {
+                    source: ApplicationCredentialDatabaseError::Database { source: other },
+                },
+            },
+            _ => Self::Backend { source },
         }
     }
 }

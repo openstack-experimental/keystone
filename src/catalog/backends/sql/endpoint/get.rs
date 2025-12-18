@@ -15,9 +15,10 @@
 use sea_orm::DatabaseConnection;
 use sea_orm::entity::*;
 
-use crate::catalog::backends::error::{CatalogDatabaseError, db_err};
+use crate::catalog::backends::error::CatalogDatabaseError;
 use crate::catalog::types::*;
-use crate::db::entity::{endpoint as db_endpoint, prelude::Endpoint as DbEndpoint};
+use crate::db::entity::prelude::Endpoint as DbEndpoint;
+use crate::error::DbContextExt;
 
 pub async fn get<I: AsRef<str>>(
     db: &DatabaseConnection,
@@ -25,11 +26,12 @@ pub async fn get<I: AsRef<str>>(
 ) -> Result<Option<Endpoint>, CatalogDatabaseError> {
     let select = DbEndpoint::find_by_id(id.as_ref());
 
-    let entry: Option<db_endpoint::Model> = select
+    select
         .one(db)
         .await
-        .map_err(|err| db_err(err, "fetching service endpoint by id"))?;
-    entry.map(TryInto::try_into).transpose()
+        .context("fetching service endpoint by id")?
+        .map(TryInto::try_into)
+        .transpose()
 }
 
 #[cfg(test)]

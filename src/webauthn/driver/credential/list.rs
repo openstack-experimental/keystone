@@ -18,7 +18,8 @@ use sea_orm::query::*;
 use webauthn_rs::prelude::Passkey;
 
 use crate::db::entity::{prelude::WebauthnCredential as DbCred, webauthn_credential};
-use crate::webauthn::{WebauthnError, db_err};
+use crate::error::DbContextExt;
+use crate::webauthn::WebauthnError;
 
 pub async fn list<U: AsRef<str>>(
     db: &DatabaseConnection,
@@ -28,7 +29,7 @@ pub async fn list<U: AsRef<str>>(
         .filter(webauthn_credential::Column::UserId.eq(user_id.as_ref()))
         .all(db)
         .await
-        .map_err(|e| db_err(e, "listing webauth credential"))?
+        .context("listing webauthn credential")?
         .into_iter()
         .map(|x| serde_json::from_str::<Passkey>(&x.passkey))
         .collect();

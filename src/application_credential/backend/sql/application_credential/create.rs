@@ -18,7 +18,7 @@ use sea_orm::query::*;
 use secrecy::ExposeSecret;
 use uuid::Uuid;
 
-use crate::application_credential::backend::error::{ApplicationCredentialDatabaseError, db_err};
+use crate::application_credential::backend::error::ApplicationCredentialDatabaseError;
 use crate::application_credential::types::*;
 use crate::common::password_hashing;
 use crate::config::Config;
@@ -30,6 +30,7 @@ use crate::db::entity::{
         AccessRule as DbAccessRule, ApplicationCredentialRole as DbApplicationCredentialRole,
     },
 };
+use crate::error::DbContextExt;
 
 impl TryFrom<ApplicationCredentialCreate> for db_application_credential::ActiveModel {
     type Error = ApplicationCredentialDatabaseError;
@@ -59,12 +60,10 @@ pub async fn create(
     rec: ApplicationCredentialCreate,
 ) -> Result<ApplicationCredentialCreateResponse, ApplicationCredentialDatabaseError> {
     // Do a lot of stuff in a transaction
-    let txn = db.begin().await.map_err(|err| {
-        db_err(
-            err,
-            "starting transaction for persisting application credential",
-        )
-    })?;
+    let txn = db
+        .begin()
+        .await
+        .context("starting transaction for persisting application credential")?;
     let mut model = db_application_credential::ActiveModel::try_from(rec.clone())?;
     model.secret_hash = if let Some(secret) = &rec.secret {
         Set(password_hashing::hash_password(conf, secret.expose_secret()).await?)
@@ -76,7 +75,7 @@ pub async fn create(
     let db_entry = model
         .insert(&txn)
         .await
-        .map_err(|err| db_err(err, "persisting application credential"))?;
+        .context("persisting application credential")?;
 
     // Insert app cred role relations
     if !rec.roles.is_empty() {
@@ -88,7 +87,7 @@ pub async fn create(
         }))
         .exec(&txn)
         .await
-        .map_err(|err| db_err(err, "persisting application credential role relations"))?;
+        .context("persisting application credential role relations")?;
     }
 
     let internal_id = db_entry.internal_id;
@@ -107,12 +106,9 @@ pub async fn create(
                 .collect::<Vec<_>>(),
         );
     }
-    txn.commit().await.map_err(|err| {
-        db_err(
-            err,
-            "committing transaction for persisting application credential",
-        )
-    })?;
+    txn.commit()
+        .await
+        .context("committing transaction for persisting application credential")?;
     Ok(builder.build()?)
 }
 
@@ -154,7 +150,7 @@ where
             )
             .all(db)
             .await
-            .map_err(|err| db_err(err, "searching matching access rules"))?;
+            .context("searching matching access rules")?;
         let existing_rule = if existing_rules.is_empty() {
             Some(
                 db_access_rule::ActiveModel {
@@ -171,7 +167,7 @@ where
                 }
                 .insert(db)
                 .await
-                .map_err(|err| db_err(err, "persising access rule"))?,
+                .context("persisting access rule")?,
             )
         } else if existing_rules.len() == 1 {
             existing_rules.first().cloned()
@@ -185,7 +181,7 @@ where
             }
             .insert(db)
             .await
-            .map_err(|err| db_err(err, "persising access rule relation"))?;
+            .context("persisting access rule relation")?;
             results.push(rule.try_into()?);
         }
     }

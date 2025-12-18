@@ -15,45 +15,41 @@
 use thiserror::Error;
 
 use crate::resource::backend::error::*;
-use crate::resource::types::DomainBuilderError;
 
 #[derive(Error, Debug)]
 pub enum ResourceProviderError {
-    /// Unsupported driver.
-    #[error("unsupported driver {0}")]
-    UnsupportedDriver(String),
+    /// SQL backend error.
+    #[error(transparent)]
+    Backend {
+        /// The source of the error.
+        source: ResourceDatabaseError,
+    },
 
     /// Conflict.
     #[error("conflict: {0}")]
     Conflict(String),
 
-    /// Data (de)serialization error.
-    #[error("data serialization error")]
-    Serde {
-        #[from]
-        source: serde_json::Error,
-    },
-
     #[error("domain {0} not found")]
     DomainNotFound(String),
 
-    /// Identity provider error
-    #[error(transparent)]
-    ResourceDatabase { source: ResourceDatabaseError },
-
-    #[error(transparent)]
-    DomainBuilder {
-        #[from]
-        source: DomainBuilderError,
-    },
+    /// Unsupported driver.
+    #[error("unsupported driver {0}")]
+    UnsupportedDriver(String),
 }
 
 impl From<ResourceDatabaseError> for ResourceProviderError {
     fn from(source: ResourceDatabaseError) -> Self {
         match source {
-            ResourceDatabaseError::Conflict { message, .. } => Self::Conflict(message),
+            ResourceDatabaseError::Database { source } => match source {
+                cfl @ crate::error::DatabaseError::Conflict { .. } => {
+                    Self::Conflict(cfl.to_string())
+                }
+                other => Self::Backend {
+                    source: ResourceDatabaseError::Database { source: other },
+                },
+            },
             ResourceDatabaseError::DomainNotFound(x) => Self::DomainNotFound(x),
-            _ => Self::ResourceDatabase { source },
+            _ => Self::Backend { source },
         }
     }
 }

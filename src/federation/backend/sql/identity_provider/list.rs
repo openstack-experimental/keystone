@@ -21,7 +21,8 @@ use crate::db::entity::{
     federated_identity_provider as db_federated_identity_provider,
     prelude::FederatedIdentityProvider as DbFederatedIdentityProvider,
 };
-use crate::federation::backend::error::{FederationDatabaseError, db_err};
+use crate::error::DbContextExt;
+use crate::federation::backend::error::FederationDatabaseError;
 use crate::federation::types::*;
 
 /// Prepare the paginated query for listing identity providers.
@@ -65,7 +66,7 @@ pub async fn list(
     get_list_query(params)?
         .all(db)
         .await
-        .map_err(|err| db_err(err, "listing identity providers"))?
+        .context("listing identity providers")?
         .into_iter()
         .map(TryInto::<IdentityProvider>::try_into)
         .collect()

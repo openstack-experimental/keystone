@@ -18,7 +18,8 @@ use sea_orm::query::*;
 use webauthn_rs::prelude::{PasskeyAuthentication, PasskeyRegistration};
 
 use crate::db::entity::{prelude::WebauthnState as DbPasskeyState, webauthn_state};
-use crate::webauthn::error::{WebauthnError, db_err};
+use crate::error::DbContextExt;
+use crate::webauthn::error::WebauthnError;
 
 pub async fn get_register<U: AsRef<str>>(
     db: &DatabaseConnection,
@@ -28,7 +29,7 @@ pub async fn get_register<U: AsRef<str>>(
         .filter(webauthn_state::Column::Type.eq("register"))
         .one(db)
         .await
-        .map_err(|e| db_err(e, "searching for webauthn registration state record"))?
+        .context("searching for webauthn registration state record")?
     {
         Some(rec) => Ok(Some(serde_json::from_str(&rec.state)?)),
         None => Ok(None),
@@ -43,7 +44,7 @@ pub async fn get_auth<U: AsRef<str>>(
         .filter(webauthn_state::Column::Type.eq("auth"))
         .one(db)
         .await
-        .map_err(|e| db_err(e, "searching for webauthn auth state record"))?
+        .context("searching for webauthn auth state record")?
     {
         Some(rec) => Ok(Some(serde_json::from_str(&rec.state)?)),
         None => Ok(None),

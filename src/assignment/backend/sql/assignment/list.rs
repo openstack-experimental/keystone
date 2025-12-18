@@ -18,7 +18,7 @@ use sea_orm::prelude::Expr;
 use sea_orm::query::*;
 use std::collections::{BTreeMap, HashMap};
 
-use crate::assignment::backend::error::{AssignmentDatabaseError, db_err};
+use crate::assignment::backend::error::AssignmentDatabaseError;
 use crate::assignment::backend::sql::implied_role;
 use crate::assignment::types::*;
 use crate::config::Config;
@@ -29,6 +29,7 @@ use crate::db::entity::{
     sea_orm_active_enums::Type as DbAssignmentType,
     system_assignment as db_system_assignment,
 };
+use crate::error::DbContextExt;
 
 pub async fn list(
     _conf: &Config,
@@ -79,7 +80,7 @@ pub async fn list(
             .find_also_related(DbRole)
             .all(db)
             .await
-            .map_err(|err| db_err(err, "fetching role assignments with roles"))?;
+            .context("fetching role assignments with roles")?;
         let db_system_assignments: Vec<(db_system_assignment::Model, Option<db_role::Model>)> =
             if params.project_id.is_none() && params.domain_id.is_none() {
                 // get system scope assignments only when no project or domain is specified
@@ -87,13 +88,13 @@ pub async fn list(
                     .find_also_related(DbRole)
                     .all(db)
                     .await
-                    .map_err(|err| db_err(err, "fetching system role assignments with roles"))?
+                    .context("fetching system role assignments with roles")?
             } else {
                 Vec::new()
             };
         db_assignments
             .into_iter()
-            .map(|item| TryInto::<Assignment>::try_into((item.0, item.1)))
+            .map(|item| Ok(Into::<Assignment>::into((item.0, item.1))))
             .chain(
                 db_system_assignments
                     .into_iter()
@@ -104,20 +105,20 @@ pub async fn list(
         let db_assignments: Vec<db_assignment::Model> = select_assignment
             .all(db)
             .await
-            .map_err(|err| db_err(err, "fetching role assignments"))?;
+            .context("fetching role assignments")?;
         let db_system_assignments: Vec<db_system_assignment::Model> =
             if params.project_id.is_none() && params.domain_id.is_none() {
                 // get system scope assignments only when no project or domain is specified
                 select_system_assignment
                     .all(db)
                     .await
-                    .map_err(|err| db_err(err, "fetching system role assignments"))?
+                    .context("fetching system role assignments")?
             } else {
                 Vec::new()
             };
         db_assignments
             .into_iter()
-            .map(TryInto::<Assignment>::try_into)
+            .map(|val| Ok(Into::<Assignment>::into(val)))
             .chain(
                 db_system_assignments
                     .into_iter()
@@ -195,24 +196,24 @@ pub async fn list_for_multiple_actors_and_targets(
         (true, false) => select
             .all(db)
             .await
-            .map_err(|err| db_err(err, "fetching role assignments"))?
+            .context("fetching role assignments")?
             .into_iter()
-            .map(TryInto::<Assignment>::try_into)
-            .collect::<Result<Vec<_>, _>>()?,
+            .map(Into::into)
+            .collect(),
         (false, true) => select_system
             .all(db)
             .await
-            .map_err(|err| db_err(err, "fetching system role assignments"))?
+            .context("fetching system role assignments")?
             .into_iter()
             .map(TryInto::<Assignment>::try_into)
             .collect::<Result<Vec<_>, _>>()?,
         (false, false) | (true, true) => {
             let (a, b) = tokio::join!(select.all(db), select_system.all(db));
-            a.map_err(|err| db_err(err, "fetching role assignments"))?
+            a.context("fetching role assignments")?
                 .into_iter()
-                .map(TryInto::<Assignment>::try_into)
+                .map(|val| Ok(Into::into(val)))
                 .chain(
-                    b.map_err(|err| db_err(err, "fetching system role assignments"))?
+                    b.context("fetching system role assignments")?
                         .into_iter()
                         .map(TryInto::<Assignment>::try_into),
                 )
@@ -245,7 +246,7 @@ pub async fn list_for_multiple_actors_and_targets(
                 .into_tuple()
                 .all(db)
                 .await
-                .map_err(|err| db_err(err, "fetching roles by ids"))?,
+                .context("fetching roles by ids")?,
         );
 
         for assignment in result_map.values_mut() {

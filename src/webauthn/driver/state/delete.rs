@@ -16,7 +16,8 @@ use sea_orm::DatabaseConnection;
 use sea_orm::entity::*;
 
 use crate::db::entity::prelude::WebauthnState as DbPasskeyState;
-use crate::webauthn::{WebauthnError, db_err};
+use crate::error::DbContextExt;
+use crate::webauthn::WebauthnError;
 
 pub async fn delete<U: AsRef<str>>(
     db: &DatabaseConnection,
@@ -25,7 +26,7 @@ pub async fn delete<U: AsRef<str>>(
     DbPasskeyState::delete_by_id(user_id.as_ref())
         .exec(db)
         .await
-        .map_err(|e| db_err(e, "deleting webauthn state record"))?;
+        .context("deleting webauthn state record")?;
     Ok(())
 }
 

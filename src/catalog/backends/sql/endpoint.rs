@@ -30,19 +30,25 @@ impl TryFrom<db_endpoint::Model> for Endpoint {
 
     fn try_from(value: db_endpoint::Model) -> Result<Self, Self::Error> {
         let mut builder = EndpointBuilder::default();
-        builder.id(value.id.clone());
-        builder.interface(value.interface.clone());
-        builder.service_id(value.service_id.clone());
-        builder.url(value.url.clone());
+        builder.id(value.id);
+        builder.interface(value.interface);
+        builder.service_id(value.service_id);
+        builder.url(value.url);
         builder.enabled(value.enabled);
         if let Some(val) = &value.region_id {
             builder.region_id(val);
         }
-        if let Some(extra) = &value.extra {
-            let extra = serde_json::from_str::<Value>(extra)
-                .inspect_err(|e| error!("failed to deserialize endpoint extra: {e}"))
-                .unwrap_or_default();
-            builder.extra(extra);
+        if let Some(extra) = &value.extra
+            && extra != "{}"
+        {
+            match serde_json::from_str::<Value>(extra) {
+                Ok(val) => {
+                    builder.extra(val);
+                }
+                Err(e) => {
+                    error!("failed to deserialize endpoint extra: {e}");
+                }
+            }
         }
 
         Ok(builder.build()?)

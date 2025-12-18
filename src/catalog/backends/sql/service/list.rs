@@ -16,9 +16,10 @@ use sea_orm::DatabaseConnection;
 use sea_orm::entity::*;
 use sea_orm::query::*;
 
-use crate::catalog::backends::error::{CatalogDatabaseError, db_err};
+use crate::catalog::backends::error::CatalogDatabaseError;
 use crate::catalog::types::*;
 use crate::db::entity::{prelude::Service as DbService, service as db_service};
+use crate::error::DbContextExt;
 
 pub async fn list(
     db: &DatabaseConnection,
@@ -30,16 +31,13 @@ pub async fn list(
         select = select.filter(db_service::Column::Type.eq(typ));
     }
 
-    let db_services: Vec<db_service::Model> = select
+    select
         .all(db)
         .await
-        .map_err(|err| db_err(err, "fetching services"))?;
-    let results: Result<Vec<Service>, _> = db_services
+        .context("fetching services")?
         .into_iter()
         .map(TryInto::<Service>::try_into)
-        .collect();
-
-    results
+        .collect()
 }
 
 #[cfg(test)]

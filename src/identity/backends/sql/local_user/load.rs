@@ -21,7 +21,8 @@ use crate::db::entity::{
     local_user, password,
     prelude::{LocalUser, Password},
 };
-use crate::identity::backends::sql::{IdentityDatabaseError, db_err};
+use crate::error::DbContextExt;
+use crate::identity::backends::sql::IdentityDatabaseError;
 
 /// Load local user record with passwords from database
 pub async fn load_local_user_with_passwords<S1: AsRef<str>, S2: AsRef<str>, S3: AsRef<str>>(
@@ -54,7 +55,7 @@ pub async fn load_local_user_with_passwords<S1: AsRef<str>, S2: AsRef<str>, S3: 
         .order_by(password::Column::CreatedAtInt, Order::Desc)
         .all(db)
         .await
-        .map_err(|err| db_err(err, "fetching user with passwords"))?;
+        .context("fetching user with passwords")?;
     Ok(results.first().cloned())
 }
 
@@ -76,7 +77,7 @@ pub async fn load_local_users_passwords<L: IntoIterator<Item = Option<i32>>>(
         .order_by(password::Column::CreatedAtInt, Order::Desc)
         .all(db)
         .await
-        .map_err(|err| db_err(err, "fetching user passwords"))?;
+        .context("fetching user passwords")?;
 
     // Prepare hashmap of passwords per local_user_id from requested users
     let mut hashmap: HashMap<i32, Vec<password::Model>> =

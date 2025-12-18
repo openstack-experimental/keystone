@@ -36,7 +36,7 @@ pub mod backends;
 pub mod error;
 #[cfg(test)]
 mod mock;
-pub(crate) mod types;
+pub mod types;
 
 use crate::catalog::backends::CatalogBackend;
 use crate::catalog::backends::sql::SqlBackend;
@@ -47,8 +47,9 @@ use crate::plugin_manager::PluginManager;
 
 #[cfg(test)]
 pub use mock::MockCatalogProvider;
+pub use types::CatalogApi;
 
-pub use types::*;
+use types::*;
 
 #[derive(Clone, Debug)]
 pub struct CatalogProvider {

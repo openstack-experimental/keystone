@@ -17,8 +17,9 @@ use sea_orm::entity::*;
 use sea_orm::query::*;
 
 use crate::db::entity::{group, prelude::Group as DbGroup};
+use crate::error::DbContextExt;
 use crate::identity::Config;
-use crate::identity::backends::sql::{IdentityDatabaseError, db_err};
+use crate::identity::backends::sql::IdentityDatabaseError;
 use crate::identity::types::{Group, GroupListParameters};
 
 pub async fn list(
@@ -36,13 +37,13 @@ pub async fn list(
         group_select = group_select.filter(group::Column::Name.eq(name));
     }
 
-    let db_groups: Vec<group::Model> = group_select
+    Ok(group_select
         .all(db)
         .await
-        .map_err(|err| db_err(err, "listing groups"))?;
-    let results: Vec<Group> = db_groups.into_iter().map(Into::into).collect();
-
-    Ok(results)
+        .context("listing groups")?
+        .into_iter()
+        .map(Into::into)
+        .collect())
 }
 
 #[cfg(test)]

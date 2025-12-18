@@ -163,3 +163,63 @@ impl From<derive_builder::UninitializedFieldError> for BuilderError {
         Self::UninitializedField(ufe.to_string())
     }
 }
+
+/// Context aware database error.
+#[derive(Debug, Error)]
+pub enum DatabaseError {
+    /// Conflict.
+    #[error("{message} while {context}")]
+    Conflict {
+        /// The error message.
+        message: String,
+        /// The error context.
+        context: String,
+    },
+
+    /// SqlError.
+    #[error("{message} while {context}")]
+    Sql {
+        /// The error message.
+        message: String,
+        /// The error context.
+        context: String,
+    },
+
+    /// Database error.
+    #[error("Database error while {context}")]
+    Database {
+        /// The source of the error.
+        source: sea_orm::DbErr,
+        /// The error context.
+        context: String,
+    },
+}
+
+pub trait DbContextExt<T> {
+    fn context(self, msg: impl Into<String>) -> Result<T, DatabaseError>;
+}
+
+impl<T> DbContextExt<T> for Result<T, sea_orm::DbErr> {
+    fn context(self, context: impl Into<String>) -> Result<T, DatabaseError> {
+        self.map_err(|err| match err.sql_err() {
+            Some(sea_orm::SqlErr::UniqueConstraintViolation(descr)) => DatabaseError::Conflict {
+                message: descr.to_string(),
+                context: context.into(),
+            },
+            Some(sea_orm::SqlErr::ForeignKeyConstraintViolation(descr)) => {
+                DatabaseError::Conflict {
+                    message: descr.to_string(),
+                    context: context.into(),
+                }
+            }
+            Some(other) => DatabaseError::Sql {
+                message: other.to_string(),
+                context: context.into(),
+            },
+            None => DatabaseError::Database {
+                source: err,
+                context: context.into(),
+            },
+        })
+    }
+}

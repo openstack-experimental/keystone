@@ -31,7 +31,7 @@ use crate::auth::AuthenticatedInfo;
 use crate::config::Config;
 use crate::identity::IdentityProviderError;
 use crate::identity::backends::IdentityBackend;
-use crate::identity::backends::error::{IdentityDatabaseError, db_err};
+use crate::identity::backends::error::IdentityDatabaseError;
 use crate::keystone::ServiceState;
 
 #[derive(Clone, Debug, Default)]

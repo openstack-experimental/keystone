@@ -18,7 +18,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use validator::Validate;
 
+use crate::error::BuilderError;
+
 #[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
+#[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct UserResponse {
     /// The ID of the default project for the user. A user’s default project
@@ -65,6 +68,7 @@ pub struct UserResponse {
 }
 
 #[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct UserCreate {
     #[builder(default)]
@@ -104,6 +108,7 @@ pub struct UserCreate {
 }
 
 #[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
+#[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(into))]
 pub struct UserUpdate {
     /// The ID of the default project for the user.
@@ -139,6 +144,7 @@ pub struct UserUpdate {
 }
 
 #[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
+#[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct UserOptions {
     pub ignore_change_password_upon_first_use: Option<bool>,
@@ -152,6 +158,7 @@ pub struct UserOptions {
 
 /// User federation data.
 #[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
+#[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct Federation {
     /// Identity provider ID.
@@ -169,6 +176,7 @@ pub struct Federation {
 
 /// Federation protocol data.
 #[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
+#[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct FederationProtocol {
     /// Federation protocol ID.
@@ -182,6 +190,7 @@ pub struct FederationProtocol {
 
 /// User listing parameters.
 #[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
+#[builder(build_fn(error = "BuilderError"))]
 pub struct UserListParameters {
     /// Filter users by the domain.
     #[builder(default)]
@@ -199,6 +208,7 @@ pub struct UserListParameters {
 
 /// User password information.
 #[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
+#[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct UserPasswordAuthRequest {
     /// User ID.
@@ -221,6 +231,7 @@ pub struct UserPasswordAuthRequest {
 
 /// Domain information.
 #[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
+#[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct Domain {
     /// Domain ID

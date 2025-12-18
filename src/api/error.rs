@@ -25,6 +25,7 @@ use tracing::error;
 use crate::assignment::error::AssignmentProviderError;
 use crate::auth::AuthenticationError;
 use crate::catalog::error::CatalogProviderError;
+use crate::error::BuilderError;
 use crate::identity::error::IdentityProviderError;
 use crate::policy::PolicyError;
 use crate::resource::error::ResourceProviderError;
@@ -75,7 +76,7 @@ pub enum KeystoneApiError {
 
     #[error(transparent)]
     AssignmentError {
-        #[from]
+        //#[from]
         source: AssignmentProviderError,
     },
 
@@ -205,16 +206,6 @@ impl IntoResponse for KeystoneApiError {
 }
 
 impl KeystoneApiError {
-    pub fn assignment(source: AssignmentProviderError) -> Self {
-        match source {
-            AssignmentProviderError::RoleNotFound(x) => Self::NotFound {
-                resource: "role".into(),
-                identifier: x,
-            },
-            _ => source.into(),
-        }
-    }
-
     pub fn identity(source: IdentityProviderError) -> Self {
         match source {
             IdentityProviderError::UserNotFound(x) => Self::NotFound {
@@ -281,15 +272,12 @@ pub enum TokenError {
         source: crate::api::types::ProjectBuilderError,
     },
 
+    /// Structures builder error.
     #[error(transparent)]
-    UserPasswordAuthBuilder {
+    StructBuilder {
+        /// The source of the error.
         #[from]
-        source: crate::identity::types::user::UserPasswordAuthRequestBuilderError,
-    },
-    #[error(transparent)]
-    DomainBuilder {
-        #[from]
-        source: crate::identity::types::user::DomainBuilderError,
+        source: BuilderError,
     },
 }
 
@@ -321,6 +309,19 @@ impl From<AuthenticationError> for KeystoneApiError {
     }
 }
 
+impl From<AssignmentProviderError> for KeystoneApiError {
+    fn from(source: AssignmentProviderError) -> Self {
+        match source {
+            AssignmentProviderError::RoleNotFound(x) => Self::NotFound {
+                resource: "role".into(),
+                identifier: x,
+            },
+            ref cfl @ AssignmentProviderError::Conflict(..) => Self::Conflict(cfl.to_string()),
+            other => Self::InternalError(other.to_string()),
+        }
+    }
+}
+
 impl From<IdentityProviderError> for KeystoneApiError {
     fn from(value: IdentityProviderError) -> Self {
         match value {
@@ -336,5 +337,11 @@ impl From<TokenProviderError> for KeystoneApiError {
             TokenProviderError::AuthenticationInfo { source } => source.into(),
             _ => Self::TokenError { source: value },
         }
+    }
+}
+
+impl From<crate::error::BuilderError> for KeystoneApiError {
+    fn from(value: crate::error::BuilderError) -> Self {
+        Self::InternalError(value.to_string())
     }
 }

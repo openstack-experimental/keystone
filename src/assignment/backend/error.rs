@@ -12,75 +12,40 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use sea_orm::SqlErr;
 use thiserror::Error;
 
-use crate::assignment::types::*;
+use crate::error::{BuilderError, DatabaseError};
 
+/// Database driver for the assignments provider.
 #[derive(Error, Debug)]
 pub enum AssignmentDatabaseError {
-    #[error("{0}")]
-    RoleNotFound(String),
-
+    /// Database error.
     #[error(transparent)]
-    Serde {
+    Database {
         #[from]
-        source: serde_json::Error,
-    },
-
-    #[error("error building role assignment data: {}", source)]
-    AssignmentBuilder {
-        #[from]
-        source: AssignmentBuilderError,
-    },
-
-    #[error("error building role data: {}", source)]
-    RoleBuilder {
-        #[from]
-        source: RoleBuilderError,
+        source: DatabaseError,
     },
 
     /// Invalid assignment type.
     #[error("{0}")]
     InvalidAssignmentType(String),
 
-    /// Conflict
-    #[error("{message}")]
-    Conflict { message: String, context: String },
+    /// The role is not found.
+    #[error("{0}")]
+    RoleNotFound(String),
 
-    /// SqlError
-    #[error("{message}")]
-    Sql { message: String, context: String },
-
-    /// Database error
-    #[error("Database error while {context}")]
-    Database {
-        source: sea_orm::DbErr,
-        context: String,
+    /// (de)serialize error.
+    #[error(transparent)]
+    Serde {
+        #[from]
+        source: serde_json::Error,
     },
-}
 
-/// Convert the DB error into the [AssignmentDatabaseError] with the context
-/// information.
-pub fn db_err(e: sea_orm::DbErr, context: &str) -> AssignmentDatabaseError {
-    e.sql_err().map_or_else(
-        || AssignmentDatabaseError::Database {
-            source: e,
-            context: context.to_string(),
-        },
-        |err| match err {
-            SqlErr::UniqueConstraintViolation(descr) => AssignmentDatabaseError::Conflict {
-                message: descr.to_string(),
-                context: context.to_string(),
-            },
-            SqlErr::ForeignKeyConstraintViolation(descr) => AssignmentDatabaseError::Conflict {
-                message: descr.to_string(),
-                context: context.to_string(),
-            },
-            other => AssignmentDatabaseError::Sql {
-                message: other.to_string(),
-                context: context.to_string(),
-            },
-        },
-    )
+    /// Structures builder error.
+    #[error(transparent)]
+    StructBuilder {
+        /// The source of the error.
+        #[from]
+        source: BuilderError,
+    },
 }

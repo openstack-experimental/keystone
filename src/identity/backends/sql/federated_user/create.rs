@@ -17,7 +17,8 @@ use sea_orm::entity::*;
 
 use crate::config::Config;
 use crate::db::entity::federated_user;
-use crate::identity::backends::sql::{IdentityDatabaseError, db_err};
+use crate::error::DbContextExt;
+use crate::identity::backends::sql::IdentityDatabaseError;
 
 pub async fn create<A, C>(
     _conf: &Config,
@@ -28,11 +29,11 @@ where
     A: Into<federated_user::ActiveModel>,
     C: ConnectionTrait,
 {
-    federation
+    Ok(federation
         .into()
         .insert(db)
         .await
-        .map_err(|err| db_err(err, "persisting federated user data"))
+        .context("persisting federated user data")?)
 }
 
 #[cfg(test)]
