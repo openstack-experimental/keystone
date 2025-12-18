@@ -20,6 +20,7 @@ use std::io::Write;
 use validator::Validate;
 
 use crate::assignment::types::Role;
+use crate::error::BuilderError;
 use crate::identity::types::UserResponse;
 use crate::resource::types::Domain;
 use crate::token::types::common;
@@ -30,6 +31,7 @@ use crate::token::{
 };
 
 #[derive(Builder, Clone, Debug, Default, PartialEq, Serialize, Validate)]
+#[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(into))]
 pub struct DomainScopePayload {
     #[validate(length(min = 1, max = 64))]

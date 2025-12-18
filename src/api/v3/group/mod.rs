@@ -56,8 +56,7 @@ async fn list(
         .provider
         .get_identity_provider()
         .list_groups(&state, &query.into())
-        .await
-        .map_err(KeystoneApiError::identity)?
+        .await?
         .into_iter()
         .map(Into::into)
         .collect();
@@ -116,8 +115,7 @@ async fn create(
         .provider
         .get_identity_provider()
         .create_group(&state, req.into())
-        .await
-        .map_err(KeystoneApiError::identity)?;
+        .await?;
     Ok((StatusCode::CREATED, res).into_response())
 }
 
@@ -143,8 +141,7 @@ async fn remove(
         .provider
         .get_identity_provider()
         .delete_group(&state, &group_id)
-        .await
-        .map_err(KeystoneApiError::identity)?;
+        .await?;
     Ok((StatusCode::NO_CONTENT).into_response())
 }
 

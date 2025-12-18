@@ -83,8 +83,7 @@ pub(super) async fn update(
         .provider
         .get_token_provider()
         .update_token_restriction(&state, &id, req.into())
-        .await
-        .map_err(KeystoneApiError::token)?;
+        .await?;
     Ok(res.into_response())
 }
 

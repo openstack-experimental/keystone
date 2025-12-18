@@ -27,16 +27,22 @@ use thiserror::Error;
 use tracing::warn;
 
 use crate::application_credential::types::ApplicationCredential;
+use crate::error::BuilderError;
 use crate::identity::types::{Group, UserResponse};
 use crate::resource::types::{Domain, Project};
 
 #[derive(Error, Debug)]
 pub enum AuthenticationError {
-    /// Builder error
-    #[error("building authentication information: {source}")]
-    AuthenticatedInfoBuilder {
+    /// Token renewal is forbidden
+    #[error("Token renewal (getting token from token) is prohibited.")]
+    TokenRenewalForbidden,
+
+    /// Structures builder error.
+    #[error(transparent)]
+    StructBuilder {
+        /// The source of the error.
         #[from]
-        source: AuthenticatedInfoBuilderError,
+        source: BuilderError,
     },
 
     /// Unauthorized
@@ -51,20 +57,18 @@ pub enum AuthenticationError {
     #[error("The account is temporarily disabled for user: {0}")]
     UserLocked(String),
 
-    /// User password is expired.
-    #[error("The password is expired for user: {0}")]
-    UserPasswordExpired(String),
-
+    /// User name password combination is wrong.
     #[error("wrong username or password")]
     UserNameOrPasswordWrong,
 
-    /// Token renewal is forbidden
-    #[error("Token renewal (getting token from token) is prohibited.")]
-    TokenRenewalForbidden,
+    /// User password is expired.
+    #[error("The password is expired for user: {0}")]
+    UserPasswordExpired(String),
 }
 
 /// Information about successful authentication
 #[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(into, strip_option))]
 pub struct AuthenticatedInfo {
     /// Application credential.

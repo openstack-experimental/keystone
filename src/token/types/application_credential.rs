@@ -26,8 +26,8 @@ use crate::token::types::Token;
 use crate::token::types::common;
 
 #[derive(Builder, Clone, Debug, Default, PartialEq, Serialize, Validate)]
-#[builder(setter(into))]
 #[builder(build_fn(error = "BuilderError"))]
+#[builder(setter(into))]
 pub struct ApplicationCredentialPayload {
     #[validate(length(min = 1, max = 64))]
     pub user_id: String,

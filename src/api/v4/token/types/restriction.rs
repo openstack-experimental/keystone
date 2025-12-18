@@ -22,7 +22,6 @@ use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 use validator::Validate;
 
-use crate::api::error::KeystoneApiError;
 use crate::api::v3::role_assignment::types::Role;
 use crate::token::types::{
     self as types, TokenRestriction as ProviderTokenRestriction,
@@ -254,11 +253,5 @@ impl IntoResponse for ProviderTokenRestriction {
             }),
         )
             .into_response()
-    }
-}
-
-impl From<TokenRestrictionBuilderError> for KeystoneApiError {
-    fn from(err: TokenRestrictionBuilderError) -> Self {
-        Self::InternalError(err.to_string())
     }
 }

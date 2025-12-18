@@ -23,14 +23,15 @@ use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 use validator::Validate;
 
-use crate::api::error::TokenError;
 use crate::api::types::*;
 use crate::api::v3::role::types::Role;
+use crate::error::BuilderError;
 use crate::identity::types as identity_types;
 use crate::token::Token as BackendToken;
 
 /// Authorization token
 #[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct Token {
     /// A list of one or two audit IDs. An audit ID is a unique, randomly
@@ -95,6 +96,7 @@ pub struct Token {
 }
 
 #[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct TokenResponse {
     /// Token
@@ -155,6 +157,7 @@ pub struct Identity {
 
 /// The password object, contains the authentication information.
 #[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct PasswordAuth {
     /// A user object.
@@ -181,7 +184,7 @@ pub struct UserPassword {
 }
 
 impl TryFrom<UserPassword> for identity_types::UserPasswordAuthRequest {
-    type Error = TokenError;
+    type Error = BuilderError;
 
     fn try_from(value: UserPassword) -> Result<Self, Self::Error> {
         let mut upa = identity_types::UserPasswordAuthRequestBuilder::default();
@@ -208,6 +211,7 @@ impl TryFrom<UserPassword> for identity_types::UserPasswordAuthRequest {
 
 /// User information
 #[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(into))]
 pub struct User {
     /// User ID
@@ -226,7 +230,7 @@ pub struct User {
 }
 
 impl TryFrom<&BackendToken> for Token {
-    type Error = TokenError;
+    type Error = BuilderError;
 
     fn try_from(value: &BackendToken) -> Result<Self, Self::Error> {
         let mut token = TokenBuilder::default();
@@ -240,6 +244,7 @@ impl TryFrom<&BackendToken> for Token {
 
 /// The token object, contains the authentication information.
 #[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct TokenAuth {
     /// An authentication token.

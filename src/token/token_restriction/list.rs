@@ -23,7 +23,8 @@ use crate::db::entity::prelude::{
 };
 use crate::db::entity::token_restriction;
 use crate::db::entity::token_restriction_role_association;
-use crate::token::error::{TokenProviderError, db_err};
+use crate::error::DbContextExt;
+use crate::token::error::TokenProviderError;
 use crate::token::types::{TokenRestriction, TokenRestrictionListParameters};
 
 /// List existing token restrictions.
@@ -48,7 +49,7 @@ pub async fn list(
         .find_with_related(DbTokenRestrictionRoleAssociation)
         .all(db)
         .await
-        .map_err(|err| db_err(err, "listing token restrictions"))?;
+        .context("listing token restrictions")?;
 
     Ok(db_restrictions.into_iter().map(Into::into).collect())
 }

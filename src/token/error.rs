@@ -13,14 +13,19 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Token provider errors.
 
-use sea_orm::SqlErr;
 use std::num::TryFromIntError;
 
 use thiserror::Error;
 
+use crate::error::{BuilderError, DatabaseError};
+
 /// Token provider error.
 #[derive(Error, Debug)]
 pub enum TokenProviderError {
+    /// Actor has no roles on the target scope.
+    #[error("actor has no roles on scope")]
+    ActorHasNoRolesOnTarget,
+
     /// Application Credential used in the token is not found.
     #[error("application credential with id: {0} not found")]
     ApplicationCredentialNotFound(String),
@@ -41,30 +46,41 @@ pub enum TokenProviderError {
     #[error("application credential is bound to another project")]
     ApplicationCredentialScopeMismatch,
 
-    /// Builder error.
     #[error(transparent)]
-    Builder {
+    AssignmentProvider {
         /// The source of the error.
         #[from]
-        source: crate::error::BuilderError,
+        source: crate::assignment::error::AssignmentProviderError,
     },
 
-    /// IO error.
-    #[error("io error: {}", source)]
-    Io {
-        /// The source of the error.
-        #[from]
-        source: std::io::Error,
-    },
+    /// AuditID must be urlsafe base64 encoded value.
+    #[error("audit_id must be urlsafe base64 encoded value")]
+    AuditIdWrongFormat,
 
-    /// Fernet payload timestamp overflow error.
-    #[error("fernet payload timestamp overflow ({value}): {}", source)]
-    TokenTimestampOverflow {
-        /// Token timestamp.
-        value: u64,
-        /// The source of the error.
-        source: std::num::TryFromIntError,
-    },
+    #[error(transparent)]
+    AuthenticationInfo(#[from] crate::auth::AuthenticationError),
+
+    #[error("b64 decryption error")]
+    Base64Decode(#[from] base64::DecodeError),
+
+    /// Conflict
+    #[error("{message}")]
+    Conflict { message: String, context: String },
+
+    /// Database error.
+    #[error(transparent)]
+    Database(#[from] DatabaseError),
+
+    /// Expired token
+    #[error("token expired")]
+    Expired,
+
+    /// Expired token
+    #[error("token expiry calculation failed")]
+    ExpiryCalculation,
+
+    #[error("federated payload must contain idp_id and protocol_id")]
+    FederatedPayloadMissingData,
 
     /// Fernet key read error.
     #[error("fernet key read error: {}", source)]
@@ -77,15 +93,14 @@ pub enum TokenProviderError {
 
     /// Fernet Decryption
     #[error("fernet decryption error")]
-    FernetDecryption {
-        /// The source of the error.
-        #[from]
-        source: fernet::DecryptionError,
-    },
+    FernetDecryption(#[from] fernet::DecryptionError),
 
     /// Missing fernet keys
     #[error("no usable fernet keys has been found")]
     FernetKeysMissing,
+
+    #[error(transparent)]
+    IdentityProvider(#[from] crate::identity::error::IdentityProviderError),
 
     /// Invalid token data
     #[error("invalid token error")]
@@ -103,13 +118,13 @@ pub enum TokenProviderError {
     #[error("token uuid coding {0:?} is not supported")]
     InvalidTokenUuidMarker(rmp::Marker),
 
-    /// Expired token
-    #[error("token expired")]
-    Expired,
-
-    /// Expired token
-    #[error("token expiry calculation failed")]
-    ExpiryCalculation,
+    /// IO error.
+    #[error("io error: {}", source)]
+    Io {
+        /// The source of the error.
+        #[from]
+        source: std::io::Error,
+    },
 
     /// Nix errno.
     #[error("unix error {source} while {context}")]
@@ -122,140 +137,34 @@ pub enum TokenProviderError {
 
     /// tempfile persisting error
     #[error(transparent)]
-    Persist {
-        /// The source of the error.
-        #[from]
-        source: tempfile::PersistError,
-    },
+    Persist(#[from] tempfile::PersistError),
+
+    #[error(transparent)]
+    ResourceProvider(#[from] crate::resource::error::ResourceProviderError),
+
+    /// Revoke Provider error.
+    #[error(transparent)]
+    RevokeProvider(#[from] crate::revoke::error::RevokeProviderError),
 
     /// MSGPack Decryption
     #[error("rmp value error")]
-    RmpValueRead {
-        /// The source of the error.
-        #[from]
-        source: rmp::decode::ValueReadError,
-    },
+    RmpValueRead(#[from] rmp::decode::ValueReadError),
 
     /// MSGPack Encryption
     #[error("rmp value encoding error")]
     RmpEncode(String),
 
-    #[error("b64 decryption error")]
-    Base64Decode {
+    /// Fernet payload timestamp overflow error.
+    #[error("fernet payload timestamp overflow ({value}): {}", source)]
+    TokenTimestampOverflow {
+        /// Token timestamp.
+        value: u64,
         /// The source of the error.
-        #[from]
-        source: base64::DecodeError,
-    },
-
-    #[error("uuid decryption error")]
-    Uuid {
-        /// The source of the error.
-        #[from]
-        source: uuid::Error,
+        source: std::num::TryFromIntError,
     },
 
     #[error("int parse")]
-    TryFromIntError {
-        /// The source of the error.
-        #[from]
-        source: TryFromIntError,
-    },
-
-    #[error(transparent)]
-    UnscopedBuilder {
-        /// The source of the error.
-        #[from]
-        source: crate::token::types::unscoped::UnscopedPayloadBuilderError,
-    },
-
-    #[error(transparent)]
-    ProjectScopeBuilder {
-        /// The source of the error.
-        #[from]
-        source: crate::token::types::project_scoped::ProjectScopePayloadBuilderError,
-    },
-
-    #[error(transparent)]
-    DomainScopeBuilder {
-        /// The source of the error.
-        #[from]
-        source: crate::token::types::domain_scoped::DomainScopePayloadBuilderError,
-    },
-
-    #[error(transparent)]
-    FederationUnscopedBuilder {
-        /// The source of the error.
-        #[from]
-        source: crate::token::types::federation_unscoped::FederationUnscopedPayloadBuilderError,
-    },
-
-    #[error(transparent)]
-    FederationProjectScopeBuilder {
-        /// The source of the error.
-        #[from]
-        source: crate::token::types::federation_project_scoped::FederationProjectScopePayloadBuilderError,
-    },
-
-    #[error(transparent)]
-    FederationDomainScopeBuilder {
-        /// The source of the error.
-        #[from]
-        source: crate::token::types::federation_domain_scoped::FederationDomainScopePayloadBuilderError,
-    },
-
-    #[error(transparent)]
-    RestrictedBuilder {
-        /// The source of the error.
-        #[from]
-        source: crate::token::types::restricted::RestrictedPayloadBuilderError,
-    },
-
-    #[error(transparent)]
-    AssignmentProvider {
-        /// The source of the error.
-        #[from]
-        source: crate::assignment::error::AssignmentProviderError,
-    },
-
-    #[error(transparent)]
-    AuthenticationInfo {
-        #[from]
-        source: crate::auth::AuthenticationError,
-    },
-
-    #[error(transparent)]
-    IdentityProvider {
-        /// The source of the error.
-        #[from]
-        source: crate::identity::error::IdentityProviderError,
-    },
-
-    #[error(transparent)]
-    ResourceProvider {
-        /// The source of the error.
-        #[from]
-        source: crate::resource::error::ResourceProviderError,
-    },
-
-    /// Revoke Provider error.
-    #[error(transparent)]
-    RevokeProvider {
-        /// The source of the error.
-        #[from]
-        source: crate::revoke::error::RevokeProviderError,
-    },
-
-    #[error("actor has no roles on scope")]
-    ActorHasNoRolesOnTarget,
-
-    #[error("federated payload must contain idp_id and protocol_id")]
-    FederatedPayloadMissingData,
-
-    #[error("user cannot be found: {0}")]
-    UserNotFound(String),
-
-    #[error("unsupported authentication methods {0} in token payload")]
-    UnsupportedAuthMethods(String),
+    TryFromIntError(#[from] TryFromIntError),
 
     #[error("token with restrictions can be only project scoped")]
     RestrictedTokenNotProjectScoped,
@@ -267,49 +176,19 @@ pub enum TokenProviderError {
     #[error("token has been revoked")]
     TokenRevoked,
 
-    /// Conflict
-    #[error("{message}")]
-    Conflict { message: String, context: String },
+    /// Structures builder error.
+    #[error(transparent)]
+    StructBuilder(#[from] BuilderError),
 
-    /// SqlError
-    #[error("{message}")]
-    Sql { message: String, context: String },
+    #[error("user cannot be found: {0}")]
+    UserNotFound(String),
 
-    #[error("Database error while {context}")]
-    Database {
-        source: sea_orm::DbErr,
-        context: String,
-    },
+    #[error("unsupported authentication methods {0} in token payload")]
+    UnsupportedAuthMethods(String),
 
-    /// AuditID must be urlsafe base64 encoded value.
-    #[error("audit_id must be urlsafe base64 encoded value")]
-    AuditIdWrongFormat,
+    #[error("uuid decryption error")]
+    Uuid(#[from] uuid::Error),
 
     #[error("Token validation error: {0}")]
     Validation(#[from] validator::ValidationErrors),
-}
-
-/// Convert the DB error into the TokenProviderError with the context
-/// information.
-pub fn db_err(e: sea_orm::DbErr, context: &str) -> TokenProviderError {
-    e.sql_err().map_or_else(
-        || TokenProviderError::Database {
-            source: e,
-            context: context.to_string(),
-        },
-        |err| match err {
-            SqlErr::UniqueConstraintViolation(descr) => TokenProviderError::Conflict {
-                message: descr.to_string(),
-                context: context.to_string(),
-            },
-            SqlErr::ForeignKeyConstraintViolation(descr) => TokenProviderError::Conflict {
-                message: descr.to_string(),
-                context: context.to_string(),
-            },
-            other => TokenProviderError::Sql {
-                message: other.to_string(),
-                context: context.to_string(),
-            },
-        },
-    )
 }

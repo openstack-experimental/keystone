@@ -380,9 +380,7 @@ fn get_fernet_timestamp(payload: &str) -> Result<DateTime<Utc>, TokenProviderErr
 
     input
         .read_u64::<byteorder::BigEndian>()
-        .map_err(|_| TokenProviderError::FernetDecryption {
-            source: fernet::DecryptionError,
-        })
+        .map_err(|_| TokenProviderError::FernetDecryption(fernet::DecryptionError))
         .and_then(|val| {
             TryInto::try_into(val).map_err(|err| TokenProviderError::TokenTimestampOverflow {
                 value: val,
@@ -390,9 +388,8 @@ fn get_fernet_timestamp(payload: &str) -> Result<DateTime<Utc>, TokenProviderErr
             })
         })
         .and_then(|val| {
-            DateTime::from_timestamp_secs(val).ok_or_else(|| TokenProviderError::FernetDecryption {
-                source: fernet::DecryptionError,
-            })
+            DateTime::from_timestamp_secs(val)
+                .ok_or_else(|| TokenProviderError::FernetDecryption(fernet::DecryptionError))
         })
 }
 
