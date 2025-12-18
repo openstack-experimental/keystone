@@ -19,7 +19,8 @@ use sea_orm::entity::*;
 
 use crate::db::entity::prelude::TokenRestrictionRoleAssociation as DbTokenRestrictionRoleAssociation;
 use crate::db::entity::{token_restriction, token_restriction_role_association};
-use crate::token::error::{TokenProviderError, db_err};
+use crate::error::DbContextExt;
+use crate::token::error::TokenProviderError;
 use crate::token::types::*;
 
 /// Create new token restriction.
@@ -46,14 +47,11 @@ pub async fn create(
             .into(),
     };
 
-    let txn = db
-        .begin()
-        .await
-        .map_err(|err| db_err(err, "starting the transaction"))?;
+    let txn = db.begin().await.context("starting the transaction")?;
     let db_entry: token_restriction::Model = entry
         .insert(db)
         .await
-        .map_err(|err| db_err(err, "creating token restriction"))?;
+        .context("creating token restriction")?;
 
     if !restriction.role_ids.is_empty() {
         DbTokenRestrictionRoleAssociation::insert_many(
@@ -66,11 +64,9 @@ pub async fn create(
         )
         .exec(db)
         .await
-        .map_err(|err| db_err(err, "persisting token restriction role association"))?;
+        .context("persisting token restriction role association")?;
     }
-    txn.commit()
-        .await
-        .map_err(|err| db_err(err, "committing the transaction"))?;
+    txn.commit().await.context("committing the transaction")?;
 
     Ok(db_entry.into())
 }

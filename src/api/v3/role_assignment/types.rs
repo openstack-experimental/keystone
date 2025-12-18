@@ -24,59 +24,72 @@ use validator::{Validate, ValidationErrors};
 
 use crate::api::error::KeystoneApiError;
 use crate::assignment::types;
+use crate::error::BuilderError;
 
+/// Assignment.
 #[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct Assignment {
-    /// Role ID
-    #[validate(nested)]
-    pub role: Role,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// Group.
     #[builder(default)]
-    #[validate(nested)]
-    pub user: Option<User>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[builder(default)]
     #[validate(nested)]
     pub group: Option<Group>,
+
+    /// Role.
+    #[validate(nested)]
+    pub role: Role,
+
+    /// Target scope.
     #[validate(nested)]
     pub scope: Scope,
+
+    /// User.
+    #[builder(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[validate(nested)]
+    pub user: Option<User>,
 }
 
-#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+/// Role.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct Role {
+    /// The role ID.
     #[validate(length(max = 64))]
     pub id: String,
+
+    /// The role name.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[validate(length(max = 64))]
     pub name: Option<String>,
 }
 
-#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct User {
     #[validate(length(max = 64))]
     pub id: String,
 }
 
-#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct Group {
     #[validate(length(max = 64))]
     pub id: String,
 }
 
-#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct Project {
     #[validate(length(max = 64))]
     pub id: String,
 }
 
-#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct Domain {
     #[validate(length(max = 64))]
     pub id: String,
 }
 
-#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct System {
     #[validate(length(max = 64))]
     pub id: String,
@@ -111,51 +124,39 @@ impl TryFrom<types::Assignment> for Assignment {
         });
         match value.r#type {
             types::AssignmentType::GroupDomain => {
-                builder.group(Group {
-                    id: value.actor_id.clone(),
-                });
+                builder.group(Group { id: value.actor_id });
                 builder.scope(Scope::Domain(Domain {
-                    id: value.target_id.clone(),
+                    id: value.target_id,
                 }));
             }
             types::AssignmentType::GroupProject => {
-                builder.group(Group {
-                    id: value.actor_id.clone(),
-                });
+                builder.group(Group { id: value.actor_id });
                 builder.scope(Scope::Project(Project {
-                    id: value.target_id.clone(),
+                    id: value.target_id,
                 }));
             }
             types::AssignmentType::UserDomain => {
-                builder.user(User {
-                    id: value.actor_id.clone(),
-                });
+                builder.user(User { id: value.actor_id });
                 builder.scope(Scope::Domain(Domain {
-                    id: value.target_id.clone(),
+                    id: value.target_id,
                 }));
             }
             types::AssignmentType::UserProject => {
-                builder.user(User {
-                    id: value.actor_id.clone(),
-                });
+                builder.user(User { id: value.actor_id });
                 builder.scope(Scope::Project(Project {
-                    id: value.target_id.clone(),
+                    id: value.target_id,
                 }));
             }
             types::AssignmentType::UserSystem => {
-                builder.user(User {
-                    id: value.actor_id.clone(),
-                });
+                builder.user(User { id: value.actor_id });
                 builder.scope(Scope::System(System {
-                    id: value.target_id.clone(),
+                    id: value.target_id,
                 }));
             }
             types::AssignmentType::GroupSystem => {
-                builder.group(Group {
-                    id: value.actor_id.clone(),
-                });
+                builder.group(Group { id: value.actor_id });
                 builder.scope(Scope::System(System {
-                    id: value.target_id.clone(),
+                    id: value.target_id,
                 }));
             }
         }
@@ -163,13 +164,7 @@ impl TryFrom<types::Assignment> for Assignment {
     }
 }
 
-impl From<AssignmentBuilderError> for KeystoneApiError {
-    fn from(err: AssignmentBuilderError) -> Self {
-        Self::InternalError(err.to_string())
-    }
-}
-
-/// Assignments
+/// Assignments.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct AssignmentList {
     /// Collection of role assignment objects
@@ -183,7 +178,7 @@ impl IntoResponse for AssignmentList {
     }
 }
 
-/// List role assignments query parameters
+/// List role assignments query parameters.
 #[derive(Clone, Debug, Default, Deserialize, Serialize, IntoParams, Validate)]
 pub struct RoleAssignmentListParameters {
     /// Filters the response by a domain ID.
@@ -231,21 +226,21 @@ impl TryFrom<RoleAssignmentListParameters> for types::RoleAssignmentListParamete
         let mut builder = types::RoleAssignmentListParametersBuilder::default();
         // Filter by role
         if let Some(val) = &value.role_id {
-            builder.role_id(val.clone());
+            builder.role_id(val);
         }
 
         // Filter by actor
         if let Some(val) = &value.user_id {
-            builder.user_id(val.clone());
+            builder.user_id(val);
         } else if let Some(val) = &value.group_id {
-            builder.group_id(val.clone());
+            builder.group_id(val);
         }
 
         // Filter by target
         if let Some(val) = &value.project_id {
-            builder.project_id(val.clone());
+            builder.project_id(val);
         } else if let Some(val) = &value.domain_id {
-            builder.domain_id(val.clone());
+            builder.domain_id(val);
         }
 
         if let Some(val) = value.effective {

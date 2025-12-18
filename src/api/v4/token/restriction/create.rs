@@ -68,8 +68,7 @@ pub(super) async fn create(
         .provider
         .get_token_provider()
         .create_token_restriction(&state, req.into())
-        .await
-        .map_err(KeystoneApiError::token)?;
+        .await?;
     Ok((StatusCode::CREATED, res).into_response())
 }
 

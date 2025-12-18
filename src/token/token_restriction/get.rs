@@ -21,7 +21,8 @@ use crate::db::entity::prelude::{
     TokenRestrictionRoleAssociation as DbTokenRestrictionRoleAssociation,
 };
 use crate::db::entity::token_restriction_role_association;
-use crate::token::error::{TokenProviderError, db_err};
+use crate::error::DbContextExt;
+use crate::token::error::TokenProviderError;
 use crate::token::types::TokenRestriction;
 
 /// Get existing token restriction by the ID.
@@ -34,7 +35,7 @@ pub async fn get<S: AsRef<str>>(
         DbTokenRestriction::find_by_id(token_restriction_id.as_ref())
             .one(db)
             .await
-            .map_err(|err| db_err(err, "reading token restriction record"))?
+            .context("reading token restriction record")?
     {
         if expand_roles {
             let roles = DbTokenRestrictionRoleAssociation::find()
@@ -45,7 +46,7 @@ pub async fn get<S: AsRef<str>>(
                 .find_also_related(DbRole)
                 .all(db)
                 .await
-                .map_err(|err| db_err(err, "reading token restriction roles"))?;
+                .context("reading token restriction roles")?;
             Some((entry, roles).into())
         } else {
             let roles = DbTokenRestrictionRoleAssociation::find()
@@ -55,7 +56,7 @@ pub async fn get<S: AsRef<str>>(
                 )
                 .all(db)
                 .await
-                .map_err(|err| db_err(err, "reading token restriction roles"))?;
+                .context("reading token restriction roles")?;
             Some((entry, roles).into())
         }
     } else {

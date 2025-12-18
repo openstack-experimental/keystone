@@ -17,7 +17,8 @@ use sea_orm::DatabaseConnection;
 use sea_orm::entity::*;
 
 use crate::db::entity::prelude::TokenRestriction as DbTokenRestriction;
-use crate::token::error::{TokenProviderError, db_err};
+use crate::error::DbContextExt;
+use crate::token::error::TokenProviderError;
 
 /// Delete existing token restriction by the ID.
 pub async fn delete<S: AsRef<str>>(
@@ -27,7 +28,7 @@ pub async fn delete<S: AsRef<str>>(
     DbTokenRestriction::delete_by_id(id.as_ref())
         .exec(db)
         .await
-        .map_err(|err| db_err(err, "deleting the token restriction"))?;
+        .context("deleting the token restriction")?;
     Ok(())
 }
 

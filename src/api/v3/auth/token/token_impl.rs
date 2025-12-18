@@ -13,7 +13,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::api::common;
-use crate::api::error::{KeystoneApiError, TokenError};
+use crate::api::error::KeystoneApiError;
 use crate::api::v3::auth::token::types::{Token, TokenBuilder, UserBuilder};
 use crate::api::v3::role::types::Role;
 use crate::identity::IdentityApi;
@@ -45,8 +45,7 @@ impl Token {
                 .provider
                 .get_identity_provider()
                 .get_user(state, token.user_id())
-                .await
-                .map_err(KeystoneApiError::identity)?
+                .await?
                 .ok_or_else(|| KeystoneApiError::NotFound {
                     resource: "user".into(),
                     identifier: token.user_id().clone(),
@@ -62,7 +61,7 @@ impl Token {
             user_response.password_expires_at(val);
         }
         user_response.domain(user_domain.clone());
-        response.user(user_response.build().map_err(TokenError::from)?);
+        response.user(user_response.build()?);
 
         if let Some(roles) = token.roles() {
             response.roles(
@@ -90,8 +89,7 @@ impl Token {
                             .provider
                             .get_resource_provider()
                             .get_project(state, &token.project_id)
-                            .await
-                            .map_err(KeystoneApiError::resource)?
+                            .await?
                             .ok_or_else(|| KeystoneApiError::NotFound {
                                 resource: "project".into(),
                                 identifier: token.project_id.clone(),
@@ -106,8 +104,7 @@ impl Token {
                             .provider
                             .get_resource_provider()
                             .get_project(state, &token.project_id)
-                            .await
-                            .map_err(KeystoneApiError::resource)?
+                            .await?
                             .ok_or_else(|| KeystoneApiError::NotFound {
                                 resource: "project".into(),
                                 identifier: token.project_id.clone(),
@@ -130,8 +127,7 @@ impl Token {
                             .provider
                             .get_resource_provider()
                             .get_project(state, &token.project_id)
-                            .await
-                            .map_err(KeystoneApiError::resource)?
+                            .await?
                             .ok_or_else(|| KeystoneApiError::NotFound {
                                 resource: "project".into(),
                                 identifier: token.project_id.clone(),
@@ -146,8 +142,7 @@ impl Token {
                             .provider
                             .get_resource_provider()
                             .get_project(state, &token.project_id)
-                            .await
-                            .map_err(KeystoneApiError::resource)?
+                            .await?
                             .ok_or_else(|| KeystoneApiError::NotFound {
                                 resource: "project".into(),
                                 identifier: token.project_id.clone(),
@@ -164,11 +159,10 @@ impl Token {
             response.project(
                 get_project_info_builder(state, &project, &user_domain)
                     .await?
-                    .build()
-                    .map_err(TokenError::from)?,
+                    .build()?,
             );
         }
-        Ok(response.build().map_err(TokenError::from)?)
+        Ok(response.build()?)
     }
 }
 

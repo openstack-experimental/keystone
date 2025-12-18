@@ -24,7 +24,8 @@ use crate::db::entity::prelude::{
     TokenRestrictionRoleAssociation as DbTokenRestrictionRoleAssociation,
 };
 use crate::db::entity::{token_restriction, token_restriction_role_association};
-use crate::token::error::{TokenProviderError, db_err};
+use crate::error::DbContextExt;
+use crate::token::error::TokenProviderError;
 use crate::token::types::*;
 
 /// Update existing token restriction by the ID.
@@ -36,7 +37,7 @@ pub async fn update<S: AsRef<str>>(
     if let Some(current) = DbTokenRestriction::find_by_id(id.as_ref())
         .one(db)
         .await
-        .map_err(|err| db_err(err, "searching for the existing token restriction"))?
+        .context("searching for the existing token restriction")?
     {
         let mut entry: token_restriction::ActiveModel = current.into();
         if let Some(val) = restriction.allow_renew {
@@ -52,14 +53,11 @@ pub async fn update<S: AsRef<str>>(
             entry.project_id = Set(val.clone());
         }
 
-        let txn = db
-            .begin()
-            .await
-            .map_err(|err| db_err(err, "starting the transaction"))?;
+        let txn = db.begin().await.context("starting the transaction")?;
         let db_entry: token_restriction::Model = entry
             .update(db)
             .await
-            .map_err(|err| db_err(err, "updating the token restriction"))?;
+            .context("updating the token restriction")?;
 
         if let Some(role_ids) = &restriction.role_ids {
             // Read the current role associations
@@ -73,7 +71,7 @@ pub async fn update<S: AsRef<str>>(
                     .into_tuple()
                     .all(db)
                     .await
-                    .map_err(|err| db_err(err, "reading current token restriction roles"))?,
+                    .context("reading current token restriction roles")?,
             );
             // Calculate roles to be add and removed
             let roles_to_remove: BTreeSet<String> = current_roles
@@ -97,7 +95,7 @@ pub async fn update<S: AsRef<str>>(
                 .on_empty_do_nothing()
                 .exec(db)
                 .await
-                .map_err(|err| db_err(err, "Adding new token restriction roles"))?;
+                .context("Adding new token restriction roles")?;
             }
             // Delete unnecessary roles
             if !roles_to_remove.is_empty() {
@@ -115,13 +113,11 @@ pub async fn update<S: AsRef<str>>(
                     )
                     .exec(db)
                     .await
-                    .map_err(|err| db_err(err, "delete obsolete token restriction roles"))?;
+                    .context("delete obsolete token restriction roles")?;
             }
         }
 
-        txn.commit()
-            .await
-            .map_err(|err| db_err(err, "committing the transaction"))?;
+        txn.commit().await.context("committing the transaction")?;
         Ok(db_entry.into())
     } else {
         Err(TokenProviderError::TokenRestrictionNotFound(

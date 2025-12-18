@@ -19,6 +19,7 @@ use serde::{Deserialize, Serialize};
 use validator::Validate;
 
 use crate::assignment::types::Role;
+use crate::error::BuilderError;
 use crate::identity::types::UserResponse;
 use crate::resource::types::Project;
 use crate::token::types::Token;
@@ -26,6 +27,7 @@ use crate::token::types::common;
 
 /// Restricted token payload.
 #[derive(Builder, Clone, Debug, Default, PartialEq, Serialize, Validate)]
+#[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(into))]
 pub struct RestrictedPayload {
     /// User ID.
@@ -95,6 +97,7 @@ impl From<RestrictedPayload> for Token {
 
 /// Token restriction information.
 #[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[builder(build_fn(error = "BuilderError"))]
 pub struct TokenRestriction {
     /// Whether the restriction allows to rescope the token.
     pub allow_rescope: bool,
@@ -116,6 +119,7 @@ pub struct TokenRestriction {
 
 /// New token restriction information.
 #[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[builder(build_fn(error = "BuilderError"))]
 pub struct TokenRestrictionCreate {
     /// Whether the restriction allows to rescope the token.
     pub allow_rescope: bool,
@@ -135,6 +139,7 @@ pub struct TokenRestrictionCreate {
 
 /// Token restriction update information.
 #[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[builder(build_fn(error = "BuilderError"))]
 pub struct TokenRestrictionUpdate {
     /// Whether the restriction allows to rescope the token.
     pub allow_rescope: Option<bool>,
@@ -150,6 +155,7 @@ pub struct TokenRestrictionUpdate {
 
 /// Token restriction list filters.
 #[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[builder(build_fn(error = "BuilderError"))]
 pub struct TokenRestrictionListParameters {
     /// Domain id.
     pub domain_id: Option<String>,

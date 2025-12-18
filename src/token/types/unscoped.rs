@@ -19,6 +19,7 @@ use serde::Serialize;
 use std::io::Write;
 use validator::Validate;
 
+use crate::error::BuilderError;
 use crate::identity::types::UserResponse;
 use crate::token::types::common;
 use crate::token::{
@@ -28,6 +29,7 @@ use crate::token::{
 };
 
 #[derive(Builder, Clone, Debug, Default, PartialEq, Serialize, Validate)]
+#[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(into))]
 pub struct UnscopedPayload {
     #[validate(length(min = 1, max = 64))]

@@ -31,8 +31,9 @@ pub mod register;
 /// WebAuthN extension state.
 #[derive(Debug)]
 pub struct ExtensionState {
+    /// Provider.
     pub provider: SqlDriver,
-    /// WebAuthN provider
+    /// WebAuthN provider.
     pub webauthn: Webauthn,
 }
 
@@ -74,5 +75,11 @@ impl From<WebauthnError> for KeystoneApiError {
             ref err @ WebauthnError::Conflict { .. } => Self::Conflict(err.to_string()),
             other => Self::InternalError(other.to_string()),
         }
+    }
+}
+
+impl From<uuid::Error> for KeystoneApiError {
+    fn from(value: uuid::Error) -> Self {
+        Self::InternalError(value.to_string())
     }
 }

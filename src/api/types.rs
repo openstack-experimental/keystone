@@ -25,9 +25,10 @@ use validator::{Validate, ValidationErrors};
 
 use crate::catalog::types::{Endpoint as ProviderEndpoint, Service};
 use crate::common::types as provider_types;
+use crate::error::BuilderError;
 use crate::resource::types as resource_provider_types;
 
-/// List of the supported API versionts as [Values].
+/// List of the supported API versions as [Values].
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct Versions {
     /// List of the versions.
@@ -148,6 +149,7 @@ impl IntoResponse for Catalog {
 
 /// A catalog object.
 #[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct CatalogService {
     pub r#type: Option<String>,
@@ -172,6 +174,7 @@ impl From<(Service, Vec<ProviderEndpoint>)> for CatalogService {
 
 /// A Catalog Endpoint.
 #[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct Endpoint {
     #[validate(length(max = 64))]
@@ -243,6 +246,7 @@ impl Validate for Scope {
 
 /// Project scope information.
 #[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(into, strip_option))]
 pub struct ScopeProject {
     /// Project ID.
@@ -260,6 +264,7 @@ pub struct ScopeProject {
 
 /// Domain information.
 #[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(into, strip_option))]
 pub struct Domain {
     /// Domain ID.
@@ -274,6 +279,7 @@ pub struct Domain {
 
 /// Project information.
 #[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[builder(build_fn(error = "BuilderError"))]
 pub struct Project {
     /// Project ID.
     #[validate(length(max = 64))]
@@ -288,6 +294,7 @@ pub struct Project {
 
 /// System scope.
 #[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(into, strip_option))]
 pub struct System {
     /// All systems access.

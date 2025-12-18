@@ -77,8 +77,7 @@ pub(super) async fn remove(
             .provider
             .get_token_provider()
             .delete_token_restriction(&state, &id)
-            .await
-            .map_err(KeystoneApiError::token)?;
+            .await?;
     } else {
         return Err(KeystoneApiError::NotFound {
             resource: "token_restriction".to_string(),
