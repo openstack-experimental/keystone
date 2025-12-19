@@ -476,11 +476,6 @@ impl IntoResponse for MappingList {
 /// Query parameters for listing OIDC/JWT attribute mappings.
 #[derive(Clone, Debug, Default, Deserialize, Serialize, IntoParams, Validate)]
 pub struct MappingListParameters {
-    /// Filters the response by IDP name.
-    #[param(nullable = false)]
-    #[validate(length(max = 255))]
-    pub name: Option<String>,
-
     /// Filters the response by a domain ID.
     #[param(nullable = false)]
     #[validate(length(max = 64))]
@@ -490,6 +485,19 @@ pub struct MappingListParameters {
     #[param(nullable = false)]
     #[validate(length(max = 64))]
     pub idp_id: Option<String>,
+
+    /// Filters the response by IDP name.
+    #[param(nullable = false)]
+    #[validate(length(max = 255))]
+    pub name: Option<String>,
+
+    /// Limit number of entries on the single response page (Maximal 100)
+    #[validate(range(min = 1, max = 100))]
+    pub limit: Option<u64>,
+
+    /// Page marker (id of the last entry on the previous page.
+    #[validate(length(max = 64))]
+    pub marker: Option<String>,
 
     /// Filters the response by a mapping type.
     #[param(nullable = false)]
@@ -501,9 +509,11 @@ impl TryFrom<MappingListParameters> for types::MappingListParameters {
 
     fn try_from(value: MappingListParameters) -> Result<Self, Self::Error> {
         Ok(Self {
-            name: value.name,
             domain_id: value.domain_id,
             idp_id: value.idp_id,
+            limit: value.limit,
+            marker: value.marker,
+            name: value.name,
             r#type: value.r#type.map(Into::into),
         })
     }

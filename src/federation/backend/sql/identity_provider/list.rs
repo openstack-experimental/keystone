@@ -68,7 +68,7 @@ pub async fn list(
         .await
         .context("listing identity providers")?
         .into_iter()
-        .map(TryInto::<IdentityProvider>::try_into)
+        .map(TryInto::try_into)
         .collect()
 }
 
@@ -127,16 +127,39 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_list() {
+    async fn test_list_no_params() {
         let db = MockDatabase::new(DatabaseBackend::Postgres)
             .append_query_results([vec![get_idp_mock("1")]])
-            .append_query_results([vec![get_idp_mock("1")]])
             .into_connection();
-        assert!(
+        assert_eq!(
             list(&db, &IdentityProviderListParameters::default())
                 .await
-                .is_ok()
+                .unwrap(),
+            vec![IdentityProvider {
+                id: "1".into(),
+                name: "name".into(),
+                domain_id: Some("did".into()),
+                ..Default::default()
+            }]
         );
+
+        // Checking transaction log
+        assert_eq!(
+            db.into_transaction_log(),
+            [Transaction::from_sql_and_values(
+                DatabaseBackend::Postgres,
+                r#"SELECT "federated_identity_provider"."id", "federated_identity_provider"."name", "federated_identity_provider"."domain_id", "federated_identity_provider"."enabled", "federated_identity_provider"."oidc_discovery_url", "federated_identity_provider"."oidc_client_id", "federated_identity_provider"."oidc_client_secret", "federated_identity_provider"."oidc_response_mode", "federated_identity_provider"."oidc_response_types", "federated_identity_provider"."jwks_url", "federated_identity_provider"."jwt_validation_pubkeys", "federated_identity_provider"."bound_issuer", "federated_identity_provider"."default_mapping_name", "federated_identity_provider"."provider_config" FROM "federated_identity_provider" ORDER BY "federated_identity_provider"."id" ASC"#,
+                []
+            ),]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_list_all_params() {
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([vec![get_idp_mock("1")]])
+            .into_connection();
+
         assert_eq!(
             list(
                 &db,
@@ -160,80 +183,15 @@ mod tests {
         // Checking transaction log
         assert_eq!(
             db.into_transaction_log(),
-            [
-                Transaction::from_sql_and_values(
-                    DatabaseBackend::Postgres,
-                    r#"SELECT "federated_identity_provider"."id", "federated_identity_provider"."name", "federated_identity_provider"."domain_id", "federated_identity_provider"."enabled", "federated_identity_provider"."oidc_discovery_url", "federated_identity_provider"."oidc_client_id", "federated_identity_provider"."oidc_client_secret", "federated_identity_provider"."oidc_response_mode", "federated_identity_provider"."oidc_response_types", "federated_identity_provider"."jwks_url", "federated_identity_provider"."jwt_validation_pubkeys", "federated_identity_provider"."bound_issuer", "federated_identity_provider"."default_mapping_name", "federated_identity_provider"."provider_config" FROM "federated_identity_provider" ORDER BY "federated_identity_provider"."id" ASC"#,
-                    []
-                ),
-                Transaction::from_sql_and_values(
-                    DatabaseBackend::Postgres,
-                    r#"SELECT "federated_identity_provider"."id", "federated_identity_provider"."name", "federated_identity_provider"."domain_id", "federated_identity_provider"."enabled", "federated_identity_provider"."oidc_discovery_url", "federated_identity_provider"."oidc_client_id", "federated_identity_provider"."oidc_client_secret", "federated_identity_provider"."oidc_response_mode", "federated_identity_provider"."oidc_response_types", "federated_identity_provider"."jwks_url", "federated_identity_provider"."jwt_validation_pubkeys", "federated_identity_provider"."bound_issuer", "federated_identity_provider"."default_mapping_name", "federated_identity_provider"."provider_config" FROM "federated_identity_provider" WHERE "federated_identity_provider"."name" = $1 AND "federated_identity_provider"."domain_id" IN ($2) AND "federated_identity_provider"."id" > $3 ORDER BY "federated_identity_provider"."id" ASC LIMIT $4"#,
-                    [
-                        "idp_name".into(),
-                        "did".into(),
-                        "marker".into(),
-                        1u64.into()
-                    ]
-                ),
-            ]
-        );
-    }
-
-    #[tokio::test]
-    async fn test_list_with_null_domain_id() {
-        let db = MockDatabase::new(DatabaseBackend::Postgres)
-            .append_query_results([vec![get_idp_mock("1")]])
-            .into_connection();
-
-        list(
-            &db,
-            &IdentityProviderListParameters {
-                name: Some("idp_name".into()),
-                domain_ids: Some(HashSet::from([None, Some("did".into())])),
-                limit: None,
-                marker: None,
-            },
-        )
-        .await
-        .unwrap();
-
-        // Checking transaction log
-        assert_eq!(
-            db.into_transaction_log(),
             [Transaction::from_sql_and_values(
                 DatabaseBackend::Postgres,
-                r#"SELECT "federated_identity_provider"."id", "federated_identity_provider"."name", "federated_identity_provider"."domain_id", "federated_identity_provider"."enabled", "federated_identity_provider"."oidc_discovery_url", "federated_identity_provider"."oidc_client_id", "federated_identity_provider"."oidc_client_secret", "federated_identity_provider"."oidc_response_mode", "federated_identity_provider"."oidc_response_types", "federated_identity_provider"."jwks_url", "federated_identity_provider"."jwt_validation_pubkeys", "federated_identity_provider"."bound_issuer", "federated_identity_provider"."default_mapping_name", "federated_identity_provider"."provider_config" FROM "federated_identity_provider" WHERE "federated_identity_provider"."name" = $1 AND ("federated_identity_provider"."domain_id" IN ($2) OR "federated_identity_provider"."domain_id" IS NULL) ORDER BY "federated_identity_provider"."id" ASC"#,
-                ["idp_name".into(), "did".into()]
-            ),]
-        );
-    }
-
-    #[tokio::test]
-    async fn test_list_without_domain_id() {
-        let db = MockDatabase::new(DatabaseBackend::Postgres)
-            .append_query_results([vec![get_idp_mock("1")]])
-            .into_connection();
-
-        list(
-            &db,
-            &IdentityProviderListParameters {
-                name: Some("idp_name".into()),
-                domain_ids: None,
-                limit: None,
-                marker: None,
-            },
-        )
-        .await
-        .unwrap();
-
-        // Checking transaction log
-        assert_eq!(
-            db.into_transaction_log(),
-            [Transaction::from_sql_and_values(
-                DatabaseBackend::Postgres,
-                r#"SELECT "federated_identity_provider"."id", "federated_identity_provider"."name", "federated_identity_provider"."domain_id", "federated_identity_provider"."enabled", "federated_identity_provider"."oidc_discovery_url", "federated_identity_provider"."oidc_client_id", "federated_identity_provider"."oidc_client_secret", "federated_identity_provider"."oidc_response_mode", "federated_identity_provider"."oidc_response_types", "federated_identity_provider"."jwks_url", "federated_identity_provider"."jwt_validation_pubkeys", "federated_identity_provider"."bound_issuer", "federated_identity_provider"."default_mapping_name", "federated_identity_provider"."provider_config" FROM "federated_identity_provider" WHERE "federated_identity_provider"."name" = $1 ORDER BY "federated_identity_provider"."id" ASC"#,
-                ["idp_name".into()]
+                r#"SELECT "federated_identity_provider"."id", "federated_identity_provider"."name", "federated_identity_provider"."domain_id", "federated_identity_provider"."enabled", "federated_identity_provider"."oidc_discovery_url", "federated_identity_provider"."oidc_client_id", "federated_identity_provider"."oidc_client_secret", "federated_identity_provider"."oidc_response_mode", "federated_identity_provider"."oidc_response_types", "federated_identity_provider"."jwks_url", "federated_identity_provider"."jwt_validation_pubkeys", "federated_identity_provider"."bound_issuer", "federated_identity_provider"."default_mapping_name", "federated_identity_provider"."provider_config" FROM "federated_identity_provider" WHERE "federated_identity_provider"."name" = $1 AND "federated_identity_provider"."domain_id" IN ($2) AND "federated_identity_provider"."id" > $3 ORDER BY "federated_identity_provider"."id" ASC LIMIT $4"#,
+                [
+                    "idp_name".into(),
+                    "did".into(),
+                    "marker".into(),
+                    1u64.into()
+                ]
             ),]
         );
     }

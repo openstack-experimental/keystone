@@ -167,9 +167,6 @@ pub struct IdentityProviderUpdate {
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct IdentityProviderListParameters {
-    /// Filters the response by IDP name.
-    pub name: Option<String>,
-
     /// Filters the response by a domain_id ID. It is an optional list of
     /// optional strings to represent fetching of null and non-null values
     /// in a single request.
@@ -182,4 +179,7 @@ pub struct IdentityProviderListParameters {
     /// Page marker (id of the last entry on the previous page.
     #[builder(default)]
     pub marker: Option<String>,
+    ///
+    /// Filters the response by IDP name.
+    pub name: Option<String>,
 }

@@ -171,12 +171,23 @@ pub enum MappingType {
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct MappingListParameters {
-    /// Filters the response by Mapping name.
-    pub name: Option<String>,
     /// Filters the response by a domain_id ID.
     pub domain_id: Option<String>,
+
     /// Filters the response by IDP ID.
     pub idp_id: Option<String>,
+
+    /// Limit number of entries on the single response page.
+    #[builder(default)]
+    pub limit: Option<u64>,
+
+    /// Page marker (id of the last entry on the previous page.
+    #[builder(default)]
+    pub marker: Option<String>,
+
+    /// Filters the response by Mapping name.
+    pub name: Option<String>,
+
     /// Filters mappings by the type
     pub r#type: Option<MappingType>,
 }
