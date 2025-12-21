@@ -17,9 +17,11 @@ use crate::identity::types::*;
 
 mod create;
 mod get;
+mod list;
 mod load;
 mod set;
 
+pub use list::list;
 pub use load::load_local_user_with_passwords;
 pub use load::load_local_users_passwords;
 pub use set::reset_failed_auth;
