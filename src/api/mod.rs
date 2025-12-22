@@ -88,13 +88,12 @@ async fn version(
     let host = state
         .config
         .default
-        .as_ref()
-        .and_then(|dflt| dflt.public_endpoint.clone())
+        .public_endpoint
+        .clone()
         .or_else(|| {
             headers
                 .get(header::HOST)
                 .and_then(|header| header.to_str().map(|val| format!("http://{val}")).ok())
-            //.and_then(|header| format!("http://{}", header.to_str().ok()).into())
         })
         .unwrap_or_else(|| "http://localhost".to_string());
 

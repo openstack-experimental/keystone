@@ -28,8 +28,8 @@ use url::Url;
 #[derive(Debug, Default, Deserialize, Clone)]
 pub struct Config {
     /// Global configuration options.
-    #[serde(rename = "DEFAULT")]
-    pub default: Option<DefaultSection>,
+    #[serde(rename = "DEFAULT", default)]
+    pub default: DefaultSection,
 
     /// Application credentials provider configuration.
     #[serde(default)]

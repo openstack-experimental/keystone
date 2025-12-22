@@ -24,7 +24,11 @@ use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
 use validator::Validate;
 
-use crate::api::KeystoneApiError;
+use crate::api::{
+    KeystoneApiError,
+    common::{QueryParameterPagination, ResourceIdentifier},
+    types::Link,
+};
 use crate::error::BuilderError;
 use crate::federation::types;
 
@@ -465,6 +469,10 @@ impl From<MappingType> for types::MappingType {
 pub struct MappingList {
     /// Collection of identity provider objects
     pub mappings: Vec<Mapping>,
+
+    /// Pagination links.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub links: Option<Vec<Link>>,
 }
 
 impl IntoResponse for MappingList {
@@ -516,5 +524,22 @@ impl TryFrom<MappingListParameters> for types::MappingListParameters {
             name: value.name,
             r#type: value.r#type.map(Into::into),
         })
+    }
+}
+
+impl ResourceIdentifier for Mapping {
+    fn get_id(&self) -> String {
+        self.id.clone()
+    }
+}
+
+impl QueryParameterPagination for MappingListParameters {
+    fn get_limit(&self) -> Option<u64> {
+        self.limit
+    }
+
+    fn set_marker(&mut self, marker: String) -> &mut Self {
+        self.marker = Some(marker);
+        self
     }
 }

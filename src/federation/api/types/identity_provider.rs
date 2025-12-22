@@ -23,6 +23,10 @@ use serde_json::Value;
 use utoipa::{IntoParams, ToSchema};
 use validator::Validate;
 
+use crate::api::{
+    common::{QueryParameterPagination, ResourceIdentifier},
+    types::Link,
+};
 use crate::error::BuilderError;
 use crate::federation::types;
 
@@ -372,6 +376,10 @@ pub struct IdentityProviderList {
     /// Collection of identity provider objects.
     #[validate(nested)]
     pub identity_providers: Vec<IdentityProvider>,
+
+    /// Pagination links.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub links: Option<Vec<Link>>,
 }
 
 impl IntoResponse for IdentityProviderList {
@@ -413,5 +421,22 @@ impl From<IdentityProviderListParameters> for types::IdentityProviderListParamet
             limit: value.limit,
             marker: value.marker,
         }
+    }
+}
+
+impl ResourceIdentifier for IdentityProvider {
+    fn get_id(&self) -> String {
+        self.id.clone()
+    }
+}
+
+impl QueryParameterPagination for IdentityProviderListParameters {
+    fn get_limit(&self) -> Option<u64> {
+        self.limit
+    }
+
+    fn set_marker(&mut self, marker: String) -> &mut Self {
+        self.marker = Some(marker);
+        self
     }
 }

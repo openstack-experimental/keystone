@@ -194,6 +194,18 @@ impl From<BuilderError> for KeystoneApiError {
     }
 }
 
+impl From<serde_urlencoded::ser::Error> for KeystoneApiError {
+    fn from(value: serde_urlencoded::ser::Error) -> Self {
+        Self::InternalError(value.to_string())
+    }
+}
+
+impl From<url::ParseError> for KeystoneApiError {
+    fn from(value: url::ParseError) -> Self {
+        Self::InternalError(value.to_string())
+    }
+}
+
 impl From<CatalogProviderError> for KeystoneApiError {
     fn from(value: CatalogProviderError) -> Self {
         match value {

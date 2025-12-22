@@ -76,8 +76,8 @@ async fn version(
     let host = state
         .config
         .default
-        .as_ref()
-        .and_then(|dflt| dflt.public_endpoint.clone())
+        .public_endpoint
+        .clone()
         .or_else(|| {
             headers
                 .get(header::HOST)

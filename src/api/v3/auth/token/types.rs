@@ -213,7 +213,7 @@ impl TryFrom<UserPassword> for identity_types::UserPasswordAuthRequest {
             upa.domain(domain_builder.build()?);
         }
         upa.password(value.password.clone());
-        Ok(upa.build()?)
+        upa.build()
     }
 }
 
@@ -246,7 +246,7 @@ impl TryFrom<&BackendToken> for Token {
         token.methods(value.methods().clone());
         token.audit_ids(value.audit_ids().clone());
         token.expires_at(*value.expires_at());
-        Ok(token.build()?)
+        token.build()
     }
 }
 

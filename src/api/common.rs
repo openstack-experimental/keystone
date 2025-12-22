@@ -12,8 +12,12 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //! # Common API helpers
-use crate::api::error::KeystoneApiError;
-use crate::api::types::ScopeProject;
+use serde::Serialize;
+use url::Url;
+
+use crate::api::KeystoneApiError;
+use crate::api::types::{Link, ScopeProject};
+use crate::config::Config;
 use crate::keystone::ServiceState;
 use crate::resource::{
     ResourceApi,
@@ -117,15 +121,76 @@ pub async fn find_project_from_scope(
     Ok(project)
 }
 
+/// Prepare the links for the paginated resource collection.
+pub fn build_pagination_links<T, Q>(
+    config: &Config,
+    data: &[T],
+    query: &Q,
+    collection_url: &str,
+) -> Result<Option<Vec<Link>>, KeystoneApiError>
+where
+    T: ResourceIdentifier,
+    Q: QueryParameterPagination + Clone + Serialize,
+{
+    Ok(match &query.get_limit() {
+        Some(limit) => {
+            if (data.len() as u64) >= *limit
+                && let Some(last_id) = data.last().map(|x| x.get_id())
+            {
+                let mut url = Url::parse(
+                    config
+                        .default
+                        .public_endpoint
+                        .as_ref()
+                        .map_or("http://localhost", |v| v),
+                )?;
+                url.set_path(collection_url);
+                let mut new_query = query.clone();
+
+                new_query.set_marker(last_id);
+                url.set_query(Some(&serde_urlencoded::to_string(&new_query)?));
+
+                let next_page_url = format!(
+                    "{}{}",
+                    url.path(),
+                    url.query().map(|q| format!("?{}", q)).unwrap_or_default()
+                );
+                Some(vec![Link {
+                    rel: String::from("next"),
+                    href: next_page_url,
+                }])
+            } else {
+                None
+            }
+        }
+        None => None,
+    })
+}
+
+/// Resource query parameters pagination extension trait.
+pub trait QueryParameterPagination {
+    /// Get the page limit.
+    fn get_limit(&self) -> Option<u64>;
+    /// Set the pagination marker.
+    fn set_marker(&mut self, marker: String) -> &mut Self;
+}
+
+/// Trait for the resource to expose the unique identifier that can be used for building the
+/// marker pagination.
+pub trait ResourceIdentifier {
+    /// Get the unique resource identifier.
+    fn get_id(&self) -> String;
+}
+
 #[cfg(test)]
 mod tests {
+    use rstest::rstest;
     use sea_orm::DatabaseConnection;
     use std::sync::Arc;
 
     use super::*;
 
     use crate::config::Config;
-
     use crate::keystone::Service;
     use crate::policy::MockPolicyFactory;
     use crate::provider::Provider;
@@ -196,5 +261,88 @@ mod tests {
                 panic!("wrong result");
             }
         }
+    }
+
+    /// Fake resource for pagination testing
+    struct FakeResource {
+        pub id: String,
+    }
+
+    /// Fake query params for pagination testing
+    #[derive(Clone, Default, Serialize)]
+    struct FakeQueryParams {
+        pub marker: Option<String>,
+        pub limit: Option<u64>,
+    }
+
+    impl ResourceIdentifier for FakeResource {
+        fn get_id(&self) -> String {
+            self.id.clone()
+        }
+    }
+
+    impl QueryParameterPagination for FakeQueryParams {
+        fn get_limit(&self) -> Option<u64> {
+            self.limit
+        }
+
+        fn set_marker(&mut self, marker: String) -> &mut Self {
+            self.marker = Some(marker);
+            self
+        }
+    }
+
+    /// Parameterized pagination test
+    #[rstest]
+    #[case(5, FakeQueryParams::default(), None)]
+    #[case(5, FakeQueryParams{marker: Some("x".into()), limit: None}, None)]
+    #[case(5, FakeQueryParams{marker: Some("x".into()), limit: Some(6)}, None)]
+    #[case(5, FakeQueryParams{marker: Some("x".into()), limit: Some(5)}, Some(vec![
+        Link {
+            rel: "next".into(),
+            href: "/foo/bar?marker=4&limit=5".into()
+        }])
+    )]
+    #[case(5, FakeQueryParams{marker: Some("x".into()), limit: Some(3)}, Some(vec![
+        Link {
+            rel: "next".into(),
+            href: "/foo/bar?marker=4&limit=3".into()
+        }])
+    )]
+    #[case(5, FakeQueryParams{marker: Some("x".into()), limit: Some(1)}, Some(vec![
+        Link {
+            rel: "next".into(),
+            href: "/foo/bar?marker=4&limit=1".into()
+        }])
+    )]
+    #[case(5, FakeQueryParams{marker: Some("x".into()), limit: Some(0)}, Some(vec![
+        Link {
+            rel: "next".into(),
+            href: "/foo/bar?marker=4&limit=0".into()
+        }])
+    )]
+    #[case(0, FakeQueryParams{marker: Some("x".into()), limit: Some(6)}, None)]
+    #[case(0, FakeQueryParams{marker: None, limit: Some(6)}, None)]
+    #[case(5, FakeQueryParams{marker: None, limit: Some(5)}, Some(vec![
+        Link {
+            rel: "next".into(),
+            href: "/foo/bar?marker=4&limit=5".into()
+        }])
+    )]
+    fn test_pagination(
+        #[case] cnt: usize,
+        #[case] query: FakeQueryParams,
+        #[case] expected: Option<Vec<Link>>,
+    ) {
+        assert_eq!(
+            build_pagination_links(
+                &Config::default(),
+                Vec::from_iter((0..cnt).map(|x| FakeResource { id: x.to_string() })).as_slice(),
+                &query,
+                "foo/bar",
+            )
+            .unwrap(),
+            expected
+        );
     }
 }
