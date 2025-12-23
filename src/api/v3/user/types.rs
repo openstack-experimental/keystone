@@ -353,8 +353,7 @@ impl From<UserListParameters> for identity_types::UserListParameters {
             domain_id: value.domain_id,
             name: value.name,
             unique_id: value.unique_id,
-            user_type: None,
-            //    limit: value.limit,
+            ..Default::default() //    limit: value.limit,
         }
     }
 }

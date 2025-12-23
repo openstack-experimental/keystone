@@ -64,22 +64,13 @@ impl IdentityBackend for SqlBackend {
         state: &ServiceState,
         params: &UserListParameters,
     ) -> Result<Vec<UserResponse>, IdentityProviderError> {
-        // Determine user type to call appropriate listing function
-        if let Some(val) = &params.user_type {
-            match val {
-                UserType::Local => {
-                    return Ok(local_user::list(&self.config, &state.db, params).await?);
-                }
-                UserType::NonLocal => {
-                    // return Ok(nonlocal_user::list(&self.config, &state.db, params).await?);
-                }
-                UserType::Federated => {
-                    // return Ok(federated_user::list(&self.config, &state.db, params).await?);
-                }
-                UserType::All => { /* continue to general listing */ }
-            }
+        // Create a modified copy if user_type is None
+        let mut modified_params = params.clone();
+        if modified_params.user_type.is_none() {
+            modified_params.user_type = Some(UserType::All);
         }
-        Ok(user::list(&self.config, &state.db, params).await?)
+
+        Ok(user::list(&self.config, &state.db, &modified_params).await?)
     }
 
     /// Get single user by ID
