@@ -137,6 +137,7 @@ pub(crate) mod tests {
             unrestricted: Some(true),
         }
     }
+
     pub fn get_application_credential_mock_from_active(
         active: application_credential::ActiveModel,
         internal_id: i32,

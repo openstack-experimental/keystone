@@ -81,6 +81,10 @@ pub struct Config {
     /// Token provider configuration.
     #[serde(default)]
     pub token: TokenProvider,
+
+    /// Trust provider configuration.
+    #[serde(default)]
+    pub trust: TrustProvider,
 }
 
 /// Default configuration section.
@@ -586,6 +590,22 @@ pub enum TokenProviderDriver {
     #[default]
     #[serde(rename = "fernet")]
     Fernet,
+}
+
+/// Trust provider.
+#[derive(Debug, Deserialize, Clone)]
+pub struct TrustProvider {
+    /// Trust provider driver.
+    #[serde(default = "default_sql_driver")]
+    pub driver: String,
+}
+
+impl Default for TrustProvider {
+    fn default() -> Self {
+        Self {
+            driver: default_sql_driver(),
+        }
+    }
 }
 
 impl Config {

@@ -81,7 +81,7 @@ mod tests {
                 "app_cred_id",
                 Some(12345),
             )]])
-            .append_query_results([vec![get_role_mock("role_id".into())]])
+            .append_query_results([vec![get_role_mock("role_id")]])
             .append_query_results([vec![get_access_rule_mock("app_cred_rule_id", None)]])
             .into_connection();
 

@@ -29,6 +29,7 @@ use crate::federation::backend::FederationBackend;
 use crate::identity::backends::IdentityBackend;
 use crate::resource::types::ResourceBackend;
 use crate::revoke::backend::RevokeBackend;
+use crate::trust::backend::TrustBackend;
 
 /// Plugin manager allowing to pass custom backend plugins implementing required
 /// trait during the service start.
@@ -48,6 +49,8 @@ pub struct PluginManager {
     resource_backends: HashMap<String, Box<dyn ResourceBackend>>,
     /// Revoke backend plugins.
     revoke_backends: HashMap<String, Box<dyn RevokeBackend>>,
+    /// Trust backend plugins.
+    trust_backends: HashMap<String, Box<dyn TrustBackend>>,
 }
 
 impl PluginManager {
@@ -116,5 +119,11 @@ impl PluginManager {
     #[allow(clippy::borrowed_box)]
     pub fn get_revoke_backend<S: AsRef<str>>(&self, name: S) -> Option<&Box<dyn RevokeBackend>> {
         self.revoke_backends.get(name.as_ref())
+    }
+
+    /// Get registered trust backend.
+    #[allow(clippy::borrowed_box)]
+    pub fn get_trust_backend<S: AsRef<str>>(&self, name: S) -> Option<&Box<dyn TrustBackend>> {
+        self.trust_backends.get(name.as_ref())
     }
 }

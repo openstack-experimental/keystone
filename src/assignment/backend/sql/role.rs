@@ -62,9 +62,9 @@ pub(crate) mod tests {
 
     use super::*;
 
-    pub(crate) fn get_role_mock(id: String) -> role::Model {
+    pub fn get_role_mock<S: AsRef<str>>(id: S) -> role::Model {
         role::Model {
-            id: id.clone(),
+            id: id.as_ref().into(),
             domain_id: "foo_domain".into(),
             name: "foo".into(),
             ..Default::default()
@@ -77,7 +77,7 @@ pub(crate) mod tests {
         let db = MockDatabase::new(DatabaseBackend::Postgres)
             .append_query_results([
                 // First query result - select user itself
-                vec![get_role_mock("1".into())],
+                vec![get_role_mock("1")],
             ])
             .into_connection();
         let config = Config::default();
@@ -108,15 +108,15 @@ pub(crate) mod tests {
         let db = MockDatabase::new(DatabaseBackend::Postgres)
             .append_query_results([
                 // First query result - select user itself
-                vec![get_role_mock("1".into())],
+                vec![get_role_mock("1")],
             ])
             .append_query_results([
                 // First query result - select user itself
-                vec![get_role_mock("1".into())],
+                vec![get_role_mock("1")],
             ])
             .append_query_results([
                 // First query result - select user itself
-                vec![get_role_mock("1".into())],
+                vec![get_role_mock("1")],
             ])
             .into_connection();
         let config = Config::default();

@@ -1,0 +1,50 @@
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+// SPDX-License-Identifier: Apache-2.0
+//! Trust provider Backend trait.
+use async_trait::async_trait;
+use dyn_clone::DynClone;
+
+use crate::config::Config;
+use crate::keystone::ServiceState;
+use crate::trust::{TrustError, types::*};
+
+pub mod error;
+pub mod sql;
+
+pub use sql::SqlBackend;
+
+#[async_trait]
+/// TrustBackend trait.
+///
+/// Backend driver interface expected by the trust provider.
+pub trait TrustBackend: DynClone + Send + Sync + std::fmt::Debug {
+    /// Set config
+    fn set_config(&mut self, config: Config);
+
+    /// Get trust by ID.
+    async fn get_trust<'a>(
+        &self,
+        state: &ServiceState,
+        id: &'a str,
+    ) -> Result<Option<Trust>, TrustError>;
+
+    /// List trusts.
+    async fn list_trusts(
+        &self,
+        state: &ServiceState,
+        params: &TrustListParameters,
+    ) -> Result<Vec<Trust>, TrustError>;
+}
+
+dyn_clone::clone_trait_object!(TrustBackend);

@@ -175,8 +175,8 @@ pub trait QueryParameterPagination {
     fn set_marker(&mut self, marker: String) -> &mut Self;
 }
 
-/// Trait for the resource to expose the unique identifier that can be used for building the
-/// marker pagination.
+/// Trait for the resource to expose the unique identifier that can be used for
+/// building the marker pagination.
 pub trait ResourceIdentifier {
     /// Get the unique resource identifier.
     fn get_id(&self) -> String;

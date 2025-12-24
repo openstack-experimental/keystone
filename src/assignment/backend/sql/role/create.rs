@@ -109,7 +109,8 @@ mod tests {
         let created = create(&db, role_create).await.unwrap();
 
         assert_eq!(created.name, "Global Role");
-        // domain_id should be None in the returned Role (because TryFrom filters NULL_DOMAIN_ID)
+        // domain_id should be None in the returned Role (because TryFrom filters
+        // NULL_DOMAIN_ID)
         assert_eq!(created.domain_id, None);
     }
 

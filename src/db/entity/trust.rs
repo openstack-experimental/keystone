@@ -27,15 +27,34 @@ pub struct Model {
     pub impersonation: bool,
     pub deleted_at: Option<DateTime>,
     pub expires_at: Option<DateTime>,
-    pub remaining_uses: Option<i32>,
+    pub remaining_uses: Option<u32>,
     #[sea_orm(column_type = "Text", nullable)]
     pub extra: Option<String>,
     pub expires_at_int: Option<i64>,
     pub redelegated_trust_id: Option<String>,
-    pub redelegation_count: Option<i32>,
+    pub redelegation_count: Option<u32>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
-pub enum Relation {}
+pub enum Relation {
+    #[sea_orm(has_many = "super::trust_role::Entity")]
+    TrustRole,
+}
 
 impl ActiveModelBehavior for ActiveModel {}
+
+impl Related<super::trust_role::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::TrustRole.def()
+    }
+}
+
+impl Related<super::role::Entity> for Entity {
+    fn to() -> RelationDef {
+        super::trust_role::Relation::Role.def()
+    }
+
+    fn via() -> Option<RelationDef> {
+        Some(super::trust_role::Relation::Trust.def().rev())
+    }
+}

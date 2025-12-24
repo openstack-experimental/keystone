@@ -69,8 +69,8 @@ pub async fn list(
     let roles = roles_handle
         .context("fetching roles for application credential list")?
         .into_iter()
-        .map(|apc| {
-            apc.into_iter()
+        .map(|apr| {
+            apr.into_iter()
                 .map(TryInto::<Role>::try_into)
                 .collect::<Result<Vec<_>, _>>()
         })
@@ -133,10 +133,7 @@ mod tests {
                     role_id: "role_id2".into(),
                 },
             ]])
-            .append_query_results([vec![
-                get_role_mock("role_id1".into()),
-                get_role_mock("role_id2".into()),
-            ]])
+            .append_query_results([vec![get_role_mock("role_id1"), get_role_mock("role_id2")]])
             .append_query_results([vec![
                 db_application_credential_access_rule::Model {
                     application_credential_id: 1,
