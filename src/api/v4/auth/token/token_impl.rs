@@ -150,6 +150,21 @@ impl Token {
                     );
                 }
             }
+            ProviderToken::Trust(token) => {
+                if project.is_none() {
+                    project = Some(
+                        state
+                            .provider
+                            .get_resource_provider()
+                            .get_project(state, &token.project_id)
+                            .await?
+                            .ok_or_else(|| KeystoneApiError::NotFound {
+                                resource: "project".into(),
+                                identifier: token.project_id.clone(),
+                            })?,
+                    );
+                }
+            }
         }
 
         if let Some(domain) = domain {

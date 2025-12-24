@@ -325,6 +325,10 @@ impl TokenProvider {
                 Token::Restricted(data) => {
                     data.user = user;
                 }
+                Token::Trust(data) => {
+                    // TODO: This maybe wrong for trust
+                    data.user = user;
+                }
             }
         }
         Ok(())

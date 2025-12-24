@@ -30,6 +30,7 @@ pub mod federation_unscoped;
 pub mod project_scoped;
 pub mod provider_api;
 pub mod restricted;
+pub mod trust;
 pub mod unscoped;
 
 pub use application_credential::*;
@@ -44,6 +45,7 @@ pub use federation_unscoped::{FederationUnscopedPayload, FederationUnscopedPaylo
 pub use project_scoped::{ProjectScopePayload, ProjectScopePayloadBuilder};
 pub use provider_api::TokenApi;
 pub use restricted::*;
+pub use trust::*;
 pub use unscoped::*;
 
 /// Fernet Token.
@@ -64,6 +66,8 @@ pub enum Token {
     ProjectScope(ProjectScopePayload),
     /// Restricted.
     Restricted(RestrictedPayload),
+    /// Trust.
+    Trust(TrustPayload),
     /// Unscoped.
     Unscoped(UnscopedPayload),
 }
@@ -78,6 +82,7 @@ impl Token {
             Self::FederationDomainScope(x) => &x.user_id,
             Self::ProjectScope(x) => &x.user_id,
             Self::Restricted(x) => &x.user_id,
+            Self::Trust(x) => &x.user_id,
             Self::Unscoped(x) => &x.user_id,
         }
     }
@@ -91,6 +96,7 @@ impl Token {
             Self::FederationDomainScope(x) => &x.user,
             Self::ProjectScope(x) => &x.user,
             Self::Restricted(x) => &x.user,
+            Self::Trust(x) => &x.user,
             Self::Unscoped(x) => &x.user,
         }
     }
@@ -108,6 +114,7 @@ impl Token {
             Self::FederationDomainScope(x) => x.issued_at = issued_at,
             Self::ProjectScope(x) => x.issued_at = issued_at,
             Self::Restricted(x) => x.issued_at = issued_at,
+            Self::Trust(x) => x.issued_at = issued_at,
             Self::Unscoped(x) => x.issued_at = issued_at,
         }
         self
@@ -126,6 +133,7 @@ impl Token {
             Self::FederationDomainScope(x) => &x.issued_at,
             Self::ProjectScope(x) => &x.issued_at,
             Self::Restricted(x) => &x.issued_at,
+            Self::Trust(x) => &x.issued_at,
             Self::Unscoped(x) => &x.issued_at,
         }
     }
@@ -140,6 +148,7 @@ impl Token {
             Self::FederationDomainScope(x) => &x.expires_at,
             Self::ProjectScope(x) => &x.expires_at,
             Self::Restricted(x) => &x.expires_at,
+            Self::Trust(x) => &x.expires_at,
             Self::Unscoped(x) => &x.expires_at,
         }
     }
@@ -153,6 +162,7 @@ impl Token {
             Self::FederationDomainScope(x) => &x.methods,
             Self::ProjectScope(x) => &x.methods,
             Self::Restricted(x) => &x.methods,
+            Self::Trust(x) => &x.methods,
             Self::Unscoped(x) => &x.methods,
         }
     }
@@ -166,6 +176,7 @@ impl Token {
             Self::FederationDomainScope(x) => &x.audit_ids,
             Self::ProjectScope(x) => &x.audit_ids,
             Self::Restricted(x) => &x.audit_ids,
+            Self::Trust(x) => &x.audit_ids,
             Self::Unscoped(x) => &x.audit_ids,
         }
     }
@@ -176,6 +187,7 @@ impl Token {
             Self::ProjectScope(x) => x.project.as_ref(),
             Self::FederationProjectScope(x) => x.project.as_ref(),
             Self::Restricted(x) => x.project.as_ref(),
+            Self::Trust(x) => x.project.as_ref(),
             _ => None,
         }
     }
@@ -186,6 +198,7 @@ impl Token {
             Self::FederationProjectScope(x) => Some(&x.project_id),
             Self::ProjectScope(x) => Some(&x.project_id),
             Self::Restricted(x) => Some(&x.project_id),
+            Self::Trust(x) => Some(&x.project_id),
             _ => None,
         }
     }
@@ -209,6 +222,7 @@ impl Token {
             Self::FederationDomainScope(x) => x.roles.as_ref(),
             Self::ProjectScope(x) => x.roles.as_ref(),
             Self::Restricted(x) => x.roles.as_ref(),
+            Self::Trust(x) => x.roles.as_ref(),
             _ => None,
         }
     }
@@ -224,6 +238,7 @@ impl Validate for Token {
             Self::FederationDomainScope(x) => x.validate(),
             Self::ProjectScope(x) => x.validate(),
             Self::Restricted(x) => x.validate(),
+            Self::Trust(x) => x.validate(),
             Self::Unscoped(x) => x.validate(),
         }
     }

@@ -39,13 +39,14 @@ use crate::token::{
         federation_domain_scoped::FederationDomainScopePayload,
         federation_project_scoped::FederationProjectScopePayload,
         federation_unscoped::FederationUnscopedPayload, project_scoped::ProjectScopePayload,
-        restricted::RestrictedPayload, unscoped::UnscopedPayload, *,
+        restricted::RestrictedPayload, trust::TrustPayload, unscoped::UnscopedPayload, *,
     },
 };
 use utils::FernetUtils;
 
 mod application_credential;
 mod restricted;
+mod trust;
 pub mod utils;
 
 #[derive(Clone)]
@@ -216,6 +217,7 @@ impl FernetTokenProvider {
                 0 => Ok(UnscopedPayload::disassemble(rd, self)?.into()),
                 1 => Ok(DomainScopePayload::disassemble(rd, self)?.into()),
                 2 => Ok(ProjectScopePayload::disassemble(rd, self)?.into()),
+                3 => Ok(TrustPayload::disassemble(rd, self)?.into()),
                 4 => Ok(FederationUnscopedPayload::disassemble(rd, self)?.into()),
                 5 => Ok(FederationProjectScopePayload::disassemble(rd, self)?.into()),
                 6 => Ok(FederationDomainScopePayload::disassemble(rd, self)?.into()),
@@ -253,6 +255,13 @@ impl FernetTokenProvider {
                 write_array_len(&mut buf, 6)
                     .map_err(|x| TokenProviderError::RmpEncode(x.to_string()))?;
                 write_pfix(&mut buf, 2)
+                    .map_err(|x| TokenProviderError::RmpEncode(x.to_string()))?;
+                data.assemble(&mut buf, self)?;
+            }
+            Token::Trust(data) => {
+                write_array_len(&mut buf, 7)
+                    .map_err(|x| TokenProviderError::RmpEncode(x.to_string()))?;
+                write_pfix(&mut buf, 3)
                     .map_err(|x| TokenProviderError::RmpEncode(x.to_string()))?;
                 data.assemble(&mut buf, self)?;
             }
@@ -758,6 +767,26 @@ pub(super) mod tests {
             project_id: Uuid::new_v4().simple().to_string(),
             allow_renew: true,
             allow_rescope: true,
+            audit_ids: vec!["Zm9vCg".into()],
+            expires_at: Local::now().trunc_subsecs(0).into(),
+            ..Default::default()
+        });
+
+        let mut provider = FernetTokenProvider::new(setup_config());
+        provider.load_keys().unwrap();
+
+        let encrypted = provider.encrypt(&token).unwrap();
+        let dec_token = discard_issued_at(provider.decrypt(&encrypted).unwrap());
+        assert_eq!(token, dec_token);
+    }
+
+    #[tokio::test]
+    async fn test_trust_roundtrip() {
+        let token = Token::Trust(TrustPayload {
+            user_id: Uuid::new_v4().simple().to_string(),
+            methods: vec!["password".into()],
+            trust_id: Uuid::new_v4().simple().to_string(),
+            project_id: Uuid::new_v4().simple().to_string(),
             audit_ids: vec!["Zm9vCg".into()],
             expires_at: Local::now().trunc_subsecs(0).into(),
             ..Default::default()
