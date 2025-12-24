@@ -64,7 +64,13 @@ impl IdentityBackend for SqlBackend {
         state: &ServiceState,
         params: &UserListParameters,
     ) -> Result<Vec<UserResponse>, IdentityProviderError> {
-        Ok(user::list(&self.config, &state.db, params).await?)
+        // Create a modified copy if user_type is None
+        let mut modified_params = params.clone();
+        if modified_params.user_type.is_none() {
+            modified_params.user_type = Some(UserType::All);
+        }
+
+        Ok(user::list(&self.config, &state.db, &modified_params).await?)
     }
 
     /// Get single user by ID
