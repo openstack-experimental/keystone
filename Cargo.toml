@@ -65,7 +65,7 @@ serde = { version = "1.0" }
 serde_bytes = { version = "0.11" }
 serde_json = { version = "1.0" }
 serde_urlencoded = { version = "0.7" }
-tempfile = { version = "3.23" }
+tempfile = { version = "3.24" }
 thiserror = { version = "2.0" }
 tokio = { version = "1.48", features = ["fs", "macros", "signal", "rt-multi-thread"] }
 tokio-util = { version = "0.7" }
