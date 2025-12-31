@@ -67,7 +67,7 @@ pub(super) async fn delete(
     let token = state
         .provider
         .get_token_provider()
-        .validate_token(&state, &subject_token, None, None, None)
+        .validate_token(&state, &subject_token, None, None)
         .await
         .inspect_err(|e| error!("{:?}", e.to_string()))
         .map_err(|_| KeystoneApiError::NotFound {
@@ -126,8 +126,8 @@ mod tests {
         let decoded_auth_token_clone1 = decoded_auth_token.clone();
         token_mock
             .expect_validate_token()
-            .withf(|_, token: &'_ str, _, _, _| token == "foo")
-            .returning(move |_, _, _, _, _| Ok(decoded_auth_token_clone1.clone()));
+            .withf(|_, token: &'_ str, _, _| token == "foo")
+            .returning(move |_, _, _, _| Ok(decoded_auth_token_clone1.clone()));
         // auth-token expanded
         let decoded_auth_token_clone2 = decoded_auth_token.clone();
         token_mock
@@ -161,8 +161,8 @@ mod tests {
         let decoded_subject_token_clone = decoded_subject_token.clone();
         token_mock
             .expect_validate_token()
-            .withf(|_, token: &'_ str, _, _, _| token == "baz")
-            .returning(move |_, _, _, _, _| Ok(decoded_subject_token_clone.clone()));
+            .withf(|_, token: &'_ str, _, _| token == "baz")
+            .returning(move |_, _, _, _| Ok(decoded_subject_token_clone.clone()));
 
         let mut revoke_mock = MockRevokeProvider::default();
         // subject token revoked
@@ -215,8 +215,8 @@ mod tests {
         // subject token validated
         token_mock
             .expect_validate_token()
-            .withf(|_, token: &'_ str, _, _, _| token == "baz")
-            .returning(move |_, _, _, _, _| Err(TokenProviderError::Expired));
+            .withf(|_, token: &'_ str, _, _| token == "baz")
+            .returning(move |_, _, _, _| Err(TokenProviderError::Expired));
 
         let provider = Provider::mocked_builder()
             .token(token_mock)
@@ -260,8 +260,8 @@ mod tests {
         // subject token validated
         token_mock
             .expect_validate_token()
-            .withf(|_, token: &'_ str, _, _, _| token == "baz")
-            .returning(move |_, _, _, _, _| Err(TokenProviderError::TokenRevoked));
+            .withf(|_, token: &'_ str, _, _| token == "baz")
+            .returning(move |_, _, _, _| Err(TokenProviderError::TokenRevoked));
 
         let provider = Provider::mocked_builder()
             .token(token_mock)

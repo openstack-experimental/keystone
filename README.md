@@ -20,7 +20,7 @@ Python Keystone service in place for existing users and workflows.
 As development progressed, however, the breadth of new functionality (and the
 opportunity to revisit some of the existing limitations) led to a partial
 re-implementation of certain core identity flows in Rust. This allows us to
-benefit from Rust’s memory safety, concurrency model, performance, and modern
+benefit from Rust's memory safety, concurrency model, performance, and modern
 tooling, while still preserving the upstream Keystone Python service as the
 canonical “master” identity service, routing only the new endpoints and
 capabilities through the Rust component.
@@ -58,7 +58,7 @@ the trusted, mature baseline and incrementally build the “Keystone-NG” Rust
 service as the complement.
 
 We believe this approach allows the best of both worlds: the trusted maturity
-of Keystone’s Python code-base, combined with the modern, high-safety,
+of Keystone's Python code-base, combined with the modern, high-safety,
 high-performance capabilities of Rust where they matter most.
 
 ## Documentation

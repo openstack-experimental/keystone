@@ -258,8 +258,16 @@ impl From<TokenProviderError> for KeystoneApiError {
     fn from(value: TokenProviderError) -> Self {
         match value {
             TokenProviderError::AuthenticationInfo(source) => source.into(),
+            TokenProviderError::DomainDisabled(x) => Self::NotFound {
+                resource: "domain".into(),
+                identifier: x,
+            },
             TokenProviderError::TokenRestrictionNotFound(x) => Self::NotFound {
                 resource: "token restriction".into(),
+                identifier: x,
+            },
+            TokenProviderError::ProjectDisabled(x) => Self::NotFound {
+                resource: "project".into(),
                 identifier: x,
             },
             other => Self::InternalError(other.to_string()),

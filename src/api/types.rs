@@ -222,7 +222,7 @@ impl From<Vec<(Service, Vec<ProviderEndpoint>)>> for Catalog {
 /// ID is sufficient to uniquely identify a project but if a project is
 /// specified by name, then the domain of the project must also be specified in
 /// order to uniquely identify the project by name. A domain scope may be
-/// specified by either the domain’s ID or name with equivalent results.
+/// specified by either the domain's ID or name with equivalent results.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum Scope {

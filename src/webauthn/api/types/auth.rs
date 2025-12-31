@@ -37,7 +37,7 @@ pub struct PasskeyUserAuthenticationRequest {
 
 /// Passkey Authorization challenge.
 ///
-/// A JSON serializable challenge which is issued to the user’s webbrowser for
+/// A JSON serializable challenge which is issued to the user's webbrowser for
 /// handling. This is meant to be opaque, that is, you should not need to
 /// inspect or alter the content of the struct
 /// - you should serialise it and transmit it to the client only.
@@ -124,7 +124,7 @@ pub enum AuthenticatorTransport {
 
 /// Defines the User Authenticator Verification policy. This is documented
 /// <https://w3c.github.io/webauthn/#enumdef-userverificationrequirement>, and each variant lists
-/// it’s effects.
+/// it's effects.
 ///
 /// To be clear, Verification means that the Authenticator perform extra or
 /// supplementary interaction with the user to verify who they are. An example
@@ -133,7 +133,7 @@ pub enum AuthenticatorTransport {
 ///
 /// An example of a non-verified interaction is a yubico device with no pin
 /// where touch is the only interaction - we only verify a user is present, but
-/// we don’t have extra details to the legitimacy of that user.
+/// we don't have extra details to the legitimacy of that user.
 ///
 /// As UserVerificationPolicy is only used in credential registration, this
 /// stores the verification state of the credential in the persisted credential.
@@ -169,7 +169,7 @@ pub enum UserVerificationPolicy {
     /// deployments this is bypassable as it implies the library will not
     /// check UV is set correctly for this credential. Webauthn-RS is not
     /// vulnerable to this as we check the UV state always based on
-    /// it’s presence at registration.
+    /// it's presence at registration.
     ///
     /// However, in some cases use of this policy can lead to some credentials
     /// failing to verify correctly due to browser peripheral exchange

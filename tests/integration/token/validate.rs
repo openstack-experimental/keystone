@@ -12,16 +12,21 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //
-mod application_credential;
 
 use eyre::Report;
 use sea_orm::{DbConn, entity::*};
 use std::sync::Arc;
 use tempfile::TempDir;
 
+mod application_credential;
+mod trust;
+
 use openstack_keystone::config::Config;
+use openstack_keystone::db::entity::assignment as db_assignment;
 use openstack_keystone::db::entity::prelude::*;
 use openstack_keystone::db::entity::project;
+use openstack_keystone::db::entity::sea_orm_active_enums::Type as DbAssignmentType;
+use openstack_keystone::identity::{IdentityApi, types::*};
 use openstack_keystone::keystone::Service;
 use openstack_keystone::plugin_manager::PluginManager;
 use openstack_keystone::policy::PolicyFactory;
@@ -67,7 +72,7 @@ async fn get_state() -> Result<(Arc<Service>, TempDir), Report> {
     let tmp_fernet_repo = TempDir::new()?;
 
     let mut cfg: Config = Config::default();
-    cfg.auth.methods = vec!["application_credential".into()];
+    cfg.auth.methods = vec!["application_credential".into(), "password".into()];
     cfg.fernet_tokens.key_repository = tmp_fernet_repo.path().to_path_buf();
     let fernet_utils = openstack_keystone::token::backend::fernet::utils::FernetUtils {
         key_repository: cfg.fernet_tokens.key_repository.clone(),
@@ -81,4 +86,43 @@ async fn get_state() -> Result<(Arc<Service>, TempDir), Report> {
     let state = Arc::new(Service::new(cfg, db, provider, PolicyFactory::default())?);
 
     Ok((state, tmp_fernet_repo))
+}
+
+async fn create_user<U: Into<String>>(
+    state: &Arc<Service>,
+    user_id: Option<U>,
+) -> Result<UserResponse, Report> {
+    let uid: String = user_id.map(Into::into).unwrap_or("user_id".to_string());
+    Ok(state
+        .provider
+        .get_identity_provider()
+        .create_user(
+            state,
+            UserCreateBuilder::default()
+                .id(&uid)
+                .name(&uid)
+                .domain_id("domain_a")
+                .enabled(true)
+                .password("foobar")
+                .build()?,
+        )
+        .await?)
+}
+
+async fn grant_role_to_user_on_project<U: AsRef<str>, P: AsRef<str>, R: AsRef<str>>(
+    state: &Arc<Service>,
+    user: U,
+    project: P,
+    role: R,
+) -> Result<(), Report> {
+    db_assignment::ActiveModel {
+        r#type: Set(DbAssignmentType::UserProject),
+        actor_id: Set(user.as_ref().to_string()),
+        target_id: Set(project.as_ref().to_string()),
+        role_id: Set(role.as_ref().to_string()),
+        inherited: Set(false),
+    }
+    .insert(&state.db)
+    .await?;
+    Ok(())
 }

@@ -22,7 +22,7 @@ use tracing::error;
 mod get;
 mod list;
 
-pub use get::get;
+pub use get::{get, get_delegation_chain};
 pub use list::list;
 
 impl TryFrom<db_trust::Model> for Trust {
@@ -87,19 +87,19 @@ impl TryFrom<&db_trust::Model> for Trust {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
 
     use crate::db::entity::trust;
 
-    pub fn get_trust_mock<S: AsRef<str>, U1: AsRef<str>, U2: AsRef<str>>(
+    pub fn get_trust_mock<S: Into<String>, U1: Into<String>, U2: Into<String>>(
         id: S,
         trustor_id: U1,
         trustee_id: U2,
     ) -> trust::Model {
         trust::Model {
-            id: id.as_ref().into(),
-            trustor_user_id: trustor_id.as_ref().into(),
-            trustee_user_id: trustee_id.as_ref().into(),
+            id: id.into(),
+            trustor_user_id: trustor_id.into(),
+            trustee_user_id: trustee_id.into(),
             project_id: Some("pid".into()),
             impersonation: false,
             deleted_at: None,
@@ -108,6 +108,26 @@ mod tests {
             extra: Some("{}".into()),
             expires_at_int: None,
             redelegated_trust_id: None,
+            redelegation_count: None,
+        }
+    }
+
+    pub fn get_trust_redelegation_mock<S: Into<String>, R: Into<String>>(
+        id: S,
+        redelegated_trust_id: Option<R>,
+    ) -> trust::Model {
+        trust::Model {
+            id: id.into(),
+            trustor_user_id: "foo".to_string(),
+            trustee_user_id: "bar".to_string(),
+            project_id: Some("pid".into()),
+            impersonation: false,
+            deleted_at: None,
+            expires_at: None,
+            remaining_uses: None,
+            extra: Some("{}".into()),
+            expires_at_int: None,
+            redelegated_trust_id: redelegated_trust_id.map(Into::into),
             redelegation_count: None,
         }
     }

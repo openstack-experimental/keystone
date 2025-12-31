@@ -13,6 +13,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use async_trait::async_trait;
+use std::collections::HashSet;
 
 use super::super::types::*;
 use crate::assignment::backend::RoleCreate;
@@ -33,62 +34,19 @@ impl SqlBackend {}
 
 #[async_trait]
 impl AssignmentBackend for SqlBackend {
-    /// Set config
+    /// Set config.
     fn set_config(&mut self, config: Config) {
         self.config = config;
     }
 
-    /// Create role.
+    /// Check assignment grant.
     #[tracing::instrument(level = "info", skip(self, state))]
-    async fn create_role(
+    async fn check_grant(
         &self,
         state: &ServiceState,
-        params: RoleCreate,
-    ) -> Result<Role, AssignmentProviderError> {
-        Ok(role::create(&state.db, params).await?)
-    }
-
-    /// List roles
-    #[tracing::instrument(level = "debug", skip(self, state))]
-    async fn list_roles(
-        &self,
-        state: &ServiceState,
-        params: &RoleListParameters,
-    ) -> Result<Vec<Role>, AssignmentProviderError> {
-        Ok(role::list(&self.config, &state.db, params).await?)
-    }
-
-    /// Get single role by ID
-    #[tracing::instrument(level = "debug", skip(self, state))]
-    async fn get_role<'a>(
-        &self,
-        state: &ServiceState,
-        id: &'a str,
-    ) -> Result<Option<Role>, AssignmentProviderError> {
-        Ok(role::get(&self.config, &state.db, id).await?)
-    }
-
-    /// List role assignments
-    #[tracing::instrument(level = "info", skip(self, state))]
-    async fn list_assignments(
-        &self,
-        state: &ServiceState,
-        params: &RoleAssignmentListParameters,
-    ) -> Result<Vec<Assignment>, AssignmentProviderError> {
-        Ok(assignment::list(&self.config, &state.db, params).await?)
-    }
-
-    /// List role assignments for multiple actors/targets
-    #[tracing::instrument(level = "info", skip(self, state))]
-    async fn list_assignments_for_multiple_actors_and_targets(
-        &self,
-        state: &ServiceState,
-        params: &RoleAssignmentListForMultipleActorTargetParameters,
-    ) -> Result<Vec<Assignment>, AssignmentProviderError> {
-        Ok(
-            assignment::list_for_multiple_actors_and_targets(&self.config, &state.db, params)
-                .await?,
-        )
+        grant: &Assignment,
+    ) -> Result<bool, AssignmentProviderError> {
+        Ok(assignment::check(&state.db, grant).await?)
     }
 
     /// Create assignment grant.
@@ -101,13 +59,88 @@ impl AssignmentBackend for SqlBackend {
         Ok(assignment::create(&state.db, grant).await?)
     }
 
-    /// Check assignment grant.
+    /// Create role.
     #[tracing::instrument(level = "info", skip(self, state))]
-    async fn check_grant(
+    async fn create_role(
         &self,
         state: &ServiceState,
-        grant: &Assignment,
-    ) -> Result<bool, AssignmentProviderError> {
-        Ok(assignment::check(&state.db, grant).await?)
+        params: RoleCreate,
+    ) -> Result<Role, AssignmentProviderError> {
+        Ok(role::create(&state.db, params).await?)
+    }
+
+    /// Get single role by ID.
+    #[tracing::instrument(level = "debug", skip(self, state))]
+    async fn get_role<'a>(
+        &self,
+        state: &ServiceState,
+        id: &'a str,
+    ) -> Result<Option<Role>, AssignmentProviderError> {
+        Ok(role::get(&self.config, &state.db, id).await?)
+    }
+
+    /// Expand implied roles.
+    ///
+    /// Modify the list of roles resolving the role inheritance.
+    #[tracing::instrument(level = "info", skip(self, state))]
+    async fn expand_implied_roles(
+        &self,
+        state: &ServiceState,
+        roles: &mut Vec<Role>,
+    ) -> Result<(), AssignmentProviderError> {
+        let rules = implied_role::list_rules(&state.db, true).await?;
+        let mut role_ids: HashSet<String> =
+            HashSet::from_iter(roles.iter().map(|role| role.id.clone()));
+        let mut implied_roles: Vec<Role> = Vec::new();
+        // iterate over all implied role ids for every role in the initial list
+        for implied_role_id in roles
+            .iter_mut()
+            .filter_map(|role| rules.get(&role.id))
+            .flat_map(|val| val.iter())
+        {
+            // Add the role that was not processed yet (present in the `role_ids` into the
+            // temporary list and save the processed id.
+            if !role_ids.contains(implied_role_id) {
+                implied_roles.push(self.get_role(state, implied_role_id).await?.ok_or(
+                    AssignmentProviderError::RoleNotFound(implied_role_id.clone()),
+                )?);
+                role_ids.insert(implied_role_id.clone());
+            }
+        }
+        roles.extend(implied_roles);
+        Ok(())
+    }
+
+    /// List roles.
+    #[tracing::instrument(level = "debug", skip(self, state))]
+    async fn list_roles(
+        &self,
+        state: &ServiceState,
+        params: &RoleListParameters,
+    ) -> Result<Vec<Role>, AssignmentProviderError> {
+        Ok(role::list(&self.config, &state.db, params).await?)
+    }
+
+    /// List role assignments.
+    #[tracing::instrument(level = "info", skip(self, state))]
+    async fn list_assignments(
+        &self,
+        state: &ServiceState,
+        params: &RoleAssignmentListParameters,
+    ) -> Result<Vec<Assignment>, AssignmentProviderError> {
+        Ok(assignment::list(&self.config, &state.db, params).await?)
+    }
+
+    /// List role assignments for multiple actors/targets.
+    #[tracing::instrument(level = "info", skip(self, state))]
+    async fn list_assignments_for_multiple_actors_and_targets(
+        &self,
+        state: &ServiceState,
+        params: &RoleAssignmentListForMultipleActorTargetParameters,
+    ) -> Result<Vec<Assignment>, AssignmentProviderError> {
+        Ok(
+            assignment::list_for_multiple_actors_and_targets(&self.config, &state.db, params)
+                .await?,
+        )
     }
 }

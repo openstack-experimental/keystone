@@ -20,7 +20,7 @@ use crate::config::Config;
 use crate::keystone::ServiceState;
 use crate::trust::{TrustError, types::*};
 
-mod trust;
+pub(crate) mod trust;
 
 /// Sql Database revocation backend.
 #[derive(Clone, Debug, Default)]
@@ -45,6 +45,16 @@ impl TrustBackend for SqlBackend {
         id: &'a str,
     ) -> Result<Option<Trust>, TrustError> {
         Ok(trust::get(&state.db, id).await?)
+    }
+
+    /// Resolve trust chain by the trust ID.
+    #[tracing::instrument(level = "debug", skip(self, state))]
+    async fn get_trust_delegation_chain<'a>(
+        &self,
+        state: &ServiceState,
+        id: &'a str,
+    ) -> Result<Option<Vec<Trust>>, TrustError> {
+        Ok(trust::get_delegation_chain(&state.db, id).await?)
     }
 
     /// List trusts.

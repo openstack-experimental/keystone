@@ -122,6 +122,9 @@ pub async fn setup_schema(db: &DbConn) -> Result<()> {
     create_table(db, &schema, ApplicationCredentialRole).await?;
     create_table(db, &schema, ApplicationCredentialAccessRule).await?;
 
+    create_table(db, &schema, Trust).await?;
+    create_table(db, &schema, TrustRole).await?;
+
     Ok(())
 }
 
@@ -147,14 +150,14 @@ pub async fn bootstrap(db: &DbConn) -> Result<()> {
             name: Set("role_a".into()),
             extra: NotSet,
             description: NotSet,
-            domain_id: Set("domain_a".into()),
+            domain_id: Set("<<null>>".into()),
         },
         role::ActiveModel {
             id: Set("role_b".into()),
             name: Set("role_b".into()),
             extra: NotSet,
             description: NotSet,
-            domain_id: Set("domain_a".into()),
+            domain_id: Set("<<null>>".into()),
         },
     ])
     .exec(db)

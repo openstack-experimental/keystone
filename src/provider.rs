@@ -47,6 +47,9 @@ use crate::revoke::RevokeProvider;
 use crate::token::TokenApi;
 #[double]
 use crate::token::TokenProvider;
+use crate::trust::TrustApi;
+#[double]
+use crate::trust::TrustProvider;
 
 //pub trait Provider: Clone + Send + Sync {
 //    fn get_identity_provider(&self) -> &impl IdentityApi;
@@ -77,6 +80,8 @@ pub struct Provider {
     revoke: RevokeProvider,
     /// Token provider.
     token: TokenProvider,
+    /// Trust provider.
+    trust: TrustProvider,
 }
 
 impl Provider {
@@ -90,6 +95,7 @@ impl Provider {
         let resource_provider = ResourceProvider::new(&cfg, &plugin_manager)?;
         let revoke_provider = RevokeProvider::new(&cfg, &plugin_manager)?;
         let token_provider = TokenProvider::new(&cfg)?;
+        let trust_provider = TrustProvider::new(&cfg, &plugin_manager)?;
 
         Ok(Self {
             config: cfg,
@@ -101,6 +107,7 @@ impl Provider {
             resource: resource_provider,
             revoke: revoke_provider,
             token: token_provider,
+            trust: trust_provider,
         })
     }
 
@@ -143,6 +150,11 @@ impl Provider {
     pub fn get_token_provider(&self) -> &impl TokenApi {
         &self.token
     }
+
+    /// Get the trust provider.
+    pub fn get_trust_provider(&self) -> &impl TrustApi {
+        &self.trust
+    }
 }
 
 #[cfg(test)]
@@ -158,6 +170,7 @@ impl Provider {
         let resource_mock = crate::resource::MockResourceProvider::default();
         let revoke_mock = crate::revoke::MockRevokeProvider::default();
         let token_mock = crate::token::MockTokenProvider::default();
+        let trust_mock = crate::trust::MockTrustProvider::default();
 
         ProviderBuilder::default()
             .config(config.clone())
@@ -169,5 +182,6 @@ impl Provider {
             .resource(resource_mock)
             .revoke(revoke_mock)
             .token(token_mock)
+            .trust(trust_mock)
     }
 }

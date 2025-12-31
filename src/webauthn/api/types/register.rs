@@ -89,7 +89,7 @@ pub struct PublicKeyCredentialCreationOptions {
     /// The challenge that should be signed by the authenticator.
     #[schema(value_type = String, format = Binary, content_encoding = "base64")]
     pub challenge: String,
-    /// Credential ID’s that are excluded from being able to be registered.
+    /// Credential ID's that are excluded from being able to be registered.
     #[schema(nullable = false)]
     #[serde(skip_serializing_if = "Option::is_none")]
     #[validate(nested)]
@@ -133,7 +133,7 @@ pub struct RelyingParty {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 #[schema(as = PasskeyUser)]
 pub struct User {
-    /// The user’s id in base64 form. This MUST be a unique id, and must NOT
+    /// The user's id in base64 form. This MUST be a unique id, and must NOT
     /// contain personally identifying information, as this value can NEVER
     /// be changed. If in doubt, use a UUID.
     #[schema(value_type = String, format = Binary, content_encoding = "base64")]
@@ -142,7 +142,7 @@ pub struct User {
     /// can change, so must not be used as a primary key.
     #[validate(length(max = 255))]
     pub name: String,
-    /// The user’s preferred name for display. This value can change, so must
+    /// The user's preferred name for display. This value can change, so must
     /// not be used as a primary key.
     #[validate(length(max = 255))]
     pub display_name: String,
@@ -257,7 +257,7 @@ pub enum AuthenticatorAttachment {
     CrossPlatform,
 }
 
-/// The Relying Party’s requirements for client-side discoverable credentials.
+/// The Relying Party's requirements for client-side discoverable credentials.
 ///
 /// <https://www.w3.org/TR/webauthn-2/#enumdef-residentkeyrequirement>
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
@@ -350,7 +350,7 @@ pub struct RequestRegistrationExtensions {
     pub uvm: Option<bool>,
 }
 
-/// The desired options for the client’s use of the credProtect extension
+/// The desired options for the client's use of the credProtect extension
 ///
 /// <https://fidoalliance.org/specs/fido-v2.1-rd-20210309/fido-client-to-authenticator-protocol-v2.1-rd-20210309.html#sctn-credProtect-extension>
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
@@ -385,7 +385,7 @@ pub enum CredentialProtectionPolicy {
 
 /// Defines the User Authenticator Verification policy. This is documented
 /// <https://w3c.github.io/webauthn/#enumdef-userverificationrequirement>, and each variant lists
-/// it’s effects.
+/// it's effects.
 ///
 /// To be clear, Verification means that the Authenticator perform extra or
 /// supplementary interaction with the user to verify who they are. An example
@@ -394,7 +394,7 @@ pub enum CredentialProtectionPolicy {
 ///
 /// An example of a non-verified interaction is a yubico device with no pin
 /// where touch is the only interaction - we only verify a user is present, but
-/// we don’t have extra details to the legitimacy of that user.
+/// we don't have extra details to the legitimacy of that user.
 ///
 /// As UserVerificationPolicy is only used in credential registration, this
 /// stores the verification state of the credential in the persisted credential.
@@ -430,7 +430,7 @@ pub enum UserVerificationPolicy {
     /// deployments this is bypassable as it implies the library will not
     /// check UV is set correctly for this credential. Webauthn-RS is not
     /// vulnerable to this as we check the UV state always based on
-    /// it’s presence at registration.
+    /// it's presence at registration.
     ///
     /// However, in some cases use of this policy can lead to some credentials
     /// failing to verify correctly due to browser peripheral exchange
@@ -443,7 +443,7 @@ pub enum UserVerificationPolicy {
 }
 
 /// A client response to a registration challenge. This contains all required
-/// information to assess and assert trust in a credential’s legitimacy,
+/// information to assess and assert trust in a credential's legitimacy,
 /// followed by registration to a user.
 ///
 /// You should not need to handle the inner content of this structure - you

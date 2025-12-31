@@ -47,14 +47,12 @@ mod tests {
         policy_allowed: bool,
     ) -> ServiceState {
         let mut token_mock = MockTokenProvider::default();
-        token_mock
-            .expect_validate_token()
-            .returning(|_, _, _, _, _| {
-                Ok(Token::Unscoped(UnscopedPayload {
-                    user_id: "bar".into(),
-                    ..Default::default()
-                }))
-            });
+        token_mock.expect_validate_token().returning(|_, _, _, _| {
+            Ok(Token::Unscoped(UnscopedPayload {
+                user_id: "bar".into(),
+                ..Default::default()
+            }))
+        });
         token_mock
             .expect_expand_token_information()
             .returning(|_, _| {

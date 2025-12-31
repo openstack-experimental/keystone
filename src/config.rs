@@ -343,7 +343,7 @@ pub struct SecurityComplianceProvider {
     /// it. This feature depends on the sql backend for the `[identity] driver`.
     /// When a user exceeds this threshold and is considered "inactive", the
     /// user's enabled attribute in the HTTP API may not match the value of
-    /// the user’s enabled column in the user table.
+    /// the user's enabled column in the user table.
     #[serde(default)]
     pub disable_user_account_days_inactive: Option<u16>,
     /// Enabling this option requires users to change their password when the
@@ -377,8 +377,8 @@ pub struct SecurityComplianceProvider {
     /// characters of hash of invalid password to be returned. When not
     /// specified, returns full hash. Its length depends on implementation and
     /// invalid_password_hash_function configuration, but is typically 16+
-    /// characters. It’s recommended to use the least reasonable value however -
-    /// it’s the most effective measure to protect the hashes.
+    /// characters. It's recommended to use the least reasonable value however -
+    /// it's the most effective measure to protect the hashes.
     #[serde(default)]
     pub invalid_password_hash_max_chars: Option<u8>,
 
@@ -595,15 +595,31 @@ pub enum TokenProviderDriver {
 /// Trust provider.
 #[derive(Debug, Deserialize, Clone)]
 pub struct TrustProvider {
+    /// Allows authorization to be redelegated from one user to another,
+    /// effectively chaining trusts together. When disabled, the
+    /// `remaining_uses` attribute of a trust is constrained to be zero.
+    #[serde(default)]
+    pub allow_redelegation: bool,
     /// Trust provider driver.
     #[serde(default = "default_sql_driver")]
     pub driver: String,
+    /// Maximum number of times that authorization can be redelegated from one
+    /// user to another in a chain of trusts. This number may be reduced
+    /// further for a specific trust.
+    #[serde(default = "default_max_redelegation_count")]
+    pub max_redelegation_count: usize,
+}
+
+fn default_max_redelegation_count() -> usize {
+    3
 }
 
 impl Default for TrustProvider {
     fn default() -> Self {
         Self {
+            allow_redelegation: false,
             driver: default_sql_driver(),
+            max_redelegation_count: default_max_redelegation_count(),
         }
     }
 }

@@ -17,63 +17,23 @@ use chrono::Utc;
 use eyre::Report;
 use sea_orm::entity::*;
 use std::collections::HashSet;
-use std::sync::Arc;
 use tracing_test::traced_test;
 use uuid::Uuid;
 
-use super::get_state;
+use super::{create_user, get_state, grant_role_to_user_on_project};
 use openstack_keystone::application_credential::ApplicationCredentialApi;
 use openstack_keystone::application_credential::types::*;
 use openstack_keystone::assignment::types::*;
 use openstack_keystone::auth::*;
-use openstack_keystone::db::entity::assignment as db_assignment;
-use openstack_keystone::db::entity::sea_orm_active_enums::Type as DbAssignmentType;
-use openstack_keystone::identity::{IdentityApi, types::*};
-use openstack_keystone::keystone::Service;
 use openstack_keystone::resource::types::ProjectBuilder;
 use openstack_keystone::token::{Token, TokenApi, TokenProviderError};
-
-async fn create_user(state: &Arc<Service>) -> Result<UserResponse, Report> {
-    Ok(state
-        .provider
-        .get_identity_provider()
-        .create_user(
-            state,
-            UserCreateBuilder::default()
-                .id("user_a")
-                .name("user_a")
-                .domain_id("domain_a")
-                .enabled(true)
-                .password("foobar")
-                .build()?,
-        )
-        .await?)
-}
-
-async fn grant_role_to_user_on_project<U: AsRef<str>, P: AsRef<str>, R: AsRef<str>>(
-    state: &Arc<Service>,
-    user: U,
-    project: P,
-    role: R,
-) -> Result<(), Report> {
-    db_assignment::ActiveModel {
-        r#type: Set(DbAssignmentType::UserProject),
-        actor_id: Set(user.as_ref().to_string()),
-        target_id: Set(project.as_ref().to_string()),
-        role_id: Set(role.as_ref().to_string()),
-        inherited: Set(false),
-    }
-    .insert(&state.db)
-    .await?;
-    Ok(())
-}
 
 #[tokio::test]
 #[traced_test]
 async fn test_valid() -> Result<(), Report> {
     let (state, _tmp) = get_state().await?;
 
-    let user = create_user(&state).await?;
+    let user = create_user(&state, Some("user_a")).await?;
     grant_role_to_user_on_project(&state, &user.id, "project_a", "role_a").await?;
 
     let cred: ApplicationCredentialCreateResponse = state
@@ -118,7 +78,7 @@ async fn test_valid() -> Result<(), Report> {
     let unpacked_token = state
         .provider
         .get_token_provider()
-        .validate_token(&state, &encoded_token, None, None, None)
+        .validate_token(&state, &encoded_token, None, None)
         .await;
 
     if let Ok(unpacked_token) = unpacked_token {
@@ -152,7 +112,7 @@ async fn test_valid() -> Result<(), Report> {
 async fn test_expired() -> Result<(), Report> {
     let (state, _tmp) = get_state().await?;
 
-    let user = create_user(&state).await?;
+    let user = create_user(&state, Some("user_a")).await?;
     grant_role_to_user_on_project(&state, &user.id, "project_a", "role_a").await?;
 
     let cred: ApplicationCredentialCreateResponse = state
@@ -198,7 +158,7 @@ async fn test_expired() -> Result<(), Report> {
     let unpacked_token = state
         .provider
         .get_token_provider()
-        .validate_token(&state, &encoded_token, None, None, None)
+        .validate_token(&state, &encoded_token, None, None)
         .await;
 
     if let Err(TokenProviderError::Expired) = unpacked_token {
@@ -214,7 +174,7 @@ async fn test_expired() -> Result<(), Report> {
 async fn test_valid_fewer_roles() -> Result<(), Report> {
     let (state, _tmp) = get_state().await?;
 
-    let user = create_user(&state).await?;
+    let user = create_user(&state, Some("user_a")).await?;
     grant_role_to_user_on_project(&state, &user.id, "project_a", "role_a").await?;
 
     let cred: ApplicationCredentialCreateResponse = state
@@ -265,7 +225,7 @@ async fn test_valid_fewer_roles() -> Result<(), Report> {
     let unpacked_token = state
         .provider
         .get_token_provider()
-        .validate_token(&state, &encoded_token, None, None, None)
+        .validate_token(&state, &encoded_token, None, None)
         .await;
 
     if let Ok(unpacked_token) = unpacked_token {
@@ -299,7 +259,7 @@ async fn test_valid_fewer_roles() -> Result<(), Report> {
 async fn test_valid_all_roles_revoked() -> Result<(), Report> {
     let (state, _tmp) = get_state().await?;
 
-    let user = create_user(&state).await?;
+    let user = create_user(&state, Some("user_a")).await?;
 
     let cred: ApplicationCredentialCreateResponse = state
         .provider
@@ -343,7 +303,7 @@ async fn test_valid_all_roles_revoked() -> Result<(), Report> {
     let unpacked_token = state
         .provider
         .get_token_provider()
-        .validate_token(&state, &encoded_token, None, None, None)
+        .validate_token(&state, &encoded_token, None, None)
         .await;
 
     if let Err(TokenProviderError::ActorHasNoRolesOnTarget) = unpacked_token {

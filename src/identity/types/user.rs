@@ -24,7 +24,7 @@ use crate::error::BuilderError;
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct UserResponse {
-    /// The ID of the default project for the user. A user’s default project
+    /// The ID of the default project for the user. A user's default project
     /// must not be a domain. Setting this attribute does not grant any actual
     /// authorization on the project, and is merely provided for convenience.
     /// Therefore, the referenced project does not need to exist within the user

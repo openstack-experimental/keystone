@@ -25,6 +25,7 @@ use crate::policy::*;
 use crate::resource::error::*;
 use crate::revoke::error::*;
 use crate::token::TokenProviderError;
+use crate::trust::TrustError;
 
 /// Keystone error.
 #[derive(Debug, Error)]
@@ -119,6 +120,14 @@ pub enum KeystoneError {
         /// The source of the error.
         #[from]
         source: TokenProviderError,
+    },
+
+    /// Trust provider.
+    #[error(transparent)]
+    TrustProvider {
+        /// The source of the error.
+        #[from]
+        source: TrustError,
     },
 
     /// Url parsing error.

@@ -34,7 +34,7 @@
 //! As development progressed, however, the breadth of new functionality (and
 //! the opportunity to revisit some of the existing limitations) led to a
 //! partial re-implementation of certain core identity flows in Rust. This
-//! allows us to benefit from Rust’s memory safety, concurrency model,
+//! allows us to benefit from Rust's memory safety, concurrency model,
 //! performance, and modern tooling, while still preserving the upstream
 //! Keystone Python service as the canonical “master” identity service, routing
 //! only the new endpoints and capabilities through the Rust component.

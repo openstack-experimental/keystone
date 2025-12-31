@@ -28,6 +28,7 @@ use crate::api::v3::role::types::Role;
 use crate::error::BuilderError;
 use crate::identity::types as identity_types;
 use crate::token::Token as BackendToken;
+use crate::trust::api::types::trust::TokenTrustRepr;
 
 /// Authorization token
 #[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
@@ -61,10 +62,20 @@ pub struct Token {
     /// The date and time when the token expires.
     pub expires_at: DateTime<Utc>,
 
+    // # Subject
     /// A user object.
     //#[builder(default)]
     #[validate(nested)]
     pub user: User,
+
+    // # Scope
+    /// A domain object including the id and name representing the domain the
+    /// token is scoped to. This is only included in tokens that are scoped
+    /// to a domain.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[builder(default)]
+    #[validate(nested)]
+    pub domain: Option<Domain>,
 
     /// A project object including the id, name and domain object representing
     /// the project the token is scoped to. This is only included in tokens
@@ -74,14 +85,13 @@ pub struct Token {
     #[validate(nested)]
     pub project: Option<Project>,
 
-    /// A domain object including the id and name representing the domain the
-    /// token is scoped to. This is only included in tokens that are scoped
-    /// to a domain.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// A trust object.
+    #[serde(skip_serializing_if = "Option::is_none", rename = "OS-TRUST:trust")]
     #[builder(default)]
     #[validate(nested)]
-    pub domain: Option<Domain>,
+    pub trust: Option<TokenTrustRepr>,
 
+    // # Roles on the scope.
     /// A list of role objects
     #[serde(skip_serializing_if = "Option::is_none")]
     #[builder(default)]
@@ -133,7 +143,7 @@ pub struct AuthRequestInner {
     /// sufficient to uniquely identify a project but if a project is
     /// specified by name, then the domain of the project must also be
     /// specified in order to uniquely identify the project by name. A domain
-    /// scope may be specified by either the domain’s ID or name with
+    /// scope may be specified by either the domain's ID or name with
     /// equivalent results.
     #[validate(nested)]
     pub scope: Option<Scope>,

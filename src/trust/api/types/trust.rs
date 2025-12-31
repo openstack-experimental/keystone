@@ -12,25 +12,20 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! # Trust types
 use chrono::{DateTime, Utc};
 use derive_builder::Builder;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use utoipa::ToSchema;
 use validator::Validate;
 
-use crate::assignment::types::Role;
 use crate::error::BuilderError;
+use crate::trust::types::Trust;
 
-/// A trust object.
-#[derive(Builder, Clone, Debug, Default, Deserialize, Serialize, PartialEq, Validate)]
+/// A trust object returned in the token.
+#[derive(Builder, Clone, Debug, Default, Deserialize, Serialize, PartialEq, ToSchema, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
-pub struct Trust {
-    /// The trust deletion date.
-    #[builder(default)]
-    pub deleted_at: Option<DateTime<Utc>>,
-
+pub struct TokenTrustRepr {
     /// Specifies the expiration time of the trust. A trust may be revoked ahead
     /// of expiration. If the value represents a time in the past, the trust is
     /// deactivated. In the redelegation case it must not exceed the value of
@@ -38,10 +33,8 @@ pub struct Trust {
     /// be omitted, then the `expires_at` value is copied from the
     /// redelegated trust.
     #[builder(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub expires_at: Option<DateTime<Utc>>,
-
-    #[builder(default)]
-    pub extra: Option<Value>,
 
     /// The ID of the trust.
     #[validate(length(min = 1, max = 64))]
@@ -54,24 +47,19 @@ pub struct Trust {
     /// will represent that of the `trustee`.
     pub impersonation: bool,
 
-    /// Identifies the project upon which the trustor is delegating
-    /// authorization.
-    #[builder(default)]
-    #[serde(default)]
-    #[validate(length(min = 1, max = 64))]
-    pub project_id: Option<String>,
-
     /// Specifies how many times the trust can be used to obtain a token. This
     /// value is decreased each time a token is issued through the trust. Once
     /// it reaches 0, no further tokens will be issued through the trust. The
     /// default value is null, meaning there is no limit on the number of tokens
     /// issued through the trust. If redelegation is enabled it must not be set.
     #[builder(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub remaining_uses: Option<u32>,
 
     /// Returned with redelegated trust provides information about the
     /// predecessor in the trust chain.
     #[builder(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
     #[validate(length(min = 1, max = 64))]
     pub redelegated_trust_id: Option<String>,
 
@@ -96,43 +84,44 @@ pub struct Trust {
     /// 0, this means that the new trust will not be redelegatable,
     /// regardless of the value of `allow_redelegation`.
     #[builder(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub redelegation_count: Option<u32>,
-
-    /// Specifies the subset of the trustor's roles on the `project_id` to be
-    /// granted to the `trustee` when the token is consumed. The trustor must
-    /// already be granted these roles in the project referenced by the
-    /// `project_id` attribute. If redelegation is used (when trust-scoped token
-    /// is used and consumed trust has `allow_redelegation` set to true) this
-    /// parameter should contain redelegated trust's roles only.
-    /// Roles are only provided when the trust is created, and are subsequently
-    /// available as a separate read-only collection. Each role can be specified
-    /// by either id or name.
-    #[builder(default)]
-    pub roles: Option<Vec<Role>>,
 
     /// Represents the user who created the trust, and who's authorization is
     /// being delegated.
-    #[validate(length(min = 1, max = 64))]
-    pub trustor_user_id: String,
+    #[validate(nested)]
+    pub trustor_user: TokenTrustUser,
 
     /// Represents the user who is capable of consuming the trust.
-    #[validate(length(min = 1, max = 64))]
-    pub trustee_user_id: String,
+    #[validate(nested)]
+    pub trustee_user: TokenTrustUser,
 }
 
-/// A trust list parameters.
-#[derive(Builder, Clone, Debug, Default, Deserialize, Serialize, PartialEq, Validate)]
+/// A trust object returned in the token.
+#[derive(Builder, Clone, Debug, Default, Deserialize, Serialize, PartialEq, ToSchema, Validate)]
+#[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
-pub struct TrustListParameters {
-    /// Whether to include deleted trusts.
-    #[builder(default)]
-    pub include_deleted: Option<bool>,
+pub struct TokenTrustUser {
+    /// The ID of the user.
+    #[validate(length(min = 1, max = 64))]
+    pub id: String,
+}
 
-    /// Limit number of entries on the single response page.
-    #[builder(default)]
-    pub limit: Option<u64>,
-
-    /// Page marker (id of the last entry on the previous page.
-    #[builder(default)]
-    pub marker: Option<String>,
+impl From<&Trust> for TokenTrustRepr {
+    fn from(value: &Trust) -> Self {
+        Self {
+            expires_at: value.expires_at,
+            id: value.id.clone(),
+            impersonation: value.impersonation,
+            remaining_uses: value.remaining_uses,
+            redelegated_trust_id: value.redelegated_trust_id.clone(),
+            redelegation_count: value.redelegation_count,
+            trustor_user: TokenTrustUser {
+                id: value.trustor_user_id.clone(),
+            },
+            trustee_user: TokenTrustUser {
+                id: value.trustee_user_id.clone(),
+            },
+        }
+    }
 }

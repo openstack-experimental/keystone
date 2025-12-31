@@ -20,34 +20,37 @@ use crate::assignment::backend::error::AssignmentDatabaseError;
 use crate::db::entity::prelude::ImpliedRole as DbImpliedRole;
 use crate::error::DbContextExt;
 
-/// Build a resolved tree of role inference
-fn expand_implied_roles(
+/// Build a resolved tree of role inference.
+fn expand_implied_role_ids(
     data: &BTreeMap<String, BTreeSet<String>>,
 ) -> BTreeMap<String, BTreeSet<String>> {
     let mut res: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     for (id, imply) in data.iter() {
         let mut implied = imply.clone();
         for im in imply.iter() {
-            implied.append(&mut get_implied_roles(im, data));
+            implied.append(&mut get_implied_role_ids(im, data));
         }
         res.insert(id.clone(), implied);
     }
     res
 }
 
-/// Recursively resolve inference tree
-fn get_implied_roles(id: &String, data: &BTreeMap<String, BTreeSet<String>>) -> BTreeSet<String> {
+/// Recursively resolve inference tree.
+fn get_implied_role_ids(
+    id: &String,
+    data: &BTreeMap<String, BTreeSet<String>>,
+) -> BTreeSet<String> {
     let mut res: BTreeSet<String> = BTreeSet::new();
     if let Some(implied) = data.get(id) {
         implied.iter().for_each(|imply| {
             res.insert(imply.clone());
-            res.append(&mut get_implied_roles(imply, data));
+            res.append(&mut get_implied_role_ids(imply, data));
         })
     }
     res
 }
 
-/// List role recursively resolved imply rules
+/// List role recursively resolving imply rules.
 pub async fn list_rules(
     db: &DatabaseConnection,
     resolve: bool,
@@ -66,7 +69,7 @@ pub async fn list_rules(
             .or_insert(BTreeSet::from([imply.implied_role_id.clone()]));
     }
     if resolve {
-        Ok(expand_implied_roles(&implied_rules))
+        Ok(expand_implied_role_ids(&implied_rules))
     } else {
         Ok(implied_rules)
     }
@@ -81,7 +84,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_expand_implied_roles() {
+    fn test_expand_implied_role_ids() {
         let implied_data: BTreeMap<String, BTreeSet<String>> = BTreeMap::from([
             (
                 "1".into(),
@@ -116,7 +119,7 @@ mod tests {
                 ),
                 ("5".into(), BTreeSet::from(["6".to_string()])),
             ]),
-            expand_implied_roles(&implied_data)
+            expand_implied_role_ids(&implied_data)
         );
     }
 

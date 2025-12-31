@@ -11,7 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-
+//! # Fernet utils
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::{DateTime, Utc};
 use fernet::Fernet;
@@ -43,13 +43,17 @@ pub struct FernetUtils {
 }
 
 impl FernetUtils {
+    /// Validate fernet key key_repository.
+    ///
+    /// Perform validation of the fernet keys repository.
     fn validate_key_repository(&self) -> Result<bool, TokenProviderError> {
         Ok(self.key_repository.exists())
     }
 
     /// Securely create a new tmp encryption key.
     ///
-    /// This created key is not effective until `become_valid_new_key()`.
+    /// This created key is not effective until `become_valid_new_key` method is
+    /// executed.
     fn create_tmp_new_key(
         &self,
         user_id: Option<u32>,

@@ -54,7 +54,6 @@ pub trait TokenApi: Send + Sync + Clone {
         credential: &'a str,
         allow_expired: Option<bool>,
         window_seconds: Option<i64>,
-        expand: Option<bool>,
     ) -> Result<Token, TokenProviderError>;
 
     /// Issue a token for given parameters.

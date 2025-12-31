@@ -48,19 +48,17 @@ mod tests {
         policy_allowed_see_other_domains: Option<bool>,
     ) -> ServiceState {
         let mut token_mock = MockTokenProvider::default();
-        token_mock
-            .expect_validate_token()
-            .returning(|_, _, _, _, _| {
-                Ok(Token::Unscoped(UnscopedPayload {
-                    user_id: "bar".into(),
-                    user: Some(UserResponse {
-                        id: "bar".into(),
-                        domain_id: "udid".into(),
-                        ..Default::default()
-                    }),
+        token_mock.expect_validate_token().returning(|_, _, _, _| {
+            Ok(Token::Unscoped(UnscopedPayload {
+                user_id: "bar".into(),
+                user: Some(UserResponse {
+                    id: "bar".into(),
+                    domain_id: "udid".into(),
                     ..Default::default()
-                }))
-            });
+                }),
+                ..Default::default()
+            }))
+        });
 
         let provider = Provider::mocked_builder()
             .federation(federation_mock)

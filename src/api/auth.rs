@@ -51,7 +51,7 @@ where
         let token = state
             .provider
             .get_token_provider()
-            .validate_token(&state, auth_header, Some(false), None, Some(true))
+            .validate_token(&state, auth_header, Some(false), None)
             .await
             .inspect_err(|e| error!("{:#?}", e))
             .map_err(|_| KeystoneApiError::Unauthorized(None))?;

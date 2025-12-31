@@ -28,10 +28,24 @@ pub trait TrustApi: Send + Sync + Clone {
         id: &'a str,
     ) -> Result<Option<Trust>, TrustError>;
 
+    /// Resolve trust chain by the trust ID.
+    async fn get_trust_delegation_chain<'a>(
+        &self,
+        state: &ServiceState,
+        id: &'a str,
+    ) -> Result<Option<Vec<Trust>>, TrustError>;
+
     /// List trusts.
     async fn list_trusts(
         &self,
         state: &ServiceState,
         params: &TrustListParameters,
     ) -> Result<Vec<Trust>, TrustError>;
+
+    /// Validate trust delegation chain.
+    async fn validate_trust_delegation_chain(
+        &self,
+        state: &ServiceState,
+        trust: &Trust,
+    ) -> Result<bool, TrustError>;
 }

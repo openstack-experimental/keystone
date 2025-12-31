@@ -23,7 +23,7 @@ use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::{DateTime, TimeDelta, Utc};
 use std::collections::HashSet;
-use tracing::trace;
+use tracing::{debug, trace};
 use uuid::Uuid;
 
 pub mod backend;
@@ -47,8 +47,9 @@ use crate::{
     assignment::{
         AssignmentApi,
         error::AssignmentProviderError,
-        types::{Role, RoleAssignmentListParametersBuilder},
+        types::{Role, RoleAssignmentListParameters, RoleAssignmentListParametersBuilder},
     },
+    trust::{TrustApi, types::Trust},
 };
 use backend::{TokenBackend, fernet::FernetTokenProvider};
 pub use error::TokenProviderError;
@@ -80,6 +81,7 @@ impl TokenProvider {
             .ok_or(TokenProviderError::ExpiryCalculation)
     }
 
+    /// Create unscoped token.
     fn create_unscoped_token(
         &self,
         authentication_info: &AuthenticatedInfo,
@@ -95,7 +97,7 @@ impl TokenProvider {
         ))
     }
 
-    /// Create project scoped token
+    /// Create project scoped token.
     fn create_project_scope_token(
         &self,
         authentication_info: &AuthenticatedInfo,
@@ -138,6 +140,7 @@ impl TokenProvider {
         }
     }
 
+    /// Create domain scoped token.
     fn create_domain_scope_token(
         &self,
         authentication_info: &AuthenticatedInfo,
@@ -156,6 +159,7 @@ impl TokenProvider {
         ))
     }
 
+    /// Create unscoped token with the identity provider bind.
     fn create_federated_unscoped_token(
         &self,
         authentication_info: &AuthenticatedInfo,
@@ -181,6 +185,7 @@ impl TokenProvider {
         }
     }
 
+    /// Create project scoped token with the identity provider bind.
     fn create_federated_project_scope_token(
         &self,
         authentication_info: &AuthenticatedInfo,
@@ -216,6 +221,7 @@ impl TokenProvider {
         }
     }
 
+    /// Create domain scoped token with the identity provider bind.
     fn create_federated_domain_scope_token(
         &self,
         authentication_info: &AuthenticatedInfo,
@@ -288,6 +294,38 @@ impl TokenProvider {
         ))
     }
 
+    /// Create token based on the trust.
+    fn create_trust_token(
+        &self,
+        authentication_info: &AuthenticatedInfo,
+        trust: &Trust,
+    ) -> Result<Token, TokenProviderError> {
+        if let Some(project_id) = &trust.project_id {
+            Ok(Token::Trust(
+                TrustPayloadBuilder::default()
+                    .user_id(authentication_info.user_id.clone())
+                    .user(authentication_info.user.clone())
+                    .methods(authentication_info.methods.clone().iter())
+                    .audit_ids(authentication_info.audit_ids.clone().iter())
+                    .expires_at(self.get_new_token_expiry()?)
+                    .trust_id(trust.id.clone())
+                    .project_id(project_id.clone())
+                    .build()?,
+            ))
+        } else {
+            // Trust without project_id is unscoped
+            Ok(Token::Unscoped(
+                UnscopedPayloadBuilder::default()
+                    .user_id(authentication_info.user_id.clone())
+                    .user(authentication_info.user.clone())
+                    .methods(authentication_info.methods.clone().iter())
+                    .audit_ids(authentication_info.audit_ids.clone().iter())
+                    .expires_at(self.get_new_token_expiry()?)
+                    .build()?,
+            ))
+        }
+    }
+
     /// Expand user information in the token.
     async fn expand_user_information(
         &self,
@@ -326,8 +364,17 @@ impl TokenProvider {
                     data.user = user;
                 }
                 Token::Trust(data) => {
-                    // TODO: This maybe wrong for trust
-                    data.user = user;
+                    data.user = if let Some(trust) = &data.trust
+                        && trust.impersonation
+                    {
+                        state
+                            .provider
+                            .get_identity_provider()
+                            .get_user(state, &trust.trustor_user_id)
+                            .await?
+                    } else {
+                        user
+                    };
                 }
             }
         }
@@ -419,6 +466,22 @@ impl TokenProvider {
                         .await?;
 
                     data.project = project;
+                }
+            }
+            Token::Trust(data) => {
+                if data.trust.is_none() {
+                    data.trust = state
+                        .provider
+                        .get_trust_provider()
+                        .get_trust(state, &data.trust_id)
+                        .await?;
+                }
+                if data.project.is_none() {
+                    data.project = state
+                        .provider
+                        .get_resource_provider()
+                        .get_project(state, &data.project_id)
+                        .await?;
                 }
             }
 
@@ -596,6 +659,51 @@ impl TokenProvider {
                         ))?;
                 }
             }
+            Token::Trust(data) => {
+                // Resolve role assignments of the trust verifying that the trustor still has
+                // those roles on the scope.
+                if let Some(ref mut trust) = data.trust {
+                    let trustor_roles: HashSet<String> = state
+                        .provider
+                        .get_assignment_provider()
+                        .list_role_assignments(
+                            state,
+                            &RoleAssignmentListParameters {
+                                user_id: Some(trust.trustor_user_id.clone()),
+                                project_id: Some(data.project_id.clone()),
+                                effective: Some(true),
+                                ..Default::default()
+                            },
+                        )
+                        .await?
+                        .into_iter()
+                        .map(|x| x.role_id.clone())
+                        .collect();
+                    if let Some(ref mut trust_roles) = trust.roles {
+                        // `token_model._get_trust_roles`: Verify that the trustor still has all
+                        // roles mentioned in the trust. Return error when at least one role is not
+                        // available anymore.
+
+                        // Expand the implied roles
+                        state
+                            .provider
+                            .get_assignment_provider()
+                            .expand_implied_roles(state, trust_roles)
+                            .await?;
+                        if !trust_roles
+                            .iter()
+                            .all(|role| trustor_roles.contains(&role.id))
+                        {
+                            debug!(
+                                "Trust roles {:?} are missing for the trustor {:?}",
+                                trust_roles, trustor_roles
+                            );
+                            return Err(TokenProviderError::ActorHasNoRolesOnTarget);
+                        }
+                        trust_roles.retain_mut(|role| role.domain_id.is_none());
+                    }
+                }
+            }
             _ => {}
         }
 
@@ -616,13 +724,7 @@ impl TokenApi for TokenProvider {
     ) -> Result<AuthenticatedInfo, TokenProviderError> {
         // TODO: is the expand really false?
         let token = self
-            .validate_token(
-                state,
-                credential,
-                allow_expired,
-                window_seconds,
-                Some(false),
-            )
+            .validate_token(state, credential, allow_expired, window_seconds)
             .await?;
         if let Token::Restricted(restriction) = &token
             && !restriction.allow_renew
@@ -649,7 +751,6 @@ impl TokenApi for TokenProvider {
         credential: &'a str,
         allow_expired: Option<bool>,
         window_seconds: Option<i64>,
-        expand: Option<bool>,
     ) -> Result<Token, TokenProviderError> {
         let mut token = self.backend_driver.decode(credential)?;
         let latest_expiration_cutof = Utc::now()
@@ -665,9 +766,7 @@ impl TokenApi for TokenProvider {
         }
 
         // Expand the token unless `expand = Some(false)`
-        if expand.is_none_or(|v| v) {
-            token = self.expand_token_information(state, &token).await?;
-        }
+        token = self.expand_token_information(state, &token).await?;
 
         if state
             .provider
@@ -678,22 +777,13 @@ impl TokenApi for TokenProvider {
             return Err(TokenProviderError::TokenRevoked);
         }
 
-        if let Token::ApplicationCredential(ref data) = token {
-            data.is_valid()?;
-            if !allow_expired.unwrap_or_default()
-                && data
-                    .application_credential
-                    .as_ref()
-                    .and_then(|ac| ac.expires_at)
-                    .is_some_and(|expiry| expiry < latest_expiration_cutof)
-            {
-                return Err(TokenProviderError::Expired);
-            }
-        }
+        token.validate_subject(state).await?;
+        token.validate_scope(state).await?;
 
         Ok(token)
     }
 
+    /// Issue the Keystone token.
     #[tracing::instrument(level = "debug", skip(self))]
     fn issue_token(
         &self,
@@ -717,22 +807,27 @@ impl TokenApi for TokenProvider {
         } else if authentication_info.idp_id.is_some() && authentication_info.protocol_id.is_some()
         {
             match &authz_info {
-                AuthzInfo::Project(project) => {
-                    self.create_federated_project_scope_token(&authentication_info, project)
-                }
                 AuthzInfo::Domain(domain) => {
                     self.create_federated_domain_scope_token(&authentication_info, domain)
                 }
+                AuthzInfo::Project(project) => {
+                    self.create_federated_project_scope_token(&authentication_info, project)
+                }
+                AuthzInfo::Trust(_trust) => Err(TokenProviderError::Conflict {
+                    message: "cannot create trust token with an identity provider in scope".into(),
+                    context: "issuing token".into(),
+                }),
                 AuthzInfo::Unscoped => self.create_federated_unscoped_token(&authentication_info),
             }
         } else {
             match &authz_info {
-                AuthzInfo::Project(project) => {
-                    self.create_project_scope_token(&authentication_info, project)
-                }
                 AuthzInfo::Domain(domain) => {
                     self.create_domain_scope_token(&authentication_info, domain)
                 }
+                AuthzInfo::Project(project) => {
+                    self.create_project_scope_token(&authentication_info, project)
+                }
+                AuthzInfo::Trust(trust) => self.create_trust_token(&authentication_info, trust),
                 AuthzInfo::Unscoped => self.create_unscoped_token(&authentication_info),
             }
         }
@@ -1070,7 +1165,7 @@ mod tests {
 
         let credential = token_provider.encode_token(&token).unwrap();
         match token_provider
-            .validate_token(&state, &credential, Some(false), None, None)
+            .validate_token(&state, &credential, Some(false), None)
             .await
         {
             Err(TokenProviderError::TokenRevoked) => {}

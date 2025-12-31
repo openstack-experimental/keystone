@@ -103,6 +103,16 @@ impl AssignmentProvider {
 
 #[async_trait]
 impl AssignmentApi for AssignmentProvider {
+    /// Create assignment grant.
+    #[tracing::instrument(level = "info", skip(self, state))]
+    async fn create_grant(
+        &self,
+        state: &ServiceState,
+        params: Assignment,
+    ) -> Result<Assignment, AssignmentProviderError> {
+        self.backend_driver.create_grant(state, params).await
+    }
+
     /// Create role.
     #[tracing::instrument(level = "info", skip(self, state))]
     async fn create_role(
@@ -120,6 +130,34 @@ impl AssignmentApi for AssignmentProvider {
         self.backend_driver.create_role(state, new_params).await
     }
 
+    /// Get single role.
+    #[tracing::instrument(level = "info", skip(self, state))]
+    async fn get_role<'a>(
+        &self,
+        state: &ServiceState,
+        id: &'a str,
+    ) -> Result<Option<Role>, AssignmentProviderError> {
+        self.backend_driver.get_role(state, id).await
+    }
+
+    /// Expand implied roles.
+    ///
+    /// Return list of the roles with the imply rules being considered.
+    #[tracing::instrument(level = "info", skip(self, state))]
+    async fn expand_implied_roles(
+        &self,
+        state: &ServiceState,
+        roles: &mut Vec<Role>,
+    ) -> Result<(), AssignmentProviderError> {
+        // In most of the cases a logic for expanding the roles may be implemented by
+        // the provider itself, but some backend drivers may have more efficient
+        // methods.
+        self.backend_driver
+            .expand_implied_roles(state, roles)
+            .await?;
+        Ok(())
+    }
+
     /// List roles
     #[tracing::instrument(level = "info", skip(self, state))]
     async fn list_roles(
@@ -128,16 +166,6 @@ impl AssignmentApi for AssignmentProvider {
         params: &RoleListParameters,
     ) -> Result<impl IntoIterator<Item = Role>, AssignmentProviderError> {
         self.backend_driver.list_roles(state, params).await
-    }
-
-    /// Get single role
-    #[tracing::instrument(level = "info", skip(self, state))]
-    async fn get_role<'a>(
-        &self,
-        state: &ServiceState,
-        id: &'a str,
-    ) -> Result<Option<Role>, AssignmentProviderError> {
-        self.backend_driver.get_role(state, id).await
     }
 
     /// List role assignments
@@ -205,15 +233,5 @@ impl AssignmentApi for AssignmentProvider {
         self.backend_driver
             .list_assignments_for_multiple_actors_and_targets(state, &request.build()?)
             .await
-    }
-
-    /// Create assignment grant.
-    #[tracing::instrument(level = "info", skip(self, state))]
-    async fn create_grant(
-        &self,
-        state: &ServiceState,
-        params: Assignment,
-    ) -> Result<Assignment, AssignmentProviderError> {
-        self.backend_driver.create_grant(state, params).await
     }
 }

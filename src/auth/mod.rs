@@ -30,6 +30,7 @@ use crate::application_credential::types::ApplicationCredential;
 use crate::error::BuilderError;
 use crate::identity::types::{Group, UserResponse};
 use crate::resource::types::{Domain, Project};
+use crate::trust::types::Trust;
 
 #[derive(Error, Debug)]
 pub enum AuthenticationError {
@@ -151,12 +152,14 @@ impl AuthenticatedInfo {
 /// Authorization information
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub enum AuthzInfo {
-    /// Unscoped
-    Unscoped,
-    /// Project scope
-    Project(Project),
-    /// Domain scope
+    /// Domain scope.
     Domain(Domain),
+    /// Project scope.
+    Project(Project),
+    /// Trust scope.
+    Trust(Trust),
+    /// Unscoped.
+    Unscoped,
 }
 
 impl AuthzInfo {
@@ -167,17 +170,18 @@ impl AuthzInfo {
     /// - Domain: check if the domain is enabled
     pub fn validate(&self) -> Result<(), AuthenticationError> {
         match self {
-            AuthzInfo::Unscoped => {}
-            AuthzInfo::Project(project) => {
-                if !project.enabled {
-                    return Err(AuthenticationError::Unauthorized);
-                }
-            }
             AuthzInfo::Domain(domain) => {
                 if !domain.enabled {
                     return Err(AuthenticationError::Unauthorized);
                 }
             }
+            AuthzInfo::Project(project) => {
+                if !project.enabled {
+                    return Err(AuthenticationError::Unauthorized);
+                }
+            }
+            AuthzInfo::Trust(_) => {}
+            AuthzInfo::Unscoped => {}
         }
         Ok(())
     }

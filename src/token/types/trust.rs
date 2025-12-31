@@ -18,7 +18,6 @@ use derive_builder::Builder;
 use serde::Serialize;
 use validator::Validate;
 
-use crate::assignment::types::Role;
 use crate::error::BuilderError;
 use crate::identity::types::UserResponse;
 use crate::resource::types::Project;
@@ -61,8 +60,6 @@ pub struct TrustPayload {
     pub user: Option<UserResponse>,
     #[builder(default)]
     pub trust: Option<Trust>,
-    #[builder(default)]
-    pub roles: Option<Vec<Role>>,
     #[builder(default)]
     pub project: Option<Project>,
 }

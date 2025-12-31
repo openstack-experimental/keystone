@@ -19,7 +19,10 @@ use validator::Validate;
 
 use crate::assignment::types::Role;
 use crate::identity::types::UserResponse;
+use crate::keystone::ServiceState;
 use crate::resource::types::{Domain, Project};
+use crate::token::error::TokenProviderError;
+use crate::trust::TrustApi;
 
 pub mod application_credential;
 pub mod common;
@@ -56,12 +59,12 @@ pub enum Token {
     ApplicationCredential(ApplicationCredentialPayload),
     /// Domain scoped.
     DomainScope(DomainScopePayload),
-    /// Federated unscoped.
-    FederationUnscoped(FederationUnscopedPayload),
-    /// Federated project scoped.
-    FederationProjectScope(FederationProjectScopePayload),
     /// Federated domain scoped.
     FederationDomainScope(FederationDomainScopePayload),
+    /// Federated project scoped.
+    FederationProjectScope(FederationProjectScopePayload),
+    /// Federated unscoped.
+    FederationUnscoped(FederationUnscopedPayload),
     /// Project scoped.
     ProjectScope(ProjectScopePayload),
     /// Restricted.
@@ -222,9 +225,151 @@ impl Token {
             Self::FederationDomainScope(x) => x.roles.as_ref(),
             Self::ProjectScope(x) => x.roles.as_ref(),
             Self::Restricted(x) => x.roles.as_ref(),
-            Self::Trust(x) => x.roles.as_ref(),
+            Self::Trust(x) => match &x.trust {
+                Some(trust) => trust.roles.as_ref(),
+                None => None,
+            },
             _ => None,
         }
+    }
+
+    /// Validate the token scope.
+    ///
+    /// Validate the scope validity of the token scope. For a project scoped
+    /// tokens this will raise an error when the project is disabled. For
+    /// domain scoped token the domain must be active.
+    pub async fn validate_scope(&self, _state: &ServiceState) -> Result<(), TokenProviderError> {
+        match self {
+            Token::ApplicationCredential(data) => {
+                if !data
+                    .project
+                    .as_ref()
+                    .ok_or(TokenProviderError::ScopeMissing)?
+                    .enabled
+                {
+                    return Err(TokenProviderError::ProjectDisabled(data.project_id.clone()));
+                }
+                if data
+                    .application_credential
+                    .as_ref()
+                    .is_none_or(|ac| ac.project_id != data.project_id)
+                {
+                    return Err(TokenProviderError::ApplicationCredentialScopeMismatch);
+                }
+            }
+            Token::DomainScope(data) => {
+                if !data
+                    .domain
+                    .as_ref()
+                    .ok_or(TokenProviderError::ScopeMissing)?
+                    .enabled
+                {
+                    return Err(TokenProviderError::DomainDisabled(data.domain_id.clone()));
+                }
+            }
+            Token::FederationDomainScope(data) => {
+                if !data
+                    .domain
+                    .as_ref()
+                    .ok_or(TokenProviderError::ScopeMissing)?
+                    .enabled
+                {
+                    return Err(TokenProviderError::DomainDisabled(data.domain_id.clone()));
+                }
+            }
+            Token::FederationProjectScope(data) => {
+                if !data
+                    .project
+                    .as_ref()
+                    .ok_or(TokenProviderError::ScopeMissing)?
+                    .enabled
+                {
+                    return Err(TokenProviderError::ProjectDisabled(data.project_id.clone()));
+                }
+            }
+            Token::FederationUnscoped(_) => {}
+            Token::ProjectScope(data) => {
+                if !data
+                    .project
+                    .as_ref()
+                    .ok_or(TokenProviderError::ScopeMissing)?
+                    .enabled
+                {
+                    return Err(TokenProviderError::ProjectDisabled(data.project_id.clone()));
+                }
+            }
+            Token::Restricted(data) => {
+                if !data
+                    .project
+                    .as_ref()
+                    .ok_or(TokenProviderError::ScopeMissing)?
+                    .enabled
+                {
+                    return Err(TokenProviderError::ProjectDisabled(data.project_id.clone()));
+                }
+            }
+            Token::Trust(data) => {
+                if !data
+                    .project
+                    .as_ref()
+                    .ok_or(TokenProviderError::ScopeMissing)?
+                    .enabled
+                {
+                    return Err(TokenProviderError::ProjectDisabled(data.project_id.clone()));
+                }
+            }
+            Token::Unscoped(_) => {}
+        }
+        Ok(())
+    }
+
+    /// Validate the token issuer.
+    ///
+    /// Perform checks for the token subject:
+    ///
+    /// - user is enabled
+    /// - user domain is enabled
+    /// - application credential is not expired
+    pub async fn validate_subject(&self, state: &ServiceState) -> Result<(), TokenProviderError> {
+        // The "user" must be active
+        if !self.user().as_ref().is_some_and(|user| user.enabled) {
+            return Err(TokenProviderError::UserDisabled(self.user_id().clone()));
+        }
+        // TODO: User domain must be enabled
+
+        match self {
+            Token::ApplicationCredential(data) => {
+                // Check whether application credential is expired
+                if data
+                    .application_credential
+                    .as_ref()
+                    .and_then(|ac| ac.expires_at)
+                    .is_some_and(|expiry| expiry < Utc::now())
+                {
+                    return Err(TokenProviderError::Expired);
+                }
+            }
+            Token::DomainScope(_data) => {}
+            Token::FederationDomainScope(_data) => {}
+            Token::FederationProjectScope(_data) => {}
+            Token::FederationUnscoped(_data) => {}
+            Token::ProjectScope(_data) => {}
+            Token::Restricted(_data) => {}
+            Token::Trust(data) => {
+                state
+                    .provider
+                    .get_trust_provider()
+                    .validate_trust_delegation_chain(
+                        state,
+                        data.trust
+                            .as_ref()
+                            .ok_or(TokenProviderError::SubjectMissing)?,
+                    )
+                    .await?;
+            }
+            Token::Unscoped(_data) => {}
+        }
+        Ok(())
     }
 }
 

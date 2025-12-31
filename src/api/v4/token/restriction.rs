@@ -72,14 +72,12 @@ mod tests {
         policy_allowed: bool,
         policy_allowed_see_other_domains: Option<bool>,
     ) -> ServiceState {
-        token_mock
-            .expect_validate_token()
-            .returning(|_, _, _, _, _| {
-                Ok(Token::Unscoped(UnscopedPayload {
-                    user_id: "bar".into(),
-                    ..Default::default()
-                }))
-            });
+        token_mock.expect_validate_token().returning(|_, _, _, _| {
+            Ok(Token::Unscoped(UnscopedPayload {
+                user_id: "bar".into(),
+                ..Default::default()
+            }))
+        });
         token_mock
             .expect_expand_token_information()
             .returning(|_, _| {

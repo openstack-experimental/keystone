@@ -18,8 +18,8 @@ use sea_orm::query::*;
 
 use crate::assignment::types::Role;
 use crate::db::entity::{
-    prelude::{Role as DbRole, Trust as DbTrust},
-    trust as db_trust,
+    prelude::{Role as DbRole, Trust as DbTrust, TrustRole as DbTrustRole},
+    trust_role as db_trust_role,
 };
 use crate::error::DbContextExt;
 use crate::trust::backend::error::TrustDatabaseError;
@@ -30,8 +30,7 @@ pub async fn get<I: AsRef<str>>(
     db: &DatabaseConnection,
     id: I,
 ) -> Result<Option<Trust>, TrustDatabaseError> {
-    if let Some(ref entry) = DbTrust::find()
-        .filter(db_trust::Column::Id.eq(id.as_ref()))
+    if let Some(ref entry) = DbTrust::find_by_id(id.as_ref())
         .one(db)
         .await
         .context("fetching trust by id")?
@@ -52,6 +51,44 @@ pub async fn get<I: AsRef<str>>(
         return Ok(Some(res));
     }
     Ok(None)
+}
+
+/// Get trust delegation chain.
+///
+/// # Arguments
+///  - `id` - The ID of the trust.
+pub async fn get_delegation_chain<I: Into<String>>(
+    db: &DatabaseConnection,
+    id: I,
+) -> Result<Option<Vec<Trust>>, TrustDatabaseError> {
+    let mut chain: Vec<Trust> = Vec::new();
+    let mut trust_id = Some(id.into());
+    while let Some(id) = &trust_id {
+        let (trust_handle, roles_handle) = tokio::join!(
+            DbTrust::find_by_id(id).one(db),
+            DbTrustRole::find()
+                .filter(db_trust_role::Column::TrustId.eq(id))
+                .all(db)
+        );
+
+        if let Some(db_trust) = trust_handle.context("fetching trust by id")? {
+            let mut trust: Trust = db_trust.try_into()?;
+            let roles: Vec<Role> = roles_handle
+                .context("fetching trust roles")?
+                .into_iter()
+                .map(|trust_role| Role {
+                    id: trust_role.role_id,
+                    ..Default::default()
+                })
+                .collect();
+            if !roles.is_empty() {
+                trust.roles = Some(roles);
+            }
+            trust_id = trust.redelegated_trust_id.clone();
+            chain.push(trust);
+        }
+    }
+    Ok(if chain.is_empty() { None } else { Some(chain) })
 }
 
 #[cfg(test)]
@@ -100,6 +137,67 @@ mod tests {
                     DatabaseBackend::Postgres,
                     r#"SELECT "role"."id", "role"."name", "role"."extra", "role"."domain_id", "role"."description" FROM "role" INNER JOIN "trust_role" ON "trust_role"."role_id" = "role"."id" INNER JOIN "trust" ON "trust"."id" = "trust_role"."trust_id" WHERE "trust"."id" = $1"#,
                     ["trust_id".into()]
+                ),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_get_chain() {
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([vec![get_trust_redelegation_mock("a", Some("b"))]])
+            .append_query_results([vec![db_trust_role::Model {
+                trust_id: "a".to_string(),
+                role_id: "rid".to_string(),
+            }]])
+            .append_query_results([vec![get_trust_redelegation_mock("b", Some("c"))]])
+            .append_query_results([vec![db_trust_role::Model {
+                trust_id: "a".to_string(),
+                role_id: "rid".to_string(),
+            }]])
+            .append_query_results([vec![get_trust_redelegation_mock("c", None::<String>)]])
+            .append_query_results([vec![db_trust_role::Model {
+                trust_id: "a".to_string(),
+                role_id: "rid".to_string(),
+            }]])
+            .into_connection();
+
+        let chain = get_delegation_chain(&db, "a").await.unwrap().unwrap();
+        assert_eq!(3, chain.len());
+
+        // Checking transaction log
+        assert_eq!(
+            db.into_transaction_log(),
+            [
+                Transaction::from_sql_and_values(
+                    DatabaseBackend::Postgres,
+                    r#"SELECT "trust"."id", "trust"."trustor_user_id", "trust"."trustee_user_id", "trust"."project_id", "trust"."impersonation", "trust"."deleted_at", "trust"."expires_at", "trust"."remaining_uses", "trust"."extra", "trust"."expires_at_int", "trust"."redelegated_trust_id", "trust"."redelegation_count" FROM "trust" WHERE "trust"."id" = $1 LIMIT $2"#,
+                    ["a".into(), 1u64.into()]
+                ),
+                Transaction::from_sql_and_values(
+                    DatabaseBackend::Postgres,
+                    r#"SELECT "trust_role"."trust_id", "trust_role"."role_id" FROM "trust_role" WHERE "trust_role"."trust_id" = $1"#,
+                    ["a".into()]
+                ),
+                Transaction::from_sql_and_values(
+                    DatabaseBackend::Postgres,
+                    r#"SELECT "trust"."id", "trust"."trustor_user_id", "trust"."trustee_user_id", "trust"."project_id", "trust"."impersonation", "trust"."deleted_at", "trust"."expires_at", "trust"."remaining_uses", "trust"."extra", "trust"."expires_at_int", "trust"."redelegated_trust_id", "trust"."redelegation_count" FROM "trust" WHERE "trust"."id" = $1 LIMIT $2"#,
+                    ["b".into(), 1u64.into()]
+                ),
+                Transaction::from_sql_and_values(
+                    DatabaseBackend::Postgres,
+                    r#"SELECT "trust_role"."trust_id", "trust_role"."role_id" FROM "trust_role" WHERE "trust_role"."trust_id" = $1"#,
+                    ["b".into()]
+                ),
+                Transaction::from_sql_and_values(
+                    DatabaseBackend::Postgres,
+                    r#"SELECT "trust"."id", "trust"."trustor_user_id", "trust"."trustee_user_id", "trust"."project_id", "trust"."impersonation", "trust"."deleted_at", "trust"."expires_at", "trust"."remaining_uses", "trust"."extra", "trust"."expires_at_int", "trust"."redelegated_trust_id", "trust"."redelegation_count" FROM "trust" WHERE "trust"."id" = $1 LIMIT $2"#,
+                    ["c".into(), 1u64.into()]
+                ),
+                Transaction::from_sql_and_values(
+                    DatabaseBackend::Postgres,
+                    r#"SELECT "trust_role"."trust_id", "trust_role"."role_id" FROM "trust_role" WHERE "trust_role"."trust_id" = $1"#,
+                    ["c".into()]
                 ),
             ]
         );

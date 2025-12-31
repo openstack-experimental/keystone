@@ -30,6 +30,20 @@ pub trait AssignmentBackend: DynClone + Send + Sync + std::fmt::Debug {
     /// Set config
     fn set_config(&mut self, config: Config);
 
+    /// Check assignment grant.
+    async fn check_grant(
+        &self,
+        state: &ServiceState,
+        params: &Assignment,
+    ) -> Result<bool, AssignmentProviderError>;
+
+    /// Create assignment grant.
+    async fn create_grant(
+        &self,
+        state: &ServiceState,
+        params: Assignment,
+    ) -> Result<Assignment, AssignmentProviderError>;
+
     /// Create Role.
     async fn create_role(
         &self,
@@ -37,19 +51,19 @@ pub trait AssignmentBackend: DynClone + Send + Sync + std::fmt::Debug {
         params: RoleCreate,
     ) -> Result<Role, AssignmentProviderError>;
 
-    /// List Roles
-    async fn list_roles(
-        &self,
-        state: &ServiceState,
-        params: &RoleListParameters,
-    ) -> Result<Vec<Role>, AssignmentProviderError>;
-
     /// Get single role by ID
     async fn get_role<'a>(
         &self,
         state: &ServiceState,
         id: &'a str,
     ) -> Result<Option<Role>, AssignmentProviderError>;
+
+    /// Expand implied roles.
+    async fn expand_implied_roles(
+        &self,
+        state: &ServiceState,
+        roles: &mut Vec<Role>,
+    ) -> Result<(), AssignmentProviderError>;
 
     /// List Role assignments
     async fn list_assignments(
@@ -70,19 +84,12 @@ pub trait AssignmentBackend: DynClone + Send + Sync + std::fmt::Debug {
         params: &RoleAssignmentListForMultipleActorTargetParameters,
     ) -> Result<Vec<Assignment>, AssignmentProviderError>;
 
-    /// Create assignment grant.
-    async fn create_grant(
+    /// List Roles
+    async fn list_roles(
         &self,
         state: &ServiceState,
-        params: Assignment,
-    ) -> Result<Assignment, AssignmentProviderError>;
-
-    /// Check assignment grant.
-    async fn check_grant(
-        &self,
-        state: &ServiceState,
-        params: &Assignment,
-    ) -> Result<bool, AssignmentProviderError>;
+        params: &RoleListParameters,
+    ) -> Result<Vec<Role>, AssignmentProviderError>;
 }
 
 dyn_clone::clone_trait_object!(AssignmentBackend);

@@ -117,7 +117,9 @@ pub struct RevocationEventListParameters {
     /// given values.
     #[builder(default)]
     pub role_ids: Option<Vec<String>>,
-    //pub trust_id: Option<String>,
+    /// Trust ID to match against.
+    #[builder(default)]
+    pub trust_id: Option<String>,
     /// User_id to match against.
     #[builder(default)]
     pub user_ids: Option<Vec<String>>,
@@ -159,13 +161,30 @@ impl TryFrom<&Token> for RevocationEventListParameters {
             role_ids: value
                 .roles()
                 .map(|roles| roles.iter().map(|role| role.id.clone()).collect()),
-            //trust_id: None,
-            user_ids: Some(vec![value.user_id().clone()]),
+            trust_id: if let Token::Trust(data) = value {
+                Some(data.trust_id.clone())
+            } else {
+                None
+            },
+            user_ids: if let Token::Trust(data) = value {
+                Some(
+                    vec![
+                        Some(data.user_id.clone()),
+                        data.trust.as_ref().map(|x| x.trustee_user_id.clone()),
+                        data.trust.as_ref().map(|x| x.trustor_user_id.clone()),
+                    ]
+                    .into_iter()
+                    .flatten()
+                    .collect(),
+                )
+            } else {
+                Some(vec![value.user_id().clone()])
+            },
         })
     }
 }
 
-/// Convert the Token into the new revocation events revord following the
+/// Convert the Token into the new revocation events record following the
 /// <https://openstack-experimental.github.io/keystone/adr/0009-auth-token-revoke.html#token-revocation>
 impl TryFrom<&Token> for RevocationEventCreate {
     type Error = RevokeProviderError;
@@ -188,7 +207,11 @@ impl TryFrom<&Token> for RevocationEventCreate {
             project_id: None,
             revoked_at: now,
             role_id: None,
-            trust_id: None,
+            trust_id: if let Token::Trust(data) = value {
+                Some(data.trust_id.clone())
+            } else {
+                None
+            },
             user_id: None,
         })
     }
@@ -198,9 +221,10 @@ impl TryFrom<&Token> for RevocationEventCreate {
 mod tests {
     use super::*;
     use crate::identity::types::UserResponse;
-    use crate::token::ProjectScopePayload;
+    use crate::token::{ProjectScopePayload, TrustPayload};
     //use crate::resource::types::Domain;
     use crate::assignment::types::Role;
+    use crate::trust::types::Trust;
 
     #[test]
     fn test_list_for_project_scope_token() {
@@ -294,5 +318,70 @@ mod tests {
         assert!(revocation.role_id.is_none());
         assert!(revocation.trust_id.is_none());
         assert!(revocation.user_id.is_none());
+    }
+
+    #[test]
+    fn test_list_for_trust_token() {
+        let token = Token::Trust(TrustPayload {
+            user_id: "user_id".into(),
+            user: Some(UserResponse {
+                id: "user_id".to_string(),
+                domain_id: "user_domain_id".into(),
+                ..Default::default()
+            }),
+            methods: Vec::from(["trust".to_string()]),
+            project_id: "project_id".into(),
+            audit_ids: vec!["Zm9vCg".into()],
+            expires_at: DateTime::parse_from_rfc3339("2025-11-17T19:55:06.123456Z")
+                .unwrap()
+                .with_timezone(&Utc),
+            trust_id: "trust_id".into(),
+            trust: Some(Trust {
+                id: "trust_id".into(),
+                impersonation: false,
+                trustee_user_id: "trustee".into(),
+                trustor_user_id: "trustor".into(),
+                roles: Some(vec![
+                    Role {
+                        id: "role_id1".to_string(),
+                        ..Default::default()
+                    },
+                    Role {
+                        id: "role_id2".to_string(),
+                        ..Default::default()
+                    },
+                ]),
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
+        let revocation: RevocationEventListParameters =
+            RevocationEventListParameters::try_from(&token).unwrap();
+
+        //assert!(revocation.audit_chain_id.is_none());
+        assert_eq!(
+            *token.audit_ids().first().unwrap(),
+            revocation.audit_id.unwrap()
+        );
+        //assert!(revocation.consumer_id.is_none());
+        assert_eq!(
+            revocation.domain_ids.unwrap(),
+            vec!["user_domain_id".to_string()]
+        );
+        assert!(revocation.expires_at.is_none());
+        assert_eq!(revocation.project_id.unwrap(), "project_id".to_string());
+        assert_eq!(
+            revocation.role_ids.unwrap(),
+            vec!["role_id1".to_string(), "role_id2".to_string()]
+        );
+        assert_eq!(revocation.trust_id.unwrap(), "trust_id".to_string());
+        assert_eq!(
+            revocation.user_ids.unwrap(),
+            vec![
+                "user_id".to_string(),
+                "trustee".to_string(),
+                "trustor".to_string()
+            ]
+        );
     }
 }

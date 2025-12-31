@@ -28,7 +28,7 @@ use crate::identity::types as identity_types;
 /// User response object.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct User {
-    /// The ID of the default project for the user. A user’s default project
+    /// The ID of the default project for the user. A user's default project
     /// must not be a domain. Setting this attribute does not grant any actual
     /// authorization on the project, and is merely provided for convenience.
     /// Therefore, the referenced project does not need to exist within the user
@@ -84,7 +84,7 @@ pub struct UserResponse {
 /// Create user data.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct UserCreate {
-    /// The ID of the default project for the user. A user’s default project
+    /// The ID of the default project for the user. A user's default project
     /// must not be a domain. Setting this attribute does not grant any actual
     /// authorization on the project, and is merely provided for convenience.
     /// Therefore, the referenced project does not need to exist within the user
@@ -121,7 +121,7 @@ pub struct UserCreate {
 /// Update user data.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct UserUpdateRequest {
-    /// The ID of the default project for the user. A user’s default project
+    /// The ID of the default project for the user. A user's default project
     /// must not be a domain. Setting this attribute does not grant any actual
     /// authorization on the project, and is merely provided for convenience.
     /// Therefore, the referenced project does not need to exist within the user

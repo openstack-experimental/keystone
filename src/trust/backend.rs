@@ -14,6 +14,8 @@
 //! Trust provider Backend trait.
 use async_trait::async_trait;
 use dyn_clone::DynClone;
+#[cfg(test)]
+use mockall::*;
 
 use crate::config::Config;
 use crate::keystone::ServiceState;
@@ -24,6 +26,7 @@ pub mod sql;
 
 pub use sql::SqlBackend;
 
+#[cfg_attr(test, automock)]
 #[async_trait]
 /// TrustBackend trait.
 ///
@@ -39,6 +42,13 @@ pub trait TrustBackend: DynClone + Send + Sync + std::fmt::Debug {
         id: &'a str,
     ) -> Result<Option<Trust>, TrustError>;
 
+    /// Resolve trust chain by the trust ID.
+    async fn get_trust_delegation_chain<'a>(
+        &self,
+        state: &ServiceState,
+        id: &'a str,
+    ) -> Result<Option<Vec<Trust>>, TrustError>;
+
     /// List trusts.
     async fn list_trusts(
         &self,
@@ -48,3 +58,11 @@ pub trait TrustBackend: DynClone + Send + Sync + std::fmt::Debug {
 }
 
 dyn_clone::clone_trait_object!(TrustBackend);
+
+#[cfg(test)]
+impl Clone for MockTrustBackend {
+    #[allow(unconditional_recursion)]
+    fn clone(&self) -> Self {
+        self.clone()
+    }
+}

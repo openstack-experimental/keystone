@@ -164,6 +164,10 @@ impl Token {
                             })?,
                     );
                 }
+
+                if let Some(trust) = &token.trust {
+                    response.trust(trust);
+                }
             }
         }
 

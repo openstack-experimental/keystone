@@ -83,14 +83,7 @@ pub(super) async fn show(
     let token = state
         .provider
         .get_token_provider()
-        .validate_token(
-            &state,
-            &subject_token,
-            query.allow_expired,
-            None,
-            // Do not expand the token for the policy evaluation
-            Some(true),
-        )
+        .validate_token(&state, &subject_token, query.allow_expired, None)
         .await
         .inspect_err(|e| error!("{:?}", e.to_string()))
         .map_err(|_| KeystoneApiError::NotFound {
@@ -180,14 +173,12 @@ mod tests {
                 }))
             });
         let mut token_mock = MockTokenProvider::default();
-        token_mock
-            .expect_validate_token()
-            .returning(|_, _, _, _, _| {
-                Ok(ProviderToken::Unscoped(UnscopedPayload {
-                    user_id: "bar".into(),
-                    ..Default::default()
-                }))
-            });
+        token_mock.expect_validate_token().returning(|_, _, _, _| {
+            Ok(ProviderToken::Unscoped(UnscopedPayload {
+                user_id: "bar".into(),
+                ..Default::default()
+            }))
+        });
         token_mock
             .expect_expand_token_information()
             .returning(|_, _| {
@@ -280,8 +271,8 @@ mod tests {
         let mut token_mock = MockTokenProvider::default();
         token_mock
             .expect_validate_token()
-            .withf(|_, token: &'_ str, _, _, _| token == "foo")
-            .returning(|_, _, _, _, _| {
+            .withf(|_, token: &'_ str, _, _| token == "foo")
+            .returning(|_, _, _, _| {
                 Ok(ProviderToken::Unscoped(UnscopedPayload {
                     user_id: "bar".into(),
                     ..Default::default()
@@ -289,10 +280,10 @@ mod tests {
             });
         token_mock
             .expect_validate_token()
-            .withf(|_, token: &'_ str, allow_expired: &Option<bool>, _, _| {
+            .withf(|_, token: &'_ str, allow_expired: &Option<bool>, _| {
                 token == "bar" && *allow_expired == Some(true)
             })
-            .returning(|_, _, _, _, _| {
+            .returning(|_, _, _, _| {
                 Ok(ProviderToken::Unscoped(UnscopedPayload {
                     user_id: "bar".into(),
                     ..Default::default()
@@ -354,8 +345,8 @@ mod tests {
         let mut token_mock = MockTokenProvider::default();
         token_mock
             .expect_validate_token()
-            .withf(|_, token: &'_ str, _, _, _| token == "foo")
-            .returning(|_, _, _, _, _| {
+            .withf(|_, token: &'_ str, _, _| token == "foo")
+            .returning(|_, _, _, _| {
                 Ok(ProviderToken::Unscoped(UnscopedPayload {
                     user_id: "bar".into(),
                     ..Default::default()
@@ -363,8 +354,8 @@ mod tests {
             });
         token_mock
             .expect_validate_token()
-            .withf(|_, token: &'_ str, _, _, _| token == "baz")
-            .returning(|_, _, _, _, _| Err(TokenProviderError::Expired));
+            .withf(|_, token: &'_ str, _, _| token == "baz")
+            .returning(|_, _, _, _| Err(TokenProviderError::Expired));
 
         let provider = Provider::mocked_builder()
             .token(token_mock)
@@ -406,8 +397,8 @@ mod tests {
         let mut token_mock = MockTokenProvider::default();
         token_mock
             .expect_validate_token()
-            .withf(|_, token: &'_ str, _, _, _| token == "foo")
-            .returning(|_, _, _, _, _| {
+            .withf(|_, token: &'_ str, _, _| token == "foo")
+            .returning(|_, _, _, _| {
                 Ok(ProviderToken::Unscoped(UnscopedPayload {
                     user_id: "bar".into(),
                     ..Default::default()
@@ -415,8 +406,8 @@ mod tests {
             });
         token_mock
             .expect_validate_token()
-            .withf(|_, token: &'_ str, _, _, _| token == "baz")
-            .returning(|_, _, _, _, _| Err(TokenProviderError::TokenRevoked));
+            .withf(|_, token: &'_ str, _, _| token == "baz")
+            .returning(|_, _, _, _| Err(TokenProviderError::TokenRevoked));
 
         let provider = Provider::mocked_builder()
             .token(token_mock)

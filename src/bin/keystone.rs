@@ -63,7 +63,7 @@ const DEFAULT_BODY_LIMIT: usize = 1024 * 256;
 ///
 /// Keystone is an `OpenStack` service that provides API client authentication,
 /// service discovery, and distributed multi-tenant authorization by
-/// implementing OpenStack’s Identity API.
+/// implementing OpenStack's Identity API.
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 struct Args {

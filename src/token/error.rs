@@ -71,6 +71,10 @@ pub enum TokenProviderError {
     #[error(transparent)]
     Database(#[from] DatabaseError),
 
+    /// The domain is disabled.
+    #[error("domain is disabled")]
+    DomainDisabled(String),
+
     /// Expired token
     #[error("token expired")]
     Expired,
@@ -139,8 +143,15 @@ pub enum TokenProviderError {
     #[error(transparent)]
     Persist(#[from] tempfile::PersistError),
 
+    /// The project is disabled.
+    #[error("project disabled")]
+    ProjectDisabled(String),
+
     #[error(transparent)]
     ResourceProvider(#[from] crate::resource::error::ResourceProviderError),
+
+    #[error("token with restrictions can be only project scoped")]
+    RestrictedTokenNotProjectScoped,
 
     /// Revoke Provider error.
     #[error(transparent)]
@@ -154,6 +165,18 @@ pub enum TokenProviderError {
     #[error("rmp value encoding error")]
     RmpEncode(String),
 
+    /// Target scope information is not found in the token.
+    #[error("scope information missing")]
+    ScopeMissing,
+
+    /// Structures builder error.
+    #[error(transparent)]
+    StructBuilder(#[from] BuilderError),
+
+    /// Target subject information is not found in the token.
+    #[error("subject information missing")]
+    SubjectMissing,
+
     /// Fernet payload timestamp overflow error.
     #[error("fernet payload timestamp overflow ({value}): {}", source)]
     TokenTimestampOverflow {
@@ -163,12 +186,6 @@ pub enum TokenProviderError {
         source: std::num::TryFromIntError,
     },
 
-    #[error("int parse")]
-    TryFromIntError(#[from] TryFromIntError),
-
-    #[error("token with restrictions can be only project scoped")]
-    RestrictedTokenNotProjectScoped,
-
     #[error("token restriction {0} not found")]
     TokenRestrictionNotFound(String),
 
@@ -176,9 +193,16 @@ pub enum TokenProviderError {
     #[error("token has been revoked")]
     TokenRevoked,
 
-    /// Structures builder error.
+    #[error("int parse")]
+    TryFromIntError(#[from] TryFromIntError),
+
+    /// Trust provider error.
     #[error(transparent)]
-    StructBuilder(#[from] BuilderError),
+    TrustProvider(#[from] crate::trust::TrustError),
+
+    /// The user is disabled.
+    #[error("user disabled")]
+    UserDisabled(String),
 
     #[error("user cannot be found: {0}")]
     UserNotFound(String),

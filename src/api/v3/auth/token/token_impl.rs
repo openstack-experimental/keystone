@@ -23,6 +23,7 @@ use crate::resource::{
     types::{Domain, Project},
 };
 use crate::token::Token as ProviderToken;
+use crate::trust::TrustApi;
 
 use super::common::*;
 
@@ -164,6 +165,22 @@ impl Token {
                             })?,
                     );
                 }
+
+                if let Some(trust) = &token.trust {
+                    response.trust(trust);
+                } else {
+                    response.trust(
+                        &state
+                            .provider
+                            .get_trust_provider()
+                            .get_trust(state, &token.trust_id)
+                            .await?
+                            .ok_or_else(|| KeystoneApiError::NotFound {
+                                resource: "trust".into(),
+                                identifier: token.trust_id.clone(),
+                            })?,
+                    );
+                }
             }
         }
 
@@ -188,10 +205,7 @@ mod tests {
 
     use crate::api::v3::auth::token::types::Token;
     use crate::api::v3::role::types::Role;
-    use crate::assignment::{
-        MockAssignmentProvider,
-        types::{Assignment, AssignmentType, Role as ProviderRole, RoleAssignmentListParameters},
-    };
+    use crate::assignment::types::Role as ProviderRole;
 
     use crate::config::Config;
     use crate::identity::{MockIdentityProvider, types::UserResponse};
@@ -203,8 +217,10 @@ mod tests {
         types::{Domain, Project},
     };
     use crate::token::{
-        DomainScopePayload, ProjectScopePayload, Token as ProviderToken, UnscopedPayload,
+        DomainScopePayload, ProjectScopePayload, Token as ProviderToken, TrustPayload,
+        UnscopedPayload,
     };
+    use crate::trust::types::Trust;
 
     #[tokio::test]
     async fn test_from_unscoped() {
@@ -352,21 +368,7 @@ mod tests {
                     ..Default::default()
                 }))
             });
-        let mut assignment_mock = MockAssignmentProvider::default();
-        assignment_mock.expect_list_role_assignments().returning(
-            |_, q: &RoleAssignmentListParameters| {
-                Ok(vec![Assignment {
-                    role_id: "rid".into(),
-                    role_name: Some("role_name".into()),
-                    actor_id: q.user_id.clone().unwrap(),
-                    target_id: q.project_id.clone().unwrap(),
-                    r#type: AssignmentType::UserProject,
-                    inherited: false,
-                }])
-            },
-        );
         let provider = Provider::mocked_builder()
-            .assignment(assignment_mock)
             .identity(identity_mock)
             .resource(resource_mock)
             .build()
@@ -389,6 +391,89 @@ mod tests {
                 name: "role_name".into(),
                 ..Default::default()
             }]),
+            ..Default::default()
+        });
+
+        let api_token = Token::from_provider_token(&state, &token).await.unwrap();
+
+        assert_eq!("bar", api_token.user.id);
+        assert_eq!(Some("user_domain_id"), api_token.user.domain.id.as_deref());
+        let project = api_token.project.expect("project_scope");
+        assert_eq!(Some("project_domain_id"), project.domain.id.as_deref());
+        assert_eq!("project_id", project.id);
+        assert!(api_token.domain.is_none());
+        assert_eq!(
+            api_token.roles,
+            Some(vec![Role {
+                id: "rid".into(),
+                name: "role_name".into(),
+                ..Default::default()
+            }])
+        );
+    }
+
+    #[tokio::test]
+    async fn test_from_trust() {
+        let mut identity_mock = MockIdentityProvider::default();
+        identity_mock
+            .expect_get_user()
+            .withf(|_, id: &'_ str| id == "bar")
+            .returning(|_, _| {
+                Ok(Some(UserResponse {
+                    id: "bar".into(),
+                    domain_id: "user_domain_id".into(),
+                    ..Default::default()
+                }))
+            });
+
+        let mut resource_mock = MockResourceProvider::default();
+        resource_mock
+            .expect_get_domain()
+            .returning(|_, id: &'_ str| {
+                Ok(Some(Domain {
+                    id: id.to_string(),
+                    ..Default::default()
+                }))
+            });
+        resource_mock
+            .expect_get_project()
+            .returning(|_, id: &'_ str| {
+                Ok(Some(Project {
+                    id: id.to_string(),
+                    domain_id: "project_domain_id".into(),
+                    ..Default::default()
+                }))
+            });
+        let provider = Provider::mocked_builder()
+            .identity(identity_mock)
+            .resource(resource_mock)
+            .build()
+            .unwrap();
+
+        let state = Arc::new(
+            Service::new(
+                Config::default(),
+                DatabaseConnection::Disconnected,
+                provider,
+                MockPolicyFactory::new(),
+            )
+            .unwrap(),
+        );
+        let token = ProviderToken::Trust(TrustPayload {
+            user_id: "bar".into(),
+            methods: vec!["trust".into()],
+            project_id: "project_id".into(),
+            trust_id: "trust_id".into(),
+            trust: Some(Trust {
+                id: "trust_id".into(),
+                impersonation: false,
+                roles: Some(vec![ProviderRole {
+                    id: "rid".into(),
+                    name: "role_name".into(),
+                    ..Default::default()
+                }]),
+                ..Default::default()
+            }),
             ..Default::default()
         });
 
