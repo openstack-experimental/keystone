@@ -46,6 +46,7 @@ derive_builder = { version = "0.20" }
 dyn-clone = { version = "1.0" }
 eyre = { version = "0.6" }
 fernet = { version = "0.2", default-features = false, features = ["rustcrypto"] }
+# futures = { version = "0.3" }
 futures-util = { version = "0.3" }
 itertools = { version = "0.14" }
 mockall_double = { version = "0.3" }

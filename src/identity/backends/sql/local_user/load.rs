@@ -63,7 +63,7 @@ pub async fn load_local_user_with_passwords<S1: AsRef<str>, S2: AsRef<str>, S3: 
 ///
 /// Returns vector of optional vectors with passwords in the same order as
 /// requested keeping None in place where local_user was empty.
-pub async fn load_local_users_passwords<L: IntoIterator<Item = Option<i32>>>(
+pub async fn load_local_users_passwords<L: IntoIterator<Item = Option<i32>> + std::fmt::Debug>(
     db: &DatabaseConnection,
     user_ids: L,
 ) -> Result<Vec<Option<Vec<password::Model>>>, IdentityDatabaseError> {

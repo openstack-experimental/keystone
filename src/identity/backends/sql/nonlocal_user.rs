@@ -21,3 +21,16 @@ impl UserResponseBuilder {
         self
     }
 }
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use crate::db::entity::nonlocal_user as db_nonlocal_user;
+
+    pub fn get_nonlocal_user_mock<UID: Into<String>>(user_id: UID) -> db_nonlocal_user::Model {
+        db_nonlocal_user::Model {
+            user_id: user_id.into(),
+            domain_id: "foo_domain".into(),
+            name: "foo".into(),
+        }
+    }
+}
