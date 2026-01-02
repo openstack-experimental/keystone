@@ -51,49 +51,50 @@ impl FromIterator<user_option::Model> for UserOptions {
 }
 
 #[allow(unused)]
-fn get_user_options_db_entries<U: AsRef<str>>(
+fn get_user_options_db_entries<U: Into<String>>(
     user_id: U,
     options: &UserOptions,
 ) -> Result<impl IntoIterator<Item = user_option::Model>, IdentityProviderError> {
     let mut res: Vec<user_option::Model> = Vec::new();
+    let uid = user_id.into();
     if let Some(val) = &options.ignore_change_password_upon_first_use {
         res.push(user_option::Model {
-            user_id: user_id.as_ref().to_string(),
+            user_id: uid.clone(),
             option_id: "1000".into(),
             option_value: Some(val.to_string()),
         });
     }
     if let Some(val) = &options.ignore_password_expiry {
         res.push(user_option::Model {
-            user_id: user_id.as_ref().to_string(),
+            user_id: uid.clone(),
             option_id: "1001".into(),
             option_value: Some(val.to_string()),
         });
     }
     if let Some(val) = &options.ignore_lockout_failure_attempts {
         res.push(user_option::Model {
-            user_id: user_id.as_ref().to_string(),
+            user_id: uid.clone(),
             option_id: "1002".into(),
             option_value: Some(val.to_string()),
         });
     }
     if let Some(val) = &options.lock_password {
         res.push(user_option::Model {
-            user_id: user_id.as_ref().to_string(),
+            user_id: uid.clone(),
             option_id: "1003".into(),
             option_value: Some(val.to_string()),
         });
     }
     if let Some(val) = &options.multi_factor_auth_rules {
         res.push(user_option::Model {
-            user_id: user_id.as_ref().to_string(),
+            user_id: uid.clone(),
             option_id: "MFAR".into(),
             option_value: Some(serde_json::to_string(val)?),
         });
     }
     if let Some(val) = &options.multi_factor_auth_enabled {
         res.push(user_option::Model {
-            user_id: user_id.as_ref().to_string(),
+            user_id: uid.clone(),
             option_id: "MFAE".into(),
             option_value: Some(val.to_string()),
         });
@@ -102,7 +103,7 @@ fn get_user_options_db_entries<U: AsRef<str>>(
 }
 
 #[cfg(test)]
-pub(super) mod tests {
+pub(crate) mod tests {
     use crate::db::entity::user_option;
     use crate::identity::types::UserOptions;
 
@@ -118,8 +119,11 @@ pub(super) mod tests {
         }
     }
 
-    pub fn get_user_options_mock(options: &UserOptions) -> Vec<user_option::Model> {
-        get_user_options_db_entries("1", options)
+    pub fn get_user_options_mock<U: Into<String>>(
+        user_id: U,
+        options: &UserOptions,
+    ) -> Vec<user_option::Model> {
+        get_user_options_db_entries(user_id, options)
             .unwrap()
             .into_iter()
             .collect()

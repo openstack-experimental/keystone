@@ -32,15 +32,15 @@ impl UserResponseBuilder {
 }
 
 #[cfg(test)]
-pub(super) mod tests {
+pub(crate) mod tests {
     use chrono::Utc;
 
     use crate::db::entity::{local_user as db_local_user, password as db_password};
 
-    pub fn get_local_user_mock() -> db_local_user::Model {
+    pub fn get_local_user_mock<UID: Into<String>>(user_id: UID) -> db_local_user::Model {
         db_local_user::Model {
             id: 1,
-            user_id: "user_id".into(),
+            user_id: user_id.into(),
             domain_id: "foo_domain".into(),
             name: "foo_domain".into(),
             failed_auth_count: Some(0),

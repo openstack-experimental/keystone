@@ -139,87 +139,24 @@ pub async fn list_for_multiple_actors_and_targets(
     db: &DatabaseConnection,
     params: &RoleAssignmentListForMultipleActorTargetParameters,
 ) -> Result<Vec<Assignment>, AssignmentDatabaseError> {
-    let mut select = DbAssignment::find();
-    let mut select_system = DbSystemAssignment::find();
-    let mut include_system = false; // Track if we should query role assignments table
-    let mut include_regular = false; // Track if we should query system assignments table
+    // Query both assignment tables in parallel and imply rules
+    let db_res = tokio::try_join!(
+        // Result assignments
+        list_for_multiple_actors_and_targets_regular(db, params),
+        // System assignments
+        list_for_multiple_actors_and_targets_system(db, params),
+        // Get all implied rules
+        implied_role::list_rules(db, true)
+    )?;
 
-    if !params.actors.is_empty() {
-        select = select.filter(db_assignment::Column::ActorId.is_in(params.actors.clone()));
-        select_system = select_system
-            .filter(db_system_assignment::Column::ActorId.is_in(params.actors.clone()));
-    }
-    if let Some(rid) = &params.role_id {
-        select = select.filter(db_assignment::Column::RoleId.eq(rid));
-        select_system = select_system.filter(db_system_assignment::Column::RoleId.eq(rid));
-    }
-    if !params.targets.is_empty() {
-        let mut cond = Condition::any();
-        let mut system_cond = Condition::any();
-        for target in params.targets.iter() {
-            match target.r#type {
-                RoleAssignmentTargetType::Domain | RoleAssignmentTargetType::Project => {
-                    cond = cond.add(
-                        Condition::all()
-                            .add(db_assignment::Column::TargetId.eq(&target.id))
-                            .add_option(
-                                target
-                                    .inherited
-                                    .map(|x| db_assignment::Column::Inherited.eq(x)),
-                            ),
-                    );
-                    include_regular = true;
-                }
-                RoleAssignmentTargetType::System => {
-                    system_cond = system_cond.add(
-                        Condition::all()
-                            .add(db_system_assignment::Column::TargetId.eq(&target.id))
-                            .add_option(
-                                target
-                                    .inherited
-                                    .map(|x| db_system_assignment::Column::Inherited.eq(x)),
-                            ),
-                    );
-                    include_system = true;
-                }
-            };
-        }
-        select = select.filter(cond);
-        select_system = select_system.filter(system_cond);
-    }
-
-    // Get all implied rules
-    let imply_rules = implied_role::list_rules(db, true).await?;
-
-    // Query both tables in parallel (if needed)
-    let assignments: Vec<Assignment> = match (include_regular, include_system) {
-        (true, false) => select
-            .all(db)
-            .await
-            .context("fetching role assignments")?
-            .into_iter()
-            .map(Into::into)
-            .collect(),
-        (false, true) => select_system
-            .all(db)
-            .await
-            .context("fetching system role assignments")?
-            .into_iter()
-            .map(TryInto::<Assignment>::try_into)
-            .collect::<Result<Vec<_>, _>>()?,
-        (false, false) | (true, true) => {
-            let (a, b) = tokio::join!(select.all(db), select_system.all(db));
-            a.context("fetching role assignments")?
-                .into_iter()
-                .map(|val| Ok(Into::into(val)))
-                .chain(
-                    b.context("fetching system role assignments")?
-                        .into_iter()
-                        .map(TryInto::<Assignment>::try_into),
-                )
-                .collect::<Result<Vec<_>, _>>()?
-        }
-    };
+    let assignments: Vec<Assignment> = [db_res.0, db_res.1]
+        .into_iter()
+        // discard None
+        .flatten()
+        // convert iter of items to items themselves
+        .flatten()
+        .collect();
+    let imply_rules = db_res.2;
 
     // Merge and apply role implications
     let mut result_map: BTreeMap<String, Assignment> = BTreeMap::new();
@@ -257,6 +194,118 @@ pub async fn list_for_multiple_actors_and_targets(
     }
 
     Ok(result_map.into_values().collect())
+}
+
+/// Select regular assignments.
+///
+/// Return Vec<Assignment> for the regular role assignments or `None` when no corresponding targets
+/// were given in the query parameters.
+async fn list_for_multiple_actors_and_targets_regular(
+    db: &DatabaseConnection,
+    params: &RoleAssignmentListForMultipleActorTargetParameters,
+) -> Result<Option<Vec<Assignment>>, AssignmentDatabaseError> {
+    let mut select = DbAssignment::find();
+    let mut should_return = false;
+
+    if !params.actors.is_empty() {
+        select = select.filter(db_assignment::Column::ActorId.is_in(params.actors.clone()));
+    }
+    if let Some(rid) = &params.role_id {
+        select = select.filter(db_assignment::Column::RoleId.eq(rid));
+    }
+    if !params.targets.is_empty() {
+        let mut cond = Condition::any();
+        for target in params.targets.iter() {
+            match target.r#type {
+                RoleAssignmentTargetType::Domain | RoleAssignmentTargetType::Project => {
+                    cond = cond.add(
+                        Condition::all()
+                            .add(db_assignment::Column::TargetId.eq(&target.id))
+                            .add_option(
+                                target
+                                    .inherited
+                                    .map(|x| db_assignment::Column::Inherited.eq(x)),
+                            ),
+                    );
+                    should_return = true;
+                }
+                _ => {}
+            };
+        }
+        select = select.filter(cond);
+    } else {
+        // When no targets requested we still query assignments.
+        should_return = true;
+    }
+
+    if should_return {
+        Ok(Some(
+            select
+                .all(db)
+                .await
+                .context("fetching role assignments")?
+                .into_iter()
+                .map(Into::into)
+                .collect(),
+        ))
+    } else {
+        Ok(None)
+    }
+}
+
+/// Select system assignments.
+///
+/// Return Vec<Assignment> for the regular role assignments or `None` when no corresponding targets
+/// were given in the query parameters.
+async fn list_for_multiple_actors_and_targets_system(
+    db: &DatabaseConnection,
+    params: &RoleAssignmentListForMultipleActorTargetParameters,
+) -> Result<Option<Vec<Assignment>>, AssignmentDatabaseError> {
+    let mut select_system = DbSystemAssignment::find();
+    let mut should_return = false;
+
+    if !params.actors.is_empty() {
+        select_system = select_system
+            .filter(db_system_assignment::Column::ActorId.is_in(params.actors.clone()));
+    }
+    if let Some(rid) = &params.role_id {
+        select_system = select_system.filter(db_system_assignment::Column::RoleId.eq(rid));
+    }
+    if !params.targets.is_empty() {
+        let mut system_cond = Condition::any();
+        for target in params.targets.iter() {
+            if let RoleAssignmentTargetType::System = target.r#type {
+                system_cond = system_cond.add(
+                    Condition::all()
+                        .add(db_system_assignment::Column::TargetId.eq(&target.id))
+                        .add_option(
+                            target
+                                .inherited
+                                .map(|x| db_system_assignment::Column::Inherited.eq(x)),
+                        ),
+                );
+                should_return = true;
+            };
+        }
+        select_system = select_system.filter(system_cond);
+    } else {
+        // When no targets requested we still query assignments.
+        should_return = true;
+    }
+
+    if should_return {
+        Ok(Some(
+            select_system
+                .all(db)
+                .await
+                .context("fetching system role assignments")?
+                .into_iter()
+                .map(TryInto::<Assignment>::try_into)
+                .collect::<Result<Vec<_>, _>>()?,
+        ))
+    } else {
+        Ok(None)
+    }
 }
 
 #[cfg(test)]
@@ -477,14 +526,14 @@ mod tests {
     async fn test_list_for_multiple_actor_targets_multiple_actors_single_target() {
         // Create MockDatabase with mock query results
         let db = MockDatabase::new(DatabaseBackend::Postgres)
-            .append_query_results([get_implied_rules_mock()])
             .append_query_results([vec![get_role_assignment_mock("1")]])
+            .append_query_results([get_implied_rules_mock()])
             .append_query_results([vec![
                 get_role_mock("1", "rname"),
                 get_role_mock("2", "rname2"),
             ]])
-            .append_query_results([get_implied_rules_mock()])
             .append_query_results([vec![get_role_system_assignment_mock("1")]])
+            .append_query_results([get_implied_rules_mock()])
             .append_query_results([vec![
                 get_role_mock("1", "rname"),
                 get_role_mock("2", "rname2"),
@@ -568,11 +617,6 @@ mod tests {
             [
                 Transaction::from_sql_and_values(
                     DatabaseBackend::Postgres,
-                    r#"SELECT "implied_role"."prior_role_id", "implied_role"."implied_role_id" FROM "implied_role""#,
-                    []
-                ),
-                Transaction::from_sql_and_values(
-                    DatabaseBackend::Postgres,
                     r#"SELECT CAST("assignment"."type" AS "text"), "assignment"."actor_id", "assignment"."target_id", "assignment"."role_id", "assignment"."inherited" FROM "assignment" WHERE "assignment"."actor_id" IN ($1, $2, $3) AND "assignment"."role_id" = $4 AND "assignment"."target_id" = $5"#,
                     [
                         "uid1".into(),
@@ -584,13 +628,13 @@ mod tests {
                 ),
                 Transaction::from_sql_and_values(
                     DatabaseBackend::Postgres,
-                    r#"SELECT "role"."id", "role"."name" FROM "role" WHERE "id" IN ($1, $2)"#,
-                    ["1".into(), "2".into(),]
+                    r#"SELECT "implied_role"."prior_role_id", "implied_role"."implied_role_id" FROM "implied_role""#,
+                    []
                 ),
                 Transaction::from_sql_and_values(
                     DatabaseBackend::Postgres,
-                    r#"SELECT "implied_role"."prior_role_id", "implied_role"."implied_role_id" FROM "implied_role""#,
-                    []
+                    r#"SELECT "role"."id", "role"."name" FROM "role" WHERE "id" IN ($1, $2)"#,
+                    ["1".into(), "2".into(),]
                 ),
                 Transaction::from_sql_and_values(
                     DatabaseBackend::Postgres,
@@ -605,6 +649,11 @@ mod tests {
                 ),
                 Transaction::from_sql_and_values(
                     DatabaseBackend::Postgres,
+                    r#"SELECT "implied_role"."prior_role_id", "implied_role"."implied_role_id" FROM "implied_role""#,
+                    []
+                ),
+                Transaction::from_sql_and_values(
+                    DatabaseBackend::Postgres,
                     r#"SELECT "role"."id", "role"."name" FROM "role" WHERE "id" IN ($1, $2)"#,
                     ["1".into(), "2".into(),]
                 ),
@@ -615,10 +664,9 @@ mod tests {
     #[tokio::test]
     async fn test_list_for_multiple_actor_targets_multiple_complex_targets() {
         // Create MockDatabase with mock query results
-
         let db = MockDatabase::new(DatabaseBackend::Postgres)
-            .append_query_results([get_implied_rules_mock()])
             .append_query_results([vec![get_role_assignment_mock("1")]])
+            .append_query_results([get_implied_rules_mock()])
             .append_query_results([vec![
                 get_role_mock("1", "rname"),
                 get_role_mock("2", "rname2"),
@@ -626,40 +674,33 @@ mod tests {
             .into_connection();
         let config = Config::default();
         // multiple actors multiple complex targets
-        assert!(
-            list_for_multiple_actors_and_targets(
-                &config,
-                &db,
-                &RoleAssignmentListForMultipleActorTargetParameters {
-                    actors: vec!["uid1".into(), "gid1".into(), "gid2".into()],
-                    targets: vec![
-                        RoleAssignmentTarget {
-                            id: "pid1".into(),
-                            r#type: RoleAssignmentTargetType::Project,
-                            inherited: None
-                        },
-                        RoleAssignmentTarget {
-                            id: "pid2".into(),
-                            r#type: RoleAssignmentTargetType::Project,
-                            inherited: Some(true)
-                        }
-                    ],
-                    role_id: None
-                }
-            )
-            .await
-            .is_ok()
-        );
+        list_for_multiple_actors_and_targets(
+            &config,
+            &db,
+            &RoleAssignmentListForMultipleActorTargetParameters {
+                actors: vec!["uid1".into(), "gid1".into(), "gid2".into()],
+                targets: vec![
+                    RoleAssignmentTarget {
+                        id: "pid1".into(),
+                        r#type: RoleAssignmentTargetType::Project,
+                        inherited: None,
+                    },
+                    RoleAssignmentTarget {
+                        id: "pid2".into(),
+                        r#type: RoleAssignmentTargetType::Project,
+                        inherited: Some(true),
+                    },
+                ],
+                role_id: None,
+            },
+        )
+        .await
+        .unwrap();
 
         // Checking transaction log
         assert_eq!(
             db.into_transaction_log(),
             [
-                Transaction::from_sql_and_values(
-                    DatabaseBackend::Postgres,
-                    r#"SELECT "implied_role"."prior_role_id", "implied_role"."implied_role_id" FROM "implied_role""#,
-                    []
-                ),
                 Transaction::from_sql_and_values(
                     DatabaseBackend::Postgres,
                     r#"SELECT CAST("assignment"."type" AS "text"), "assignment"."actor_id", "assignment"."target_id", "assignment"."role_id", "assignment"."inherited" FROM "assignment" WHERE "assignment"."actor_id" IN ($1, $2, $3) AND ("assignment"."target_id" = $4 OR ("assignment"."target_id" = $5 AND "assignment"."inherited" = $6))"#,
@@ -671,6 +712,11 @@ mod tests {
                         "pid2".into(),
                         true.into()
                     ]
+                ),
+                Transaction::from_sql_and_values(
+                    DatabaseBackend::Postgres,
+                    r#"SELECT "implied_role"."prior_role_id", "implied_role"."implied_role_id" FROM "implied_role""#,
+                    []
                 ),
                 Transaction::from_sql_and_values(
                     DatabaseBackend::Postgres,
@@ -686,9 +732,9 @@ mod tests {
         // Create MockDatabase with mock query results
 
         let db = MockDatabase::new(DatabaseBackend::Postgres)
-            .append_query_results([get_implied_rules_mock()])
             .append_query_results([vec![get_role_assignment_mock("1")]])
             .append_query_results([vec![get_role_system_assignment_mock("2")]])
+            .append_query_results([get_implied_rules_mock()])
             .append_query_results([vec![
                 get_role_mock("1", "rname"),
                 get_role_mock("2", "rname2"),
@@ -696,29 +742,25 @@ mod tests {
             .into_connection();
         let config = Config::default();
         //// empty actors and targets
-        assert!(
-            list_for_multiple_actors_and_targets(
-                &config,
-                &db,
-                &RoleAssignmentListForMultipleActorTargetParameters {
-                    actors: vec![],
-                    targets: vec![],
-                    role_id: None
-                }
-            )
-            .await
-            .is_ok()
-        );
+        //assert!(
+        list_for_multiple_actors_and_targets(
+            &config,
+            &db,
+            &RoleAssignmentListForMultipleActorTargetParameters {
+                actors: vec![],
+                targets: vec![],
+                role_id: None,
+            },
+        )
+        .await
+        .unwrap();
+        //    .is_ok()
+        //);
 
         // Checking transaction log
         assert_eq!(
             db.into_transaction_log(),
             [
-                Transaction::from_sql_and_values(
-                    DatabaseBackend::Postgres,
-                    r#"SELECT "implied_role"."prior_role_id", "implied_role"."implied_role_id" FROM "implied_role""#,
-                    []
-                ),
                 Transaction::from_sql_and_values(
                     DatabaseBackend::Postgres,
                     r#"SELECT CAST("assignment"."type" AS "text"), "assignment"."actor_id", "assignment"."target_id", "assignment"."role_id", "assignment"."inherited" FROM "assignment""#,
@@ -727,6 +769,11 @@ mod tests {
                 Transaction::from_sql_and_values(
                     DatabaseBackend::Postgres,
                     r#"SELECT "system_assignment"."type", "system_assignment"."actor_id", "system_assignment"."target_id", "system_assignment"."role_id", "system_assignment"."inherited" FROM "system_assignment""#,
+                    []
+                ),
+                Transaction::from_sql_and_values(
+                    DatabaseBackend::Postgres,
+                    r#"SELECT "implied_role"."prior_role_id", "implied_role"."implied_role_id" FROM "implied_role""#,
                     []
                 ),
                 Transaction::from_sql_and_values(
@@ -743,8 +790,8 @@ mod tests {
         // Create MockDatabase with mock query results
 
         let db = MockDatabase::new(DatabaseBackend::Postgres)
-            .append_query_results([get_implied_rules_mock()])
             .append_query_results([vec![get_role_assignment_mock("1")]])
+            .append_query_results([get_implied_rules_mock()])
             .append_query_results([vec![
                 get_role_mock("1", "rname"),
                 get_role_mock("2", "rname2"),
@@ -784,13 +831,13 @@ mod tests {
             [
                 Transaction::from_sql_and_values(
                     DatabaseBackend::Postgres,
-                    r#"SELECT "implied_role"."prior_role_id", "implied_role"."implied_role_id" FROM "implied_role""#,
-                    []
+                    r#"SELECT CAST("assignment"."type" AS "text"), "assignment"."actor_id", "assignment"."target_id", "assignment"."role_id", "assignment"."inherited" FROM "assignment" WHERE "assignment"."target_id" = $1 OR ("assignment"."target_id" = $2 AND "assignment"."inherited" = $3)"#,
+                    ["pid1".into(), "pid2".into(), true.into()]
                 ),
                 Transaction::from_sql_and_values(
                     DatabaseBackend::Postgres,
-                    r#"SELECT CAST("assignment"."type" AS "text"), "assignment"."actor_id", "assignment"."target_id", "assignment"."role_id", "assignment"."inherited" FROM "assignment" WHERE "assignment"."target_id" = $1 OR ("assignment"."target_id" = $2 AND "assignment"."inherited" = $3)"#,
-                    ["pid1".into(), "pid2".into(), true.into()]
+                    r#"SELECT "implied_role"."prior_role_id", "implied_role"."implied_role_id" FROM "implied_role""#,
+                    []
                 ),
                 Transaction::from_sql_and_values(
                     DatabaseBackend::Postgres,
@@ -804,38 +851,35 @@ mod tests {
     #[tokio::test]
     async fn test_list_for_multiple_actor_targets_complex_targets() {
         // Create MockDatabase with mock query results
-
         let db = MockDatabase::new(DatabaseBackend::Postgres)
-            .append_query_results([get_implied_rules_mock()])
             .append_query_results([Vec::<assignment::Model>::new()])
+            .append_query_results([get_implied_rules_mock()])
             .into_connection();
         let config = Config::default();
 
         //// only complex targets
-        assert!(
-            list_for_multiple_actors_and_targets(
-                &config,
-                &db,
-                &RoleAssignmentListForMultipleActorTargetParameters {
-                    actors: vec![],
-                    targets: vec![
-                        RoleAssignmentTarget {
-                            id: "pid1".into(),
-                            r#type: RoleAssignmentTargetType::Project,
-                            inherited: Some(false)
-                        },
-                        RoleAssignmentTarget {
-                            id: "pid2".into(),
-                            r#type: RoleAssignmentTargetType::Project,
-                            inherited: Some(true)
-                        }
-                    ],
-                    role_id: None
-                }
-            )
-            .await
-            .is_ok()
-        );
+        list_for_multiple_actors_and_targets(
+            &config,
+            &db,
+            &RoleAssignmentListForMultipleActorTargetParameters {
+                actors: vec![],
+                targets: vec![
+                    RoleAssignmentTarget {
+                        id: "pid1".into(),
+                        r#type: RoleAssignmentTargetType::Project,
+                        inherited: Some(false),
+                    },
+                    RoleAssignmentTarget {
+                        id: "pid2".into(),
+                        r#type: RoleAssignmentTargetType::Project,
+                        inherited: Some(true),
+                    },
+                ],
+                role_id: None,
+            },
+        )
+        .await
+        .unwrap();
 
         // Checking transaction log
         assert_eq!(
@@ -843,13 +887,13 @@ mod tests {
             [
                 Transaction::from_sql_and_values(
                     DatabaseBackend::Postgres,
-                    r#"SELECT "implied_role"."prior_role_id", "implied_role"."implied_role_id" FROM "implied_role""#,
-                    []
+                    r#"SELECT CAST("assignment"."type" AS "text"), "assignment"."actor_id", "assignment"."target_id", "assignment"."role_id", "assignment"."inherited" FROM "assignment" WHERE ("assignment"."target_id" = $1 AND "assignment"."inherited" = $2) OR ("assignment"."target_id" = $3 AND "assignment"."inherited" = $4)"#,
+                    ["pid1".into(), false.into(), "pid2".into(), true.into()]
                 ),
                 Transaction::from_sql_and_values(
                     DatabaseBackend::Postgres,
-                    r#"SELECT CAST("assignment"."type" AS "text"), "assignment"."actor_id", "assignment"."target_id", "assignment"."role_id", "assignment"."inherited" FROM "assignment" WHERE ("assignment"."target_id" = $1 AND "assignment"."inherited" = $2) OR ("assignment"."target_id" = $3 AND "assignment"."inherited" = $4)"#,
-                    ["pid1".into(), false.into(), "pid2".into(), true.into()]
+                    r#"SELECT "implied_role"."prior_role_id", "implied_role"."implied_role_id" FROM "implied_role""#,
+                    []
                 ),
             ]
         );

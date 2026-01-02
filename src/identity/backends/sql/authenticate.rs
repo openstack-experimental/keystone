@@ -182,7 +182,7 @@ mod tests {
         let db = MockDatabase::new(DatabaseBackend::Postgres).into_connection();
         let config = Config::default();
         assert!(
-            !should_lock(&config, &db, &get_local_user_mock())
+            !should_lock(&config, &db, &get_local_user_mock("user_id"))
                 .await
                 .unwrap(),
             "Default config does not request any validation and user is not considered locked"
@@ -233,7 +233,7 @@ mod tests {
     #[tokio::test]
     async fn test_should_lock_no_failed_auth_at() {
         let db = MockDatabase::new(DatabaseBackend::Postgres)
-            .append_query_results([vec![get_local_user_mock()]])
+            .append_query_results([vec![get_local_user_mock("user_id")]])
             .into_connection();
         let mut config = Config::default();
         config.security_compliance.lockout_failure_attempts = Some(5);
@@ -273,7 +273,7 @@ mod tests {
     #[tokio::test]
     async fn test_should_lock_expired() {
         let db = MockDatabase::new(DatabaseBackend::Postgres)
-            .append_query_results([vec![get_local_user_mock()]])
+            .append_query_results([vec![get_local_user_mock("user_id")]])
             .into_connection();
         let mut config = Config::default();
         config.security_compliance.lockout_failure_attempts = Some(5);
@@ -378,7 +378,7 @@ mod tests {
         password_hash: String,
     ) -> (db_local_user::Model, db_password::Model) {
         (
-            get_local_user_mock(),
+            get_local_user_mock("user_id"),
             db_password::ModelBuilder::default()
                 .password_hash(password_hash)
                 .build()
@@ -397,6 +397,7 @@ mod tests {
                     .unwrap(),
             )]])
             .append_query_results([user_option::tests::get_user_options_mock(
+                "user_id",
                 &UserOptions::default(),
             )])
             .append_query_results([vec![user::tests::get_user_mock("user_id")]])
@@ -465,6 +466,7 @@ mod tests {
                     .unwrap(),
             )]])
             .append_query_results([user_option::tests::get_user_options_mock(
+                "user_id",
                 &UserOptions::default(),
             )])
             .into_connection();
@@ -515,10 +517,13 @@ mod tests {
                     .build()
                     .unwrap(),
             )]])
-            .append_query_results([user_option::tests::get_user_options_mock(&UserOptions {
-                ignore_lockout_failure_attempts: Some(true),
-                ..Default::default()
-            })])
+            .append_query_results([user_option::tests::get_user_options_mock(
+                "user_id",
+                &UserOptions {
+                    ignore_lockout_failure_attempts: Some(true),
+                    ..Default::default()
+                },
+            )])
             .append_query_results([vec![user::tests::get_user_mock("user_id")]])
             .append_query_results([vec![user::tests::get_user_mock("user_id")]])
             .into_connection();
@@ -544,13 +549,14 @@ mod tests {
         let config = Config::default();
         let db = MockDatabase::new(DatabaseBackend::Postgres)
             .append_query_results([vec![(
-                get_local_user_mock(),
+                get_local_user_mock("user_id"),
                 db_password::ModelBuilder::default()
                     .password_hash("wrong_password")
                     .build()
                     .unwrap(),
             )]])
             .append_query_results([user_option::tests::get_user_options_mock(
+                "user_id",
                 &UserOptions::default(),
             )])
             .into_connection();
@@ -582,7 +588,7 @@ mod tests {
         let password = String::from("foo_pass");
         let db = MockDatabase::new(DatabaseBackend::Postgres)
             .append_query_results([vec![(
-                get_local_user_mock(),
+                get_local_user_mock("user_id"),
                 db_password::ModelBuilder::default()
                     .password_hash(
                         password_hashing::hash_password(&config, &password)
@@ -594,6 +600,7 @@ mod tests {
                     .unwrap(),
             )]])
             .append_query_results([user_option::tests::get_user_options_mock(
+                "user_id",
                 &UserOptions::default(),
             )])
             .into_connection();
@@ -626,7 +633,7 @@ mod tests {
         let password = String::from("foo_pass");
         let db = MockDatabase::new(DatabaseBackend::Postgres)
             .append_query_results([vec![(
-                get_local_user_mock(),
+                get_local_user_mock("user_id"),
                 db_password::ModelBuilder::expired()
                     .password_hash(
                         password_hashing::hash_password(&config, &password)
@@ -636,10 +643,13 @@ mod tests {
                     .build()
                     .unwrap(),
             )]])
-            .append_query_results([user_option::tests::get_user_options_mock(&UserOptions {
-                ignore_password_expiry: Some(true),
-                ..Default::default()
-            })])
+            .append_query_results([user_option::tests::get_user_options_mock(
+                "user_id",
+                &UserOptions {
+                    ignore_password_expiry: Some(true),
+                    ..Default::default()
+                },
+            )])
             .append_query_results([vec![user::tests::get_user_mock("user_id")]])
             .append_query_results([vec![user::tests::get_user_mock("user_id")]])
             .into_connection();

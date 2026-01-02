@@ -48,3 +48,19 @@ impl UserResponseBuilder {
         self
     }
 }
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use crate::db::entity::federated_user as db_federated_user;
+
+    pub fn get_federated_user_mock<UID: Into<String>>(user_id: UID) -> db_federated_user::Model {
+        db_federated_user::Model {
+            id: 1,
+            user_id: user_id.into(),
+            idp_id: "idp_id".into(),
+            protocol_id: "protocol_id".into(),
+            unique_id: "uid".into(),
+            display_name: Some("foo".into()),
+        }
+    }
+}
