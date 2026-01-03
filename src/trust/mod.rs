@@ -63,7 +63,7 @@ pub mod error;
 #[cfg(test)]
 mod mock;
 pub mod types;
-//
+
 use crate::config::Config;
 use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManager;
@@ -74,8 +74,7 @@ pub use error::TrustError;
 pub use mock::MockTrustProvider;
 pub use types::*;
 
-//
-/// Revoke provider.
+/// Trust provider.
 #[derive(Clone, Debug)]
 pub struct TrustProvider {
     /// Backend driver.

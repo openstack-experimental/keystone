@@ -37,6 +37,9 @@ use crate::federation::FederationProvider;
 use crate::identity::IdentityApi;
 #[double]
 use crate::identity::IdentityProvider;
+use crate::identity_mapping::IdentityMappingApi;
+#[double]
+use crate::identity_mapping::IdentityMappingProvider;
 use crate::plugin_manager::PluginManager;
 use crate::resource::ResourceApi;
 #[double]
@@ -74,6 +77,8 @@ pub struct Provider {
     federation: FederationProvider,
     /// Identity provider.
     identity: IdentityProvider,
+    /// Identity mapping provider.
+    identity_mapping: IdentityMappingProvider,
     /// Resource provider.
     resource: ResourceProvider,
     /// Revoke provider.
@@ -92,6 +97,7 @@ impl Provider {
         let catalog_provider = CatalogProvider::new(&cfg, &plugin_manager)?;
         let federation_provider = FederationProvider::new(&cfg, &plugin_manager)?;
         let identity_provider = IdentityProvider::new(&cfg, &plugin_manager)?;
+        let identity_mapping_provider = IdentityMappingProvider::new(&cfg, &plugin_manager)?;
         let resource_provider = ResourceProvider::new(&cfg, &plugin_manager)?;
         let revoke_provider = RevokeProvider::new(&cfg, &plugin_manager)?;
         let token_provider = TokenProvider::new(&cfg)?;
@@ -104,6 +110,7 @@ impl Provider {
             catalog: catalog_provider,
             federation: federation_provider,
             identity: identity_provider,
+            identity_mapping: identity_mapping_provider,
             resource: resource_provider,
             revoke: revoke_provider,
             token: token_provider,
@@ -136,6 +143,11 @@ impl Provider {
         &self.identity
     }
 
+    /// Get the identity mapping provider.
+    pub fn get_identity_mapping_provider(&self) -> &impl IdentityMappingApi {
+        &self.identity_mapping
+    }
+
     /// Get the resource provider.
     pub fn get_resource_provider(&self) -> &impl ResourceApi {
         &self.resource
@@ -166,6 +178,7 @@ impl Provider {
         let assignment_mock = crate::assignment::MockAssignmentProvider::default();
         let catalog_mock = crate::catalog::MockCatalogProvider::default();
         let identity_mock = crate::identity::MockIdentityProvider::default();
+        let identity_mapping_mock = crate::identity_mapping::MockIdentityMappingProvider::default();
         let federation_mock = crate::federation::MockFederationProvider::default();
         let resource_mock = crate::resource::MockResourceProvider::default();
         let revoke_mock = crate::revoke::MockRevokeProvider::default();
@@ -178,6 +191,7 @@ impl Provider {
             .assignment(assignment_mock)
             .catalog(catalog_mock)
             .identity(identity_mock)
+            .identity_mapping(identity_mapping_mock)
             .federation(federation_mock)
             .resource(resource_mock)
             .revoke(revoke_mock)

@@ -30,9 +30,10 @@ use crate::identity::types::*;
 
 /// List users.
 ///
-/// List users in the database. Fetch matching `user` table entries first. Afterwards fetch in
-/// parallel `local_user`, `nonlocal_user`, `federated_user`, `user_option` entries merging results
-/// to the proper entry. For the local users additionally passwords are being retrieved to identify
+/// List users in the database. Fetch matching `user` table entries first.
+/// Afterwards fetch in parallel `local_user`, `nonlocal_user`,
+/// `federated_user`, `user_option` entries merging results to the proper entry.
+/// For the local users additionally passwords are being retrieved to identify
 /// the password expiration date.
 pub async fn list(
     conf: &Config,
@@ -101,8 +102,8 @@ pub async fn list(
         )
         .await?;
 
-    // Determine the date for which users with the last activity earlier than are determined as
-    // inactive.
+    // Determine the date for which users with the last activity earlier than are
+    // determined as inactive.
     let last_activity_cutof_date = conf.get_user_last_activity_cutof_date();
 
     let mut results: Vec<UserResponse> = Vec::new();

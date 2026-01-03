@@ -198,8 +198,8 @@ pub async fn list_for_multiple_actors_and_targets(
 
 /// Select regular assignments.
 ///
-/// Return Vec<Assignment> for the regular role assignments or `None` when no corresponding targets
-/// were given in the query parameters.
+/// Return Vec<Assignment> for the regular role assignments or `None` when no
+/// corresponding targets were given in the query parameters.
 async fn list_for_multiple_actors_and_targets_regular(
     db: &DatabaseConnection,
     params: &RoleAssignmentListForMultipleActorTargetParameters,
@@ -255,8 +255,8 @@ async fn list_for_multiple_actors_and_targets_regular(
 
 /// Select system assignments.
 ///
-/// Return Vec<Assignment> for the regular role assignments or `None` when no corresponding targets
-/// were given in the query parameters.
+/// Return Vec<Assignment> for the regular role assignments or `None` when no
+/// corresponding targets were given in the query parameters.
 async fn list_for_multiple_actors_and_targets_system(
     db: &DatabaseConnection,
     params: &RoleAssignmentListForMultipleActorTargetParameters,

@@ -21,6 +21,7 @@ use crate::assignment::error::*;
 use crate::catalog::error::*;
 use crate::federation::error::*;
 use crate::identity::error::*;
+use crate::identity_mapping::error::*;
 use crate::policy::*;
 use crate::resource::error::*;
 use crate::revoke::error::*;
@@ -68,6 +69,14 @@ pub enum KeystoneError {
         /// The source of the error.
         #[from]
         source: IdentityProviderError,
+    },
+
+    /// Identity mapping provider.
+    #[error(transparent)]
+    IdentityMappingError {
+        /// The source of the error.
+        #[from]
+        source: IdentityMappingError,
     },
 
     /// IO error.

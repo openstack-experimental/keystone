@@ -12,10 +12,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-pub mod group;
+pub mod id_mapping;
 pub mod provider_api;
-pub mod user;
 
-pub use group::*;
-pub use provider_api::IdentityApi;
-pub use user::*;
+pub use id_mapping::*;
+pub use provider_api::IdentityMappingApi;

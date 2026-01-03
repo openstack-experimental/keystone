@@ -12,10 +12,30 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-pub mod group;
-pub mod provider_api;
-pub mod user;
+use thiserror::Error;
 
-pub use group::*;
-pub use provider_api::IdentityApi;
-pub use user::*;
+use crate::error::{BuilderError, DatabaseError};
+
+#[derive(Error, Debug)]
+pub enum IdentityMappingDatabaseError {
+    /// Database error.
+    #[error(transparent)]
+    Database {
+        #[from]
+        source: DatabaseError,
+    },
+
+    #[error(transparent)]
+    Serde {
+        #[from]
+        source: serde_json::Error,
+    },
+
+    /// Structures builder error.
+    #[error(transparent)]
+    StructBuilder {
+        /// The source of the error.
+        #[from]
+        source: BuilderError,
+    },
+}

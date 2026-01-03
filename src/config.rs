@@ -58,9 +58,13 @@ pub struct Config {
     //#[serde(default)]
     pub database: DatabaseSection,
 
-    /// Identity provider configuration configuration.
+    /// Identity provider configuration.
     #[serde(default)]
     pub identity: IdentityProvider,
+
+    /// Identity mapping provider configuration.
+    #[serde(default)]
+    pub identity_mapping: IdentityMappingProvider,
 
     /// API policy enforcement.
     #[serde(default)]
@@ -251,6 +255,7 @@ impl FederationProvider {
             .unwrap_or(Utc::now())
     }
 }
+
 /// Identity provider.
 #[derive(Debug, Deserialize, Clone)]
 pub struct IdentityProvider {
@@ -281,6 +286,22 @@ impl Default for IdentityProvider {
             max_password_length: 4096,
             password_hash_rounds: None,
             user_options_id_name_mapping: default_user_options_mapping(),
+        }
+    }
+}
+
+/// Identity mapping provider.
+#[derive(Debug, Deserialize, Clone)]
+pub struct IdentityMappingProvider {
+    /// Identity provider driver.
+    #[serde(default = "default_sql_driver")]
+    pub driver: String,
+}
+
+impl Default for IdentityMappingProvider {
+    fn default() -> Self {
+        Self {
+            driver: default_sql_driver(),
         }
     }
 }

@@ -21,19 +21,21 @@
 //! The [PluginManager] is responsible for picking the proper backend driver for
 //! the provider.
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use crate::application_credential::backend::ApplicationCredentialBackend;
 use crate::assignment::backend::AssignmentBackend;
 use crate::catalog::backends::CatalogBackend;
 use crate::federation::backend::FederationBackend;
 use crate::identity::backends::IdentityBackend;
+use crate::identity_mapping::backend::IdentityMappingBackend;
 use crate::resource::types::ResourceBackend;
 use crate::revoke::backend::RevokeBackend;
 use crate::trust::backend::TrustBackend;
 
 /// Plugin manager allowing to pass custom backend plugins implementing required
 /// trait during the service start.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Default)]
 pub struct PluginManager {
     /// Application credentials backend plugin.
     application_credential_backends: HashMap<String, Box<dyn ApplicationCredentialBackend>>,
@@ -45,6 +47,8 @@ pub struct PluginManager {
     federation_backends: HashMap<String, Box<dyn FederationBackend>>,
     /// Identity backend plugins.
     identity_backends: HashMap<String, Box<dyn IdentityBackend>>,
+    /// Identity mapping backend plugins.
+    identity_mapping_backends: HashMap<String, Arc<dyn IdentityMappingBackend>>,
     /// Resource backend plugins.
     resource_backends: HashMap<String, Box<dyn ResourceBackend>>,
     /// Revoke backend plugins.
@@ -104,6 +108,15 @@ impl PluginManager {
         name: S,
     ) -> Option<&Box<dyn IdentityBackend>> {
         self.identity_backends.get(name.as_ref())
+    }
+
+    /// Get registered identity mapping backend.
+    #[allow(clippy::borrowed_box)]
+    pub fn get_identity_mapping_backend<S: AsRef<str>>(
+        &self,
+        name: S,
+    ) -> Option<&Arc<dyn IdentityMappingBackend>> {
+        self.identity_mapping_backends.get(name.as_ref())
     }
 
     /// Get registered resource backend.

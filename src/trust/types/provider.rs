@@ -20,7 +20,7 @@ use crate::trust::{TrustError, types::*};
 
 /// Trust extension provider interface.
 #[async_trait]
-pub trait TrustApi: Send + Sync + Clone {
+pub trait TrustApi: Send + Sync {
     /// Get trust by ID.
     async fn get_trust<'a>(
         &self,
