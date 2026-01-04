@@ -103,8 +103,4 @@ mock! {
             id: &'a str,
         ) -> Result<(), TokenProviderError>;
     }
-
-    impl Clone for TokenProvider {
-        fn clone(&self) -> Self;
-    }
 }

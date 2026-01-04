@@ -13,8 +13,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Token provider backends.
 
-use dyn_clone::DynClone;
-
 use crate::config::Config;
 use crate::token::{TokenProviderError, types::Token};
 
@@ -22,7 +20,8 @@ pub mod fernet;
 pub use fernet::*;
 
 /// Token Provider backend interface.
-pub trait TokenBackend: DynClone + Send + Sync + std::fmt::Debug {
+#[cfg_attr(test, mockall::automock)]
+pub trait TokenBackend: Send + Sync {
     /// Set config.
     fn set_config(&mut self, g: Config);
 
@@ -32,5 +31,3 @@ pub trait TokenBackend: DynClone + Send + Sync + std::fmt::Debug {
     /// Extract the token from string.
     fn encode(&self, token: &Token) -> Result<String, TokenProviderError>;
 }
-
-dyn_clone::clone_trait_object!(TokenBackend);

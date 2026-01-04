@@ -123,7 +123,7 @@ mod tests {
                 trust_id: "1".into(),
                 role_id: "rid".into(),
             }]])
-            .append_query_results([vec![get_role_mock("1")]])
+            .append_query_results([vec![get_role_mock("1", "foo")]])
             .into_connection();
         assert_eq!(
             list(&db, &TrustListParameters::default()).await.unwrap(),

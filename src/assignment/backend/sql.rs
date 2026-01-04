@@ -18,27 +18,17 @@ use std::collections::HashSet;
 use super::super::types::*;
 use crate::assignment::backend::RoleCreate;
 use crate::assignment::{AssignmentProviderError, backend::AssignmentBackend};
-use crate::config::Config;
 use crate::keystone::ServiceState;
 
 pub(crate) mod assignment;
 pub(crate) mod implied_role;
 pub(crate) mod role;
 
-#[derive(Clone, Debug, Default)]
-pub struct SqlBackend {
-    pub config: Config,
-}
-
-impl SqlBackend {}
+#[derive(Default)]
+pub struct SqlBackend {}
 
 #[async_trait]
 impl AssignmentBackend for SqlBackend {
-    /// Set config.
-    fn set_config(&mut self, config: Config) {
-        self.config = config;
-    }
-
     /// Check assignment grant.
     #[tracing::instrument(level = "info", skip(self, state))]
     async fn check_grant(
@@ -76,7 +66,7 @@ impl AssignmentBackend for SqlBackend {
         state: &ServiceState,
         id: &'a str,
     ) -> Result<Option<Role>, AssignmentProviderError> {
-        Ok(role::get(&self.config, &state.db, id).await?)
+        Ok(role::get(&state.db, id).await?)
     }
 
     /// Expand implied roles.
@@ -118,7 +108,7 @@ impl AssignmentBackend for SqlBackend {
         state: &ServiceState,
         params: &RoleListParameters,
     ) -> Result<Vec<Role>, AssignmentProviderError> {
-        Ok(role::list(&self.config, &state.db, params).await?)
+        Ok(role::list(&state.db, params).await?)
     }
 
     /// List role assignments.
@@ -128,7 +118,7 @@ impl AssignmentBackend for SqlBackend {
         state: &ServiceState,
         params: &RoleAssignmentListParameters,
     ) -> Result<Vec<Assignment>, AssignmentProviderError> {
-        Ok(assignment::list(&self.config, &state.db, params).await?)
+        Ok(assignment::list(&state.db, params).await?)
     }
 
     /// List role assignments for multiple actors/targets.
@@ -138,9 +128,6 @@ impl AssignmentBackend for SqlBackend {
         state: &ServiceState,
         params: &RoleAssignmentListForMultipleActorTargetParameters,
     ) -> Result<Vec<Assignment>, AssignmentProviderError> {
-        Ok(
-            assignment::list_for_multiple_actors_and_targets(&self.config, &state.db, params)
-                .await?,
-        )
+        Ok(assignment::list_for_multiple_actors_and_targets(&state.db, params).await?)
     }
 }

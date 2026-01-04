@@ -13,57 +13,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 pub mod assignment;
+pub mod provider_api;
 pub mod role;
-
-use async_trait::async_trait;
-
-use crate::assignment::AssignmentProviderError;
-use crate::keystone::ServiceState;
 
 pub use crate::assignment::types::assignment::*;
 pub use crate::assignment::types::role::{Role, RoleCreate, RoleListParameters};
-
-#[async_trait]
-pub trait AssignmentApi: Send + Sync + Clone {
-    /// Create assignment grant.
-    async fn create_grant(
-        &self,
-        state: &ServiceState,
-        params: Assignment,
-    ) -> Result<Assignment, AssignmentProviderError>;
-
-    /// Create Role.
-    async fn create_role(
-        &self,
-        state: &ServiceState,
-        params: RoleCreate,
-    ) -> Result<Role, AssignmentProviderError>;
-
-    /// Get a single role.
-    async fn get_role<'a>(
-        &self,
-        state: &ServiceState,
-        role_id: &'a str,
-    ) -> Result<Option<Role>, AssignmentProviderError>;
-
-    /// Expand implied roles.
-    async fn expand_implied_roles(
-        &self,
-        state: &ServiceState,
-        roles: &mut Vec<Role>,
-    ) -> Result<(), AssignmentProviderError>;
-
-    /// List Roles.
-    async fn list_roles(
-        &self,
-        state: &ServiceState,
-        params: &RoleListParameters,
-    ) -> Result<impl IntoIterator<Item = Role>, AssignmentProviderError>;
-
-    /// List role assignments for given target/role/actor.
-    async fn list_role_assignments(
-        &self,
-        state: &ServiceState,
-        params: &RoleAssignmentListParameters,
-    ) -> Result<impl IntoIterator<Item = Assignment>, AssignmentProviderError>;
-}
+pub use provider_api::*;

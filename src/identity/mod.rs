@@ -36,10 +36,11 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use std::collections::HashSet;
+use std::sync::Arc;
 use uuid::Uuid;
 use validator::Validate;
 
-pub mod backends;
+pub mod backend;
 pub mod error;
 #[cfg(test)]
 pub mod mock;
@@ -49,7 +50,7 @@ pub use mock::MockIdentityProvider;
 
 use crate::auth::AuthenticatedInfo;
 use crate::config::Config;
-use crate::identity::backends::{IdentityBackend, sql::SqlBackend};
+use crate::identity::backend::{IdentityBackend, sql::SqlBackend};
 use crate::identity::error::IdentityProviderError;
 use crate::identity::types::{
     Group, GroupCreate, GroupListParameters, UserCreate, UserListParameters,
@@ -61,9 +62,9 @@ use crate::resource::{ResourceApi, error::ResourceProviderError};
 
 pub use types::IdentityApi;
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct IdentityProvider {
-    backend_driver: Box<dyn IdentityBackend>,
+    backend_driver: Arc<dyn IdentityBackend>,
 }
 
 impl IdentityProvider {
@@ -71,13 +72,13 @@ impl IdentityProvider {
         config: &Config,
         plugin_manager: &PluginManager,
     ) -> Result<Self, IdentityProviderError> {
-        let mut backend_driver = if let Some(driver) =
+        let backend_driver = if let Some(driver) =
             plugin_manager.get_identity_backend(config.identity.driver.clone())
         {
             driver.clone()
         } else {
             match config.identity.driver.as_str() {
-                "sql" => Box::new(SqlBackend::default()),
+                "sql" => Arc::new(SqlBackend::default()),
                 _ => {
                     return Err(IdentityProviderError::UnsupportedDriver(
                         config.identity.driver.clone(),
@@ -85,7 +86,6 @@ impl IdentityProvider {
                 }
             }
         };
-        backend_driver.set_config(config.clone());
         Ok(Self { backend_driver })
     }
 }

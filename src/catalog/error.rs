@@ -14,7 +14,7 @@
 
 use thiserror::Error;
 
-use crate::catalog::backends::error::*;
+use crate::catalog::backend::error::*;
 
 #[derive(Error, Debug)]
 pub enum CatalogProviderError {

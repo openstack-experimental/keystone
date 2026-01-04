@@ -54,13 +54,8 @@ use crate::trust::TrustApi;
 #[double]
 use crate::trust::TrustProvider;
 
-//pub trait Provider: Clone + Send + Sync {
-//    fn get_identity_provider(&self) -> &impl IdentityApi;
-//    fn get_token_provider(&self) -> &impl TokenApi;
-//}
-
 /// Global provider manager.
-#[derive(Builder, Clone)]
+#[derive(Builder)]
 // It is necessary to use the owned pattern since otherwise builder invokes clone which immediately
 // confuses mockall used in tests
 #[builder(pattern = "owned")]

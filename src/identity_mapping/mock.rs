@@ -41,9 +41,4 @@ mock! {
             public_id: &'a str,
         ) -> Result<Option<IdMapping>, IdentityMappingError>;
     }
-
-    impl Clone for IdentityMappingProvider {
-        fn clone(&self) -> Self;
-    }
-
 }

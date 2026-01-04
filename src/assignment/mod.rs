@@ -46,6 +46,7 @@
 //! interprets the user role set, and determines to which operations or
 //! resources each role grants access.
 use async_trait::async_trait;
+use std::sync::Arc;
 use uuid::Uuid;
 use validator::Validate;
 
@@ -72,9 +73,9 @@ use crate::resource::ResourceApi;
 pub use mock::MockAssignmentProvider;
 pub use types::AssignmentApi;
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct AssignmentProvider {
-    backend_driver: Box<dyn AssignmentBackend>,
+    backend_driver: Arc<dyn AssignmentBackend>,
 }
 
 impl AssignmentProvider {
@@ -82,13 +83,13 @@ impl AssignmentProvider {
         config: &Config,
         plugin_manager: &PluginManager,
     ) -> Result<Self, AssignmentProviderError> {
-        let mut backend_driver = if let Some(driver) =
+        let backend_driver = if let Some(driver) =
             plugin_manager.get_assignment_backend(config.assignment.driver.clone())
         {
             driver.clone()
         } else {
             match config.assignment.driver.as_str() {
-                "sql" => Box::new(SqlBackend::default()),
+                "sql" => Arc::new(SqlBackend::default()),
                 other => {
                     return Err(AssignmentProviderError::UnsupportedDriver(
                         other.to_string(),
@@ -96,7 +97,6 @@ impl AssignmentProvider {
                 }
             }
         };
-        backend_driver.set_config(config.clone());
         Ok(Self { backend_driver })
     }
 }

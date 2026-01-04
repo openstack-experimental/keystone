@@ -133,7 +133,10 @@ mod tests {
                     role_id: "role_id2".into(),
                 },
             ]])
-            .append_query_results([vec![get_role_mock("role_id1"), get_role_mock("role_id2")]])
+            .append_query_results([vec![
+                get_role_mock("role_id1", "foo"),
+                get_role_mock("role_id2", "foo"),
+            ]])
             .append_query_results([vec![
                 db_application_credential_access_rule::Model {
                     application_credential_id: 1,

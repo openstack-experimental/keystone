@@ -103,7 +103,7 @@ mod tests {
     async fn test_get() {
         let db = MockDatabase::new(DatabaseBackend::Postgres)
             .append_query_results([vec![get_trust_mock("trust_id", "trustor", "trustee")]])
-            .append_query_results([vec![get_role_mock("role_id")]])
+            .append_query_results([vec![get_role_mock("role_id", "foo")]])
             .into_connection();
 
         assert_eq!(

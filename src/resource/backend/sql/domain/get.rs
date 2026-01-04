@@ -18,12 +18,10 @@ use sea_orm::query::*;
 
 use crate::db::entity::{prelude::Project as DbProject, project as db_project};
 use crate::error::DbContextExt;
-use crate::resource::Config;
 use crate::resource::backend::error::ResourceDatabaseError;
 use crate::resource::types::Domain;
 
 pub async fn get_domain_by_id<I: AsRef<str>>(
-    _conf: &Config,
     db: &DatabaseConnection,
     domain_id: I,
 ) -> Result<Option<Domain>, ResourceDatabaseError> {
@@ -38,7 +36,6 @@ pub async fn get_domain_by_id<I: AsRef<str>>(
 }
 
 pub async fn get_domain_by_name<N: AsRef<str>>(
-    _conf: &Config,
     db: &DatabaseConnection,
     domain_name: N,
 ) -> Result<Option<Domain>, ResourceDatabaseError> {

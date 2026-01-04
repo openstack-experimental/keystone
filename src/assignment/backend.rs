@@ -16,20 +16,16 @@ pub mod error;
 pub mod sql;
 
 use async_trait::async_trait;
-use dyn_clone::DynClone;
 
 use crate::assignment::AssignmentProviderError;
-use crate::config::Config;
 use crate::keystone::ServiceState;
 
 use crate::assignment::types::{assignment::*, role::*};
 pub use sql::SqlBackend;
 
+#[cfg_attr(test, mockall::automock)]
 #[async_trait]
-pub trait AssignmentBackend: DynClone + Send + Sync + std::fmt::Debug {
-    /// Set config
-    fn set_config(&mut self, config: Config);
-
+pub trait AssignmentBackend: Send + Sync {
     /// Check assignment grant.
     async fn check_grant(
         &self,
@@ -91,5 +87,3 @@ pub trait AssignmentBackend: DynClone + Send + Sync + std::fmt::Debug {
         params: &RoleListParameters,
     ) -> Result<Vec<Role>, AssignmentProviderError>;
 }
-
-dyn_clone::clone_trait_object!(AssignmentBackend);

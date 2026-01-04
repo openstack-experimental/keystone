@@ -62,8 +62,4 @@ mock! {
         ) -> Result<Vec<(Service, Vec<Endpoint>)>, CatalogProviderError>;
 
     }
-
-    impl Clone for CatalogProvider {
-        fn clone(&self) -> Self;
-    }
 }

@@ -14,8 +14,9 @@
 //! # Federation provider
 //!
 //! Federation provider implements the functionality necessary for the user
-//! fedefation.
+//! federation.
 use async_trait::async_trait;
+use std::sync::Arc;
 use uuid::Uuid;
 
 pub mod api;
@@ -36,9 +37,9 @@ use types::*;
 pub use mock::MockFederationProvider;
 pub use types::FederationApi;
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct FederationProvider {
-    backend_driver: Box<dyn FederationBackend>,
+    backend_driver: Arc<dyn FederationBackend>,
 }
 
 impl FederationProvider {
@@ -52,7 +53,7 @@ impl FederationProvider {
             driver.clone()
         } else {
             match config.federation.driver.as_str() {
-                "sql" => Box::new(SqlBackend::default()),
+                "sql" => Arc::new(SqlBackend::default()),
                 _ => {
                     return Err(FederationProviderError::UnsupportedDriver(
                         config.resource.driver.clone(),

@@ -13,11 +13,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Trust provider Backend trait.
 use async_trait::async_trait;
-use dyn_clone::DynClone;
-#[cfg(test)]
-use mockall::*;
 
-use crate::config::Config;
 use crate::keystone::ServiceState;
 use crate::trust::{TrustError, types::*};
 
@@ -26,15 +22,12 @@ pub mod sql;
 
 pub use sql::SqlBackend;
 
-#[cfg_attr(test, automock)]
-#[async_trait]
 /// TrustBackend trait.
 ///
 /// Backend driver interface expected by the trust provider.
-pub trait TrustBackend: DynClone + Send + Sync + std::fmt::Debug {
-    /// Set config
-    fn set_config(&mut self, config: Config);
-
+#[cfg_attr(test, mockall::automock)]
+#[async_trait]
+pub trait TrustBackend: Send + Sync {
     /// Get trust by ID.
     async fn get_trust<'a>(
         &self,
@@ -55,14 +48,4 @@ pub trait TrustBackend: DynClone + Send + Sync + std::fmt::Debug {
         state: &ServiceState,
         params: &TrustListParameters,
     ) -> Result<Vec<Trust>, TrustError>;
-}
-
-dyn_clone::clone_trait_object!(TrustBackend);
-
-#[cfg(test)]
-impl Clone for MockTrustBackend {
-    #[allow(unconditional_recursion)]
-    fn clone(&self) -> Self {
-        self.clone()
-    }
 }

@@ -22,7 +22,7 @@ mod auth_state;
 mod identity_provider;
 mod mapping;
 
-#[derive(Clone, Debug, Default)]
+#[derive(Default)]
 pub struct SqlBackend {}
 
 #[async_trait]

@@ -21,7 +21,7 @@ use crate::identity_mapping::backend::IdentityMappingBackend;
 use crate::identity_mapping::types::*;
 use crate::keystone::ServiceState;
 
-#[derive(Clone, Debug, Default)]
+#[derive(Default)]
 pub struct SqlBackend {}
 
 #[async_trait]

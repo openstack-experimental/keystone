@@ -23,6 +23,7 @@ use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::{DateTime, TimeDelta, Utc};
 use std::collections::HashSet;
+use std::sync::Arc;
 use tracing::{debug, trace};
 use uuid::Uuid;
 
@@ -58,10 +59,10 @@ pub use crate::token::types::*;
 #[cfg(test)]
 pub use mock::MockTokenProvider;
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct TokenProvider {
     config: Config,
-    backend_driver: Box<dyn TokenBackend>,
+    backend_driver: Arc<dyn TokenBackend>,
 }
 
 impl TokenProvider {
@@ -71,7 +72,7 @@ impl TokenProvider {
         };
         Ok(Self {
             config: config.clone(),
-            backend_driver: Box::new(backend_driver),
+            backend_driver: Arc::new(backend_driver),
         })
     }
 

@@ -21,7 +21,6 @@ use std::collections::{BTreeMap, HashMap};
 use crate::assignment::backend::error::AssignmentDatabaseError;
 use crate::assignment::backend::sql::implied_role;
 use crate::assignment::types::*;
-use crate::config::Config;
 use crate::db::entity::{
     assignment as db_assignment,
     prelude::{Assignment as DbAssignment, Role as DbRole, SystemAssignment as DbSystemAssignment},
@@ -32,7 +31,6 @@ use crate::db::entity::{
 use crate::error::DbContextExt;
 
 pub async fn list(
-    _conf: &Config,
     db: &DatabaseConnection,
     params: &RoleAssignmentListParameters,
 ) -> Result<Vec<Assignment>, AssignmentDatabaseError> {
@@ -135,7 +133,6 @@ pub async fn list(
 /// check all roles assigned to the user (including groups) on a concrete target
 /// (including all higher targets the role can be inherited from)
 pub async fn list_for_multiple_actors_and_targets(
-    _conf: &Config,
     db: &DatabaseConnection,
     params: &RoleAssignmentListForMultipleActorTargetParameters,
 ) -> Result<Vec<Assignment>, AssignmentDatabaseError> {
@@ -312,7 +309,6 @@ async fn list_for_multiple_actors_and_targets_system(
 mod tests {
     use sea_orm::{DatabaseBackend, MockDatabase, Transaction};
 
-    use crate::config::Config;
     use crate::db::entity::assignment;
 
     use super::super::tests::*;
@@ -325,9 +321,8 @@ mod tests {
             .append_query_results([vec![get_role_assignment_mock("1")]])
             .append_query_results([vec![get_role_system_assignment_mock("1")]])
             .into_connection();
-        let config = Config::default();
         assert_eq!(
-            list(&config, &db, &RoleAssignmentListParameters::default())
+            list(&db, &RoleAssignmentListParameters::default())
                 .await
                 .unwrap(),
             vec![
@@ -374,10 +369,8 @@ mod tests {
             .append_query_results([vec![get_role_assignment_mock("1")]])
             .append_query_results([vec![get_role_system_assignment_mock("1")]])
             .into_connection();
-        let config = Config::default();
         assert_eq!(
             list(
-                &config,
                 &db,
                 &RoleAssignmentListParameters {
                     role_id: Some("1".into()),
@@ -429,10 +422,8 @@ mod tests {
         let db = MockDatabase::new(DatabaseBackend::Postgres)
             .append_query_results([vec![get_role_assignment_mock("1")]])
             .into_connection();
-        let config = Config::default();
         assert_eq!(
             list(
-                &config,
                 &db,
                 &RoleAssignmentListParameters {
                     project_id: Some("target".into()),
@@ -473,10 +464,8 @@ mod tests {
             .append_query_results([vec![get_role_assignment_with_role_mock("1")]])
             .append_query_results([vec![get_role_system_assignment_with_role_mock("1")]])
             .into_connection();
-        let config = Config::default();
         assert_eq!(
             list(
-                &config,
                 &db,
                 &RoleAssignmentListParameters {
                     include_names: Some(true),
@@ -529,20 +518,18 @@ mod tests {
             .append_query_results([vec![get_role_assignment_mock("1")]])
             .append_query_results([get_implied_rules_mock()])
             .append_query_results([vec![
-                get_role_mock("1", "rname"),
-                get_role_mock("2", "rname2"),
+                get_short_role_mock("1", "rname"),
+                get_short_role_mock("2", "rname2"),
             ]])
             .append_query_results([vec![get_role_system_assignment_mock("1")]])
             .append_query_results([get_implied_rules_mock()])
             .append_query_results([vec![
-                get_role_mock("1", "rname"),
-                get_role_mock("2", "rname2"),
+                get_short_role_mock("1", "rname"),
+                get_short_role_mock("2", "rname2"),
             ]])
             .into_connection();
-        let config = Config::default();
         assert_eq!(
             list_for_multiple_actors_and_targets(
-                &config,
                 &db,
                 &RoleAssignmentListForMultipleActorTargetParameters {
                     actors: vec!["uid1".into(), "gid1".into(), "gid2".into()],
@@ -578,7 +565,6 @@ mod tests {
         // system target
         assert_eq!(
             list_for_multiple_actors_and_targets(
-                &config,
                 &db,
                 &RoleAssignmentListForMultipleActorTargetParameters {
                     actors: vec!["uid1".into(), "gid1".into(), "gid2".into()],
@@ -668,14 +654,12 @@ mod tests {
             .append_query_results([vec![get_role_assignment_mock("1")]])
             .append_query_results([get_implied_rules_mock()])
             .append_query_results([vec![
-                get_role_mock("1", "rname"),
-                get_role_mock("2", "rname2"),
+                get_short_role_mock("1", "rname"),
+                get_short_role_mock("2", "rname2"),
             ]])
             .into_connection();
-        let config = Config::default();
         // multiple actors multiple complex targets
         list_for_multiple_actors_and_targets(
-            &config,
             &db,
             &RoleAssignmentListForMultipleActorTargetParameters {
                 actors: vec!["uid1".into(), "gid1".into(), "gid2".into()],
@@ -736,15 +720,13 @@ mod tests {
             .append_query_results([vec![get_role_system_assignment_mock("2")]])
             .append_query_results([get_implied_rules_mock()])
             .append_query_results([vec![
-                get_role_mock("1", "rname"),
-                get_role_mock("2", "rname2"),
+                get_short_role_mock("1", "rname"),
+                get_short_role_mock("2", "rname2"),
             ]])
             .into_connection();
-        let config = Config::default();
         //// empty actors and targets
         //assert!(
         list_for_multiple_actors_and_targets(
-            &config,
             &db,
             &RoleAssignmentListForMultipleActorTargetParameters {
                 actors: vec![],
@@ -793,16 +775,14 @@ mod tests {
             .append_query_results([vec![get_role_assignment_mock("1")]])
             .append_query_results([get_implied_rules_mock()])
             .append_query_results([vec![
-                get_role_mock("1", "rname"),
-                get_role_mock("2", "rname2"),
+                get_short_role_mock("1", "rname"),
+                get_short_role_mock("2", "rname2"),
             ]])
             .into_connection();
-        let config = Config::default();
 
         //// only mixed targets
         assert!(
             list_for_multiple_actors_and_targets(
-                &config,
                 &db,
                 &RoleAssignmentListForMultipleActorTargetParameters {
                     actors: vec![],
@@ -855,11 +835,9 @@ mod tests {
             .append_query_results([Vec::<assignment::Model>::new()])
             .append_query_results([get_implied_rules_mock()])
             .into_connection();
-        let config = Config::default();
 
         //// only complex targets
         list_for_multiple_actors_and_targets(
-            &config,
             &db,
             &RoleAssignmentListForMultipleActorTargetParameters {
                 actors: vec![],

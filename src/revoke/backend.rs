@@ -14,9 +14,7 @@
 //! Token revocation: Backends.
 //! Revocation provider Backend trait.
 use async_trait::async_trait;
-use dyn_clone::DynClone;
 
-use crate::config::Config;
 use crate::keystone::ServiceState;
 use crate::revoke::RevokeProviderError;
 use crate::token::types::Token;
@@ -24,14 +22,12 @@ use crate::token::types::Token;
 pub mod error;
 pub mod sql;
 
-#[async_trait]
 /// RevokeBackend trait.
 ///
 /// Backend driver interface expected by the revocation provider.
-pub trait RevokeBackend: DynClone + Send + Sync + std::fmt::Debug {
-    /// Set config
-    fn set_config(&mut self, config: Config);
-
+#[cfg_attr(test, mockall::automock)]
+#[async_trait]
+pub trait RevokeBackend: Send + Sync {
     /// Check token revocation.
     ///
     /// Check whether there are existing revocation records that invalidate the
@@ -52,5 +48,3 @@ pub trait RevokeBackend: DynClone + Send + Sync + std::fmt::Debug {
         token: &Token,
     ) -> Result<(), RevokeProviderError>;
 }
-
-dyn_clone::clone_trait_object!(RevokeBackend);

@@ -43,6 +43,7 @@ pub struct Service {
     pub policy_factory: Arc<PolicyFactory>,
 
     /// Service/resource Provider.
+    #[from_ref(skip)]
     pub provider: Provider,
 
     /// Shutdown flag.

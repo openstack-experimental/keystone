@@ -16,27 +16,17 @@
 use async_trait::async_trait;
 
 use super::TrustBackend;
-use crate::config::Config;
 use crate::keystone::ServiceState;
 use crate::trust::{TrustError, types::*};
 
 pub(crate) mod trust;
 
 /// Sql Database revocation backend.
-#[derive(Clone, Debug, Default)]
-pub struct SqlBackend {
-    pub config: Config,
-}
-
-impl SqlBackend {}
+#[derive(Default)]
+pub struct SqlBackend {}
 
 #[async_trait]
 impl TrustBackend for SqlBackend {
-    /// Set config.
-    fn set_config(&mut self, config: Config) {
-        self.config = config;
-    }
-
     /// Get trust by ID.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn get_trust<'a>(

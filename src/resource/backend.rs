@@ -12,5 +12,52 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use async_trait::async_trait;
+
 pub mod error;
 pub mod sql;
+
+use crate::keystone::ServiceState;
+use crate::resource::ResourceProviderError;
+use crate::resource::types::Domain;
+use crate::resource::types::Project;
+
+#[cfg_attr(test, mockall::automock)]
+#[async_trait]
+pub trait ResourceBackend: Send + Sync {
+    /// Get single domain by ID
+    async fn get_domain<'a>(
+        &self,
+        state: &ServiceState,
+        domain_id: &'a str,
+    ) -> Result<Option<Domain>, ResourceProviderError>;
+
+    /// Get single domain by Name
+    async fn get_domain_by_name<'a>(
+        &self,
+        state: &ServiceState,
+        domain_name: &'a str,
+    ) -> Result<Option<Domain>, ResourceProviderError>;
+
+    /// Get single project by ID
+    async fn get_project<'a>(
+        &self,
+        state: &ServiceState,
+        project_id: &'a str,
+    ) -> Result<Option<Project>, ResourceProviderError>;
+
+    /// Get single project by Name and Domain ID
+    async fn get_project_by_name<'a>(
+        &self,
+        state: &ServiceState,
+        name: &'a str,
+        domain_id: &'a str,
+    ) -> Result<Option<Project>, ResourceProviderError>;
+
+    /// Get project parents
+    async fn get_project_parents<'a>(
+        &self,
+        state: &ServiceState,
+        project_id: &'a str,
+    ) -> Result<Option<Vec<Project>>, ResourceProviderError>;
+}

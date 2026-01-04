@@ -113,8 +113,4 @@ mock! {
             mapping: MappingUpdate,
         ) -> Result<Mapping, FederationProviderError>;
     }
-
-    impl Clone for FederationProvider {
-        fn clone(&self) -> Self;
-    }
 }

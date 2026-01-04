@@ -20,8 +20,9 @@ use crate::keystone::ServiceState;
 use crate::webauthn::{WebauthnError, types::WebauthnCredential};
 
 /// WebAuthN extension provider interface.
+#[cfg_attr(test, mockall::automock)]
 #[async_trait]
-pub trait WebauthnApi: Send + Sync + Clone {
+pub trait WebauthnApi: Send + Sync {
     /// Create passkey.
     async fn create_user_webauthn_credential<'a>(
         &self,
@@ -61,19 +62,19 @@ pub trait WebauthnApi: Send + Sync + Clone {
         &self,
         state: &ServiceState,
         user_id: &'a str,
-    ) -> Result<impl IntoIterator<Item = Passkey>, WebauthnError>;
+    ) -> Result<Vec<Passkey>, WebauthnError>;
 
     async fn save_user_webauthn_credential_authentication_state<'a>(
         &self,
         state: &ServiceState,
         user_id: &'a str,
-        state: PasskeyAuthentication,
+        auth: PasskeyAuthentication,
     ) -> Result<(), WebauthnError>;
 
     async fn save_user_webauthn_credential_registration_state<'a>(
         &self,
         state: &ServiceState,
         user_id: &'a str,
-        state: PasskeyRegistration,
+        reg_state: PasskeyRegistration,
     ) -> Result<(), WebauthnError>;
 }

@@ -116,6 +116,7 @@ use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose};
 use rand::{Rng, rng};
 use secrecy::SecretString;
+use std::sync::Arc;
 use uuid::Uuid;
 use validator::Validate;
 
@@ -138,9 +139,9 @@ mod mock;
 pub mod types;
 
 /// Application Credential Provider.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct ApplicationCredentialProvider {
-    backend_driver: Box<dyn ApplicationCredentialBackend>,
+    backend_driver: Arc<dyn ApplicationCredentialBackend>,
 }
 
 impl ApplicationCredentialProvider {
@@ -148,13 +149,13 @@ impl ApplicationCredentialProvider {
         config: &Config,
         plugin_manager: &PluginManager,
     ) -> Result<Self, ApplicationCredentialProviderError> {
-        let mut backend_driver = if let Some(driver) = plugin_manager
+        let backend_driver = if let Some(driver) = plugin_manager
             .get_application_credential_backend(config.application_credential.driver.clone())
         {
             driver.clone()
         } else {
             match config.application_credential.driver.as_str() {
-                "sql" => Box::new(SqlBackend::default()),
+                "sql" => Arc::new(SqlBackend::default()),
                 other => {
                     return Err(ApplicationCredentialProviderError::UnsupportedDriver(
                         other.to_string(),
@@ -162,7 +163,6 @@ impl ApplicationCredentialProvider {
                 }
             }
         };
-        backend_driver.set_config(config.clone());
         Ok(Self { backend_driver })
     }
 }

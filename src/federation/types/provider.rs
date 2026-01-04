@@ -14,7 +14,7 @@
 //! # Federation provider
 //!
 //! Federation provider implements the functionality necessary for the user
-//! fedefation.
+//! federation.
 use async_trait::async_trait;
 
 use crate::federation::error::FederationProviderError;
@@ -23,7 +23,7 @@ use crate::keystone::ServiceState;
 
 /// Federation provider interface.
 #[async_trait]
-pub trait FederationApi: Send + Sync + Clone {
+pub trait FederationApi: Send + Sync {
     /// Cleanup expired resources
     async fn cleanup(&self, state: &ServiceState) -> Result<(), FederationProviderError>;
 

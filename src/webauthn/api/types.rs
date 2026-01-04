@@ -29,7 +29,7 @@ pub mod auth;
 pub mod register;
 
 /// WebAuthN extension state.
-#[derive(Debug)]
+#[derive()]
 pub struct ExtensionState {
     /// Provider.
     pub provider: SqlDriver,

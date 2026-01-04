@@ -66,8 +66,4 @@ mock! {
             params: &RoleAssignmentListParameters,
         ) -> Result<Vec<Assignment>, AssignmentProviderError>;
     }
-
-    impl Clone for AssignmentProvider {
-        fn clone(&self) -> Self;
-    }
 }

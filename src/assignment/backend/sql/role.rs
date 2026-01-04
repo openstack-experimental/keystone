@@ -16,10 +16,11 @@ use serde_json::Value;
 use tracing::error;
 
 mod create;
+mod get;
 mod list;
 
 pub use create::create;
-pub use list::get;
+pub use get::get;
 pub use list::list;
 
 use crate::assignment::backend::error::AssignmentDatabaseError;
@@ -55,110 +56,14 @@ impl TryFrom<db_role::Model> for Role {
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use sea_orm::{DatabaseBackend, MockDatabase, Transaction};
-
-    use crate::config::Config;
     use crate::db::entity::role;
 
-    use super::*;
-
-    pub fn get_role_mock<S: AsRef<str>>(id: S) -> role::Model {
+    pub fn get_role_mock<I: Into<String>, N: Into<String>>(id: I, name: N) -> role::Model {
         role::Model {
-            id: id.as_ref().into(),
+            id: id.into(),
             domain_id: "foo_domain".into(),
-            name: "foo".into(),
+            name: name.into(),
             ..Default::default()
         }
-    }
-
-    #[tokio::test]
-    async fn test_get() {
-        // Create MockDatabase with mock query results
-        let db = MockDatabase::new(DatabaseBackend::Postgres)
-            .append_query_results([
-                // First query result - select user itself
-                vec![get_role_mock("1")],
-            ])
-            .into_connection();
-        let config = Config::default();
-        assert_eq!(
-            get(&config, &db, "1").await.unwrap().unwrap(),
-            Role {
-                id: "1".into(),
-                domain_id: Some("foo_domain".into()),
-                name: "foo".to_owned(),
-                ..Default::default()
-            }
-        );
-
-        // Checking transaction log
-        assert_eq!(
-            db.into_transaction_log(),
-            [Transaction::from_sql_and_values(
-                DatabaseBackend::Postgres,
-                r#"SELECT "role"."id", "role"."name", "role"."extra", "role"."domain_id", "role"."description" FROM "role" WHERE "role"."id" = $1 LIMIT $2"#,
-                ["1".into(), 1u64.into()]
-            ),]
-        );
-    }
-
-    #[tokio::test]
-    async fn test_list() {
-        // Create MockDatabase with mock query results
-        let db = MockDatabase::new(DatabaseBackend::Postgres)
-            .append_query_results([
-                // First query result - select user itself
-                vec![get_role_mock("1")],
-            ])
-            .append_query_results([
-                // First query result - select user itself
-                vec![get_role_mock("1")],
-            ])
-            .append_query_results([
-                // First query result - select user itself
-                vec![get_role_mock("1")],
-            ])
-            .into_connection();
-        let config = Config::default();
-        assert!(
-            list(&config, &db, &RoleListParameters::default())
-                .await
-                .is_ok()
-        );
-        assert_eq!(
-            list(
-                &config,
-                &db,
-                &RoleListParameters {
-                    name: Some("foo".into()),
-                    domain_id: Some("foo_domain".into())
-                }
-            )
-            .await
-            .unwrap(),
-            vec![Role {
-                id: "1".into(),
-                domain_id: Some("foo_domain".into()),
-                name: "foo".to_owned(),
-                ..Default::default()
-            }]
-        );
-
-        // Checking transaction log
-        assert_eq!(
-            db.into_transaction_log(),
-            [
-                Transaction::from_sql_and_values(
-                    DatabaseBackend::Postgres,
-                    r#"SELECT "role"."id", "role"."name", "role"."extra", "role"."domain_id", "role"."description" FROM "role""#,
-                    []
-                ),
-                Transaction::from_sql_and_values(
-                    DatabaseBackend::Postgres,
-                    r#"SELECT "role"."id", "role"."name", "role"."extra", "role"."domain_id", "role"."description" FROM "role" WHERE "role"."domain_id" = $1 AND "role"."name" = $2"#,
-                    ["foo_domain".into(), "foo".into()]
-                ),
-            ]
-        );
     }
 }

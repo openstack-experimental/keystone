@@ -36,6 +36,7 @@
 //! `issued_before` field of the revocation record.
 
 use async_trait::async_trait;
+use std::sync::Arc;
 
 pub mod backend;
 pub mod error;
@@ -55,10 +56,10 @@ pub use mock::MockRevokeProvider;
 pub use types::*;
 
 /// Revoke provider.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct RevokeProvider {
     /// Backend driver.
-    backend_driver: Box<dyn RevokeBackend>,
+    backend_driver: Arc<dyn RevokeBackend>,
 }
 
 impl RevokeProvider {
@@ -66,12 +67,12 @@ impl RevokeProvider {
         config: &Config,
         plugin_manager: &PluginManager,
     ) -> Result<Self, RevokeProviderError> {
-        let mut backend_driver =
+        let backend_driver =
             if let Some(driver) = plugin_manager.get_revoke_backend(config.revoke.driver.clone()) {
                 driver.clone()
             } else {
                 match config.revoke.driver.as_str() {
-                    "sql" => Box::new(SqlBackend::default()),
+                    "sql" => Arc::new(SqlBackend::default()),
                     _ => {
                         return Err(RevokeProviderError::UnsupportedDriver(
                             config.revoke.driver.clone(),
@@ -79,7 +80,6 @@ impl RevokeProvider {
                     }
                 }
             };
-        backend_driver.set_config(config.clone());
         Ok(Self { backend_driver })
     }
 }

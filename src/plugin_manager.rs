@@ -25,11 +25,11 @@ use std::sync::Arc;
 
 use crate::application_credential::backend::ApplicationCredentialBackend;
 use crate::assignment::backend::AssignmentBackend;
-use crate::catalog::backends::CatalogBackend;
+use crate::catalog::backend::CatalogBackend;
 use crate::federation::backend::FederationBackend;
-use crate::identity::backends::IdentityBackend;
+use crate::identity::backend::IdentityBackend;
 use crate::identity_mapping::backend::IdentityMappingBackend;
-use crate::resource::types::ResourceBackend;
+use crate::resource::backend::ResourceBackend;
 use crate::revoke::backend::RevokeBackend;
 use crate::trust::backend::TrustBackend;
 
@@ -38,23 +38,23 @@ use crate::trust::backend::TrustBackend;
 #[derive(Clone, Default)]
 pub struct PluginManager {
     /// Application credentials backend plugin.
-    application_credential_backends: HashMap<String, Box<dyn ApplicationCredentialBackend>>,
+    application_credential_backends: HashMap<String, Arc<dyn ApplicationCredentialBackend>>,
     /// Assignments backend plugin.
-    assignment_backends: HashMap<String, Box<dyn AssignmentBackend>>,
+    assignment_backends: HashMap<String, Arc<dyn AssignmentBackend>>,
     /// Catalog backend plugins.
-    catalog_backends: HashMap<String, Box<dyn CatalogBackend>>,
+    catalog_backends: HashMap<String, Arc<dyn CatalogBackend>>,
     /// Federation backend plugins.
-    federation_backends: HashMap<String, Box<dyn FederationBackend>>,
+    federation_backends: HashMap<String, Arc<dyn FederationBackend>>,
     /// Identity backend plugins.
-    identity_backends: HashMap<String, Box<dyn IdentityBackend>>,
+    identity_backends: HashMap<String, Arc<dyn IdentityBackend>>,
     /// Identity mapping backend plugins.
     identity_mapping_backends: HashMap<String, Arc<dyn IdentityMappingBackend>>,
     /// Resource backend plugins.
-    resource_backends: HashMap<String, Box<dyn ResourceBackend>>,
+    resource_backends: HashMap<String, Arc<dyn ResourceBackend>>,
     /// Revoke backend plugins.
-    revoke_backends: HashMap<String, Box<dyn RevokeBackend>>,
+    revoke_backends: HashMap<String, Arc<dyn RevokeBackend>>,
     /// Trust backend plugins.
-    trust_backends: HashMap<String, Box<dyn TrustBackend>>,
+    trust_backends: HashMap<String, Arc<dyn TrustBackend>>,
 }
 
 impl PluginManager {
@@ -62,7 +62,7 @@ impl PluginManager {
     pub fn register_identity_backend<S: AsRef<str>>(
         &mut self,
         name: S,
-        plugin: Box<dyn IdentityBackend>,
+        plugin: Arc<dyn IdentityBackend>,
     ) {
         self.identity_backends
             .insert(name.as_ref().to_string(), plugin);
@@ -73,7 +73,7 @@ impl PluginManager {
     pub fn get_application_credential_backend<S: AsRef<str>>(
         &self,
         name: S,
-    ) -> Option<&Box<dyn ApplicationCredentialBackend>> {
+    ) -> Option<&Arc<dyn ApplicationCredentialBackend>> {
         self.application_credential_backends.get(name.as_ref())
     }
 
@@ -82,13 +82,13 @@ impl PluginManager {
     pub fn get_assignment_backend<S: AsRef<str>>(
         &self,
         name: S,
-    ) -> Option<&Box<dyn AssignmentBackend>> {
+    ) -> Option<&Arc<dyn AssignmentBackend>> {
         self.assignment_backends.get(name.as_ref())
     }
 
     /// Get registered catalog backend.
     #[allow(clippy::borrowed_box)]
-    pub fn get_catalog_backend<S: AsRef<str>>(&self, name: S) -> Option<&Box<dyn CatalogBackend>> {
+    pub fn get_catalog_backend<S: AsRef<str>>(&self, name: S) -> Option<&Arc<dyn CatalogBackend>> {
         self.catalog_backends.get(name.as_ref())
     }
 
@@ -97,7 +97,7 @@ impl PluginManager {
     pub fn get_federation_backend<S: AsRef<str>>(
         &self,
         name: S,
-    ) -> Option<&Box<dyn FederationBackend>> {
+    ) -> Option<&Arc<dyn FederationBackend>> {
         self.federation_backends.get(name.as_ref())
     }
 
@@ -106,7 +106,7 @@ impl PluginManager {
     pub fn get_identity_backend<S: AsRef<str>>(
         &self,
         name: S,
-    ) -> Option<&Box<dyn IdentityBackend>> {
+    ) -> Option<&Arc<dyn IdentityBackend>> {
         self.identity_backends.get(name.as_ref())
     }
 
@@ -124,19 +124,19 @@ impl PluginManager {
     pub fn get_resource_backend<S: AsRef<str>>(
         &self,
         name: S,
-    ) -> Option<&Box<dyn ResourceBackend>> {
+    ) -> Option<&Arc<dyn ResourceBackend>> {
         self.resource_backends.get(name.as_ref())
     }
 
     /// Get registered revoke backend.
     #[allow(clippy::borrowed_box)]
-    pub fn get_revoke_backend<S: AsRef<str>>(&self, name: S) -> Option<&Box<dyn RevokeBackend>> {
+    pub fn get_revoke_backend<S: AsRef<str>>(&self, name: S) -> Option<&Arc<dyn RevokeBackend>> {
         self.revoke_backends.get(name.as_ref())
     }
 
     /// Get registered trust backend.
     #[allow(clippy::borrowed_box)]
-    pub fn get_trust_backend<S: AsRef<str>>(&self, name: S) -> Option<&Box<dyn TrustBackend>> {
+    pub fn get_trust_backend<S: AsRef<str>>(&self, name: S) -> Option<&Arc<dyn TrustBackend>> {
         self.trust_backends.get(name.as_ref())
     }
 }

@@ -44,8 +44,4 @@ mock! {
             token: &Token,
         ) -> Result<(), RevokeProviderError>;
     }
-
-    impl Clone for RevokeProvider {
-        fn clone(&self) -> Self;
-    }
 }

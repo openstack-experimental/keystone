@@ -16,7 +16,7 @@ use thiserror::Error;
 
 use crate::common::password_hashing::PasswordHashError;
 use crate::error::BuilderError;
-use crate::identity::backends::error::*;
+use crate::identity::backend::error::*;
 use crate::resource::error::ResourceProviderError;
 
 /// Identity provider error.

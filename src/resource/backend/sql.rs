@@ -18,31 +18,22 @@ mod domain;
 mod project;
 
 use super::super::types::*;
-use crate::config::Config;
 use crate::keystone::ServiceState;
 use crate::resource::ResourceProviderError;
+use crate::resource::backend::ResourceBackend;
 
-#[derive(Clone, Debug, Default)]
-pub struct SqlBackend {
-    pub config: Config,
-}
-
-impl SqlBackend {}
+#[derive(Default)]
+pub struct SqlBackend {}
 
 #[async_trait]
 impl ResourceBackend for SqlBackend {
-    /// Set config
-    fn set_config(&mut self, config: Config) {
-        self.config = config;
-    }
-
     /// Get single domain by ID
     async fn get_domain<'a>(
         &self,
         state: &ServiceState,
         domain_id: &'a str,
     ) -> Result<Option<Domain>, ResourceProviderError> {
-        Ok(domain::get_domain_by_id(&self.config, &state.db, domain_id).await?)
+        Ok(domain::get_domain_by_id(&state.db, domain_id).await?)
     }
 
     /// Get single domain by Name
@@ -51,7 +42,7 @@ impl ResourceBackend for SqlBackend {
         state: &ServiceState,
         domain_name: &'a str,
     ) -> Result<Option<Domain>, ResourceProviderError> {
-        Ok(domain::get_domain_by_name(&self.config, &state.db, domain_name).await?)
+        Ok(domain::get_domain_by_name(&state.db, domain_name).await?)
     }
 
     /// Get single project by ID
@@ -60,7 +51,7 @@ impl ResourceBackend for SqlBackend {
         state: &ServiceState,
         project_id: &'a str,
     ) -> Result<Option<Project>, ResourceProviderError> {
-        Ok(project::get_project(&self.config, &state.db, project_id).await?)
+        Ok(project::get_project(&state.db, project_id).await?)
     }
 
     /// Get single project by Name and Domain ID
@@ -70,7 +61,7 @@ impl ResourceBackend for SqlBackend {
         name: &'a str,
         domain_id: &'a str,
     ) -> Result<Option<Project>, ResourceProviderError> {
-        Ok(project::get_project_by_name(&self.config, &state.db, name, domain_id).await?)
+        Ok(project::get_project_by_name(&state.db, name, domain_id).await?)
     }
 
     /// Get project parents

@@ -22,7 +22,7 @@ use crate::identity::types::{group::*, user::*};
 use crate::keystone::ServiceState;
 
 #[async_trait]
-pub trait IdentityApi: Send + Sync + Clone {
+pub trait IdentityApi: Send + Sync {
     async fn authenticate_by_password(
         &self,
         state: &ServiceState,

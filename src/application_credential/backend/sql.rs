@@ -18,26 +18,17 @@ use super::super::types::*;
 use crate::application_credential::{
     ApplicationCredentialProviderError, backend::ApplicationCredentialBackend,
 };
-use crate::config::Config;
 use crate::keystone::ServiceState;
 
 mod application_credential;
 
 /// SQL backend provider implementing the ApplicationCredentialBackend
 /// interface.
-#[derive(Clone, Debug, Default)]
-pub struct SqlBackend {
-    /// Config.
-    pub config: Config,
-}
+#[derive(Default)]
+pub struct SqlBackend {}
 
 #[async_trait]
 impl ApplicationCredentialBackend for SqlBackend {
-    /// Set config
-    fn set_config(&mut self, config: Config) {
-        self.config = config;
-    }
-
     /// Create a new application credential.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn create_application_credential(

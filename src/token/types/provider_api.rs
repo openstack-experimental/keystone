@@ -23,7 +23,7 @@ use super::*;
 
 /// Token Provider interface.
 #[async_trait]
-pub trait TokenApi: Send + Sync + Clone {
+pub trait TokenApi: Send + Sync {
     /// Authenticate using the existing token.
     async fn authenticate_by_token<'a>(
         &self,

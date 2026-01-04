@@ -176,9 +176,4 @@ mock! {
             last_verified: Option<&'a DateTime<Utc>>,
         ) -> Result<(), IdentityProviderError>;
     }
-
-    impl Clone for IdentityProvider {
-        fn clone(&self) -> Self;
-    }
-
 }

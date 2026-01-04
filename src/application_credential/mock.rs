@@ -47,8 +47,4 @@ mock! {
             params: &ApplicationCredentialListParameters,
         ) -> Result<Vec<ApplicationCredential>, ApplicationCredentialProviderError>;
     }
-
-    impl Clone for ApplicationCredentialProvider {
-        fn clone(&self) -> Self;
-    }
 }

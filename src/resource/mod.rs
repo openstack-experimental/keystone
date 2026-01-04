@@ -31,103 +31,28 @@
 //! on the service operator, a project might map to a customer, account,
 //! organization, or tenant.
 use async_trait::async_trait;
-#[cfg(test)]
-use mockall::mock;
+use std::sync::Arc;
 
 pub mod backend;
 pub mod error;
+#[cfg(test)]
+mod mock;
 pub mod types;
 
 use crate::config::Config;
 use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManager;
-use crate::resource::backend::sql::SqlBackend;
+use crate::resource::backend::{ResourceBackend, sql::SqlBackend};
 use crate::resource::error::ResourceProviderError;
-use crate::resource::types::{Domain, Project, ResourceBackend};
-
-#[derive(Clone, Debug)]
-pub struct ResourceProvider {
-    backend_driver: Box<dyn ResourceBackend>,
-}
-
-#[async_trait]
-pub trait ResourceApi: Send + Sync + Clone {
-    async fn get_domain<'a>(
-        &self,
-        state: &ServiceState,
-        domain_id: &'a str,
-    ) -> Result<Option<Domain>, ResourceProviderError>;
-
-    async fn find_domain_by_name<'a>(
-        &self,
-        state: &ServiceState,
-        domain_name: &'a str,
-    ) -> Result<Option<Domain>, ResourceProviderError>;
-
-    async fn get_project<'a>(
-        &self,
-        state: &ServiceState,
-        project_id: &'a str,
-    ) -> Result<Option<Project>, ResourceProviderError>;
-
-    async fn get_project_by_name<'a>(
-        &self,
-        state: &ServiceState,
-        name: &'a str,
-        domain_id: &'a str,
-    ) -> Result<Option<Project>, ResourceProviderError>;
-
-    /// Get project parents
-    async fn get_project_parents<'a>(
-        &self,
-        state: &ServiceState,
-        project_id: &'a str,
-    ) -> Result<Option<Vec<Project>>, ResourceProviderError>;
-}
+use crate::resource::types::{Domain, Project};
 
 #[cfg(test)]
-mock! {
-    pub ResourceProvider {
-        pub fn new(cfg: &Config, plugin_manager: &PluginManager) -> Result<Self, ResourceProviderError>;
-    }
+pub use mock::MockResourceProvider;
+pub use types::ResourceApi;
 
-    #[async_trait]
-    impl ResourceApi for ResourceProvider {
-        async fn get_domain<'a>(
-            &self,
-            state: &ServiceState,
-            domain_id: &'a str,
-        ) -> Result<Option<Domain>, ResourceProviderError>;
-
-        async fn find_domain_by_name<'a>(
-            &self,
-            state: &ServiceState,
-            domain_name: &'a str,
-        ) -> Result<Option<Domain>, ResourceProviderError>;
-
-        async fn get_project<'a>(
-            &self,
-            state: &ServiceState,
-            project_id: &'a str,
-        ) -> Result<Option<Project>, ResourceProviderError>;
-
-        async fn get_project_by_name<'a>(
-            &self,
-            state: &ServiceState,
-            name: &'a str,
-            domain_id: &'a str,
-        ) -> Result<Option<Project>, ResourceProviderError>;
-
-        async fn get_project_parents<'a>(
-            &self,
-            state: &ServiceState,
-            project_id: &'a str,
-        ) -> Result<Option<Vec<Project>>, ResourceProviderError>;
-    }
-
-    impl Clone for ResourceProvider {
-        fn clone(&self) -> Self;
-    }
+#[derive(Clone)]
+pub struct ResourceProvider {
+    backend_driver: Arc<dyn ResourceBackend>,
 }
 
 impl ResourceProvider {
@@ -135,13 +60,13 @@ impl ResourceProvider {
         config: &Config,
         plugin_manager: &PluginManager,
     ) -> Result<Self, ResourceProviderError> {
-        let mut backend_driver = if let Some(driver) =
+        let backend_driver = if let Some(driver) =
             plugin_manager.get_resource_backend(config.resource.driver.clone())
         {
             driver.clone()
         } else {
             match config.resource.driver.as_str() {
-                "sql" => Box::new(SqlBackend::default()),
+                "sql" => Arc::new(SqlBackend::default()),
                 _ => {
                     return Err(ResourceProviderError::UnsupportedDriver(
                         config.resource.driver.clone(),
@@ -149,7 +74,6 @@ impl ResourceProvider {
                 }
             }
         };
-        backend_driver.set_config(config.clone());
         Ok(Self { backend_driver })
     }
 }

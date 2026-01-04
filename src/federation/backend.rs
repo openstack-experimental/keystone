@@ -13,7 +13,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use async_trait::async_trait;
-use dyn_clone::DynClone;
 
 use crate::federation::FederationProviderError;
 use crate::federation::types::*;
@@ -25,8 +24,9 @@ pub mod sql;
 pub use sql::SqlBackend;
 
 /// Backend driver interface for the Federation Provider.
+#[cfg_attr(test, mockall::automock)]
 #[async_trait]
-pub trait FederationBackend: DynClone + Send + Sync + std::fmt::Debug {
+pub trait FederationBackend: Send + Sync {
     /// Cleanup expired resources.
     async fn cleanup(&self, state: &ServiceState) -> Result<(), FederationProviderError>;
 
@@ -123,5 +123,3 @@ pub trait FederationBackend: DynClone + Send + Sync + std::fmt::Debug {
         idp: MappingUpdate,
     ) -> Result<Mapping, FederationProviderError>;
 }
-
-dyn_clone::clone_trait_object!(FederationBackend);

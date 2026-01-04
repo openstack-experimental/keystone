@@ -25,7 +25,7 @@ use crate::webauthn::{
 };
 
 /// Sql driver for the WebAuthN extension.
-#[derive(Clone, Debug, Default)]
+#[derive(Default)]
 pub struct SqlDriver {}
 
 #[async_trait]
@@ -88,7 +88,7 @@ impl WebauthnApi for SqlDriver {
         &self,
         state: &ServiceState,
         user_id: &'a str,
-    ) -> Result<impl IntoIterator<Item = Passkey>, WebauthnError> {
+    ) -> Result<Vec<Passkey>, WebauthnError> {
         credential::list(&state.db, user_id).await
     }
 

@@ -18,12 +18,10 @@ use sea_orm::query::*;
 
 use crate::db::entity::{prelude::Project as DbProject, project as db_project};
 use crate::error::DbContextExt;
-use crate::resource::Config;
 use crate::resource::backend::error::ResourceDatabaseError;
 use crate::resource::types::Project;
 
 pub async fn get_project<I: AsRef<str>>(
-    _conf: &Config,
     db: &DatabaseConnection,
     id: I,
 ) -> Result<Option<Project>, ResourceDatabaseError> {
@@ -38,7 +36,6 @@ pub async fn get_project<I: AsRef<str>>(
 }
 
 pub async fn get_project_by_name<N: AsRef<str>, D: AsRef<str>>(
-    _conf: &Config,
     db: &DatabaseConnection,
     name: N,
     domain_id: D,

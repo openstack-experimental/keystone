@@ -55,6 +55,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use std::collections::HashSet;
 use std::hash::RandomState;
+use std::sync::Arc;
 use tracing::debug;
 
 pub mod api;
@@ -75,26 +76,25 @@ pub use mock::MockTrustProvider;
 pub use types::*;
 
 /// Trust provider.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct TrustProvider {
     /// Backend driver.
-    backend_driver: Box<dyn TrustBackend>,
+    backend_driver: Arc<dyn TrustBackend>,
 }
 
 impl TrustProvider {
     pub fn new(config: &Config, plugin_manager: &PluginManager) -> Result<Self, TrustError> {
-        let mut backend_driver =
+        let backend_driver =
             if let Some(driver) = plugin_manager.get_trust_backend(config.trust.driver.clone()) {
                 driver.clone()
             } else {
                 match config.trust.driver.as_str() {
-                    "sql" => Box::new(SqlBackend::default()),
+                    "sql" => Arc::new(SqlBackend::default()),
                     _ => {
                         return Err(TrustError::UnsupportedDriver(config.trust.driver.clone()));
                     }
                 }
             };
-        backend_driver.set_config(config.clone());
         Ok(Self { backend_driver })
     }
 }
@@ -268,7 +268,7 @@ mod tests {
             });
 
         let trust_provider = TrustProvider {
-            backend_driver: Box::new(backend),
+            backend_driver: Arc::new(backend),
         };
 
         let trust: Trust = trust_provider
@@ -302,7 +302,7 @@ mod tests {
             });
 
         let trust_provider = TrustProvider {
-            backend_driver: Box::new(backend),
+            backend_driver: Arc::new(backend),
         };
 
         let chain = trust_provider
@@ -329,7 +329,7 @@ mod tests {
             });
 
         let trust_provider = TrustProvider {
-            backend_driver: Box::new(backend),
+            backend_driver: Arc::new(backend),
         };
         let trust = trust_provider
             .get_trust(&state, "fake_trust")
@@ -374,7 +374,7 @@ mod tests {
             });
 
         let trust_provider = TrustProvider {
-            backend_driver: Box::new(backend),
+            backend_driver: Arc::new(backend),
         };
         let trust = trust_provider
             .get_trust(&state, "redelegated_trust")
@@ -426,7 +426,7 @@ mod tests {
             });
 
         let trust_provider = TrustProvider {
-            backend_driver: Box::new(backend),
+            backend_driver: Arc::new(backend),
         };
         let trust = trust_provider
             .get_trust(&state, "redelegated_trust2")
@@ -488,7 +488,7 @@ mod tests {
             });
 
         let trust_provider = TrustProvider {
-            backend_driver: Box::new(backend),
+            backend_driver: Arc::new(backend),
         };
         let trust = trust_provider
             .get_trust(&state, "redelegated_trust")
@@ -544,7 +544,7 @@ mod tests {
             });
 
         let trust_provider = TrustProvider {
-            backend_driver: Box::new(backend),
+            backend_driver: Arc::new(backend),
         };
         let trust = trust_provider
             .get_trust(&state, "redelegated_trust2")
@@ -640,7 +640,7 @@ mod tests {
             });
 
         let trust_provider = TrustProvider {
-            backend_driver: Box::new(backend),
+            backend_driver: Arc::new(backend),
         };
         let trust = trust_provider
             .get_trust(&state, "redelegated_trust2")
@@ -699,7 +699,7 @@ mod tests {
             });
 
         let trust_provider = TrustProvider {
-            backend_driver: Box::new(backend),
+            backend_driver: Arc::new(backend),
         };
 
         let list = trust_provider

@@ -14,36 +14,8 @@
 //! # Application credential related types
 mod access_rule;
 mod application_credential;
-
-use async_trait::async_trait;
-
-use crate::application_credential::error::ApplicationCredentialProviderError;
-use crate::keystone::ServiceState;
+mod provider_api;
 
 pub use access_rule::*;
 pub use application_credential::*;
-
-/// Application credentials API.
-#[async_trait]
-pub trait ApplicationCredentialApi: Send + Sync + Clone {
-    /// Create a new application credential.
-    async fn create_application_credential(
-        &self,
-        state: &ServiceState,
-        rec: ApplicationCredentialCreate,
-    ) -> Result<ApplicationCredentialCreateResponse, ApplicationCredentialProviderError>;
-
-    /// Get a single application credential by ID.
-    async fn get_application_credential<'a>(
-        &self,
-        state: &ServiceState,
-        id: &'a str,
-    ) -> Result<Option<ApplicationCredential>, ApplicationCredentialProviderError>;
-
-    /// List application credentials.
-    async fn list_application_credentials(
-        &self,
-        state: &ServiceState,
-        params: &ApplicationCredentialListParameters,
-    ) -> Result<impl IntoIterator<Item = ApplicationCredential>, ApplicationCredentialProviderError>;
-}
+pub use provider_api::*;

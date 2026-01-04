@@ -31,15 +31,16 @@
 //! Image service (glance), that provides one or more endpoints through which
 //! users can access resources and perform operations.
 use async_trait::async_trait;
+use std::sync::Arc;
 
-pub mod backends;
+pub mod backend;
 pub mod error;
 #[cfg(test)]
 mod mock;
 pub mod types;
 
-use crate::catalog::backends::CatalogBackend;
-use crate::catalog::backends::sql::SqlBackend;
+use crate::catalog::backend::CatalogBackend;
+use crate::catalog::backend::sql::SqlBackend;
 use crate::catalog::error::CatalogProviderError;
 use crate::config::Config;
 use crate::keystone::ServiceState;
@@ -51,9 +52,9 @@ pub use types::CatalogApi;
 
 use types::*;
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct CatalogProvider {
-    backend_driver: Box<dyn CatalogBackend>,
+    backend_driver: Arc<dyn CatalogBackend>,
 }
 
 impl CatalogProvider {
@@ -61,13 +62,13 @@ impl CatalogProvider {
         config: &Config,
         plugin_manager: &PluginManager,
     ) -> Result<Self, CatalogProviderError> {
-        let mut backend_driver = if let Some(driver) =
+        let backend_driver = if let Some(driver) =
             plugin_manager.get_catalog_backend(config.catalog.driver.clone())
         {
             driver.clone()
         } else {
             match config.resource.driver.as_str() {
-                "sql" => Box::new(SqlBackend::default()),
+                "sql" => Arc::new(SqlBackend::default()),
                 _ => {
                     return Err(CatalogProviderError::UnsupportedDriver(
                         config.resource.driver.clone(),
@@ -75,7 +76,6 @@ impl CatalogProvider {
                 }
             }
         };
-        backend_driver.set_config(config.clone());
         Ok(Self { backend_driver })
     }
 }

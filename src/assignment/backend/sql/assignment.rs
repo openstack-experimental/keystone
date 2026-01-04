@@ -147,13 +147,14 @@ mod tests {
     use sea_orm::Value;
     use std::collections::BTreeMap;
 
+    use super::super::role::tests::get_role_mock;
     use crate::db::entity::{
         assignment, implied_role, role, sea_orm_active_enums, system_assignment,
     };
 
-    pub(super) fn get_role_assignment_mock<S: AsRef<str>>(role_id: S) -> assignment::Model {
+    pub(super) fn get_role_assignment_mock<S: Into<String>>(role_id: S) -> assignment::Model {
         assignment::Model {
-            role_id: role_id.as_ref().to_string(),
+            role_id: role_id.into(),
             actor_id: "actor".into(),
             target_id: "target".into(),
             r#type: sea_orm_active_enums::Type::UserProject,
@@ -161,11 +162,11 @@ mod tests {
         }
     }
 
-    pub(super) fn get_role_system_assignment_mock<S: AsRef<str>>(
+    pub(super) fn get_role_system_assignment_mock<S: Into<String>>(
         role_id: S,
     ) -> system_assignment::Model {
         system_assignment::Model {
-            role_id: role_id.as_ref().to_string(),
+            role_id: role_id.into(),
             actor_id: "actor".into(),
             target_id: "system".into(),
             r#type: "UserSystem".into(),
@@ -173,7 +174,7 @@ mod tests {
         }
     }
 
-    pub(super) fn get_role_mock<SI: AsRef<str>, SN: AsRef<str>>(
+    pub(super) fn get_short_role_mock<SI: AsRef<str>, SN: AsRef<str>>(
         role_id: SI,
         role_name: SN,
     ) -> BTreeMap<String, Value> {
@@ -200,20 +201,8 @@ mod tests {
         role_id: S,
     ) -> (assignment::Model, role::Model) {
         (
-            assignment::Model {
-                role_id: role_id.as_ref().to_string(),
-                actor_id: "actor".into(),
-                target_id: "target".into(),
-                r#type: sea_orm_active_enums::Type::UserProject,
-                inherited: false,
-            },
-            role::Model {
-                id: role_id.as_ref().to_string(),
-                name: role_id.as_ref().to_string(),
-                extra: None,
-                domain_id: String::new(),
-                description: None,
-            },
+            get_role_assignment_mock(role_id.as_ref()),
+            get_role_mock(role_id.as_ref(), role_id.as_ref()),
         )
     }
 
@@ -221,20 +210,8 @@ mod tests {
         role_id: S,
     ) -> (system_assignment::Model, role::Model) {
         (
-            system_assignment::Model {
-                role_id: role_id.as_ref().to_string(),
-                actor_id: "actor".into(),
-                target_id: "system".into(),
-                r#type: "UserSystem".into(),
-                inherited: false,
-            },
-            role::Model {
-                id: role_id.as_ref().to_string(),
-                name: role_id.as_ref().to_string(),
-                extra: None,
-                domain_id: String::new(),
-                description: None,
-            },
+            get_role_system_assignment_mock(role_id.as_ref()),
+            get_role_mock(role_id.as_ref(), role_id.as_ref()),
         )
     }
 }

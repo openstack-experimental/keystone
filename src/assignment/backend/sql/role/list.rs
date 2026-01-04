@@ -18,23 +18,10 @@ use sea_orm::query::*;
 
 use crate::assignment::backend::error::AssignmentDatabaseError;
 use crate::assignment::types::*;
-use crate::config::Config;
 use crate::db::entity::{prelude::Role as DbRole, role as db_role};
 use crate::error::DbContextExt;
 
-pub async fn get<I: AsRef<str>>(
-    _conf: &Config,
-    db: &DatabaseConnection,
-    id: I,
-) -> Result<Option<Role>, AssignmentDatabaseError> {
-    let role_select = DbRole::find_by_id(id.as_ref());
-
-    let entry: Option<db_role::Model> = role_select.one(db).await.context("fetching role by id")?;
-    entry.map(TryInto::try_into).transpose()
-}
-
 pub async fn list(
-    _conf: &Config,
     db: &DatabaseConnection,
     params: &RoleListParameters,
 ) -> Result<Vec<Role>, AssignmentDatabaseError> {
@@ -60,56 +47,8 @@ pub async fn list(
 pub(super) mod tests {
     use sea_orm::{DatabaseBackend, MockDatabase, Transaction};
 
-    use crate::config::Config;
-    use crate::db::entity::role;
-
+    use super::super::tests::get_role_mock;
     use super::*;
-
-    pub(crate) fn get_role_mock<I>(id: I) -> role::Model
-    where
-        I: AsRef<str>,
-    {
-        let id_str = id.as_ref();
-
-        role::Model {
-            id: id_str.to_string(),
-            domain_id: "foo_domain".into(),
-            name: "foo".into(),
-            description: None,
-            extra: None,
-        }
-    }
-
-    #[tokio::test]
-    async fn test_get() {
-        // Create MockDatabase with mock query results
-        let db = MockDatabase::new(DatabaseBackend::Postgres)
-            .append_query_results([
-                // First query result - select user itself
-                vec![get_role_mock("1")],
-            ])
-            .into_connection();
-        let config = Config::default();
-        assert_eq!(
-            get(&config, &db, "1").await.unwrap().unwrap(),
-            Role {
-                id: "1".into(),
-                domain_id: Some("foo_domain".into()),
-                name: "foo".to_owned(),
-                ..Default::default()
-            }
-        );
-
-        // Checking transaction log
-        assert_eq!(
-            db.into_transaction_log(),
-            [Transaction::from_sql_and_values(
-                DatabaseBackend::Postgres,
-                r#"SELECT "role"."id", "role"."name", "role"."extra", "role"."domain_id", "role"."description" FROM "role" WHERE "role"."id" = $1 LIMIT $2"#,
-                ["1".into(), 1u64.into()]
-            ),]
-        );
-    }
 
     #[tokio::test]
     async fn test_list() {
@@ -117,26 +56,20 @@ pub(super) mod tests {
         let db = MockDatabase::new(DatabaseBackend::Postgres)
             .append_query_results([
                 // First query result - select user itself
-                vec![get_role_mock("1")],
+                vec![get_role_mock("1", "foo")],
             ])
             .append_query_results([
                 // First query result - select user itself
-                vec![get_role_mock("1")],
+                vec![get_role_mock("1", "foo")],
             ])
             .append_query_results([
                 // First query result - select user itself
-                vec![get_role_mock("1")],
+                vec![get_role_mock("1", "foo")],
             ])
             .into_connection();
-        let config = Config::default();
-        assert!(
-            list(&config, &db, &RoleListParameters::default())
-                .await
-                .is_ok()
-        );
+        assert!(list(&db, &RoleListParameters::default()).await.is_ok());
         assert_eq!(
             list(
-                &config,
                 &db,
                 &RoleListParameters {
                     name: Some("foo".into()),

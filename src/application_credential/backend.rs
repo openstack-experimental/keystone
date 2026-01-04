@@ -16,21 +16,17 @@ pub mod error;
 pub mod sql;
 
 use async_trait::async_trait;
-use dyn_clone::DynClone;
 
 use crate::application_credential::ApplicationCredentialProviderError;
 use crate::application_credential::types::*;
-use crate::config::Config;
 use crate::keystone::ServiceState;
 
 pub use sql::SqlBackend;
 
 /// Application Credential backend driver interface.
+#[cfg_attr(test, mockall::automock)]
 #[async_trait]
-pub trait ApplicationCredentialBackend: DynClone + Send + Sync + std::fmt::Debug {
-    /// Set config
-    fn set_config(&mut self, config: Config);
-
+pub trait ApplicationCredentialBackend: Send + Sync {
     /// Create a new application credential.
     async fn create_application_credential(
         &self,
@@ -52,5 +48,3 @@ pub trait ApplicationCredentialBackend: DynClone + Send + Sync + std::fmt::Debug
         params: &ApplicationCredentialListParameters,
     ) -> Result<Vec<ApplicationCredential>, ApplicationCredentialProviderError>;
 }
-
-dyn_clone::clone_trait_object!(ApplicationCredentialBackend);

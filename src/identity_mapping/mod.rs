@@ -14,8 +14,8 @@
 
 //! # Identity mapping provider
 //!
-//! Identity mapping provider provides a mapping of the entity ID between Keystone and the remote
-//! system (i.e. LDAP, IdP, OpenFGA, SCIM, etc).
+//! Identity mapping provider provides a mapping of the entity ID between
+//! Keystone and the remote system (i.e. LDAP, IdP, OpenFGA, SCIM, etc).
 
 use async_trait::async_trait;
 use std::sync::Arc;

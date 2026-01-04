@@ -16,7 +16,6 @@
 use async_trait::async_trait;
 
 use super::RevokeBackend;
-use crate::config::Config;
 use crate::db::entity::revocation_event as db_revocation_event;
 use crate::keystone::ServiceState;
 use crate::revoke::RevokeProviderError;
@@ -28,12 +27,8 @@ mod create;
 mod list;
 
 /// Sql Database revocation backend.
-#[derive(Clone, Debug, Default)]
-pub struct SqlBackend {
-    pub config: Config,
-}
-
-impl SqlBackend {}
+#[derive(Default)]
+pub struct SqlBackend {}
 
 impl TryFrom<db_revocation_event::Model> for RevocationEvent {
     type Error = RevokeDatabaseError;
@@ -57,11 +52,6 @@ impl TryFrom<db_revocation_event::Model> for RevocationEvent {
 
 #[async_trait]
 impl RevokeBackend for SqlBackend {
-    /// Set config.
-    fn set_config(&mut self, config: Config) {
-        self.config = config;
-    }
-
     /// Check the token for being revoked.
     ///
     /// List not expired revocation records that invalidate the token and

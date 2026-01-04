@@ -54,8 +54,4 @@ mock! {
             trust: &Trust,
         ) -> Result<bool, TrustError>;
     }
-
-    impl Clone for TrustProvider {
-        fn clone(&self) -> Self;
-    }
 }

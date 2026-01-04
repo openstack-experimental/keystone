@@ -12,46 +12,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use async_trait::async_trait;
+mod endpoint;
+mod provider_api;
+mod service;
 
-pub mod endpoint;
-pub mod service;
-
-use crate::catalog::CatalogProviderError;
-use crate::keystone::ServiceState;
-
-pub use endpoint::*;
-pub use service::*;
-
-#[async_trait]
-pub trait CatalogApi: Send + Sync + Clone {
-    async fn list_services(
-        &self,
-        state: &ServiceState,
-        params: &ServiceListParameters,
-    ) -> Result<Vec<Service>, CatalogProviderError>;
-
-    async fn get_service<'a>(
-        &self,
-        state: &ServiceState,
-        id: &'a str,
-    ) -> Result<Option<Service>, CatalogProviderError>;
-
-    async fn list_endpoints(
-        &self,
-        state: &ServiceState,
-        params: &EndpointListParameters,
-    ) -> Result<Vec<Endpoint>, CatalogProviderError>;
-
-    async fn get_endpoint<'a>(
-        &self,
-        state: &ServiceState,
-        id: &'a str,
-    ) -> Result<Option<Endpoint>, CatalogProviderError>;
-
-    async fn get_catalog(
-        &self,
-        state: &ServiceState,
-        enabled: bool,
-    ) -> Result<Vec<(Service, Vec<Endpoint>)>, CatalogProviderError>;
-}
+pub use provider_api::*;
