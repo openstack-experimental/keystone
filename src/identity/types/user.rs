@@ -216,6 +216,28 @@ pub struct UserListParameters {
     #[builder(default)]
     #[validate(length(max = 64))]
     pub unique_id: Option<String>,
+    /// Filter users by User Type (local, federated, nonlocal, all).
+    #[builder(default)]
+    #[serde(default, rename = "type")]
+    pub user_type: Option<UserType>,
+}
+
+/// User type for filtering.
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq, Hash, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum UserType {
+    /// All users (default behavior).
+    #[default]
+    All,
+
+    /// Federated users only (authenticated via external IdP).
+    Federated,
+
+    /// Local users only (with passwords).
+    Local,
+
+    /// Non-local users (users without local authentication).
+    NonLocal,
 }
 
 /// User password information.

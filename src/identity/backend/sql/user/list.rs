@@ -60,11 +60,12 @@ pub async fn list(
     let db_users: Vec<db_user::Model> = user_select.all(db).await.context("fetching users data")?;
     let count_of_users_selected = db_users.len();
 
+    let user_type = params.user_type.unwrap_or(UserType::All);
     let (user_opts, local_users, nonlocal_users, federated_users) = tokio::join!(
         db_users.load_many(DbUserOption, db),
         // Load local users when requested, otherwise return empty results list
         async {
-            if true {
+            if user_type == UserType::Local || user_type == UserType::All {
                 db_users.load_one(local_user_select, db).await
             } else {
                 Ok(vec![None; count_of_users_selected])
@@ -72,7 +73,7 @@ pub async fn list(
         },
         // Load nonlocal users when requested
         async {
-            if true {
+            if user_type == UserType::NonLocal || user_type == UserType::All {
                 db_users.load_one(nonlocal_user_select, db).await
             } else {
                 Ok(vec![None; count_of_users_selected])
@@ -80,7 +81,7 @@ pub async fn list(
         },
         // Load federated users when requested
         async {
-            if true {
+            if user_type == UserType::Federated || user_type == UserType::All {
                 db_users.load_many(federated_user_select, db).await
             } else {
                 Ok(vec![Vec::new(); count_of_users_selected])
@@ -92,15 +93,19 @@ pub async fn list(
 
     // For local users fetch passwords to determine password expiration
     let local_users_passwords: Vec<Option<Vec<db_password::Model>>> =
-        local_user::load_local_users_passwords(
-            db,
-            locals
-                .iter()
-                .cloned()
-                .map(|u| u.map(|x| x.id))
-                .collect::<Vec<_>>(),
-        )
-        .await?;
+        if user_type == UserType::Local || user_type == UserType::All {
+            local_user::load_local_users_passwords(
+                db,
+                locals
+                    .iter()
+                    .cloned()
+                    .map(|u| u.map(|x| x.id))
+                    .collect::<Vec<_>>(),
+            )
+            .await?
+        } else {
+            vec![None; count_of_users_selected]
+        };
 
     // Determine the date for which users with the last activity earlier than are
     // determined as inactive.
@@ -231,5 +236,179 @@ mod tests {
                 r.statements().iter().map(|x| x.sql.clone()).collect::<Vec<_>>()
             );
         }
+    }
+
+    #[tokio::test]
+    async fn test_list_local_only() {
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([vec![
+                // local user
+                get_user_mock("1"),
+                // nonlocal user
+                get_user_mock("2"),
+                // federated user
+                get_user_mock("3"),
+                // a "bad" user with no user detail records
+                get_user_mock("4"),
+            ]])
+            .append_query_results([[get_user_options_mock("1", &UserOptions::default())]
+                .into_iter()
+                .flatten()])
+            .append_query_results([vec![get_local_user_mock("1")]])
+            .append_query_results([vec![db_password::Model::default()]])
+            .into_connection();
+
+        let config = Config::default();
+        let res = list(
+            &config,
+            &db,
+            &UserListParameters {
+                user_type: Some(UserType::Local),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(res.len(), 1, "1 local user found");
+        for (l,r) in db.into_transaction_log().iter().zip([
+                Transaction::from_sql_and_values(
+                    DatabaseBackend::Postgres,
+                    r#"SELECT "user"."id", "user"."extra", "user"."enabled", "user"."default_project_id", "user"."created_at", "user"."last_active_at", "user"."domain_id" FROM "user""#,
+                    []
+                ),
+                Transaction::from_sql_and_values(
+                    DatabaseBackend::Postgres,
+                    r#"SELECT "user_option"."user_id", "user_option"."option_id", "user_option"."option_value" FROM "user_option" WHERE "user_option"."user_id" IN ($1, $2, $3, $4)"#,
+                    []
+                ),
+                Transaction::from_sql_and_values(
+                    DatabaseBackend::Postgres,
+                    r#"SELECT "local_user"."id", "local_user"."user_id", "local_user"."domain_id", "local_user"."name", "local_user"."failed_auth_count", "local_user"."failed_auth_at" FROM "local_user" WHERE ("local_user"."user_id", "local_user"."domain_id") IN (($1, $2), ($3, $4), ($5, $6), ($7, $8))"#,
+                    []
+                ),
+                Transaction::from_sql_and_values(
+                    DatabaseBackend::Postgres,
+                    r#"SELECT "password"."id", "password"."local_user_id", "password"."self_service", "password"."created_at", "password"."expires_at", "password"."password_hash", "password"."created_at_int", "password"."expires_at_int" FROM "password" WHERE "password"."local_user_id" IN ($1) ORDER BY "password"."created_at_int" DESC"#,
+                    []
+                ),
+            ]) {
+            assert_eq!(
+                l.statements().iter().map(|x| x.sql.clone()).collect::<Vec<_>>(),
+                r.statements().iter().map(|x| x.sql.clone()).collect::<Vec<_>>()
+            );
+        }
+    }
+
+    #[tokio::test]
+
+    async fn test_list_nonlocal_only() {
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([vec![
+                // local user
+                get_user_mock("1"),
+                // nonlocal user
+                get_user_mock("2"),
+                // federated user
+                get_user_mock("3"),
+                // a "bad" user with no user detail records
+                get_user_mock("4"),
+            ]])
+            .append_query_results([[get_user_options_mock("2", &UserOptions::default())]
+                .into_iter()
+                .flatten()])
+            .append_query_results([vec![get_nonlocal_user_mock("2")]])
+            .into_connection();
+
+        let config = Config::default();
+        let res = list(
+            &config,
+            &db,
+            &UserListParameters {
+                user_type: Some(UserType::NonLocal),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(res.len(), 1, "1 nonlocal user found");
+
+        for (l,r) in db.into_transaction_log().iter().zip([
+                Transaction::from_sql_and_values(
+                    DatabaseBackend::Postgres,
+                    r#"SELECT "user"."id", "user"."extra", "user"."enabled", "user"."default_project_id", "user"."created_at", "user"."last_active_at", "user"."domain_id" FROM "user""#,
+                    []
+                ),
+                Transaction::from_sql_and_values(
+                    DatabaseBackend::Postgres,
+                    r#"SELECT "user_option"."user_id", "user_option"."option_id", "user_option"."option_value" FROM "user_option" WHERE "user_option"."user_id" IN ($1, $2, $3, $4)"#,
+                    []
+                ),
+                Transaction::from_sql_and_values(
+                    DatabaseBackend::Postgres,
+                    r#"SELECT "nonlocal_user"."domain_id", "nonlocal_user"."name", "nonlocal_user"."user_id" FROM "nonlocal_user" WHERE ("nonlocal_user"."user_id", "nonlocal_user"."domain_id") IN (($1, $2), ($3, $4), ($5, $6), ($7, $8))"#,
+                    []
+                ),
+            ]) {
+            assert_eq!(
+                l.statements().iter().map(|x| x.sql.clone()).collect::<Vec<_>>(),
+                r.statements().iter().map(|x| x.sql.clone()).collect::<Vec<_>>()
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_list_federated_only() {
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([vec![
+                // local user
+                get_user_mock("1"),
+                // nonlocal user
+                get_user_mock("2"),
+                // federated user
+                get_user_mock("3"),
+                // a "bad" user with no user detail records
+                get_user_mock("4"),
+            ]])
+            .append_query_results([[get_user_options_mock("3", &UserOptions::default())]
+                .into_iter()
+                .flatten()])
+            .append_query_results([vec![get_federated_user_mock("3")]])
+            .into_connection();
+
+        let config = Config::default();
+        let res = list(
+            &config,
+            &db,
+            &UserListParameters {
+                user_type: Some(UserType::Federated),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(res.len(), 1, "1 federated user found");
+
+        for (l,r) in db.into_transaction_log().iter().zip([
+                Transaction::from_sql_and_values(
+                    DatabaseBackend::Postgres,
+                    r#"SELECT "user"."id", "user"."extra", "user"."enabled", "user"."default_project_id", "user"."created_at", "user"."last_active_at", "user"."domain_id" FROM "user""#,
+                    []
+                ),
+                Transaction::from_sql_and_values(
+                    DatabaseBackend::Postgres,
+                    r#"SELECT "user_option"."user_id", "user_option"."option_id", "user_option"."option_value" FROM "user_option" WHERE "user_option"."user_id" IN ($1, $2, $3, $4)"#,
+                    []
+                ),
+                Transaction::from_sql_and_values(
+                    DatabaseBackend::Postgres,
+                    r#"SELECT "federated_user"."id", "federated_user"."user_id", "federated_user"."idp_id", "federated_user"."protocol_id", "federated_user"."unique_id", "federated_user"."display_name" FROM "federated_user" WHERE "federated_user"."user_id" IN ($1, $2, $3, $4)"#,
+                    []
+                ),
+            ]) {
+            assert_eq!(
+                l.statements().iter().map(|x| x.sql.clone()).collect::<Vec<_>>(),
+                r.statements().iter().map(|x| x.sql.clone()).collect::<Vec<_>>()
+            );
+            }
     }
 }
