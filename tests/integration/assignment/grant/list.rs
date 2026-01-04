@@ -13,21 +13,21 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Test role assignments.
 
-use eyre::Report;
+use eyre::Result;
 use std::collections::BTreeSet;
+use tracing_test::traced_test;
 
-use openstack_keystone::assignment::AssignmentApi;
-use openstack_keystone::assignment::types::{
-    RoleAssignmentListParameters, RoleAssignmentListParametersBuilder,
-};
+use openstack_keystone::assignment::{AssignmentApi, types::*};
+use openstack_keystone::identity::IdentityApi;
 use openstack_keystone::keystone::ServiceState;
 
 use super::get_state;
+use crate::common::{create_group, create_role, create_user};
 
 async fn list_grants(
     state: &ServiceState,
     params: &RoleAssignmentListParameters,
-) -> Result<BTreeSet<String>, Report> {
+) -> Result<BTreeSet<String>> {
     Ok(state
         .provider
         .get_assignment_provider()
@@ -38,9 +38,43 @@ async fn list_grants(
         .collect())
 }
 
+async fn init_data(state: &ServiceState) -> Result<()> {
+    create_user(&state, Some("user_a")).await?;
+    create_group(&state, Some("group_a")).await?;
+    state
+        .provider
+        .get_identity_provider()
+        .add_user_to_group(state, "user_a", "group_a")
+        .await?;
+    for role in [
+        "role_a", "role_b", "role_c", "role_d", "role_ga", "role_gb", "role_gc", "role_gd",
+    ] {
+        create_role(state, role).await?;
+    }
+    for assignment in [
+        Assignment::user_domain("user_a", "domain_a", "role_a", false),
+        Assignment::group_domain("group_a", "domain_a", "role_ga", false),
+        Assignment::user_domain("user_a", "domain_a", "role_b", true),
+        Assignment::group_domain("group_a", "domain_a", "role_gb", true),
+        Assignment::user_project("user_a", "project_a", "role_c", false),
+        Assignment::group_project("group_a", "project_a", "role_gc", false),
+        Assignment::user_project("user_a", "project_a", "role_d", true),
+        Assignment::group_project("group_a", "project_a", "role_gd", true),
+    ] {
+        state
+            .provider
+            .get_assignment_provider()
+            .create_grant(state, assignment)
+            .await?;
+    }
+    Ok(())
+}
+
+#[traced_test]
 #[tokio::test]
-async fn test_list_user_domain() -> Result<(), Report> {
+async fn test_list_user_domain() -> Result<()> {
     let state = get_state().await?;
+    init_data(&state).await?;
 
     assert_eq!(
         list_grants(
@@ -84,8 +118,9 @@ async fn test_list_user_domain() -> Result<(), Report> {
 }
 
 #[tokio::test]
-async fn test_list_user_tl_project() -> Result<(), Report> {
+async fn test_list_user_tl_project() -> Result<()> {
     let state = get_state().await?;
+    init_data(&state).await?;
 
     assert_eq!(
         list_grants(
@@ -122,8 +157,9 @@ async fn test_list_user_tl_project() -> Result<(), Report> {
 }
 
 #[tokio::test]
-async fn test_list_user_sub_project() -> Result<(), Report> {
+async fn test_list_user_sub_project() -> Result<()> {
     let state = get_state().await?;
+    init_data(&state).await?;
 
     assert_eq!(
         list_grants(

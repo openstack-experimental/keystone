@@ -23,6 +23,7 @@ use crate::error::BuilderError;
 #[builder(setter(strip_option, into))]
 pub struct Group {
     /// The description of the group.
+    #[builder(default)]
     pub description: Option<String>,
     /// The ID of the domain.
     pub domain_id: String,
@@ -40,8 +41,10 @@ pub struct Group {
 #[builder(setter(strip_option, into))]
 pub struct GroupListParameters {
     /// Filter groups by the domain
+    #[builder(default)]
     pub domain_id: Option<String>,
     /// Filter groups by the name attribute
+    #[builder(default)]
     pub name: Option<String>,
 }
 
@@ -50,6 +53,7 @@ pub struct GroupListParameters {
 #[builder(setter(strip_option, into))]
 pub struct GroupCreate {
     /// The description of the group.
+    #[builder(default)]
     pub description: Option<String>,
     /// The ID of the domain.
     pub domain_id: String,

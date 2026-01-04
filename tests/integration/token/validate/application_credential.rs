@@ -15,12 +15,12 @@
 
 use chrono::Utc;
 use eyre::Report;
-use sea_orm::entity::*;
 use std::collections::HashSet;
 use tracing_test::traced_test;
 use uuid::Uuid;
 
 use super::{create_user, get_state, grant_role_to_user_on_project};
+use crate::common::create_role;
 use openstack_keystone::application_credential::ApplicationCredentialApi;
 use openstack_keystone::application_credential::types::*;
 use openstack_keystone::assignment::types::*;
@@ -34,6 +34,7 @@ async fn test_valid() -> Result<(), Report> {
     let (state, _tmp) = get_state().await?;
 
     let user = create_user(&state, Some("user_a")).await?;
+    create_role(&state, "role_a").await?;
     grant_role_to_user_on_project(&state, &user.id, "project_a", "role_a").await?;
 
     let cred: ApplicationCredentialCreateResponse = state
@@ -113,6 +114,7 @@ async fn test_expired() -> Result<(), Report> {
     let (state, _tmp) = get_state().await?;
 
     let user = create_user(&state, Some("user_a")).await?;
+    create_role(&state, "role_a").await?;
     grant_role_to_user_on_project(&state, &user.id, "project_a", "role_a").await?;
 
     let cred: ApplicationCredentialCreateResponse = state
@@ -175,6 +177,8 @@ async fn test_valid_fewer_roles() -> Result<(), Report> {
     let (state, _tmp) = get_state().await?;
 
     let user = create_user(&state, Some("user_a")).await?;
+    create_role(&state, "role_a").await?;
+    create_role(&state, "role_b").await?;
     grant_role_to_user_on_project(&state, &user.id, "project_a", "role_a").await?;
 
     let cred: ApplicationCredentialCreateResponse = state
@@ -260,6 +264,7 @@ async fn test_valid_all_roles_revoked() -> Result<(), Report> {
     let (state, _tmp) = get_state().await?;
 
     let user = create_user(&state, Some("user_a")).await?;
+    create_role(&state, "role_b").await?;
 
     let cred: ApplicationCredentialCreateResponse = state
         .provider

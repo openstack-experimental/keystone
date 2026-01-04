@@ -21,6 +21,7 @@ use std::sync::Arc;
 use tracing_test::traced_test;
 
 use super::{create_user, get_state, grant_role_to_user_on_project};
+use crate::common::create_role;
 use openstack_keystone::assignment::AssignmentApi;
 use openstack_keystone::auth::*;
 use openstack_keystone::db::entity::prelude::{Trust as DbTrust, TrustRole as DbTrustRole};
@@ -92,6 +93,8 @@ async fn get_trust<U: AsRef<str>>(state: &Arc<Service>, id: U) -> Result<Option<
 #[traced_test]
 async fn test_valid() -> Result<(), Report> {
     let (state, _tmp) = get_state().await?;
+    create_role(&state, "role_a").await?;
+    create_role(&state, "role_b").await?;
     setup(&state.db).await?;
 
     let user_a = create_user(&state, Some("user_a")).await?;
@@ -154,6 +157,8 @@ async fn test_valid() -> Result<(), Report> {
 #[traced_test]
 async fn test_valid_redelegated() -> Result<(), Report> {
     let (state, _tmp) = get_state().await?;
+    create_role(&state, "role_a").await?;
+    create_role(&state, "role_b").await?;
     setup(&state.db).await?;
 
     let user_a = create_user(&state, Some("user_a")).await?;
@@ -216,6 +221,8 @@ async fn test_valid_redelegated() -> Result<(), Report> {
 #[traced_test]
 async fn test_fewer_roles() -> Result<(), Report> {
     let (state, _tmp) = get_state().await?;
+    create_role(&state, "role_a").await?;
+    create_role(&state, "role_b").await?;
     setup(&state.db).await?;
 
     let _user_a = create_user(&state, Some("user_a")).await?;
@@ -254,6 +261,8 @@ async fn test_fewer_roles() -> Result<(), Report> {
 #[traced_test]
 async fn test_exclude_local_roles() -> Result<(), Report> {
     let (state, _tmp) = get_state().await?;
+    create_role(&state, "role_a").await?;
+    create_role(&state, "role_b").await?;
     setup(&state.db).await?;
 
     let user_a = create_user(&state, Some("user_a")).await?;

@@ -21,11 +21,10 @@ use tempfile::TempDir;
 mod application_credential;
 mod trust;
 
+use openstack_keystone::assignment::{AssignmentApi, types::Assignment};
 use openstack_keystone::config::Config;
-use openstack_keystone::db::entity::assignment as db_assignment;
-use openstack_keystone::db::entity::prelude::*;
+use openstack_keystone::db::entity::prelude::Project;
 use openstack_keystone::db::entity::project;
-use openstack_keystone::db::entity::sea_orm_active_enums::Type as DbAssignmentType;
 use openstack_keystone::identity::{IdentityApi, types::*};
 use openstack_keystone::keystone::Service;
 use openstack_keystone::plugin_manager::PluginManager;
@@ -109,20 +108,16 @@ async fn create_user<U: Into<String>>(
         .await?)
 }
 
-async fn grant_role_to_user_on_project<U: AsRef<str>, P: AsRef<str>, R: AsRef<str>>(
+async fn grant_role_to_user_on_project<U: Into<String>, P: Into<String>, R: Into<String>>(
     state: &Arc<Service>,
     user: U,
     project: P,
     role: R,
 ) -> Result<(), Report> {
-    db_assignment::ActiveModel {
-        r#type: Set(DbAssignmentType::UserProject),
-        actor_id: Set(user.as_ref().to_string()),
-        target_id: Set(project.as_ref().to_string()),
-        role_id: Set(role.as_ref().to_string()),
-        inherited: Set(false),
-    }
-    .insert(&state.db)
-    .await?;
+    state
+        .provider
+        .get_assignment_provider()
+        .create_grant(state, Assignment::user_project(user, project, role, false))
+        .await?;
     Ok(())
 }

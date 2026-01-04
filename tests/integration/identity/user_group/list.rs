@@ -24,10 +24,18 @@ use openstack_keystone::db::entity::{
 };
 
 use super::*;
+use crate::common::{create_group, create_user};
 
 #[tokio::test]
 async fn test_list_user_groups() -> Result<(), Report> {
     let state = get_state().await?;
+    create_user(&state, Some("user_a")).await?;
+    create_group(&state, Some("group_a")).await?;
+    state
+        .provider
+        .get_identity_provider()
+        .add_user_to_group(&state, "user_a", "group_a")
+        .await?;
 
     assert_eq!(
         list_user_groups(&state, "user_a")
@@ -45,7 +53,24 @@ async fn test_list_user_groups() -> Result<(), Report> {
 #[traced_test]
 async fn test_expiring_groups() -> Result<(), Report> {
     let state = get_state().await?;
+    create_user(&state, Some("user_a")).await?;
+    create_group(&state, Some("group_a")).await?;
+    create_group(&state, Some("group_b")).await?;
+    create_group(&state, Some("group_c")).await?;
+    state
+        .provider
+        .get_identity_provider()
+        .add_user_to_group(&state, "user_a", "group_a")
+        .await?;
 
+    // non expired membership
+    state
+        .provider
+        .get_identity_provider()
+        .add_user_to_group_expiring(&state, "user_a", "group_b", "idp_id")
+        .await?;
+
+    // TODO: Find a way to add expired group membership for the test
     DbExpiringUserGroupMembership::insert_many([
         // Add expired membership
         expiring_user_group_membership::ActiveModel {
@@ -53,13 +78,6 @@ async fn test_expiring_groups() -> Result<(), Report> {
             group_id: Set("group_c".to_string()),
             idp_id: Set("idp_id".to_string()),
             last_verified: Set(DateTime::<Utc>::default().naive_utc()),
-        },
-        // non expired membership
-        expiring_user_group_membership::ActiveModel {
-            user_id: Set("user_a".to_string()),
-            group_id: Set("group_b".to_string()),
-            idp_id: Set("idp_id".to_string()),
-            last_verified: Set(Utc::now().naive_utc()),
         },
     ])
     .exec(&state.db)

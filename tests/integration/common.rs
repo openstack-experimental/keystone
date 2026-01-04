@@ -18,10 +18,14 @@ use sea_orm::{
     ConnectOptions, ConnectionTrait, Database, DatabaseConnection, DbConn, EntityTrait, entity::*,
     schema::Schema, sea_query::*,
 };
+use std::sync::Arc;
 use uuid::Uuid;
 
+use openstack_keystone::assignment::{AssignmentApi, types::RoleCreate};
 use openstack_keystone::db::entity::prelude::*;
-use openstack_keystone::db::entity::{local_user, project, role, user};
+use openstack_keystone::db::entity::{local_user, project, user};
+use openstack_keystone::identity::{IdentityApi, types::*};
+use openstack_keystone::keystone::Service;
 
 /// Create table with the related types and indexes (when known)
 async fn create_table<C, E>(conn: &C, schema: &Schema, entity: E) -> Result<()>
@@ -143,26 +147,6 @@ pub async fn bootstrap(db: &DbConn) -> Result<()> {
     .exec(db)
     .await?;
 
-    // Roles
-    Role::insert_many([
-        role::ActiveModel {
-            id: Set("role_a".into()),
-            name: Set("role_a".into()),
-            extra: NotSet,
-            description: NotSet,
-            domain_id: Set("<<null>>".into()),
-        },
-        role::ActiveModel {
-            id: Set("role_b".into()),
-            name: Set("role_b".into()),
-            extra: NotSet,
-            description: NotSet,
-            domain_id: Set("<<null>>".into()),
-        },
-    ])
-    .exec(db)
-    .await?;
-
     Ok(())
 }
 
@@ -229,4 +213,61 @@ pub async fn get_isolated_database() -> Result<DatabaseConnection> {
     setup_schema(&db).await?;
 
     Ok(db)
+}
+
+pub async fn create_user<U: Into<String>>(
+    state: &Arc<Service>,
+    user_id: Option<U>,
+) -> Result<UserResponse> {
+    let uid: String = user_id.map(Into::into).unwrap_or("user_id".to_string());
+    Ok(state
+        .provider
+        .get_identity_provider()
+        .create_user(
+            state,
+            UserCreateBuilder::default()
+                .id(&uid)
+                .name(&uid)
+                .domain_id("domain_a")
+                .enabled(true)
+                .build()?,
+        )
+        .await?)
+}
+
+pub async fn create_group<U: Into<String>>(
+    state: &Arc<Service>,
+    group_id: Option<U>,
+) -> Result<()> {
+    let uid: String = group_id.map(Into::into).unwrap_or("user_id".to_string());
+    state
+        .provider
+        .get_identity_provider()
+        .create_group(
+            state,
+            GroupCreateBuilder::default()
+                .id(&uid)
+                .name(&uid)
+                .domain_id("domain_a")
+                .build()?,
+        )
+        .await?;
+    Ok(())
+}
+
+pub async fn create_role<U: Into<String>>(state: &Arc<Service>, role_id: U) -> Result<()> {
+    let id: String = role_id.into();
+    state
+        .provider
+        .get_assignment_provider()
+        .create_role(
+            state,
+            RoleCreate {
+                id: Some(id.clone()),
+                name: id.clone(),
+                ..Default::default()
+            },
+        )
+        .await?;
+    Ok(())
 }

@@ -47,6 +47,95 @@ pub struct Assignment {
     pub inherited: bool,
 }
 
+impl Assignment {
+    /// Instantiate new assignment.
+    pub fn new<A, T, R>(
+        actor_id: A,
+        target_id: T,
+        role_id: R,
+        r#type: AssignmentType,
+        inherited: bool,
+    ) -> Self
+    where
+        A: Into<String>,
+        T: Into<String>,
+        R: Into<String>,
+    {
+        Self {
+            actor_id: actor_id.into(),
+            target_id: target_id.into(),
+            role_id: role_id.into(),
+            r#type,
+            inherited,
+            role_name: None,
+        }
+    }
+
+    /// Instantiate GroupDomain assignment.
+    pub fn group_domain<A, T, R>(actor_id: A, target_id: T, role_id: R, inherited: bool) -> Self
+    where
+        A: Into<String>,
+        T: Into<String>,
+        R: Into<String>,
+    {
+        Self::new(
+            actor_id,
+            target_id,
+            role_id,
+            AssignmentType::GroupDomain,
+            inherited,
+        )
+    }
+
+    /// Instantiate GroupProject assignment.
+    pub fn group_project<A, T, R>(actor_id: A, target_id: T, role_id: R, inherited: bool) -> Self
+    where
+        A: Into<String>,
+        T: Into<String>,
+        R: Into<String>,
+    {
+        Self::new(
+            actor_id,
+            target_id,
+            role_id,
+            AssignmentType::GroupProject,
+            inherited,
+        )
+    }
+
+    /// Instantiate UserDomain assignment.
+    pub fn user_domain<A, T, R>(actor_id: A, target_id: T, role_id: R, inherited: bool) -> Self
+    where
+        A: Into<String>,
+        T: Into<String>,
+        R: Into<String>,
+    {
+        Self::new(
+            actor_id,
+            target_id,
+            role_id,
+            AssignmentType::UserDomain,
+            inherited,
+        )
+    }
+
+    /// Instantiate UserProject assignment.
+    pub fn user_project<A, T, R>(actor_id: A, target_id: T, role_id: R, inherited: bool) -> Self
+    where
+        A: Into<String>,
+        T: Into<String>,
+        R: Into<String>,
+    {
+        Self::new(
+            actor_id,
+            target_id,
+            role_id,
+            AssignmentType::UserProject,
+            inherited,
+        )
+    }
+}
+
 /// Role assignment type.
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 pub enum AssignmentType {

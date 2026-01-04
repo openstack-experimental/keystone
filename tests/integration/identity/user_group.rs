@@ -18,9 +18,8 @@ use std::sync::Arc;
 
 use openstack_keystone::config::Config;
 use openstack_keystone::db::entity::{
-    group, identity_provider as db_identity_provider,
-    prelude::{Group as DbGroup, IdentityProvider as DbIdentityProvider},
-    project, user, user_group_membership,
+    identity_provider as db_identity_provider, prelude::IdentityProvider as DbIdentityProvider,
+    project,
 };
 use openstack_keystone::identity::IdentityApi;
 use openstack_keystone::identity::types::*;
@@ -37,7 +36,7 @@ mod list;
 async fn setup_data(db: &DbConn) -> Result<(), Report> {
     bootstrap(db).await?;
     // Domain/project data
-    let domain_a = project::ActiveModel {
+    let _domain_a = project::ActiveModel {
         is_domain: Set(true),
         id: Set("domain_a".into()),
         name: Set("domain_a".into()),
@@ -46,51 +45,6 @@ async fn setup_data(db: &DbConn) -> Result<(), Report> {
         enabled: Set(Some(true)),
         domain_id: Set("<<keystone.domain.root>>".into()),
         parent_id: NotSet,
-    }
-    .insert(db)
-    .await?;
-
-    // Group
-    DbGroup::insert_many([
-        group::ActiveModel {
-            id: Set("group_a".into()),
-            name: Set("group_a".into()),
-            domain_id: Set(domain_a.id.clone()),
-            extra: NotSet,
-            description: NotSet,
-        },
-        group::ActiveModel {
-            id: Set("group_b".into()),
-            name: Set("group_b".into()),
-            domain_id: Set(domain_a.id.clone()),
-            extra: NotSet,
-            description: NotSet,
-        },
-        group::ActiveModel {
-            id: Set("group_c".into()),
-            name: Set("group_c".into()),
-            domain_id: Set(domain_a.id.clone()),
-            extra: NotSet,
-            description: NotSet,
-        },
-    ])
-    .exec(db)
-    .await?;
-    // User
-    let user_a = user::ActiveModel {
-        id: Set("user_a".into()),
-        extra: NotSet,
-        enabled: Set(Some(true)),
-        default_project_id: NotSet,
-        last_active_at: NotSet,
-        created_at: NotSet,
-        domain_id: Set(domain_a.id.clone()),
-    }
-    .insert(db)
-    .await?;
-    user_group_membership::ActiveModel {
-        user_id: Set(user_a.id.clone()),
-        group_id: Set("group_a".to_string()),
     }
     .insert(db)
     .await?;

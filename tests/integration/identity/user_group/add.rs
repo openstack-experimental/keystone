@@ -13,17 +13,28 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Test add user group membership functionality.
 
-use eyre::Report;
+use eyre::Result;
 use tracing_test::traced_test;
 
 use openstack_keystone::identity::IdentityApi;
 
 use super::*;
+use crate::common::{create_group, create_user};
 
 #[tokio::test]
 #[traced_test]
-async fn test_expiring_groups() -> Result<(), Report> {
+async fn test_expiring_groups() -> Result<()> {
     let state = get_state().await?;
+
+    create_user(&state, Some("user_a")).await?;
+    create_group(&state, Some("group_a")).await?;
+    create_group(&state, Some("group_b")).await?;
+
+    state
+        .provider
+        .get_identity_provider()
+        .add_user_to_group(&state, "user_a", "group_a")
+        .await?;
 
     state
         .provider

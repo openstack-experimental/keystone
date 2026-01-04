@@ -22,7 +22,7 @@ use openstack_keystone::application_credential::types;
 use openstack_keystone::assignment::types as as_types;
 use openstack_keystone::config::Config;
 use openstack_keystone::db::entity::prelude::*;
-use openstack_keystone::db::entity::{project, user};
+use openstack_keystone::db::entity::project;
 use openstack_keystone::keystone::Service;
 use openstack_keystone::plugin_manager::PluginManager;
 use openstack_keystone::policy::PolicyFactory;
@@ -32,7 +32,7 @@ mod create;
 mod get;
 mod list;
 
-use crate::common::{bootstrap, get_isolated_database};
+use crate::common::{bootstrap, create_role, create_user, get_isolated_database};
 
 async fn setup_data(db: &DbConn) -> Result<(), Report> {
     bootstrap(db).await?;
@@ -62,19 +62,6 @@ async fn setup_data(db: &DbConn) -> Result<(), Report> {
     .exec(db)
     .await?;
 
-    // User
-    user::ActiveModel {
-        id: Set("user_a".into()),
-        extra: NotSet,
-        enabled: Set(Some(true)),
-        default_project_id: NotSet,
-        last_active_at: NotSet,
-        created_at: NotSet,
-        domain_id: Set("domain_a".into()),
-    }
-    .insert(db)
-    .await?;
-
     Ok(())
 }
 
@@ -86,12 +73,12 @@ async fn get_state() -> Result<Arc<Service>, Report> {
 
     let plugin_manager = PluginManager::default();
     let provider = Provider::new(cfg.clone(), plugin_manager)?;
-    Ok(Arc::new(Service::new(
-        cfg,
-        db,
-        provider,
-        PolicyFactory::default(),
-    )?))
+    let state = Arc::new(Service::new(cfg, db, provider, PolicyFactory::default())?);
+
+    create_role(&state, "role_a").await?;
+    create_role(&state, "role_b").await?;
+    create_user(&state, Some("user_a")).await?;
+    Ok(state)
 }
 
 async fn create_ac<S>(

@@ -216,7 +216,9 @@ impl IdentityApi for IdentityProvider {
         group: GroupCreate,
     ) -> Result<Group, IdentityProviderError> {
         let mut res = group;
-        res.id = Some(Uuid::new_v4().simple().to_string());
+        if res.id.is_none() {
+            res.id = Some(Uuid::new_v4().simple().to_string());
+        }
         self.backend_driver.create_group(state, res).await
     }
 
