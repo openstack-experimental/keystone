@@ -104,7 +104,7 @@ pub async fn list(
 
     // Determine the date for which users with the last activity earlier than are
     // determined as inactive.
-    let last_activity_cutof_date = conf.get_user_last_activity_cutof_date();
+    let last_activity_cutof_date = conf.security_compliance.get_user_last_activity_cutof_date();
 
     let mut results: Vec<UserResponse> = Vec::new();
     for (u, (o, (l, (p, (n, f))))) in db_users.into_iter().zip(

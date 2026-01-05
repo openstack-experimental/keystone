@@ -60,7 +60,9 @@ pub async fn get(
         user_builder.merge_user_data(
             &user,
             &UserOptions::from_iter(user_opts.context("fetching user options")?),
-            conf.get_user_last_activity_cutof_date().as_ref(),
+            conf.security_compliance
+                .get_user_last_activity_cutof_date()
+                .as_ref(),
         );
 
         match local_user_with_passwords? {
