@@ -108,7 +108,10 @@ pub async fn authenticate_by_password(
         .merge_user_data(
             &user_entry,
             &user_opts,
-            config.get_user_last_activity_cutof_date().as_ref(),
+            config
+                .security_compliance
+                .get_user_last_activity_cutof_date()
+                .as_ref(),
         )
         .merge_local_user_data(&local_user)
         .merge_passwords_data(passwords)

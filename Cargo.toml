@@ -51,7 +51,7 @@ futures-util = { version = "0.3" }
 itertools = { version = "0.14" }
 mockall_double = { version = "0.3" }
 nix = { version = "0.30", default-features = false, features = ["fs", "user"] }
-opa-wasm = { version = "^0.1", optional = true }
+# opa-wasm = { version = "^0.1", optional = true }
 openidconnect = { version = "4.0" }
 rand = { version = "0.9" }
 regex = { version = "1.12" }
@@ -75,6 +75,7 @@ tower-http = { version = "0.6", features = ["compression-full", "request-id", "s
 tracing = { version = "0.1" }
 tracing-subscriber = { version = "0.3", features = [] }
 url = { version = "2.5", features = ["serde"] }
+url-macro = { version = "0.2" }
 utoipa = { version = "5.4", features = ["axum_extras", "chrono", "yaml"] }
 utoipa-axum = { version = "0.2" }
 utoipa-swagger-ui = { version = "9.0", features = ["axum", "vendored"], default-features = false }
@@ -102,7 +103,7 @@ webauthn-rs = { version = "0.5", features = ["danger-credential-internals"] }
 
 [features]
 default = []
-wasm = ["dep:opa-wasm"]
+# wasm = ["dep:opa-wasm"]
 bench_internals = []
 
 [profile.release]

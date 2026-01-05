@@ -48,7 +48,6 @@ use uuid::Uuid;
 
 use openstack_keystone::api;
 use openstack_keystone::config::Config;
-use openstack_keystone::error::KeystoneError;
 use openstack_keystone::federation::FederationApi;
 use openstack_keystone::keystone::{Service, ServiceState};
 use openstack_keystone::plugin_manager::PluginManager;
@@ -117,10 +116,10 @@ async fn main() -> Result<(), Report> {
             2 => LevelFilter::DEBUG,
             _ => LevelFilter::TRACE,
         })
-        .with_target("cranelift_codegen", Level::INFO)
-        .with_target("wasmtime_codegen", Level::INFO)
-        .with_target("wasmtime_cranelift", Level::INFO)
-        .with_target("wasmtime::runtime", Level::INFO);
+        .with_target("cranelift_codegen", Level::INFO);
+    // .with_target("wasmtime_codegen", Level::INFO)
+    // .with_target("wasmtime_cranelift", Level::INFO)
+    // .with_target("wasmtime::runtime", Level::INFO);
 
     let log_layer = tracing_subscriber::fmt::layer()
         .with_writer(io::stderr)
@@ -166,16 +165,7 @@ async fn main() -> Result<(), Report> {
 
     let provider = Provider::new(cfg.clone(), plugin_manager)?;
 
-    let policy = if let Some(opa_base_url) = &cfg.api_policy.opa_base_url {
-        PolicyFactory::http(opa_base_url.clone()).await?
-    } else {
-        #[cfg(feature = "wasm")]
-        {
-            let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("policy.wasm");
-            PolicyFactory::from_wasm(&path).await?
-        }
-        return Err(KeystoneError::PolicyEnforcementNotAvailable)?;
-    };
+    let policy = PolicyFactory::http(cfg.api_policy.opa_base_url.clone()).await?;
 
     let shared_state = Arc::new(Service::new(cfg, conn, provider, policy)?);
 
