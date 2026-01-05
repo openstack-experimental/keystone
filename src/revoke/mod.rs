@@ -56,7 +56,6 @@ pub use mock::MockRevokeProvider;
 pub use types::*;
 
 /// Revoke provider.
-#[derive(Clone)]
 pub struct RevokeProvider {
     /// Backend driver.
     backend_driver: Arc<dyn RevokeBackend>,

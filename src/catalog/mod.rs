@@ -52,7 +52,6 @@ pub use types::CatalogApi;
 
 use types::*;
 
-#[derive(Clone)]
 pub struct CatalogProvider {
     backend_driver: Arc<dyn CatalogBackend>,
 }

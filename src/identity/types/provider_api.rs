@@ -23,74 +23,6 @@ use crate::keystone::ServiceState;
 
 #[async_trait]
 pub trait IdentityApi: Send + Sync {
-    async fn authenticate_by_password(
-        &self,
-        state: &ServiceState,
-        auth: &UserPasswordAuthRequest,
-    ) -> Result<AuthenticatedInfo, IdentityProviderError>;
-
-    async fn list_users(
-        &self,
-        state: &ServiceState,
-        params: &UserListParameters,
-    ) -> Result<impl IntoIterator<Item = UserResponse>, IdentityProviderError>;
-
-    async fn get_user<'a>(
-        &self,
-        state: &ServiceState,
-        user_id: &'a str,
-    ) -> Result<Option<UserResponse>, IdentityProviderError>;
-
-    async fn find_federated_user<'a>(
-        &self,
-        state: &ServiceState,
-        idp_id: &'a str,
-        unique_id: &'a str,
-    ) -> Result<Option<UserResponse>, IdentityProviderError>;
-
-    async fn create_user(
-        &self,
-        state: &ServiceState,
-        user: UserCreate,
-    ) -> Result<UserResponse, IdentityProviderError>;
-
-    async fn delete_user<'a>(
-        &self,
-        state: &ServiceState,
-        user_id: &'a str,
-    ) -> Result<(), IdentityProviderError>;
-
-    async fn list_groups(
-        &self,
-        state: &ServiceState,
-        params: &GroupListParameters,
-    ) -> Result<impl IntoIterator<Item = Group>, IdentityProviderError>;
-
-    async fn get_group<'a>(
-        &self,
-        state: &ServiceState,
-        group_id: &'a str,
-    ) -> Result<Option<Group>, IdentityProviderError>;
-
-    async fn create_group(
-        &self,
-        state: &ServiceState,
-        group: GroupCreate,
-    ) -> Result<Group, IdentityProviderError>;
-
-    async fn delete_group<'a>(
-        &self,
-        state: &ServiceState,
-        group_id: &'a str,
-    ) -> Result<(), IdentityProviderError>;
-
-    /// List groups the user is a member of.
-    async fn list_groups_of_user<'a>(
-        &self,
-        state: &ServiceState,
-        user_id: &'a str,
-    ) -> Result<impl IntoIterator<Item = Group>, IdentityProviderError>;
-
     /// Add the user to the single group.
     async fn add_user_to_group<'a>(
         &self,
@@ -122,6 +54,81 @@ pub trait IdentityApi: Send + Sync {
         memberships: Vec<(&'a str, &'a str)>,
         idp_id: &'a str,
     ) -> Result<(), IdentityProviderError>;
+
+    async fn authenticate_by_password(
+        &self,
+        state: &ServiceState,
+        auth: &UserPasswordAuthRequest,
+    ) -> Result<AuthenticatedInfo, IdentityProviderError>;
+
+    async fn create_group(
+        &self,
+        state: &ServiceState,
+        group: GroupCreate,
+    ) -> Result<Group, IdentityProviderError>;
+
+    async fn create_user(
+        &self,
+        state: &ServiceState,
+        user: UserCreate,
+    ) -> Result<UserResponse, IdentityProviderError>;
+
+    async fn delete_user<'a>(
+        &self,
+        state: &ServiceState,
+        user_id: &'a str,
+    ) -> Result<(), IdentityProviderError>;
+
+    async fn get_group<'a>(
+        &self,
+        state: &ServiceState,
+        group_id: &'a str,
+    ) -> Result<Option<Group>, IdentityProviderError>;
+
+    async fn get_user<'a>(
+        &self,
+        state: &ServiceState,
+        user_id: &'a str,
+    ) -> Result<Option<UserResponse>, IdentityProviderError>;
+
+    /// Get single user by ID.
+    async fn get_user_domain_id<'a>(
+        &self,
+        state: &ServiceState,
+        user_id: &'a str,
+    ) -> Result<Option<String>, IdentityProviderError>;
+
+    async fn find_federated_user<'a>(
+        &self,
+        state: &ServiceState,
+        idp_id: &'a str,
+        unique_id: &'a str,
+    ) -> Result<Option<UserResponse>, IdentityProviderError>;
+
+    async fn list_groups(
+        &self,
+        state: &ServiceState,
+        params: &GroupListParameters,
+    ) -> Result<impl IntoIterator<Item = Group>, IdentityProviderError>;
+
+    async fn list_users(
+        &self,
+        state: &ServiceState,
+        params: &UserListParameters,
+    ) -> Result<impl IntoIterator<Item = UserResponse>, IdentityProviderError>;
+
+    async fn delete_group<'a>(
+        &self,
+        state: &ServiceState,
+        group_id: &'a str,
+    ) -> Result<(), IdentityProviderError>;
+
+    /// List groups the user is a member of.
+    async fn list_groups_of_user<'a>(
+        &self,
+        state: &ServiceState,
+        user_id: &'a str,
+    ) -> Result<impl IntoIterator<Item = Group>, IdentityProviderError>;
 
     /// Remove the user from the single group.
     async fn remove_user_from_group<'a>(

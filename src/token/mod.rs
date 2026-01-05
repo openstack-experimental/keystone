@@ -59,7 +59,6 @@ pub use crate::token::types::*;
 #[cfg(test)]
 pub use mock::MockTokenProvider;
 
-#[derive(Clone)]
 pub struct TokenProvider {
     config: Config,
     backend_driver: Arc<dyn TokenBackend>,

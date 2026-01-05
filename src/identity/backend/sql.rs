@@ -38,129 +38,6 @@ pub struct SqlBackend {}
 
 #[async_trait]
 impl IdentityBackend for SqlBackend {
-    /// Authenticate a user by a password
-    async fn authenticate_by_password(
-        &self,
-        state: &ServiceState,
-        auth: &UserPasswordAuthRequest,
-    ) -> Result<AuthenticatedInfo, IdentityProviderError> {
-        Ok(authenticate::authenticate_by_password(&state.config, &state.db, auth).await?)
-    }
-
-    /// Fetch users from the database
-    #[tracing::instrument(level = "debug", skip(self, state))]
-    async fn list_users(
-        &self,
-        state: &ServiceState,
-        params: &UserListParameters,
-    ) -> Result<Vec<UserResponse>, IdentityProviderError> {
-        Ok(user::list(&state.config, &state.db, params).await?)
-    }
-
-    /// Get single user by ID
-    #[tracing::instrument(level = "debug", skip(self, state))]
-    async fn get_user<'a>(
-        &self,
-        state: &ServiceState,
-        user_id: &'a str,
-    ) -> Result<Option<UserResponse>, IdentityProviderError> {
-        Ok(user::get(&state.config, &state.db, user_id).await?)
-    }
-
-    /// Find federated user by IDP and Unique ID
-    #[tracing::instrument(level = "debug", skip(self, state))]
-    async fn find_federated_user<'a>(
-        &self,
-        state: &ServiceState,
-        idp_id: &'a str,
-        unique_id: &'a str,
-    ) -> Result<Option<UserResponse>, IdentityProviderError> {
-        if let Some(federated_user) =
-            federated_user::find_by_idp_and_unique_id(&state.db, idp_id, unique_id).await?
-        {
-            return Ok(user::get(&state.config, &state.db, &federated_user.user_id).await?);
-        }
-        Ok(None)
-    }
-
-    /// Create user
-    #[tracing::instrument(level = "debug", skip(self, state))]
-    async fn create_user(
-        &self,
-        state: &ServiceState,
-        user: UserCreate,
-    ) -> Result<UserResponse, IdentityProviderError> {
-        Ok(user::create(&state.config, &state.db, user).await?)
-    }
-
-    /// Delete user
-    #[tracing::instrument(level = "debug", skip(self, state))]
-    async fn delete_user<'a>(
-        &self,
-        state: &ServiceState,
-        user_id: &'a str,
-    ) -> Result<(), IdentityProviderError> {
-        Ok(user::delete(&state.db, user_id).await?)
-    }
-
-    /// List groups
-    #[tracing::instrument(level = "debug", skip(self, state))]
-    async fn list_groups(
-        &self,
-        state: &ServiceState,
-        params: &GroupListParameters,
-    ) -> Result<Vec<Group>, IdentityProviderError> {
-        Ok(group::list(&state.db, params).await?)
-    }
-
-    /// Get single group by ID
-    #[tracing::instrument(level = "debug", skip(self, state))]
-    async fn get_group<'a>(
-        &self,
-        state: &ServiceState,
-        group_id: &'a str,
-    ) -> Result<Option<Group>, IdentityProviderError> {
-        Ok(group::get(&state.db, group_id).await?)
-    }
-
-    /// Create group
-    #[tracing::instrument(level = "debug", skip(self, state))]
-    async fn create_group(
-        &self,
-        state: &ServiceState,
-        group: GroupCreate,
-    ) -> Result<Group, IdentityProviderError> {
-        Ok(group::create(&state.db, group).await?)
-    }
-
-    /// Delete group
-    #[tracing::instrument(level = "debug", skip(self, state))]
-    async fn delete_group<'a>(
-        &self,
-        state: &ServiceState,
-        group_id: &'a str,
-    ) -> Result<(), IdentityProviderError> {
-        Ok(group::delete(&state.db, group_id).await?)
-    }
-
-    /// List groups a user is member of.
-    #[tracing::instrument(level = "debug", skip(self, state))]
-    async fn list_groups_of_user<'a>(
-        &self,
-        state: &ServiceState,
-        user_id: &'a str,
-    ) -> Result<Vec<Group>, IdentityProviderError> {
-        Ok(user_group::list_user_groups(
-            &state.db,
-            user_id,
-            &state
-                .config
-                .federation
-                .get_expiring_user_group_membership_cutof_datetime(),
-        )
-        .await?)
-    }
-
     /// Add the user into the group.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn add_user_to_group<'a>(
@@ -206,6 +83,138 @@ impl IdentityBackend for SqlBackend {
         idp_id: &'a str,
     ) -> Result<(), IdentityProviderError> {
         Ok(user_group::add_users_to_groups_expiring(&state.db, memberships, idp_id, None).await?)
+    }
+
+    /// Authenticate a user by a password.
+    async fn authenticate_by_password(
+        &self,
+        state: &ServiceState,
+        auth: &UserPasswordAuthRequest,
+    ) -> Result<AuthenticatedInfo, IdentityProviderError> {
+        Ok(authenticate::authenticate_by_password(&state.config, &state.db, auth).await?)
+    }
+
+    /// Create group.
+    #[tracing::instrument(level = "debug", skip(self, state))]
+    async fn create_group(
+        &self,
+        state: &ServiceState,
+        group: GroupCreate,
+    ) -> Result<Group, IdentityProviderError> {
+        Ok(group::create(&state.db, group).await?)
+    }
+
+    /// Create user.
+    #[tracing::instrument(level = "debug", skip(self, state))]
+    async fn create_user(
+        &self,
+        state: &ServiceState,
+        user: UserCreate,
+    ) -> Result<UserResponse, IdentityProviderError> {
+        Ok(user::create(&state.config, &state.db, user).await?)
+    }
+
+    /// Delete group.
+    #[tracing::instrument(level = "debug", skip(self, state))]
+    async fn delete_group<'a>(
+        &self,
+        state: &ServiceState,
+        group_id: &'a str,
+    ) -> Result<(), IdentityProviderError> {
+        Ok(group::delete(&state.db, group_id).await?)
+    }
+
+    /// Delete user.
+    #[tracing::instrument(level = "debug", skip(self, state))]
+    async fn delete_user<'a>(
+        &self,
+        state: &ServiceState,
+        user_id: &'a str,
+    ) -> Result<(), IdentityProviderError> {
+        Ok(user::delete(&state.db, user_id).await?)
+    }
+
+    /// Fetch users from the database.
+    #[tracing::instrument(level = "debug", skip(self, state))]
+    async fn list_users(
+        &self,
+        state: &ServiceState,
+        params: &UserListParameters,
+    ) -> Result<Vec<UserResponse>, IdentityProviderError> {
+        Ok(user::list(&state.config, &state.db, params).await?)
+    }
+
+    /// Get single group by ID.
+    #[tracing::instrument(level = "debug", skip(self, state))]
+    async fn get_group<'a>(
+        &self,
+        state: &ServiceState,
+        group_id: &'a str,
+    ) -> Result<Option<Group>, IdentityProviderError> {
+        Ok(group::get(&state.db, group_id).await?)
+    }
+
+    /// Get single user by ID.
+    #[tracing::instrument(level = "debug", skip(self, state))]
+    async fn get_user<'a>(
+        &self,
+        state: &ServiceState,
+        user_id: &'a str,
+    ) -> Result<Option<UserResponse>, IdentityProviderError> {
+        Ok(user::get(&state.config, &state.db, user_id).await?)
+    }
+
+    /// Get single user by ID.
+    async fn get_user_domain_id<'a>(
+        &self,
+        state: &ServiceState,
+        user_id: &'a str,
+    ) -> Result<Option<String>, IdentityProviderError> {
+        Ok(user::get_user_domain_id(&state.db, user_id).await?)
+    }
+
+    /// Find federated user by IDP and Unique ID
+    #[tracing::instrument(level = "debug", skip(self, state))]
+    async fn find_federated_user<'a>(
+        &self,
+        state: &ServiceState,
+        idp_id: &'a str,
+        unique_id: &'a str,
+    ) -> Result<Option<UserResponse>, IdentityProviderError> {
+        if let Some(federated_user) =
+            federated_user::find_by_idp_and_unique_id(&state.db, idp_id, unique_id).await?
+        {
+            return Ok(user::get(&state.config, &state.db, &federated_user.user_id).await?);
+        }
+        Ok(None)
+    }
+
+    /// List groups
+    #[tracing::instrument(level = "debug", skip(self, state))]
+    async fn list_groups(
+        &self,
+        state: &ServiceState,
+        params: &GroupListParameters,
+    ) -> Result<Vec<Group>, IdentityProviderError> {
+        Ok(group::list(&state.db, params).await?)
+    }
+
+    /// List groups a user is member of.
+    #[tracing::instrument(level = "debug", skip(self, state))]
+    async fn list_groups_of_user<'a>(
+        &self,
+        state: &ServiceState,
+        user_id: &'a str,
+    ) -> Result<Vec<Group>, IdentityProviderError> {
+        Ok(user_group::list_user_groups(
+            &state.db,
+            user_id,
+            &state
+                .config
+                .federation
+                .get_expiring_user_group_membership_cutof_datetime(),
+        )
+        .await?)
     }
 
     /// Remove the user from the group.

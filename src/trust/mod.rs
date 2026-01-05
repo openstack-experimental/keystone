@@ -76,7 +76,6 @@ pub use mock::MockTrustProvider;
 pub use types::*;
 
 /// Trust provider.
-#[derive(Clone)]
 pub struct TrustProvider {
     /// Backend driver.
     backend_driver: Arc<dyn TrustBackend>,

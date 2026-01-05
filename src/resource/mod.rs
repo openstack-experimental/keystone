@@ -50,7 +50,6 @@ use crate::resource::types::{Domain, Project};
 pub use mock::MockResourceProvider;
 pub use types::ResourceApi;
 
-#[derive(Clone)]
 pub struct ResourceProvider {
     backend_driver: Arc<dyn ResourceBackend>,
 }

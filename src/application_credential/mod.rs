@@ -139,7 +139,6 @@ mod mock;
 pub mod types;
 
 /// Application Credential Provider.
-#[derive(Clone)]
 pub struct ApplicationCredentialProvider {
     backend_driver: Arc<dyn ApplicationCredentialBackend>,
 }

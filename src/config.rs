@@ -263,6 +263,10 @@ pub struct IdentityProvider {
     #[serde(default = "default_sql_driver")]
     pub driver: String,
 
+    /// Caching.
+    #[serde(default)]
+    pub caching: bool,
+
     /// Default password hashing algorithm.
     #[serde(default)]
     pub password_hashing_algorithm: PasswordHashingAlgo,
@@ -282,6 +286,7 @@ impl Default for IdentityProvider {
     fn default() -> Self {
         Self {
             driver: default_sql_driver(),
+            caching: false,
             password_hashing_algorithm: PasswordHashingAlgo::Bcrypt,
             max_password_length: 4096,
             password_hash_rounds: None,

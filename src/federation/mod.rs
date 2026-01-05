@@ -37,7 +37,6 @@ use types::*;
 pub use mock::MockFederationProvider;
 pub use types::FederationApi;
 
-#[derive(Clone)]
 pub struct FederationProvider {
     backend_driver: Arc<dyn FederationBackend>,
 }

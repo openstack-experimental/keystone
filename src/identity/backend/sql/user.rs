@@ -27,8 +27,8 @@ mod set;
 
 pub use create::create;
 pub use delete::delete;
-pub use get::get;
 pub(super) use get::get_main_entry;
+pub use get::{get, get_user_domain_id};
 pub use list::list;
 pub use set::reset_last_active;
 

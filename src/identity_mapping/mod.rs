@@ -37,7 +37,6 @@ use types::*;
 pub use mock::MockIdentityMappingProvider;
 pub use types::IdentityMappingApi;
 
-#[derive(Clone)]
 pub struct IdentityMappingProvider {
     /// Backend driver.
     backend_driver: Arc<dyn IdentityMappingBackend>,

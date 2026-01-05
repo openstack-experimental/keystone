@@ -73,7 +73,6 @@ use crate::resource::ResourceApi;
 pub use mock::MockAssignmentProvider;
 pub use types::AssignmentApi;
 
-#[derive(Clone)]
 pub struct AssignmentProvider {
     backend_driver: Arc<dyn AssignmentBackend>,
 }

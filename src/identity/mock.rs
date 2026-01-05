@@ -35,73 +35,6 @@ mock! {
 
     #[async_trait]
     impl IdentityApi for IdentityProvider {
-        async fn authenticate_by_password(
-            &self,
-            state: &ServiceState,
-            auth: &UserPasswordAuthRequest,
-        ) -> Result<AuthenticatedInfo, IdentityProviderError>;
-
-        async fn list_users(
-            &self,
-            state: &ServiceState,
-            params: &UserListParameters,
-        ) -> Result<Vec<UserResponse>, IdentityProviderError>;
-
-        async fn get_user<'a>(
-            &self,
-            state: &ServiceState,
-            user_id: &'a str,
-        ) -> Result<Option<UserResponse>, IdentityProviderError>;
-
-        async fn find_federated_user<'a>(
-            &self,
-            state: &ServiceState,
-            idp_id: &'a str,
-            unique_id: &'a str,
-        ) -> Result<Option<UserResponse>, IdentityProviderError>;
-
-        async fn create_user(
-            &self,
-            state: &ServiceState,
-            user: UserCreate,
-        ) -> Result<UserResponse, IdentityProviderError>;
-
-        async fn delete_user<'a>(
-            &self,
-            state: &ServiceState,
-            user_id: &'a str,
-        ) -> Result<(), IdentityProviderError>;
-
-        async fn list_groups(
-            &self,
-            state: &ServiceState,
-            params: &GroupListParameters,
-        ) -> Result<Vec<Group>, IdentityProviderError>;
-
-        async fn get_group<'a>(
-            &self,
-            state: &ServiceState,
-            group_id: &'a str,
-        ) -> Result<Option<Group>, IdentityProviderError>;
-
-        async fn create_group(
-            &self,
-            state: &ServiceState,
-            group: GroupCreate,
-        ) -> Result<Group, IdentityProviderError>;
-
-        async fn delete_group<'a>(
-            &self,
-            state: &ServiceState,
-            group_id: &'a str,
-        ) -> Result<(), IdentityProviderError>;
-
-        async fn list_groups_of_user<'a>(
-            &self,
-            state: &ServiceState,
-            user_id: &'a str,
-        ) -> Result<Vec<Group>, IdentityProviderError>;
-
         async fn add_user_to_group<'a>(
             &self,
             state: &ServiceState,
@@ -129,6 +62,79 @@ mock! {
             memberships: Vec<(&'a str, &'a str)>,
             idp_id: &'a str
         ) -> Result<(), IdentityProviderError>;
+
+        async fn authenticate_by_password(
+            &self,
+            state: &ServiceState,
+            auth: &UserPasswordAuthRequest,
+        ) -> Result<AuthenticatedInfo, IdentityProviderError>;
+
+        async fn create_group(
+            &self,
+            state: &ServiceState,
+            group: GroupCreate,
+        ) -> Result<Group, IdentityProviderError>;
+
+        async fn create_user(
+            &self,
+            state: &ServiceState,
+            user: UserCreate,
+        ) -> Result<UserResponse, IdentityProviderError>;
+
+        async fn delete_group<'a>(
+            &self,
+            state: &ServiceState,
+            group_id: &'a str,
+        ) -> Result<(), IdentityProviderError>;
+
+        async fn delete_user<'a>(
+            &self,
+            state: &ServiceState,
+            user_id: &'a str,
+        ) -> Result<(), IdentityProviderError>;
+
+        async fn get_group<'a>(
+            &self,
+            state: &ServiceState,
+            group_id: &'a str,
+        ) -> Result<Option<Group>, IdentityProviderError>;
+
+        async fn get_user<'a>(
+            &self,
+            state: &ServiceState,
+            user_id: &'a str,
+        ) -> Result<Option<UserResponse>, IdentityProviderError>;
+
+        async fn get_user_domain_id<'a>(
+            &self,
+            state: &ServiceState,
+            user_id: &'a str,
+        ) -> Result<Option<String>, IdentityProviderError>;
+
+        async fn find_federated_user<'a>(
+            &self,
+            state: &ServiceState,
+            idp_id: &'a str,
+            unique_id: &'a str,
+        ) -> Result<Option<UserResponse>, IdentityProviderError>;
+
+        async fn list_groups(
+            &self,
+            state: &ServiceState,
+            params: &GroupListParameters,
+        ) -> Result<Vec<Group>, IdentityProviderError>;
+
+        async fn list_groups_of_user<'a>(
+            &self,
+            state: &ServiceState,
+            user_id: &'a str,
+        ) -> Result<Vec<Group>, IdentityProviderError>;
+
+        async fn list_users(
+            &self,
+            state: &ServiceState,
+            params: &UserListParameters,
+        ) -> Result<Vec<UserResponse>, IdentityProviderError>;
 
         async fn remove_user_from_group<'a>(
             &self,

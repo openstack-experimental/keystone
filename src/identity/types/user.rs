@@ -46,9 +46,9 @@ pub struct UserResponse {
     #[builder(default)]
     pub extra: Option<Value>,
     /// List of federated objects associated with a user. Each object in the
-    /// list contains the idp_id and protocols. protocols is a list of objects,
-    /// each of which contains protocol_id and unique_id of the protocol and
-    /// user respectively.
+    /// list contains the `idp_id` and `protocols`. `protocols` is a list of
+    /// objects, each of which contains `protocol_id` and `unique_id` of the
+    /// protocol and user respectively.
     #[builder(default)]
     #[validate(nested)]
     pub federated: Option<Vec<Federation>>,
@@ -67,44 +67,55 @@ pub struct UserResponse {
     pub password_expires_at: Option<DateTime<Utc>>,
 }
 
+/// User creation data.
 #[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct UserCreate {
+    /// The ID of the default project for the user.
+    #[builder(default)]
+    #[validate(length(min = 1, max = 64))]
+    pub default_project_id: Option<String>,
+
+    /// The ID of the domain.
+    #[validate(length(min = 1, max = 64))]
+    pub domain_id: String,
+
+    /// If the user is enabled, this value is true. If the user is disabled,
+    /// this value is false.
+    #[builder(default)]
+    pub enabled: Option<bool>,
+
+    /// Additional user properties.
+    #[builder(default)]
+    pub extra: Option<Value>,
+
+    /// List of federated objects associated with a user. Each object in the
+    /// list contains the `idp_id` and `protocols`. `protocols` is a list of
+    /// objects, each of which contains `protocol_id` and `unique_id` of the
+    /// protocol and user respectively.
+    #[builder(default)]
+    #[validate(nested)]
+    pub federated: Option<Vec<Federation>>,
+
+    /// The ID of the user. When unset a new UUID would be assigned.
     #[builder(default)]
     #[validate(length(min = 1, max = 64))]
     pub id: Option<String>,
+
     /// The user name. Must be unique within the owning domain.
-    #[validate(length(max = 255))]
+    #[validate(length(min = 1, max = 255))]
     pub name: String,
-    /// The ID of the domain.
-    #[validate(length(max = 64))]
-    pub domain_id: String,
-    /// If the user is enabled, this value is true. If the user is disabled,
-    /// this value is false.
-    pub enabled: Option<bool>,
-    /// The ID of the default project for the user.
-    #[builder(default)]
-    #[validate(length(max = 64))]
-    pub default_project_id: Option<String>,
-    /// User password
-    #[builder(default)]
-    #[validate(length(max = 72))]
-    pub password: Option<String>,
-    /// Additional user properties
-    #[builder(default)]
-    pub extra: Option<Value>,
+
     /// The resource options for the user.
     #[builder(default)]
     #[validate(nested)]
     pub options: Option<UserOptions>,
-    /// List of federated objects associated with a user. Each object in the
-    /// list contains the idp_id and protocols. protocols is a list of objects,
-    /// each of which contains protocol_id and unique_id of the protocol and
-    /// user respectively.
+
+    /// User password.
     #[builder(default)]
-    #[validate(nested)]
-    pub federated: Option<Vec<Federation>>,
+    #[validate(length(max = 72))]
+    pub password: Option<String>,
 }
 
 #[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
@@ -143,6 +154,7 @@ pub struct UserUpdate {
     pub password: Option<String>,
 }
 
+/// User options.
 #[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]

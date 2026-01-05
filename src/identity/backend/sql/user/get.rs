@@ -98,9 +98,24 @@ pub async fn get(
     Ok(None)
 }
 
+/// Get the `domain_id` of the user specified by the `user_id`.
+pub async fn get_user_domain_id<U: AsRef<str>>(
+    db: &DatabaseConnection,
+    user_id: U,
+) -> Result<Option<String>, IdentityDatabaseError> {
+    Ok(DbUser::find_by_id(user_id.as_ref())
+        .select_only()
+        .column(db_user::Column::DomainId)
+        .into_tuple()
+        .one(db)
+        .await
+        .context("fetching domain_id of a user by ID")?)
+}
+
 #[cfg(test)]
 mod tests {
-    use sea_orm::{DatabaseBackend, MockDatabase, Transaction};
+    use sea_orm::{DatabaseBackend, IntoMockRow, MockDatabase, Transaction};
+    use std::collections::BTreeMap;
 
     use crate::config::Config;
     use crate::db::entity::user_option as db_user_option;
@@ -109,25 +124,26 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn test_get() { //// Create MockDatabase with mock query results
-        //let db = MockDatabase::new(DatabaseBackend::Postgres)
-        //    .append_exec_results([MockExecResult {
-        //        rows_affected: 1,
-        //        ..Default::default()
-        //    }])
-        //    .into_connection();
-        //let config = Config::default();
+    async fn test_get_main() {
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([vec![get_user_mock("1")]])
+            .into_connection();
 
-        //delete(&config, &db, "id").await.unwrap();
-        //// Checking transaction log
-        //assert_eq!(
-        //    db.into_transaction_log(),
-        //    [Transaction::from_sql_and_values(
-        //        DatabaseBackend::Postgres,
-        //        r#"DELETE FROM "user" WHERE "user"."id" = $1"#,
-        //        ["id".into()]
-        //    ),]
-        //);
+        assert_eq!(
+            get_main_entry(&db, "1")
+                .await
+                .unwrap()
+                .expect("entry found"),
+            get_user_mock("1")
+        );
+        assert_eq!(
+            db.into_transaction_log(),
+            [Transaction::from_sql_and_values(
+                DatabaseBackend::Postgres,
+                r#"SELECT "user"."id", "user"."extra", "user"."enabled", "user"."default_project_id", "user"."created_at", "user"."last_active_at", "user"."domain_id" FROM "user" WHERE "user"."id" = $1 LIMIT $2"#,
+                ["1".into(), 1u64.into()]
+            ),]
+        );
     }
 
     #[tokio::test]
@@ -187,6 +203,31 @@ mod tests {
                     ["1".into()]
                 ),
             ]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_get_user_domain_id() {
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([vec![
+                BTreeMap::from([("domain_id", Into::<Value>::into("did"))]).into_mock_row(),
+            ]])
+            .into_connection();
+
+        assert_eq!(
+            get_user_domain_id(&db, "uid")
+                .await
+                .unwrap()
+                .expect("found"),
+            "did"
+        );
+        assert_eq!(
+            db.into_transaction_log(),
+            [Transaction::from_sql_and_values(
+                DatabaseBackend::Postgres,
+                r#"SELECT "user"."domain_id" FROM "user" WHERE "user"."id" = $1 LIMIT $2"#,
+                ["uid".into(), 1u64.into()]
+            ),]
         );
     }
 }
