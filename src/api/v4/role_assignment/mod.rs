@@ -100,6 +100,7 @@ mod tests {
                     target_id: "target".into(),
                     r#type: AssignmentType::UserProject,
                     inherited: false,
+                    implied_via: None,
                 }])
             });
 
@@ -113,7 +114,7 @@ mod tests {
             .as_service()
             .oneshot(
                 Request::builder()
-                    .uri("/")
+                    .uri("/role_assignments")
                     .header("x-auth-token", "foo")
                     .body(Body::empty())
                     .unwrap(),
@@ -162,6 +163,7 @@ mod tests {
                     target_id: "target".into(),
                     r#type: AssignmentType::UserProject,
                     inherited: false,
+                    implied_via: None,
                 }])
             });
 
@@ -183,6 +185,7 @@ mod tests {
                     target_id: "target".into(),
                     r#type: AssignmentType::UserProject,
                     inherited: false,
+                    implied_via: None,
                 }])
             });
 
@@ -203,6 +206,7 @@ mod tests {
                     target_id: "target".into(),
                     r#type: AssignmentType::UserProject,
                     inherited: false,
+                    implied_via: None,
                 }])
             });
 
@@ -216,7 +220,7 @@ mod tests {
             .as_service()
             .oneshot(
                 Request::builder()
-                    .uri("/?role.id=role&user.id=user1&scope.project.id=project1")
+                    .uri("/role_assignments?role.id=role&user.id=user1&scope.project.id=project1")
                     .header("x-auth-token", "foo")
                     .body(Body::empty())
                     .unwrap(),
@@ -233,7 +237,7 @@ mod tests {
             .as_service()
             .oneshot(
                 Request::builder()
-                    .uri("/?role.id=role&user.id=user2&scope.domain.id=domain2")
+                    .uri("/role_assignments?role.id=role&user.id=user2&scope.domain.id=domain2")
                     .header("x-auth-token", "foo")
                     .body(Body::empty())
                     .unwrap(),
@@ -247,7 +251,7 @@ mod tests {
             .as_service()
             .oneshot(
                 Request::builder()
-                    .uri("/?group.id=group3&scope.project.id=project3")
+                    .uri("/role_assignments?group.id=group3&scope.project.id=project3")
                     .header("x-auth-token", "foo")
                     .body(Body::empty())
                     .unwrap(),

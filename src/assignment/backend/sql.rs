@@ -44,7 +44,7 @@ impl AssignmentBackend for SqlBackend {
     async fn create_grant(
         &self,
         state: &ServiceState,
-        grant: Assignment,
+        grant: AssignmentCreate,
     ) -> Result<Assignment, AssignmentProviderError> {
         Ok(assignment::create(&state.db, grant).await?)
     }

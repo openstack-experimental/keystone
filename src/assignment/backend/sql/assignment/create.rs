@@ -26,7 +26,7 @@ use crate::error::DbContextExt;
 /// Create assignment grant.
 pub async fn create(
     db: &DatabaseConnection,
-    assignment: Assignment,
+    assignment: AssignmentCreate,
 ) -> Result<Assignment, AssignmentDatabaseError> {
     match assignment.r#type {
         AssignmentType::GroupDomain
@@ -75,7 +75,7 @@ mod tests {
         assert_eq!(
             create(
                 &db,
-                Assignment {
+                AssignmentCreate {
                     role_id: "role_id".into(),
                     role_name: None,
                     actor_id: "actor_id".into(),
@@ -92,7 +92,8 @@ mod tests {
                 actor_id: "actor".into(),
                 target_id: "target".into(),
                 r#type: AssignmentType::UserProject,
-                inherited: false
+                inherited: false,
+                implied_via: None,
             }
         );
         // Checking transaction log
@@ -120,7 +121,7 @@ mod tests {
             .into_connection();
         create(
             &db,
-            Assignment {
+            AssignmentCreate {
                 role_id: "role_id".into(),
                 role_name: None,
                 actor_id: "actor_id".into(),
@@ -156,7 +157,7 @@ mod tests {
             .into_connection();
         create(
             &db,
-            Assignment {
+            AssignmentCreate {
                 role_id: "role_id".into(),
                 role_name: None,
                 actor_id: "actor_id".into(),

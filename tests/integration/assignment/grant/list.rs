@@ -39,8 +39,8 @@ async fn list_grants(
 }
 
 async fn init_data(state: &ServiceState) -> Result<()> {
-    create_user(&state, Some("user_a")).await?;
-    create_group(&state, Some("group_a")).await?;
+    create_user(state, Some("user_a")).await?;
+    create_group(state, Some("group_a")).await?;
     state
         .provider
         .get_identity_provider()
@@ -52,14 +52,14 @@ async fn init_data(state: &ServiceState) -> Result<()> {
         create_role(state, role).await?;
     }
     for assignment in [
-        Assignment::user_domain("user_a", "domain_a", "role_a", false),
-        Assignment::group_domain("group_a", "domain_a", "role_ga", false),
-        Assignment::user_domain("user_a", "domain_a", "role_b", true),
-        Assignment::group_domain("group_a", "domain_a", "role_gb", true),
-        Assignment::user_project("user_a", "project_a", "role_c", false),
-        Assignment::group_project("group_a", "project_a", "role_gc", false),
-        Assignment::user_project("user_a", "project_a", "role_d", true),
-        Assignment::group_project("group_a", "project_a", "role_gd", true),
+        AssignmentCreate::user_domain("user_a", "domain_a", "role_a", false),
+        AssignmentCreate::group_domain("group_a", "domain_a", "role_ga", false),
+        AssignmentCreate::user_domain("user_a", "domain_a", "role_b", true),
+        AssignmentCreate::group_domain("group_a", "domain_a", "role_gb", true),
+        AssignmentCreate::user_project("user_a", "project_a", "role_c", false),
+        AssignmentCreate::group_project("group_a", "project_a", "role_gc", false),
+        AssignmentCreate::user_project("user_a", "project_a", "role_d", true),
+        AssignmentCreate::group_project("group_a", "project_a", "role_gd", true),
     ] {
         state
             .provider

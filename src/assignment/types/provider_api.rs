@@ -15,7 +15,7 @@
 use async_trait::async_trait;
 
 use super::assignment::*;
-use super::role::{Role, RoleCreate, RoleListParameters};
+use super::role::*;
 use crate::assignment::AssignmentProviderError;
 use crate::keystone::ServiceState;
 
@@ -25,7 +25,7 @@ pub trait AssignmentApi: Send + Sync {
     async fn create_grant(
         &self,
         state: &ServiceState,
-        params: Assignment,
+        params: AssignmentCreate,
     ) -> Result<Assignment, AssignmentProviderError>;
 
     /// Create Role.
@@ -54,12 +54,12 @@ pub trait AssignmentApi: Send + Sync {
         &self,
         state: &ServiceState,
         params: &RoleListParameters,
-    ) -> Result<impl IntoIterator<Item = Role>, AssignmentProviderError>;
+    ) -> Result<Vec<Role>, AssignmentProviderError>;
 
     /// List role assignments for given target/role/actor.
     async fn list_role_assignments(
         &self,
         state: &ServiceState,
         params: &RoleAssignmentListParameters,
-    ) -> Result<impl IntoIterator<Item = Assignment>, AssignmentProviderError>;
+    ) -> Result<Vec<Assignment>, AssignmentProviderError>;
 }

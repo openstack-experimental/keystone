@@ -58,11 +58,7 @@ pub mod types;
 
 use crate::assignment::backend::{AssignmentBackend, SqlBackend};
 use crate::assignment::error::AssignmentProviderError;
-use crate::assignment::types::{
-    Assignment, Role, RoleAssignmentListForMultipleActorTargetParametersBuilder,
-    RoleAssignmentListParameters, RoleAssignmentTarget, RoleAssignmentTargetType, RoleCreate,
-    RoleListParameters,
-};
+use crate::assignment::types::*;
 use crate::config::Config;
 use crate::identity::IdentityApi;
 use crate::keystone::ServiceState;
@@ -107,9 +103,9 @@ impl AssignmentApi for AssignmentProvider {
     async fn create_grant(
         &self,
         state: &ServiceState,
-        params: Assignment,
+        grant: AssignmentCreate,
     ) -> Result<Assignment, AssignmentProviderError> {
-        self.backend_driver.create_grant(state, params).await
+        self.backend_driver.create_grant(state, grant).await
     }
 
     /// Create role.
@@ -163,7 +159,8 @@ impl AssignmentApi for AssignmentProvider {
         &self,
         state: &ServiceState,
         params: &RoleListParameters,
-    ) -> Result<impl IntoIterator<Item = Role>, AssignmentProviderError> {
+    ) -> Result<Vec<Role>, AssignmentProviderError> {
+        params.validate()?;
         self.backend_driver.list_roles(state, params).await
     }
 
@@ -173,7 +170,7 @@ impl AssignmentApi for AssignmentProvider {
         &self,
         state: &ServiceState,
         params: &RoleAssignmentListParameters,
-    ) -> Result<impl IntoIterator<Item = Assignment>, AssignmentProviderError> {
+    ) -> Result<Vec<Assignment>, AssignmentProviderError> {
         params.validate()?;
         let mut request = RoleAssignmentListForMultipleActorTargetParametersBuilder::default();
         let mut actors: Vec<String> = Vec::new();

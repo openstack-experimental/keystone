@@ -13,18 +13,23 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Common functionality used in the functional tests.
 
-use eyre::{Report, eyre};
-use reqwest::{Client, StatusCode};
+use eyre::{Report, Result, eyre};
+use reqwest::{
+    Client, ClientBuilder, StatusCode,
+    header::{HeaderMap, HeaderName, HeaderValue},
+};
+use std::env;
 
 use openstack_keystone::api::types::*;
 use openstack_keystone::api::v3::auth::token::types::*;
+use openstack_keystone::api::v3::role::types::{Role, RoleList};
 
 /// Get the password auth identity struct
 pub fn get_password_auth<U, P, DID>(
     username: U,
     password: P,
     domain_id: DID,
-) -> Result<PasswordAuth, Report>
+) -> Result<PasswordAuth>
 where
     U: AsRef<str>,
     P: AsRef<str>,
@@ -43,14 +48,10 @@ where
 }
 
 /// Authenticate using the passed password auth and the scope.
-pub async fn auth<U>(
-    keystone_url: U,
+pub async fn auth(
     password_auth: PasswordAuth,
     scope: Option<Scope>,
-) -> Result<String, Report>
-where
-    U: AsRef<str> + std::fmt::Display,
-{
+) -> Result<(TokenResponse, String)> {
     let identity = IdentityBuilder::default()
         .methods(vec!["password".into()])
         .password(password_auth)
@@ -60,7 +61,7 @@ where
     };
     let client = Client::new();
     let rsp = client
-        .post(format!("{}/v3/auth/tokens", keystone_url,))
+        .post(build_url("v3/auth/tokens"))
         .json(&serde_json::to_value(auth_request)?)
         .send()
         .await?;
@@ -71,24 +72,20 @@ where
         return Err(eyre!("Authentication failed with {}", rsp.status()));
     }
 
-    Ok(rsp
+    let token: String = rsp
         .headers()
         .get("X-Subject-Token")
         .ok_or_else(|| eyre!("Token is missing in the {:?}", rsp))?
         .to_str()?
-        .into())
-    //.unwrap()
+        .into();
+    let rsp: TokenResponse = rsp.json().await?;
+    Ok((rsp, token))
 }
 
 /// Authenticate using the token.
-pub async fn auth_with_token<U, S>(
-    keystone_url: U,
-    token: S,
-    scope: Option<Scope>,
-) -> Result<String, Report>
+pub async fn auth_with_token<S>(token: S, scope: Option<Scope>) -> Result<String, Report>
 where
     S: AsRef<str> + std::fmt::Display,
-    U: AsRef<str> + std::fmt::Display,
 {
     let identity = IdentityBuilder::default()
         .methods(vec!["token".into()])
@@ -99,7 +96,7 @@ where
     };
     let client = Client::new();
     let rsp = client
-        .post(format!("{}/v3/auth/tokens", keystone_url,))
+        .post(build_url("v3/auth/tokens"))
         .json(&serde_json::to_value(auth_request)?)
         .send()
         .await?;
@@ -112,21 +109,64 @@ where
 }
 
 /// Perform token check request.
-pub async fn check_token<U, S1, S2>(
+pub async fn check_token<S>(
     client: &Client,
-    keystone_url: U,
-    auth_token: S1,
-    subject_token: S2,
+    subject_token: S,
 ) -> Result<reqwest::Response, reqwest::Error>
 where
-    S1: AsRef<str> + std::fmt::Display,
-    S2: AsRef<str> + std::fmt::Display,
-    U: AsRef<str> + std::fmt::Display,
+    S: AsRef<str> + std::fmt::Display,
 {
     client
-        .get(format!("{}/v3/auth/tokens", keystone_url.as_ref()))
-        .header("x-auth-token", auth_token.as_ref())
+        .get(build_url("v3/auth/tokens"))
         .header("x-subject-token", subject_token.as_ref())
         .send()
         .await
+}
+
+/// Authenticate using the passed password auth and the scope.
+pub async fn get_auth_client<A: AsRef<str>>(auth_token: A) -> Result<Client> {
+    Ok(ClientBuilder::new()
+        .default_headers(HeaderMap::from_iter([(
+            HeaderName::from_static("x-auth-token"),
+            HeaderValue::from_str(auth_token.as_ref())?,
+        )]))
+        .build()?)
+}
+
+/// Authenticate as an admin and return the token with the info
+pub async fn get_admin_auth(_client: &Client) -> Result<(TokenResponse, String)> {
+    auth(
+        get_password_auth(
+            "admin",
+            env::var("OPENSTACK_ADMIN_PASSWORD").unwrap_or("password".to_string()),
+            "default",
+        )
+        .expect("can't prepare password auth"),
+        Some(Scope::Project(
+            ScopeProjectBuilder::default()
+                .name("admin")
+                .domain(DomainBuilder::default().id("default").build()?)
+                .build()?,
+        )),
+    )
+    .await
+}
+
+pub fn build_url<U>(relative: U) -> String
+where
+    U: AsRef<str> + std::fmt::Display,
+{
+    let keystone_url = env::var("KEYSTONE_URL").expect("KEYSTONE_URL is set");
+    format!("{}/{}", keystone_url, relative)
+}
+
+/// List roles.
+pub async fn list_roles(client: &Client) -> Result<Vec<Role>> {
+    Ok(client
+        .get(build_url("v3/roles"))
+        .send()
+        .await?
+        .json::<RoleList>()
+        .await?
+        .roles)
 }

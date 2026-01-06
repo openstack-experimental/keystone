@@ -39,6 +39,7 @@ impl From<db_assignment::Model> for Assignment {
             target_id: value.target_id,
             inherited: value.inherited,
             r#type: value.r#type.into(),
+            implied_via: None,
         }
     }
 }

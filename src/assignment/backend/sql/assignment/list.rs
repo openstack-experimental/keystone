@@ -165,6 +165,7 @@ pub async fn list_for_multiple_actors_and_targets(
             for implied_role_id in implies.iter() {
                 let mut implied_assignment = assignment.clone();
                 implied_assignment.role_id = implied_role_id.clone();
+                implied_assignment.implied_via = Some(assignment.role_id.clone());
                 result_map.insert(implied_role_id.clone(), implied_assignment);
             }
         }
@@ -333,6 +334,7 @@ mod tests {
                     target_id: "target".into(),
                     r#type: AssignmentType::UserProject,
                     inherited: false,
+                    implied_via: None,
                 },
                 Assignment {
                     role_id: "1".into(),
@@ -341,6 +343,7 @@ mod tests {
                     target_id: "system".into(),
                     r#type: AssignmentType::UserSystem,
                     inherited: false,
+                    implied_via: None,
                 }
             ]
         );
@@ -387,6 +390,7 @@ mod tests {
                     target_id: "target".into(),
                     r#type: AssignmentType::UserProject,
                     inherited: false,
+                    implied_via: None,
                 },
                 Assignment {
                     role_id: "1".into(),
@@ -395,6 +399,7 @@ mod tests {
                     target_id: "system".into(),
                     r#type: AssignmentType::UserSystem,
                     inherited: false,
+                    implied_via: None,
                 }
             ]
         );
@@ -439,6 +444,7 @@ mod tests {
                 target_id: "target".into(),
                 r#type: AssignmentType::UserProject,
                 inherited: false,
+                implied_via: None,
             }]
         );
         // Checking transaction log
@@ -482,6 +488,7 @@ mod tests {
                     target_id: "target".into(),
                     r#type: AssignmentType::UserProject,
                     inherited: false,
+                    implied_via: None,
                 },
                 Assignment {
                     role_id: "1".into(),
@@ -490,6 +497,7 @@ mod tests {
                     target_id: "system".into(),
                     r#type: AssignmentType::UserSystem,
                     inherited: false,
+                    implied_via: None,
                 }
             ]
         );
@@ -551,6 +559,7 @@ mod tests {
                     target_id: "target".into(),
                     r#type: AssignmentType::UserProject,
                     inherited: false,
+                    implied_via: None,
                 },
                 Assignment {
                     role_id: "2".into(),
@@ -559,6 +568,7 @@ mod tests {
                     target_id: "target".into(),
                     r#type: AssignmentType::UserProject,
                     inherited: false,
+                    implied_via: Some("1".into()),
                 }
             ]
         );
@@ -586,6 +596,7 @@ mod tests {
                     target_id: "system".into(),
                     r#type: AssignmentType::UserSystem,
                     inherited: false,
+                    implied_via: None,
                 },
                 Assignment {
                     role_id: "2".into(),
@@ -594,6 +605,7 @@ mod tests {
                     target_id: "system".into(),
                     r#type: AssignmentType::UserSystem,
                     inherited: false,
+                    implied_via: Some("1".into()),
                 }
             ]
         );

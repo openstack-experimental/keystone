@@ -24,18 +24,18 @@ use validator::Validate;
 #[builder(setter(strip_option, into))]
 pub struct Role {
     /// The role ID.
-    #[validate(length(max = 64))]
+    #[validate(length(min = 1, max = 64))]
     pub id: String,
     /// The role name.
-    #[validate(length(max = 255))]
+    #[validate(length(min = 1, max = 255))]
     pub name: String,
     /// The role domain_id.
     #[builder(default)]
-    #[validate(length(max = 64))]
+    #[validate(length(min = 1, max = 64))]
     pub domain_id: Option<String>,
     /// The role description.
     #[builder(default)]
-    #[validate(length(max = 255))]
+    #[validate(length(min = 1, max = 255))]
     pub description: Option<String>,
     /// Additional role properties.
     #[builder(default)]
@@ -48,22 +48,26 @@ pub struct Role {
 #[builder(setter(strip_option, into))]
 pub struct RoleListParameters {
     /// Filter roles by the domain.
-    #[validate(length(max = 64))]
+    #[builder(default)]
+    #[validate(length(min = 1, max = 64))]
     pub domain_id: Option<String>,
     /// Filter roles by the name attribute.
-    #[validate(length(max = 255))]
+    #[builder(default)]
+    #[validate(length(min = 1, max = 255))]
     pub name: Option<String>,
 }
 
+/// Role creation data.
 #[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct RoleCreate {
     /// The role ID.
-    #[validate(length(max = 64))]
+    #[builder(default)]
+    #[validate(length(min = 1, max = 64))]
     pub id: Option<String>,
     /// The role name.
-    #[validate(length(max = 255))]
+    #[validate(length(min = 1, max = 255))]
     pub name: String,
     /// The role domain_id.
     #[builder(default)]

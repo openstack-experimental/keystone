@@ -48,6 +48,7 @@ async fn test_valid() -> Result<(), Report> {
                 project_id: "project_a".into(),
                 roles: vec![Role {
                     id: "role_a".into(),
+                    name: "role_a".into(),
                     ..Default::default()
                 }],
                 user_id: user.id.clone(),
@@ -129,6 +130,7 @@ async fn test_expired() -> Result<(), Report> {
                 project_id: "project_a".into(),
                 roles: vec![Role {
                     id: "role_a".into(),
+                    name: "role_a".into(),
                     ..Default::default()
                 }],
                 user_id: user.id.clone(),
@@ -193,10 +195,12 @@ async fn test_valid_fewer_roles() -> Result<(), Report> {
                 roles: vec![
                     Role {
                         id: "role_a".into(),
+                        name: "role_a".into(),
                         ..Default::default()
                     },
                     Role {
                         id: "role_b".into(),
+                        name: "role_b".into(),
                         ..Default::default()
                     },
                 ],
@@ -277,6 +281,7 @@ async fn test_valid_all_roles_revoked() -> Result<(), Report> {
                 project_id: "project_a".into(),
                 roles: vec![Role {
                     id: "role_b".into(),
+                    name: "role_b".into(),
                     ..Default::default()
                 }],
                 user_id: user.id.clone(),

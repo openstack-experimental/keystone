@@ -12,6 +12,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use eyre::Result;
 use reqwest::{Client, StatusCode};
 use std::env;
 use tracing_test::traced_test;
@@ -23,31 +24,13 @@ use crate::common::*;
 
 #[tokio::test]
 #[traced_test]
-async fn test_revoke() {
-    let keystone_url = env::var("KEYSTONE_URL").expect("KEYSTONE_URL is set");
+async fn test_revoke() -> Result<()> {
     let client = Client::new();
 
-    let admin_token = auth(
-        &keystone_url,
-        get_password_auth(
-            "admin",
-            env::var("OPENSTACK_ADMIN_PASSWORD").unwrap_or("password".to_string()),
-            "default",
-        )
-        .expect("can't prepare password auth"),
-        Some(Scope::Project(
-            ScopeProjectBuilder::default()
-                .name("admin")
-                .domain(DomainBuilder::default().id("default").build().unwrap())
-                .build()
-                .unwrap(),
-        )),
-    )
-    .await
-    .expect("no token");
+    let admin_token = get_admin_auth(&client).await?.1;
+    let auth_client = get_auth_client(&admin_token).await?;
 
     let test_token = auth(
-        &keystone_url,
         get_password_auth(
             "admin",
             env::var("OPENSTACK_ADMIN_PASSWORD").unwrap_or("password".to_string()),
@@ -63,66 +46,43 @@ async fn test_revoke() {
         )),
     )
     .await
-    .expect("no token");
+    .expect("no token")
+    .1;
 
-    let _auth_rsp: TokenResponse = check_token(
-        &client,
-        keystone_url.clone(),
-        admin_token.clone(),
-        test_token.clone(),
-    )
-    .await
-    .unwrap()
-    .json()
-    .await
-    .unwrap();
+    let _auth_rsp: TokenResponse = check_token(&auth_client, &test_token)
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
 
-    let rsp = client
-        .delete(format!("{}/v3/auth/tokens", keystone_url))
-        .header("x-auth-token", admin_token.clone())
+    let rsp = auth_client
+        .delete(build_url("v3/auth/tokens"))
         .header("x-subject-token", test_token.clone())
         .send()
         .await
         .unwrap();
     assert_eq!(rsp.status(), StatusCode::NO_CONTENT);
 
-    let rsp = client
-        .get(format!("{}/v3/auth/tokens", keystone_url))
-        .header("x-auth-token", admin_token.clone())
+    let rsp = auth_client
+        .get(build_url("v3/auth/tokens"))
         .header("x-subject-token", test_token.clone())
         .send()
         .await
         .unwrap();
     assert_eq!(rsp.status(), StatusCode::NOT_FOUND);
+    Ok(())
 }
 
 #[tokio::test]
 #[traced_test]
-async fn test_revoke_parent_invalidates_child() {
-    let keystone_url = env::var("KEYSTONE_URL").expect("KEYSTONE_URL is set");
+async fn test_revoke_parent_invalidates_child() -> Result<()> {
     let client = Client::new();
 
-    let admin_token = auth(
-        &keystone_url,
-        get_password_auth(
-            "admin",
-            env::var("OPENSTACK_ADMIN_PASSWORD").unwrap_or("password".to_string()),
-            "default",
-        )
-        .expect("can't prepare password auth"),
-        Some(Scope::Project(
-            ScopeProjectBuilder::default()
-                .name("admin")
-                .domain(DomainBuilder::default().id("default").build().unwrap())
-                .build()
-                .unwrap(),
-        )),
-    )
-    .await
-    .expect("no token");
+    let admin_token = get_admin_auth(&client).await?.1;
+    let auth_client = get_auth_client(&admin_token).await?;
 
     let parent_token = auth(
-        &keystone_url,
         get_password_auth(
             "admin",
             env::var("OPENSTACK_ADMIN_PASSWORD").unwrap_or("password".to_string()),
@@ -138,10 +98,10 @@ async fn test_revoke_parent_invalidates_child() {
         )),
     )
     .await
-    .expect("no token");
+    .expect("no token")
+    .1;
 
     let child_token = auth_with_token(
-        &keystone_url,
         &parent_token,
         Some(Scope::Project(
             ScopeProjectBuilder::default()
@@ -154,62 +114,42 @@ async fn test_revoke_parent_invalidates_child() {
     .await
     .expect("no token");
 
-    let _auth_rsp: TokenResponse = check_token(
-        &client,
-        keystone_url.clone(),
-        admin_token.clone(),
-        parent_token.clone(),
-    )
-    .await
-    .unwrap()
-    .json()
-    .await
-    .unwrap();
+    let _auth_rsp: TokenResponse = check_token(&auth_client, &parent_token)
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
 
-    let _auth_rsp: TokenResponse = check_token(
-        &client,
-        keystone_url.clone(),
-        admin_token.clone(),
-        child_token.clone(),
-    )
-    .await
-    .unwrap()
-    .json()
-    .await
-    .unwrap();
+    let _auth_rsp: TokenResponse = check_token(&auth_client, &child_token)
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
 
-    let rsp = client
-        .delete(format!("{}/v3/auth/tokens", keystone_url))
-        .header("x-auth-token", admin_token.clone())
+    let rsp = auth_client
+        .delete(build_url("v3/auth/tokens"))
         .header("x-subject-token", parent_token.clone())
         .send()
         .await
         .unwrap();
-    assert_eq!(rsp.status(), StatusCode::NO_CONTENT);
+    assert_eq!(rsp.status(), StatusCode::NO_CONTENT, "token can be revoked");
 
     assert_eq!(
         StatusCode::NOT_FOUND,
-        check_token(
-            &client,
-            keystone_url.clone(),
-            admin_token.clone(),
-            parent_token.clone(),
-        )
-        .await
-        .unwrap()
-        .status()
+        check_token(&auth_client, parent_token.clone(),)
+            .await
+            .unwrap()
+            .status()
     );
 
     assert_eq!(
         StatusCode::NOT_FOUND,
-        check_token(
-            &client,
-            keystone_url.clone(),
-            admin_token.clone(),
-            child_token.clone(),
-        )
-        .await
-        .unwrap()
-        .status()
+        check_token(&auth_client, child_token.clone(),)
+            .await
+            .unwrap()
+            .status()
     );
+    Ok(())
 }

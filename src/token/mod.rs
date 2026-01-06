@@ -996,6 +996,7 @@ mod tests {
                     target_id: q.project_id.clone().unwrap(),
                     r#type: AssignmentType::UserProject,
                     inherited: false,
+                    implied_via: None,
                 }])
             });
         assignment_mock
@@ -1011,6 +1012,7 @@ mod tests {
                     target_id: q.domain_id.clone().unwrap(),
                     r#type: AssignmentType::UserProject,
                     inherited: false,
+                    implied_via: None,
                 }])
             });
         let provider = Provider::mocked_builder()
@@ -1144,6 +1146,7 @@ mod tests {
                     target_id: q.project_id.clone().unwrap(),
                     r#type: AssignmentType::UserProject,
                     inherited: false,
+                    implied_via: None,
                 }])
             });
         let provider = Provider::mocked_builder()
@@ -1193,6 +1196,7 @@ mod tests {
                     target_id: q.project_id.clone().unwrap(),
                     r#type: AssignmentType::UserProject,
                     inherited: false,
+                    implied_via: None,
                 }])
             });
         assignment_mock
@@ -1208,6 +1212,7 @@ mod tests {
                     target_id: q.domain_id.clone().unwrap(),
                     r#type: AssignmentType::UserProject,
                     inherited: false,
+                    implied_via: None,
                 }])
             });
         let mut ac_mock = MockApplicationCredentialProvider::default();

@@ -225,8 +225,12 @@ pub enum EvaluationError {
 pub struct Credentials {
     pub user_id: String,
     pub roles: Vec<String>,
+    #[serde(default)]
     pub project_id: Option<String>,
+    #[serde(default)]
     pub domain_id: Option<String>,
+    #[serde(default)]
+    pub system: Option<String>,
 }
 
 impl From<&Token> for Credentials {
@@ -239,6 +243,7 @@ impl From<&Token> for Credentials {
                 .unwrap_or_default(),
             project_id: token.project().map(|val| val.id.clone()),
             domain_id: token.domain().map(|val| val.id.clone()),
+            system: None,
         }
     }
 }

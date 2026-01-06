@@ -148,6 +148,7 @@ async fn test_create_nonexisting_role() -> Result<(), Report> {
                 project_id: "project_a".into(),
                 roles: vec![Role {
                     id: "missing".into(),
+                    name: "missing".into(),
                     ..Default::default()
                 }],
                 user_id: "user_a".into(),
@@ -177,6 +178,7 @@ async fn test_create_role() -> Result<(), Report> {
                 project_id: "project_a".into(),
                 roles: vec![Role {
                     id: "role_a".into(),
+                    name: "role_a".into(),
                     ..Default::default()
                 }],
                 user_id: "user_a".into(),

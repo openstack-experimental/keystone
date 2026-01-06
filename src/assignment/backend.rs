@@ -37,7 +37,7 @@ pub trait AssignmentBackend: Send + Sync {
     async fn create_grant(
         &self,
         state: &ServiceState,
-        params: Assignment,
+        params: AssignmentCreate,
     ) -> Result<Assignment, AssignmentProviderError>;
 
     /// Create Role.

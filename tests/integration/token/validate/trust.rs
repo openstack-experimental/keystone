@@ -275,6 +275,7 @@ async fn test_exclude_local_roles() -> Result<(), Report> {
             &state,
             RoleCreate {
                 id: Some("role_x".into()),
+                name: "role_x".into(),
                 domain_id: Some("domain_a".into()),
                 ..Default::default()
             },

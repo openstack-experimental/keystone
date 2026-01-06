@@ -12,43 +12,25 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use eyre::Result;
 use reqwest::Client;
-use std::env;
 
-use openstack_keystone::api::types::*;
 use openstack_keystone::api::v3::auth::token::types::*;
 
 use crate::common::*;
 
 #[tokio::test]
-async fn test_validate_own() {
-    let keystone_url = env::var("KEYSTONE_URL").expect("KEYSTONE_URL is set");
+async fn test_validate_own() -> Result<()> {
     let client = Client::new();
 
-    let token = auth(
-        &keystone_url,
-        get_password_auth(
-            "admin",
-            env::var("OPENSTACK_ADMIN_PASSWORD").unwrap_or("password".to_string()),
-            "default",
-        )
-        .expect("can't prepare password auth"),
-        Some(Scope::Project(
-            ScopeProjectBuilder::default()
-                .name("admin")
-                .domain(DomainBuilder::default().id("default").build().unwrap())
-                .build()
-                .unwrap(),
-        )),
-    )
-    .await
-    .expect("no token");
+    let admin_token = get_admin_auth(&client).await?.1;
+    let auth_client = get_auth_client(&admin_token).await?;
 
-    let _auth_rsp: TokenResponse =
-        check_token(&client, keystone_url.clone(), token.clone(), token.clone())
-            .await
-            .unwrap()
-            .json()
-            .await
-            .unwrap();
+    let _auth_rsp: TokenResponse = check_token(&auth_client, &admin_token)
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    Ok(())
 }

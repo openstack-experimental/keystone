@@ -45,9 +45,42 @@ pub struct Assignment {
 
     /// Inherited flag.
     pub inherited: bool,
+
+    /// Assignment through the role inference rules.
+    #[builder(default)]
+    pub implied_via: Option<String>,
 }
 
-impl Assignment {
+/// The new assignment object.
+#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[builder(build_fn(error = "BuilderError"))]
+#[builder(setter(strip_option, into))]
+pub struct AssignmentCreate {
+    /// The actor id.
+    #[validate(length(max = 64))]
+    pub actor_id: String,
+
+    /// The role ID.
+    #[validate(length(max = 64))]
+    pub role_id: String,
+
+    /// The role name.
+    #[builder(default)]
+    #[validate(length(max = 64))]
+    pub role_name: Option<String>,
+
+    /// The target id.
+    #[validate(length(max = 64))]
+    pub target_id: String,
+
+    /// The assignment type.
+    pub r#type: AssignmentType,
+
+    /// Inherited flag.
+    pub inherited: bool,
+}
+
+impl AssignmentCreate {
     /// Instantiate new assignment.
     pub fn new<A, T, R>(
         actor_id: A,

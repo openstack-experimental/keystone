@@ -279,6 +279,7 @@ mod tests {
                 target_id: "target".into(),
                 r#type: types::AssignmentType::UserProject,
                 inherited: false,
+                implied_via: None,
             })
             .unwrap()
         );
@@ -301,6 +302,7 @@ mod tests {
                 target_id: "target".into(),
                 r#type: types::AssignmentType::UserDomain,
                 inherited: false,
+                implied_via: None,
             })
             .unwrap()
         );
@@ -323,6 +325,7 @@ mod tests {
                 target_id: "target".into(),
                 r#type: types::AssignmentType::GroupProject,
                 inherited: false,
+                implied_via: None,
             })
             .unwrap()
         );
@@ -345,6 +348,7 @@ mod tests {
                 target_id: "target".into(),
                 r#type: types::AssignmentType::GroupDomain,
                 inherited: false,
+                implied_via: None,
             })
             .unwrap()
         );

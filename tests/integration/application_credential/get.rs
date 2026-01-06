@@ -46,10 +46,12 @@ async fn test_get() -> Result<(), Report> {
                 roles: vec![
                     Role {
                         id: "role_a".into(),
+                        name: "role_a".into(),
                         ..Default::default()
                     },
                     Role {
                         id: "role_b".into(),
+                        name: "role_b".into(),
                         ..Default::default()
                     },
                 ],

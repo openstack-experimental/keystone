@@ -21,7 +21,7 @@ use tempfile::TempDir;
 mod application_credential;
 mod trust;
 
-use openstack_keystone::assignment::{AssignmentApi, types::Assignment};
+use openstack_keystone::assignment::{AssignmentApi, types::AssignmentCreate};
 use openstack_keystone::config::Config;
 use openstack_keystone::db::entity::prelude::Project;
 use openstack_keystone::db::entity::project;
@@ -117,7 +117,10 @@ async fn grant_role_to_user_on_project<U: Into<String>, P: Into<String>, R: Into
     state
         .provider
         .get_assignment_provider()
-        .create_grant(state, Assignment::user_project(user, project, role, false))
+        .create_grant(
+            state,
+            AssignmentCreate::user_project(user, project, role, false),
+        )
         .await?;
     Ok(())
 }

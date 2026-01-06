@@ -108,10 +108,12 @@ where
                 roles: vec![
                     as_types::Role {
                         id: "role_a".into(),
+                        name: "role_a".into(),
                         ..Default::default()
                     },
                     as_types::Role {
                         id: "role_b".into(),
+                        name: "role_b".into(),
                         ..Default::default()
                     },
                 ],

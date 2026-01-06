@@ -92,7 +92,8 @@ mod tests {
                     actor_id: "actor_id".into(),
                     target_id: "target_id".into(),
                     r#type: AssignmentType::UserProject,
-                    inherited: true
+                    inherited: true,
+                    implied_via: None,
                 }
             )
             .await
@@ -107,7 +108,8 @@ mod tests {
                     actor_id: "actor_id".into(),
                     target_id: "target_id".into(),
                     r#type: AssignmentType::UserProject,
-                    inherited: true
+                    inherited: true,
+                    implied_via: None,
                 }
             )
             .await
@@ -163,7 +165,8 @@ mod tests {
                     actor_id: "actor_id".into(),
                     target_id: "target_id".into(),
                     r#type: AssignmentType::UserSystem,
-                    inherited: true
+                    inherited: true,
+                    implied_via: None,
                 }
             )
             .await
@@ -178,7 +181,8 @@ mod tests {
                     actor_id: "actor_id".into(),
                     target_id: "target_id".into(),
                     r#type: AssignmentType::UserSystem,
-                    inherited: true
+                    inherited: true,
+                    implied_via: None,
                 }
             )
             .await

@@ -366,6 +366,7 @@ mod tests {
                     target_id: q.project_id.clone().unwrap(),
                     r#type: AssignmentType::UserProject,
                     inherited: false,
+                    implied_via: None,
                 }])
             },
         );
