@@ -156,6 +156,8 @@ pub enum AuthzInfo {
     Domain(Domain),
     /// Project scope.
     Project(Project),
+    /// System scope.
+    System,
     /// Trust scope.
     Trust(Trust),
     /// Unscoped.
@@ -180,6 +182,7 @@ impl AuthzInfo {
                     return Err(AuthenticationError::Unauthorized);
                 }
             }
+            AuthzInfo::System => {}
             AuthzInfo::Trust(_) => {}
             AuthzInfo::Unscoped => {}
         }
@@ -293,6 +296,13 @@ mod tests {
         } else {
             panic!("should fail when domain is not enabled");
         }
+    }
+
+    #[test]
+    #[traced_test]
+    fn test_authz_validate_system() {
+        let authz = AuthzInfo::System;
+        assert!(authz.validate().is_ok());
     }
 
     #[test]

@@ -230,7 +230,7 @@ pub struct RoleAssignmentListParameters {
     /// Query role assignments on the system.
     #[builder(default)]
     #[validate(length(max = 64))]
-    pub system: Option<String>,
+    pub system_id: Option<String>,
 
     // #[builder(default)]
     // pub inherited: Option<bool>,

@@ -131,9 +131,7 @@ pub(super) async fn get_authz_info(
                 return Err(KeystoneApiError::Unauthorized(None));
             }
         }
-        Some(Scope::System(_scope)) => {
-            todo!()
-        }
+        Some(Scope::System(_scope)) => AuthzInfo::System,
         None => AuthzInfo::Unscoped,
     };
     authz_info.validate()?;

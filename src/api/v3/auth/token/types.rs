@@ -62,6 +62,9 @@ pub struct Token {
     /// The date and time when the token expires.
     pub expires_at: DateTime<Utc>,
 
+    /// The date and time when the token was issued.
+    pub issued_at: DateTime<Utc>,
+
     // # Subject
     /// A user object.
     //#[builder(default)]
@@ -97,6 +100,12 @@ pub struct Token {
     #[builder(default)]
     #[validate(nested)]
     pub roles: Option<Vec<Role>>,
+
+    /// A system object.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[builder(default)]
+    #[validate(nested)]
+    pub system: Option<System>,
 
     /// A catalog object.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -285,4 +294,13 @@ pub struct ValidateTokenParameters {
     /// Allow fetching a token that has expired. By default expired tokens
     /// return a 404 exception.
     pub allow_expired: Option<bool>,
+}
+
+/// System information.
+#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[builder(build_fn(error = "BuilderError"))]
+#[builder(setter(into, strip_option))]
+pub struct System {
+    /// All
+    pub all: bool,
 }

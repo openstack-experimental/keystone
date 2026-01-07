@@ -33,6 +33,7 @@ pub mod federation_unscoped;
 pub mod project_scoped;
 pub mod provider_api;
 pub mod restricted;
+pub mod system_scoped;
 pub mod trust;
 pub mod unscoped;
 
@@ -48,6 +49,7 @@ pub use federation_unscoped::{FederationUnscopedPayload, FederationUnscopedPaylo
 pub use project_scoped::{ProjectScopePayload, ProjectScopePayloadBuilder};
 pub use provider_api::TokenApi;
 pub use restricted::*;
+pub use system_scoped::*;
 pub use trust::*;
 pub use unscoped::*;
 
@@ -69,6 +71,8 @@ pub enum Token {
     ProjectScope(ProjectScopePayload),
     /// Restricted.
     Restricted(RestrictedPayload),
+    /// System scoped.
+    SystemScope(SystemScopePayload),
     /// Trust.
     Trust(TrustPayload),
     /// Unscoped.
@@ -85,6 +89,7 @@ impl Token {
             Self::FederationDomainScope(x) => &x.user_id,
             Self::ProjectScope(x) => &x.user_id,
             Self::Restricted(x) => &x.user_id,
+            Self::SystemScope(x) => &x.user_id,
             Self::Trust(x) => &x.user_id,
             Self::Unscoped(x) => &x.user_id,
         }
@@ -99,6 +104,7 @@ impl Token {
             Self::FederationDomainScope(x) => &x.user,
             Self::ProjectScope(x) => &x.user,
             Self::Restricted(x) => &x.user,
+            Self::SystemScope(x) => &x.user,
             Self::Trust(x) => &x.user,
             Self::Unscoped(x) => &x.user,
         }
@@ -117,6 +123,7 @@ impl Token {
             Self::FederationDomainScope(x) => x.issued_at = issued_at,
             Self::ProjectScope(x) => x.issued_at = issued_at,
             Self::Restricted(x) => x.issued_at = issued_at,
+            Self::SystemScope(x) => x.issued_at = issued_at,
             Self::Trust(x) => x.issued_at = issued_at,
             Self::Unscoped(x) => x.issued_at = issued_at,
         }
@@ -136,6 +143,7 @@ impl Token {
             Self::FederationDomainScope(x) => &x.issued_at,
             Self::ProjectScope(x) => &x.issued_at,
             Self::Restricted(x) => &x.issued_at,
+            Self::SystemScope(x) => &x.issued_at,
             Self::Trust(x) => &x.issued_at,
             Self::Unscoped(x) => &x.issued_at,
         }
@@ -151,6 +159,7 @@ impl Token {
             Self::FederationDomainScope(x) => &x.expires_at,
             Self::ProjectScope(x) => &x.expires_at,
             Self::Restricted(x) => &x.expires_at,
+            Self::SystemScope(x) => &x.expires_at,
             Self::Trust(x) => &x.expires_at,
             Self::Unscoped(x) => &x.expires_at,
         }
@@ -165,6 +174,7 @@ impl Token {
             Self::FederationDomainScope(x) => &x.methods,
             Self::ProjectScope(x) => &x.methods,
             Self::Restricted(x) => &x.methods,
+            Self::SystemScope(x) => &x.methods,
             Self::Trust(x) => &x.methods,
             Self::Unscoped(x) => &x.methods,
         }
@@ -179,6 +189,7 @@ impl Token {
             Self::FederationDomainScope(x) => &x.audit_ids,
             Self::ProjectScope(x) => &x.audit_ids,
             Self::Restricted(x) => &x.audit_ids,
+            Self::SystemScope(x) => &x.audit_ids,
             Self::Trust(x) => &x.audit_ids,
             Self::Unscoped(x) => &x.audit_ids,
         }
@@ -225,6 +236,7 @@ impl Token {
             Self::FederationDomainScope(x) => x.roles.as_ref(),
             Self::ProjectScope(x) => x.roles.as_ref(),
             Self::Restricted(x) => x.roles.as_ref(),
+            Self::SystemScope(x) => x.roles.as_ref(),
             Self::Trust(x) => match &x.trust {
                 Some(trust) => trust.roles.as_ref(),
                 None => None,
@@ -308,6 +320,7 @@ impl Token {
                     return Err(TokenProviderError::ProjectDisabled(data.project_id.clone()));
                 }
             }
+            Token::SystemScope(_data) => {}
             Token::Trust(data) => {
                 if !data
                     .project
@@ -355,6 +368,7 @@ impl Token {
             Token::FederationUnscoped(_data) => {}
             Token::ProjectScope(_data) => {}
             Token::Restricted(_data) => {}
+            Token::SystemScope(_data) => {}
             Token::Trust(data) => {
                 state
                     .provider
@@ -383,6 +397,7 @@ impl Validate for Token {
             Self::FederationDomainScope(x) => x.validate(),
             Self::ProjectScope(x) => x.validate(),
             Self::Restricted(x) => x.validate(),
+            Self::SystemScope(x) => x.validate(),
             Self::Trust(x) => x.validate(),
             Self::Unscoped(x) => x.validate(),
         }

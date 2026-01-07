@@ -62,11 +62,16 @@ pub struct Token {
     /// The date and time when the token expires.
     pub expires_at: DateTime<Utc>,
 
+    /// The date and time when the token was issued.
+    pub issued_at: DateTime<Utc>,
+
+    // # Subject
     /// A user object.
     //#[builder(default)]
     #[validate(nested)]
     pub user: User,
 
+    // # Scope
     /// A domain object including the id and name representing the domain the
     /// token is scoped to. This is only included in tokens that are scoped
     /// to a domain.
@@ -83,12 +88,19 @@ pub struct Token {
     #[validate(nested)]
     pub project: Option<Project>,
 
+    /// A system object.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[builder(default)]
+    #[validate(nested)]
+    pub system: Option<System>,
+
     /// A trust object.
     #[serde(skip_serializing_if = "Option::is_none", rename = "OS-TRUST:trust")]
     #[builder(default)]
     #[validate(nested)]
     pub trust: Option<TokenTrustRepr>,
 
+    // # Roles on the scope.
     /// A list of role objects
     #[serde(skip_serializing_if = "Option::is_none")]
     #[builder(default)]
@@ -274,4 +286,13 @@ pub struct ValidateTokenParameters {
     /// Allow fetching a token that has expired. By default expired tokens
     /// return a 404 exception.
     pub allow_expired: Option<bool>,
+}
+
+/// System information.
+#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[builder(build_fn(error = "BuilderError"))]
+#[builder(setter(into, strip_option))]
+pub struct System {
+    /// All
+    pub all: bool,
 }

@@ -221,6 +221,7 @@ impl FernetTokenProvider {
                 4 => Ok(FederationUnscopedPayload::disassemble(rd, self)?.into()),
                 5 => Ok(FederationProjectScopePayload::disassemble(rd, self)?.into()),
                 6 => Ok(FederationDomainScopePayload::disassemble(rd, self)?.into()),
+                8 => Ok(SystemScopePayload::disassemble(rd, self)?.into()),
                 9 => Ok(ApplicationCredentialPayload::disassemble(rd, self)?.into()),
                 11 => Ok(RestrictedPayload::disassemble(rd, self)?.into()),
                 other => Err(TokenProviderError::InvalidTokenType(other)),
@@ -237,10 +238,10 @@ impl FernetTokenProvider {
         token.validate()?;
         let mut buf = vec![];
         match token {
-            Token::Unscoped(data) => {
-                write_array_len(&mut buf, 5)
+            Token::ApplicationCredential(data) => {
+                write_array_len(&mut buf, 7)
                     .map_err(|x| TokenProviderError::RmpEncode(x.to_string()))?;
-                write_pfix(&mut buf, 0)
+                write_pfix(&mut buf, 9)
                     .map_err(|x| TokenProviderError::RmpEncode(x.to_string()))?;
                 data.assemble(&mut buf, self)?;
             }
@@ -248,13 +249,6 @@ impl FernetTokenProvider {
                 write_array_len(&mut buf, 6)
                     .map_err(|x| TokenProviderError::RmpEncode(x.to_string()))?;
                 write_pfix(&mut buf, 1)
-                    .map_err(|x| TokenProviderError::RmpEncode(x.to_string()))?;
-                data.assemble(&mut buf, self)?;
-            }
-            Token::ProjectScope(data) => {
-                write_array_len(&mut buf, 6)
-                    .map_err(|x| TokenProviderError::RmpEncode(x.to_string()))?;
-                write_pfix(&mut buf, 2)
                     .map_err(|x| TokenProviderError::RmpEncode(x.to_string()))?;
                 data.assemble(&mut buf, self)?;
             }
@@ -286,10 +280,10 @@ impl FernetTokenProvider {
                     .map_err(|x| TokenProviderError::RmpEncode(x.to_string()))?;
                 data.assemble(&mut buf, self)?;
             }
-            Token::ApplicationCredential(data) => {
-                write_array_len(&mut buf, 7)
+            Token::ProjectScope(data) => {
+                write_array_len(&mut buf, 6)
                     .map_err(|x| TokenProviderError::RmpEncode(x.to_string()))?;
-                write_pfix(&mut buf, 9)
+                write_pfix(&mut buf, 2)
                     .map_err(|x| TokenProviderError::RmpEncode(x.to_string()))?;
                 data.assemble(&mut buf, self)?;
             }
@@ -297,6 +291,20 @@ impl FernetTokenProvider {
                 write_array_len(&mut buf, 9)
                     .map_err(|x| TokenProviderError::RmpEncode(x.to_string()))?;
                 write_pfix(&mut buf, 11)
+                    .map_err(|x| TokenProviderError::RmpEncode(x.to_string()))?;
+                data.assemble(&mut buf, self)?;
+            }
+            Token::SystemScope(data) => {
+                write_array_len(&mut buf, 6)
+                    .map_err(|x| TokenProviderError::RmpEncode(x.to_string()))?;
+                write_pfix(&mut buf, 8)
+                    .map_err(|x| TokenProviderError::RmpEncode(x.to_string()))?;
+                data.assemble(&mut buf, self)?;
+            }
+            Token::Unscoped(data) => {
+                write_array_len(&mut buf, 5)
+                    .map_err(|x| TokenProviderError::RmpEncode(x.to_string()))?;
+                write_pfix(&mut buf, 0)
                     .map_err(|x| TokenProviderError::RmpEncode(x.to_string()))?;
                 data.assemble(&mut buf, self)?;
             }

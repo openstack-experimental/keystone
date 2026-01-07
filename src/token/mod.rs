@@ -294,6 +294,23 @@ impl TokenProvider {
         ))
     }
 
+    /// Create system scoped token.
+    fn create_system_scoped_token(
+        &self,
+        authentication_info: &AuthenticatedInfo,
+    ) -> Result<Token, TokenProviderError> {
+        Ok(Token::SystemScope(
+            SystemScopePayloadBuilder::default()
+                .user_id(authentication_info.user_id.clone())
+                .user(authentication_info.user.clone())
+                .methods(authentication_info.methods.clone().iter())
+                .audit_ids(authentication_info.audit_ids.clone().iter())
+                .system_id("system")
+                .expires_at(self.get_new_token_expiry()?)
+                .build()?,
+        ))
+    }
+
     /// Create token based on the trust.
     fn create_trust_token(
         &self,
@@ -361,6 +378,9 @@ impl TokenProvider {
                     data.user = user;
                 }
                 Token::Restricted(data) => {
+                    data.user = user;
+                }
+                Token::SystemScope(data) => {
                     data.user = user;
                 }
                 Token::Trust(data) => {
@@ -468,6 +488,7 @@ impl TokenProvider {
                     data.project = project;
                 }
             }
+            Token::SystemScope(_data) => {}
             Token::Trust(data) => {
                 if data.trust.is_none() {
                     data.trust = state
@@ -497,62 +518,6 @@ impl TokenProvider {
         token: &mut Token,
     ) -> Result<(), TokenProviderError> {
         match token {
-            Token::ProjectScope(data) => {
-                data.roles = Some(
-                    state
-                        .provider
-                        .get_assignment_provider()
-                        .list_role_assignments(
-                            state,
-                            &RoleAssignmentListParametersBuilder::default()
-                                .user_id(&data.user_id)
-                                .project_id(&data.project_id)
-                                .include_names(true)
-                                .effective(true)
-                                .build()
-                                .map_err(AssignmentProviderError::from)?,
-                        )
-                        .await?
-                        .into_iter()
-                        .map(|x| Role {
-                            id: x.role_id.clone(),
-                            name: x.role_name.clone().unwrap_or_default(),
-                            ..Default::default()
-                        })
-                        .collect(),
-                );
-                if data.roles.as_ref().is_none_or(|roles| roles.is_empty()) {
-                    return Err(TokenProviderError::ActorHasNoRolesOnTarget);
-                }
-            }
-            Token::DomainScope(data) => {
-                data.roles = Some(
-                    state
-                        .provider
-                        .get_assignment_provider()
-                        .list_role_assignments(
-                            state,
-                            &RoleAssignmentListParametersBuilder::default()
-                                .user_id(&data.user_id)
-                                .domain_id(&data.domain_id)
-                                .include_names(true)
-                                .effective(true)
-                                .build()
-                                .map_err(AssignmentProviderError::from)?,
-                        )
-                        .await?
-                        .into_iter()
-                        .map(|x| Role {
-                            id: x.role_id.clone(),
-                            name: x.role_name.clone().unwrap_or_default(),
-                            ..Default::default()
-                        })
-                        .collect(),
-                );
-                if data.roles.as_ref().is_none_or(|roles| roles.is_empty()) {
-                    return Err(TokenProviderError::ActorHasNoRolesOnTarget);
-                }
-            }
             Token::ApplicationCredential(data) => {
                 if data.application_credential.is_none() {
                     data.application_credential = Some(
@@ -592,6 +557,34 @@ impl TokenProvider {
                         return Err(TokenProviderError::ActorHasNoRolesOnTarget);
                     }
                 };
+            }
+            Token::DomainScope(data) => {
+                data.roles = Some(
+                    state
+                        .provider
+                        .get_assignment_provider()
+                        .list_role_assignments(
+                            state,
+                            &RoleAssignmentListParametersBuilder::default()
+                                .user_id(&data.user_id)
+                                .domain_id(&data.domain_id)
+                                .include_names(true)
+                                .effective(true)
+                                .build()
+                                .map_err(AssignmentProviderError::from)?,
+                        )
+                        .await?
+                        .into_iter()
+                        .map(|x| Role {
+                            id: x.role_id.clone(),
+                            name: x.role_name.clone().unwrap_or_default(),
+                            ..Default::default()
+                        })
+                        .collect(),
+                );
+                if data.roles.as_ref().is_none_or(|roles| roles.is_empty()) {
+                    return Err(TokenProviderError::ActorHasNoRolesOnTarget);
+                }
             }
             Token::FederationProjectScope(data) => {
                 data.roles = Some(
@@ -649,6 +642,34 @@ impl TokenProvider {
                     return Err(TokenProviderError::ActorHasNoRolesOnTarget);
                 }
             }
+            Token::ProjectScope(data) => {
+                data.roles = Some(
+                    state
+                        .provider
+                        .get_assignment_provider()
+                        .list_role_assignments(
+                            state,
+                            &RoleAssignmentListParametersBuilder::default()
+                                .user_id(&data.user_id)
+                                .project_id(&data.project_id)
+                                .include_names(true)
+                                .effective(true)
+                                .build()
+                                .map_err(AssignmentProviderError::from)?,
+                        )
+                        .await?
+                        .into_iter()
+                        .map(|x| Role {
+                            id: x.role_id.clone(),
+                            name: x.role_name.clone().unwrap_or_default(),
+                            ..Default::default()
+                        })
+                        .collect(),
+                );
+                if data.roles.as_ref().is_none_or(|roles| roles.is_empty()) {
+                    return Err(TokenProviderError::ActorHasNoRolesOnTarget);
+                }
+            }
             Token::Restricted(data) => {
                 if data.roles.is_none() {
                     self.get_token_restriction(state, &data.token_restriction_id, true)
@@ -657,6 +678,34 @@ impl TokenProvider {
                         .ok_or(TokenProviderError::TokenRestrictionNotFound(
                             data.token_restriction_id.clone(),
                         ))?;
+                }
+            }
+            Token::SystemScope(data) => {
+                data.roles = Some(
+                    state
+                        .provider
+                        .get_assignment_provider()
+                        .list_role_assignments(
+                            state,
+                            &RoleAssignmentListParametersBuilder::default()
+                                .user_id(&data.user_id)
+                                .system_id(&data.system_id)
+                                .include_names(true)
+                                .effective(true)
+                                .build()
+                                .map_err(AssignmentProviderError::from)?,
+                        )
+                        .await?
+                        .into_iter()
+                        .map(|x| Role {
+                            id: x.role_id.clone(),
+                            name: x.role_name.clone().unwrap_or_default(),
+                            ..Default::default()
+                        })
+                        .collect(),
+                );
+                if data.roles.as_ref().is_none_or(|roles| roles.is_empty()) {
+                    return Err(TokenProviderError::ActorHasNoRolesOnTarget);
                 }
             }
             Token::Trust(data) => {
@@ -817,6 +866,11 @@ impl TokenApi for TokenProvider {
                     message: "cannot create trust token with an identity provider in scope".into(),
                     context: "issuing token".into(),
                 }),
+                AuthzInfo::System => Err(TokenProviderError::Conflict {
+                    message: "cannot create system scope token with an identity provider in scope"
+                        .into(),
+                    context: "issuing token".into(),
+                }),
                 AuthzInfo::Unscoped => self.create_federated_unscoped_token(&authentication_info),
             }
         } else {
@@ -828,6 +882,7 @@ impl TokenApi for TokenProvider {
                     self.create_project_scope_token(&authentication_info, project)
                 }
                 AuthzInfo::Trust(trust) => self.create_trust_token(&authentication_info, trust),
+                AuthzInfo::System => self.create_system_scoped_token(&authentication_info),
                 AuthzInfo::Unscoped => self.create_unscoped_token(&authentication_info),
             }
         }

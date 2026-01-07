@@ -15,7 +15,7 @@
 use crate::api::common;
 use crate::api::error::KeystoneApiError;
 use crate::api::v3::role::types::Role;
-use crate::api::v4::auth::token::types::{Token, TokenBuilder, UserBuilder};
+use crate::api::v4::auth::token::types::{System, Token, TokenBuilder, UserBuilder};
 use crate::identity::IdentityApi;
 use crate::keystone::ServiceState;
 use crate::resource::{
@@ -37,6 +37,7 @@ impl Token {
         response.audit_ids(token.audit_ids().clone());
         response.methods(token.methods().clone());
         response.expires_at(*token.expires_at());
+        response.issued_at(*token.issued_at());
 
         let user = if let Some(user) = token.user() {
             user
@@ -74,29 +75,6 @@ impl Token {
         }
 
         match token {
-            ProviderToken::Unscoped(_token) => {}
-            ProviderToken::DomainScope(token) => {
-                if domain.is_none() {
-                    domain = Some(
-                        common::get_domain(state, Some(&token.domain_id), None::<&str>).await?,
-                    );
-                }
-            }
-            ProviderToken::ProjectScope(token) => {
-                if project.is_none() {
-                    project = Some(
-                        state
-                            .provider
-                            .get_resource_provider()
-                            .get_project(state, &token.project_id)
-                            .await?
-                            .ok_or_else(|| KeystoneApiError::NotFound {
-                                resource: "project".into(),
-                                identifier: token.project_id.clone(),
-                            })?,
-                    );
-                }
-            }
             ProviderToken::ApplicationCredential(token) => {
                 if project.is_none() {
                     project = Some(
@@ -112,6 +90,13 @@ impl Token {
                     );
                 }
             }
+            ProviderToken::DomainScope(token) => {
+                if domain.is_none() {
+                    domain = Some(
+                        common::get_domain(state, Some(&token.domain_id), None::<&str>).await?,
+                    );
+                }
+            }
             ProviderToken::FederationUnscoped(_token) => {}
             ProviderToken::FederationDomainScope(token) => {
                 if domain.is_none() {
@@ -121,6 +106,21 @@ impl Token {
                 }
             }
             ProviderToken::FederationProjectScope(token) => {
+                if project.is_none() {
+                    project = Some(
+                        state
+                            .provider
+                            .get_resource_provider()
+                            .get_project(state, &token.project_id)
+                            .await?
+                            .ok_or_else(|| KeystoneApiError::NotFound {
+                                resource: "project".into(),
+                                identifier: token.project_id.clone(),
+                            })?,
+                    );
+                }
+            }
+            ProviderToken::ProjectScope(token) => {
                 if project.is_none() {
                     project = Some(
                         state
@@ -150,6 +150,9 @@ impl Token {
                     );
                 }
             }
+            ProviderToken::SystemScope(_token) => {
+                response.system(System { all: true });
+            }
             ProviderToken::Trust(token) => {
                 if project.is_none() {
                     project = Some(
@@ -169,6 +172,7 @@ impl Token {
                     response.trust(trust);
                 }
             }
+            ProviderToken::Unscoped(_token) => {}
         }
 
         if let Some(domain) = domain {
