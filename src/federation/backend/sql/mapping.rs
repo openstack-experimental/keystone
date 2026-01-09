@@ -54,8 +54,8 @@ impl TryFrom<db_federated_mapping::Model> for Mapping {
     fn try_from(value: db_federated_mapping::Model) -> Result<Self, Self::Error> {
         let mut builder = MappingBuilder::default();
         builder.id(value.id.clone());
-        builder.name(value.name.clone());
-        builder.idp_id(value.idp_id.clone());
+        builder.name(value.name);
+        builder.idp_id(value.idp_id);
         if let Some(val) = &value.domain_id {
             builder.domain_id(val);
         }
@@ -69,8 +69,8 @@ impl TryFrom<db_federated_mapping::Model> for Mapping {
         {
             builder.allowed_redirect_uris(Vec::from_iter(val.split(",").map(Into::into)));
         }
-        builder.user_id_claim(value.user_id_claim.clone());
-        builder.user_name_claim(value.user_name_claim.clone());
+        builder.user_id_claim(value.user_id_claim);
+        builder.user_name_claim(value.user_name_claim);
         if let Some(val) = &value.domain_id_claim {
             builder.domain_id_claim(val);
         }
@@ -85,8 +85,8 @@ impl TryFrom<db_federated_mapping::Model> for Mapping {
         if let Some(val) = &value.bound_subject {
             builder.bound_subject(val);
         }
-        if let Some(val) = &value.bound_claims {
-            builder.bound_claims(val.clone());
+        if let Some(val) = value.bound_claims {
+            builder.bound_claims(val);
         }
         if let Some(val) = &value.oidc_scopes
             && !val.is_empty()
@@ -94,10 +94,10 @@ impl TryFrom<db_federated_mapping::Model> for Mapping {
             builder.oidc_scopes(Vec::from_iter(val.split(",").map(Into::into)));
         }
         if let Some(val) = &value.token_project_id {
-            builder.token_project_id(val.clone());
+            builder.token_project_id(val);
         }
         if let Some(val) = &value.token_restriction_id {
-            builder.token_restriction_id(val.clone());
+            builder.token_restriction_id(val);
         }
         Ok(builder.build()?)
     }

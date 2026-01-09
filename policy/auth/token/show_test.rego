@@ -1,4 +1,3 @@
-
 package test_auth_token_show
 
 import data.identity.auth.token.show

@@ -15,16 +15,17 @@ use serde_json::Value;
 use tracing::error;
 
 mod get;
+mod list;
 mod tree;
 
 pub use get::get_project;
 pub use get::get_project_by_name;
+pub use list::list;
 pub use tree::get_project_parents;
 
 use crate::db::entity::project as db_project;
 use crate::resource::backend::error::ResourceDatabaseError;
-use crate::resource::types::Project;
-use crate::resource::types::ProjectBuilder;
+use crate::resource::types::{Project, ProjectBuilder};
 
 impl TryFrom<db_project::Model> for Project {
     type Error = ResourceDatabaseError;
@@ -35,25 +36,45 @@ impl TryFrom<db_project::Model> for Project {
         if let Some(parent_id) = &value.parent_id {
             project_builder.parent_id(parent_id);
         }
-        project_builder.name(value.name.clone());
-        project_builder.domain_id(value.domain_id.clone());
+        project_builder.name(value.name);
+        project_builder.domain_id(value.domain_id);
         if let Some(description) = &value.description {
-            project_builder.description(description.clone());
+            project_builder.description(description);
         }
-        project_builder.enabled(value.enabled.unwrap_or(false));
-        if let Some(extra) = &value.extra {
-            project_builder.extra(
-                serde_json::from_str::<Value>(extra)
-                    .inspect_err(|e| {
-                        error!(
-                            "failed to deserialize project [id: {}] extra properties: {e}",
-                            value.id
-                        )
-                    })
-                    .unwrap_or_default(),
-            );
+        // python keystone defaults to project/domain being enabled when the column is
+        // unset.
+        project_builder.enabled(value.enabled.unwrap_or(true));
+        if let Some(extra) = &value.extra
+            && extra != "{}"
+        {
+            match serde_json::from_str::<Value>(extra) {
+                Ok(extras) => {
+                    project_builder.extra(extras);
+                }
+                Err(e) => {
+                    error!("failed to deserialize project extra: {e}");
+                }
+            };
         }
 
         Ok(project_builder.build()?)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    pub(super) fn get_project_mock<S: Into<String>>(id: S) -> db_project::Model {
+        db_project::Model {
+            description: None,
+            domain_id: "did".into(),
+            enabled: Some(true),
+            extra: Some("{}".to_string()),
+            id: id.into(),
+            is_domain: false,
+            name: "name".into(),
+            parent_id: None,
+        }
     }
 }

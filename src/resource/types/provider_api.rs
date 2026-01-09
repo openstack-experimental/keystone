@@ -17,7 +17,7 @@ use async_trait::async_trait;
 use crate::keystone::ServiceState;
 use crate::resource::ResourceProviderError;
 use crate::resource::types::domain::Domain;
-use crate::resource::types::project::Project;
+use crate::resource::types::project::*;
 
 #[async_trait]
 pub trait ResourceApi: Send + Sync {
@@ -52,4 +52,11 @@ pub trait ResourceApi: Send + Sync {
         state: &ServiceState,
         project_id: &'a str,
     ) -> Result<Option<Vec<Project>>, ResourceProviderError>;
+
+    /// List projects.
+    async fn list_projects(
+        &self,
+        state: &ServiceState,
+        params: &ProjectListParameters,
+    ) -> Result<Vec<Project>, ResourceProviderError>;
 }

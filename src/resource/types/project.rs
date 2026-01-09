@@ -15,29 +15,62 @@
 use derive_builder::Builder;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::HashSet;
+use validator::Validate;
 
 use crate::error::BuilderError;
 
-#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct Project {
-    /// The project ID.
-    pub id: String,
-    /// The ID of the parent for the project.
+    /// The description of the project.
     #[builder(default)]
-    pub parent_id: Option<String>,
-    /// The project name.
-    pub name: String,
+    #[validate(length(min = 1, max = 255))]
+    pub description: Option<String>,
+
     /// The project domain_id.
+    #[validate(length(min = 1, max = 64))]
     pub domain_id: String,
+
     /// If set to true, project is enabled. If set to false, project is
     /// disabled.
     pub enabled: bool,
-    /// The description of the project.
-    #[builder(default)]
-    pub description: Option<String>,
+
     /// Additional project properties.
     #[builder(default)]
     pub extra: Option<Value>,
+
+    /// The project ID.
+    #[validate(length(min = 1, max = 255))]
+    pub id: String,
+
+    /// The project name.
+    #[validate(length(min = 1, max = 255))]
+    pub name: String,
+
+    /// The ID of the parent for the project.
+    #[builder(default)]
+    #[validate(length(min = 1, max = 64))]
+    pub parent_id: Option<String>,
+}
+
+/// Project listing parameters.
+#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
+#[builder(build_fn(error = "BuilderError"))]
+pub struct ProjectListParameters {
+    /// Filter project by the domain.
+    #[builder(default)]
+    #[validate(length(max = 64))]
+    pub domain_id: Option<String>,
+
+    /// Filter projects by the id attribute. Items are treated as `IN[]`.
+    #[builder(default)]
+    #[validate(length(min = 1, max = 64))]
+    pub ids: Option<HashSet<String>>,
+
+    /// Filter projects by the name attribute.
+    #[builder(default)]
+    #[validate(length(max = 255))]
+    pub name: Option<String>,
 }

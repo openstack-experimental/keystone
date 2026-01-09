@@ -34,7 +34,7 @@ impl TryFrom<db_federated_identity_provider::Model> for IdentityProvider {
     fn try_from(value: db_federated_identity_provider::Model) -> Result<Self, Self::Error> {
         let mut builder = IdentityProviderBuilder::default();
         builder.id(value.id.clone());
-        builder.name(value.name.clone());
+        builder.name(value.name);
         builder.enabled(value.enabled);
         if let Some(val) = &value.domain_id {
             builder.domain_id(val);
@@ -67,11 +67,11 @@ impl TryFrom<db_federated_identity_provider::Model> for IdentityProvider {
         if let Some(val) = &value.bound_issuer {
             builder.bound_issuer(val);
         }
-        if let Some(val) = &value.provider_config {
-            builder.provider_config(val.clone());
+        if let Some(val) = value.provider_config {
+            builder.provider_config(val);
         }
         if let Some(val) = &value.default_mapping_name {
-            builder.default_mapping_name(val.clone());
+            builder.default_mapping_name(val);
         }
         Ok(builder.build()?)
     }

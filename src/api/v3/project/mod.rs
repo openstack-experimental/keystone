@@ -17,6 +17,8 @@ use utoipa_axum::router::OpenApiRouter;
 
 use crate::keystone::ServiceState;
 
+pub mod types;
+
 /// OpenApi specification for the project API.
 #[derive(OpenApi)]
 #[openapi(

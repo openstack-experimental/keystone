@@ -1,8 +1,8 @@
-package identity.auth.token.show
+package identity.auth.project.list
 
 import data.identity
 
-# Validate the token
+# List projects the user is having access to
 
 default allow := false
 
@@ -11,15 +11,7 @@ allow if {
 }
 
 allow if {
-	"service" in input.credentials.roles
-}
-
-allow if {
 	"reader" in input.credentials.roles
 	input.credentials.system_scope != null
 	"all" == input.credentials.system_scope
-}
-
-allow if {
-	identity.token_subject
 }

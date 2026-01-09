@@ -12,7 +12,7 @@ allow if {
 
 allow if {
 	"reader" in input.credentials.roles
-  input.credentials.system == "all"
+	input.credentials.system == "all"
 }
 
 allow if {
@@ -21,7 +21,7 @@ allow if {
 	input.target.user.domain_id != null
 	input.credentials.domain_id == input.target.user.domain_id
 	input.credentials.domain_id == input.target.project.domain_id
-  identity.own_role_or_global_role
+	identity.own_role_or_global_role
 }
 
 # violation contains {"field": "domain_id", "msg": "checking project-user-role assignment requires domain scope."} if {
