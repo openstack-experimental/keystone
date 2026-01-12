@@ -34,7 +34,7 @@ harness = false
 async-trait = { version = "0.1" }
 axum = { version = "0.8", features = ["macros"] }
 base64 = { version = "0.22" }
-bcrypt = { version = "0.17", features = ["alloc"] }
+bcrypt = { version = "0.18", features = ["alloc"] }
 byteorder = { version = "1.5" }
 bytes = { version = "1.11" }
 chrono = { version = "0.4" }
