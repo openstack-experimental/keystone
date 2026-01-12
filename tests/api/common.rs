@@ -13,16 +13,133 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Common functionality used in the functional tests.
 
-use eyre::{Report, Result, eyre};
+use eyre::{Result, WrapErr, eyre};
 use reqwest::{
     Client, ClientBuilder, StatusCode,
     header::{HeaderMap, HeaderName, HeaderValue},
 };
+use secrecy::SecretString;
 use std::env;
+use url::Url;
 
 use openstack_keystone::api::types::*;
 use openstack_keystone::api::v3::auth::token::types::*;
-use openstack_keystone::api::v3::role::types::{Role, RoleList};
+
+pub struct TestClient {
+    pub client: Client,
+    pub base_url: Url,
+    pub auth: Option<TokenResponse>,
+    pub token: Option<SecretString>,
+}
+
+impl TestClient {
+    pub fn default() -> Result<Self> {
+        Ok(Self {
+            client: Client::new(),
+            base_url: env::var("KEYSTONE_URL")
+                .wrap_err("KEYSTONE_URL must be set")?
+                .parse()?,
+            auth: None,
+            token: None,
+        })
+    }
+
+    pub fn with_base_url<U: AsRef<str>>(base_url: Option<U>) -> Result<Self> {
+        if let Some(base_url) = base_url {
+            Ok(Self {
+                client: Client::new(),
+                base_url: base_url.as_ref().parse()?,
+                auth: None,
+                token: None,
+            })
+        } else {
+            Self::default()
+        }
+    }
+
+    pub async fn auth(&mut self, identity: Identity, scope: Option<Scope>) -> Result<&mut Self> {
+        let new = self;
+        let auth_request = AuthRequest {
+            auth: AuthRequestInner { identity, scope },
+        };
+        let rsp = new
+            .client
+            .post(new.base_url.join("v3/auth/tokens")?)
+            .json(&serde_json::to_value(auth_request)?)
+            .send()
+            .await?;
+
+        if rsp.status() != StatusCode::OK {
+            return Err(eyre!("Authentication failed with {}", rsp.status()));
+        }
+
+        let token = rsp
+            .headers()
+            .get("X-Subject-Token")
+            .ok_or_else(|| eyre!("Token is missing in the {:?}", rsp))?
+            .to_str()?
+            .to_string();
+
+        new.token = Some(SecretString::from(token.clone()));
+        new.auth = Some(rsp.json().await?);
+        let mut token = HeaderValue::from_str(&token)?;
+        token.set_sensitive(true);
+        new.client = ClientBuilder::new()
+            .default_headers(HeaderMap::from_iter([(
+                HeaderName::from_static("x-auth-token"),
+                token,
+            )]))
+            .build()?;
+        Ok(new)
+    }
+
+    /// Authenticate using the passed password auth and the scope.
+    pub async fn auth_password(
+        &mut self,
+        password_auth: PasswordAuth,
+        scope: Option<Scope>,
+    ) -> Result<&mut Self> {
+        let new = self;
+        let identity = IdentityBuilder::default()
+            .methods(vec!["password".into()])
+            .password(password_auth)
+            .build()?;
+        new.auth(identity, scope).await?;
+        Ok(new)
+    }
+
+    pub async fn auth_admin(&mut self) -> Result<&mut Self> {
+        let new = self;
+        new.auth_password(
+            get_password_auth(
+                "admin",
+                env::var("OPENSTACK_ADMIN_PASSWORD").unwrap_or("password".to_string()),
+                "default",
+            )?,
+            Some(Scope::Project(
+                ScopeProjectBuilder::default()
+                    .name("admin")
+                    .domain(DomainBuilder::default().id("default").build()?)
+                    .build()?,
+            )),
+        )
+        .await?;
+        Ok(new)
+    }
+
+    pub async fn auth_token<S>(&mut self, token: S, scope: Option<Scope>) -> Result<&mut Self>
+    where
+        S: AsRef<str> + std::fmt::Display,
+    {
+        let new = self;
+        let identity = IdentityBuilder::default()
+            .methods(vec!["token".into()])
+            .token(TokenAuthBuilder::default().id(token.as_ref()).build()?)
+            .build()?;
+        new.auth(identity, scope).await?;
+        Ok(new)
+    }
+}
 
 /// Get the password auth identity struct
 pub fn get_password_auth<U, P, DID>(
@@ -45,128 +162,4 @@ where
         )
         .build()
         .map_err(Into::into)
-}
-
-/// Authenticate using the passed password auth and the scope.
-pub async fn auth(
-    password_auth: PasswordAuth,
-    scope: Option<Scope>,
-) -> Result<(TokenResponse, String)> {
-    let identity = IdentityBuilder::default()
-        .methods(vec!["password".into()])
-        .password(password_auth)
-        .build()?;
-    let auth_request = AuthRequest {
-        auth: AuthRequestInner { identity, scope },
-    };
-    let client = Client::new();
-    let rsp = client
-        .post(build_url("v3/auth/tokens"))
-        .json(&serde_json::to_value(auth_request)?)
-        .send()
-        .await?;
-
-    tracing::debug!("Authentication response: {:?}", rsp);
-
-    if rsp.status() != StatusCode::OK {
-        return Err(eyre!("Authentication failed with {}", rsp.status()));
-    }
-
-    let token: String = rsp
-        .headers()
-        .get("X-Subject-Token")
-        .ok_or_else(|| eyre!("Token is missing in the {:?}", rsp))?
-        .to_str()?
-        .into();
-    let rsp: TokenResponse = rsp.json().await?;
-    Ok((rsp, token))
-}
-
-/// Authenticate using the token.
-pub async fn auth_with_token<S>(token: S, scope: Option<Scope>) -> Result<String, Report>
-where
-    S: AsRef<str> + std::fmt::Display,
-{
-    let identity = IdentityBuilder::default()
-        .methods(vec!["token".into()])
-        .token(TokenAuthBuilder::default().id(token.as_ref()).build()?)
-        .build()?;
-    let auth_request = AuthRequest {
-        auth: AuthRequestInner { identity, scope },
-    };
-    let client = Client::new();
-    let rsp = client
-        .post(build_url("v3/auth/tokens"))
-        .json(&serde_json::to_value(auth_request)?)
-        .send()
-        .await?;
-    Ok(rsp
-        .headers()
-        .get("X-Subject-Token")
-        .ok_or_else(|| eyre!("Token is missing in the {:?}", rsp))?
-        .to_str()?
-        .to_string())
-}
-
-/// Perform token check request.
-pub async fn check_token<S>(
-    client: &Client,
-    subject_token: S,
-) -> Result<reqwest::Response, reqwest::Error>
-where
-    S: AsRef<str> + std::fmt::Display,
-{
-    client
-        .get(build_url("v3/auth/tokens"))
-        .header("x-subject-token", subject_token.as_ref())
-        .send()
-        .await
-}
-
-/// Authenticate using the passed password auth and the scope.
-pub async fn get_auth_client<A: AsRef<str>>(auth_token: A) -> Result<Client> {
-    Ok(ClientBuilder::new()
-        .default_headers(HeaderMap::from_iter([(
-            HeaderName::from_static("x-auth-token"),
-            HeaderValue::from_str(auth_token.as_ref())?,
-        )]))
-        .build()?)
-}
-
-/// Authenticate as an admin and return the token with the info
-pub async fn get_admin_auth(_client: &Client) -> Result<(TokenResponse, String)> {
-    auth(
-        get_password_auth(
-            "admin",
-            env::var("OPENSTACK_ADMIN_PASSWORD").unwrap_or("password".to_string()),
-            "default",
-        )
-        .expect("can't prepare password auth"),
-        Some(Scope::Project(
-            ScopeProjectBuilder::default()
-                .name("admin")
-                .domain(DomainBuilder::default().id("default").build()?)
-                .build()?,
-        )),
-    )
-    .await
-}
-
-pub fn build_url<U>(relative: U) -> String
-where
-    U: AsRef<str> + std::fmt::Display,
-{
-    let keystone_url = env::var("KEYSTONE_URL").expect("KEYSTONE_URL is set");
-    format!("{}/{}", keystone_url, relative)
-}
-
-/// List roles.
-pub async fn list_roles(client: &Client) -> Result<Vec<Role>> {
-    Ok(client
-        .get(build_url("v3/roles"))
-        .send()
-        .await?
-        .json::<RoleList>()
-        .await?
-        .roles)
 }

@@ -13,23 +13,36 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use eyre::Result;
+use std::env;
 
-use openstack_keystone::api::v3::auth::token::types::*;
+use openstack_keystone::api::types::*;
+use openstack_keystone::api::v3::auth::token::types::IdentityBuilder;
 
-use crate::auth::token::check_token;
 use crate::common::*;
 
 #[tokio::test]
-async fn test_validate_own() -> Result<()> {
+async fn test_login_password() -> Result<()> {
     let mut admin_client = TestClient::default()?;
     admin_client.auth_admin().await?;
+    Ok(())
+}
 
-    let _auth_rsp: TokenResponse = check_token(
-        &admin_client,
-        admin_client.token.as_ref().expect("must be authenticated"),
-    )
-    .await?
-    .json()
-    .await?;
+#[tokio::test]
+async fn test_login_system_scope() -> Result<()> {
+    let mut admin_client = TestClient::default()?;
+
+    let auth = IdentityBuilder::default()
+        .methods(vec!["password".into()])
+        .password(get_password_auth(
+            "admin",
+            env::var("OPENSTACK_ADMIN_PASSWORD").unwrap_or("password".to_string()),
+            "default",
+        )?)
+        .build()?;
+
+    admin_client
+        .auth(auth, Some(Scope::System(System::default())))
+        .await?;
+
     Ok(())
 }

@@ -13,27 +13,29 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use eyre::Result;
-use reqwest::{Client, StatusCode};
+use reqwest::StatusCode;
 use std::collections::HashSet;
 use tracing_test::traced_test;
 
 use crate::common::*;
+use crate::role::list_roles;
 
 pub async fn check_grant<
     P: AsRef<str> + std::fmt::Display,
     U: AsRef<str> + std::fmt::Display,
     R: AsRef<str> + std::fmt::Display,
 >(
-    client: &Client,
+    tc: &TestClient,
     project_id: P,
     user_id: U,
     role_id: R,
 ) -> Result<bool> {
-    let rsp = client
-        .head(build_url(format!(
+    let rsp = tc
+        .client
+        .head(tc.base_url.join(&format!(
             "v3/projects/{}/users/{}/roles/{}",
             project_id, user_id, role_id
-        )))
+        ))?)
         .send()
         .await?;
     Ok(rsp.status() == StatusCode::NO_CONTENT)
@@ -42,11 +44,16 @@ pub async fn check_grant<
 #[tokio::test]
 #[traced_test]
 async fn test_check() -> Result<()> {
-    let client = Client::new();
-    let admin_auth = get_admin_auth(&client).await?;
-    let auth_token = admin_auth.0.token;
-    let admin_client = get_auth_client(admin_auth.1).await?;
-    let all_role_ids: HashSet<String> = list_roles(&admin_client)
+    let mut test_client = TestClient::default()?;
+    test_client.auth_admin().await?;
+
+    let auth_token = test_client
+        .auth
+        .as_ref()
+        .expect("token info must be present in the client")
+        .token
+        .clone();
+    let all_role_ids: HashSet<String> = list_roles(&test_client)
         .await?
         .into_iter()
         .map(|r| r.id)
@@ -60,7 +67,7 @@ async fn test_check() -> Result<()> {
         .collect();
     for role_id in user_role_ids.union(&all_role_ids) {
         let res = check_grant(
-            &admin_client,
+            &test_client,
             &auth_token.project.as_ref().expect("project must exist").id,
             &auth_token.user.id,
             &role_id,

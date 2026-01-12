@@ -11,6 +11,36 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+use eyre::Result;
+
+use openstack_keystone::api::v3::role::types::*;
+
+use crate::common::*;
 
 mod create;
 mod list;
+
+/// Create role.
+pub async fn create_role(tc: &TestClient, role: RoleCreate) -> Result<Role> {
+    Ok(tc
+        .client
+        .post(tc.base_url.join("v3/roles")?)
+        .json(&serde_json::to_value(role)?)
+        .send()
+        .await?
+        .json::<RoleResponse>()
+        .await?
+        .role)
+}
+
+/// List roles.
+pub async fn list_roles(tc: &TestClient) -> Result<Vec<Role>> {
+    Ok(tc
+        .client
+        .get(tc.base_url.join("v3/roles")?)
+        .send()
+        .await?
+        .json::<RoleList>()
+        .await?
+        .roles)
+}

@@ -13,19 +13,18 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use eyre::Result;
-use reqwest::Client;
 use tracing_test::traced_test;
 
 use openstack_keystone::api::v3::role::types::Role;
 
 use crate::common::*;
+use crate::role::*;
 
 #[tokio::test]
 #[traced_test]
 async fn test_list() -> Result<()> {
-    let client = Client::new();
-    let admin_auth = get_admin_auth(&client).await?;
-    let admin_client = get_auth_client(admin_auth.1).await?;
-    let _roles: Vec<Role> = list_roles(&admin_client).await?.into_iter().collect();
+    let mut test_client = TestClient::default()?;
+    test_client.auth_admin().await?;
+    let _roles: Vec<Role> = list_roles(&test_client).await?;
     Ok(())
 }

@@ -12,5 +12,27 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use axum::http::HeaderValue;
+use eyre::Result;
+use secrecy::{ExposeSecret, SecretString};
+
+mod password;
 mod revoke;
 mod validate;
+
+use crate::common::*;
+
+/// Perform token check request.
+pub async fn check_token(
+    tc: &TestClient,
+    subject_token: &SecretString,
+) -> Result<reqwest::Response> {
+    let mut hdr = HeaderValue::from_str(subject_token.expose_secret())?;
+    hdr.set_sensitive(true);
+    Ok(tc
+        .client
+        .get(tc.base_url.join("v3/auth/tokens")?)
+        .header("x-subject-token", hdr)
+        .send()
+        .await?)
+}

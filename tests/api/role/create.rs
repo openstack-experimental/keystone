@@ -13,37 +13,23 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use eyre::Result;
-use reqwest::Client;
 use tracing_test::traced_test;
-use uuid::Uuid;
 
 use openstack_keystone::api::v3::role::types::*;
 
 use crate::common::*;
-
-/// Create role.
-pub async fn create_role(client: &Client, role: RoleCreate) -> Result<Role> {
-    Ok(client
-        .post(build_url("v3/roles"))
-        .json(&serde_json::to_value(role)?)
-        .send()
-        .await?
-        .json::<RoleResponse>()
-        .await?
-        .role)
-}
+use crate::role::*;
 
 #[tokio::test]
 #[traced_test]
 async fn test_create() -> Result<()> {
-    let client = Client::new();
-    let admin_auth = get_admin_auth(&client).await?;
-    let auth_client = get_auth_client(admin_auth.1).await?;
+    let mut test_client = TestClient::default()?;
+    test_client.auth_admin().await?;
     let name = uuid::Uuid::new_v4().to_string();
-    let role: Role = create_role(
-        &auth_client,
+    let _role: Role = create_role(
+        &test_client,
         RoleCreate {
-            name: name,
+            name,
             ..Default::default()
         },
     )

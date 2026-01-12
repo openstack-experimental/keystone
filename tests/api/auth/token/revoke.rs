@@ -13,63 +13,36 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use eyre::Result;
-use reqwest::{Client, StatusCode};
-use std::env;
+use reqwest::StatusCode;
+use secrecy::ExposeSecret;
 use tracing_test::traced_test;
 
 use openstack_keystone::api::types::*;
-use openstack_keystone::api::v3::auth::token::types::*;
 
+use crate::auth::token::*;
 use crate::common::*;
 
 #[tokio::test]
 #[traced_test]
 async fn test_revoke() -> Result<()> {
-    let client = Client::new();
+    let mut admin_client = TestClient::default()?;
+    admin_client.auth_admin().await?;
 
-    let admin_token = get_admin_auth(&client).await?.1;
-    let auth_client = get_auth_client(&admin_token).await?;
+    let mut test_client = TestClient::default()?;
+    test_client.auth_admin().await?;
+    let test_token = test_client.token.as_ref().expect("must be authenticated");
 
-    let test_token = auth(
-        get_password_auth(
-            "admin",
-            env::var("OPENSTACK_ADMIN_PASSWORD").unwrap_or("password".to_string()),
-            "default",
-        )
-        .expect("can't prepare password auth"),
-        Some(Scope::Project(
-            ScopeProjectBuilder::default()
-                .name("admin")
-                .domain(DomainBuilder::default().id("default").build().unwrap())
-                .build()
-                .unwrap(),
-        )),
-    )
-    .await
-    .expect("no token")
-    .1;
+    check_token(&admin_client, test_token).await?;
 
-    let _auth_rsp: TokenResponse = check_token(&auth_client, &test_token)
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
-
-    let rsp = auth_client
-        .delete(build_url("v3/auth/tokens"))
-        .header("x-subject-token", test_token.clone())
+    let rsp = admin_client
+        .client
+        .delete(admin_client.base_url.join("v3/auth/tokens")?)
+        .header("x-subject-token", test_token.expose_secret())
         .send()
-        .await
-        .unwrap();
+        .await?;
     assert_eq!(rsp.status(), StatusCode::NO_CONTENT);
 
-    let rsp = auth_client
-        .get(build_url("v3/auth/tokens"))
-        .header("x-subject-token", test_token.clone())
-        .send()
-        .await
-        .unwrap();
+    let rsp = check_token(&admin_client, &test_token).await?;
     assert_eq!(rsp.status(), StatusCode::NOT_FOUND);
     Ok(())
 }
@@ -77,79 +50,48 @@ async fn test_revoke() -> Result<()> {
 #[tokio::test]
 #[traced_test]
 async fn test_revoke_parent_invalidates_child() -> Result<()> {
-    let client = Client::new();
+    let mut admin_client = TestClient::default()?;
+    admin_client.auth_admin().await?;
 
-    let admin_token = get_admin_auth(&client).await?.1;
-    let auth_client = get_auth_client(&admin_token).await?;
+    let mut parent_client = TestClient::default()?;
+    parent_client.auth_admin().await?;
+    let parent_token = parent_client.token.as_ref().expect("must be authenticated");
 
-    let parent_token = auth(
-        get_password_auth(
-            "admin",
-            env::var("OPENSTACK_ADMIN_PASSWORD").unwrap_or("password".to_string()),
-            "default",
+    let mut child_client = TestClient::default()?;
+    child_client
+        .auth_token(
+            &parent_token.expose_secret(),
+            Some(Scope::Project(
+                ScopeProjectBuilder::default()
+                    .name("admin")
+                    .domain(DomainBuilder::default().id("default").build()?)
+                    .build()?,
+            )),
         )
-        .expect("can't prepare password auth"),
-        Some(Scope::Project(
-            ScopeProjectBuilder::default()
-                .name("admin")
-                .domain(DomainBuilder::default().id("default").build().unwrap())
-                .build()
-                .unwrap(),
-        )),
-    )
-    .await
-    .expect("no token")
-    .1;
+        .await?;
 
-    let child_token = auth_with_token(
-        &parent_token,
-        Some(Scope::Project(
-            ScopeProjectBuilder::default()
-                .name("admin")
-                .domain(DomainBuilder::default().id("default").build().unwrap())
-                .build()
-                .unwrap(),
-        )),
-    )
-    .await
-    .expect("no token");
+    let child_token = child_client.token.as_ref().expect("must be authenticated");
 
-    let _auth_rsp: TokenResponse = check_token(&auth_client, &parent_token)
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
+    check_token(&admin_client, parent_token).await?;
 
-    let _auth_rsp: TokenResponse = check_token(&auth_client, &child_token)
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
+    check_token(&admin_client, child_token).await?;
 
-    let rsp = auth_client
-        .delete(build_url("v3/auth/tokens"))
-        .header("x-subject-token", parent_token.clone())
+    let rsp = admin_client
+        .client
+        .delete(admin_client.base_url.join("v3/auth/tokens")?)
+        .header("x-subject-token", parent_token.expose_secret())
         .send()
-        .await
-        .unwrap();
+        .await?;
     assert_eq!(rsp.status(), StatusCode::NO_CONTENT, "token can be revoked");
 
     assert_eq!(
         StatusCode::NOT_FOUND,
-        check_token(&auth_client, parent_token.clone(),)
-            .await
-            .unwrap()
-            .status()
+        check_token(&admin_client, parent_token).await?.status()
     );
 
     assert_eq!(
         StatusCode::NOT_FOUND,
-        check_token(&auth_client, child_token.clone(),)
-            .await
-            .unwrap()
-            .status()
+        check_token(&admin_client, child_token).await?.status()
     );
     Ok(())
 }
