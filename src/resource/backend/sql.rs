@@ -72,6 +72,15 @@ impl ResourceBackend for SqlBackend {
     ) -> Result<Option<Vec<Project>>, ResourceProviderError> {
         Ok(project::get_project_parents(&state.db, project_id).await?)
     }
+
+    /// List projects.
+    async fn list_projects(
+        &self,
+        state: &ServiceState,
+        params: &ProjectListParameters,
+    ) -> Result<Vec<Project>, ResourceProviderError> {
+        Ok(project::list(&state.db, params).await?)
+    }
 }
 
 //#[cfg(test)]

@@ -11,16 +11,13 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-
-use utoipa_axum::router::OpenApiRouter;
+//! Projects the user has access to.
+use utoipa_axum::{router::OpenApiRouter, routes};
 
 use crate::keystone::ServiceState;
 
-pub mod project;
-pub mod token;
+mod list;
 
-pub(super) fn openapi_router() -> OpenApiRouter<ServiceState> {
-    OpenApiRouter::new()
-        .nest("/tokens", token::openapi_router())
-        .nest("/projects", project::openapi_router())
+pub(crate) fn openapi_router() -> OpenApiRouter<ServiceState> {
+    OpenApiRouter::new().routes(routes!(list::list))
 }

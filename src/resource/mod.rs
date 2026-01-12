@@ -44,7 +44,7 @@ use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManager;
 use crate::resource::backend::{ResourceBackend, sql::SqlBackend};
 use crate::resource::error::ResourceProviderError;
-use crate::resource::types::{Domain, Project};
+use crate::resource::types::*;
 
 #[cfg(test)]
 pub use mock::MockResourceProvider;
@@ -79,7 +79,7 @@ impl ResourceProvider {
 
 #[async_trait]
 impl ResourceApi for ResourceProvider {
-    /// Get single domain
+    /// Get single domain.
     #[tracing::instrument(level = "info", skip(self, state))]
     async fn get_domain<'a>(
         &self,
@@ -89,19 +89,7 @@ impl ResourceApi for ResourceProvider {
         self.backend_driver.get_domain(state, domain_id).await
     }
 
-    /// Get single domain by its name
-    #[tracing::instrument(level = "info", skip(self, state))]
-    async fn find_domain_by_name<'a>(
-        &self,
-        state: &ServiceState,
-        domain_name: &'a str,
-    ) -> Result<Option<Domain>, ResourceProviderError> {
-        self.backend_driver
-            .get_domain_by_name(state, domain_name)
-            .await
-    }
-
-    /// Get single project
+    /// Get single project.
     #[tracing::instrument(level = "info", skip(self, state))]
     async fn get_project<'a>(
         &self,
@@ -111,7 +99,7 @@ impl ResourceApi for ResourceProvider {
         self.backend_driver.get_project(state, project_id).await
     }
 
-    /// Get single project by Name and Domain ID
+    /// Get single project by Name and Domain ID.
     #[tracing::instrument(level = "info", skip(self, state))]
     async fn get_project_by_name<'a>(
         &self,
@@ -124,7 +112,8 @@ impl ResourceApi for ResourceProvider {
             .await
     }
 
-    /// Get project parents
+    /// Get project parents.
+    #[tracing::instrument(level = "info", skip(self, state))]
     async fn get_project_parents<'a>(
         &self,
         state: &ServiceState,
@@ -133,5 +122,27 @@ impl ResourceApi for ResourceProvider {
         self.backend_driver
             .get_project_parents(state, project_id)
             .await
+    }
+
+    /// Get single domain by its name.
+    #[tracing::instrument(level = "info", skip(self, state))]
+    async fn find_domain_by_name<'a>(
+        &self,
+        state: &ServiceState,
+        domain_name: &'a str,
+    ) -> Result<Option<Domain>, ResourceProviderError> {
+        self.backend_driver
+            .get_domain_by_name(state, domain_name)
+            .await
+    }
+
+    /// List projects.
+    #[tracing::instrument(level = "info", skip(self, state))]
+    async fn list_projects(
+        &self,
+        state: &ServiceState,
+        params: &ProjectListParameters,
+    ) -> Result<Vec<Project>, ResourceProviderError> {
+        self.backend_driver.list_projects(state, params).await
     }
 }

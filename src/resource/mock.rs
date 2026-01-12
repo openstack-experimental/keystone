@@ -19,7 +19,7 @@ use crate::config::Config;
 use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManager;
 use crate::resource::error::ResourceProviderError;
-use crate::resource::types::{Domain, Project, ResourceApi};
+use crate::resource::types::*;
 
 #[cfg(test)]
 mock! {
@@ -59,5 +59,11 @@ mock! {
             state: &ServiceState,
             project_id: &'a str,
         ) -> Result<Option<Vec<Project>>, ResourceProviderError>;
+
+        async fn list_projects(
+            &self,
+            state: &ServiceState,
+            params: &ProjectListParameters,
+        ) -> Result<Vec<Project>, ResourceProviderError>;
     }
 }

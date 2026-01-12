@@ -23,4 +23,3 @@ allow if {
 allow if {
 	identity.token_subject
 }
-

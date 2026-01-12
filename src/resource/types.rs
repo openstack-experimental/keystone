@@ -16,6 +16,6 @@ mod domain;
 mod project;
 mod provider_api;
 
-pub use crate::resource::types::domain::{Domain, DomainBuilder};
-pub use crate::resource::types::project::{Project, ProjectBuilder};
+pub use crate::resource::types::domain::*;
+pub use crate::resource::types::project::*;
 pub use provider_api::*;

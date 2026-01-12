@@ -19,8 +19,7 @@ pub mod sql;
 
 use crate::keystone::ServiceState;
 use crate::resource::ResourceProviderError;
-use crate::resource::types::Domain;
-use crate::resource::types::Project;
+use crate::resource::types::*;
 
 #[cfg_attr(test, mockall::automock)]
 #[async_trait]
@@ -60,4 +59,11 @@ pub trait ResourceBackend: Send + Sync {
         state: &ServiceState,
         project_id: &'a str,
     ) -> Result<Option<Vec<Project>>, ResourceProviderError>;
+
+    /// List projects.
+    async fn list_projects(
+        &self,
+        state: &ServiceState,
+        params: &ProjectListParameters,
+    ) -> Result<Vec<Project>, ResourceProviderError>;
 }
