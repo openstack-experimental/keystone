@@ -31,7 +31,7 @@ jobs:
         run: git clone https://opendev.org/openstack/codegenerator
 
       - name: Install uv
-        uses: astral-sh/setup-uv@3259c6206f993105e3a61b142c2d97bf4b9ef83d  # v7.1.0
+        uses: astral-sh/setup-uv@61cb8a9741eeb8a550a1b8544337180c0fc8476b  # v7.2.0
         with:
           working-directory: codegenerator
 
