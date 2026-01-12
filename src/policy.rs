@@ -40,15 +40,17 @@ use crate::token::Token;
 /// Policy related error.
 #[derive(Debug, Error)]
 pub enum PolicyError {
+    /// Module compilation error.
+    #[error("module compilation task crashed")]
+    Compilation(#[from] eyre::Report),
+
+    /// Forbidden error.
     #[error("{}", .0.violations.as_ref().map(
         |v| v.iter().cloned().map(|x| x.msg)
         .reduce(|acc, s| format!("{acc}, {s}"))
         .unwrap_or_default()
     ).unwrap_or("The request you made requires authentication.".into()))]
     Forbidden(PolicyEvaluationResult),
-
-    #[error("module compilation task crashed")]
-    Compilation(#[from] eyre::Report),
 
     #[error(transparent)]
     IO(#[from] std::io::Error),

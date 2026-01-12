@@ -194,20 +194,20 @@ pub enum DatabaseError {
         context: String,
     },
 
-    /// SqlError.
-    #[error("{message} while {context}")]
-    Sql {
-        /// The error message.
-        message: String,
-        /// The error context.
-        context: String,
-    },
-
     /// Database error.
     #[error("Database error while {context}")]
     Database {
         /// The source of the error.
         source: sea_orm::DbErr,
+        /// The error context.
+        context: String,
+    },
+
+    /// SqlError.
+    #[error("{message} while {context}")]
+    Sql {
+        /// The error message.
+        message: String,
         /// The error context.
         context: String,
     },

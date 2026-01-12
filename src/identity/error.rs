@@ -73,14 +73,6 @@ pub enum IdentityProviderError {
         source: BuilderError,
     },
 
-    /// Request validation error.
-    #[error("request validation error: {}", source)]
-    Validation {
-        /// The source of the error.
-        #[from]
-        source: validator::ValidationErrors,
-    },
-
     /// Unsupported driver.
     #[error("unsupported driver {0}")]
     UnsupportedDriver(String),
@@ -92,6 +84,13 @@ pub enum IdentityProviderError {
     /// The user has not been found.
     #[error("user {0} not found")]
     UserNotFound(String),
+    /// Request validation error.
+    #[error("request validation error: {}", source)]
+    Validation {
+        /// The source of the error.
+        #[from]
+        source: validator::ValidationErrors,
+    },
 }
 
 impl From<IdentityDatabaseError> for IdentityProviderError {

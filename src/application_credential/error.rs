@@ -30,6 +30,10 @@ pub enum ApplicationCredentialProviderError {
     #[error("conflict: {0}")]
     Conflict(String),
 
+    /// Unsupported driver.
+    #[error("unsupported driver {0}")]
+    UnsupportedDriver(String),
+
     /// Request validation error.
     #[error("request validation error: {}", source)]
     Validation {
@@ -37,10 +41,6 @@ pub enum ApplicationCredentialProviderError {
         #[from]
         source: validator::ValidationErrors,
     },
-
-    /// Unsupported driver.
-    #[error("unsupported driver {0}")]
-    UnsupportedDriver(String),
 }
 
 impl From<ApplicationCredentialDatabaseError> for ApplicationCredentialProviderError {
