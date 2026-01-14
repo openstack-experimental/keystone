@@ -42,27 +42,27 @@ pub enum TrustError {
     #[error("requested expiration is more than the redelegated trust can provide")]
     ExpirationImpossible,
 
-    /// Redelegation chain is longer than allowed.
-    #[error("redelegation depth of {length} is out of allowed range [0..{max_depth}]")]
-    RedelegationDeepnessExceed { length: usize, max_depth: usize },
-
-    /// Relegation trust must not add new roles.
-    #[error("some of the requested roles are not in the redelegated trust")]
-    RedelegatedRolesNotAvailable,
-
     /// Relegated trust does not allow impersonation.
     #[error(
         "impersonation is not allowed because redelegated trust does not specify impersonation"
     )]
     RedelegatedImpersonationNotAllowed,
 
-    /// Remaining uses must be unset to redelegate a trust.
-    #[error("remaining uses is set while it must not be set in order to redelegate a trust")]
-    RemainingUsesMustBeUnset,
+    /// Relegation trust must not add new roles.
+    #[error("some of the requested roles are not in the redelegated trust")]
+    RedelegatedRolesNotAvailable,
+
+    /// Redelegation chain is longer than allowed.
+    #[error("redelegation depth of {length} is out of allowed range [0..{max_depth}]")]
+    RedelegationDeepnessExceed { length: usize, max_depth: usize },
 
     /// Remaining uses of the trust is exceeded.
     #[error("remaining uses exceed")]
     RemainingUsesExceed,
+
+    /// Remaining uses must be unset to redelegate a trust.
+    #[error("remaining uses is set while it must not be set in order to redelegate a trust")]
+    RemainingUsesMustBeUnset,
 
     /// (de)serialization error.
     #[error(transparent)]

@@ -26,13 +26,13 @@ pub enum TokenProviderError {
     #[error("actor has no roles on scope")]
     ActorHasNoRolesOnTarget,
 
-    /// Application Credential used in the token is not found.
-    #[error("application credential with id: {0} not found")]
-    ApplicationCredentialNotFound(String),
-
     /// Application Credential has expired.
     #[error("application credential has expired")]
     ApplicationCredentialExpired,
+
+    /// Application Credential used in the token is not found.
+    #[error("application credential with id: {0} not found")]
+    ApplicationCredentialNotFound(String),
 
     /// Application credential provider error.
     #[error(transparent)]
@@ -86,6 +86,14 @@ pub enum TokenProviderError {
     #[error("federated payload must contain idp_id and protocol_id")]
     FederatedPayloadMissingData,
 
+    /// Fernet Decryption
+    #[error("fernet decryption error")]
+    FernetDecryption(#[from] fernet::DecryptionError),
+
+    /// Missing fernet keys
+    #[error("no usable fernet keys has been found")]
+    FernetKeysMissing,
+
     /// Fernet key read error.
     #[error("fernet key read error: {}", source)]
     FernetKeyRead {
@@ -94,14 +102,6 @@ pub enum TokenProviderError {
         /// Key file name.
         path: std::path::PathBuf,
     },
-
-    /// Fernet Decryption
-    #[error("fernet decryption error")]
-    FernetDecryption(#[from] fernet::DecryptionError),
-
-    /// Missing fernet keys
-    #[error("no usable fernet keys has been found")]
-    FernetKeysMissing,
 
     #[error(transparent)]
     IdentityProvider(#[from] crate::identity::error::IdentityProviderError),
@@ -157,13 +157,13 @@ pub enum TokenProviderError {
     #[error(transparent)]
     RevokeProvider(#[from] crate::revoke::error::RevokeProviderError),
 
-    /// MSGPack Decryption
-    #[error("rmp value error")]
-    RmpValueRead(#[from] rmp::decode::ValueReadError),
-
     /// MSGPack Encryption
     #[error("rmp value encoding error")]
     RmpEncode(String),
+
+    /// MSGPack Decryption
+    #[error("rmp value error")]
+    RmpValueRead(#[from] rmp::decode::ValueReadError),
 
     /// Target scope information is not found in the token.
     #[error("scope information missing")]
@@ -193,12 +193,15 @@ pub enum TokenProviderError {
     #[error("token has been revoked")]
     TokenRevoked,
 
-    #[error("int parse")]
-    TryFromIntError(#[from] TryFromIntError),
-
     /// Trust provider error.
     #[error(transparent)]
     TrustProvider(#[from] crate::trust::TrustError),
+
+    #[error("int parse")]
+    TryFromIntError(#[from] TryFromIntError),
+
+    #[error("unsupported authentication methods {0} in token payload")]
+    UnsupportedAuthMethods(String),
 
     /// The user is disabled.
     #[error("user disabled")]
@@ -206,9 +209,6 @@ pub enum TokenProviderError {
 
     #[error("user cannot be found: {0}")]
     UserNotFound(String),
-
-    #[error("unsupported authentication methods {0} in token payload")]
-    UnsupportedAuthMethods(String),
 
     #[error("uuid decryption error")]
     Uuid(#[from] uuid::Error),

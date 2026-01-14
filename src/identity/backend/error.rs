@@ -39,14 +39,14 @@ pub enum IdentityDatabaseError {
     #[error("{0}")]
     GroupNotFound(String),
 
-    #[error("corrupted database entries for user {0}")]
-    MalformedUser(String),
-
     #[error(transparent)]
     Join {
         #[from]
         source: tokio::task::JoinError,
     },
+
+    #[error("corrupted database entries for user {0}")]
+    MalformedUser(String),
 
     /// No data for local_user and passwords
     #[error("no passwords for the user {0}")]
