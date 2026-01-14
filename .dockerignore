@@ -3,4 +3,5 @@ doc
 .git/
 .gitignore
 .github/
-target
+tools/
+target/

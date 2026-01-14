@@ -15,10 +15,13 @@ use serde::Deserialize;
 use url::Url;
 use url_macro::url;
 
+use super::common::default_true;
+
 /// The configuration options for the API policy enforcement.
 #[derive(Clone, Debug, Deserialize)]
 pub struct PolicyProvider {
     /// Whether the policy enforcement should be enforced or not.
+    #[serde(default = "default_true")]
     pub enable: bool,
 
     /// OpenPolicyAgent instance url to use for evaluating the policy.

@@ -1,0 +1,32 @@
+apiVersion: skaffold/v4beta13
+kind: Config
+metadata:
+  name: keystone
+build:
+  insecureRegistries:
+    - localhost:5000
+  artifacts:
+    - image: localhost:5000/keystone-rs
+      context: .
+      docker:
+        dockerfile: Dockerfile
+    - image: localhost:5000/keystone-opa-policies
+      context: policy
+      docker:
+        dockerfile: ../tools/Dockerfile.opa # Just FROM opa, but allows syncing
+  local:
+    useDockerCLI: true
+    #tryImportMissing: true
+manifests:
+  kustomize:
+    paths:
+      - tools/k8s/keystone/overlays/dev
+deploy:
+  kubectl: {}
+  helm:
+    releases:
+      - name: cloudnative-pg
+        repo: https://cloudnative-pg.github.io/charts
+        remoteChart: cloudnative-pg
+        createNamespace: true
+        namespace: cnpg
