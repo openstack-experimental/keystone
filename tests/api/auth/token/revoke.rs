@@ -42,7 +42,7 @@ async fn test_revoke() -> Result<()> {
         .await?;
     assert_eq!(rsp.status(), StatusCode::NO_CONTENT);
 
-    let rsp = check_token(&admin_client, &test_token).await?;
+    let rsp = check_token(&admin_client, test_token).await?;
     assert_eq!(rsp.status(), StatusCode::NOT_FOUND);
     Ok(())
 }

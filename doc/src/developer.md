@@ -39,3 +39,12 @@ the how the K8 is being deployed and access the Keystone may be directly
 accessible from the localhost when i.e. the routes are added in the `/etc/hosts`
 file. The manifests are not currently designed to be used for production
 deployment.
+
+With the keystone deployed in the Kubernetes running API tests can be performed
+with the following command:
+
+```console
+
+KEYSTONE_URL=http://keystone-rs.local cargo nextest run --test api
+
+```

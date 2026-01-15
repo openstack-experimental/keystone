@@ -18,7 +18,7 @@ use mockall_double::double;
 use serde_json::Value;
 use std::collections::HashSet;
 
-use crate::api::v3::project::types::{ProjectShort, ProjectShortList};
+use crate::api::v3::project::types::ProjectShortList;
 use crate::api::{auth::Auth, error::KeystoneApiError};
 use crate::assignment::{
     AssignmentApi,
@@ -76,22 +76,26 @@ pub(super) async fn list(
         .map(|assignment| assignment.target_id.clone())
         .collect();
 
-    let projects: Vec<ProjectShort> = state
-        .provider
-        .get_resource_provider()
-        .list_projects(
-            &state,
-            &ProjectListParameters {
-                ids: Some(project_ids),
-                ..Default::default()
-            },
-        )
-        .await?
-        .into_iter()
-        .map(Into::into)
-        .collect();
-
-    Ok(ProjectShortList { projects })
+    Ok(ProjectShortList {
+        projects: if !project_ids.is_empty() {
+            state
+                .provider
+                .get_resource_provider()
+                .list_projects(
+                    &state,
+                    &ProjectListParameters {
+                        ids: Some(project_ids),
+                        ..Default::default()
+                    },
+                )
+                .await?
+                .into_iter()
+                .map(Into::into)
+                .collect()
+        } else {
+            vec![]
+        },
+    })
 }
 
 #[cfg(test)]
@@ -107,6 +111,7 @@ mod tests {
     use tower::ServiceExt; // for `call`, `oneshot`, and `ready`
     use tower_http::trace::TraceLayer;
 
+    use crate::api::v3::project::types::ProjectShort;
     use crate::assignment::{MockAssignmentProvider, types::*};
     use crate::config::Config;
     use crate::keystone::{Service, ServiceState};
@@ -232,6 +237,7 @@ mod tests {
                         id: "p1".into(),
                         name: "p1_name".into(),
                         parent_id: None,
+                        is_domain: false,
                     },
                     ProviderProject {
                         description: None,
@@ -241,6 +247,7 @@ mod tests {
                         id: "p2".into(),
                         name: "p2_name".into(),
                         parent_id: None,
+                        is_domain: false,
                     },
                 ])
             });

@@ -119,3 +119,66 @@ async fn version(
     };
     Ok(res)
 }
+
+#[cfg(test)]
+mod tests {
+    use sea_orm::DatabaseConnection;
+    use std::sync::Arc;
+
+    use crate::config::Config;
+    use crate::keystone::{Service, ServiceState};
+    use crate::policy::{MockPolicy, MockPolicyFactory, PolicyError, PolicyEvaluationResult};
+    use crate::provider::ProviderBuilder;
+    use crate::token::{MockTokenProvider, Token, UnscopedPayload};
+
+    pub fn get_mocked_state(
+        provider_builder: ProviderBuilder,
+        policy_allowed: bool,
+    ) -> ServiceState {
+        let mut token_mock = MockTokenProvider::default();
+        token_mock.expect_validate_token().returning(|_, _, _, _| {
+            Ok(Token::Unscoped(UnscopedPayload {
+                user_id: "bar".into(),
+                ..Default::default()
+            }))
+        });
+        token_mock
+            .expect_expand_token_information()
+            .returning(|_, _| {
+                Ok(Token::Unscoped(UnscopedPayload {
+                    user_id: "bar".into(),
+                    ..Default::default()
+                }))
+            });
+
+        let provider = provider_builder.token(token_mock).build().unwrap();
+
+        let mut policy_factory_mock = MockPolicyFactory::default();
+        if policy_allowed {
+            policy_factory_mock.expect_instantiate().returning(move || {
+                let mut policy_mock = MockPolicy::default();
+                policy_mock
+                    .expect_enforce()
+                    .returning(|_, _, _, _| Ok(PolicyEvaluationResult::allowed()));
+                Ok(policy_mock)
+            });
+        } else {
+            policy_factory_mock.expect_instantiate().returning(|| {
+                let mut policy_mock = MockPolicy::default();
+                policy_mock.expect_enforce().returning(|_, _, _, _| {
+                    Err(PolicyError::Forbidden(PolicyEvaluationResult::forbidden()))
+                });
+                Ok(policy_mock)
+            });
+        }
+        Arc::new(
+            Service::new(
+                Config::default(),
+                DatabaseConnection::Disconnected,
+                provider,
+                policy_factory_mock,
+            )
+            .unwrap(),
+        )
+    }
+}

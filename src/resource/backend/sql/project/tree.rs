@@ -66,7 +66,7 @@ mod tests {
             enabled: Some(true),
             domain_id: "domain_id".into(),
             parent_id: parent_id.as_ref().map(|val| val.as_ref().into()),
-            is_domain: parent_id.as_ref().is_some(),
+            is_domain: false,
         }
     }
 
@@ -89,7 +89,8 @@ mod tests {
                     domain_id: "domain_id".into(),
                     enabled: true,
                     description: Some("description".into()),
-                    extra: None
+                    extra: None,
+                    is_domain: false,
                 },
                 Project {
                     id: "1".into(),
@@ -98,7 +99,8 @@ mod tests {
                     domain_id: "domain_id".into(),
                     enabled: true,
                     description: Some("description".into()),
-                    extra: None
+                    extra: None,
+                    is_domain: false,
                 },
                 Project {
                     id: "domain_id".into(),
@@ -107,7 +109,8 @@ mod tests {
                     domain_id: "domain_id".into(),
                     enabled: true,
                     description: Some("description".into()),
-                    extra: None
+                    extra: None,
+                    is_domain: false,
                 }
             ]
         );

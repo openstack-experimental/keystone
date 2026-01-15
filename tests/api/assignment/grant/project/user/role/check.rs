@@ -13,37 +13,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use eyre::Result;
-use reqwest::StatusCode;
 use std::collections::HashSet;
 use tracing_test::traced_test;
 
+use super::*;
 use crate::common::*;
 use crate::role::list_roles;
 
-pub async fn check_grant<
-    P: AsRef<str> + std::fmt::Display,
-    U: AsRef<str> + std::fmt::Display,
-    R: AsRef<str> + std::fmt::Display,
->(
-    tc: &TestClient,
-    project_id: P,
-    user_id: U,
-    role_id: R,
-) -> Result<bool> {
-    let rsp = tc
-        .client
-        .head(tc.base_url.join(&format!(
-            "v3/projects/{}/users/{}/roles/{}",
-            project_id, user_id, role_id
-        ))?)
-        .send()
-        .await?;
-    Ok(rsp.status() == StatusCode::NO_CONTENT)
-}
-
 #[tokio::test]
 #[traced_test]
-async fn test_check() -> Result<()> {
+async fn test_check_auth_roles() -> Result<()> {
     let mut test_client = TestClient::default()?;
     test_client.auth_admin().await?;
 

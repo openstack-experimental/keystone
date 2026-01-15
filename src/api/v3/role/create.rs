@@ -38,7 +38,7 @@ use crate::keystone::ServiceState;
     ),
     tag="roles"
 )]
-#[tracing::instrument(name = "api::role_create", level = "debug", skip(state))]
+#[tracing::instrument(name = "api::v3::role_create", level = "debug", skip(state))]
 pub(super) async fn create(
     Auth(user_auth): Auth,
     State(state): State<ServiceState>,

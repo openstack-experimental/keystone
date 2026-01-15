@@ -21,9 +21,17 @@ use crate::keystone::ServiceState;
 use crate::resource::ResourceProviderError;
 use crate::resource::types::*;
 
+/// Resource driver interface.
 #[cfg_attr(test, mockall::automock)]
 #[async_trait]
 pub trait ResourceBackend: Send + Sync {
+    /// Create new project.
+    async fn create_project(
+        &self,
+        state: &ServiceState,
+        project: ProjectCreate,
+    ) -> Result<Project, ResourceProviderError>;
+
     /// Get single domain by ID
     async fn get_domain<'a>(
         &self,

@@ -13,12 +13,12 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Common functionality used in the functional tests.
 
-use eyre::{Result, WrapErr, eyre};
+use eyre::{OptionExt, Result, WrapErr, eyre};
 use reqwest::{
     Client, ClientBuilder, StatusCode,
     header::{HeaderMap, HeaderName, HeaderValue},
 };
-use secrecy::SecretString;
+use secrecy::{ExposeSecret, SecretString};
 use std::env;
 use url::Url;
 
@@ -137,6 +137,56 @@ impl TestClient {
             .token(TokenAuthBuilder::default().id(token.as_ref()).build()?)
             .build()?;
         new.auth(identity, scope).await?;
+        Ok(new)
+    }
+
+    pub async fn rescope(&mut self, scope: Option<Scope>) -> Result<&mut Self> {
+        let new = self;
+
+        let identity = IdentityBuilder::default()
+            .methods(vec!["token".into()])
+            .token(
+                TokenAuthBuilder::default()
+                    .id(new
+                        .token
+                        .as_ref()
+                        .ok_or_eyre("must be authenticated")?
+                        .expose_secret())
+                    .build()?,
+            )
+            .build()?;
+
+        let auth_request = AuthRequest {
+            auth: AuthRequestInner { identity, scope },
+        };
+        let rsp = new
+            .client
+            .post(new.base_url.join("v3/auth/tokens")?)
+            .json(&serde_json::to_value(auth_request)?)
+            .send()
+            .await?;
+
+        if rsp.status() != StatusCode::OK {
+            return Err(eyre!("Authentication failed with {}", rsp.status()));
+        }
+
+        let token = rsp
+            .headers()
+            .get("X-Subject-Token")
+            .ok_or_else(|| eyre!("Token is missing in the {:?}", rsp))?
+            .to_str()?
+            .to_string();
+
+        new.token = Some(SecretString::from(token.clone()));
+        new.auth = Some(rsp.json().await?);
+        let mut token = HeaderValue::from_str(&token)?;
+        token.set_sensitive(true);
+        new.client = ClientBuilder::new()
+            .default_headers(HeaderMap::from_iter([(
+                HeaderName::from_static("x-auth-token"),
+                token,
+            )]))
+            .build()?;
         Ok(new)
     }
 }

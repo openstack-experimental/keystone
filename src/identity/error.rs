@@ -84,6 +84,7 @@ pub enum IdentityProviderError {
     /// The user has not been found.
     #[error("user {0} not found")]
     UserNotFound(String),
+
     /// Request validation error.
     #[error("request validation error: {}", source)]
     Validation {
