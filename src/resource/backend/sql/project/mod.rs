@@ -11,13 +11,18 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+use sea_orm::entity::*;
 use serde_json::Value;
+use serde_json::json;
 use tracing::error;
+use uuid::Uuid;
 
+mod create;
 mod get;
 mod list;
 mod tree;
 
+pub use create::create;
 pub use get::get_project;
 pub use get::get_project_by_name;
 pub use list::list;
@@ -25,7 +30,7 @@ pub use tree::get_project_parents;
 
 use crate::db::entity::project as db_project;
 use crate::resource::backend::error::ResourceDatabaseError;
-use crate::resource::types::{Project, ProjectBuilder};
+use crate::resource::types::{Project, ProjectBuilder, ProjectCreate};
 
 impl TryFrom<db_project::Model> for Project {
     type Error = ResourceDatabaseError;
@@ -33,6 +38,7 @@ impl TryFrom<db_project::Model> for Project {
     fn try_from(value: db_project::Model) -> Result<Self, Self::Error> {
         let mut project_builder = ProjectBuilder::default();
         project_builder.id(value.id.clone());
+        project_builder.is_domain(value.is_domain);
         if let Some(parent_id) = &value.parent_id {
             project_builder.parent_id(parent_id);
         }
@@ -61,11 +67,31 @@ impl TryFrom<db_project::Model> for Project {
     }
 }
 
+impl TryFrom<ProjectCreate> for db_project::ActiveModel {
+    type Error = ResourceDatabaseError;
+
+    fn try_from(value: ProjectCreate) -> Result<Self, Self::Error> {
+        Ok(Self {
+            description: value.description.map(Set).unwrap_or(NotSet).into(),
+            domain_id: Set(value.domain_id),
+            enabled: Set(Some(value.enabled)),
+            extra: Set(Some(serde_json::to_string(
+                // For keystone it is important to have at least "{}"
+                &value.extra.as_ref().or(Some(&json!({}))),
+            )?)),
+            id: Set(value.id.unwrap_or(Uuid::new_v4().simple().to_string())),
+            is_domain: Set(value.is_domain),
+            name: Set(value.name),
+            parent_id: value.parent_id.map(Set).unwrap_or(NotSet).into(),
+        })
+    }
+}
+
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
 
-    pub(super) fn get_project_mock<S: Into<String>>(id: S) -> db_project::Model {
+    pub fn get_project_mock<S: Into<String>>(id: S) -> db_project::Model {
         db_project::Model {
             description: None,
             domain_id: "did".into(),

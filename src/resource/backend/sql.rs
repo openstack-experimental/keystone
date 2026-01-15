@@ -27,6 +27,16 @@ pub struct SqlBackend {}
 
 #[async_trait]
 impl ResourceBackend for SqlBackend {
+    /// Create new project.
+    #[tracing::instrument(level = "info", skip(self, state))]
+    async fn create_project(
+        &self,
+        state: &ServiceState,
+        project: ProjectCreate,
+    ) -> Result<Project, ResourceProviderError> {
+        Ok(project::create(&state.db, project).await?)
+    }
+
     /// Get single domain by ID
     async fn get_domain<'a>(
         &self,

@@ -13,3 +13,52 @@
 // SPDX-License-Identifier: Apache-2.0
 
 mod check;
+mod grant;
+
+use eyre::Result;
+use reqwest::StatusCode;
+
+use crate::common::*;
+
+pub async fn check_grant<
+    P: AsRef<str> + std::fmt::Display,
+    U: AsRef<str> + std::fmt::Display,
+    R: AsRef<str> + std::fmt::Display,
+>(
+    tc: &TestClient,
+    project_id: P,
+    user_id: U,
+    role_id: R,
+) -> Result<bool> {
+    let rsp = tc
+        .client
+        .head(tc.base_url.join(&format!(
+            "v3/projects/{}/users/{}/roles/{}",
+            project_id, user_id, role_id
+        ))?)
+        .send()
+        .await?;
+    Ok(rsp.status() == StatusCode::NO_CONTENT)
+}
+
+pub async fn add_project_grant<
+    P: AsRef<str> + std::fmt::Display,
+    U: AsRef<str> + std::fmt::Display,
+    R: AsRef<str> + std::fmt::Display,
+>(
+    tc: &TestClient,
+    project_id: P,
+    user_id: U,
+    role_id: R,
+) -> Result<()> {
+    let rsp = tc
+        .client
+        .put(tc.base_url.join(&format!(
+            "v3/projects/{}/users/{}/roles/{}",
+            project_id, user_id, role_id
+        ))?)
+        .send()
+        .await?;
+    assert_eq!(rsp.status(), StatusCode::NO_CONTENT);
+    Ok(())
+}

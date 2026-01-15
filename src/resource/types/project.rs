@@ -45,12 +45,76 @@ pub struct Project {
     #[validate(length(min = 1, max = 255))]
     pub id: String,
 
+    /// Indicates whether the project also acts as a domain. If set to true,
+    /// this project acts as both a project and domain. As a domain, the project
+    /// provides a name space in which you can create users, groups, and other
+    /// projects. If set to false, this project behaves as a regular project
+    /// that contains only resources. Default is false. You cannot update this
+    /// parameter after you create the project.
+    #[builder(default)]
+    pub is_domain: bool,
+
     /// The project name.
     #[validate(length(min = 1, max = 255))]
     pub name: String,
 
     /// The ID of the parent for the project.
     #[builder(default)]
+    #[validate(length(min = 1, max = 64))]
+    pub parent_id: Option<String>,
+}
+
+/// New project data.
+#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
+#[builder(build_fn(error = "BuilderError"))]
+#[builder(setter(strip_option, into))]
+pub struct ProjectCreate {
+    /// The description of the project.
+    #[validate(length(min = 1, max = 255))]
+    pub description: Option<String>,
+
+    /// The ID of the domain for the project.
+    #[validate(length(min = 1, max = 64))]
+    pub domain_id: String,
+
+    /// If set to true, project is enabled. If set to false, project is
+    /// disabled.
+    pub enabled: bool,
+
+    /// Additional project properties.
+    #[serde(flatten)]
+    pub extra: Option<Value>,
+
+    /// The ID for the project.
+    #[validate(length(min = 1, max = 64))]
+    pub id: Option<String>,
+
+    /// Indicates whether the project also acts as a domain. If set to true,
+    /// this project acts as both a project and domain. As a domain, the project
+    /// provides a name space in which you can create users, groups, and other
+    /// projects. If set to false, this project behaves as a regular project
+    /// that contains only resources. Default is false. You cannot update this
+    /// parameter after you create the project.
+    pub is_domain: bool,
+
+    /// The name of the project, which must be unique within the owning domain.
+    /// A project can have the same name as its domain.
+    #[validate(length(min = 1, max = 255))]
+    pub name: String,
+
+    // TODO: add options
+    /// The ID of the parent of the project.
+    ///
+    /// If specified on project creation, this places the project within a
+    /// hierarchy and implicitly defines the owning domain, which will be the
+    /// same domain as the parent specified. If `parent_id` is not specified and
+    /// `is_domain` is false, then the project will use its owning domain as its
+    /// parent. If `is_domain` is true (i.e. the project is acting as a domain),
+    /// then `parent_id` must not specified (or if it is, it must be null) since
+    /// domains have no parents.
+    ///
+    /// `parent_id` is immutable, and can’t be updated after the project is
+    /// created - hence a project cannot be moved within the hierarchy.
     #[validate(length(min = 1, max = 64))]
     pub parent_id: Option<String>,
 }

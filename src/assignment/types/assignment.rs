@@ -19,25 +19,25 @@ use std::fmt;
 use validator::Validate;
 
 /// The assignment object.
-#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(Builder, Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct Assignment {
     /// The actor id.
-    #[validate(length(max = 64))]
+    #[validate(length(min = 1, max = 64))]
     pub actor_id: String,
 
     /// The role ID.
-    #[validate(length(max = 64))]
+    #[validate(length(min = 1, max = 64))]
     pub role_id: String,
 
     /// The role name.
     #[builder(default)]
-    #[validate(length(max = 64))]
+    #[validate(length(min = 1, max = 255))]
     pub role_name: Option<String>,
 
     /// The target id.
-    #[validate(length(max = 64))]
+    #[validate(length(min = 1, max = 64))]
     pub target_id: String,
 
     /// The assignment type.
@@ -170,7 +170,7 @@ impl AssignmentCreate {
 }
 
 /// Role assignment type.
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Hash, Serialize)]
 pub enum AssignmentType {
     /// Group to the domain.
     GroupDomain,

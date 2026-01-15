@@ -11,14 +11,22 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-//! # Project User role API
-use utoipa_axum::{router::OpenApiRouter, routes};
 
-use crate::keystone::ServiceState;
+use eyre::Result;
 
-mod check;
-mod grant;
+use openstack_keystone::api::v3::user::types::*;
 
-pub(crate) fn openapi_router() -> OpenApiRouter<ServiceState> {
-    OpenApiRouter::new().routes(routes!(check::check, grant::grant))
+use crate::common::*;
+
+/// Create user
+pub async fn create_user(tc: &TestClient, user: UserCreate) -> Result<User> {
+    Ok(tc
+        .client
+        .post(tc.base_url.join("v3/users")?)
+        .json(&serde_json::to_value(UserCreateRequest { user })?)
+        .send()
+        .await?
+        .json::<UserResponse>()
+        .await?
+        .user)
 }

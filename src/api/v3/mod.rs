@@ -36,7 +36,11 @@ use crate::api::types::*;
 
 /// OpenApi specification for v3.
 #[derive(OpenApi)]
-#[openapi()]
+#[openapi(
+    nest(
+      (path = "/roles", api = role::ApiDoc),
+    ),
+)]
 pub struct ApiDoc;
 
 pub(super) fn openapi_router() -> OpenApiRouter<ServiceState> {

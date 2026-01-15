@@ -134,6 +134,7 @@ mod tests {
                 enabled: true,
                 extra: None,
                 id: "pid1".into(),
+                is_domain: false,
                 name: "name".into(),
                 parent_id: None,
             }]

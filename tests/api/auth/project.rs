@@ -12,28 +12,29 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use axum::http::HeaderValue;
 use eyre::Result;
-use secrecy::{ExposeSecret, SecretString};
 
-mod password;
-mod revoke;
-mod token;
-mod validate;
+use openstack_keystone::api::v3::project::types::{ProjectShort, ProjectShortList};
 
 use crate::common::*;
 
-/// Perform token check request.
-pub async fn check_token(
-    tc: &TestClient,
-    subject_token: &SecretString,
-) -> Result<reqwest::Response> {
-    let mut hdr = HeaderValue::from_str(subject_token.expose_secret())?;
-    hdr.set_sensitive(true);
+/// List projects available to the user
+pub async fn list_auth_projects(tc: &TestClient) -> Result<Vec<ProjectShort>> {
     Ok(tc
         .client
-        .get(tc.base_url.join("v3/auth/tokens")?)
-        .header("x-subject-token", hdr)
+        .get(tc.base_url.join("v3/auth/projects")?)
         .send()
-        .await?)
+        .await?
+        .json::<ProjectShortList>()
+        .await?
+        .projects)
+}
+
+#[tokio::test]
+async fn test_list_user_projects() -> Result<()> {
+    let mut admin_client = TestClient::default()?;
+    admin_client.auth_admin().await?;
+    let projects = list_auth_projects(&admin_client).await?;
+    assert!(!projects.is_empty());
+    Ok(())
 }

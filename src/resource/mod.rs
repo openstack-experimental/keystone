@@ -32,6 +32,8 @@
 //! organization, or tenant.
 use async_trait::async_trait;
 use std::sync::Arc;
+use uuid::Uuid;
+use validator::Validate;
 
 pub mod backend;
 pub mod error;
@@ -79,6 +81,22 @@ impl ResourceProvider {
 
 #[async_trait]
 impl ResourceApi for ResourceProvider {
+    /// Create new project.
+    #[tracing::instrument(level = "info", skip(self, state))]
+    async fn create_project(
+        &self,
+        state: &ServiceState,
+        project: ProjectCreate,
+    ) -> Result<Project, ResourceProviderError> {
+        let mut new_project = project;
+
+        if new_project.id.is_none() {
+            new_project.id = Some(Uuid::new_v4().simple().to_string());
+        }
+        new_project.validate()?;
+        self.backend_driver.create_project(state, new_project).await
+    }
+
     /// Get single domain.
     #[tracing::instrument(level = "info", skip(self, state))]
     async fn get_domain<'a>(

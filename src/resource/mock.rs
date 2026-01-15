@@ -29,6 +29,12 @@ mock! {
 
     #[async_trait]
     impl ResourceApi for ResourceProvider {
+        async fn create_project(
+            &self,
+            state: &ServiceState,
+            project: ProjectCreate,
+        ) -> Result<Project, ResourceProviderError>;
+
         async fn get_domain<'a>(
             &self,
             state: &ServiceState,

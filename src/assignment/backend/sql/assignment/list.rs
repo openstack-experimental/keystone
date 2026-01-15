@@ -16,7 +16,7 @@ use sea_orm::DatabaseConnection;
 use sea_orm::entity::*;
 use sea_orm::prelude::Expr;
 use sea_orm::query::*;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use crate::assignment::backend::error::AssignmentDatabaseError;
 use crate::assignment::backend::sql::implied_role;
@@ -156,42 +156,48 @@ pub async fn list_for_multiple_actors_and_targets(
     let imply_rules = db_res.2;
 
     // Merge and apply role implications
-    let mut result_map: BTreeMap<String, Assignment> = BTreeMap::new();
+    let mut result_map: HashSet<Assignment> = HashSet::new();
 
     for assignment in assignments.into_iter() {
-        result_map.insert(assignment.role_id.clone(), assignment.clone());
+        result_map.insert(assignment.clone());
 
         if let Some(implies) = imply_rules.get(&assignment.role_id) {
             for implied_role_id in implies.iter() {
                 let mut implied_assignment = assignment.clone();
                 implied_assignment.role_id = implied_role_id.clone();
                 implied_assignment.implied_via = Some(assignment.role_id.clone());
-                result_map.insert(implied_role_id.clone(), implied_assignment);
+                result_map.insert(implied_assignment);
             }
         }
     }
 
     // Fetch and update role names
     if !result_map.is_empty() {
+        let role_ids: BTreeSet<String> = result_map.iter().map(|x| x.role_id.clone()).collect();
+
         let roles: HashMap<String, String> = HashMap::from_iter(
             DbRole::find()
                 .select_only()
                 .columns([db_role::Column::Id, db_role::Column::Name])
-                .filter(Expr::col(db_role::Column::Id).is_in(result_map.keys()))
+                .filter(Expr::col(db_role::Column::Id).is_in(role_ids.iter()))
                 .into_tuple()
                 .all(db)
                 .await
                 .context("fetching roles by ids")?,
         );
 
-        for assignment in result_map.values_mut() {
-            if let Some(name) = roles.get(&assignment.role_id) {
-                assignment.role_name = Some(name.clone());
-            }
-        }
+        return Ok(result_map
+            .into_iter()
+            .map(|mut assignment| {
+                if let Some(name) = roles.get(&assignment.role_id) {
+                    assignment.role_name = Some(name.clone());
+                }
+                assignment
+            })
+            .collect());
     }
 
-    Ok(result_map.into_values().collect())
+    Ok(vec![])
 }
 
 /// Select regular assignments.
@@ -536,79 +542,73 @@ mod tests {
                 get_short_role_mock("2", "rname2"),
             ]])
             .into_connection();
-        assert_eq!(
-            list_for_multiple_actors_and_targets(
-                &db,
-                &RoleAssignmentListForMultipleActorTargetParameters {
-                    actors: vec!["uid1".into(), "gid1".into(), "gid2".into()],
-                    targets: vec![RoleAssignmentTarget {
-                        id: "pid1".into(),
-                        r#type: RoleAssignmentTargetType::Project,
-                        inherited: None
-                    }],
-                    role_id: Some("rid".into())
-                }
-            )
-            .await
-            .unwrap(),
-            vec![
-                Assignment {
-                    role_id: "1".into(),
-                    role_name: Some("rname".into()),
-                    actor_id: "actor".into(),
-                    target_id: "target".into(),
-                    r#type: AssignmentType::UserProject,
-                    inherited: false,
-                    implied_via: None,
-                },
-                Assignment {
-                    role_id: "2".into(),
-                    role_name: Some("rname2".into()),
-                    actor_id: "actor".into(),
-                    target_id: "target".into(),
-                    r#type: AssignmentType::UserProject,
-                    inherited: false,
-                    implied_via: Some("1".into()),
-                }
-            ]
-        );
+        let res = list_for_multiple_actors_and_targets(
+            &db,
+            &RoleAssignmentListForMultipleActorTargetParameters {
+                actors: vec!["uid1".into(), "gid1".into(), "gid2".into()],
+                targets: vec![RoleAssignmentTarget {
+                    id: "pid1".into(),
+                    r#type: RoleAssignmentTargetType::Project,
+                    inherited: None,
+                }],
+                role_id: Some("rid".into()),
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(2, res.len());
+        assert!(res.contains(&Assignment {
+            role_id: "1".into(),
+            role_name: Some("rname".into()),
+            actor_id: "actor".into(),
+            target_id: "target".into(),
+            r#type: AssignmentType::UserProject,
+            inherited: false,
+            implied_via: None,
+        }));
+        assert!(res.contains(&Assignment {
+            role_id: "2".into(),
+            role_name: Some("rname2".into()),
+            actor_id: "actor".into(),
+            target_id: "target".into(),
+            r#type: AssignmentType::UserProject,
+            inherited: false,
+            implied_via: Some("1".into()),
+        }));
         // system target
-        assert_eq!(
-            list_for_multiple_actors_and_targets(
-                &db,
-                &RoleAssignmentListForMultipleActorTargetParameters {
-                    actors: vec!["uid1".into(), "gid1".into(), "gid2".into()],
-                    targets: vec![RoleAssignmentTarget {
-                        id: "system".into(),
-                        r#type: RoleAssignmentTargetType::System,
-                        inherited: None
-                    }],
-                    role_id: Some("rid".into())
-                }
-            )
-            .await
-            .unwrap(),
-            vec![
-                Assignment {
-                    role_id: "1".into(),
-                    role_name: Some("rname".into()),
-                    actor_id: "actor".into(),
-                    target_id: "system".into(),
-                    r#type: AssignmentType::UserSystem,
-                    inherited: false,
-                    implied_via: None,
-                },
-                Assignment {
-                    role_id: "2".into(),
-                    role_name: Some("rname2".into()),
-                    actor_id: "actor".into(),
-                    target_id: "system".into(),
-                    r#type: AssignmentType::UserSystem,
-                    inherited: false,
-                    implied_via: Some("1".into()),
-                }
-            ]
-        );
+        let res = list_for_multiple_actors_and_targets(
+            &db,
+            &RoleAssignmentListForMultipleActorTargetParameters {
+                actors: vec!["uid1".into(), "gid1".into(), "gid2".into()],
+                targets: vec![RoleAssignmentTarget {
+                    id: "system".into(),
+                    r#type: RoleAssignmentTargetType::System,
+                    inherited: None,
+                }],
+                role_id: Some("rid".into()),
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(2, res.len());
+        assert!(res.contains(&Assignment {
+            role_id: "1".into(),
+            role_name: Some("rname".into()),
+            actor_id: "actor".into(),
+            target_id: "system".into(),
+            r#type: AssignmentType::UserSystem,
+            inherited: false,
+            implied_via: None,
+        }));
+        assert!(res.contains(&Assignment {
+            role_id: "2".into(),
+            role_name: Some("rname2".into()),
+            actor_id: "actor".into(),
+            target_id: "system".into(),
+            r#type: AssignmentType::UserSystem,
+            inherited: false,
+            implied_via: Some("1".into()),
+        }));
         // Checking transaction log
         assert_eq!(
             db.into_transaction_log(),
@@ -886,6 +886,82 @@ mod tests {
                     []
                 ),
             ]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_list_for_multiple_actor_no_target_role_id_collision() {
+        // Create MockDatabase with mock query results
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([vec![get_role_assignment_mock("1")]])
+            .append_query_results([vec![get_role_system_assignment_mock("1")]])
+            .append_query_results([get_implied_rules_mock()])
+            .append_query_results([vec![
+                get_short_role_mock("1", "rname"),
+                get_short_role_mock("2", "rname2"),
+            ]])
+            .into_connection();
+        let res = list_for_multiple_actors_and_targets(
+            &db,
+            &RoleAssignmentListForMultipleActorTargetParameters {
+                actors: vec!["uid1".into()],
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(4, res.len());
+        assert!(
+            res.contains(&Assignment {
+                role_id: "1".into(),
+                role_name: Some("rname".into()),
+                actor_id: "actor".into(),
+                target_id: "target".into(),
+                r#type: AssignmentType::UserProject,
+                inherited: false,
+                implied_via: None,
+            }),
+            "in {:?}",
+            res
+        );
+        assert!(
+            res.contains(&Assignment {
+                role_id: "2".into(),
+                role_name: Some("rname2".into()),
+                actor_id: "actor".into(),
+                target_id: "target".into(),
+                r#type: AssignmentType::UserProject,
+                inherited: false,
+                implied_via: Some("1".into()),
+            }),
+            "in {:?}",
+            res
+        );
+        assert!(
+            res.contains(&Assignment {
+                role_id: "1".into(),
+                role_name: Some("rname".into()),
+                actor_id: "actor".into(),
+                target_id: "system".into(),
+                r#type: AssignmentType::UserSystem,
+                inherited: false,
+                implied_via: None,
+            }),
+            "in {:?}",
+            res
+        );
+        assert!(
+            res.contains(&Assignment {
+                role_id: "2".into(),
+                role_name: Some("rname2".into()),
+                actor_id: "actor".into(),
+                target_id: "system".into(),
+                r#type: AssignmentType::UserSystem,
+                inherited: false,
+                implied_via: Some("1".into()),
+            }),
+            "in {:?}",
+            res
         );
     }
 }
