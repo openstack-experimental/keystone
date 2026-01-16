@@ -14,7 +14,7 @@
 
 //! # WebAuthN provider interface
 use async_trait::async_trait;
-use webauthn_rs::prelude::{Passkey, PasskeyAuthentication, PasskeyRegistration};
+use webauthn_rs::prelude::{PasskeyAuthentication, PasskeyRegistration};
 
 use crate::keystone::ServiceState;
 use crate::webauthn::{WebauthnError, types::WebauthnCredential};
@@ -24,13 +24,19 @@ use crate::webauthn::{WebauthnError, types::WebauthnCredential};
 #[async_trait]
 pub trait WebauthnApi: Send + Sync {
     /// Create passkey.
-    async fn create_user_webauthn_credential<'a>(
+    async fn create_user_webauthn_credential(
+        &self,
+        state: &ServiceState,
+        passkey: WebauthnCredential,
+    ) -> Result<WebauthnCredential, WebauthnError>;
+
+    /// Get webauthn credential of the user by the credential_id.
+    async fn get_user_webauthn_credential<'a>(
         &self,
         state: &ServiceState,
         user_id: &'a str,
-        passkey: &Passkey,
-        description: Option<&'a str>,
-    ) -> Result<WebauthnCredential, WebauthnError>;
+        credential_id: &'a str,
+    ) -> Result<Option<WebauthnCredential>, WebauthnError>;
 
     /// Delete passkey registration state of a user
     async fn delete_user_webauthn_credential_authentication_state<'a>(
@@ -62,7 +68,7 @@ pub trait WebauthnApi: Send + Sync {
         &self,
         state: &ServiceState,
         user_id: &'a str,
-    ) -> Result<Vec<Passkey>, WebauthnError>;
+    ) -> Result<Vec<WebauthnCredential>, WebauthnError>;
 
     async fn save_user_webauthn_credential_authentication_state<'a>(
         &self,
@@ -77,4 +83,12 @@ pub trait WebauthnApi: Send + Sync {
         user_id: &'a str,
         reg_state: PasskeyRegistration,
     ) -> Result<(), WebauthnError>;
+
+    /// Update credential data.
+    async fn update_user_webauthn_credential(
+        &self,
+        state: &ServiceState,
+        internal_id: i32,
+        credential: &WebauthnCredential,
+    ) -> Result<WebauthnCredential, WebauthnError>;
 }

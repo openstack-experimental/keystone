@@ -10,7 +10,9 @@ pub struct Model {
     pub user_id: String,
     pub credential_id: String,
     pub description: Option<String>,
+    #[sea_orm(column_type = "Text")]
     pub passkey: String,
+    pub counter: i32,
     pub r#type: String,
     pub aaguid: Option<String>,
     pub created_at: DateTime,

@@ -31,6 +31,14 @@ pub enum WebauthnError {
     #[error("conflict: {0}")]
     Conflict(String),
 
+    /// Counter violation
+    #[error("the credential counter verification failure")]
+    CounterVerification,
+
+    /// Credential not found.
+    #[error("credential with credential_id: `{0}` is not found")]
+    CredentialNotFound(String),
+
     /// Database error.
     #[error(transparent)]
     Database {
@@ -46,4 +54,8 @@ pub enum WebauthnError {
         #[from]
         source: serde_json::Error,
     },
+
+    /// Int conversion error.
+    #[error(transparent)]
+    TryFromIntError(#[from] std::num::TryFromIntError),
 }

@@ -16,7 +16,7 @@ pub mod credential;
 pub mod state;
 
 use async_trait::async_trait;
-use webauthn_rs::prelude::{Passkey, PasskeyAuthentication, PasskeyRegistration};
+use webauthn_rs::prelude::{PasskeyAuthentication, PasskeyRegistration};
 
 use crate::keystone::ServiceState;
 use crate::webauthn::{
@@ -32,14 +32,23 @@ pub struct SqlDriver {}
 impl WebauthnApi for SqlDriver {
     /// Create webauthn credential for the user.
     #[tracing::instrument(level = "debug", skip(self, state))]
-    async fn create_user_webauthn_credential<'a>(
+    async fn create_user_webauthn_credential(
+        &self,
+        state: &ServiceState,
+        credential: WebauthnCredential,
+    ) -> Result<WebauthnCredential, WebauthnError> {
+        credential::create(&state.db, credential).await
+    }
+
+    /// Get webauthn credential of the user by the credential_id.
+    #[tracing::instrument(level = "debug", skip(self, state))]
+    async fn get_user_webauthn_credential<'a>(
         &self,
         state: &ServiceState,
         user_id: &'a str,
-        credential: &Passkey,
-        description: Option<&'a str>,
-    ) -> Result<WebauthnCredential, WebauthnError> {
-        credential::create(&state.db, user_id, credential, description, None).await
+        credential_id: &'a str,
+    ) -> Result<Option<WebauthnCredential>, WebauthnError> {
+        credential::find(&state.db, user_id, credential_id).await
     }
 
     /// Delete webauthn credential auth state for a user.
@@ -88,7 +97,7 @@ impl WebauthnApi for SqlDriver {
         &self,
         state: &ServiceState,
         user_id: &'a str,
-    ) -> Result<Vec<Passkey>, WebauthnError> {
+    ) -> Result<Vec<WebauthnCredential>, WebauthnError> {
         credential::list(&state.db, user_id).await
     }
 
@@ -112,6 +121,17 @@ impl WebauthnApi for SqlDriver {
         reg_state: PasskeyRegistration,
     ) -> Result<(), WebauthnError> {
         state::create_register(&state.db, user_id, reg_state).await
+    }
+
+    /// Update credential data.
+    #[tracing::instrument(level = "debug", skip(self, state))]
+    async fn update_user_webauthn_credential(
+        &self,
+        state: &ServiceState,
+        internal_id: i32,
+        credential: &WebauthnCredential,
+    ) -> Result<WebauthnCredential, WebauthnError> {
+        credential::update(&state.db, internal_id, credential).await
     }
 }
 

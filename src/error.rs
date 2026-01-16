@@ -195,7 +195,7 @@ pub enum DatabaseError {
     },
 
     /// Database error.
-    #[error("Database error while {context}")]
+    #[error("Database error {source} while {context}")]
     Database {
         /// The source of the error.
         source: sea_orm::DbErr,

@@ -14,6 +14,8 @@
 
 //! # Finish passkey authentication process
 use axum::{Json, extract::State, http::StatusCode, response::IntoResponse};
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+use chrono::Utc;
 use tracing::debug;
 use validator::Validate;
 
@@ -25,7 +27,7 @@ use crate::auth::{AuthenticatedInfo, AuthenticationError, AuthzInfo};
 use crate::identity::IdentityApi;
 use crate::token::TokenApi;
 use crate::webauthn::{
-    WebauthnApi,
+    WebauthnApi, WebauthnError,
     api::types::{CombinedExtensionState, auth::*},
 };
 
@@ -72,8 +74,50 @@ pub async fn finish(
             .webauthn
             .finish_passkey_authentication(&req.try_into()?, &s)
         {
-            Ok(_auth_result) => {
-                // Here should the DB update happen (last_used, ...)
+            Ok(auth_result) => {
+                // As per https://www.w3.org/TR/webauthn-3/#sctn-verifying-assertion 21:
+                //
+                // If the Credential Counter is greater than 0 you MUST assert that the counter
+                // is greater than the stored counter. If the counter is equal or less than this
+                // MAY indicate a cloned credential and you SHOULD invalidate and reject that
+                // credential as a result.
+                //
+                // From this AuthenticationResult you should update the Credential’s Counter
+                // value if it is valid per the above check. If you wish you may use the content
+                // of the AuthenticationResult for extended validations (such as the presence of
+                // the user verification flag).
+                let cred_id = URL_SAFE_NO_PAD.encode(auth_result.cred_id());
+                let mut credential = state
+                    .extension
+                    .provider
+                    .get_user_webauthn_credential(&state.core, &user_id, &cred_id)
+                    .await?
+                    .ok_or(WebauthnError::CredentialNotFound(cred_id))?;
+
+                let now = Utc::now();
+                if auth_result.counter() > 0 {
+                    if auth_result.counter() <= credential.counter {
+                        return Err(WebauthnError::CounterVerification)?;
+                    }
+                    credential.counter = auth_result.counter();
+                }
+
+                credential.last_used_at = Some(now);
+                credential.updated_at = Some(now);
+                // Integrate auth_result into the saved passkey data. Ignore the result since we
+                // want to update the last_used_at anyway.
+                credential.data.update_credential(&auth_result);
+
+                // Persist updated data.
+                state
+                    .extension
+                    .provider
+                    .update_user_webauthn_credential(
+                        &state.core,
+                        credential.internal_id,
+                        &credential,
+                    )
+                    .await?;
             }
             Err(e) => {
                 debug!("challenge_register -> {:?}", e);

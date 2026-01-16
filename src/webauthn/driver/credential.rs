@@ -12,21 +12,66 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use sea_orm::entity::*;
+
 use super::super::types::WebauthnCredential;
-use crate::db::entity::webauthn_credential;
+use crate::{db::entity::webauthn_credential, webauthn::WebauthnError};
 
 mod create;
+mod get;
 mod list;
+mod update;
 
 pub use create::create;
+pub use get::find;
 pub use list::list;
+pub use update::update;
 
-impl From<webauthn_credential::Model> for WebauthnCredential {
-    fn from(value: webauthn_credential::Model) -> Self {
-        Self {
+impl TryFrom<webauthn_credential::Model> for WebauthnCredential {
+    type Error = WebauthnError;
+    fn try_from(value: webauthn_credential::Model) -> Result<Self, Self::Error> {
+        Ok(Self {
+            created_at: value.created_at.and_utc(),
             credential_id: value.credential_id,
+            data: serde_json::from_str(&value.passkey)?,
+            counter: value.counter.try_into()?,
             description: value.description,
-        }
+            internal_id: value.id,
+            last_used_at: value.last_used_at.map(|x| x.and_utc()),
+            r#type: value.r#type.into(),
+            updated_at: value.last_updated_at.map(|x| x.and_utc()),
+            user_id: value.user_id,
+        })
+    }
+}
+
+impl TryFrom<WebauthnCredential> for webauthn_credential::ActiveModel {
+    type Error = WebauthnError;
+
+    fn try_from(value: WebauthnCredential) -> Result<Self, Self::Error> {
+        Ok(Self {
+            id: if value.internal_id == 0 {
+                NotSet
+            } else {
+                Set(value.internal_id)
+            },
+            user_id: Set(value.user_id),
+            credential_id: Set(value.credential_id),
+            description: value.description.map(Set).unwrap_or(NotSet).into(),
+            passkey: Set(serde_json::to_string(&value.data)?),
+            counter: Set(value.counter.try_into()?),
+            r#type: Set(value.r#type.to_string()),
+            aaguid: NotSet,
+            created_at: Set(value.created_at.naive_utc()),
+            last_used_at: value
+                .last_used_at
+                .map(|x| Set(Some(x.naive_utc())))
+                .unwrap_or(NotSet),
+            last_updated_at: value
+                .updated_at
+                .map(|x| Set(Some(x.naive_utc())))
+                .unwrap_or(NotSet),
+        })
     }
 }
 
@@ -78,13 +123,14 @@ mod tests {
         .into()
     }
 
-    pub(super) fn get_mock<S: AsRef<str>>(id: S) -> webauthn_credential::Model {
+    pub(super) fn get_mock<S: Into<String>>(id: S) -> webauthn_credential::Model {
         webauthn_credential::Model {
             id: 1,
-            user_id: id.as_ref().to_string(),
+            user_id: id.into(),
             credential_id: "cred".into(),
             description: Some("fake".into()),
             passkey: serde_json::to_string(&get_fake_passkey()).unwrap(),
+            counter: 0,
             r#type: "cross-platform".into(),
             aaguid: Some("aaguid".into()),
             created_at: NaiveDateTime::default(),
