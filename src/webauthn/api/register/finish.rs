@@ -18,6 +18,8 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+use chrono::Utc;
 use mockall_double::double;
 use tracing::debug;
 use validator::Validate;
@@ -30,6 +32,7 @@ use crate::policy::Policy;
 use crate::webauthn::{
     WebauthnApi,
     api::types::{CombinedExtensionState, register::*},
+    types::{CredentialType, WebauthnCredential},
 };
 
 /// Finish passkey registration for the user.
@@ -96,15 +99,22 @@ pub(super) async fn finish(
             .finish_passkey_registration(&req.try_into()?, &s)
         {
             Ok(sk) => {
+                let cred = WebauthnCredential {
+                    counter: 0,
+                    created_at: Utc::now(),
+                    credential_id: URL_SAFE_NO_PAD.encode(sk.cred_id()),
+                    data: sk,
+                    description: credential_description,
+                    internal_id: 0,
+                    last_used_at: None,
+                    r#type: CredentialType::CrossPlatform,
+                    updated_at: None,
+                    user_id: user_id.to_string(),
+                };
                 state
                     .extension
                     .provider
-                    .create_user_webauthn_credential(
-                        &state.core,
-                        &user_id,
-                        &sk,
-                        credential_description.as_deref(),
-                    )
+                    .create_user_webauthn_credential(&state.core, cred)
                     .await?
             }
             Err(e) => {

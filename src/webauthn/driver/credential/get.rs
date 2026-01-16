@@ -21,18 +21,19 @@ use crate::error::DbContextExt;
 use crate::webauthn::WebauthnCredential;
 use crate::webauthn::WebauthnError;
 
-pub async fn list<U: AsRef<str>>(
+pub async fn find<U: AsRef<str>, C: AsRef<str>>(
     db: &DatabaseConnection,
     user_id: U,
-) -> Result<Vec<WebauthnCredential>, WebauthnError> {
+    credential_id: C,
+) -> Result<Option<WebauthnCredential>, WebauthnError> {
     DbCred::find()
         .filter(webauthn_credential::Column::UserId.eq(user_id.as_ref()))
-        .all(db)
+        .filter(webauthn_credential::Column::CredentialId.eq(credential_id.as_ref()))
+        .one(db)
         .await
-        .context("listing webauthn credential")?
-        .into_iter()
+        .context("searching webauthn credential")?
         .map(TryInto::try_into)
-        .collect::<Result<Vec<_>, _>>()
+        .transpose()
 }
 
 #[cfg(test)]
@@ -43,20 +44,20 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn test_list() {
+    async fn test_find() {
         let db = MockDatabase::new(DatabaseBackend::Postgres)
             .append_query_results([vec![get_mock("uid")]])
             .into_connection();
 
-        list(&db, "uid").await.unwrap();
+        find(&db, "uid", "cred_id").await.unwrap();
 
         // Checking transaction log
         assert_eq!(
             db.into_transaction_log(),
             [Transaction::from_sql_and_values(
                 DatabaseBackend::Postgres,
-                r#"SELECT "webauthn_credential"."id", "webauthn_credential"."user_id", "webauthn_credential"."credential_id", "webauthn_credential"."description", "webauthn_credential"."passkey", "webauthn_credential"."counter", "webauthn_credential"."type", "webauthn_credential"."aaguid", "webauthn_credential"."created_at", "webauthn_credential"."last_used_at", "webauthn_credential"."last_updated_at" FROM "webauthn_credential" WHERE "webauthn_credential"."user_id" = $1"#,
-                ["uid".into()]
+                r#"SELECT "webauthn_credential"."id", "webauthn_credential"."user_id", "webauthn_credential"."credential_id", "webauthn_credential"."description", "webauthn_credential"."passkey", "webauthn_credential"."counter", "webauthn_credential"."type", "webauthn_credential"."aaguid", "webauthn_credential"."created_at", "webauthn_credential"."last_used_at", "webauthn_credential"."last_updated_at" FROM "webauthn_credential" WHERE "webauthn_credential"."user_id" = $1 AND "webauthn_credential"."credential_id" = $2 LIMIT $3"#,
+                ["uid".into(), "cred_id".into(), 1u64.into()]
             ),]
         );
     }

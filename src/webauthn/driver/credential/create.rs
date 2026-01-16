@@ -12,57 +12,33 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use chrono::{DateTime, Local, Utc};
 use sea_orm::DatabaseConnection;
 use sea_orm::entity::*;
-use webauthn_rs::prelude::Passkey;
 
 use crate::db::entity::webauthn_credential;
 use crate::error::DbContextExt;
 use crate::webauthn::{WebauthnError, types::WebauthnCredential};
 
-pub async fn create<U: AsRef<str>, D: AsRef<str>>(
+pub async fn create(
     db: &DatabaseConnection,
-    user_id: U,
-    passkey: &Passkey,
-    description: Option<D>,
-    created_at: Option<DateTime<Utc>>,
+    credential: WebauthnCredential,
 ) -> Result<WebauthnCredential, WebauthnError> {
-    //let now = createLocal::now().naive_utc();
-    let entry = webauthn_credential::ActiveModel {
-        id: NotSet,
-        user_id: Set(user_id.as_ref().to_string()),
-        credential_id: Set(serde_json::to_string(passkey.cred_id())?
-            .trim_matches('"')
-            .to_string()),
-        description: if let Some(v) = description {
-            Set(Some(v.as_ref().to_string()))
-        } else {
-            NotSet
-        },
-        passkey: Set(serde_json::to_string(&passkey)?),
-        r#type: Set("cross-platform".to_string()),
-        aaguid: NotSet,
-        created_at: Set(created_at
-            .map(|dt| dt.naive_utc())
-            .unwrap_or_else(|| Local::now().naive_utc())),
-        last_used_at: NotSet,
-        last_updated_at: NotSet,
-    };
-    let cred = entry
+    webauthn_credential::ActiveModel::try_from(credential)?
         .insert(db)
         .await
         .context("inserting webauthn credential")?
-        .into();
-    Ok(cred)
+        .try_into()
 }
 
 #[cfg(test)]
 mod tests {
+    use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+    use chrono::Utc;
     use sea_orm::{DatabaseBackend, MockDatabase, MockExecResult, Transaction};
 
     use super::super::tests::{get_fake_passkey, get_mock};
     use super::*;
+    use crate::webauthn::types::*;
 
     #[tokio::test]
     async fn test_create() {
@@ -74,25 +50,34 @@ mod tests {
             }])
             .into_connection();
         let passkey = get_fake_passkey();
-        let now = Local::now();
-        create(&db, "uid", &passkey, Some("desc"), Some(now.into()))
-            .await
-            .unwrap();
+        let now = Utc::now();
+
+        let cred = WebauthnCredential {
+            created_at: now,
+            credential_id: URL_SAFE_NO_PAD.encode(passkey.cred_id()),
+            data: passkey.clone(),
+            counter: 0,
+            description: Some("description".into()),
+            internal_id: 0,
+            last_used_at: None,
+            r#type: CredentialType::CrossPlatform,
+            updated_at: None,
+            user_id: "uid".into(),
+        };
+        create(&db, cred).await.unwrap();
 
         // Checking transaction log
         assert_eq!(
             db.into_transaction_log(),
             [Transaction::from_sql_and_values(
                 DatabaseBackend::Postgres,
-                r#"INSERT INTO "webauthn_credential" ("user_id", "credential_id", "description", "passkey", "type", "created_at") VALUES ($1, $2, $3, $4, $5, $6) RETURNING "id", "user_id", "credential_id", "description", "passkey", "type", "aaguid", "created_at", "last_used_at", "last_updated_at""#,
+                r#"INSERT INTO "webauthn_credential" ("user_id", "credential_id", "description", "passkey", "counter", "type", "created_at") VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING "id", "user_id", "credential_id", "description", "passkey", "counter", "type", "aaguid", "created_at", "last_used_at", "last_updated_at""#,
                 [
                     "uid".into(),
-                    serde_json::to_string(passkey.cred_id())
-                        .unwrap()
-                        .trim_matches('"')
-                        .into(),
-                    "desc".into(),
+                    URL_SAFE_NO_PAD.encode(passkey.cred_id()).into(),
+                    "description".into(),
                     serde_json::to_string(&passkey).unwrap().into(),
+                    0.into(),
                     "cross-platform".into(),
                     now.naive_utc().into()
                 ]

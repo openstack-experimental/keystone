@@ -61,6 +61,7 @@ pub async fn start(
         .list_user_webauthn_credentials(&state.core, &req.passkey.user_id)
         .await?
         .into_iter()
+        .map(|x| x.data)
         .collect();
     let res = match state
         .extension

@@ -284,7 +284,7 @@ pub struct AuthenticationExtensionsClientOutputs {
     /// The response to a hmac get secret request.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schema(nullable = false)]
-    #[validate(nested, required)]
+    #[validate(nested)]
     pub hmac_get_secret: Option<HmacGetSecretOutput>,
 }
 

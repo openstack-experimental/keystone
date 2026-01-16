@@ -134,7 +134,7 @@ async fn main() -> Result<(), Report> {
     let webauthn_openapi = webauthn::api::openapi_router();
     let (main_router, main_api) = api::openapi_router().split_for_parts();
     openapi.merge(main_api);
-    openapi.merge(webauthn_openapi.into_openapi());
+    openapi = openapi.nest("/v4", webauthn_openapi.into_openapi());
 
     if let Some(dump_format) = &args.dump_openapi {
         println!(
@@ -218,7 +218,7 @@ async fn main() -> Result<(), Report> {
     let webauthn_extension = webauthn::api::init_extension(shared_state.clone())?;
     let app = Router::new()
         .merge(main_router.with_state(shared_state.clone()))
-        .merge(webauthn_extension)
+        .nest("/v4", webauthn_extension)
         .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", openapi))
         .layer(middleware);
 

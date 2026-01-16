@@ -33,6 +33,7 @@ impl MigrationTrait for Migration {
                     .col(string_len(WebauthnCredential::CredentialId, 1024))
                     .col(string_len(WebauthnCredential::Description, 64))
                     .col(text(WebauthnCredential::Passkey))
+                    .col(unsigned(WebauthnCredential::Counter))
                     .col(string_len(WebauthnCredential::Type, 25))
                     .col(string_len_null(WebauthnCredential::Aaguid, 36))
                     .col(date_time(WebauthnCredential::CreatedAt))
@@ -93,6 +94,7 @@ enum WebauthnCredential {
     CredentialId,
     Description,
     Passkey,
+    Counter,
     Type,
     Aaguid,
     CreatedAt,
