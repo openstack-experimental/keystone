@@ -45,8 +45,15 @@ use crate::token::{
 use utils::FernetUtils;
 
 mod application_credential;
+mod domain_scoped;
+mod federation_domain_scoped;
+mod federation_project_scoped;
+mod federation_unscoped;
+mod project_scoped;
 mod restricted;
+mod system_scoped;
 mod trust;
+mod unscoped;
 pub mod utils;
 
 #[derive(Clone)]
