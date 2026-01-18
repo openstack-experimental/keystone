@@ -31,7 +31,7 @@ impl MigrationTrait for Migration {
                     .col(pk_auto(WebauthnCredential::Id))
                     .col(string_len(WebauthnCredential::UserId, 64))
                     .col(string_len(WebauthnCredential::CredentialId, 1024))
-                    .col(string_len(WebauthnCredential::Description, 64))
+                    .col(string_len_null(WebauthnCredential::Description, 64))
                     .col(text(WebauthnCredential::Passkey))
                     .col(unsigned(WebauthnCredential::Counter))
                     .col(string_len(WebauthnCredential::Type, 25))

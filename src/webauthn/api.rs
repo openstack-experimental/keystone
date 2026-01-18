@@ -24,7 +24,7 @@ use crate::keystone::ServiceState;
 
 mod auth;
 mod register;
-mod types;
+pub mod types;
 
 use crate::webauthn::driver::SqlDriver;
 use types::{CombinedExtensionState, ExtensionState};

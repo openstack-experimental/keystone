@@ -38,7 +38,7 @@ runs:
         mkdir -p etc/fernet-keys
         cat <<EOF > etc/keystone.conf
         [auth]
-        methods = password,token,openid,application_credential
+        methods = password,token,openid,application_credential,x509
         [database]
         connection = postgresql://keystone:1234@postgres:5432/keystone
         [fernet_receipts]

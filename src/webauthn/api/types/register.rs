@@ -20,7 +20,11 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use validator::Validate;
 
+use super::authenticator_transport::AuthenticatorTransport;
+use super::credential_protection_policy::CredentialProtectionPolicy;
+use super::public_key_credential_creation_options::PublicKeyCredentialCreationOptions;
 use crate::api::KeystoneApiError;
+use crate::webauthn::WebauthnError;
 
 /// Passkey registration request.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
@@ -30,8 +34,10 @@ pub struct UserPasskeyRegistrationStartRequest {
     pub passkey: PasskeyCreate,
 }
 
+// TODO:
+// - remove description from register_start request
 /// Passkey information.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct PasskeyCreate {
     /// Passkey description
     #[schema(nullable = false, max_length = 64)]
@@ -48,6 +54,14 @@ pub struct PasskeyResponse {
     pub passkey: Passkey,
 }
 
+impl From<crate::webauthn::types::WebauthnCredential> for PasskeyResponse {
+    fn from(value: crate::webauthn::types::WebauthnCredential) -> Self {
+        Self {
+            passkey: value.into(),
+        }
+    }
+}
+
 /// Passkey information.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct Passkey {
@@ -57,6 +71,15 @@ pub struct Passkey {
     #[schema(nullable = false)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+}
+
+impl From<crate::webauthn::types::WebauthnCredential> for Passkey {
+    fn from(value: crate::webauthn::types::WebauthnCredential) -> Self {
+        Self {
+            credential_id: value.credential_id,
+            description: value.description,
+        }
+    }
 }
 
 /// Passkey challenge.
@@ -70,376 +93,17 @@ pub struct UserPasskeyRegistrationStartResponse {
     pub public_key: PublicKeyCredentialCreationOptions,
 }
 
-/// The requested options for the authentication.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
-pub struct PublicKeyCredentialCreationOptions {
-    /// The requested attestation level from the device.
-    #[schema(nullable = false)]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub attestation: Option<AttestationConveyancePreference>,
-    /// The list of attestation formats that the RP will accept.
-    #[schema(nullable = false)]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub attestation_formats: Option<Vec<AttestationFormat>>,
-    /// Criteria defining which authenticators may be used in this operation.
-    #[schema(nullable = false)]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[validate(nested)]
-    pub authenticator_selection: Option<AuthenticatorSelectionCriteria>,
-    /// The challenge that should be signed by the authenticator.
-    #[schema(value_type = String, format = Binary, content_encoding = "base64")]
-    pub challenge: String,
-    /// Credential ID's that are excluded from being able to be registered.
-    #[schema(nullable = false)]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[validate(nested)]
-    pub exclude_credentials: Option<Vec<PublicKeyCredentialDescriptor>>,
-    /// extensions.
-    #[schema(nullable = false)]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[validate(nested)]
-    pub extensions: Option<RequestRegistrationExtensions>,
-    /// Hints defining which types credentials may be used in this operation.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub hints: Option<Vec<PublicKeyCredentialHints>>,
-    /// The set of cryptographic types allowed by this server.
-    #[validate(nested)]
-    pub pub_key_cred_params: Vec<PubKeyCredParams>,
-    /// The relying party
-    #[validate(nested)]
-    pub rp: RelyingParty,
-    /// The timeout for the authenticator in case of no interaction.
-    #[schema(nullable = false)]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[validate(range(min = 1))]
-    pub timeout: Option<u32>,
-    /// The user.
-    #[validate(nested)]
-    pub user: User,
-}
-
-/// Relying Party Entity.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
-pub struct RelyingParty {
-    /// The id of the relying party.
-    #[validate(length(max = 64))]
-    pub id: String,
-    /// The name of the relying party.
-    #[validate(length(max = 255))]
-    pub name: String,
-}
-
-/// User Entity.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
-#[schema(as = PasskeyUser)]
-pub struct User {
-    /// The user's id in base64 form. This MUST be a unique id, and must NOT
-    /// contain personally identifying information, as this value can NEVER
-    /// be changed. If in doubt, use a UUID.
-    #[schema(value_type = String, format = Binary, content_encoding = "base64")]
-    pub id: String,
-    /// A detailed name for the account, such as an email address. This value
-    /// can change, so must not be used as a primary key.
-    #[validate(length(max = 255))]
-    pub name: String,
-    /// The user's preferred name for display. This value can change, so must
-    /// not be used as a primary key.
-    #[validate(length(max = 255))]
-    pub display_name: String,
-}
-
-/// Public key cryptographic parameters
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
-pub struct PubKeyCredParams {
-    /// The algorithm in use defined by CASE.
-    pub alg: i64,
-    /// The type of public-key credential.
-    pub type_: String,
-}
-
-/// <https://www.w3.org/TR/webauthn/#dictdef-publickeycredentialdescriptor>
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
-pub struct PublicKeyCredentialDescriptor {
-    /// The type of credential.
-    pub type_: String,
-    /// The credential id.
-    #[schema(value_type = String, format = Binary, content_encoding = "base64")]
-    pub id: String,
-    /// The allowed transports for this credential. Note this is a hint, and is
-    /// NOT enforced.
-    #[schema(nullable = false)]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub transports: Option<Vec<AuthenticatorTransport>>,
-}
-
-// ///
-// /// Request in residentkey workflows that conditional mediation should be
-// used /// in the UI, or not.
-// #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
-// pub enum Mediation {
-//     /// Discovered credentials are presented to the user in a dialog.
-//     /// Conditional UI is used. See <https://github.com/w3c/webauthn/wiki/Explainer:-WebAuthn-Conditional-UI>
-//     /// <https://w3c.github.io/webappsec-credential-management/#enumdef-credentialmediationrequirement>
-//     Conditional,
-// }
-//
-// /// A descriptor of a credential that can be used.
-// #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema,
-// Validate)] pub struct AllowCredentials {
-//     /// The type of credential.
-//     pub type_: String,
-//     /// The id of the credential.
-//     #[schema(value_type = String, format = Binary, content_encoding =
-// "base64")]     pub id: String,
-//     /// <https://www.w3.org/TR/webauthn/#transport> may be usb, nfc, ble, internal
-//     #[schema(nullable = false)]
-//     #[serde(skip_serializing_if = "Option::is_none")]
-//     pub transports: Option<Vec<AuthenticatorTransport>>,
-// }
-
-/// <https://www.w3.org/TR/webauthn/#enumdef-authenticatortransport>
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
-pub enum AuthenticatorTransport {
-    /// <https://www.w3.org/TR/webauthn/#dom-authenticatortransport-ble>
-    Ble,
-    /// Hybrid transport, formerly caBLE. Part of the level 3 draft
-    /// specification. <https://w3c.github.io/webauthn/#dom-authenticatortransport-hybrid>
-    Hybrid,
-    /// <https://www.w3.org/TR/webauthn/#dom-authenticatortransport-internal>
-    Internal,
-    /// <https://www.w3.org/TR/webauthn/#dom-authenticatortransport-nfc>
-    Nfc,
-    /// Test transport; used for Windows 10.
-    Test,
-    /// An unknown transport was provided - it will be ignored.
-    Unknown,
-    /// <https://www.w3.org/TR/webauthn/#dom-authenticatortransport-usb>
-    Usb,
-}
-
-/// <https://www.w3.org/TR/webauthn/#dictdef-authenticatorselectioncriteria>
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
-pub struct AuthenticatorSelectionCriteria {
-    /// How the authenticator should be attached to the client machine. Note
-    /// this is only a hint. It is not enforced in anyway shape or form. <https://www.w3.org/TR/webauthn/#attachment>.
-    #[schema(nullable = false)]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub authenticator_attachment: Option<AuthenticatorAttachment>,
-    /// Hint to the credential to create a resident key. Note this value should
-    /// be a member of ResidentKeyRequirement, but client must ignore
-    /// unknown values, treating an unknown value as if the member does not
-    /// exist. <https://www.w3.org/TR/webauthn-2/#dom-authenticatorselectioncriteria-residentkey>.
-    #[schema(nullable = false)]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub resident_key: Option<ResidentKeyRequirement>,
-    /// Hint to the credential to create a resident key. Note this can not be
-    /// enforced or validated, so the authenticator may choose to ignore
-    /// this parameter. <https://www.w3.org/TR/webauthn/#resident-credential>.
-    pub require_resident_key: bool,
-    /// The user verification level to request during registration. Depending on
-    /// if this authenticator provides verification may affect future
-    /// interactions as this is associated to the credential during
-    /// registration.
-    pub user_verification: UserVerificationPolicy,
-}
-
-/// The authenticator attachment hint. This is NOT enforced, and is only used to
-/// help a user select a relevant authenticator type.
-///
-/// <https://www.w3.org/TR/webauthn/#attachment>
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
-pub enum AuthenticatorAttachment {
-    /// Request a device that is part of the machine aka inseparable.
-    /// <https://www.w3.org/TR/webauthn/#attachment>.
-    Platform,
-    /// Request a device that can be separated from the machine aka an external
-    /// token. <https://www.w3.org/TR/webauthn/#attachment>.
-    CrossPlatform,
-}
-
-/// The Relying Party's requirements for client-side discoverable credentials.
-///
-/// <https://www.w3.org/TR/webauthn-2/#enumdef-residentkeyrequirement>
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
-pub enum ResidentKeyRequirement {
-    /// <https://www.w3.org/TR/webauthn-2/#dom-residentkeyrequirement-discouraged>.
-    Discouraged,
-    /// ⚠️ In all major browsers preferred is identical in behaviour to
-    /// required. You should use required instead. <https://www.w3.org/TR/webauthn-2/#dom-residentkeyrequirement-preferred>.
-    Preferred,
-    /// <https://www.w3.org/TR/webauthn-2/#dom-residentkeyrequirement-required>.
-    Required,
-}
-
-/// A hint as to the class of device that is expected to fufil this operation.
-///
-/// <https://www.w3.org/TR/webauthn-3/#enumdef-publickeycredentialhints>
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
-pub enum PublicKeyCredentialHints {
-    /// The credential is a platform authenticator.
-    ClientDevice,
-    /// The credential will come from an external device.
-    Hybrid,
-    /// The credential is a removable security key.
-    SecurityKey,
-}
-
-/// <https://www.w3.org/TR/webauthn/#enumdef-attestationconveyancepreference>
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
-pub enum AttestationConveyancePreference {
-    /// Do not request attestation.
-    /// <https://www.w3.org/TR/webauthn/#dom-attestationconveyancepreference-none>.
-    None,
-    /// Request attestation in a semi-anonymized form.
-    /// <https://www.w3.org/TR/webauthn/#dom-attestationconveyancepreference-indirect>.
-    Indirect,
-    /// Request attestation in a direct form.
-    /// <https://www.w3.org/TR/webauthn/#dom-attestationconveyancepreference-direct>.
-    Direct,
-}
-
-/// The type of attestation on the credential.
-///
-/// <https://www.iana.org/assignments/webauthn/webauthn.xhtml>
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
-pub enum AttestationFormat {
-    /// Packed attestation.
-    Packed,
-    /// TPM attestation (like Microsoft).
-    Tpm,
-    /// Android hardware attestation.
-    AndroidKey,
-    /// Older Android Safety Net.
-    AndroidSafetyNet,
-    /// Old U2F attestation type.
-    FIDOU2F,
-    /// Apple touchID/faceID.
-    AppleAnonymous,
-    /// No attestation.
-    None,
-}
-
-/// Extension option inputs for PublicKeyCredentialCreationOptions.
-///
-/// Implements `AuthenticatorExtensionsClientInputs` from the spec.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
-pub struct RequestRegistrationExtensions {
-    /// ⚠️ - This extension result is always unsigned, and only indicates if the
-    /// browser requests a residentKey to be created. It has no bearing on
-    /// the true rk state of the credential.
-    #[schema(nullable = false)]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub cred_props: Option<bool>,
-    /// The credProtect extension options.
-    #[schema(nullable = false)]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[validate(nested)]
-    pub cred_protect: Option<CredProtect>,
-    /// ⚠️ - Browsers support the creation of the secret, but not the retrieval
-    /// of it. CTAP2.1 create hmac secret.
-    #[schema(nullable = false)]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub hmac_create_secret: Option<bool>,
-    /// CTAP2.1 Minimum pin length.
-    #[schema(nullable = false)]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub min_pin_length: Option<bool>,
-    /// ⚠️ - Browsers do not support this! Uvm
-    #[schema(nullable = false)]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub uvm: Option<bool>,
-}
-
-/// The desired options for the client's use of the credProtect extension
-///
-/// <https://fidoalliance.org/specs/fido-v2.1-rd-20210309/fido-client-to-authenticator-protocol-v2.1-rd-20210309.html#sctn-credProtect-extension>
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
-pub struct CredProtect {
-    /// The credential policy to enact.
-    pub credential_protection_policy: CredentialProtectionPolicy,
-    /// Whether it is better for the authenticator to fail to create a
-    /// credential rather than ignore the protection policy If no value is
-    /// provided, the client treats it as false.
-    #[schema(nullable = false)]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub enforce_credential_protection_policy: Option<bool>,
-}
-
-/// Valid credential protection policies
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
-#[repr(u8)]
-pub enum CredentialProtectionPolicy {
-    /// This reflects “FIDO_2_0” semantics. In this configuration, performing
-    /// some form of user verification is optional with or without
-    /// credentialID list. This is the default state of the credential if
-    /// the extension is not specified.
-    Optional = 1,
-    /// In this configuration, credential is discovered only when its
-    /// credentialID is provided by the platform or when some form of user
-    /// verification is performed.
-    OptionalWithCredentialIDList = 2,
-    /// This reflects that discovery and usage of the credential MUST be
-    /// preceded by some form of user verification.
-    Required = 3,
-}
-
-/// Defines the User Authenticator Verification policy. This is documented
-/// <https://w3c.github.io/webauthn/#enumdef-userverificationrequirement>, and each variant lists
-/// it's effects.
-///
-/// To be clear, Verification means that the Authenticator perform extra or
-/// supplementary interaction with the user to verify who they are. An example
-/// of this is Apple Touch Id required a fingerprint to be verified, or a yubico
-/// device requiring a pin in addition to a touch event.
-///
-/// An example of a non-verified interaction is a yubico device with no pin
-/// where touch is the only interaction - we only verify a user is present, but
-/// we don't have extra details to the legitimacy of that user.
-///
-/// As UserVerificationPolicy is only used in credential registration, this
-/// stores the verification state of the credential in the persisted credential.
-/// These persisted credentials define which UserVerificationPolicy is issued
-/// during authentications.
-///
-/// IMPORTANT - Due to limitations of the webauthn specification, CTAP devices,
-/// and browser implementations, the only secure choice as an RP is required.
-///
-///   ⚠️ WARNING - discouraged is marked with a warning, as some authenticators
-/// will FORCE   verification during registration but NOT during authentication.
-/// This makes it impossible   for a relying party to consistently enforce user
-/// verification, which can confuse users and   lead them to distrust user
-/// verification is being enforced.
-///
-///   ⚠️ WARNING - preferred can lead to authentication errors in some cases due
-/// to browser   peripheral exchange allowing authentication verification
-/// bypass. Webauthn RS is not   vulnerable to these bypasses due to our
-/// tracking of UV during registration through   authentication, however
-/// preferred can cause legitimate credentials to not prompt for UV   correctly
-/// due to browser perhipheral exchange leading Webauthn RS to deny them in what
-///   should otherwise be legitimate operations.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
-pub enum UserVerificationPolicy {
-    /// Require user verification bit to be set, and fail the registration or
-    /// authentication if false. If the authenticator is not able to perform
-    /// verification, it will not be usable with this policy.
-    ///
-    /// This policy is the default as it is the only secure and consistent user
-    /// verification option.
-    Required,
-    /// Prefer UV if possible, but ignore if not present. In other webauthn
-    /// deployments this is bypassable as it implies the library will not
-    /// check UV is set correctly for this credential. Webauthn-RS is not
-    /// vulnerable to this as we check the UV state always based on
-    /// it's presence at registration.
-    ///
-    /// However, in some cases use of this policy can lead to some credentials
-    /// failing to verify correctly due to browser peripheral exchange
-    /// bypasses.
-    Preferred,
-    /// Discourage - but do not prevent - user verification from being supplied.
-    /// Many CTAP devices will attempt UV during registration but not
-    /// authentication leading to user confusion.
-    DiscouragedDoNotUse,
+impl TryFrom<webauthn_rs::prelude::CreationChallengeResponse>
+    for UserPasskeyRegistrationStartResponse
+{
+    type Error = WebauthnError;
+    fn try_from(
+        value: webauthn_rs::prelude::CreationChallengeResponse,
+    ) -> Result<Self, Self::Error> {
+        Ok(Self {
+            public_key: value.public_key.try_into()?,
+        })
+    }
 }
 
 /// A client response to a registration challenge. This contains all required
@@ -475,6 +139,36 @@ pub struct UserPasskeyRegistrationFinishRequest {
     pub extensions: RegistrationExtensionsClientOutputs,
 }
 
+impl TryFrom<UserPasskeyRegistrationFinishRequest>
+    for webauthn_rs::prelude::RegisterPublicKeyCredential
+{
+    type Error = KeystoneApiError;
+    fn try_from(value: UserPasskeyRegistrationFinishRequest) -> Result<Self, Self::Error> {
+        Ok(Self {
+            id: value.id,
+            raw_id: URL_SAFE.decode(value.raw_id)?.into(),
+            type_: value.type_,
+            response: value.response.try_into()?,
+            extensions: value.extensions.into(),
+        })
+    }
+}
+
+impl From<webauthn_rs::prelude::RegisterPublicKeyCredential>
+    for UserPasskeyRegistrationFinishRequest
+{
+    fn from(value: webauthn_rs::prelude::RegisterPublicKeyCredential) -> Self {
+        Self {
+            description: None,
+            id: value.id,
+            raw_id: URL_SAFE.encode(value.raw_id),
+            type_: value.type_,
+            response: value.response.into(),
+            extensions: value.extensions.into(),
+        }
+    }
+}
+
 /// <https://w3c.github.io/webauthn/#authenticatorattestationresponse>
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct AuthenticatorAttestationResponseRaw {
@@ -488,6 +182,36 @@ pub struct AuthenticatorAttestationResponseRaw {
     #[schema(nullable = false)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub transports: Option<Vec<AuthenticatorTransport>>,
+}
+
+impl From<webauthn_rs_proto::attest::AuthenticatorAttestationResponseRaw>
+    for AuthenticatorAttestationResponseRaw
+{
+    fn from(value: webauthn_rs_proto::attest::AuthenticatorAttestationResponseRaw) -> Self {
+        Self {
+            attestation_object: URL_SAFE.encode(value.attestation_object),
+            client_data_json: URL_SAFE.encode(value.client_data_json),
+            transports: value
+                .transports
+                .map(|i| i.into_iter().map(Into::into).collect::<Vec<_>>()),
+        }
+    }
+}
+
+impl TryFrom<AuthenticatorAttestationResponseRaw>
+    for webauthn_rs_proto::attest::AuthenticatorAttestationResponseRaw
+{
+    type Error = WebauthnError;
+
+    fn try_from(value: AuthenticatorAttestationResponseRaw) -> Result<Self, Self::Error> {
+        Ok(Self {
+            attestation_object: URL_SAFE.decode(value.attestation_object)?.into(),
+            client_data_json: URL_SAFE.decode(value.client_data_json)?.into(),
+            transports: value
+                .transports
+                .map(|i| i.into_iter().map(Into::into).collect::<Vec<_>>()),
+        })
+    }
 }
 
 /// <https://w3c.github.io/webauthn/#dictdef-authenticationextensionsclientoutputs> The default
@@ -520,6 +244,34 @@ pub struct RegistrationExtensionsClientOutputs {
     pub min_pin_length: Option<u32>,
 }
 
+impl From<RegistrationExtensionsClientOutputs>
+    for webauthn_rs_proto::extensions::RegistrationExtensionsClientOutputs
+{
+    fn from(value: RegistrationExtensionsClientOutputs) -> Self {
+        Self {
+            appid: value.appid,
+            cred_props: value.cred_props.map(Into::into),
+            hmac_secret: value.hmac_secret,
+            cred_protect: value.cred_protect.map(Into::into),
+            min_pin_length: value.min_pin_length,
+        }
+    }
+}
+
+impl From<webauthn_rs_proto::extensions::RegistrationExtensionsClientOutputs>
+    for RegistrationExtensionsClientOutputs
+{
+    fn from(value: webauthn_rs_proto::extensions::RegistrationExtensionsClientOutputs) -> Self {
+        Self {
+            appid: value.appid,
+            cred_props: value.cred_props.map(Into::into),
+            hmac_secret: value.hmac_secret,
+            cred_protect: value.cred_protect.map(Into::into),
+            min_pin_length: value.min_pin_length,
+        }
+    }
+}
+
 /// <https://www.w3.org/TR/webauthn-3/#sctn-authenticator-credential-properties-extension>
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct CredProps {
@@ -529,202 +281,17 @@ pub struct CredProps {
     ///
     /// Note that this extension is UNSIGNED and may have been altered by page
     /// javascript.
-    pub rk: bool,
+    pub rk: Option<bool>,
 }
 
-impl From<crate::webauthn::types::WebauthnCredential> for PasskeyResponse {
-    fn from(value: crate::webauthn::types::WebauthnCredential) -> Self {
-        Self {
-            passkey: value.into(),
-        }
+impl From<CredProps> for webauthn_rs_proto::extensions::CredProps {
+    fn from(value: CredProps) -> Self {
+        Self { rk: value.rk }
     }
 }
 
-impl From<crate::webauthn::types::WebauthnCredential> for Passkey {
-    fn from(value: crate::webauthn::types::WebauthnCredential) -> Self {
-        Self {
-            credential_id: value.credential_id,
-            description: value.description,
-        }
-    }
-}
-
-impl TryFrom<UserPasskeyRegistrationFinishRequest>
-    for webauthn_rs::prelude::RegisterPublicKeyCredential
-{
-    type Error = KeystoneApiError;
-    fn try_from(val: UserPasskeyRegistrationFinishRequest) -> Result<Self, Self::Error> {
-        Ok(webauthn_rs::prelude::RegisterPublicKeyCredential {
-            id: val.id,
-            raw_id: URL_SAFE.decode(val.raw_id)?.into(),
-            type_: val.type_,
-            response: webauthn_rs_proto::attest::AuthenticatorAttestationResponseRaw {
-                attestation_object: URL_SAFE.decode(val.response.attestation_object)?.into(),
-                client_data_json: URL_SAFE.decode(val.response.client_data_json)?.into(),
-                transports: val.response.transports.map(|i| {
-                    i.into_iter()
-                        .map(|t| match t {
-                            AuthenticatorTransport::Ble => webauthn_rs_proto::options::AuthenticatorTransport::Ble,
-                            AuthenticatorTransport::Hybrid => webauthn_rs_proto::options::AuthenticatorTransport::Hybrid,
-                            AuthenticatorTransport::Internal => webauthn_rs_proto::options::AuthenticatorTransport::Internal,
-                            AuthenticatorTransport::Nfc => webauthn_rs_proto::options::AuthenticatorTransport::Nfc,
-                            AuthenticatorTransport::Test => webauthn_rs_proto::options::AuthenticatorTransport::Test,
-                            AuthenticatorTransport::Unknown => webauthn_rs_proto::options::AuthenticatorTransport::Unknown,
-                            AuthenticatorTransport::Usb => webauthn_rs_proto::options::AuthenticatorTransport::Usb,
-
-                        })
-                        .collect::<Vec<_>>()
-                }),
-            },
-            extensions: webauthn_rs_proto::extensions::RegistrationExtensionsClientOutputs {
-                appid: val.extensions.appid,
-                cred_props: val
-                    .extensions
-                    .cred_props
-                    .map(|x| webauthn_rs_proto::extensions::CredProps { rk: x.rk }),
-                hmac_secret: val.extensions.hmac_secret,
-                cred_protect: val.extensions.cred_protect.map(|x| {
-                    match x {
-                        CredentialProtectionPolicy::Optional => webauthn_rs_proto::extensions::CredentialProtectionPolicy::UserVerificationOptional,
-                        CredentialProtectionPolicy::OptionalWithCredentialIDList => webauthn_rs_proto::extensions::CredentialProtectionPolicy::UserVerificationOptionalWithCredentialIDList,
-                        CredentialProtectionPolicy::Required => webauthn_rs_proto::extensions::CredentialProtectionPolicy::UserVerificationRequired
-                    }
-                }),
-                min_pin_length: val.extensions.min_pin_length,
-            },
-        })
-    }
-}
-
-impl TryFrom<webauthn_rs::prelude::CreationChallengeResponse>
-    for UserPasskeyRegistrationStartResponse
-{
-    type Error = KeystoneApiError;
-    fn try_from(val: webauthn_rs::prelude::CreationChallengeResponse) -> Result<Self, Self::Error> {
-        Ok(UserPasskeyRegistrationStartResponse {
-            public_key: PublicKeyCredentialCreationOptions {
-                attestation: val.public_key.attestation.map(|att| match att {
-                    webauthn_rs_proto::options::AttestationConveyancePreference::Direct => {
-                        AttestationConveyancePreference::Direct
-                    }
-                    webauthn_rs_proto::options::AttestationConveyancePreference::Indirect => {
-                        AttestationConveyancePreference::Indirect
-                    }
-                    webauthn_rs_proto::options::AttestationConveyancePreference::None => {
-                        AttestationConveyancePreference::None
-                    }
-                }),
-                attestation_formats: val
-                    .public_key
-                    .attestation_formats
-                    .map(|afs| {
-                        afs.into_iter().map(|fmt| match fmt {
-                            webauthn_rs_proto::options::AttestationFormat::AndroidKey => {
-                                AttestationFormat::AndroidKey
-                            }
-                            webauthn_rs_proto::options::AttestationFormat::AndroidSafetyNet => {
-                                AttestationFormat::AndroidSafetyNet
-                            }
-                            webauthn_rs_proto::options::AttestationFormat::AppleAnonymous => {
-                                AttestationFormat::AppleAnonymous
-                            }
-                            webauthn_rs_proto::options::AttestationFormat::FIDOU2F => {
-                                AttestationFormat::FIDOU2F
-                            }
-                            webauthn_rs_proto::options::AttestationFormat::None => {
-                                AttestationFormat::None
-                            }
-                            webauthn_rs_proto::options::AttestationFormat::Packed => {
-                                AttestationFormat::Packed
-                            }
-                            webauthn_rs_proto::options::AttestationFormat::Tpm => {
-                                AttestationFormat::Tpm
-                            }
-                        })
-                            .collect::<Vec<_>>()
-                    }),
-                authenticator_selection: val.public_key.authenticator_selection.map(|authn| {
-                    AuthenticatorSelectionCriteria {
-                        authenticator_attachment: authn.authenticator_attachment.map(|attach| {
-                            match attach {
-                                webauthn_rs_proto::options::AuthenticatorAttachment::CrossPlatform => AuthenticatorAttachment::CrossPlatform,
-                                webauthn_rs_proto::options::AuthenticatorAttachment::Platform => AuthenticatorAttachment::Platform,
-                            }
-                        }),
-                        require_resident_key: authn.require_resident_key,
-                        resident_key: authn.resident_key.map(|rk|
-                            match rk {
-                                webauthn_rs_proto::options::ResidentKeyRequirement::Discouraged => ResidentKeyRequirement::Discouraged,
-                                webauthn_rs_proto::options::ResidentKeyRequirement::Preferred => ResidentKeyRequirement::Preferred,
-                                webauthn_rs_proto::options::ResidentKeyRequirement::Required => ResidentKeyRequirement::Required,
-                            }
-                        ),
-                        user_verification: match authn.user_verification {
-                            webauthn_rs_proto::options::UserVerificationPolicy::Preferred => UserVerificationPolicy::Preferred,
-                            webauthn_rs_proto::options::UserVerificationPolicy::Required => UserVerificationPolicy::Required,
-                            webauthn_rs_proto::options::UserVerificationPolicy::Discouraged_DO_NOT_USE => UserVerificationPolicy::DiscouragedDoNotUse,
-                        }
-                    }
-                }),
-                challenge: URL_SAFE.encode(&val.public_key.challenge),
-                exclude_credentials: val.public_key.exclude_credentials.map(|ecs| ecs.into_iter().map(|descr| {
-                    PublicKeyCredentialDescriptor{
-                        type_: descr.type_,
-                        id: URL_SAFE.encode(&descr.id),
-                        transports: descr.transports.map(|transports| transports.into_iter().map(|tr|{
-                            match tr {
-                                webauthn_rs_proto::options::AuthenticatorTransport::Ble => AuthenticatorTransport::Ble,
-                                webauthn_rs_proto::options::AuthenticatorTransport::Hybrid => AuthenticatorTransport::Hybrid,
-                                webauthn_rs_proto::options::AuthenticatorTransport::Internal => AuthenticatorTransport::Internal,
-                                webauthn_rs_proto::options::AuthenticatorTransport::Nfc => AuthenticatorTransport::Nfc,
-                                webauthn_rs_proto::options::AuthenticatorTransport::Usb => AuthenticatorTransport::Usb,
-                                webauthn_rs_proto::options::AuthenticatorTransport::Test => AuthenticatorTransport::Test,
-                                webauthn_rs_proto::options::AuthenticatorTransport::Unknown => AuthenticatorTransport::Unknown,
-                            }
-                        }).collect::<Vec<_>>())
-                    }
-                }).collect::<Vec<_>>()),
-                extensions: val.public_key.extensions.map(|ext| RequestRegistrationExtensions{
-                    cred_props: ext.cred_props,
-                    cred_protect: ext.cred_protect.map(|cp|
-                        {
-                            CredProtect {
-                                credential_protection_policy: match cp.credential_protection_policy {
-                                    webauthn_rs_proto::extensions::CredentialProtectionPolicy::UserVerificationOptional => CredentialProtectionPolicy::Optional,
-                                    webauthn_rs_proto::extensions::CredentialProtectionPolicy::UserVerificationOptionalWithCredentialIDList => CredentialProtectionPolicy::OptionalWithCredentialIDList,
-                                    webauthn_rs_proto::extensions::CredentialProtectionPolicy::UserVerificationRequired => CredentialProtectionPolicy::Required,
-
-                                },
-                                enforce_credential_protection_policy: cp.enforce_credential_protection_policy,
-                            }
-                        }),
-                    hmac_create_secret: ext.hmac_create_secret,
-                    min_pin_length: ext.min_pin_length,
-                    uvm: ext.uvm,
-                }),
-                hints: val.public_key.hints.map(|hints| hints.into_iter().map(|hint|{
-                    match hint {
-                        webauthn_rs_proto::options::PublicKeyCredentialHints::ClientDevice => PublicKeyCredentialHints::ClientDevice,
-                        webauthn_rs_proto::options::PublicKeyCredentialHints::Hybrid => PublicKeyCredentialHints::Hybrid,
-                        webauthn_rs_proto::options::PublicKeyCredentialHints::SecurityKey => PublicKeyCredentialHints::SecurityKey,
-                    } }).collect::<Vec<_>>()),
-                pub_key_cred_params: val.public_key.pub_key_cred_params.into_iter().map(|pkcp| {
-                    PubKeyCredParams{
-                        alg: pkcp.alg,
-                        type_: pkcp.type_
-                    }
-                }).collect::<Vec<_>>(),
-                rp: RelyingParty{
-                    id: val.public_key.rp.id,
-                    name: val.public_key.rp.name,
-                },
-                timeout: val.public_key.timeout,
-                user: User {
-                    id: URL_SAFE.encode(&val.public_key.user.id),
-                    name: val.public_key.user.name,
-                    display_name: val.public_key.user.display_name,
-                }
-            },
-        })
+impl From<webauthn_rs_proto::extensions::CredProps> for CredProps {
+    fn from(value: webauthn_rs_proto::extensions::CredProps) -> Self {
+        Self { rk: value.rk }
     }
 }
