@@ -99,6 +99,7 @@ serde_urlencoded = { version = "0.7" }
 thirtyfour = "0.36"
 tracing-test = { version = "0.2", features = ["no-env-filter"] }
 url = { version = "2.5" }
+webauthn-authenticator-rs = { version = "0.5", features = ["softtoken"] }
 webauthn-rs = { version = "0.5", features = ["danger-credential-internals"] }
 
 [features]

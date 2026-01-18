@@ -27,6 +27,10 @@ pub enum WebauthnError {
         source: crate::auth::AuthenticationError,
     },
 
+    /// Base64 decode error
+    #[error("base64 decoding error")]
+    Base64Decode(#[from] base64::DecodeError),
+
     /// Conflict.
     #[error("conflict: {0}")]
     Conflict(String),
