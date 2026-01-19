@@ -136,7 +136,7 @@ impl AssignmentBackend for SqlBackend {
     async fn revoke_grant(
         &self,
         state: &ServiceState,
-        grant: &AssignmentRevoke,
+        grant: AssignmentRevoke,
     ) -> Result<(), AssignmentProviderError> {
         Ok(assignment::delete(&state.db, grant).await?)
     }

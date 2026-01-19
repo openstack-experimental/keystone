@@ -67,7 +67,7 @@ mock! {
         async fn revoke_grant(
             &self,
             state: &ServiceState,
-            params: &AssignmentRevoke,
+            params: AssignmentRevoke,
         ) -> Result<(), AssignmentProviderError>;
     }
 }

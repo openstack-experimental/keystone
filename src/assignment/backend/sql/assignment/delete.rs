@@ -26,7 +26,7 @@ use crate::error::DbContextExt;
 /// Delete assignment grant.
 pub async fn delete(
     db: &DatabaseConnection,
-    grant: &AssignmentRevoke,
+    grant: AssignmentRevoke,
 ) -> Result<(), AssignmentDatabaseError> {
     if grant.inherited {
         // Cannot delete inherited assignments directly
@@ -88,7 +88,7 @@ mod tests {
             inherited: false,
         };
 
-        delete(&db, &grant).await.unwrap();
+        delete(&db, grant).await.unwrap();
 
         // Checking transaction log
         assert_eq!(
@@ -124,7 +124,7 @@ mod tests {
             inherited: false,
         };
 
-        delete(&db, &grant).await.unwrap();
+        delete(&db, grant).await.unwrap();
 
         assert_eq!(
             db.into_transaction_log(),
@@ -159,7 +159,7 @@ mod tests {
             inherited: false,
         };
 
-        delete(&db, &grant).await.unwrap();
+        delete(&db, grant).await.unwrap();
 
         assert_eq!(
             db.into_transaction_log(),
@@ -194,7 +194,7 @@ mod tests {
             inherited: false,
         };
 
-        delete(&db, &grant).await.unwrap();
+        delete(&db, grant).await.unwrap();
 
         assert_eq!(
             db.into_transaction_log(),
@@ -229,7 +229,7 @@ mod tests {
             inherited: false,
         };
 
-        delete(&db, &grant).await.unwrap();
+        delete(&db, grant).await.unwrap();
 
         assert_eq!(
             db.into_transaction_log(),
@@ -260,7 +260,7 @@ mod tests {
             inherited: true, // ← Inherited
         };
 
-        delete(&db, &grant).await.unwrap();
+        delete(&db, grant).await.unwrap();
 
         // No SQL should be executed for inherited grants
         assert_eq!(db.into_transaction_log(), []);
@@ -285,7 +285,7 @@ mod tests {
         };
 
         // Should succeed even though nothing was deleted
-        delete(&db, &grant).await.unwrap();
+        delete(&db, grant).await.unwrap();
 
         assert_eq!(
             db.into_transaction_log(),

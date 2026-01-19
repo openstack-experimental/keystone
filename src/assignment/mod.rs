@@ -236,8 +236,8 @@ impl AssignmentApi for AssignmentProvider {
     async fn revoke_grant(
         &self,
         state: &ServiceState,
-        grant: &AssignmentRevoke,
+        grant: AssignmentRevoke,
     ) -> Result<(), AssignmentProviderError> {
-        self.backend_driver.revoke_grant(state, &grant).await
+        self.backend_driver.revoke_grant(state, grant).await
     }
 }

@@ -121,7 +121,7 @@ pub(super) async fn revoke(
         .get_assignment_provider()
         .revoke_grant(
             &state,
-            &AssignmentRevoke::user_project(user.id, project.id, role.id, false),
+            AssignmentRevoke::user_project(user.id, project.id, role.id, false),
         )
         .await?;
 
