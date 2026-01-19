@@ -23,10 +23,12 @@ use crate::db::entity::{
 
 mod check;
 mod create;
+mod delete;
 mod list;
 
 pub use check::check;
 pub use create::create;
+pub use delete::delete;
 pub use list::list;
 pub use list::list_for_multiple_actors_and_targets;
 

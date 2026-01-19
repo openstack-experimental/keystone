@@ -130,4 +130,14 @@ impl AssignmentBackend for SqlBackend {
     ) -> Result<Vec<Assignment>, AssignmentProviderError> {
         Ok(assignment::list_for_multiple_actors_and_targets(&state.db, params).await?)
     }
+
+    /// Revoke assignment grant.
+    #[tracing::instrument(level = "info", skip(self, state))]
+    async fn revoke_grant(
+        &self,
+        state: &ServiceState,
+        grant: &AssignmentRevoke,
+    ) -> Result<(), AssignmentProviderError> {
+        Ok(assignment::delete(&state.db, grant).await?)
+    }
 }

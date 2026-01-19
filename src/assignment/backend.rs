@@ -86,4 +86,11 @@ pub trait AssignmentBackend: Send + Sync {
         state: &ServiceState,
         params: &RoleListParameters,
     ) -> Result<Vec<Role>, AssignmentProviderError>;
+
+    /// Revoke assignment grant.
+    async fn revoke_grant(
+        &self,
+        state: &ServiceState,
+        params: &AssignmentRevoke,
+    ) -> Result<(), AssignmentProviderError>;
 }

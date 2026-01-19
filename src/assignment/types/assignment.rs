@@ -293,3 +293,65 @@ pub enum RoleAssignmentTargetType {
     /// System ID.
     System,
 }
+
+#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[builder(build_fn(error = "BuilderError"))]
+#[builder(setter(strip_option, into))]
+pub struct AssignmentRevoke {
+    /// The actor id.
+    #[validate(length(max = 64))]
+    pub actor_id: String,
+
+    /// The role ID.
+    #[validate(length(max = 64))]
+    pub role_id: String,
+
+    /// The target id.
+    #[validate(length(max = 64))]
+    pub target_id: String,
+
+    /// The assignment type.
+    pub r#type: AssignmentType,
+
+    /// Inherited flag.
+    pub inherited: bool,
+}
+impl AssignmentRevoke {
+    /// Instantiate new assignment revoke.
+    pub fn new<A, T, R>(
+        actor_id: A,
+        target_id: T,
+        role_id: R,
+        r#type: AssignmentType,
+        inherited: bool,
+    ) -> Self
+    where
+        A: Into<String>,
+        T: Into<String>,
+        R: Into<String>,
+    {
+        Self {
+            actor_id: actor_id.into(),
+            target_id: target_id.into(),
+            role_id: role_id.into(),
+            r#type,
+            inherited,
+        }
+    }
+
+    /// Instantiate UserProject assignment.
+    pub fn user_project<A, T, R>(actor_id: A, target_id: T, role_id: R, inherited: bool) -> Self
+    where
+        A: Into<String>,
+        T: Into<String>,
+        R: Into<String>,
+    {
+        Self::new(
+            actor_id,
+            target_id,
+            role_id,
+            AssignmentType::UserProject,
+            inherited,
+        )
+    }
+}
