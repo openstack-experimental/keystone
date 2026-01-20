@@ -215,10 +215,15 @@ async fn main() -> Result<(), Report> {
         // propagate the header to the response before the response reaches `TraceLayer`
         .layer(PropagateRequestIdLayer::new(x_request_id));
 
-    let webauthn_extension = webauthn::api::init_extension(shared_state.clone())?;
-    let app = Router::new()
-        .merge(main_router.with_state(shared_state.clone()))
-        .nest("/v4", webauthn_extension)
+    let mut app = Router::new().merge(main_router.with_state(shared_state.clone()));
+
+    if shared_state.config.webauthn.enabled {
+        info!("Not enabling the WebAuthN extension due to the `config.webauthn.enabled` flag.");
+        let webauthn_extension = webauthn::api::init_extension(shared_state.clone())?;
+        app = app.nest("/v4", webauthn_extension);
+    }
+
+    app = app
         .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", openapi))
         .layer(middleware);
 

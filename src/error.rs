@@ -27,6 +27,7 @@ use crate::resource::error::*;
 use crate::revoke::error::*;
 use crate::token::TokenProviderError;
 use crate::trust::TrustError;
+use crate::webauthn::WebauthnError;
 
 /// Keystone error.
 #[derive(Debug, Error)]
@@ -147,11 +148,11 @@ pub enum KeystoneError {
     },
 
     /// WebauthN error.
-    #[error("webauthn error: {}", source)]
+    #[error(transparent)]
     Webauthn {
         /// The source of the error.
         #[from]
-        source: webauthn_rs::prelude::WebauthnError,
+        source: WebauthnError,
     },
 }
 

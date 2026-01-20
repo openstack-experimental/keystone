@@ -51,6 +51,10 @@ pub enum WebauthnError {
         source: DatabaseError,
     },
 
+    /// Relying party configuration is missing.
+    #[error("webauthn relying party configuration is missing")]
+    RelyingPartyConfigurationUnset,
+
     /// (de)serialization error.
     #[error(transparent)]
     Serde {
@@ -62,4 +66,12 @@ pub enum WebauthnError {
     /// Int conversion error.
     #[error(transparent)]
     TryFromIntError(#[from] std::num::TryFromIntError),
+
+    /// WebauthN error.
+    #[error("webauthn error: {}", source)]
+    Webauthn {
+        /// The source of the error.
+        #[from]
+        source: webauthn_rs::prelude::WebauthnError,
+    },
 }

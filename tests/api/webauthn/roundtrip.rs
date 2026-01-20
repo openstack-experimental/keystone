@@ -40,7 +40,7 @@ async fn test_register_auth() -> Result<()> {
 
     let authenticator_backend = SoftToken::new(true)?.0;
     let mut authenticator = WebauthnAuthenticator::new(authenticator_backend);
-    let origin = Url::parse("http://localhost:8080")?;
+    let origin = Url::parse("https://keystone.local")?;
 
     register_user_passkey(
         &test_client,

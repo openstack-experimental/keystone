@@ -45,6 +45,10 @@ runs:
         key_repository = $(pwd)/etc/fernet-keys
         [fernet_tokens]
         key_repository = $(pwd)/etc/fernet-keys
+        [webauthn]
+        enabled = true
+        relying_party_id = local
+        relying_party_origin = https://keystone.local
         EOF
         cat etc/keystone.conf
         echo "2Rlc-npWYOGqqG1zM-bmfBj2apLacLXhIbBsdyqQ0zg=" > etc/fernet-keys/0
