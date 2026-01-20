@@ -137,13 +137,11 @@ where
             if (data.len() as u64) >= *limit
                 && let Some(last_id) = data.last().map(|x| x.get_id())
             {
-                let mut url = Url::parse(
-                    config
-                        .default
-                        .public_endpoint
-                        .as_ref()
-                        .map_or("http://localhost", |v| v),
-                )?;
+                let mut url = if let Some(pe) = &config.default.public_endpoint {
+                    pe.clone()
+                } else {
+                    Url::parse("http://localhost")?
+                };
                 url.set_path(collection_url);
                 let mut new_query = query.clone();
 

@@ -78,6 +78,7 @@ async fn version(
         .default
         .public_endpoint
         .clone()
+        .map(|x| x.to_string())
         .or_else(|| {
             headers
                 .get(header::HOST)
