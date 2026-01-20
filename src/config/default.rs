@@ -12,6 +12,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 use serde::Deserialize;
+use url::Url;
 
 /// Default configuration section.
 #[derive(Debug, Default, Deserialize, Clone)]
@@ -19,5 +20,5 @@ pub struct DefaultSection {
     /// Debug logging.
     pub debug: Option<bool>,
     /// Public endpoint.
-    pub public_endpoint: Option<String>,
+    pub public_endpoint: Option<Url>,
 }
