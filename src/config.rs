@@ -36,6 +36,7 @@ mod revoke;
 mod security_compliance;
 mod token;
 mod trust;
+mod webauthn;
 
 use application_credentials::ApplicationCredentialProvider;
 use assignment::AssignmentProvider;
@@ -54,6 +55,7 @@ use security_compliance::SecurityComplianceProvider;
 use token::TokenProvider;
 pub use token::TokenProviderDriver;
 use trust::TrustProvider;
+use webauthn::WebauthnSection;
 
 /// Keystone configuration.
 #[derive(Debug, Default, Deserialize, Clone)]
@@ -120,6 +122,10 @@ pub struct Config {
     /// Trust provider configuration.
     #[serde(default)]
     pub trust: TrustProvider,
+
+    /// Webauthn configuration.
+    #[serde(default)]
+    pub webauthn: WebauthnSection,
 }
 
 impl Config {

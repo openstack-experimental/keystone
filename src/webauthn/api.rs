@@ -17,7 +17,7 @@ use axum::Router;
 use std::sync::Arc;
 use utoipa::OpenApi;
 use utoipa_axum::router::OpenApiRouter;
-use webauthn_rs::{WebauthnBuilder, prelude::Url};
+use webauthn_rs::WebauthnBuilder;
 
 use crate::error::KeystoneError;
 use crate::keystone::ServiceState;
@@ -26,7 +26,7 @@ mod auth;
 mod register;
 pub mod types;
 
-use crate::webauthn::driver::SqlDriver;
+use crate::webauthn::{WebauthnError, driver::SqlDriver};
 use types::{CombinedExtensionState, ExtensionState};
 
 /// OpenApi specification for the user passkey support.
@@ -47,21 +47,26 @@ pub fn openapi_router() -> OpenApiRouter<CombinedExtensionState> {
 
 /// Initialize the extension.
 pub fn init_extension(main_state: ServiceState) -> Result<Router, KeystoneError> {
-    // Effective domain name.
-    let rp_id = "localhost";
     // Url containing the effective domain name
-    // TODO: This must come from the configuration file.
     // MUST include the port number!
-    let rp_origin = Url::parse("http://localhost:8080")?;
-    let builder = WebauthnBuilder::new(rp_id, &rp_origin)?;
+    let rp = main_state
+        .config
+        .webauthn
+        .relying_party
+        .as_ref()
+        .ok_or(WebauthnError::RelyingPartyConfigurationUnset)?;
+
+    let mut builder = WebauthnBuilder::new(&rp.id, &rp.origin).map_err(WebauthnError::from)?;
 
     // Now, with the builder you can define other options.
     // Set a "nice" relying party name. Has no security properties and
     // may be changed in the future.
-    let builder = builder.rp_name("Keystone");
+    if let Some(name) = &rp.name {
+        builder = builder.rp_name(name);
+    }
 
     // Consume the builder and create our webauthn instance.
-    let webauthn = builder.build()?;
+    let webauthn = builder.build().map_err(WebauthnError::from)?;
 
     let extension_state = Arc::new(ExtensionState {
         provider: SqlDriver::default(),
