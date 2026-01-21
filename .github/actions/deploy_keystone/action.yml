@@ -37,6 +37,10 @@ runs:
         mkdir -p etc
         mkdir -p etc/fernet-keys
         cat <<EOF > etc/keystone.conf
+        [DEFAULT]
+        debug = true
+        use_stderr = true
+
         [auth]
         methods = password,token,openid,application_credential,x509
         [database]
