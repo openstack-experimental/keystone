@@ -26,7 +26,7 @@ use crate::error::DbContextExt;
 /// Delete assignment grant.
 pub async fn delete(
     db: &DatabaseConnection,
-    grant: AssignmentRevoke,
+    grant: Assignment,
 ) -> Result<(), AssignmentDatabaseError> {
     if grant.inherited {
         // Cannot delete inherited assignments directly
@@ -80,12 +80,14 @@ mod tests {
             }])
             .into_connection();
 
-        let grant = AssignmentRevoke {
+        let grant = Assignment {
             role_id: "role_id".into(),
             actor_id: "actor_id".into(),
             target_id: "target_id".into(),
             r#type: AssignmentType::UserProject,
             inherited: false,
+            role_name: None,
+            implied_via: None,
         };
 
         delete(&db, grant).await.unwrap();
@@ -116,12 +118,14 @@ mod tests {
             }])
             .into_connection();
 
-        let grant = AssignmentRevoke {
+        let grant = Assignment {
             role_id: "role_id".into(),
             actor_id: "group_id".into(),
             target_id: "project_id".into(),
             r#type: AssignmentType::GroupProject,
             inherited: false,
+            role_name: None,
+            implied_via: None,
         };
 
         delete(&db, grant).await.unwrap();
@@ -151,12 +155,14 @@ mod tests {
             }])
             .into_connection();
 
-        let grant = AssignmentRevoke {
+        let grant = Assignment {
             role_id: "role_id".into(),
             actor_id: "user_id".into(),
             target_id: "domain_id".into(),
             r#type: AssignmentType::UserDomain,
             inherited: false,
+            role_name: None,
+            implied_via: None,
         };
 
         delete(&db, grant).await.unwrap();
@@ -186,12 +192,14 @@ mod tests {
             }])
             .into_connection();
 
-        let grant = AssignmentRevoke {
+        let grant = Assignment {
             role_id: "role_id".into(),
             actor_id: "user_id".into(),
             target_id: "system".into(),
             r#type: AssignmentType::UserSystem,
             inherited: false,
+            role_name: None,
+            implied_via: None,
         };
 
         delete(&db, grant).await.unwrap();
@@ -221,12 +229,14 @@ mod tests {
             }])
             .into_connection();
 
-        let grant = AssignmentRevoke {
+        let grant = Assignment {
             role_id: "role_id".into(),
             actor_id: "group_id".into(),
             target_id: "system".into(),
             r#type: AssignmentType::GroupSystem,
             inherited: false,
+            role_name: None,
+            implied_via: None,
         };
 
         delete(&db, grant).await.unwrap();
@@ -252,12 +262,14 @@ mod tests {
         // Inherited grants should be silently skipped
         let db = MockDatabase::new(DatabaseBackend::Postgres).into_connection();
 
-        let grant = AssignmentRevoke {
+        let grant = Assignment {
             role_id: "role_id".into(),
             actor_id: "user_id".into(),
             target_id: "project_id".into(),
             r#type: AssignmentType::UserProject,
             inherited: true, // ← Inherited
+            role_name: None,
+            implied_via: None,
         };
 
         delete(&db, grant).await.unwrap();
@@ -276,12 +288,14 @@ mod tests {
             }])
             .into_connection();
 
-        let grant = AssignmentRevoke {
+        let grant = Assignment {
             role_id: "nonexistent_role".into(),
             actor_id: "user_id".into(),
             target_id: "project_id".into(),
             r#type: AssignmentType::UserProject,
             inherited: false,
+            role_name: None,
+            implied_via: None,
         };
 
         // Should succeed even though nothing was deleted

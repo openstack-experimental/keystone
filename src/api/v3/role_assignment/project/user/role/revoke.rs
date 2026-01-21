@@ -29,7 +29,7 @@ use crate::keystone::ServiceState;
 use crate::policy::Policy;
 use crate::{
     api::auth::Auth,
-    assignment::{AssignmentApi, types::AssignmentRevoke},
+    assignment::{AssignmentApi, types::AssignmentBuilder, types::AssignmentType},
     identity::IdentityApi,
     resource::ResourceApi,
 };
@@ -109,20 +109,25 @@ pub(super) async fn revoke(
 
     policy
         .enforce(
-            "identity/project/user/role/check",
+            "identity/project/user/role/revoke",
             &user_auth,
             json!({"user": user, "role": role, "project": project}),
             None,
         )
         .await?;
 
+    let grant = AssignmentBuilder::default()
+        .actor_id(user_id)
+        .role_id(role_id)
+        .target_id(project_id)
+        .r#type(AssignmentType::UserProject)
+        .inherited(false)
+        .build()?;
+
     state
         .provider
         .get_assignment_provider()
-        .revoke_grant(
-            &state,
-            AssignmentRevoke::user_project(user.id, project.id, role.id, false),
-        )
+        .revoke_grant(&state, grant)
         .await?;
 
     Ok(StatusCode::NO_CONTENT.into_response())
@@ -172,7 +177,7 @@ mod tests {
             });
         assignment_mock
             .expect_revoke_grant()
-            .withf(|_, grant: &AssignmentRevoke| {
+            .withf(|_, grant: &Assignment| {
                 grant.role_id == "role_id"
                     && grant.actor_id == "user_id"
                     && grant.target_id == "project_id"

@@ -91,6 +91,6 @@ pub trait AssignmentBackend: Send + Sync {
     async fn revoke_grant(
         &self,
         state: &ServiceState,
-        params: AssignmentRevoke,
+        params: Assignment,
     ) -> Result<(), AssignmentProviderError>;
 }
