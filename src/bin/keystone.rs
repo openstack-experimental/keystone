@@ -109,27 +109,25 @@ impl MakeRequestId for OpenStackRequestId {
 async fn main() -> Result<(), Report> {
     let args = Args::parse();
 
-    let filter = Targets::new()
-        .with_default(match args.verbose {
-            0 => LevelFilter::WARN,
-            1 => LevelFilter::INFO,
-            2 => LevelFilter::DEBUG,
-            _ => LevelFilter::TRACE,
-        })
-        .with_target("cranelift_codegen", Level::INFO);
+    let stderr_log_filter = Targets::new().with_default(match args.verbose {
+        0 => LevelFilter::WARN,
+        1 => LevelFilter::INFO,
+        2 => LevelFilter::DEBUG,
+        _ => LevelFilter::TRACE,
+    });
+    // .with_target("cranelift_codegen", Level::INFO)
     // .with_target("wasmtime_codegen", Level::INFO)
     // .with_target("wasmtime_cranelift", Level::INFO)
     // .with_target("wasmtime::runtime", Level::INFO);
 
-    let log_layer = tracing_subscriber::fmt::layer()
+    // Build the stderr log layer.
+    let stderr_layer = tracing_subscriber::fmt::layer()
         .with_writer(io::stderr)
-        .with_filter(filter);
+        .with_filter(stderr_log_filter)
+        .boxed();
 
-    // build the tracing registry
-    tracing_subscriber::registry().with(log_layer).init();
-
-    info!("Starting Keystone...");
-
+    // When only dumping of the openapi spec is necessary we should not even start parsing the
+    // config file. This means we cannot initialize the logging yet.
     let mut openapi = api::ApiDoc::openapi();
     let webauthn_openapi = webauthn::api::openapi_router();
     let (main_router, main_api) = api::openapi_router().split_for_parts();
@@ -147,10 +145,44 @@ async fn main() -> Result<(), Report> {
         return Ok(());
     }
 
+    let cfg = Config::new(args.config)?;
+
+    let mut log_layers = Vec::new();
+
+    if cfg.default.use_stderr {
+        log_layers.push(stderr_layer);
+    }
+
+    let non_blocking;
+    let _guard;
+
+    if let Some(log_dir) = &cfg.default.log_dir {
+        // create a file appender that rotates hourly
+        let file_appender = tracing_appender::rolling::never(log_dir, "keystone.log");
+        // make the file appender non-blocking
+        // the guard exists outside the scope to make sure buffered logs get flushed to output
+        (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
+        log_layers.push(
+            tracing_subscriber::fmt::layer()
+                // No colors in the log file
+                .with_ansi(false)
+                .with_writer(non_blocking)
+                .with_filter(if cfg.default.debug {
+                    LevelFilter::DEBUG
+                } else {
+                    LevelFilter::INFO
+                })
+                .boxed(),
+        );
+    }
+    // build the tracing registry
+    tracing_subscriber::registry().with(log_layers).init();
+
+    info!("Starting Keystone...");
+
     let token = CancellationToken::new();
     let cloned_token = token.clone();
 
-    let cfg = Config::new(args.config)?;
     let opt: ConnectOptions = ConnectOptions::new(cfg.database.get_connection().expose_secret())
         // Prevent dumping the password in plaintext.
         .sqlx_logging(false)

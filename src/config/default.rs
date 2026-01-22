@@ -12,13 +12,24 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 use serde::Deserialize;
+use std::path::PathBuf;
 use url::Url;
 
 /// Default configuration section.
 #[derive(Debug, Default, Deserialize, Clone)]
 pub struct DefaultSection {
-    /// Debug logging.
-    pub debug: Option<bool>,
+    /// If set to true, the logging level for the file will be set to DEBUG
+    /// instead of the default INFO level.
+    #[serde(default)]
+    pub debug: bool,
+
+    // Directory to be used for writing log files.
+    pub log_dir: Option<PathBuf>,
+
     /// Public endpoint.
     pub public_endpoint: Option<Url>,
+
+    /// Log output to standard error.
+    #[serde(default)]
+    pub use_stderr: bool,
 }

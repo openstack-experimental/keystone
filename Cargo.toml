@@ -73,6 +73,7 @@ tokio-util = { version = "0.7" }
 tower = { version = "0.5" }
 tower-http = { version = "0.6", features = ["compression-full", "request-id", "sensitive-headers", "trace", "util"] }
 tracing = { version = "0.1" }
+tracing-appender = { version = "0.2" }
 tracing-subscriber = { version = "0.3", features = [] }
 url = { version = "2.5", features = ["serde"] }
 url-macro = { version = "0.2" }
