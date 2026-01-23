@@ -48,9 +48,9 @@ use crate::config::Config;
 use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManager;
 use crate::revoke::backend::{RevokeBackend, sql::SqlBackend};
-use crate::revoke::error::RevokeProviderError;
 use crate::token::types::Token;
 
+pub use error::RevokeProviderError;
 #[cfg(test)]
 pub use mock::MockRevokeProvider;
 pub use types::*;
@@ -85,6 +85,18 @@ impl RevokeProvider {
 
 #[async_trait]
 impl RevokeApi for RevokeProvider {
+    /// Create revocation event.
+    #[tracing::instrument(level = "info", skip(self, state))]
+    async fn create_revocation_event(
+        &self,
+        state: &ServiceState,
+        event: RevocationEventCreate,
+    ) -> Result<RevocationEvent, RevokeProviderError> {
+        self.backend_driver
+            .create_revocation_event(state, event)
+            .await
+    }
+
     /// Check whether the token has been revoked or not.
     ///
     /// Checks revocation events matching the token parameters and return
@@ -109,5 +121,49 @@ impl RevokeApi for RevokeProvider {
         token: &Token,
     ) -> Result<(), RevokeProviderError> {
         self.backend_driver.revoke_token(state, token).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use sea_orm::DatabaseConnection;
+    use std::sync::Arc;
+
+    use super::backend::MockRevokeBackend;
+    use super::*;
+    use crate::config::Config;
+    use crate::keystone::Service;
+    use crate::policy::MockPolicyFactory;
+    use crate::provider::Provider;
+
+    fn get_state_mock() -> Arc<Service> {
+        Arc::new(
+            Service::new(
+                Config::default(),
+                DatabaseConnection::Disconnected,
+                Provider::mocked_builder().build().unwrap(),
+                MockPolicyFactory::default(),
+            )
+            .unwrap(),
+        )
+    }
+
+    #[tokio::test]
+    async fn test_create_revocation_event() {
+        let state = get_state_mock();
+        let mut backend = MockRevokeBackend::default();
+        backend
+            .expect_create_revocation_event()
+            .returning(|_, _| Ok(RevocationEvent::default()));
+        let provider = RevokeProvider {
+            backend_driver: Arc::new(backend),
+        };
+
+        assert!(
+            provider
+                .create_revocation_event(&state, RevocationEventCreate::default())
+                .await
+                .is_ok()
+        );
     }
 }

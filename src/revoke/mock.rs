@@ -18,8 +18,7 @@ use mockall::mock;
 
 use crate::config::Config;
 use crate::plugin_manager::PluginManager;
-use crate::revoke::RevokeApi;
-use crate::revoke::error::RevokeProviderError;
+use crate::revoke::{RevokeApi, RevokeProviderError, types::*};
 use crate::token::types::Token;
 
 use crate::keystone::ServiceState;
@@ -32,6 +31,12 @@ mock! {
 
     #[async_trait]
     impl RevokeApi for RevokeProvider {
+        async fn create_revocation_event(
+            &self,
+            state: &ServiceState,
+            event: RevocationEventCreate
+        ) -> Result<RevocationEvent, RevokeProviderError>;
+
         async fn is_token_revoked(
             &self,
             state: &ServiceState,

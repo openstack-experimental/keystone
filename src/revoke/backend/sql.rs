@@ -52,6 +52,15 @@ impl TryFrom<db_revocation_event::Model> for RevocationEvent {
 
 #[async_trait]
 impl RevokeBackend for SqlBackend {
+    /// Create revocation event.
+    async fn create_revocation_event(
+        &self,
+        state: &ServiceState,
+        event: RevocationEventCreate,
+    ) -> Result<RevocationEvent, RevokeProviderError> {
+        Ok(create::create(&state.db, event).await?)
+    }
+
     /// Check the token for being revoked.
     ///
     /// List not expired revocation records that invalidate the token and

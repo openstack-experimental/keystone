@@ -17,12 +17,19 @@
 use async_trait::async_trait;
 
 use crate::keystone::ServiceState;
-use crate::revoke::RevokeProviderError;
+use crate::revoke::{RevokeProviderError, types::*};
 use crate::token::types::Token;
 
 /// Revocation Provider interface.
 #[async_trait]
 pub trait RevokeApi: Send + Sync {
+    /// Create revocation event.
+    async fn create_revocation_event(
+        &self,
+        state: &ServiceState,
+        event: RevocationEventCreate,
+    ) -> Result<RevocationEvent, RevokeProviderError>;
+
     /// Check whether the token has been revoked of not.
     ///
     /// Checks revocation events matching the token parameters and return
