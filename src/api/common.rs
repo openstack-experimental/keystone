@@ -261,12 +261,12 @@ mod tests {
         }
     }
 
-    /// Fake resource for pagination testing
+    /// Fake resource for pagination testing.
     struct FakeResource {
         pub id: String,
     }
 
-    /// Fake query params for pagination testing
+    /// Fake query params for pagination testing.
     #[derive(Clone, Default, Serialize)]
     struct FakeQueryParams {
         pub marker: Option<String>,

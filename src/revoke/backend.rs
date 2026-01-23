@@ -16,7 +16,7 @@
 use async_trait::async_trait;
 
 use crate::keystone::ServiceState;
-use crate::revoke::RevokeProviderError;
+use crate::revoke::{RevokeProviderError, types::*};
 use crate::token::types::Token;
 
 pub mod error;
@@ -28,6 +28,13 @@ pub mod sql;
 #[cfg_attr(test, mockall::automock)]
 #[async_trait]
 pub trait RevokeBackend: Send + Sync {
+    /// Create revocation event.
+    async fn create_revocation_event(
+        &self,
+        state: &ServiceState,
+        event: RevocationEventCreate,
+    ) -> Result<RevocationEvent, RevokeProviderError>;
+
     /// Check token revocation.
     ///
     /// Check whether there are existing revocation records that invalidate the
