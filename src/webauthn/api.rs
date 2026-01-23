@@ -15,6 +15,10 @@
 
 use axum::Router;
 use std::sync::Arc;
+use std::time::Duration;
+use tokio::{spawn, time};
+use tokio_util::sync::CancellationToken;
+use tracing::{error, info, trace};
 use utoipa::OpenApi;
 use utoipa_axum::router::OpenApiRouter;
 use webauthn_rs::WebauthnBuilder;
@@ -26,7 +30,7 @@ mod auth;
 mod register;
 pub mod types;
 
-use crate::webauthn::{WebauthnError, driver::SqlDriver};
+use crate::webauthn::{WebauthnApi, WebauthnError, driver::SqlDriver};
 use types::{CombinedExtensionState, ExtensionState};
 
 /// OpenApi specification for the user passkey support.
@@ -46,7 +50,10 @@ pub fn openapi_router() -> OpenApiRouter<CombinedExtensionState> {
 }
 
 /// Initialize the extension.
-pub fn init_extension(main_state: ServiceState) -> Result<Router, KeystoneError> {
+pub fn init_extension(
+    main_state: ServiceState,
+    cancellation_token: CancellationToken,
+) -> Result<Router, KeystoneError> {
     // Url containing the effective domain name
     // MUST include the port number!
     let rp = main_state
@@ -77,9 +84,31 @@ pub fn init_extension(main_state: ServiceState) -> Result<Router, KeystoneError>
         core: main_state,
         extension: extension_state,
     };
+    spawn(cleanup(cancellation_token, combined_state.clone()));
     let (router, _openapi) = OpenApiRouter::new()
         .merge(openapi_router())
         .with_state(combined_state)
         .split_for_parts();
     Ok(router)
+}
+
+/// Periodic cleanup job.
+async fn cleanup(cancel: CancellationToken, state: CombinedExtensionState) {
+    let mut interval = time::interval(Duration::from_secs(60));
+    interval.tick().await;
+    info!("Start the periodic cleanup thread of the webauthn extension");
+    loop {
+        tokio::select! {
+            _ = interval.tick() => {
+                trace!("cleanup job tick");
+                if let Err(e) = state.extension.provider.cleanup(&state.core).await {
+                    error!("Error during cleanup job: {}", e);
+                }
+            },
+            () = cancel.cancelled() => {
+                info!("Cancellation requested. Stopping webauthn cleanup task.");
+                break; // Exit the loop
+            }
+        }
+    }
 }

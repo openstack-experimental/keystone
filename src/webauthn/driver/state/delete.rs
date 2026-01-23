@@ -12,10 +12,14 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use chrono::{TimeDelta, Utc};
 use sea_orm::DatabaseConnection;
 use sea_orm::entity::*;
+use sea_orm::query::*;
 
-use crate::db::entity::prelude::WebauthnState as DbPasskeyState;
+use crate::db::entity::{
+    prelude::WebauthnState as DbPasskeyState, webauthn_state as db_webauthn_state,
+};
 use crate::error::DbContextExt;
 use crate::webauthn::WebauthnError;
 
@@ -27,6 +31,18 @@ pub async fn delete<U: AsRef<str>>(
         .exec(db)
         .await
         .context("deleting webauthn state record")?;
+    Ok(())
+}
+
+/// Delete expired states.
+pub async fn delete_expired(db: &DatabaseConnection) -> Result<(), WebauthnError> {
+    if let Some(oldest_date) = Utc::now().checked_sub_signed(TimeDelta::minutes(5)) {
+        DbPasskeyState::delete_many()
+            .filter(db_webauthn_state::Column::CreatedAt.lt(oldest_date))
+            .exec(db)
+            .await
+            .context("deleting expired passkey states")?;
+    }
     Ok(())
 }
 
@@ -55,5 +71,37 @@ mod tests {
                 ["id".into()]
             ),]
         );
+    }
+
+    #[tokio::test]
+    async fn test_delete_expired() {
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_exec_results([MockExecResult {
+                rows_affected: 1,
+                ..Default::default()
+            }])
+            .into_connection();
+
+        delete_expired(&db).await.unwrap();
+        for (l, r) in db
+            .into_transaction_log()
+            .iter()
+            .zip([Transaction::from_sql_and_values(
+                DatabaseBackend::Postgres,
+                r#"DELETE FROM "webauthn_state" WHERE "webauthn_state"."created_at" < $1"#,
+                [],
+            )])
+        {
+            assert_eq!(
+                l.statements()
+                    .iter()
+                    .map(|x| x.sql.clone())
+                    .collect::<Vec<_>>(),
+                r.statements()
+                    .iter()
+                    .map(|x| x.sql.clone())
+                    .collect::<Vec<_>>()
+            );
+        }
     }
 }

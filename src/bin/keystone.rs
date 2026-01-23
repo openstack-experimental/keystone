@@ -251,9 +251,12 @@ async fn main() -> Result<(), Report> {
     let mut app = Router::new().merge(main_router.with_state(shared_state.clone()));
 
     if shared_state.config.webauthn.enabled {
-        info!("Not enabling the WebAuthN extension due to the `config.webauthn.enabled` flag.");
-        let webauthn_extension = webauthn::api::init_extension(shared_state.clone())?;
+        let webauthn_cloned_token = token.clone();
+        let webauthn_extension =
+            webauthn::api::init_extension(shared_state.clone(), webauthn_cloned_token)?;
         app = app.nest("/v4", webauthn_extension);
+    } else {
+        info!("Not enabling the WebAuthN extension due to the `config.webauthn.enabled` flag.");
     }
 
     app = app
@@ -274,7 +277,6 @@ async fn main() -> Result<(), Report> {
 async fn cleanup(cancel: CancellationToken, state: ServiceState) {
     let mut interval = time::interval(Duration::from_secs(60));
     interval.tick().await;
-    // TODO: Clean passkeys expired states
     info!("Start the periodic cleanup thread");
     loop {
         tokio::select! {

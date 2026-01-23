@@ -30,6 +30,12 @@ pub struct SqlDriver {}
 
 #[async_trait]
 impl WebauthnApi for SqlDriver {
+    /// Cleanup expired Webauthn states.
+    #[tracing::instrument(level = "debug", skip(self, state))]
+    async fn cleanup(&self, state: &ServiceState) -> Result<(), WebauthnError> {
+        state::delete_expired(&state.db).await
+    }
+
     /// Create webauthn credential for the user.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn create_user_webauthn_credential(
