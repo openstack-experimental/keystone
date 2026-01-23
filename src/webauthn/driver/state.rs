@@ -17,5 +17,5 @@ mod delete;
 mod get;
 
 pub use create::{create_auth, create_register};
-pub use delete::delete;
+pub use delete::{delete, delete_expired};
 pub use get::{get_auth, get_register};

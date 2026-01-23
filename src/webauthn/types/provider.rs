@@ -23,6 +23,9 @@ use crate::webauthn::{WebauthnError, types::WebauthnCredential};
 #[cfg_attr(test, mockall::automock)]
 #[async_trait]
 pub trait WebauthnApi: Send + Sync {
+    /// Cleanup expired Webauthn states.
+    async fn cleanup(&self, state: &ServiceState) -> Result<(), WebauthnError>;
+
     /// Create passkey.
     async fn create_user_webauthn_credential(
         &self,
