@@ -15,7 +15,7 @@
 //! Project user role: delete
 
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Request, State},
     http::StatusCode,
     response::IntoResponse,
 };
@@ -54,7 +54,7 @@ use crate::{
     ),
     security(
         ("X-Auth-Token" = [])),
-    tag="Role Assignment"
+    tag="role_assignments"
 )]
 #[tracing::instrument(
     name = "api::v3:project_user_role_revoke",
@@ -68,7 +68,9 @@ pub(super) async fn revoke(
     mut policy: Policy,
     Path((project_id, user_id, role_id)): Path<(String, String, String)>,
     State(state): State<ServiceState>,
+    request: Request,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
+    let inherited = request.uri().path().contains("inherited_to_projects");
     // Use join instead of try_join to have more constant latency preventing timing
     // attacks.
     let (user, role, project) = tokio::join!(
@@ -121,7 +123,7 @@ pub(super) async fn revoke(
         .role_id(role_id)
         .target_id(project_id)
         .r#type(AssignmentType::UserProject)
-        .inherited(false)
+        .inherited(inherited)
         .build()?;
 
     state

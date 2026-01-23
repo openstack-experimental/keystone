@@ -28,12 +28,7 @@ pub async fn delete(
     db: &DatabaseConnection,
     grant: Assignment,
 ) -> Result<(), AssignmentDatabaseError> {
-    if grant.inherited {
-        // Cannot delete inherited assignments directly
-        return Ok(());
-    }
-
-    match &grant.r#type {
+    let rows_affected = match &grant.r#type {
         AssignmentType::GroupDomain
         | AssignmentType::GroupProject
         | AssignmentType::UserDomain
@@ -43,10 +38,11 @@ pub async fn delete(
                 .filter(db_assignment::Column::TargetId.eq(&grant.target_id))
                 .filter(db_assignment::Column::ActorId.eq(&grant.actor_id))
                 .filter(db_assignment::Column::Type.eq(DbAssignmentType::try_from(&grant.r#type)?))
-                .filter(db_assignment::Column::Inherited.eq(false))
+                .filter(db_assignment::Column::Inherited.eq(grant.inherited))
                 .exec(db)
                 .await
-                .context("deleting assignment")?;
+                .context("deleting assignment")?
+                .rows_affected
         }
         AssignmentType::GroupSystem | AssignmentType::UserSystem => {
             db_system_assignment::Entity::delete_many()
@@ -54,11 +50,19 @@ pub async fn delete(
                 .filter(db_system_assignment::Column::TargetId.eq(&grant.target_id))
                 .filter(db_system_assignment::Column::ActorId.eq(&grant.actor_id))
                 .filter(db_system_assignment::Column::Type.eq(grant.r#type.to_string()))
-                .filter(db_system_assignment::Column::Inherited.eq(false))
+                .filter(db_system_assignment::Column::Inherited.eq(grant.inherited))
                 .exec(db)
                 .await
-                .context("deleting system assignment")?;
+                .context("deleting system assignment")?
+                .rows_affected
         }
+    };
+
+    if rows_affected == 0 {
+        return Err(AssignmentDatabaseError::AssignmentNotFound(format!(
+            "actor={}, target={}, role={}, type={:?}, inherited={}",
+            grant.actor_id, grant.target_id, grant.role_id, grant.r#type, grant.inherited
+        )));
     }
 
     Ok(())
@@ -71,7 +75,7 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn test_delete_user_project() {
+    async fn test_delete_user_project_success() {
         // Create MockDatabase with mock query results
         let db = MockDatabase::new(DatabaseBackend::Postgres)
             .append_exec_results([MockExecResult {
@@ -90,9 +94,10 @@ mod tests {
             implied_via: None,
         };
 
+        // Should succeed
         delete(&db, grant).await.unwrap();
 
-        // Checking transaction log
+        // Verify SQL was executed correctly
         assert_eq!(
             db.into_transaction_log(),
             [Transaction::from_sql_and_values(
@@ -110,7 +115,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_delete_group_project() {
+    async fn test_delete_group_project_success() {
         let db = MockDatabase::new(DatabaseBackend::Postgres)
             .append_exec_results([MockExecResult {
                 last_insert_id: 0,
@@ -147,7 +152,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_delete_user_domain() {
+    async fn test_delete_user_domain_success() {
         let db = MockDatabase::new(DatabaseBackend::Postgres)
             .append_exec_results([MockExecResult {
                 last_insert_id: 0,
@@ -184,7 +189,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_delete_user_system() {
+    async fn test_delete_user_system_success() {
         let db = MockDatabase::new(DatabaseBackend::Postgres)
             .append_exec_results([MockExecResult {
                 last_insert_id: 0,
@@ -221,7 +226,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_delete_group_system() {
+    async fn test_delete_group_system_success() {
         let db = MockDatabase::new(DatabaseBackend::Postgres)
             .append_exec_results([MockExecResult {
                 last_insert_id: 0,
@@ -258,29 +263,48 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_delete_inherited_succeeds_without_deletion() {
-        // Inherited grants should be silently skipped
-        let db = MockDatabase::new(DatabaseBackend::Postgres).into_connection();
+    async fn test_delete_inherited_assignment_success() {
+        // Inherited assignments CAN now be deleted (if they exist in DB)
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_exec_results([MockExecResult {
+                last_insert_id: 0,
+                rows_affected: 1, // ← 1 row deleted
+            }])
+            .into_connection();
 
         let grant = Assignment {
             role_id: "role_id".into(),
             actor_id: "user_id".into(),
             target_id: "project_id".into(),
             r#type: AssignmentType::UserProject,
-            inherited: true, // ← Inherited
+            inherited: true, // ← Inherited assignment
             role_name: None,
             implied_via: None,
         };
 
+        // Should succeed
         delete(&db, grant).await.unwrap();
 
-        // No SQL should be executed for inherited grants
-        assert_eq!(db.into_transaction_log(), []);
+        // Verify correct SQL with inherited=true
+        assert_eq!(
+            db.into_transaction_log(),
+            [Transaction::from_sql_and_values(
+                DatabaseBackend::Postgres,
+                r#"DELETE FROM "assignment" WHERE "assignment"."role_id" = $1 AND "assignment"."target_id" = $2 AND "assignment"."actor_id" = $3 AND "assignment"."type" = (CAST($4 AS "type")) AND "assignment"."inherited" = $5"#,
+                [
+                    "role_id".into(),
+                    "project_id".into(),
+                    "user_id".into(),
+                    "UserProject".into(),
+                    true.into(), // ← inherited=true
+                ]
+            ),]
+        );
     }
 
     #[tokio::test]
-    async fn test_delete_not_found_succeeds() {
-        // Deleting non-existent grant should succeed (idempotent)
+    async fn test_delete_not_found_returns_error() {
+        // Deleting non-existent grant should return AssignmentNotFound error
         let db = MockDatabase::new(DatabaseBackend::Postgres)
             .append_exec_results([MockExecResult {
                 last_insert_id: 0,
@@ -298,9 +322,22 @@ mod tests {
             implied_via: None,
         };
 
-        // Should succeed even though nothing was deleted
-        delete(&db, grant).await.unwrap();
+        // Should return error
+        let result = delete(&db, grant).await;
 
+        assert!(result.is_err());
+
+        // Verify it's the correct error type
+        match result {
+            Err(AssignmentDatabaseError::AssignmentNotFound(msg)) => {
+                assert!(msg.contains("nonexistent_role"));
+                assert!(msg.contains("user_id"));
+                assert!(msg.contains("project_id"));
+            }
+            _ => panic!("Expected AssignmentNotFound error, got: {:?}", result),
+        }
+
+        // Verify SQL was still executed
         assert_eq!(
             db.into_transaction_log(),
             [Transaction::from_sql_and_values(
@@ -315,5 +352,38 @@ mod tests {
                 ]
             ),]
         );
+    }
+
+    #[tokio::test]
+    async fn test_delete_inherited_not_found_returns_error() {
+        // Deleting non-existent inherited grant should also return error
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_exec_results([MockExecResult {
+                last_insert_id: 0,
+                rows_affected: 0, // ← 0 rows deleted
+            }])
+            .into_connection();
+
+        let grant = Assignment {
+            role_id: "role_id".into(),
+            actor_id: "user_id".into(),
+            target_id: "project_id".into(),
+            r#type: AssignmentType::UserProject,
+            inherited: true, // ← Inherited
+            role_name: None,
+            implied_via: None,
+        };
+
+        // Should return error
+        let result = delete(&db, grant).await;
+
+        assert!(result.is_err());
+
+        match result {
+            Err(AssignmentDatabaseError::AssignmentNotFound(msg)) => {
+                assert!(msg.contains("inherited=true"));
+            }
+            _ => panic!("Expected AssignmentNotFound error"),
+        }
     }
 }
