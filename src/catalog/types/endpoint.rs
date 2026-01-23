@@ -47,7 +47,7 @@ pub struct Endpoint {
     /// The endpoint does not appear in the service catalog. - true. The
     /// endpoint appears in the service catalog.
     pub enabled: bool,
-    /// Additional endpoint properties
+    /// Additional endpoint properties.
     #[builder(default)]
     pub extra: Option<Value>,
 }

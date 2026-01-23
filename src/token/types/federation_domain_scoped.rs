@@ -24,7 +24,7 @@ use crate::resource::types::Domain;
 use crate::token::types::Token;
 use crate::token::types::common;
 
-/// Federated domain scope token payload
+/// Federated domain scope token payload.
 #[derive(Builder, Clone, Debug, Default, PartialEq, Serialize, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(into))]

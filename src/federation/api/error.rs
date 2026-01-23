@@ -137,7 +137,7 @@ pub enum OidcError {
     #[error("no jwt issuer can be determined")]
     NoJwtIssuer,
 
-    /// User not found
+    /// User not found.
     #[error("token user not found")]
     UserNotFound(String),
 }
@@ -157,7 +157,7 @@ impl OidcError {
 }
 
 /// Convert OIDC error into the [HTTP](KeystoneApiError) with the expected
-/// message
+/// message.
 impl From<OidcError> for KeystoneApiError {
     #[instrument(level = Level::ERROR)]
     fn from(value: OidcError) -> Self {

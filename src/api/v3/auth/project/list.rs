@@ -11,7 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-//! Get available project scopes
+//! Get available project scopes.
 
 use axum::{extract::State, response::IntoResponse};
 use mockall_double::double;

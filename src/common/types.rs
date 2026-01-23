@@ -28,7 +28,7 @@ pub enum Scope {
     System(System),
 }
 
-/// Project scope information
+/// Project scope information.
 #[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
 pub struct Project {
     /// Project ID.

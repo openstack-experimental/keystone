@@ -12,7 +12,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! JWT based authentication API
+//! JWT based authentication API.
 
 use axum::{
     Json, debug_handler,

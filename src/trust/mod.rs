@@ -13,7 +13,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! # Trust provider.
 //!
-//! Trusts
+//! Trusts.
 //!
 //! A trust represents a user's (the trustor) authorization to delegate roles to
 //! another user (the trustee), and optionally allow the trustee to impersonate

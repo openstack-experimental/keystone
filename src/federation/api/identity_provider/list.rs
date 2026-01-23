@@ -12,7 +12,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! Identity providers: list IDP
+//! Identity providers: list IDP.
 use axum::{
     extract::{OriginalUri, Query, State},
     response::IntoResponse,

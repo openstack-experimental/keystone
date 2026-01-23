@@ -12,7 +12,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! Project user role: get
+//! Project user role: get.
 use axum::{
     extract::{Path, State},
     http::StatusCode,
@@ -33,7 +33,7 @@ use crate::{
     resource::ResourceApi,
 };
 
-/// Check whether user has role assignment on project
+/// Check whether user has role assignment on project.
 ///
 /// Validates that a user has a role on a project.
 #[utoipa::path(

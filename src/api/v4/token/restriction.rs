@@ -12,7 +12,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! Token restrictions API
+//! Token restrictions API.
 use utoipa::OpenApi;
 use utoipa_axum::{router::OpenApiRouter, routes};
 

@@ -14,23 +14,23 @@
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-/// <https://www.w3.org/TR/webauthn/#enumdef-authenticatortransport>
+/// <https://www.w3.org/TR/webauthn/#enumdef-authenticatortransport>.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
 pub enum AuthenticatorTransport {
-    /// <https://www.w3.org/TR/webauthn/#dom-authenticatortransport-ble>
+    /// <https://www.w3.org/TR/webauthn/#dom-authenticatortransport-ble>.
     Ble,
     /// Hybrid transport, formerly caBLE. Part of the level 3 draft
-    /// specification. <https://w3c.github.io/webauthn/#dom-authenticatortransport-hybrid>
+    /// specification. <https://w3c.github.io/webauthn/#dom-authenticatortransport-hybrid>.
     Hybrid,
-    /// <https://www.w3.org/TR/webauthn/#dom-authenticatortransport-internal>
+    /// <https://www.w3.org/TR/webauthn/#dom-authenticatortransport-internal>.
     Internal,
-    /// <https://www.w3.org/TR/webauthn/#dom-authenticatortransport-nfc>
+    /// <https://www.w3.org/TR/webauthn/#dom-authenticatortransport-nfc>.
     Nfc,
     /// Test transport; used for Windows 10.
     Test,
     /// An unknown transport was provided - it will be ignored.
     Unknown,
-    /// <https://www.w3.org/TR/webauthn/#dom-authenticatortransport-usb>
+    /// <https://www.w3.org/TR/webauthn/#dom-authenticatortransport-usb>.
     Usb,
 }
 

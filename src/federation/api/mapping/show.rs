@@ -12,7 +12,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! Federation attribute mapping: show
+//! Federation attribute mapping: show.
 use axum::{
     extract::{Path, State},
     response::IntoResponse,

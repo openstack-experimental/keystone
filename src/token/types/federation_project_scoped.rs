@@ -24,7 +24,7 @@ use crate::resource::types::Project;
 use crate::token::types::Token;
 use crate::token::types::common;
 
-/// Federated project scope token payload
+/// Federated project scope token payload.
 #[derive(Builder, Clone, Debug, Default, PartialEq, Serialize, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(into))]

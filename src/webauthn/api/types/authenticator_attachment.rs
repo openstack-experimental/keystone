@@ -17,7 +17,7 @@ use utoipa::ToSchema;
 /// The authenticator attachment hint. This is NOT enforced, and is only used to
 /// help a user select a relevant authenticator type.
 ///
-/// <https://www.w3.org/TR/webauthn/#attachment>
+/// <https://www.w3.org/TR/webauthn/#attachment>.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
 pub enum AuthenticatorAttachment {
     /// Request a device that is part of the machine aka inseparable.

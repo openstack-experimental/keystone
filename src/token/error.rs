@@ -66,7 +66,7 @@ pub enum TokenProviderError {
     #[error("b64 decryption error")]
     Base64Decode(#[from] base64::DecodeError),
 
-    /// Conflict
+    /// Conflict.
     #[error("{message}")]
     Conflict { message: String, context: String },
 
@@ -78,11 +78,11 @@ pub enum TokenProviderError {
     #[error("domain is disabled")]
     DomainDisabled(String),
 
-    /// Expired token
+    /// Expired token.
     #[error("token expired")]
     Expired,
 
-    /// Expiry calculation error
+    /// Expiry calculation error.
     #[error("token expiry calculation failed")]
     ExpiryCalculation,
 
@@ -90,11 +90,11 @@ pub enum TokenProviderError {
     #[error("federated payload must contain idp_id and protocol_id")]
     FederatedPayloadMissingData,
 
-    /// Fernet Decryption
+    /// Fernet Decryption.
     #[error("fernet decryption error")]
     FernetDecryption(#[from] fernet::DecryptionError),
 
-    /// Missing fernet keys
+    /// Missing fernet keys.
     #[error("no usable fernet keys has been found")]
     FernetKeysMissing,
 
@@ -111,19 +111,19 @@ pub enum TokenProviderError {
     #[error(transparent)]
     IdentityProvider(#[from] crate::identity::error::IdentityProviderError),
 
-    /// Invalid token data
+    /// Invalid token data.
     #[error("invalid token error")]
     InvalidToken,
 
-    /// Unsupported token version
+    /// Unsupported token version.
     #[error("token version {0} is not supported")]
     InvalidTokenType(u8),
 
-    /// Unsupported token uuid
+    /// Unsupported token uuid.
     #[error("token uuid is not supported")]
     InvalidTokenUuid,
 
-    /// Unsupported token uuid coding
+    /// Unsupported token uuid coding.
     #[error("token uuid coding {0:?} is not supported")]
     InvalidTokenUuidMarker(rmp::Marker),
 
@@ -144,7 +144,7 @@ pub enum TokenProviderError {
         source: nix::errno::Errno,
     },
 
-    /// tempfile persisting error
+    /// tempfile persisting error.
     #[error(transparent)]
     Persist(#[from] tempfile::PersistError),
 
@@ -164,11 +164,11 @@ pub enum TokenProviderError {
     #[error(transparent)]
     RevokeProvider(#[from] crate::revoke::error::RevokeProviderError),
 
-    /// MSGPack Encryption
+    /// MSGPack Encryption.
     #[error("rmp value encoding error")]
     RmpEncode(String),
 
-    /// MSGPack Decryption
+    /// MSGPack Decryption.
     #[error("rmp value error")]
     RmpValueRead(#[from] rmp::decode::ValueReadError),
 

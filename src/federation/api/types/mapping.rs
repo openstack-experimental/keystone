@@ -118,7 +118,7 @@ pub struct Mapping {
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct MappingResponse {
-    /// IDP object
+    /// Mapping object.
     #[validate(nested)]
     pub mapping: Mapping,
 }
@@ -338,7 +338,7 @@ pub struct MappingUpdate {
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct MappingCreateRequest {
-    /// Mapping object
+    /// Mapping object.
     #[validate(nested)]
     pub mapping: MappingCreate,
 }
@@ -348,7 +348,7 @@ pub struct MappingCreateRequest {
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct MappingUpdateRequest {
-    /// Mapping object
+    /// Mapping object.
     #[validate(nested)]
     pub mapping: MappingUpdate,
 }
@@ -440,9 +440,9 @@ impl IntoResponse for types::Mapping {
 #[serde(rename_all = "lowercase")]
 pub enum MappingType {
     #[default]
-    /// OIDC
+    /// OIDC.
     Oidc,
-    /// JWT
+    /// JWT.
     Jwt,
 }
 
@@ -467,7 +467,7 @@ impl From<MappingType> for types::MappingType {
 /// List of OIDC/JWT attribute mappings.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema)]
 pub struct MappingList {
-    /// Collection of identity provider objects
+    /// Collection of identity provider objects.
     pub mappings: Vec<Mapping>,
 
     /// Pagination links.
@@ -499,7 +499,7 @@ pub struct MappingListParameters {
     #[validate(length(max = 255))]
     pub name: Option<String>,
 
-    /// Limit number of entries on the single response page (Maximal 100)
+    /// Limit number of entries on the single response page (Maximal 100).
     #[validate(range(min = 1, max = 100))]
     pub limit: Option<u64>,
 

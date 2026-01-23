@@ -12,7 +12,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! Identity providers: delete IDP
+//! Identity providers: delete IDP.
 use axum::{
     extract::{Path, State},
     http::StatusCode,

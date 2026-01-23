@@ -41,8 +41,7 @@ pub struct UserResponse {
     /// If the user is enabled, this value is true. If the user is disabled,
     /// this value is false.
     pub enabled: bool,
-    /// The ID of the default project for the user.
-    /// Additional user properties
+    /// Additional user properties.
     #[builder(default)]
     pub extra: Option<Value>,
     /// List of federated objects associated with a user. Each object in the
@@ -268,11 +267,11 @@ pub struct UserPasswordAuthRequest {
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct Domain {
-    /// Domain ID
+    /// Domain ID.
     #[builder(default)]
     #[validate(length(max = 64))]
     pub id: Option<String>,
-    /// Domain Name
+    /// Domain Name.
     #[builder(default)]
     #[validate(length(max = 255))]
     pub name: Option<String>,

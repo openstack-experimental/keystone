@@ -16,7 +16,7 @@ use utoipa::ToSchema;
 
 /// The Relying Party's requirements for client-side discoverable credentials.
 ///
-/// <https://www.w3.org/TR/webauthn-2/#enumdef-residentkeyrequirement>
+/// <https://www.w3.org/TR/webauthn-2/#enumdef-residentkeyrequirement>.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
 pub enum ResidentKeyRequirement {
     /// <https://www.w3.org/TR/webauthn-2/#dom-residentkeyrequirement-discouraged>.

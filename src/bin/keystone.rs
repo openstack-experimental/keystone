@@ -126,8 +126,8 @@ async fn main() -> Result<(), Report> {
         .with_filter(stderr_log_filter)
         .boxed();
 
-    // When only dumping of the openapi spec is necessary we should not even start parsing the
-    // config file. This means we cannot initialize the logging yet.
+    // When only dumping of the openapi spec is necessary we should not even start
+    // parsing the config file. This means we cannot initialize the logging yet.
     let mut openapi = api::ApiDoc::openapi();
     let webauthn_openapi = webauthn::api::openapi_router();
     let (main_router, main_api) = api::openapi_router().split_for_parts();
@@ -160,7 +160,8 @@ async fn main() -> Result<(), Report> {
         // create a file appender that rotates hourly
         let file_appender = tracing_appender::rolling::never(log_dir, "keystone.log");
         // make the file appender non-blocking
-        // the guard exists outside the scope to make sure buffered logs get flushed to output
+        // the guard exists outside the scope to make sure buffered logs get flushed to
+        // output
         (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
         log_layers.push(
             tracing_subscriber::fmt::layer()
@@ -269,7 +270,7 @@ async fn main() -> Result<(), Report> {
     Ok(())
 }
 
-/// Periodic cleanup job
+/// Periodic cleanup job.
 async fn cleanup(cancel: CancellationToken, state: ServiceState) {
     let mut interval = time::interval(Duration::from_secs(60));
     interval.tick().await;
@@ -291,7 +292,7 @@ async fn cleanup(cancel: CancellationToken, state: ServiceState) {
     }
 }
 
-/// Install shutdown and interrupt signal handler
+/// Install shutdown and interrupt signal handler.
 async fn shutdown_signal(state: ServiceState) {
     let ctrl_c = async {
         signal::ctrl_c()

@@ -12,7 +12,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! Federation attribute mapping: delete
+//! Federation attribute mapping: delete.
 use axum::{
     extract::{Path, State},
     http::StatusCode,

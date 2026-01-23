@@ -100,7 +100,7 @@ pub struct RevocationEventListParameters {
 }
 
 /// Convert Token into the revocation events listing parameters following the
-/// <https://openstack-experimental.github.io/keystone/adr/0009-auth-token-revoke.html#revocation-check>
+/// <https://openstack-experimental.github.io/keystone/adr/0009-auth-token-revoke.html#revocation-check>.
 // TODO: It is necessary to also consider list of the token roles against the
 // role_id of the entry TODO: domain_id of the database entry should be compared
 // against the user_domain_id and the scope_domain_id. That means, however, that
@@ -159,7 +159,7 @@ impl TryFrom<&Token> for RevocationEventListParameters {
 }
 
 /// Convert the Token into the new revocation events record following the
-/// <https://openstack-experimental.github.io/keystone/adr/0009-auth-token-revoke.html#token-revocation>
+/// <https://openstack-experimental.github.io/keystone/adr/0009-auth-token-revoke.html#token-revocation>.
 impl TryFrom<&Token> for RevocationEventCreate {
     type Error = RevokeProviderError;
     fn try_from(value: &Token) -> Result<Self, Self::Error> {

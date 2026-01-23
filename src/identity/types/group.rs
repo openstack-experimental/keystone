@@ -27,7 +27,7 @@ pub struct Group {
     pub description: Option<String>,
     /// The ID of the domain.
     pub domain_id: String,
-    /// Additional user properties
+    /// Additional user properties.
     #[builder(default)]
     pub extra: Option<Value>,
     /// The ID of the group.
@@ -40,10 +40,10 @@ pub struct Group {
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct GroupListParameters {
-    /// Filter groups by the domain
+    /// Filter groups by the domain.
     #[builder(default)]
     pub domain_id: Option<String>,
-    /// Filter groups by the name attribute
+    /// Filter groups by the name attribute.
     #[builder(default)]
     pub name: Option<String>,
 }
@@ -57,7 +57,7 @@ pub struct GroupCreate {
     pub description: Option<String>,
     /// The ID of the domain.
     pub domain_id: String,
-    /// Additional user properties
+    /// Additional user properties.
     #[builder(default)]
     pub extra: Option<Value>,
     /// The ID of the group.

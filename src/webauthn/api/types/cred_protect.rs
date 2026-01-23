@@ -17,9 +17,9 @@ use validator::Validate;
 
 use super::credential_protection_policy::CredentialProtectionPolicy;
 
-/// The desired options for the client's use of the credProtect extension
+/// The desired options for the client's use of the credProtect extension.
 ///
-/// <https://fidoalliance.org/specs/fido-v2.1-rd-20210309/fido-client-to-authenticator-protocol-v2.1-rd-20210309.html#sctn-credProtect-extension>
+/// <https://fidoalliance.org/specs/fido-v2.1-rd-20210309/fido-client-to-authenticator-protocol-v2.1-rd-20210309.html#sctn-credProtect-extension>.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct CredProtect {
     /// The credential policy to enforce.

@@ -16,7 +16,7 @@ use utoipa::ToSchema;
 
 /// A hint as to the class of device that is expected to fulfill this operation.
 ///
-/// <https://www.w3.org/TR/webauthn-3/#enumdef-publickeycredentialhints>
+/// <https://www.w3.org/TR/webauthn-3/#enumdef-publickeycredentialhints>.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
 pub enum PublicKeyCredentialHints {
     /// The credential is a platform authenticator.

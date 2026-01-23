@@ -131,7 +131,7 @@ pub async fn list(
 ///
 /// It is a naive interpretation of the effective role assignments where we
 /// check all roles assigned to the user (including groups) on a concrete target
-/// (including all higher targets the role can be inherited from)
+/// (including all higher targets the role can be inherited from).
 pub async fn list_for_multiple_actors_and_targets(
     db: &DatabaseConnection,
     params: &RoleAssignmentListForMultipleActorTargetParameters,

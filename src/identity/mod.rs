@@ -22,7 +22,7 @@
 //! owned by a domain. A group role, granted to a domain or project, applies to
 //! all users in the group. Adding or removing users to or from a group grants
 //! or revokes their role and authentication to the associated domain or
-//! project. OpenStackClient
+//! project.
 //!
 //! ## User
 //!

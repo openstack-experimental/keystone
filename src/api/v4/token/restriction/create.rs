@@ -11,7 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-//! Token restriction: create
+//! Token restriction: create.
 
 use axum::{Json, debug_handler, extract::State, http::StatusCode, response::IntoResponse};
 use mockall_double::double;

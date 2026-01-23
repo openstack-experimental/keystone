@@ -208,7 +208,7 @@ impl FernetUtils {
     }
 }
 
-/// Read binary data from the payload
+/// Read binary data from the payload.
 pub fn read_bin_data<R: Read>(len: u32, rd: &mut R) -> Result<Vec<u8>, io::Error> {
     let mut buf = Vec::with_capacity(len.min(1 << 16) as usize);
     let bytes_read = rd.take(u64::from(len)).read_to_end(&mut buf)?;
@@ -240,10 +240,10 @@ pub fn read_str<R: Read>(rd: &mut R) -> Result<String, TokenProviderError> {
     }
 }
 
-/// Read the UUID from the payload
+/// Read the UUID from the payload.
 /// It is represented as an Array[bool, bytes] where first bool indicates
 /// whether following bytes are UUID or just bytes that should be treated as a
-/// string (for cases where ID is not a valid UUID)
+/// string (for cases where ID is not a valid UUID).
 pub fn read_uuid(rd: &mut &[u8]) -> Result<String, TokenProviderError> {
     match read_marker(rd).map_err(ValueReadError::from)? {
         Marker::FixArray(_) => {
@@ -291,10 +291,10 @@ pub fn read_uuid(rd: &mut &[u8]) -> Result<String, TokenProviderError> {
     Err(TokenProviderError::InvalidTokenUuid)
 }
 
-/// Write the UUID to the payload
+/// Write the UUID to the payload.
 /// It is represented as an Array[bool, bytes] where first bool indicates
 /// whether following bytes are UUID or just bytes that should be treated as a
-/// string (for cases where ID is not a valid UUID)
+/// string (for cases where ID is not a valid UUID).
 pub fn write_uuid<W: RmpWrite>(wd: &mut W, uid: &str) -> Result<(), TokenProviderError> {
     match Uuid::parse_str(uid) {
         Ok(uuid) => {
@@ -313,20 +313,20 @@ pub fn write_uuid<W: RmpWrite>(wd: &mut W, uid: &str) -> Result<(), TokenProvide
     Ok(())
 }
 
-/// Read the time represented as a f64 of the UTC seconds
+/// Read the time represented as a f64 of the UTC seconds.
 pub fn read_time(rd: &mut &[u8]) -> Result<DateTime<Utc>, TokenProviderError> {
     DateTime::from_timestamp(read_f64(rd)?.round() as i64, 0)
         .ok_or(TokenProviderError::InvalidToken)
 }
 
-/// Write the time represented as a f64 of the UTC seconds
+/// Write the time represented as a f64 of the UTC seconds.
 pub fn write_time<W: RmpWrite>(wd: &mut W, time: DateTime<Utc>) -> Result<(), TokenProviderError> {
     write_f64(wd, time.timestamp() as f64)
         .map_err(|x| TokenProviderError::RmpEncode(x.to_string()))?;
     Ok(())
 }
 
-/// Decode array of audit ids from the payload
+/// Decode array of audit ids from the payload.
 pub fn read_audit_ids(
     rd: &mut &[u8],
 ) -> Result<impl IntoIterator<Item = String> + use<>, TokenProviderError> {
@@ -346,7 +346,7 @@ pub fn read_audit_ids(
     Err(TokenProviderError::InvalidToken)
 }
 
-/// Encode array of audit ids into the payload
+/// Encode array of audit ids into the payload.
 pub fn write_audit_ids<W: RmpWrite, I: IntoIterator<Item = String>>(
     wd: &mut W,
     data: I,
@@ -366,7 +366,7 @@ pub fn write_audit_ids<W: RmpWrite, I: IntoIterator<Item = String>>(
     Ok(())
 }
 
-/// Decode array of strings ids from the payload
+/// Decode array of strings ids from the payload.
 pub fn read_list_of_uuids(
     rd: &mut &[u8],
 ) -> Result<impl IntoIterator<Item = String> + use<>, TokenProviderError> {
@@ -380,7 +380,7 @@ pub fn read_list_of_uuids(
     Err(TokenProviderError::InvalidToken)
 }
 
-/// Encode array of bytes into the payload
+/// Encode array of bytes into the payload.
 pub fn write_list_of_uuids<W: RmpWrite, I: IntoIterator<Item = V>, V: AsRef<str>>(
     wd: &mut W,
     data: I,

@@ -27,17 +27,17 @@ use crate::assignment::types;
 /// The role data.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct Role {
-    /// Role ID
+    /// Role ID.
     #[validate(length(min = 1, max = 64))]
     pub id: String,
-    /// Role domain ID
+    /// Role domain ID.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[validate(length(min = 1, max = 64))]
     pub domain_id: Option<String>,
-    /// Role name
+    /// Role name.
     #[validate(length(min = 1, max = 255))]
     pub name: String,
-    /// Role description
+    /// Role description.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[validate(length(min = 1, max = 255))]
     pub description: Option<String>,
@@ -47,7 +47,7 @@ pub struct Role {
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct RoleResponse {
-    /// Role object
+    /// Role object.
     #[validate(nested)]
     pub role: Role,
 }
@@ -82,7 +82,7 @@ impl IntoResponse for types::Role {
     }
 }
 
-/// Roles
+/// Roles.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct RoleList {
     /// Collection of role objects.
@@ -105,10 +105,10 @@ impl IntoResponse for RoleList {
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, IntoParams, Validate)]
 pub struct RoleListParameters {
-    /// Filter users by Domain ID
+    /// Filter users by Domain ID.
     #[validate(length(min = 1, max = 64))]
     pub domain_id: Option<String>,
-    /// Filter users by Name
+    /// Filter users by Name.
     #[validate(length(min = 1, max = 255))]
     pub name: Option<String>,
 }

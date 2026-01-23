@@ -12,7 +12,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! Project user role: put
+//! Project user role: put.
 use axum::{
     extract::{Path, State},
     http::StatusCode,

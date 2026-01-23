@@ -167,7 +167,7 @@ impl TryFrom<types::Assignment> for Assignment {
 /// Assignments.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct AssignmentList {
-    /// Collection of role assignment objects
+    /// Collection of role assignment objects.
     #[validate(nested)]
     pub role_assignments: Vec<Assignment>,
 }
@@ -213,8 +213,6 @@ pub struct RoleAssignmentListParameters {
     /// If set to true, then the names of any entities returned will be include
     /// as well as their IDs. Any value other than 0 (including no value)
     /// will be interpreted as true.
-    ///
-    /// New in version 3.6
     #[serde(default)]
     pub include_names: Option<bool>,
 }

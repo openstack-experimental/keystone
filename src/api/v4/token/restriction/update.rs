@@ -12,7 +12,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! Token restriction: update
+//! Token restriction: update.
 use axum::{
     Json,
     extract::{Path, State},

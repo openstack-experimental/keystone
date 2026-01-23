@@ -24,7 +24,7 @@ use crate::db::entity::{
 use crate::error::DbContextExt;
 use crate::identity::backend::sql::IdentityDatabaseError;
 
-/// Load local user record with passwords from database
+/// Load local user record with passwords from database.
 pub async fn load_local_user_with_passwords<S1: AsRef<str>, S2: AsRef<str>, S3: AsRef<str>>(
     db: &DatabaseConnection,
     user_id: Option<S1>,
@@ -59,7 +59,7 @@ pub async fn load_local_user_with_passwords<S1: AsRef<str>, S2: AsRef<str>, S3: 
     Ok(results.first().cloned())
 }
 
-/// Fetch passwords for list of optional local user ids
+/// Fetch passwords for list of optional local user ids.
 ///
 /// Returns vector of optional vectors with passwords in the same order as
 /// requested keeping None in place where local_user was empty.

@@ -73,11 +73,11 @@ pub struct RoleCreate {
     #[builder(default)]
     #[validate(length(min = 1, max = 64))]
     pub domain_id: Option<String>,
-    /// The role description
+    /// The role description.
     #[builder(default)]
     #[validate(length(max = 255))]
     pub description: Option<String>,
-    /// Additional role properties
+    /// Additional role properties.
     #[builder(default)]
     pub extra: Option<Value>,
 }

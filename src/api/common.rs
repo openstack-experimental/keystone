@@ -24,7 +24,7 @@ use crate::resource::{
     types::{Domain, Project},
 };
 
-/// Get the domain by ID or Name
+/// Get the domain by ID or Name.
 ///
 /// # Arguments
 /// * `state` - The service state
