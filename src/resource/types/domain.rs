@@ -27,10 +27,10 @@ pub struct Domain {
     /// The domain name.
     pub name: String,
     pub enabled: bool,
-    /// The resource description
+    /// The resource description.
     #[builder(default)]
     pub description: Option<String>,
-    /// Additional domain properties
+    /// Additional domain properties.
     #[builder(default)]
     pub extra: Option<Value>,
 }

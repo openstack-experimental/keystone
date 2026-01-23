@@ -18,9 +18,9 @@ use validator::Validate;
 use super::hmac_get_secret_input::HmacGetSecretInput;
 use crate::webauthn::WebauthnError;
 
-/// Extension option inputs for PublicKeyCredentialRequestOptions
+/// Extension option inputs for PublicKeyCredentialRequestOptions.
 ///
-/// Implements AuthenticatorExtensionsClientInputs from the spec
+/// Implements AuthenticatorExtensionsClientInputs from the spec.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct RequestAuthenticationExtensions {
     /// The appid extension options.

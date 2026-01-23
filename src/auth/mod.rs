@@ -34,7 +34,7 @@ use crate::trust::types::Trust;
 
 #[derive(Error, Debug)]
 pub enum AuthenticationError {
-    /// Token renewal is forbidden
+    /// Token renewal is forbidden.
     #[error("Token renewal (getting token from token) is prohibited.")]
     TokenRenewalForbidden,
 
@@ -46,11 +46,11 @@ pub enum AuthenticationError {
         source: BuilderError,
     },
 
-    /// Unauthorized
+    /// Unauthorized.
     #[error("The request you have made requires authentication.")]
     Unauthorized,
 
-    /// User is disabled
+    /// User is disabled.
     #[error("The account is disabled for user: {0}")]
     UserDisabled(String),
 
@@ -67,7 +67,7 @@ pub enum AuthenticationError {
     UserPasswordExpired(String),
 }
 
-/// Information about successful authentication
+/// Information about successful authentication.
 #[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(into, strip_option))]
@@ -117,7 +117,7 @@ impl AuthenticatedInfo {
         AuthenticatedInfoBuilder::default()
     }
 
-    /// Validate the authentication information
+    /// Validate the authentication information:
     ///
     /// - User attribute must be set
     /// - User must be enabled
@@ -149,7 +149,7 @@ impl AuthenticatedInfo {
     }
 }
 
-/// Authorization information
+/// Authorization information.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub enum AuthzInfo {
     /// Domain scope.
@@ -165,7 +165,7 @@ pub enum AuthzInfo {
 }
 
 impl AuthzInfo {
-    /// Validate the authorization information
+    /// Validate the authorization information:
     ///
     /// - Unscoped: always valid
     /// - Project: check if the project is enabled

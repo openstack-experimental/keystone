@@ -11,7 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-//! Project API types
+//! Project API types.
 
 use axum::{
     Json,

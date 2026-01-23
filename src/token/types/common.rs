@@ -15,7 +15,7 @@
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use validator::ValidationError;
 
-/// Validate audit_ids are valid URL-safe base64 strings without padding
+/// Validate audit_ids are valid URL-safe base64 strings without padding.
 pub fn validate_audit_ids(audit_ids: &[String]) -> Result<(), ValidationError> {
     for audit_id in audit_ids {
         if audit_id.is_empty() {

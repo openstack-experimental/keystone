@@ -30,7 +30,7 @@ use crate::api::{
 use crate::error::BuilderError;
 use crate::federation::types;
 
-/// Identity provider data
+/// Identity provider data.
 #[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
@@ -202,7 +202,7 @@ pub struct IdentityProviderCreate {
     #[validate(length(max = 255))]
     pub default_mapping_name: Option<String>,
 
-    /// Additional special provider specific configuration
+    /// Additional special provider specific configuration.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[builder(default)]
     #[schema(value_type = Object)]
@@ -278,7 +278,7 @@ pub struct IdentityProviderUpdate {
     pub provider_config: Option<Option<Value>>,
 }
 
-/// Identity provider create request
+/// Identity provider create request.
 #[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
@@ -288,7 +288,7 @@ pub struct IdentityProviderCreateRequest {
     pub identity_provider: IdentityProviderCreate,
 }
 
-/// Identity provider update request
+/// Identity provider update request.
 #[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]

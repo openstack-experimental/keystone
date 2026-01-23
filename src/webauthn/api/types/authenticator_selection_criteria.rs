@@ -19,7 +19,7 @@ use super::authenticator_attachment::AuthenticatorAttachment;
 use super::resident_key_requirement::ResidentKeyRequirement;
 use super::user_verification_policy::UserVerificationPolicy;
 
-/// <https://www.w3.org/TR/webauthn/#dictdef-authenticatorselectioncriteria>
+/// <https://www.w3.org/TR/webauthn/#dictdef-authenticatorselectioncriteria>.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct AuthenticatorSelectionCriteria {
     /// How the authenticator should be attached to the client machine. Note

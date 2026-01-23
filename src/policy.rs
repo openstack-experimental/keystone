@@ -222,7 +222,7 @@ pub enum EvaluationError {
     Evaluation(#[from] eyre::Report),
 }
 
-/// OpenPolicyAgent `Credentials` object
+/// OpenPolicyAgent `Credentials` object.
 #[derive(Serialize, Debug)]
 pub struct Credentials {
     pub user_id: String,

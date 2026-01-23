@@ -62,7 +62,7 @@ pub struct PublicKeyCredentialCreationOptions {
     /// The set of cryptographic types allowed by this server.
     #[validate(nested)]
     pub pub_key_cred_params: Vec<PubKeyCredParams>,
-    /// The relying party
+    /// The relying party.
     #[validate(nested)]
     pub rp: RelyingParty,
     /// The timeout for the authenticator in case of no interaction.

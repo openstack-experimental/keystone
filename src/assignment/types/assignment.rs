@@ -204,7 +204,7 @@ impl fmt::Display for AssignmentType {
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct RoleAssignmentListParameters {
-    /// Query role assignments filtering results by the role
+    /// Query role assignments filtering results by the role.
     #[builder(default)]
     #[validate(length(max = 64))]
     pub role_id: Option<String>,

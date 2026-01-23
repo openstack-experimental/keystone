@@ -22,7 +22,7 @@ use crate::identity::types::UserResponse;
 use crate::token::types::Token;
 use crate::token::types::common;
 
-/// Federated unscoped token payload
+/// Federated unscoped token payload.
 #[derive(Builder, Clone, Debug, Default, PartialEq, Serialize, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(into))]

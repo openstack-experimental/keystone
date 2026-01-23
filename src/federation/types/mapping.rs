@@ -160,9 +160,9 @@ pub struct MappingUpdate {
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub enum MappingType {
     #[default]
-    /// OIDC
+    /// OIDC.
     Oidc,
-    /// JWT
+    /// JWT.
     Jwt,
 }
 
@@ -188,6 +188,6 @@ pub struct MappingListParameters {
     /// Filters the response by Mapping name.
     pub name: Option<String>,
 
-    /// Filters mappings by the type
+    /// Filters mappings by the type.
     pub r#type: Option<MappingType>,
 }

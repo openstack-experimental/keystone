@@ -29,7 +29,7 @@ pub struct IdentityProvider {
     /// Provider name.
     pub name: String,
 
-    /// Domain ID,
+    /// Domain ID.
     #[builder(default)]
     pub domain_id: Option<String>,
 
@@ -80,7 +80,7 @@ pub struct IdentityProviderCreate {
     /// Provider name.
     pub name: String,
 
-    /// Domain ID,
+    /// Domain ID.
     #[builder(default)]
     pub domain_id: Option<String>,
 
@@ -125,7 +125,7 @@ pub struct IdentityProviderCreate {
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(into))]
 pub struct IdentityProviderUpdate {
-    /// Provider name
+    /// Provider name.
     pub name: Option<String>,
 
     /// Enabled flag.

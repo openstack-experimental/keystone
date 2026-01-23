@@ -20,7 +20,7 @@ use crate::webauthn::WebauthnError;
 
 /// The inputs to the hmac secret if it was created during registration.
 ///
-/// <https://fidoalliance.org/specs/fido-v2.1-ps-20210615/fido-client-to-authenticator-protocol-v2.1-ps-20210615.html#sctn-hmac-secret-extension>
+/// <https://fidoalliance.org/specs/fido-v2.1-ps-20210615/fido-client-to-authenticator-protocol-v2.1-ps-20210615.html#sctn-hmac-secret-extension>.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct HmacGetSecretInput {
     /// Retrieve a symmetric secrets from the authenticator with this input.

@@ -22,7 +22,7 @@ use crate::assignment::types::role::{Role, RoleCreate};
 use crate::db::entity::role as db_role;
 use crate::error::DbContextExt;
 
-/// Create a new role
+/// Create a new role.
 pub async fn create(
     db: &DatabaseConnection,
     role: RoleCreate, // ← Using RoleCreate instead of Role

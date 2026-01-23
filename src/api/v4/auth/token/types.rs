@@ -30,7 +30,7 @@ use crate::identity::types as identity_types;
 use crate::token::Token as BackendToken;
 use crate::trust::api::types::trust::TokenTrustRepr;
 
-/// Authorization token
+/// Authorization token.
 #[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
@@ -101,7 +101,7 @@ pub struct Token {
     pub trust: Option<TokenTrustRepr>,
 
     // # Roles on the scope.
-    /// A list of role objects
+    /// A list of role objects.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[builder(default)]
     #[validate(nested)]
@@ -118,7 +118,7 @@ pub struct Token {
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct TokenResponse {
-    /// Token
+    /// Token.
     #[validate(nested)]
     pub token: Token,
 }
@@ -185,7 +185,7 @@ pub struct PasswordAuth {
     pub user: UserPassword,
 }
 
-/// User password information
+/// User password information.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct UserPassword {
     /// User ID.
@@ -228,22 +228,22 @@ impl TryFrom<UserPassword> for identity_types::UserPasswordAuthRequest {
     }
 }
 
-/// User information
+/// User information.
 #[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(into))]
 pub struct User {
-    /// User ID
+    /// User ID.
     #[validate(length(max = 64))]
     pub id: String,
-    /// User Name
+    /// User Name.
     #[builder(default)]
     #[validate(length(max = 64))]
     pub name: Option<String>,
-    /// User domain
+    /// User domain.
     #[validate(nested)]
     pub domain: Domain,
-    /// User password expiry date
+    /// User password expiry date.
     #[builder(default)]
     pub password_expires_at: Option<DateTime<Utc>>,
 }
@@ -293,6 +293,6 @@ pub struct ValidateTokenParameters {
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(into, strip_option))]
 pub struct System {
-    /// All
+    /// All.
     pub all: bool,
 }

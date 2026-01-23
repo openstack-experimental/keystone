@@ -113,7 +113,7 @@ pub struct TokenRestriction {
     pub role_ids: Vec<String>,
     /// Optional list of full Role information.
     pub roles: Option<Vec<crate::assignment::types::Role>>,
-    /// User id
+    /// User id.
     pub user_id: Option<String>,
 }
 
@@ -133,7 +133,7 @@ pub struct TokenRestrictionCreate {
     pub project_id: Option<String>,
     /// Roles bound to the restriction.
     pub role_ids: Vec<String>,
-    /// User id
+    /// User id.
     pub user_id: Option<String>,
 }
 

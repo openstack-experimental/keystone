@@ -163,10 +163,10 @@ pub enum KeystoneError {
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum BuilderError {
-    /// Uninitialized field
+    /// Uninitialized field.
     #[error("{0}")]
     UninitializedField(String),
-    /// Custom validation error
+    /// Custom validation error.
     #[error("{0}")]
     Validation(String),
 }

@@ -101,7 +101,7 @@ pub(super) async fn authenticate_request(
         })
 }
 
-/// Build the AuthZ information from the request
+/// Build the AuthZ information from the request.
 ///
 /// # Arguments
 ///

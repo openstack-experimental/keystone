@@ -18,7 +18,7 @@ use validator::Validate;
 
 use crate::webauthn::WebauthnError;
 
-/// [AuthenticatorAssertionResponseRaw](https://w3c.github.io/webauthn/#authenticatorassertionresponse)
+/// [AuthenticatorAssertionResponseRaw](https://w3c.github.io/webauthn/#authenticatorassertionresponse).
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct AuthenticatorAssertionResponseRaw {
     /// Raw authenticator data.

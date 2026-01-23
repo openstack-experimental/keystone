@@ -12,7 +12,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! Identity providers: update existing IDP
+//! Identity providers: update existing IDP.
 use axum::{
     Json,
     extract::{Path, State},

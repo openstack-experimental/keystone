@@ -12,7 +12,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! Federation attribute mapping: update
+//! Federation attribute mapping: update.
 use axum::{
     Json,
     extract::{Path, State},

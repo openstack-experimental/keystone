@@ -21,7 +21,7 @@ use crate::resource::error::ResourceProviderError;
 /// Assignment provider error.
 #[derive(Error, Debug)]
 pub enum AssignmentProviderError {
-    /// Assignment provider error
+    /// Assignment provider error.
     #[error(transparent)]
     Backend { source: AssignmentDatabaseError },
 

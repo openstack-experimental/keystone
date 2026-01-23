@@ -76,7 +76,7 @@ pub struct User {
 /// Complete response with the user data.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct UserResponse {
-    /// User object
+    /// User object.
     #[validate(nested)]
     pub user: User,
 }
@@ -100,7 +100,7 @@ pub struct UserCreate {
     /// If the user is enabled, this value is true. If the user is disabled,
     /// this value is false.
     pub enabled: Option<bool>,
-    /// Additional user properties
+    /// Additional user properties.
     #[serde(flatten)]
     pub extra: Option<Value>,
     /// The user name. Must be unique within the owning domain.
@@ -134,7 +134,7 @@ pub struct UserUpdateRequest {
     /// If the user is enabled, this value is true. If the user is disabled,
     /// this value is false.
     pub enabled: Option<bool>,
-    /// Additional user properties
+    /// Additional user properties.
     #[serde(flatten)]
     pub extra: Option<Value>,
     /// The user name. Must be unique within the owning domain.
@@ -268,11 +268,11 @@ pub struct Federation {
 /// Federation protocol data.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct FederationProtocol {
-    /// Federation protocol ID
+    /// Federation protocol ID.
     #[validate(length(max = 64))]
     pub protocol_id: String,
     // TODO: unique ID should potentially belong to the IDP and not to the protocol
-    /// Unique ID of the associated user
+    /// Unique ID of the associated user.
     #[validate(length(max = 64))]
     pub unique_id: String,
 }
@@ -315,7 +315,7 @@ impl IntoResponse for identity_types::UserResponse {
 /// List of users.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct UserList {
-    /// Collection of user objects
+    /// Collection of user objects.
     #[validate(nested)]
     pub users: Vec<User>,
 }

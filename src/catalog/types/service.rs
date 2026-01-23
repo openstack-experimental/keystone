@@ -22,7 +22,7 @@ use crate::error::BuilderError;
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct Service {
-    /// Additional service properties
+    /// Additional service properties.
     #[builder(default)]
     pub extra: Option<Value>,
     /// The ID of the service.

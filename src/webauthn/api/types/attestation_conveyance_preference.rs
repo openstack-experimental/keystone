@@ -14,7 +14,7 @@
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-/// <https://www.w3.org/TR/webauthn/#enumdef-attestationconveyancepreference>
+/// <https://www.w3.org/TR/webauthn/#enumdef-attestationconveyancepreference>.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
 pub enum AttestationConveyancePreference {
     /// Do not request attestation.

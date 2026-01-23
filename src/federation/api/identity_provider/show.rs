@@ -12,7 +12,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! Identity providers: show IDP
+//! Identity providers: show IDP.
 use axum::{
     extract::{Path, State},
     response::IntoResponse,

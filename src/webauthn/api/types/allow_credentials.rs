@@ -25,7 +25,7 @@ pub struct AllowCredentials {
     /// The id of the credential.
     #[schema(value_type = String, format = Binary, content_encoding = "base64")]
     pub id: String,
-    /// <https://www.w3.org/TR/webauthn/#transport> may be usb, nfc, ble, internal
+    /// <https://www.w3.org/TR/webauthn/#transport> may be usb, nfc, ble, internal.
     #[schema(nullable = false)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub transports: Option<Vec<AuthenticatorTransport>>,

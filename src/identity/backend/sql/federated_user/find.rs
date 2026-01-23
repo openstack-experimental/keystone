@@ -20,7 +20,7 @@ use crate::db::entity::{federated_user, prelude::FederatedUser};
 use crate::error::DbContextExt;
 use crate::identity::backend::sql::IdentityDatabaseError;
 
-/// Get federated user entry by the idp_id and the unique_id
+/// Get federated user entry by the idp_id and the unique_id.
 pub async fn find_by_idp_and_unique_id<I: AsRef<str>, U: AsRef<str>>(
     db: &DatabaseConnection,
     idp_id: I,

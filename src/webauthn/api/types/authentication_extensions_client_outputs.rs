@@ -18,9 +18,9 @@ use validator::Validate;
 use super::hmac_get_secret_output::HmacGetSecretOutput;
 use crate::webauthn::WebauthnError;
 
-/// [AuthenticationExtensionsClientOutputs](https://w3c.github.io/webauthn/#dictdef-authenticationextensionsclientoutputs)
+/// [AuthenticationExtensionsClientOutputs](https://w3c.github.io/webauthn/#dictdef-authenticationextensionsclientoutputs).
 ///
-/// The default option here for Options are None, so it can be derived
+/// The default option here for Options are None, so it can be derived.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct AuthenticationExtensionsClientOutputs {
     /// Indicates whether the client used the provided appid extension.

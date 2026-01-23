@@ -31,7 +31,7 @@ use crate::federation::types::{
 };
 use crate::keystone::ServiceState;
 
-/// Convert ProviderScope to AuthZ information
+/// Convert ProviderScope to AuthZ information.
 ///
 /// # Arguments
 /// * `state`: The service state
@@ -66,7 +66,7 @@ pub(super) async fn get_authz_info(
     Ok(authz_info)
 }
 
-/// Validate bound claims in the token
+/// Validate bound claims in the token.
 ///
 /// # Arguments
 ///
@@ -132,7 +132,7 @@ pub(super) fn validate_bound_claims(
     Ok(())
 }
 
-/// Map the user data using the referred mapping
+/// Map the user data using the referred mapping.
 ///
 /// # Arguments
 /// * `idp` - The identity provider
@@ -140,7 +140,7 @@ pub(super) fn validate_bound_claims(
 /// * `claims_as_json` - The claims as json
 ///
 /// # Returns
-/// The mapped user data
+/// The mapped user data.
 pub(super) async fn map_user_data(
     _state: &ServiceState,
     idp: &ProviderIdentityProvider,

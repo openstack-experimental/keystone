@@ -42,7 +42,7 @@ pub struct RequestRegistrationExtensions {
     #[schema(nullable = false)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub min_pin_length: Option<bool>,
-    /// ⚠️ - Browsers do not support this! Uvm
+    /// ⚠️ - Browsers do not support this! Uvm.
     #[schema(nullable = false)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub uvm: Option<bool>,

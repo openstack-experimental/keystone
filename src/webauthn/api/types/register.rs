@@ -13,7 +13,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! # Passkey registration API types
 //!
-//! Embedded type webauthn_rs::prelude::CreationChallengeResponse
+//! Embedded type webauthn_rs::prelude::CreationChallengeResponse.
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE};
 use serde::{Deserialize, Serialize};
@@ -39,7 +39,7 @@ pub struct UserPasskeyRegistrationStartRequest {
 /// Passkey information.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct PasskeyCreate {
-    /// Passkey description
+    /// Passkey description.
     #[schema(nullable = false, max_length = 64)]
     #[serde(skip_serializing_if = "Option::is_none")]
     #[validate(length(max = 255))]
@@ -112,7 +112,7 @@ impl TryFrom<webauthn_rs::prelude::CreationChallengeResponse>
 ///
 /// You should not need to handle the inner content of this structure - you
 /// should provide this to the correctly handling function of Webauthn only.
-/// <https://w3c.github.io/webauthn/#iface-pkcredential>
+/// <https://w3c.github.io/webauthn/#iface-pkcredential>.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct UserPasskeyRegistrationFinishRequest {
     /// Optional credential description.
@@ -169,7 +169,7 @@ impl From<webauthn_rs::prelude::RegisterPublicKeyCredential>
     }
 }
 
-/// <https://w3c.github.io/webauthn/#authenticatorattestationresponse>
+/// <https://w3c.github.io/webauthn/#authenticatorattestationresponse>.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct AuthenticatorAttestationResponseRaw {
     /// <https://w3c.github.io/webauthn/#dom-authenticatorattestationresponse-attestationobject>.
@@ -215,7 +215,7 @@ impl TryFrom<AuthenticatorAttestationResponseRaw>
 }
 
 /// <https://w3c.github.io/webauthn/#dictdef-authenticationextensionsclientoutputs> The default
-/// option here for Options are None, so it can be derived
+/// option here for Options are None, so it can be derived.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct RegistrationExtensionsClientOutputs {
     /// Indicates whether the client used the provided appid extension.
@@ -272,7 +272,7 @@ impl From<webauthn_rs_proto::extensions::RegistrationExtensionsClientOutputs>
     }
 }
 
-/// <https://www.w3.org/TR/webauthn-3/#sctn-authenticator-credential-properties-extension>
+/// <https://www.w3.org/TR/webauthn-3/#sctn-authenticator-credential-properties-extension>.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct CredProps {
     /// A user agent supplied hint that this credential may have created a

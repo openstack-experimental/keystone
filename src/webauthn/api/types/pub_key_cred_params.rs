@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use validator::Validate;
 
-/// Public key cryptographic parameters
+/// Public key cryptographic parameters.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct PubKeyCredParams {
     /// The algorithm in use defined by CASE.

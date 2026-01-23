@@ -48,7 +48,7 @@ pub enum IdentityDatabaseError {
     #[error("corrupted database entries for user {0}")]
     MalformedUser(String),
 
-    /// No data for local_user and passwords
+    /// No data for local_user and passwords.
     #[error("no passwords for the user {0}")]
     NoPasswordsForUser(String),
 

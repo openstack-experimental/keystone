@@ -12,7 +12,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! v3 API
+//! v3 API.
 
 use axum::{
     extract::{OriginalUri, Request, State},

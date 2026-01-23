@@ -19,7 +19,7 @@ use validator::Validate;
 use super::authenticator_transport::AuthenticatorTransport;
 use crate::webauthn::WebauthnError;
 
-/// <https://www.w3.org/TR/webauthn/#dictdef-publickeycredentialdescriptor>
+/// <https://www.w3.org/TR/webauthn/#dictdef-publickeycredentialdescriptor>.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct PublicKeyCredentialDescriptor {
     /// The type of credential.

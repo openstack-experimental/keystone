@@ -12,7 +12,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! Federation attribute mapping: list
+//! Federation attribute mapping: list.
 use axum::{
     extract::{OriginalUri, Query, State},
     response::IntoResponse,

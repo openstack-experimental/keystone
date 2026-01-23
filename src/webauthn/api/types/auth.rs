@@ -42,8 +42,8 @@ pub struct PasskeyUserAuthenticationRequest {
 ///
 /// A JSON serializable challenge which is issued to the user's webbrowser for
 /// handling. This is meant to be opaque, that is, you should not need to
-/// inspect or alter the content of the struct
-/// - you should serialise it and transmit it to the client only.
+/// inspect or alter the content of the struct - you should serialise it and
+/// transmit it to the client only.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct PasskeyAuthenticationStartResponse {
     /// The options.
@@ -70,7 +70,7 @@ impl From<webauthn_rs::prelude::RequestChallengeResponse> for PasskeyAuthenticat
 pub enum Mediation {
     /// Discovered credentials are presented to the user in a dialog.
     /// Conditional UI is used. See <https://github.com/w3c/webauthn/wiki/Explainer:-WebAuthn-Conditional-UI>
-    /// <https://w3c.github.io/webappsec-credential-management/#enumdef-credentialmediationrequirement>
+    /// <https://w3c.github.io/webappsec-credential-management/#enumdef-credentialmediationrequirement>.
     Conditional,
 }
 

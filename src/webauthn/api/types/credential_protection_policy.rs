@@ -14,7 +14,7 @@
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-/// Valid credential protection policies
+/// Valid credential protection policies.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
 #[repr(u8)]
 pub enum CredentialProtectionPolicy {

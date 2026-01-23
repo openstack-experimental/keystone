@@ -56,6 +56,7 @@ mod trust;
 mod unscoped;
 pub mod utils;
 
+/// Fernet token provider.
 #[derive(Clone)]
 pub struct FernetTokenProvider {
     config: Config,
@@ -70,7 +71,7 @@ pub struct FernetTokenProvider {
 pub trait MsgPackToken {
     type Token;
 
-    /// Construct MsgPack payload for the Token
+    /// Construct MsgPack payload for the Token.
     fn assemble<W: Write>(
         &self,
         _wd: &mut W,
@@ -79,7 +80,7 @@ pub trait MsgPackToken {
         Ok(())
     }
 
-    /// Parse MsgPack payload into the Token
+    /// Parse MsgPack payload into the Token.
     fn disassemble(
         rd: &mut &[u8],
         fernet_provider: &FernetTokenProvider,
@@ -92,7 +93,7 @@ impl fmt::Debug for FernetTokenProvider {
     }
 }
 
-/// Read the payload version
+/// Read the payload version.
 fn read_payload_token_type(rd: &mut &[u8]) -> Result<u8, TokenProviderError> {
     match read_marker(rd).map_err(ValueReadError::from)? {
         Marker::FixPos(dt) => Ok(dt),
@@ -124,7 +125,7 @@ where
 }
 
 impl FernetTokenProvider {
-    /// Construct new FernetTokenProvider
+    /// Construct new FernetTokenProvider.
     pub fn new(config: Config) -> Self {
         let mut slf = Self {
             utils: FernetUtils {
@@ -240,7 +241,7 @@ impl FernetTokenProvider {
         }
     }
 
-    /// Encode Token as binary blob as MessagePack
+    /// Encode Token as binary blob as MessagePack.
     fn encode(&self, token: &Token) -> Result<Bytes, TokenProviderError> {
         token.validate()?;
         let mut buf = vec![];
@@ -319,7 +320,7 @@ impl FernetTokenProvider {
         Ok(buf.into())
     }
 
-    /// Get MultiFernet initialized with repository keys
+    /// Get MultiFernet initialized with repository keys.
     #[tracing::instrument(level = "trace", skip(self))]
     pub fn get_fernet(&self) -> Result<MultiFernet, TokenProviderError> {
         Ok(MultiFernet::new(
@@ -327,17 +328,17 @@ impl FernetTokenProvider {
         ))
     }
 
-    /// Load fernet keys from FS
+    /// Load fernet keys from FS.
     #[tracing::instrument(level = "trace", skip(self))]
     pub fn load_keys(&mut self) -> Result<(), TokenProviderError> {
         self.fernet = Some(self.get_fernet()?);
         Ok(())
     }
 
-    /// Decrypt the token
+    /// Decrypt the token.
     ///
-    /// 1. Decrypt as Fernet
-    /// 2. Unpack MessagePack payload
+    /// 1. Decrypt as Fernet.
+    /// 2. Unpack MessagePack payload.
     pub fn decrypt(&self, credential: &str) -> Result<Token, TokenProviderError> {
         // TODO: Implement fernet keys change watching. Keystone loads them from FS on
         // every request and in the best case it costs 15µs.
@@ -350,7 +351,7 @@ impl FernetTokenProvider {
         self.decode(&mut payload.as_slice(), get_fernet_timestamp(credential)?)
     }
 
-    /// Encrypt the token
+    /// Encrypt the token.
     pub fn encrypt(&self, token: &Token) -> Result<String, TokenProviderError> {
         let payload = self.encode(token)?;
         let res = match &self.fernet {
@@ -362,19 +363,19 @@ impl FernetTokenProvider {
 }
 
 impl TokenBackend for FernetTokenProvider {
-    /// Set config
+    /// Set config.
     fn set_config(&mut self, config: Config) {
         self.config = config;
         self.reload_config();
     }
 
-    /// Decrypt the token
+    /// Decrypt the token.
     #[tracing::instrument(level = "trace", skip(self, credential))]
     fn decode(&self, credential: &str) -> Result<Token, TokenProviderError> {
         self.decrypt(credential)
     }
 
-    /// Encrypt the token
+    /// Encrypt the token.
     #[tracing::instrument(level = "trace", skip(self, token))]
     fn encode(&self, token: &Token) -> Result<String, TokenProviderError> {
         self.encrypt(token)

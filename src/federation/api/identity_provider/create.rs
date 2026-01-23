@@ -12,7 +12,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! Identity providers: create IDP
+//! Identity providers: create IDP.
 use axum::{Json, debug_handler, extract::State, http::StatusCode, response::IntoResponse};
 use mockall_double::double;
 use validator::Validate;
