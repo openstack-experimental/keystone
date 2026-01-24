@@ -169,7 +169,7 @@ impl IdentityBackend for SqlBackend {
         &self,
         state: &ServiceState,
         user_id: &'a str,
-    ) -> Result<Option<String>, IdentityProviderError> {
+    ) -> Result<String, IdentityProviderError> {
         Ok(user::get_user_domain_id(&state.db, user_id).await?)
     }
 

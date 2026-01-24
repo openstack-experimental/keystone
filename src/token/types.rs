@@ -18,9 +18,9 @@ use serde::Serialize;
 use validator::Validate;
 
 use crate::assignment::types::Role;
-use crate::identity::types::UserResponse;
+use crate::identity::{IdentityApi, types::UserResponse};
 use crate::keystone::ServiceState;
-use crate::resource::types::{Domain, Project};
+use crate::resource::{ResourceApi, types::*};
 use crate::token::error::TokenProviderError;
 use crate::trust::TrustApi;
 
@@ -336,7 +336,7 @@ impl Token {
         Ok(())
     }
 
-    /// Validate the token issuer.
+    /// Validate the token subject.
     ///
     /// Perform checks for the token subject:
     ///
@@ -344,11 +344,27 @@ impl Token {
     /// - user domain is enabled
     /// - application credential is not expired
     pub async fn validate_subject(&self, state: &ServiceState) -> Result<(), TokenProviderError> {
-        // The "user" must be active
-        if !self.user().as_ref().is_some_and(|user| user.enabled) {
-            return Err(TokenProviderError::UserDisabled(self.user_id().clone()));
+        let user_domain_id: String;
+        if let Some(user) = self.user() {
+            // The "user" must be active
+            if !user.enabled {
+                return Err(TokenProviderError::UserDisabled(user.id.clone()));
+            }
+
+            // Ensure user domain is enabled
+            if !state
+                .provider
+                .get_resource_provider()
+                .get_domain_enabled(state, &user.domain_id)
+                .await?
+            {
+                return Err(TokenProviderError::UserDomainDisabled);
+            }
+
+            user_domain_id = user.domain_id.clone();
+        } else {
+            return Err(TokenProviderError::SubjectMissing);
         }
-        // TODO: User domain must be enabled
 
         match self {
             Token::ApplicationCredential(data) => {
@@ -370,6 +386,7 @@ impl Token {
             Token::Restricted(_data) => {}
             Token::SystemScope(_data) => {}
             Token::Trust(data) => {
+                // Validate the trust chain
                 state
                     .provider
                     .get_trust_provider()
@@ -380,6 +397,31 @@ impl Token {
                             .ok_or(TokenProviderError::SubjectMissing)?,
                     )
                     .await?;
+                // Validate trustor and trustee
+                if let Some(trust) = &data.trust {
+                    if data.user_id != trust.trustee_user_id {
+                        return Err(TokenProviderError::UserIsNotTrustee);
+                    }
+
+                    // Resolve and verify trustor domain is enabled
+                    let trustor_domain_id = state
+                        .provider
+                        .get_identity_provider()
+                        .get_user_domain_id(state, &trust.trustor_user_id)
+                        .await?;
+
+                    if user_domain_id != trustor_domain_id
+                        && !state
+                            .provider
+                            .get_resource_provider()
+                            .get_domain_enabled(state, &trustor_domain_id)
+                            .await?
+                    {
+                        return Err(TokenProviderError::TrustorDomainDisabled);
+                    }
+                } else {
+                    return Err(TokenProviderError::SubjectMissing);
+                }
             }
             Token::Unscoped(_data) => {}
         }

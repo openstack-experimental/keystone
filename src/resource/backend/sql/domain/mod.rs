@@ -15,9 +15,10 @@ use serde_json::Value;
 use tracing::error;
 
 mod get;
+mod list;
 
-pub use get::get_domain_by_id;
-pub use get::get_domain_by_name;
+pub use get::{get_domain_by_id, get_domain_by_name, get_domain_enabled};
+pub use list::list;
 
 use crate::db::entity::project as db_project;
 use crate::resource::backend::error::ResourceDatabaseError;
@@ -34,8 +35,10 @@ impl TryFrom<db_project::Model> for Domain {
         if let Some(description) = &value.description {
             domain_builder.description(description.clone());
         }
-        domain_builder.enabled(value.enabled.unwrap_or(false));
-        if let Some(extra) = &value.extra {
+        domain_builder.enabled(value.enabled.unwrap_or(true));
+        if let Some(extra) = &value.extra
+            && "{}" != extra
+        {
             domain_builder.extra(
                 serde_json::from_str::<Value>(extra)
                     .inspect_err(|e| error!("failed to deserialize domain extra: {e}"))
@@ -44,5 +47,23 @@ impl TryFrom<db_project::Model> for Domain {
         }
 
         Ok(domain_builder.build()?)
+    }
+}
+
+#[cfg(test)]
+pub mod tests {
+    use super::*;
+
+    pub fn get_domain_mock<S: Into<String>>(id: S) -> db_project::Model {
+        db_project::Model {
+            description: None,
+            domain_id: "did".into(),
+            enabled: Some(true),
+            extra: Some("{}".to_string()),
+            id: id.into(),
+            is_domain: true,
+            name: "name".into(),
+            parent_id: None,
+        }
     }
 }

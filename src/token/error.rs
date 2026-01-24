@@ -205,6 +205,10 @@ pub enum TokenProviderError {
     #[error(transparent)]
     TrustProvider(#[from] crate::trust::TrustError),
 
+    /// The user domain of the trustee is disabled.
+    #[error("trustee domain disabled")]
+    TrustorDomainDisabled,
+
     /// Integer conversion error.
     #[error("int parse")]
     TryFromIntError(#[from] TryFromIntError),
@@ -216,6 +220,14 @@ pub enum TokenProviderError {
     /// The user is disabled.
     #[error("user disabled")]
     UserDisabled(String),
+
+    /// The user domain is disabled.
+    #[error("user domain disabled")]
+    UserDomainDisabled,
+
+    /// The user is not trustee.
+    #[error("the token subject user is not trustee of the trust")]
+    UserIsNotTrustee,
 
     /// The user cannot be found error.
     #[error("user cannot be found: {0}")]

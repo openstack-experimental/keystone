@@ -29,6 +29,7 @@ pub enum ResourceProviderError {
     #[error("conflict: {0}")]
     Conflict(String),
 
+    /// Domain not found.
     #[error("domain {0} not found")]
     DomainNotFound(String),
 

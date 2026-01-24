@@ -104,14 +104,17 @@ pub async fn get(
 pub async fn get_user_domain_id<U: AsRef<str>>(
     db: &DatabaseConnection,
     user_id: U,
-) -> Result<Option<String>, IdentityDatabaseError> {
-    Ok(DbUser::find_by_id(user_id.as_ref())
+) -> Result<String, IdentityDatabaseError> {
+    DbUser::find_by_id(user_id.as_ref())
         .select_only()
         .column(db_user::Column::DomainId)
         .into_tuple()
         .one(db)
         .await
-        .context("fetching domain_id of a user by ID")?)
+        .context("fetching domain_id of a user by ID")?
+        .ok_or(IdentityDatabaseError::UserNotFound(
+            user_id.as_ref().to_string(),
+        ))
 }
 
 #[cfg(test)]
@@ -216,13 +219,7 @@ mod tests {
             ]])
             .into_connection();
 
-        assert_eq!(
-            get_user_domain_id(&db, "uid")
-                .await
-                .unwrap()
-                .expect("found"),
-            "did"
-        );
+        assert_eq!(get_user_domain_id(&db, "uid").await.unwrap(), "did");
         assert_eq!(
             db.into_transaction_log(),
             [Transaction::from_sql_and_values(

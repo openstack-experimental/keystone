@@ -25,6 +25,13 @@ use crate::resource::types::*;
 #[cfg_attr(test, mockall::automock)]
 #[async_trait]
 pub trait ResourceBackend: Send + Sync {
+    /// Get `enabled` field of the domain.
+    async fn get_domain_enabled<'a>(
+        &self,
+        state: &ServiceState,
+        domain_id: &'a str,
+    ) -> Result<bool, ResourceProviderError>;
+
     /// Create new project.
     async fn create_project(
         &self,
@@ -67,6 +74,13 @@ pub trait ResourceBackend: Send + Sync {
         state: &ServiceState,
         project_id: &'a str,
     ) -> Result<Option<Vec<Project>>, ResourceProviderError>;
+
+    /// List domains.
+    async fn list_domains(
+        &self,
+        state: &ServiceState,
+        params: &DomainListParameters,
+    ) -> Result<Vec<Domain>, ResourceProviderError>;
 
     /// List projects.
     async fn list_projects(

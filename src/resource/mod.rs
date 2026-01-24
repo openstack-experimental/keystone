@@ -81,6 +81,17 @@ impl ResourceProvider {
 
 #[async_trait]
 impl ResourceApi for ResourceProvider {
+    /// Check whether the domain is enabled.
+    async fn get_domain_enabled<'a>(
+        &self,
+        state: &ServiceState,
+        domain_id: &'a str,
+    ) -> Result<bool, ResourceProviderError> {
+        self.backend_driver
+            .get_domain_enabled(state, domain_id)
+            .await
+    }
+
     /// Create new project.
     #[tracing::instrument(level = "info", skip(self, state))]
     async fn create_project(
@@ -152,6 +163,16 @@ impl ResourceApi for ResourceProvider {
         self.backend_driver
             .get_domain_by_name(state, domain_name)
             .await
+    }
+
+    /// List domains.
+    #[tracing::instrument(level = "info", skip(self, state))]
+    async fn list_domains(
+        &self,
+        state: &ServiceState,
+        params: &DomainListParameters,
+    ) -> Result<Vec<Domain>, ResourceProviderError> {
+        self.backend_driver.list_domains(state, params).await
     }
 
     /// List projects.

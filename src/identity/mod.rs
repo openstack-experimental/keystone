@@ -267,21 +267,19 @@ impl IdentityApi for IdentityProvider {
         &self,
         state: &ServiceState,
         user_id: &'a str,
-    ) -> Result<Option<String>, IdentityProviderError> {
+    ) -> Result<String, IdentityProviderError> {
         if self.caching {
             if let Some(domain_id) = self.user_id_domain_id_cache.read().await.get(user_id) {
-                return Ok(Some(domain_id.clone()));
+                return Ok(domain_id.clone());
             } else {
                 let domain_id = self
                     .backend_driver
                     .get_user_domain_id(state, user_id)
                     .await?;
-                if let Some(did) = &domain_id {
-                    self.user_id_domain_id_cache
-                        .write()
-                        .await
-                        .insert(user_id.to_string(), did.clone());
-                }
+                self.user_id_domain_id_cache
+                    .write()
+                    .await
+                    .insert(user_id.to_string(), domain_id.clone());
                 return Ok(domain_id);
             }
         } else {
@@ -498,28 +496,20 @@ mod tests {
             .expect_get_user_domain_id()
             .withf(|_, uid: &'_ str| uid == "uid")
             .times(2) // only 2 times
-            .returning(|_, _| Ok(Some("did".into())));
+            .returning(|_, _| Ok("did".into()));
         backend
             .expect_get_user_domain_id()
             .withf(|_, uid: &'_ str| uid == "missing")
-            .returning(|_, _| Ok(None));
+            .returning(|_, _| Err(IdentityProviderError::UserNotFound("missing".into())));
         let mut provider = IdentityProvider::from_driver(backend);
         provider.caching = true;
 
         assert_eq!(
-            provider
-                .get_user_domain_id(&state, "uid")
-                .await
-                .unwrap()
-                .expect("domain_id should be there"),
+            provider.get_user_domain_id(&state, "uid").await.unwrap(),
             "did"
         );
         assert_eq!(
-            provider
-                .get_user_domain_id(&state, "uid")
-                .await
-                .unwrap()
-                .expect("domain_id should be there"),
+            provider.get_user_domain_id(&state, "uid").await.unwrap(),
             "did",
             "second time data extracted from cache"
         );
@@ -527,16 +517,11 @@ mod tests {
             provider
                 .get_user_domain_id(&state, "missing")
                 .await
-                .unwrap()
-                .is_none()
+                .is_err()
         );
         provider.caching = false;
         assert_eq!(
-            provider
-                .get_user_domain_id(&state, "uid")
-                .await
-                .unwrap()
-                .expect("domain_id should be there"),
+            provider.get_user_domain_id(&state, "uid").await.unwrap(),
             "did",
             "third time backend is again triggered causing total of 2 invocations"
         );
