@@ -29,6 +29,12 @@ mock! {
 
     #[async_trait]
     impl ResourceApi for ResourceProvider {
+        async fn get_domain_enabled<'a>(
+            &self,
+            state: &ServiceState,
+            domain_id: &'a str,
+        ) -> Result<bool, ResourceProviderError>;
+
         async fn create_project(
             &self,
             state: &ServiceState,
@@ -65,6 +71,12 @@ mock! {
             state: &ServiceState,
             project_id: &'a str,
         ) -> Result<Option<Vec<Project>>, ResourceProviderError>;
+
+        async fn list_domains(
+            &self,
+            state: &ServiceState,
+            params: &DomainListParameters,
+        ) -> Result<Vec<Domain>, ResourceProviderError>;
 
         async fn list_projects(
             &self,

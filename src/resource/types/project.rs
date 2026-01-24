@@ -42,7 +42,7 @@ pub struct Project {
     pub extra: Option<Value>,
 
     /// The project ID.
-    #[validate(length(min = 1, max = 255))]
+    #[validate(length(min = 1, max = 64))]
     pub id: String,
 
     /// Indicates whether the project also acts as a domain. If set to true,

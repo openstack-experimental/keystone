@@ -113,7 +113,7 @@ pub trait IdentityBackend: Send + Sync {
         &self,
         state: &ServiceState,
         user_id: &'a str,
-    ) -> Result<Option<String>, IdentityProviderError>;
+    ) -> Result<String, IdentityProviderError>;
 
     /// Find federated user by IDP and Unique ID.
     async fn find_federated_user<'a>(

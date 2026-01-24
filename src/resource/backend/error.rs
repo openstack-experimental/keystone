@@ -25,6 +25,7 @@ pub enum ResourceDatabaseError {
         source: DatabaseError,
     },
 
+    /// Domain not found.
     #[error("{0}")]
     DomainNotFound(String),
 

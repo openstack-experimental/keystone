@@ -22,15 +22,11 @@ use crate::error::DbContextExt;
 use crate::resource::backend::error::ResourceDatabaseError;
 use crate::resource::types::*;
 
-/// Prepare the paginated query for listing projects.
+/// Prepare the paginated query for listing domains.
 fn get_list_query(
-    params: &ProjectListParameters,
+    params: &DomainListParameters,
 ) -> Result<Cursor<SelectModel<db_project::Model>>, ResourceDatabaseError> {
-    let mut select = DbProject::find().filter(db_project::Column::IsDomain.eq(false));
-
-    if let Some(val) = &params.domain_id {
-        select = select.filter(db_project::Column::DomainId.eq(val));
-    }
+    let mut select = DbProject::find().filter(db_project::Column::IsDomain.eq(true));
 
     if let Some(val) = &params.name {
         select = select.filter(db_project::Column::Name.eq(val));
@@ -47,12 +43,12 @@ fn get_list_query(
 
 pub async fn list(
     db: &DatabaseConnection,
-    params: &ProjectListParameters,
-) -> Result<Vec<Project>, ResourceDatabaseError> {
+    params: &DomainListParameters,
+) -> Result<Vec<Domain>, ResourceDatabaseError> {
     get_list_query(params)?
         .all(db)
         .await
-        .context("listing projects")?
+        .context("listing domains")?
         .into_iter()
         .map(TryInto::try_into)
         .collect()
@@ -68,24 +64,9 @@ mod tests {
     #[tokio::test]
     async fn test_query_all() {
         assert_eq!(
-            r#"SELECT "project"."id", "project"."name", "project"."extra", "project"."description", "project"."enabled", "project"."domain_id", "project"."parent_id", "project"."is_domain" FROM "project" WHERE "project"."is_domain" = FALSE"#,
-            QueryOrder::query(&mut get_list_query(&ProjectListParameters::default()).unwrap())
+            r#"SELECT "project"."id", "project"."name", "project"."extra", "project"."description", "project"."enabled", "project"."domain_id", "project"."parent_id", "project"."is_domain" FROM "project" WHERE "project"."is_domain" = TRUE"#,
+            QueryOrder::query(&mut get_list_query(&DomainListParameters::default()).unwrap())
                 .to_string(PostgresQueryBuilder)
-        );
-    }
-
-    #[tokio::test]
-    async fn test_query_domain_id() {
-        assert!(
-            QueryOrder::query(
-                &mut get_list_query(&ProjectListParameters {
-                    domain_id: Some("did".into()),
-                    ..Default::default()
-                })
-                .unwrap()
-            )
-            .to_string(PostgresQueryBuilder)
-            .contains("\"project\".\"domain_id\" = 'did'")
         );
     }
 
@@ -93,7 +74,7 @@ mod tests {
     async fn test_query_name() {
         assert!(
             QueryOrder::query(
-                &mut get_list_query(&ProjectListParameters {
+                &mut get_list_query(&DomainListParameters {
                     name: Some("name".into()),
                     ..Default::default()
                 })
@@ -107,7 +88,7 @@ mod tests {
     #[tokio::test]
     async fn test_query_ids() {
         let q = QueryOrder::query(
-            &mut get_list_query(&ProjectListParameters {
+            &mut get_list_query(&DomainListParameters {
                 ids: Some(std::collections::HashSet::from([
                     "1".to_string(),
                     "2".to_string(),
@@ -123,20 +104,17 @@ mod tests {
     #[tokio::test]
     async fn test_list() {
         let db = MockDatabase::new(DatabaseBackend::Postgres)
-            .append_query_results([vec![get_project_mock("pid1")]])
+            .append_query_results([vec![get_domain_mock("pid1")]])
             .into_connection();
 
         assert_eq!(
-            list(&db, &ProjectListParameters::default()).await.unwrap(),
-            vec![Project {
+            list(&db, &DomainListParameters::default()).await.unwrap(),
+            vec![Domain {
                 description: None,
-                domain_id: "did".into(),
                 enabled: true,
                 extra: None,
                 id: "pid1".into(),
-                is_domain: false,
                 name: "name".into(),
-                parent_id: None,
             }]
         );
 
@@ -145,7 +123,7 @@ mod tests {
             [Transaction::from_sql_and_values(
                 DatabaseBackend::Postgres,
                 r#"SELECT "project"."id", "project"."name", "project"."extra", "project"."description", "project"."enabled", "project"."domain_id", "project"."parent_id", "project"."is_domain" FROM "project" WHERE "project"."is_domain" = $1 ORDER BY "project"."id" ASC"#,
-                [false.into()]
+                [true.into()]
             ),]
         );
     }

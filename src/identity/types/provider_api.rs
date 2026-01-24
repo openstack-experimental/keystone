@@ -96,7 +96,7 @@ pub trait IdentityApi: Send + Sync {
         &self,
         state: &ServiceState,
         user_id: &'a str,
-    ) -> Result<Option<String>, IdentityProviderError>;
+    ) -> Result<String, IdentityProviderError>;
 
     async fn find_federated_user<'a>(
         &self,
