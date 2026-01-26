@@ -50,7 +50,7 @@ fernet = { version = "0.2", default-features = false, features = ["rustcrypto"] 
 futures-util = { version = "0.3" }
 itertools = { version = "0.14" }
 mockall_double = { version = "0.3" }
-nix = { version = "0.30", default-features = false, features = ["fs", "user"] }
+nix = { version = "0.31", default-features = false, features = ["fs", "user"] }
 # opa-wasm = { version = "^0.1", optional = true }
 openidconnect = { version = "4.0" }
 rand = { version = "0.9" }
