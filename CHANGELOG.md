@@ -7,6 +7,75 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.2](https://github.com/openstack-experimental/keystone/compare/v0.1.1...v0.1.2) - 2026-01-26
+
+### Added
+
+- Validate domain is enabled for token ([#533](https://github.com/openstack-experimental/keystone/pull/533))
+- Implement webauthn state cleanup ([#532](https://github.com/openstack-experimental/keystone/pull/532))
+- Add `create_revocation_event` method ([#531](https://github.com/openstack-experimental/keystone/pull/531))
+- Add support for logging into the file ([#527](https://github.com/openstack-experimental/keystone/pull/527))
+- Add WebAuthN RP support ([#525](https://github.com/openstack-experimental/keystone/pull/525))
+- Address webauthn counter tracking ([#519](https://github.com/openstack-experimental/keystone/pull/519))
+- Add few apis and tests ([#511](https://github.com/openstack-experimental/keystone/pull/511))
+- Add /auth/projects API ([#500](https://github.com/openstack-experimental/keystone/pull/500))
+- Enable system_scope token support ([#498](https://github.com/openstack-experimental/keystone/pull/498))
+- Implement project/user/role check API ([#496](https://github.com/openstack-experimental/keystone/pull/496))
+- Add `identity.get_user_domain_id` method ([#493](https://github.com/openstack-experimental/keystone/pull/493))
+- Start implementing IdMapping provider ([#486](https://github.com/openstack-experimental/keystone/pull/486))
+- Implement trust token validation ([#484](https://github.com/openstack-experimental/keystone/pull/484))
+- Add trust provider ([#478](https://github.com/openstack-experimental/keystone/pull/478))
+- Paginate the federation API calls ([#475](https://github.com/openstack-experimental/keystone/pull/475))
+- Add pagination to the attribute mappings ([#467](https://github.com/openstack-experimental/keystone/pull/467))
+- Implement create_role api and backend ([#454](https://github.com/openstack-experimental/keystone/pull/454))
+- Start running integration tests per DB ([#461](https://github.com/openstack-experimental/keystone/pull/461))
+- Add appcred token validation integration test ([#459](https://github.com/openstack-experimental/keystone/pull/459))
+- Implement token structure validation ([#439](https://github.com/openstack-experimental/keystone/pull/439))
+- Implement application credential provider ([#447](https://github.com/openstack-experimental/keystone/pull/447))
+- Add pagination to listing idp ([#438](https://github.com/openstack-experimental/keystone/pull/438))
+- Include system assignments in the list ([#426](https://github.com/openstack-experimental/keystone/pull/426))
+- Add `enabled` to federation resources ([#423](https://github.com/openstack-experimental/keystone/pull/423))
+
+### Fixed
+
+- Fix conflicts ([#499](https://github.com/openstack-experimental/keystone/pull/499))
+- Fix logic for application credential token roles ([#457](https://github.com/openstack-experimental/keystone/pull/457))
+- User expiring membership for federated users ([#425](https://github.com/openstack-experimental/keystone/pull/425))
+- Resolve system_assignment query issue ([#434](https://github.com/openstack-experimental/keystone/pull/434))
+
+### Other
+
+- *(deps)* bump nix from 0.30.1 to 0.31.1 ([#536](https://github.com/openstack-experimental/keystone/pull/536))
+- *(deps)* bump uuid from 1.19.0 to 1.20.0 ([#534](https://github.com/openstack-experimental/keystone/pull/534))
+- Add linter to verify doc strings punctuation ([#530](https://github.com/openstack-experimental/keystone/pull/530))
+- Use `Url` as a type for config public_endpoint ([#526](https://github.com/openstack-experimental/keystone/pull/526))
+- Add webauthn api tests ([#522](https://github.com/openstack-experimental/keystone/pull/522))
+- Split token payloads into the fernet backend ([#510](https://github.com/openstack-experimental/keystone/pull/510))
+- Add skaffold support ([#509](https://github.com/openstack-experimental/keystone/pull/509))
+- Reorganize errors by alphabetical order ([#508](https://github.com/openstack-experimental/keystone/pull/508))
+- *(deps)* bump bcrypt from 0.17.1 to 0.18.0 ([#503](https://github.com/openstack-experimental/keystone/pull/503))
+- *(deps)* bump rsa in the cargo group across 1 directory ([#497](https://github.com/openstack-experimental/keystone/pull/497))
+- Improve list function ([#458](https://github.com/openstack-experimental/keystone/pull/458))
+- *(deps)* bump tokio from 1.48.0 to 1.49.0 ([#490](https://github.com/openstack-experimental/keystone/pull/490))
+- Split out config elements ([#494](https://github.com/openstack-experimental/keystone/pull/494))
+- Do not require traits to implement Clone ([#488](https://github.com/openstack-experimental/keystone/pull/488))
+- Switch more integration tests to use API ([#487](https://github.com/openstack-experimental/keystone/pull/487))
+- Improve conditional parallel tasks ([#485](https://github.com/openstack-experimental/keystone/pull/485))
+- *(deps)* bump schemars from 1.1.0 to 1.2.0 ([#482](https://github.com/openstack-experimental/keystone/pull/482))
+- *(deps)* bump tempfile from 3.23.0 to 3.24.0 ([#483](https://github.com/openstack-experimental/keystone/pull/483))
+- Continue cleaning Errors ([#466](https://github.com/openstack-experimental/keystone/pull/466))
+- Replace `db_err` with the context trait ([#465](https://github.com/openstack-experimental/keystone/pull/465))
+- Add basic CRUD integration for user api ([#463](https://github.com/openstack-experimental/keystone/pull/463))
+- Allow updating `dist` workflow ([#460](https://github.com/openstack-experimental/keystone/pull/460))
+- Modularize federation functionality ([#456](https://github.com/openstack-experimental/keystone/pull/456))
+- Modularize webauthn functionality ([#455](https://github.com/openstack-experimental/keystone/pull/455))
+- Reorg functests ([#453](https://github.com/openstack-experimental/keystone/pull/453))
+- Replace URL_SAFE with URL_SAFE_NO_PAD for audit_id ([#446](https://github.com/openstack-experimental/keystone/pull/446))
+- *(deps)* bump uuid from 1.18.1 to 1.19.0 ([#429](https://github.com/openstack-experimental/keystone/pull/429))
+- Add federation functest with DexIDP ([#424](https://github.com/openstack-experimental/keystone/pull/424))
+- Expand code documentation ([#422](https://github.com/openstack-experimental/keystone/pull/422))
+- Remove unnecessary content from rust package ([#418](https://github.com/openstack-experimental/keystone/pull/418))
+
 ## [0.1.1](https://github.com/openstack-experimental/keystone/compare/v0.1.0...v0.1.1) - 2025-12-02
 
 ### Added
