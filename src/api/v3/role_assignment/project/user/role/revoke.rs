@@ -12,7 +12,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! Project user role: delete
+//! Project user role: delete.
 
 use axum::{
     extract::{Path, Request, State},
