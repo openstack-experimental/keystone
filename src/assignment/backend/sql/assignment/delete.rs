@@ -47,7 +47,7 @@ pub async fn delete(
         }
         AssignmentType::GroupSystem | AssignmentType::UserSystem => {
             let pk = (
-                grant.r#type.to_string(), // This might need to be different too
+                grant.r#type.to_string(),
                 grant.actor_id.clone(),
                 grant.target_id.clone(),
                 grant.role_id.clone(),
@@ -71,7 +71,6 @@ pub async fn delete(
 
     Ok(())
 }
-
 #[cfg(test)]
 mod tests {
     use sea_orm::{DatabaseBackend, MockDatabase, MockExecResult, Transaction};
@@ -80,11 +79,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_delete_user_project_success() {
-        // Create MockDatabase with mock query results
         let db = MockDatabase::new(DatabaseBackend::Postgres)
             .append_exec_results([MockExecResult {
                 last_insert_id: 0,
-                rows_affected: 1, // 1 row deleted
+                rows_affected: 1,
             }])
             .into_connection();
 
@@ -98,20 +96,19 @@ mod tests {
             implied_via: None,
         };
 
-        // Should succeed
         delete(&db, grant).await.unwrap();
 
-        // Verify SQL was executed correctly
+        // Update expected SQL to match delete_by_id order
         assert_eq!(
             db.into_transaction_log(),
             [Transaction::from_sql_and_values(
                 DatabaseBackend::Postgres,
-                r#"DELETE FROM "assignment" WHERE "assignment"."role_id" = $1 AND "assignment"."target_id" = $2 AND "assignment"."actor_id" = $3 AND "assignment"."type" = (CAST($4 AS "type")) AND "assignment"."inherited" = $5"#,
+                r#"DELETE FROM "assignment" WHERE "assignment"."type" = (CAST($1 AS "type")) AND "assignment"."actor_id" = $2 AND "assignment"."target_id" = $3 AND "assignment"."role_id" = $4 AND "assignment"."inherited" = $5"#,
                 [
-                    "role_id".into(),
-                    "target_id".into(),
+                    "UserProject".into(), // type first
                     "actor_id".into(),
-                    "UserProject".into(),
+                    "target_id".into(),
+                    "role_id".into(),
                     false.into(),
                 ]
             ),]
@@ -143,12 +140,12 @@ mod tests {
             db.into_transaction_log(),
             [Transaction::from_sql_and_values(
                 DatabaseBackend::Postgres,
-                r#"DELETE FROM "assignment" WHERE "assignment"."role_id" = $1 AND "assignment"."target_id" = $2 AND "assignment"."actor_id" = $3 AND "assignment"."type" = (CAST($4 AS "type")) AND "assignment"."inherited" = $5"#,
+                r#"DELETE FROM "assignment" WHERE "assignment"."type" = (CAST($1 AS "type")) AND "assignment"."actor_id" = $2 AND "assignment"."target_id" = $3 AND "assignment"."role_id" = $4 AND "assignment"."inherited" = $5"#,
                 [
-                    "role_id".into(),
-                    "project_id".into(),
-                    "group_id".into(),
                     "GroupProject".into(),
+                    "group_id".into(),
+                    "project_id".into(),
+                    "role_id".into(),
                     false.into(),
                 ]
             ),]
@@ -180,12 +177,12 @@ mod tests {
             db.into_transaction_log(),
             [Transaction::from_sql_and_values(
                 DatabaseBackend::Postgres,
-                r#"DELETE FROM "assignment" WHERE "assignment"."role_id" = $1 AND "assignment"."target_id" = $2 AND "assignment"."actor_id" = $3 AND "assignment"."type" = (CAST($4 AS "type")) AND "assignment"."inherited" = $5"#,
+                r#"DELETE FROM "assignment" WHERE "assignment"."type" = (CAST($1 AS "type")) AND "assignment"."actor_id" = $2 AND "assignment"."target_id" = $3 AND "assignment"."role_id" = $4 AND "assignment"."inherited" = $5"#,
                 [
-                    "role_id".into(),
-                    "domain_id".into(),
-                    "user_id".into(),
                     "UserDomain".into(),
+                    "user_id".into(),
+                    "domain_id".into(),
+                    "role_id".into(),
                     false.into(),
                 ]
             ),]
@@ -217,12 +214,12 @@ mod tests {
             db.into_transaction_log(),
             [Transaction::from_sql_and_values(
                 DatabaseBackend::Postgres,
-                r#"DELETE FROM "system_assignment" WHERE "system_assignment"."role_id" = $1 AND "system_assignment"."target_id" = $2 AND "system_assignment"."actor_id" = $3 AND "system_assignment"."type" = $4 AND "system_assignment"."inherited" = $5"#,
+                r#"DELETE FROM "system_assignment" WHERE "system_assignment"."type" = $1 AND "system_assignment"."actor_id" = $2 AND "system_assignment"."target_id" = $3 AND "system_assignment"."role_id" = $4 AND "system_assignment"."inherited" = $5"#,
                 [
-                    "role_id".into(),
-                    "system".into(),
-                    "user_id".into(),
                     "UserSystem".into(),
+                    "user_id".into(),
+                    "system".into(),
+                    "role_id".into(),
                     false.into(),
                 ]
             ),]
@@ -254,12 +251,12 @@ mod tests {
             db.into_transaction_log(),
             [Transaction::from_sql_and_values(
                 DatabaseBackend::Postgres,
-                r#"DELETE FROM "system_assignment" WHERE "system_assignment"."role_id" = $1 AND "system_assignment"."target_id" = $2 AND "system_assignment"."actor_id" = $3 AND "system_assignment"."type" = $4 AND "system_assignment"."inherited" = $5"#,
+                r#"DELETE FROM "system_assignment" WHERE "system_assignment"."type" = $1 AND "system_assignment"."actor_id" = $2 AND "system_assignment"."target_id" = $3 AND "system_assignment"."role_id" = $4 AND "system_assignment"."inherited" = $5"#,
                 [
-                    "role_id".into(),
-                    "system".into(),
-                    "group_id".into(),
                     "GroupSystem".into(),
+                    "group_id".into(),
+                    "system".into(),
+                    "role_id".into(),
                     false.into(),
                 ]
             ),]
@@ -268,11 +265,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_delete_inherited_assignment_success() {
-        // Inherited assignments CAN now be deleted (if they exist in DB)
         let db = MockDatabase::new(DatabaseBackend::Postgres)
             .append_exec_results([MockExecResult {
                 last_insert_id: 0,
-                rows_affected: 1, // ← 1 row deleted
+                rows_affected: 1,
             }])
             .into_connection();
 
@@ -281,26 +277,24 @@ mod tests {
             actor_id: "user_id".into(),
             target_id: "project_id".into(),
             r#type: AssignmentType::UserProject,
-            inherited: true, // ← Inherited assignment
+            inherited: true,
             role_name: None,
             implied_via: None,
         };
 
-        // Should succeed
         delete(&db, grant).await.unwrap();
 
-        // Verify correct SQL with inherited=true
         assert_eq!(
             db.into_transaction_log(),
             [Transaction::from_sql_and_values(
                 DatabaseBackend::Postgres,
-                r#"DELETE FROM "assignment" WHERE "assignment"."role_id" = $1 AND "assignment"."target_id" = $2 AND "assignment"."actor_id" = $3 AND "assignment"."type" = (CAST($4 AS "type")) AND "assignment"."inherited" = $5"#,
+                r#"DELETE FROM "assignment" WHERE "assignment"."type" = (CAST($1 AS "type")) AND "assignment"."actor_id" = $2 AND "assignment"."target_id" = $3 AND "assignment"."role_id" = $4 AND "assignment"."inherited" = $5"#,
                 [
-                    "role_id".into(),
-                    "project_id".into(),
-                    "user_id".into(),
                     "UserProject".into(),
-                    true.into(), // ← inherited=true
+                    "user_id".into(),
+                    "project_id".into(),
+                    "role_id".into(),
+                    true.into(),
                 ]
             ),]
         );
@@ -308,11 +302,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_delete_not_found_returns_error() {
-        // Deleting non-existent grant should return AssignmentNotFound error
         let db = MockDatabase::new(DatabaseBackend::Postgres)
             .append_exec_results([MockExecResult {
                 last_insert_id: 0,
-                rows_affected: 0, // ← 0 rows deleted
+                rows_affected: 0,
             }])
             .into_connection();
 
@@ -326,12 +319,10 @@ mod tests {
             implied_via: None,
         };
 
-        // Should return error
         let result = delete(&db, grant).await;
 
         assert!(result.is_err());
 
-        // Verify it's the correct error type
         match result {
             Err(AssignmentDatabaseError::AssignmentNotFound(msg)) => {
                 assert!(msg.contains("nonexistent_role"));
@@ -341,17 +332,16 @@ mod tests {
             _ => panic!("Expected AssignmentNotFound error, got: {:?}", result),
         }
 
-        // Verify SQL was still executed
         assert_eq!(
             db.into_transaction_log(),
             [Transaction::from_sql_and_values(
                 DatabaseBackend::Postgres,
-                r#"DELETE FROM "assignment" WHERE "assignment"."role_id" = $1 AND "assignment"."target_id" = $2 AND "assignment"."actor_id" = $3 AND "assignment"."type" = (CAST($4 AS "type")) AND "assignment"."inherited" = $5"#,
+                r#"DELETE FROM "assignment" WHERE "assignment"."type" = (CAST($1 AS "type")) AND "assignment"."actor_id" = $2 AND "assignment"."target_id" = $3 AND "assignment"."role_id" = $4 AND "assignment"."inherited" = $5"#,
                 [
-                    "nonexistent_role".into(),
-                    "project_id".into(),
-                    "user_id".into(),
                     "UserProject".into(),
+                    "user_id".into(),
+                    "project_id".into(),
+                    "nonexistent_role".into(),
                     false.into(),
                 ]
             ),]
