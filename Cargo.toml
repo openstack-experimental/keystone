@@ -55,7 +55,7 @@ nix = { version = "0.31", default-features = false, features = ["fs", "user"] }
 openidconnect = { version = "4.0" }
 rand = { version = "0.9" }
 regex = { version = "1.12" }
-reqwest = { version = "0.12", features = ["json", "http2", "gzip", "deflate"] }
+reqwest = { version = "0.13", features = ["json", "http2", "gzip", "deflate"] }
 rmp = { version = "0.8" }
 schemars = { version = "1.2" }
 scopeguard = "1.2.0"
@@ -93,7 +93,7 @@ hyper = { version = "1.8", features = ["http1"] }
 hyper-util = { version = "0.1", features = ["tokio", "http1"] }
 keycloak = { version = "26.4" }
 mockall = { version = "0.14" }
-reqwest = { version = "0.12", features = ["json", "multipart"] }
+reqwest = { version = "0.13", features = ["json", "multipart"] }
 rstest = "0.26"
 sea-orm = { version = "1.1", features = ["mock", "sqlx-sqlite" ]}
 serde_urlencoded = { version = "0.7" }
