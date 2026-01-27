@@ -21,6 +21,10 @@ use crate::resource::error::ResourceProviderError;
 /// Assignment provider error.
 #[derive(Error, Debug)]
 pub enum AssignmentProviderError {
+    /// Assignment not found.
+    #[error("assignment not found: {0}")]
+    AssignmentNotFound(String),
+
     /// Assignment provider error.
     #[error(transparent)]
     Backend { source: AssignmentDatabaseError },
@@ -71,6 +75,9 @@ pub enum AssignmentProviderError {
 impl From<AssignmentDatabaseError> for AssignmentProviderError {
     fn from(source: AssignmentDatabaseError) -> Self {
         match source {
+            AssignmentDatabaseError::AssignmentNotFound(msg) => {
+                AssignmentProviderError::AssignmentNotFound(msg)
+            }
             AssignmentDatabaseError::Database { source } => match source {
                 cfl @ crate::error::DatabaseError::Conflict { .. } => {
                     Self::Conflict(cfl.to_string())

@@ -63,5 +63,11 @@ mock! {
             state: &ServiceState,
             params: &RoleAssignmentListParameters,
         ) -> Result<Vec<Assignment>, AssignmentProviderError>;
+
+        async fn revoke_grant(
+            &self,
+            state: &ServiceState,
+            params: Assignment,
+        ) -> Result<(), AssignmentProviderError>;
     }
 }

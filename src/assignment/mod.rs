@@ -230,4 +230,14 @@ impl AssignmentApi for AssignmentProvider {
             .list_assignments_for_multiple_actors_and_targets(state, &request.build()?)
             .await
     }
+
+    /// Revoke grant
+    #[tracing::instrument(level = "info", skip(self, state))]
+    async fn revoke_grant(
+        &self,
+        state: &ServiceState,
+        grant: Assignment,
+    ) -> Result<(), AssignmentProviderError> {
+        self.backend_driver.revoke_grant(state, grant).await
+    }
 }
