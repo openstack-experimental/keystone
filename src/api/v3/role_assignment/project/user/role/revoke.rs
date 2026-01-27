@@ -57,7 +57,7 @@ use crate::{
     tag="role_assignments"
 )]
 #[tracing::instrument(
-    name = "api::v3:project_user_role_revoke",
+    name = "api::v3::project_user_role_revoke",
     level = "debug",
     skip(state, user_auth, policy),
     err(Debug)

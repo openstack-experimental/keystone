@@ -25,7 +25,7 @@ pub enum AssignmentProviderError {
     #[error("assignment not found: {0}")]
     AssignmentNotFound(String),
 
-    /// Assignment provider error
+    /// Assignment provider error.
     #[error(transparent)]
     Backend { source: AssignmentDatabaseError },
 

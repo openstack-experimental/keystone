@@ -13,6 +13,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 mod list;
+mod revoke;
 
 use eyre::Report;
 use sea_orm::{DbConn, entity::*};
