@@ -25,6 +25,7 @@ use crate::error::DbContextExt;
 use crate::identity::backend::sql::IdentityDatabaseError;
 
 /// Remove the user from the group.
+#[tracing::instrument(skip_all)]
 pub async fn remove_user_from_group<U: AsRef<str>, G: AsRef<str>>(
     db: &DatabaseConnection,
     user_id: U,
@@ -39,6 +40,7 @@ pub async fn remove_user_from_group<U: AsRef<str>, G: AsRef<str>>(
 }
 
 /// Remove the user from multiple groups.
+#[tracing::instrument(skip_all)]
 pub async fn remove_user_from_groups<I, U, G>(
     db: &DatabaseConnection,
     user_id: U,
@@ -66,6 +68,7 @@ where
 }
 
 /// Remove the user from the group with expiration.
+#[tracing::instrument(skip_all)]
 pub async fn remove_user_from_group_expiring<U: AsRef<str>, G: AsRef<str>, IDP: AsRef<str>>(
     db: &DatabaseConnection,
     user_id: U,
@@ -85,6 +88,7 @@ pub async fn remove_user_from_group_expiring<U: AsRef<str>, G: AsRef<str>, IDP: 
 }
 
 /// Remove the user from multiple groups.
+#[tracing::instrument(skip_all)]
 pub async fn remove_user_from_groups_expiring<I, U, G, IDP>(
     db: &DatabaseConnection,
     user_id: U,

@@ -73,6 +73,13 @@ pub trait IdentityBackend: Send + Sync {
         group: GroupCreate,
     ) -> Result<Group, IdentityProviderError>;
 
+    /// Create service account.
+    async fn create_service_account(
+        &self,
+        state: &ServiceState,
+        sa: ServiceAccountCreate,
+    ) -> Result<ServiceAccount, IdentityProviderError>;
+
     /// Create user.
     async fn create_user(
         &self,
@@ -100,6 +107,13 @@ pub trait IdentityBackend: Send + Sync {
         state: &ServiceState,
         group_id: &'a str,
     ) -> Result<Option<Group>, IdentityProviderError>;
+
+    /// Get single service account by ID.
+    async fn get_service_account<'a>(
+        &self,
+        state: &ServiceState,
+        user_id: &'a str,
+    ) -> Result<Option<ServiceAccount>, IdentityProviderError>;
 
     /// Get single user by ID.
     async fn get_user<'a>(

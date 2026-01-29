@@ -19,6 +19,7 @@ use crate::db::entity::local_user as db_local_user;
 use crate::error::DbContextExt;
 use crate::identity::backend::sql::IdentityDatabaseError;
 
+#[tracing::instrument(skip_all)]
 pub async fn reset_failed_auth(
     db: &DatabaseConnection,
     user: &db_local_user::Model,

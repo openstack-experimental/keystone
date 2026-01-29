@@ -15,6 +15,12 @@
 use crate::db::entity::nonlocal_user as db_nonlocal_user;
 use crate::identity::types::UserResponseBuilder;
 
+mod create;
+mod get;
+
+pub use create::create;
+pub use get::*;
+
 impl UserResponseBuilder {
     pub fn merge_nonlocal_user_data(&mut self, data: &db_nonlocal_user::Model) -> &mut Self {
         self.name(data.name.clone());

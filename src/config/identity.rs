@@ -77,6 +77,9 @@ fn default_user_options_mapping() -> HashMap<String, String> {
         ("1001".into(), "ignore_password_expiry".into()),
         ("1002".into(), "ignore_lockout_failure_attempts".into()),
         ("1003".into(), "lock_password".into()),
+        ("1004".into(), "ignore_user_inactivity".into()),
+        ("MFAR".into(), "multi_factor_auth_rules".into()),
+        ("MFAE".into(), "multi_factor_auth_rules".into()),
     ])
 }
 

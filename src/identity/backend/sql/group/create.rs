@@ -21,6 +21,7 @@ use crate::error::DbContextExt;
 use crate::identity::backend::sql::IdentityDatabaseError;
 use crate::identity::types::{Group, GroupCreate};
 
+#[tracing::instrument(skip_all)]
 pub async fn create(
     db: &DatabaseConnection,
     group: GroupCreate,

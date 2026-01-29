@@ -22,6 +22,7 @@ use crate::error::DbContextExt;
 use crate::identity::backend::sql::IdentityDatabaseError;
 
 /// Reset the `user.last_active_at` to the current date.
+#[tracing::instrument(skip_all)]
 pub async fn reset_last_active(
     db: &DatabaseConnection,
     user: &db_user::Model,
@@ -58,7 +59,7 @@ mod tests {
             db.into_transaction_log(),
             [Transaction::from_sql_and_values(
                 DatabaseBackend::Postgres,
-                r#"UPDATE "user" SET "last_active_at" = $1 WHERE "user"."id" = $2 RETURNING "id", "extra", "enabled", "default_project_id", "created_at", "last_active_at", "domain_id""#,
+                r#"UPDATE "user" SET "last_active_at" = $1 WHERE "user"."id" = $2 RETURNING "created_at", "default_project_id", "domain_id", "enabled", "extra", "id", "last_active_at""#,
                 [Utc::now().date_naive().into(), "user_id".into()]
             ),]
         );

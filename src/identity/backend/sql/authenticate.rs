@@ -437,12 +437,12 @@ mod tests {
                 ),
                 Transaction::from_sql_and_values(
                     DatabaseBackend::Postgres,
-                    r#"SELECT "user"."id", "user"."extra", "user"."enabled", "user"."default_project_id", "user"."created_at", "user"."last_active_at", "user"."domain_id" FROM "user" WHERE "user"."id" = $1 LIMIT $2"#,
+                    r#"SELECT "user"."created_at", "user"."default_project_id", "user"."domain_id", "user"."enabled", "user"."extra", "user"."id", "user"."last_active_at" FROM "user" WHERE "user"."id" = $1 LIMIT $2"#,
                     ["user_id".into(), 1u64.into()]
                 ),
                 Transaction::from_sql_and_values(
                     DatabaseBackend::Postgres,
-                    r#"UPDATE "user" SET "last_active_at" = $1 WHERE "user"."id" = $2 RETURNING "id", "extra", "enabled", "default_project_id", "created_at", "last_active_at", "domain_id""#,
+                    r#"UPDATE "user" SET "last_active_at" = $1 WHERE "user"."id" = $2 RETURNING "created_at", "default_project_id", "domain_id", "enabled", "extra", "id", "last_active_at""#,
                     [Utc::now().date_naive().into(), "user_id".into()]
                 ),
             ]

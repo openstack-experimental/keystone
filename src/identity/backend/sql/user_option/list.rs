@@ -21,6 +21,7 @@ use crate::error::DbContextExt;
 use crate::identity::backend::sql::IdentityDatabaseError;
 use crate::identity::types::UserOptions;
 
+#[tracing::instrument(skip_all)]
 pub async fn list_by_user_id<S: AsRef<str>>(
     db: &DatabaseConnection,
     user_id: S,

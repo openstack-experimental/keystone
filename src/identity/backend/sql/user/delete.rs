@@ -19,6 +19,7 @@ use crate::db::entity::prelude::User as DbUser;
 use crate::error::DbContextExt;
 use crate::identity::backend::sql::IdentityDatabaseError;
 
+#[tracing::instrument(skip_all)]
 pub async fn delete<U: AsRef<str>>(
     db: &DatabaseConnection,
     user_id: U,

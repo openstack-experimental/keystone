@@ -21,8 +21,10 @@ use sea_orm::entity::prelude::*;
 pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
     pub domain_id: String,
+
     #[sea_orm(primary_key, auto_increment = false)]
     pub name: String,
+
     #[sea_orm(unique)]
     pub user_id: String,
 }

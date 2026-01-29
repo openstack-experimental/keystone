@@ -16,7 +16,7 @@ use sea_orm::DatabaseConnection;
 use sea_orm::entity::*;
 use sea_orm::query::*;
 
-use crate::db::entity::{local_user, prelude::LocalUser};
+use crate::db::entity::{nonlocal_user, prelude::NonlocalUser};
 use crate::error::DbContextExt;
 use crate::identity::backend::sql::IdentityDatabaseError;
 
@@ -26,24 +26,23 @@ pub async fn get_by_name_and_domain<N: AsRef<str>, D: AsRef<str>>(
     db: &DatabaseConnection,
     name: N,
     domain_id: D,
-) -> Result<Option<local_user::Model>, IdentityDatabaseError> {
-    Ok(LocalUser::find()
-        .filter(local_user::Column::Name.eq(name.as_ref()))
-        .filter(local_user::Column::DomainId.eq(domain_id.as_ref()))
+) -> Result<Option<nonlocal_user::Model>, IdentityDatabaseError> {
+    Ok(NonlocalUser::find()
+        .filter(nonlocal_user::Column::Name.eq(name.as_ref()))
+        .filter(nonlocal_user::Column::DomainId.eq(domain_id.as_ref()))
         .one(db)
         .await
-        .context("searching user by name and domain")?)
+        .context("searching nonlocal user by name and domain")?)
 }
 
-#[allow(unused)]
 #[tracing::instrument(skip_all)]
 pub async fn get_by_user_id<U: AsRef<str>>(
     db: &DatabaseConnection,
     user_id: U,
-) -> Result<Option<local_user::Model>, IdentityDatabaseError> {
-    Ok(LocalUser::find()
-        .filter(local_user::Column::UserId.eq(user_id.as_ref()))
+) -> Result<Option<nonlocal_user::Model>, IdentityDatabaseError> {
+    Ok(NonlocalUser::find()
+        .filter(nonlocal_user::Column::UserId.eq(user_id.as_ref()))
         .one(db)
         .await
-        .context("fetching the user by ID")?)
+        .context("fetching the nonlocal user by ID")?)
 }

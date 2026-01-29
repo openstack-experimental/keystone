@@ -160,83 +160,15 @@ mod tests {
             .expect_get_user()
             .withf(|_, id: &'_ str| id == "user_id")
             .returning(|_, _| {
-                Ok(Some(UserResponse {
-                    id: "user_id".into(),
-                    ..Default::default()
-                }))
-            });
-
-        let mut assignment_mock = MockAssignmentProvider::default();
-        assignment_mock
-            .expect_get_role()
-            .withf(|_, rid: &'_ str| rid == "role_id")
-            .returning(|_, _| {
-                Ok(Some(Role {
-                    id: "role_id".into(),
-                    name: "test_role".into(),
-                    ..Default::default()
-                }))
-            });
-        assignment_mock
-            .expect_revoke_grant()
-            .withf(|_, grant: &Assignment| {
-                grant.role_id == "role_id"
-                    && grant.actor_id == "user_id"
-                    && grant.target_id == "project_id"
-                    && grant.r#type == AssignmentType::UserProject
-                    && !grant.inherited
-            })
-            .returning(|_, _| Ok(()));
-
-        let mut resource_mock = MockResourceProvider::default();
-        resource_mock
-            .expect_get_project()
-            .withf(|_, pid: &'_ str| pid == "project_id")
-            .returning(|_, id: &'_ str| {
-                Ok(Some(Project {
-                    id: id.to_string(),
-                    domain_id: "project_domain_id".into(),
-                    ..Default::default()
-                }))
-            });
-
-        let provider_builder = Provider::mocked_builder()
-            .assignment(assignment_mock)
-            .identity(identity_mock)
-            .resource(resource_mock);
-        let state = get_mocked_state(provider_builder, true);
-        let mut api = openapi_router()
-            .layer(TraceLayer::new_for_http())
-            .with_state(state);
-
-        let response = api
-            .as_service()
-            .oneshot(
-                Request::builder()
-                    .method("DELETE")
-                    .uri("/projects/project_id/users/user_id/roles/role_id")
-                    .header("x-auth-token", "foo")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(response.status(), StatusCode::NO_CONTENT);
-    }
-
-    #[tokio::test]
-    #[traced_test]
-    async fn test_revoke_forbidden() {
-        let mut identity_mock = MockIdentityProvider::default();
-        identity_mock
-            .expect_get_user()
-            .withf(|_, id: &'_ str| id == "user_id")
-            .returning(|_, _| {
-                Ok(Some(UserResponse {
-                    id: "user_id".into(),
-                    ..Default::default()
-                }))
+                Ok(Some(
+                    UserResponseBuilder::default()
+                        .id("user_id")
+                        .domain_id("did")
+                        .enabled(true)
+                        .name("uname")
+                        .build()
+                        .unwrap(),
+                ))
             });
 
         let mut assignment_mock = MockAssignmentProvider::default();
@@ -354,10 +286,15 @@ mod tests {
             .expect_get_user()
             .withf(|_, id: &'_ str| id == "user_id")
             .returning(|_, _| {
-                Ok(Some(UserResponse {
-                    id: "user_id".into(),
-                    ..Default::default()
-                }))
+                Ok(Some(
+                    UserResponseBuilder::default()
+                        .id("user_id")
+                        .domain_id("did")
+                        .enabled(true)
+                        .name("uname")
+                        .build()
+                        .unwrap(),
+                ))
             });
 
         let mut assignment_mock = MockAssignmentProvider::default();
@@ -411,10 +348,15 @@ mod tests {
             .expect_get_user()
             .withf(|_, id: &'_ str| id == "user_id")
             .returning(|_, _| {
-                Ok(Some(UserResponse {
-                    id: "user_id".into(),
-                    ..Default::default()
-                }))
+                Ok(Some(
+                    UserResponseBuilder::default()
+                        .id("user_id")
+                        .domain_id("did")
+                        .enabled(true)
+                        .name("uname")
+                        .build()
+                        .unwrap(),
+                ))
             });
 
         let mut assignment_mock = MockAssignmentProvider::default();

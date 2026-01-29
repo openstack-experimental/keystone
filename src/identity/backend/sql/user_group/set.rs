@@ -34,6 +34,7 @@ use super::*;
 /// Add user to the groups it should be in and remove from the groups where the
 /// user is currently member of, but should not be. This is only incremental
 /// operation and is not deleting group membership where the user should stay.
+#[tracing::instrument(skip_all)]
 pub async fn set_user_groups<I, U, G>(
     db: &DatabaseConnection,
     user_id: U,
@@ -90,6 +91,7 @@ where
 /// Add user to the groups it should be in and remove from the groups where the
 /// user is currently member of, but should not be. This is only incremental
 /// operation and is not deleting group membership where the user should stay.
+#[tracing::instrument(skip_all)]
 pub async fn set_user_groups_expiring<I, U, G, IDP>(
     db: &DatabaseConnection,
     user_id: U,

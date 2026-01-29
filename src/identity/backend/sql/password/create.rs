@@ -20,6 +20,7 @@ use crate::db::entity::password;
 use crate::error::DbContextExt;
 use crate::identity::backend::sql::IdentityDatabaseError;
 
+#[tracing::instrument(skip_all)]
 pub async fn create<C: ConnectionTrait, S: AsRef<str>>(
     db: &C,
     local_user_id: i32,

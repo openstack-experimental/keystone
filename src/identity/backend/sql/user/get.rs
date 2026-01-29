@@ -28,6 +28,7 @@ use crate::identity::backend::sql::IdentityDatabaseError;
 use crate::identity::types::*;
 
 /// Get the `user` table entry by the `user_id`.
+#[tracing::instrument(skip_all)]
 pub async fn get_main_entry<U: AsRef<str>>(
     db: &DatabaseConnection,
     user_id: U,
@@ -38,6 +39,7 @@ pub async fn get_main_entry<U: AsRef<str>>(
         .context("fetching user by ID")?)
 }
 
+#[tracing::instrument(skip_all)]
 pub async fn get(
     conf: &Config,
     db: &DatabaseConnection,
@@ -101,6 +103,7 @@ pub async fn get(
 }
 
 /// Get the `domain_id` of the user specified by the `user_id`.
+#[tracing::instrument(skip_all)]
 pub async fn get_user_domain_id<U: AsRef<str>>(
     db: &DatabaseConnection,
     user_id: U,
@@ -145,7 +148,7 @@ mod tests {
             db.into_transaction_log(),
             [Transaction::from_sql_and_values(
                 DatabaseBackend::Postgres,
-                r#"SELECT "user"."id", "user"."extra", "user"."enabled", "user"."default_project_id", "user"."created_at", "user"."last_active_at", "user"."domain_id" FROM "user" WHERE "user"."id" = $1 LIMIT $2"#,
+                r#"SELECT "user"."created_at", "user"."default_project_id", "user"."domain_id", "user"."enabled", "user"."extra", "user"."id", "user"."last_active_at" FROM "user" WHERE "user"."id" = $1 LIMIT $2"#,
                 ["1".into(), 1u64.into()]
             ),]
         );
@@ -184,7 +187,10 @@ mod tests {
                     ignore_change_password_upon_first_use: Some(true),
                     ..Default::default()
                 },
-                ..Default::default()
+                default_project_id: None,
+                extra: None,
+                federated: None,
+                password_expires_at: None
             }
         );
 
@@ -194,7 +200,7 @@ mod tests {
             [
                 Transaction::from_sql_and_values(
                     DatabaseBackend::Postgres,
-                    r#"SELECT "user"."id", "user"."extra", "user"."enabled", "user"."default_project_id", "user"."created_at", "user"."last_active_at", "user"."domain_id" FROM "user" WHERE "user"."id" = $1 LIMIT $2"#,
+                    r#"SELECT "user"."created_at", "user"."default_project_id", "user"."domain_id", "user"."enabled", "user"."extra", "user"."id", "user"."last_active_at" FROM "user" WHERE "user"."id" = $1 LIMIT $2"#,
                     ["1".into(), 1u64.into()]
                 ),
                 Transaction::from_sql_and_values(

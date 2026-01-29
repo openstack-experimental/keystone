@@ -21,6 +21,7 @@ use crate::error::DbContextExt;
 use crate::identity::backend::sql::IdentityDatabaseError;
 use crate::identity::types::{Group, GroupListParameters};
 
+#[tracing::instrument(skip_all)]
 pub async fn list(
     db: &DatabaseConnection,
     params: &GroupListParameters,

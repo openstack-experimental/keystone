@@ -29,6 +29,7 @@ use crate::identity::types::Group;
 ///
 /// Selects all groups with the ID in the list of user group memberships and
 /// expiring group memberships.
+#[tracing::instrument(skip_all)]
 pub async fn list_user_groups<S: AsRef<str>>(
     db: &DatabaseConnection,
     user_id: S,

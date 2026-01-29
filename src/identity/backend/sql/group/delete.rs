@@ -19,6 +19,7 @@ use crate::db::entity::prelude::Group as DbGroup;
 use crate::error::DbContextExt;
 use crate::identity::backend::sql::IdentityDatabaseError;
 
+#[tracing::instrument(skip_all)]
 pub async fn delete<S: AsRef<str>>(
     db: &DatabaseConnection,
     group_id: S,

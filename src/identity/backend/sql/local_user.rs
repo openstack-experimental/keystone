@@ -12,14 +12,18 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::db::entity::local_user as db_local_user;
+use sea_orm::entity::*;
+
+use crate::db::entity::{local_user as db_local_user, user as db_user};
 use crate::identity::types::*;
+use crate::{config::Config, identity::backend::error::IdentityDatabaseError};
 
 mod create;
 mod get;
 mod load;
 mod set;
 
+pub use create::create;
 pub use load::load_local_user_with_passwords;
 pub use load::load_local_users_passwords;
 pub use set::reset_failed_auth;
@@ -28,6 +32,33 @@ impl UserResponseBuilder {
     pub fn merge_local_user_data(&mut self, data: &db_local_user::Model) -> &mut Self {
         self.name(data.name.clone());
         self
+    }
+}
+
+impl UserCreate {
+    /// Get `local_user::ActiveModel` from the `UserCreate` request.
+    pub(in super::super) fn to_local_user_active_model(
+        &self,
+        config: &Config,
+        main_record: &db_user::Model,
+    ) -> Result<db_local_user::ActiveModel, IdentityDatabaseError> {
+        Ok(db_local_user::ActiveModel {
+            id: NotSet,
+            user_id: Set(main_record.id.clone()),
+            domain_id: Set(main_record.domain_id.clone()),
+            name: Set(self.name.clone()),
+            failed_auth_count: if main_record.enabled.is_some_and(|x| x)
+                && config
+                    .security_compliance
+                    .disable_user_account_days_inactive
+                    .is_some()
+            {
+                Set(Some(0))
+            } else {
+                NotSet
+            },
+            failed_auth_at: NotSet,
+        })
     }
 }
 
@@ -78,4 +109,5 @@ pub(crate) mod tests {
             .map(|x| (lu.clone(), x.clone()))
             .collect()
     }
+    // TODO: implement test for `UserCreate::to_local_user_active_model`
 }

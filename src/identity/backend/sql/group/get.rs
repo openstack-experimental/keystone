@@ -20,6 +20,7 @@ use crate::error::DbContextExt;
 use crate::identity::backend::sql::IdentityDatabaseError;
 use crate::identity::types::Group;
 
+#[tracing::instrument(skip_all)]
 pub async fn get<S: AsRef<str>>(
     db: &DatabaseConnection,
     group_id: S,
