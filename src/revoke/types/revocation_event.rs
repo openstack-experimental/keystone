@@ -194,7 +194,7 @@ impl TryFrom<&Token> for RevocationEventCreate {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::identity::types::UserResponse;
+    use crate::identity::types::UserResponseBuilder;
     use crate::token::{ProjectScopePayload, TrustPayload};
     //use crate::resource::types::Domain;
     use crate::assignment::types::Role;
@@ -204,11 +204,15 @@ mod tests {
     fn test_list_for_project_scope_token() {
         let token = Token::ProjectScope(ProjectScopePayload {
             user_id: "user_id".into(),
-            user: Some(UserResponse {
-                id: "user_id".to_string(),
-                domain_id: "user_domain_id".into(),
-                ..Default::default()
-            }),
+            user: Some(
+                UserResponseBuilder::default()
+                    .id("user_id")
+                    .domain_id("user_domain_id")
+                    .enabled(true)
+                    .name("name")
+                    .build()
+                    .unwrap(),
+            ),
             methods: Vec::from(["password".to_string()]),
             project_id: "project_id".into(),
             audit_ids: vec!["Zm9vCg".into()],
@@ -298,11 +302,15 @@ mod tests {
     fn test_list_for_trust_token() {
         let token = Token::Trust(TrustPayload {
             user_id: "user_id".into(),
-            user: Some(UserResponse {
-                id: "user_id".to_string(),
-                domain_id: "user_domain_id".into(),
-                ..Default::default()
-            }),
+            user: Some(
+                UserResponseBuilder::default()
+                    .id("user_id")
+                    .domain_id("user_domain_id")
+                    .enabled(true)
+                    .name("name")
+                    .build()
+                    .unwrap(),
+            ),
             methods: Vec::from(["trust".to_string()]),
             project_id: "project_id".into(),
             audit_ids: vec!["Zm9vCg".into()],

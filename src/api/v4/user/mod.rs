@@ -196,7 +196,7 @@ mod tests {
     use crate::identity::{
         MockIdentityProvider,
         error::IdentityProviderError,
-        types::{Group, UserCreate, UserListParameters, UserResponse},
+        types::{Group, UserCreate, UserListParameters, UserResponseBuilder},
     };
 
     use crate::tests::api::{get_mocked_state, get_mocked_state_unauthed};
@@ -208,11 +208,15 @@ mod tests {
             .expect_list_users()
             .withf(|_, _: &UserListParameters| true)
             .returning(|_, _| {
-                Ok(vec![UserResponse {
-                    id: "1".into(),
-                    name: "2".into(),
-                    ..Default::default()
-                }])
+                Ok(vec![
+                    UserResponseBuilder::default()
+                        .id("1")
+                        .domain_id("did")
+                        .enabled(true)
+                        .name("2")
+                        .build()
+                        .unwrap(),
+                ])
             });
 
         let state = get_mocked_state(identity_mock);
@@ -240,7 +244,9 @@ mod tests {
         assert_eq!(
             vec![ApiUser {
                 id: "1".into(),
+                domain_id: "did".into(),
                 name: "2".into(),
+                enabled: true,
                 // object
                 extra: Some(json!({})),
                 ..Default::default()
@@ -311,12 +317,13 @@ mod tests {
             .expect_create_user()
             .withf(|_, req: &UserCreate| req.domain_id == "domain" && req.name == "name")
             .returning(|_, req| {
-                Ok(UserResponse {
-                    id: "bar".into(),
-                    domain_id: req.domain_id,
-                    name: req.name,
-                    ..Default::default()
-                })
+                Ok(UserResponseBuilder::default()
+                    .id("bar")
+                    .domain_id(req.domain_id.clone())
+                    .enabled(true)
+                    .name(req.name.clone())
+                    .build()
+                    .unwrap())
             });
 
         let state = get_mocked_state(identity_mock);
@@ -366,10 +373,15 @@ mod tests {
             .expect_get_user()
             .withf(|_, id: &'_ str| id == "bar")
             .returning(|_, _| {
-                Ok(Some(UserResponse {
-                    id: "bar".into(),
-                    ..Default::default()
-                }))
+                Ok(Some(
+                    UserResponseBuilder::default()
+                        .id("bar")
+                        .domain_id("did")
+                        .enabled(true)
+                        .name("foo")
+                        .build()
+                        .unwrap(),
+                ))
             });
 
         let state = get_mocked_state(identity_mock);
@@ -411,7 +423,10 @@ mod tests {
         assert_eq!(
             ApiUser {
                 id: "bar".into(),
+                domain_id: "did".into(),
+                enabled: true,
                 extra: Some(json!({})),
+                name: "foo".into(),
                 ..Default::default()
             },
             res.user,

@@ -22,6 +22,8 @@ mod group;
 mod local_user;
 mod nonlocal_user;
 mod password;
+mod service_account;
+mod types;
 mod user;
 mod user_group;
 mod user_option;
@@ -32,6 +34,7 @@ use crate::identity::IdentityProviderError;
 use crate::identity::backend::IdentityBackend;
 use crate::identity::backend::error::IdentityDatabaseError;
 use crate::keystone::ServiceState;
+use types::User;
 
 #[derive(Default)]
 pub struct SqlBackend {}
@@ -104,6 +107,16 @@ impl IdentityBackend for SqlBackend {
         Ok(group::create(&state.db, group).await?)
     }
 
+    /// Create service account.
+    #[tracing::instrument(level = "debug", skip(self, state))]
+    async fn create_service_account(
+        &self,
+        state: &ServiceState,
+        sa: ServiceAccountCreate,
+    ) -> Result<UserResponse, IdentityProviderError> {
+        Ok(user::create(&state.config, &state.db, sa.try_into()?).await?)
+    }
+
     /// Create user.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn create_user(
@@ -111,7 +124,8 @@ impl IdentityBackend for SqlBackend {
         state: &ServiceState,
         user: UserCreate,
     ) -> Result<UserResponse, IdentityProviderError> {
-        Ok(user::create(&state.config, &state.db, user).await?)
+        let internal_user = User::try_from(user)?;
+        Ok(user::create(&state.config, &state.db, internal_user).await?)
     }
 
     /// Delete group.

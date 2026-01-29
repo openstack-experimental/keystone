@@ -994,7 +994,7 @@ mod tests {
         types::{Assignment, AssignmentType, Role, RoleAssignmentListParameters},
     };
     use crate::config::Config;
-    use crate::identity::{MockIdentityProvider, types::UserResponse};
+    use crate::identity::{MockIdentityProvider, types::UserResponseBuilder};
     use crate::keystone::Service;
     use crate::provider::Provider;
     use crate::resource::{MockResourceProvider, types::Project};
@@ -1167,11 +1167,15 @@ mod tests {
             .expect_get_user()
             .withf(move |_, id: &'_ str| id == token_clone.user_id())
             .returning(|_, id: &'_ str| {
-                Ok(Some(UserResponse {
-                    id: id.to_string(),
-                    domain_id: "user_domain_id".into(),
-                    ..Default::default()
-                }))
+                Ok(Some(
+                    UserResponseBuilder::default()
+                        .domain_id("user_domain_id")
+                        .enabled(true)
+                        .name("name")
+                        .id(id)
+                        .build()
+                        .unwrap(),
+                ))
             });
         let mut resource_mock = MockResourceProvider::default();
         let token_clone2 = token.clone();

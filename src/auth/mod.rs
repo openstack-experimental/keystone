@@ -196,7 +196,7 @@ mod tests {
 
     use tracing_test::traced_test;
 
-    use crate::identity::types::UserResponse;
+    use crate::identity::types::{UserOptions, UserResponse};
 
     #[test]
     fn test_authn_validate_no_user() {
@@ -215,7 +215,13 @@ mod tests {
             .user(UserResponse {
                 id: "uid".to_string(),
                 enabled: false,
-                ..Default::default()
+                default_project_id: None,
+                domain_id: "did".into(),
+                extra: None,
+                name: "foo".into(),
+                options: UserOptions::default(),
+                federated: None,
+                password_expires_at: None,
             })
             .build()
             .unwrap();
@@ -234,7 +240,13 @@ mod tests {
             .user(UserResponse {
                 id: "uid2".to_string(),
                 enabled: false,
-                ..Default::default()
+                default_project_id: None,
+                domain_id: "did".into(),
+                extra: None,
+                name: "foo".into(),
+                options: UserOptions::default(),
+                federated: None,
+                password_expires_at: None,
             })
             .build()
             .unwrap();

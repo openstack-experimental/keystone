@@ -184,7 +184,10 @@ mod tests {
                     ignore_change_password_upon_first_use: Some(true),
                     ..Default::default()
                 },
-                ..Default::default()
+                default_project_id: None,
+                extra: None,
+                federated: None,
+                password_expires_at: None
             }
         );
 

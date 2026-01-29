@@ -52,11 +52,7 @@ pub use mock::MockIdentityProvider;
 use crate::auth::AuthenticatedInfo;
 use crate::config::Config;
 use crate::identity::backend::{IdentityBackend, sql::SqlBackend};
-use crate::identity::error::IdentityProviderError;
-use crate::identity::types::{
-    Group, GroupCreate, GroupListParameters, UserCreate, UserListParameters,
-    UserPasswordAuthRequest, UserResponse,
-};
+use crate::identity::{error::IdentityProviderError, types::*};
 use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManager;
 use crate::resource::{ResourceApi, error::ResourceProviderError};
@@ -192,6 +188,40 @@ impl IdentityApi for IdentityProvider {
 
         self.backend_driver
             .authenticate_by_password(state, &auth)
+            .await
+    }
+
+    /// Create group.
+    #[tracing::instrument(level = "info", skip(self, state))]
+    async fn create_group(
+        &self,
+        state: &ServiceState,
+        group: GroupCreate,
+    ) -> Result<Group, IdentityProviderError> {
+        let mut res = group;
+        if res.id.is_none() {
+            res.id = Some(Uuid::new_v4().simple().to_string());
+        }
+        self.backend_driver.create_group(state, res).await
+    }
+
+    /// Create service account.
+    #[tracing::instrument(level = "info", skip(self, state))]
+    async fn create_service_account(
+        &self,
+        state: &ServiceState,
+        sa: ServiceAccountCreate,
+    ) -> Result<UserResponse, IdentityProviderError> {
+        let mut mod_sa = sa;
+        if mod_sa.id.is_none() {
+            mod_sa.id = Some(Uuid::new_v4().simple().to_string());
+        }
+        if mod_sa.enabled.is_none() {
+            mod_sa.enabled = Some(true);
+        }
+        mod_sa.validate()?;
+        self.backend_driver
+            .create_service_account(state, mod_sa)
             .await
     }
 
@@ -333,20 +363,6 @@ impl IdentityApi for IdentityProvider {
         self.backend_driver.get_group(state, group_id).await
     }
 
-    /// Create group.
-    #[tracing::instrument(level = "info", skip(self, state))]
-    async fn create_group(
-        &self,
-        state: &ServiceState,
-        group: GroupCreate,
-    ) -> Result<Group, IdentityProviderError> {
-        let mut res = group;
-        if res.id.is_none() {
-            res.id = Some(Uuid::new_v4().simple().to_string());
-        }
-        self.backend_driver.create_group(state, res).await
-    }
-
     /// List groups a user is a member of.
     #[tracing::instrument(level = "info", skip(self, state))]
     async fn list_groups_of_user<'a>(
@@ -439,7 +455,7 @@ impl IdentityApi for IdentityProvider {
 #[cfg(test)]
 mod tests {
     use super::backend::MockIdentityBackend;
-    use super::types::user::UserCreateBuilder;
+    use super::types::user::{UserCreateBuilder, UserResponseBuilder};
     use super::*;
     use crate::tests::get_state_mock;
 
@@ -447,9 +463,15 @@ mod tests {
     async fn test_create_user() {
         let state = get_state_mock();
         let mut backend = MockIdentityBackend::default();
-        backend
-            .expect_create_user()
-            .returning(|_, _| Ok(UserResponse::default()));
+        backend.expect_create_user().returning(|_, _| {
+            Ok(UserResponseBuilder::default()
+                .id("id")
+                .domain_id("domain_id")
+                .enabled(true)
+                .name("name")
+                .build()
+                .unwrap())
+        });
         let provider = IdentityProvider::from_driver(backend);
 
         assert_eq!(
@@ -464,7 +486,13 @@ mod tests {
                 )
                 .await
                 .unwrap(),
-            UserResponse::default()
+            UserResponseBuilder::default()
+                .domain_id("domain_id")
+                .enabled(true)
+                .id("id")
+                .name("name")
+                .build()
+                .unwrap()
         );
     }
 
@@ -475,7 +503,17 @@ mod tests {
         backend
             .expect_get_user()
             .withf(|_, uid: &'_ str| uid == "uid")
-            .returning(|_, _| Ok(Some(UserResponse::default())));
+            .returning(|_, _| {
+                Ok(Some(
+                    UserResponseBuilder::default()
+                        .id("id")
+                        .domain_id("domain_id")
+                        .enabled(true)
+                        .name("name")
+                        .build()
+                        .unwrap(),
+                ))
+            });
         let provider = IdentityProvider::from_driver(backend);
 
         assert_eq!(
@@ -484,7 +522,13 @@ mod tests {
                 .await
                 .unwrap()
                 .expect("user should be there"),
-            UserResponse::default()
+            UserResponseBuilder::default()
+                .domain_id("domain_id")
+                .enabled(true)
+                .id("id")
+                .name("name")
+                .build()
+                .unwrap(),
         );
     }
 

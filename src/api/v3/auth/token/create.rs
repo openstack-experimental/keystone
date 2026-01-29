@@ -120,7 +120,7 @@ mod tests {
     use crate::config::Config;
     use crate::identity::{
         MockIdentityProvider,
-        types::{UserPasswordAuthRequest, UserResponse},
+        types::{UserPasswordAuthRequest, UserResponseBuilder},
     };
     use crate::keystone::Service;
     use crate::policy::MockPolicyFactory;
@@ -170,12 +170,15 @@ mod tests {
             .returning(|_, _| {
                 Ok(AuthenticatedInfo::builder()
                     .user_id("uid")
-                    .user(UserResponse {
-                        id: "uid".to_string(),
-                        domain_id: "udid".into(),
-                        enabled: true,
-                        ..Default::default()
-                    })
+                    .user(
+                        UserResponseBuilder::default()
+                            .id("uid")
+                            .domain_id("udid")
+                            .enabled(true)
+                            .name("name")
+                            .build()
+                            .unwrap(),
+                    )
                     .build()
                     .unwrap())
             });
@@ -198,11 +201,15 @@ mod tests {
             Ok(ProviderToken::ProjectScope(ProjectScopePayload {
                 user_id: "bar".into(),
                 methods: Vec::from(["password".to_string()]),
-                user: Some(UserResponse {
-                    id: "uid".to_string(),
-                    domain_id: "user_domain_id".into(),
-                    ..Default::default()
-                }),
+                user: Some(
+                    UserResponseBuilder::default()
+                        .id("uid")
+                        .domain_id("user_domain_id")
+                        .enabled(true)
+                        .name("name")
+                        .build()
+                        .unwrap(),
+                ),
                 project_id: "pid".into(),
                 ..Default::default()
             }))
@@ -216,11 +223,15 @@ mod tests {
                 Ok(ProviderToken::ProjectScope(ProjectScopePayload {
                     user_id: "bar".into(),
                     methods: Vec::from(["password".to_string()]),
-                    user: Some(UserResponse {
-                        id: "uid".to_string(),
-                        domain_id: "user_domain_id".into(),
-                        ..Default::default()
-                    }),
+                    user: Some(
+                        UserResponseBuilder::default()
+                            .id("uid")
+                            .domain_id("user_domain_id")
+                            .enabled(true)
+                            .name("name")
+                            .build()
+                            .unwrap(),
+                    ),
                     project_id: "pid".into(),
                     project: Some(Project {
                         id: "pid".into(),
@@ -321,12 +332,15 @@ mod tests {
             .returning(|_, _| {
                 Ok(AuthenticatedInfo::builder()
                     .user_id("uid")
-                    .user(UserResponse {
-                        id: "uid".to_string(),
-                        domain_id: "udid".into(),
-                        enabled: true,
-                        ..Default::default()
-                    })
+                    .user(
+                        UserResponseBuilder::default()
+                            .id("uid")
+                            .domain_id("udid")
+                            .enabled(true)
+                            .name("name")
+                            .build()
+                            .unwrap(),
+                    )
                     .build()
                     .unwrap())
             });

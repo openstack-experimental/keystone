@@ -14,8 +14,10 @@
 
 pub mod group;
 pub mod provider_api;
+pub mod service_account;
 pub mod user;
 
 pub use group::*;
 pub use provider_api::IdentityApi;
+pub use service_account::*;
 pub use user::*;
