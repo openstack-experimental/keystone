@@ -36,7 +36,7 @@ mod tests {
 
     use crate::config::Config;
     use crate::federation::MockFederationProvider;
-    use crate::identity::types::UserResponse;
+    use crate::identity::types::UserResponseBuilder;
     use crate::keystone::{Service, ServiceState};
     use crate::policy::{MockPolicy, MockPolicyFactory, PolicyError, PolicyEvaluationResult};
     use crate::provider::Provider;
@@ -51,11 +51,15 @@ mod tests {
         token_mock.expect_validate_token().returning(|_, _, _, _| {
             Ok(Token::Unscoped(UnscopedPayload {
                 user_id: "bar".into(),
-                user: Some(UserResponse {
-                    id: "bar".into(),
-                    domain_id: "udid".into(),
-                    ..Default::default()
-                }),
+                user: Some(
+                    UserResponseBuilder::default()
+                        .id("bar")
+                        .domain_id("udid")
+                        .enabled(true)
+                        .name("name")
+                        .build()
+                        .unwrap(),
+                ),
                 ..Default::default()
             }))
         });

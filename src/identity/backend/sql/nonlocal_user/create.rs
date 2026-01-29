@@ -15,39 +15,25 @@
 use sea_orm::ConnectionTrait;
 use sea_orm::entity::*;
 
-use crate::config::Config;
-use crate::db::entity::{local_user, user};
+use crate::db::entity::{nonlocal_user, user};
 use crate::error::DbContextExt;
 use crate::identity::backend::sql::IdentityDatabaseError;
-use crate::identity::backend::sql::types::LocalUserData;
 
-pub async fn create<C>(
-    conf: &Config,
+pub async fn create<C, S>(
     db: &C,
     main_record: &user::Model,
-    local: &LocalUserData,
-) -> Result<local_user::Model, IdentityDatabaseError>
+    name: S,
+) -> Result<nonlocal_user::Model, IdentityDatabaseError>
 where
     C: ConnectionTrait,
+    S: Into<String>,
 {
-    Ok(local_user::ActiveModel {
-        id: NotSet,
+    Ok(nonlocal_user::ActiveModel {
         user_id: Set(main_record.id.clone()),
         domain_id: Set(main_record.domain_id.clone()),
-        name: Set(local.name.clone()),
-        failed_auth_count: if main_record.enabled.is_some_and(|x| x)
-            && conf
-                .security_compliance
-                .disable_user_account_days_inactive
-                .is_some()
-        {
-            Set(Some(0))
-        } else {
-            NotSet
-        },
-        failed_auth_at: NotSet,
+        name: Set(name.into()),
     }
     .insert(db)
     .await
-    .context("inserting new user record")?)
+    .context("inserting new nonlocal user record")?)
 }

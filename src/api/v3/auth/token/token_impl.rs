@@ -212,7 +212,7 @@ mod tests {
     use crate::assignment::types::Role as ProviderRole;
 
     use crate::config::Config;
-    use crate::identity::{MockIdentityProvider, types::UserResponse};
+    use crate::identity::{MockIdentityProvider, types::UserResponseBuilder};
     use crate::keystone::Service;
     use crate::policy::MockPolicyFactory;
     use crate::provider::Provider;
@@ -233,11 +233,15 @@ mod tests {
             .expect_get_user()
             .withf(|_, id: &'_ str| id == "bar")
             .returning(|_, _| {
-                Ok(Some(UserResponse {
-                    id: "bar".into(),
-                    domain_id: "user_domain_id".into(),
-                    ..Default::default()
-                }))
+                Ok(Some(
+                    UserResponseBuilder::default()
+                        .id("bar")
+                        .domain_id("user_domain_id")
+                        .enabled(true)
+                        .name("name")
+                        .build()
+                        .unwrap(),
+                ))
             });
 
         let mut resource_mock = MockResourceProvider::default();
@@ -288,11 +292,15 @@ mod tests {
             .expect_get_user()
             .withf(|_, id: &'_ str| id == "bar")
             .returning(|_, _| {
-                Ok(Some(UserResponse {
-                    id: "bar".into(),
-                    domain_id: "user_domain_id".into(),
-                    ..Default::default()
-                }))
+                Ok(Some(
+                    UserResponseBuilder::default()
+                        .id("bar")
+                        .domain_id("user_domain_id")
+                        .enabled(true)
+                        .name("name")
+                        .build()
+                        .unwrap(),
+                ))
             });
 
         let mut resource_mock = MockResourceProvider::default();
@@ -347,11 +355,15 @@ mod tests {
             .expect_get_user()
             .withf(|_, id: &'_ str| id == "bar")
             .returning(|_, _| {
-                Ok(Some(UserResponse {
-                    id: "bar".into(),
-                    domain_id: "user_domain_id".into(),
-                    ..Default::default()
-                }))
+                Ok(Some(
+                    UserResponseBuilder::default()
+                        .id("bar")
+                        .domain_id("user_domain_id")
+                        .enabled(true)
+                        .name("name")
+                        .build()
+                        .unwrap(),
+                ))
             });
 
         let mut resource_mock = MockResourceProvider::default();
@@ -423,11 +435,15 @@ mod tests {
             .expect_get_user()
             .withf(|_, id: &'_ str| id == "bar")
             .returning(|_, _| {
-                Ok(Some(UserResponse {
-                    id: "bar".into(),
-                    domain_id: "user_domain_id".into(),
-                    ..Default::default()
-                }))
+                Ok(Some(
+                    UserResponseBuilder::default()
+                        .id("bar")
+                        .domain_id("user_domain_id")
+                        .enabled(true)
+                        .name("name")
+                        .build()
+                        .unwrap(),
+                ))
             });
 
         let mut resource_mock = MockResourceProvider::default();

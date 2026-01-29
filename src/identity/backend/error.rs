@@ -82,6 +82,9 @@ pub enum IdentityDatabaseError {
         source: BuilderError,
     },
 
+    #[error("user id must be given")]
+    UserIdMissing,
+
     #[error("either user id or user name with user domain id or name must be given")]
     UserIdOrNameWithDomain,
 

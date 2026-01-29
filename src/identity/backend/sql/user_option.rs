@@ -16,6 +16,7 @@ use crate::db::entity::user_option;
 use crate::identity::error::IdentityProviderError;
 use crate::identity::types::*;
 
+mod create;
 mod list;
 
 pub use list::list_by_user_id;
@@ -37,11 +38,17 @@ impl FromIterator<user_option::Model> for UserOptions {
                 ("1003", Some(val)) => {
                     user_opts.lock_password = val.parse().ok();
                 }
+                ("1004", Some(val)) => {
+                    user_opts.ignore_user_inactivity = val.parse().ok();
+                }
                 ("MFAR", Some(val)) => {
                     user_opts.multi_factor_auth_rules = serde_json::from_str(val.as_ref()).ok();
                 }
                 ("MFAE", Some(val)) => {
                     user_opts.multi_factor_auth_enabled = val.parse().ok();
+                }
+                ("ISSA", Some(val)) => {
+                    user_opts.is_service_account = val.parse().ok();
                 }
                 _ => {}
             }
@@ -85,6 +92,13 @@ fn get_user_options_db_entries<U: Into<String>>(
             option_value: Some(val.to_string()),
         });
     }
+    if let Some(val) = &options.ignore_user_inactivity {
+        res.push(user_option::Model {
+            user_id: uid.clone(),
+            option_id: "1004".into(),
+            option_value: Some(val.to_string()),
+        });
+    }
     if let Some(val) = &options.multi_factor_auth_rules {
         res.push(user_option::Model {
             user_id: uid.clone(),
@@ -96,6 +110,13 @@ fn get_user_options_db_entries<U: Into<String>>(
         res.push(user_option::Model {
             user_id: uid.clone(),
             option_id: "MFAE".into(),
+            option_value: Some(val.to_string()),
+        });
+    }
+    if let Some(val) = &options.is_service_account {
+        res.push(user_option::Model {
+            user_id: uid.clone(),
+            option_id: "ISSA".into(),
             option_value: Some(val.to_string()),
         });
     }

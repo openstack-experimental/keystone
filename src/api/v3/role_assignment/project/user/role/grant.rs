@@ -149,10 +149,15 @@ mod tests {
             .expect_get_user()
             .withf(|_, id: &'_ str| id == "user_id")
             .returning(|_, _| {
-                Ok(Some(UserResponse {
-                    id: "user_id".into(),
-                    ..Default::default()
-                }))
+                Ok(Some(
+                    UserResponseBuilder::default()
+                        .id("user_id")
+                        .domain_id("user_domain_id")
+                        .enabled(true)
+                        .name("name")
+                        .build()
+                        .unwrap(),
+                ))
             });
         let mut assignment_mock = MockAssignmentProvider::default();
         assignment_mock
@@ -230,10 +235,15 @@ mod tests {
             .expect_get_user()
             .withf(|_, id: &'_ str| id == "user_id")
             .returning(|_, _| {
-                Ok(Some(UserResponse {
-                    id: "user_id".into(),
-                    ..Default::default()
-                }))
+                Ok(Some(
+                    UserResponseBuilder::default()
+                        .id("user_id")
+                        .domain_id("user_domain_id")
+                        .enabled(true)
+                        .name("name")
+                        .build()
+                        .unwrap(),
+                ))
             });
         let mut assignment_mock = MockAssignmentProvider::default();
         assignment_mock
@@ -346,10 +356,15 @@ mod tests {
             .expect_get_user()
             .withf(|_, id: &'_ str| id == "user_id")
             .returning(|_, _| {
-                Ok(Some(UserResponse {
-                    id: "user_id".into(),
-                    ..Default::default()
-                }))
+                Ok(Some(
+                    UserResponseBuilder::default()
+                        .id("user_id")
+                        .domain_id("user_domain_id")
+                        .enabled(true)
+                        .name("name")
+                        .build()
+                        .unwrap(),
+                ))
             });
         let mut assignment_mock = MockAssignmentProvider::default();
         assignment_mock
@@ -401,10 +416,15 @@ mod tests {
             .expect_get_user()
             .withf(|_, id: &'_ str| id == "user_id")
             .returning(|_, _| {
-                Ok(Some(UserResponse {
-                    id: "user_id".into(),
-                    ..Default::default()
-                }))
+                Ok(Some(
+                    UserResponseBuilder::default()
+                        .id("user_id")
+                        .domain_id("user_domain_id")
+                        .enabled(true)
+                        .name("name")
+                        .build()
+                        .unwrap(),
+                ))
             });
         let mut assignment_mock = MockAssignmentProvider::default();
         assignment_mock
