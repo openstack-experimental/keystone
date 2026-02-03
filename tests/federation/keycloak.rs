@@ -28,8 +28,8 @@ mod keycloak {
     pub mod utils;
 }
 
-use keycloak::utils::*;
-use keystone_utils::*;
+use crate::keycloak::utils::*;
+use crate::keystone_utils::*;
 
 use openstack_keystone::federation::api::types::*;
 
