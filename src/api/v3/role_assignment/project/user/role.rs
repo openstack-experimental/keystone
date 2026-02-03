@@ -18,7 +18,8 @@ use crate::keystone::ServiceState;
 
 mod check;
 mod grant;
+mod revoke;
 
 pub(crate) fn openapi_router() -> OpenApiRouter<ServiceState> {
-    OpenApiRouter::new().routes(routes!(check::check, grant::grant))
+    OpenApiRouter::new().routes(routes!(check::check, grant::grant, revoke::revoke))
 }

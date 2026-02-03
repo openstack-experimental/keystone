@@ -19,6 +19,10 @@ use crate::error::{BuilderError, DatabaseError};
 /// Database driver for the assignments provider.
 #[derive(Error, Debug)]
 pub enum AssignmentDatabaseError {
+    /// Assignment not found.
+    #[error("assignment not found: {0}")]
+    AssignmentNotFound(String),
+
     /// Database error.
     #[error(transparent)]
     Database {

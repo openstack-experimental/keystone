@@ -175,6 +175,10 @@ impl From<AuthenticationError> for KeystoneApiError {
 impl From<AssignmentProviderError> for KeystoneApiError {
     fn from(source: AssignmentProviderError) -> Self {
         match source {
+            AssignmentProviderError::AssignmentNotFound(x) => Self::NotFound {
+                resource: "assignment".into(),
+                identifier: x,
+            },
             AssignmentProviderError::RoleNotFound(x) => Self::NotFound {
                 resource: "role".into(),
                 identifier: x,
