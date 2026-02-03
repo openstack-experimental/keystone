@@ -19,12 +19,7 @@ use std::collections::HashSet;
 
 use crate::auth::AuthenticatedInfo;
 use crate::config::Config;
-use crate::identity::IdentityApi;
-use crate::identity::error::IdentityProviderError;
-use crate::identity::types::{
-    Group, GroupCreate, GroupListParameters, UserCreate, UserListParameters,
-    UserPasswordAuthRequest, UserResponse,
-};
+use crate::identity::{IdentityApi, error::IdentityProviderError, types::*};
 use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManager;
 
@@ -75,6 +70,12 @@ mock! {
             group: GroupCreate,
         ) -> Result<Group, IdentityProviderError>;
 
+        async fn create_service_account(
+            &self,
+            state: &ServiceState,
+            sa: ServiceAccountCreate,
+        ) -> Result<ServiceAccount, IdentityProviderError>;
+
         async fn create_user(
             &self,
             state: &ServiceState,
@@ -98,6 +99,13 @@ mock! {
             state: &ServiceState,
             group_id: &'a str,
         ) -> Result<Option<Group>, IdentityProviderError>;
+
+        /// Get single service account by ID.
+        async fn get_service_account<'a>(
+            &self,
+            state: &ServiceState,
+            user_id: &'a str,
+        ) -> Result<Option<ServiceAccount>, IdentityProviderError>;
 
         async fn get_user<'a>(
             &self,

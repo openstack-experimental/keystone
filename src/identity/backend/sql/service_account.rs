@@ -12,28 +12,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use sea_orm::ConnectionTrait;
-use sea_orm::entity::*;
+mod create;
+mod get;
 
-use crate::db::entity::federated_user;
-use crate::error::DbContextExt;
-use crate::identity::backend::sql::IdentityDatabaseError;
-
-#[tracing::instrument(skip_all)]
-pub async fn create<A, C>(
-    db: &C,
-    federation: A,
-) -> Result<federated_user::Model, IdentityDatabaseError>
-where
-    A: Into<federated_user::ActiveModel>,
-    C: ConnectionTrait,
-{
-    Ok(federation
-        .into()
-        .insert(db)
-        .await
-        .context("persisting federated user data")?)
-}
-
-#[cfg(test)]
-mod tests {}
+pub use create::create;
+pub use get::get;

@@ -22,6 +22,7 @@ mod group;
 mod local_user;
 mod nonlocal_user;
 mod password;
+mod service_account;
 mod user;
 mod user_group;
 mod user_option;
@@ -39,7 +40,7 @@ pub struct SqlBackend {}
 #[async_trait]
 impl IdentityBackend for SqlBackend {
     /// Add the user into the group.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(skip(self, state))]
     async fn add_user_to_group<'a>(
         &self,
         state: &ServiceState,
@@ -50,7 +51,7 @@ impl IdentityBackend for SqlBackend {
     }
 
     /// Add the user to the group with expiration.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(skip(self, state))]
     async fn add_user_to_group_expiring<'a>(
         &self,
         state: &ServiceState,
@@ -65,7 +66,7 @@ impl IdentityBackend for SqlBackend {
     }
 
     /// Add user group membership relations.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(skip(self, state))]
     async fn add_users_to_groups<'a>(
         &self,
         state: &ServiceState,
@@ -75,7 +76,7 @@ impl IdentityBackend for SqlBackend {
     }
 
     /// Add expiring user group membership relations.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(skip(self, state))]
     async fn add_users_to_groups_expiring<'a>(
         &self,
         state: &ServiceState,
@@ -95,7 +96,7 @@ impl IdentityBackend for SqlBackend {
     }
 
     /// Create group.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(skip(self, state))]
     async fn create_group(
         &self,
         state: &ServiceState,
@@ -104,8 +105,18 @@ impl IdentityBackend for SqlBackend {
         Ok(group::create(&state.db, group).await?)
     }
 
+    /// Create service account.
+    #[tracing::instrument(skip(self, state))]
+    async fn create_service_account(
+        &self,
+        state: &ServiceState,
+        sa: ServiceAccountCreate,
+    ) -> Result<ServiceAccount, IdentityProviderError> {
+        Ok(service_account::create(&state.config, &state.db, sa, None).await?)
+    }
+
     /// Create user.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(skip(self, state))]
     async fn create_user(
         &self,
         state: &ServiceState,
@@ -115,7 +126,7 @@ impl IdentityBackend for SqlBackend {
     }
 
     /// Delete group.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(skip(self, state))]
     async fn delete_group<'a>(
         &self,
         state: &ServiceState,
@@ -125,7 +136,7 @@ impl IdentityBackend for SqlBackend {
     }
 
     /// Delete user.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(skip(self, state))]
     async fn delete_user<'a>(
         &self,
         state: &ServiceState,
@@ -134,18 +145,8 @@ impl IdentityBackend for SqlBackend {
         Ok(user::delete(&state.db, user_id).await?)
     }
 
-    /// Fetch users from the database.
-    #[tracing::instrument(level = "debug", skip(self, state))]
-    async fn list_users(
-        &self,
-        state: &ServiceState,
-        params: &UserListParameters,
-    ) -> Result<Vec<UserResponse>, IdentityProviderError> {
-        Ok(user::list(&state.config, &state.db, params).await?)
-    }
-
     /// Get single group by ID.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(skip(self, state))]
     async fn get_group<'a>(
         &self,
         state: &ServiceState,
@@ -154,8 +155,18 @@ impl IdentityBackend for SqlBackend {
         Ok(group::get(&state.db, group_id).await?)
     }
 
+    /// Get single service account by ID.
+    #[tracing::instrument(skip(self, state))]
+    async fn get_service_account<'a>(
+        &self,
+        state: &ServiceState,
+        user_id: &'a str,
+    ) -> Result<Option<ServiceAccount>, IdentityProviderError> {
+        Ok(service_account::get(&state.config, &state.db, user_id).await?)
+    }
+
     /// Get single user by ID.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(skip(self, state))]
     async fn get_user<'a>(
         &self,
         state: &ServiceState,
@@ -174,7 +185,7 @@ impl IdentityBackend for SqlBackend {
     }
 
     /// Find federated user by IDP and Unique ID
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(skip(self, state))]
     async fn find_federated_user<'a>(
         &self,
         state: &ServiceState,
@@ -190,7 +201,7 @@ impl IdentityBackend for SqlBackend {
     }
 
     /// List groups
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(skip(self, state))]
     async fn list_groups(
         &self,
         state: &ServiceState,
@@ -200,7 +211,7 @@ impl IdentityBackend for SqlBackend {
     }
 
     /// List groups a user is member of.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(skip(self, state))]
     async fn list_groups_of_user<'a>(
         &self,
         state: &ServiceState,
@@ -217,8 +228,18 @@ impl IdentityBackend for SqlBackend {
         .await?)
     }
 
+    /// Fetch users from the database.
+    #[tracing::instrument(skip(self, state))]
+    async fn list_users(
+        &self,
+        state: &ServiceState,
+        params: &UserListParameters,
+    ) -> Result<Vec<UserResponse>, IdentityProviderError> {
+        Ok(user::list(&state.config, &state.db, params).await?)
+    }
+
     /// Remove the user from the group.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(skip(self, state))]
     async fn remove_user_from_group<'a>(
         &self,
         state: &ServiceState,
@@ -229,7 +250,7 @@ impl IdentityBackend for SqlBackend {
     }
 
     /// Remove the user from the group with expiration.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(skip(self, state))]
     async fn remove_user_from_group_expiring<'a>(
         &self,
         state: &ServiceState,
@@ -244,7 +265,7 @@ impl IdentityBackend for SqlBackend {
     }
 
     /// Remove the user from multiple groups.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(skip(self, state))]
     async fn remove_user_from_groups<'a>(
         &self,
         state: &ServiceState,
@@ -255,7 +276,7 @@ impl IdentityBackend for SqlBackend {
     }
 
     /// Remove the user from multiple expiring groups.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(skip(self, state))]
     async fn remove_user_from_groups_expiring<'a>(
         &self,
         state: &ServiceState,
@@ -270,7 +291,7 @@ impl IdentityBackend for SqlBackend {
     }
 
     /// Set group memberships of the user.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(skip(self, state))]
     async fn set_user_groups<'a>(
         &self,
         state: &ServiceState,
@@ -281,7 +302,7 @@ impl IdentityBackend for SqlBackend {
     }
 
     /// Set expiring group memberships for the user.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(skip(self, state))]
     async fn set_user_groups_expiring<'a>(
         &self,
         state: &ServiceState,

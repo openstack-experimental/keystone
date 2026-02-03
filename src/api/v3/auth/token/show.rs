@@ -140,7 +140,7 @@ mod tests {
     use crate::api::v3::auth::token::types::*;
     use crate::catalog::MockCatalogProvider;
     use crate::config::Config;
-    use crate::identity::{MockIdentityProvider, types::UserResponse};
+    use crate::identity::{MockIdentityProvider, types::UserResponseBuilder};
     use crate::keystone::Service;
     use crate::provider::Provider;
     use crate::resource::{MockResourceProvider, types::Domain};
@@ -155,11 +155,15 @@ mod tests {
     async fn test_get() {
         let mut identity_mock = MockIdentityProvider::default();
         identity_mock.expect_get_user().returning(|_, id: &'_ str| {
-            Ok(Some(UserResponse {
-                id: id.to_string(),
-                domain_id: "user_domain_id".into(),
-                ..Default::default()
-            }))
+            Ok(Some(
+                UserResponseBuilder::default()
+                    .id(id)
+                    .domain_id("user_domain_id")
+                    .enabled(true)
+                    .name("name")
+                    .build()
+                    .unwrap(),
+            ))
         });
 
         let mut resource_mock = MockResourceProvider::default();
@@ -251,11 +255,15 @@ mod tests {
     async fn test_get_allow_expired() {
         let mut identity_mock = MockIdentityProvider::default();
         identity_mock.expect_get_user().returning(|_, id: &'_ str| {
-            Ok(Some(UserResponse {
-                id: id.to_string(),
-                domain_id: "user_domain_id".into(),
-                ..Default::default()
-            }))
+            Ok(Some(
+                UserResponseBuilder::default()
+                    .id(id)
+                    .domain_id("user_domain_id")
+                    .enabled(true)
+                    .name("name")
+                    .build()
+                    .unwrap(),
+            ))
         });
 
         let mut resource_mock = MockResourceProvider::default();

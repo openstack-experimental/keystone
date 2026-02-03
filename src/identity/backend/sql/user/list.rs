@@ -35,6 +35,7 @@ use crate::identity::types::*;
 /// `federated_user`, `user_option` entries merging results to the proper entry.
 /// For the local users additionally passwords are being retrieved to identify
 /// the password expiration date.
+#[tracing::instrument(skip_all)]
 pub async fn list(
     conf: &Config,
     db: &DatabaseConnection,
@@ -202,7 +203,7 @@ mod tests {
         for (l,r) in db.into_transaction_log().iter().zip([
                 Transaction::from_sql_and_values(
                     DatabaseBackend::Postgres,
-                    r#"SELECT "user"."id", "user"."extra", "user"."enabled", "user"."default_project_id", "user"."created_at", "user"."last_active_at", "user"."domain_id" FROM "user""#,
+                    r#"SELECT "user"."created_at", "user"."default_project_id", "user"."domain_id", "user"."enabled", "user"."extra", "user"."id", "user"."last_active_at" FROM "user""#,
                     []
                 ),
                 Transaction::from_sql_and_values(
@@ -273,7 +274,7 @@ mod tests {
         for (l,r) in db.into_transaction_log().iter().zip([
                 Transaction::from_sql_and_values(
                     DatabaseBackend::Postgres,
-                    r#"SELECT "user"."id", "user"."extra", "user"."enabled", "user"."default_project_id", "user"."created_at", "user"."last_active_at", "user"."domain_id" FROM "user""#,
+                    r#"SELECT "user"."created_at", "user"."default_project_id", "user"."domain_id", "user"."enabled", "user"."extra", "user"."id", "user"."last_active_at" FROM "user""#,
                     []
                 ),
                 Transaction::from_sql_and_values(
@@ -335,7 +336,7 @@ mod tests {
         for (l,r) in db.into_transaction_log().iter().zip([
                 Transaction::from_sql_and_values(
                     DatabaseBackend::Postgres,
-                    r#"SELECT "user"."id", "user"."extra", "user"."enabled", "user"."default_project_id", "user"."created_at", "user"."last_active_at", "user"."domain_id" FROM "user""#,
+                    r#"SELECT "user"."created_at", "user"."default_project_id", "user"."domain_id", "user"."enabled", "user"."extra", "user"."id", "user"."last_active_at" FROM "user""#,
                     []
                 ),
                 Transaction::from_sql_and_values(
@@ -391,7 +392,7 @@ mod tests {
         for (l,r) in db.into_transaction_log().iter().zip([
                 Transaction::from_sql_and_values(
                     DatabaseBackend::Postgres,
-                    r#"SELECT "user"."id", "user"."extra", "user"."enabled", "user"."default_project_id", "user"."created_at", "user"."last_active_at", "user"."domain_id" FROM "user""#,
+                    r#"SELECT "user"."created_at", "user"."default_project_id", "user"."domain_id", "user"."enabled", "user"."extra", "user"."id", "user"."last_active_at" FROM "user""#,
                     []
                 ),
                 Transaction::from_sql_and_values(

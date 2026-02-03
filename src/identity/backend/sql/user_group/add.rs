@@ -25,6 +25,7 @@ use crate::error::DbContextExt;
 use crate::identity::backend::sql::IdentityDatabaseError;
 
 /// Add the user to the single group.
+#[tracing::instrument(skip_all)]
 pub async fn add_user_to_group<U: AsRef<str>, G: AsRef<str>>(
     db: &DatabaseConnection,
     user_id: U,
@@ -43,6 +44,7 @@ pub async fn add_user_to_group<U: AsRef<str>, G: AsRef<str>>(
 
 /// Add group user relations as specified by the tuples (user_id, group_id)
 /// iterator.
+#[tracing::instrument(skip_all)]
 pub async fn add_users_to_groups<I, U, G>(
     db: &DatabaseConnection,
     iter: I,
@@ -67,6 +69,7 @@ where
 }
 
 /// Add the user to the single group with expiring membership.
+#[tracing::instrument(skip_all)]
 pub async fn add_user_to_group_expiring<U: AsRef<str>, G: AsRef<str>, IDP: AsRef<str>>(
     db: &DatabaseConnection,
     user_id: U,
@@ -89,6 +92,7 @@ pub async fn add_user_to_group_expiring<U: AsRef<str>, G: AsRef<str>, IDP: AsRef
 
 /// Add expiring group user relations as specified by the tuples (user_id,
 /// group_id) iterator.
+#[tracing::instrument(skip_all)]
 pub async fn add_users_to_groups_expiring<I, U, G, IDP>(
     db: &DatabaseConnection,
     iter: I,

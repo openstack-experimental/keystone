@@ -52,11 +52,7 @@ pub use mock::MockIdentityProvider;
 use crate::auth::AuthenticatedInfo;
 use crate::config::Config;
 use crate::identity::backend::{IdentityBackend, sql::SqlBackend};
-use crate::identity::error::IdentityProviderError;
-use crate::identity::types::{
-    Group, GroupCreate, GroupListParameters, UserCreate, UserListParameters,
-    UserPasswordAuthRequest, UserResponse,
-};
+use crate::identity::{error::IdentityProviderError, types::*};
 use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManager;
 use crate::resource::{ResourceApi, error::ResourceProviderError};
@@ -112,7 +108,7 @@ impl IdentityProvider {
 
 #[async_trait]
 impl IdentityApi for IdentityProvider {
-    #[tracing::instrument(level = "info", skip(self, state))]
+    #[tracing::instrument(skip(self, state))]
     async fn add_user_to_group<'a>(
         &self,
         state: &ServiceState,
@@ -124,7 +120,7 @@ impl IdentityApi for IdentityProvider {
             .await
     }
 
-    #[tracing::instrument(level = "info", skip(self, state))]
+    #[tracing::instrument(skip(self, state))]
     async fn add_user_to_group_expiring<'a>(
         &self,
         state: &ServiceState,
@@ -137,7 +133,7 @@ impl IdentityApi for IdentityProvider {
             .await
     }
 
-    #[tracing::instrument(level = "info", skip(self, state))]
+    #[tracing::instrument(skip(self, state))]
     async fn add_users_to_groups<'a>(
         &self,
         state: &ServiceState,
@@ -148,7 +144,7 @@ impl IdentityApi for IdentityProvider {
             .await
     }
 
-    #[tracing::instrument(level = "info", skip(self, state))]
+    #[tracing::instrument(skip(self, state))]
     async fn add_users_to_groups_expiring<'a>(
         &self,
         state: &ServiceState,
@@ -161,7 +157,7 @@ impl IdentityApi for IdentityProvider {
     }
 
     /// Authenticate user with the password auth method.
-    #[tracing::instrument(level = "info", skip(self, state, auth))]
+    #[tracing::instrument(skip(self, state, auth))]
     async fn authenticate_by_password(
         &self,
         state: &ServiceState,
@@ -195,8 +191,42 @@ impl IdentityApi for IdentityProvider {
             .await
     }
 
+    /// Create group.
+    #[tracing::instrument(skip(self, state))]
+    async fn create_group(
+        &self,
+        state: &ServiceState,
+        group: GroupCreate,
+    ) -> Result<Group, IdentityProviderError> {
+        let mut res = group;
+        if res.id.is_none() {
+            res.id = Some(Uuid::new_v4().simple().to_string());
+        }
+        self.backend_driver.create_group(state, res).await
+    }
+
+    /// Create service account.
+    #[tracing::instrument(skip(self, state))]
+    async fn create_service_account(
+        &self,
+        state: &ServiceState,
+        sa: ServiceAccountCreate,
+    ) -> Result<ServiceAccount, IdentityProviderError> {
+        let mut mod_sa = sa;
+        if mod_sa.id.is_none() {
+            mod_sa.id = Some(Uuid::new_v4().simple().to_string());
+        }
+        if mod_sa.enabled.is_none() {
+            mod_sa.enabled = Some(true);
+        }
+        mod_sa.validate()?;
+        self.backend_driver
+            .create_service_account(state, mod_sa)
+            .await
+    }
+
     /// Create user.
-    #[tracing::instrument(level = "info", skip(self, state))]
+    #[tracing::instrument(skip(self, state))]
     async fn create_user(
         &self,
         state: &ServiceState,
@@ -214,7 +244,7 @@ impl IdentityApi for IdentityProvider {
     }
 
     /// Delete group.
-    #[tracing::instrument(level = "info", skip(self, state))]
+    #[tracing::instrument(skip(self, state))]
     async fn delete_group<'a>(
         &self,
         state: &ServiceState,
@@ -224,7 +254,7 @@ impl IdentityApi for IdentityProvider {
     }
 
     /// Delete user.
-    #[tracing::instrument(level = "info", skip(self, state))]
+    #[tracing::instrument(skip(self, state))]
     async fn delete_user<'a>(
         &self,
         state: &ServiceState,
@@ -237,8 +267,20 @@ impl IdentityApi for IdentityProvider {
         Ok(())
     }
 
+    /// Get a service account by ID.
+    #[tracing::instrument(skip(self, state))]
+    async fn get_service_account<'a>(
+        &self,
+        state: &ServiceState,
+        user_id: &'a str,
+    ) -> Result<Option<ServiceAccount>, IdentityProviderError> {
+        self.backend_driver
+            .get_service_account(state, user_id)
+            .await
+    }
+
     /// Get single user.
-    #[tracing::instrument(level = "info", skip(self, state))]
+    #[tracing::instrument(skip(self, state))]
     async fn get_user<'a>(
         &self,
         state: &ServiceState,
@@ -291,7 +333,7 @@ impl IdentityApi for IdentityProvider {
     }
 
     /// Find federated user by `idp_id` and `unique_id`.
-    #[tracing::instrument(level = "info", skip(self, state))]
+    #[tracing::instrument(skip(self, state))]
     async fn find_federated_user<'a>(
         &self,
         state: &ServiceState,
@@ -304,7 +346,7 @@ impl IdentityApi for IdentityProvider {
     }
 
     /// List users.
-    #[tracing::instrument(level = "info", skip(self, state))]
+    #[tracing::instrument(skip(self, state))]
     async fn list_users(
         &self,
         state: &ServiceState,
@@ -314,7 +356,7 @@ impl IdentityApi for IdentityProvider {
     }
 
     /// List groups.
-    #[tracing::instrument(level = "info", skip(self, state))]
+    #[tracing::instrument(skip(self, state))]
     async fn list_groups(
         &self,
         state: &ServiceState,
@@ -324,7 +366,7 @@ impl IdentityApi for IdentityProvider {
     }
 
     /// Get single group.
-    #[tracing::instrument(level = "info", skip(self, state))]
+    #[tracing::instrument(skip(self, state))]
     async fn get_group<'a>(
         &self,
         state: &ServiceState,
@@ -333,22 +375,8 @@ impl IdentityApi for IdentityProvider {
         self.backend_driver.get_group(state, group_id).await
     }
 
-    /// Create group.
-    #[tracing::instrument(level = "info", skip(self, state))]
-    async fn create_group(
-        &self,
-        state: &ServiceState,
-        group: GroupCreate,
-    ) -> Result<Group, IdentityProviderError> {
-        let mut res = group;
-        if res.id.is_none() {
-            res.id = Some(Uuid::new_v4().simple().to_string());
-        }
-        self.backend_driver.create_group(state, res).await
-    }
-
     /// List groups a user is a member of.
-    #[tracing::instrument(level = "info", skip(self, state))]
+    #[tracing::instrument(skip(self, state))]
     async fn list_groups_of_user<'a>(
         &self,
         state: &ServiceState,
@@ -359,7 +387,7 @@ impl IdentityApi for IdentityProvider {
             .await
     }
 
-    #[tracing::instrument(level = "info", skip(self, state))]
+    #[tracing::instrument(skip(self, state))]
     async fn remove_user_from_group<'a>(
         &self,
         state: &ServiceState,
@@ -371,7 +399,7 @@ impl IdentityApi for IdentityProvider {
             .await
     }
 
-    #[tracing::instrument(level = "info", skip(self, state))]
+    #[tracing::instrument(skip(self, state))]
     async fn remove_user_from_group_expiring<'a>(
         &self,
         state: &ServiceState,
@@ -384,7 +412,7 @@ impl IdentityApi for IdentityProvider {
             .await
     }
 
-    #[tracing::instrument(level = "info", skip(self, state))]
+    #[tracing::instrument(skip(self, state))]
     async fn remove_user_from_groups<'a>(
         &self,
         state: &ServiceState,
@@ -396,7 +424,7 @@ impl IdentityApi for IdentityProvider {
             .await
     }
 
-    #[tracing::instrument(level = "info", skip(self, state))]
+    #[tracing::instrument(skip(self, state))]
     async fn remove_user_from_groups_expiring<'a>(
         &self,
         state: &ServiceState,
@@ -409,7 +437,7 @@ impl IdentityApi for IdentityProvider {
             .await
     }
 
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(skip(self, state))]
     async fn set_user_groups<'a>(
         &self,
         state: &ServiceState,
@@ -421,7 +449,7 @@ impl IdentityApi for IdentityProvider {
             .await
     }
 
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(skip(self, state))]
     async fn set_user_groups_expiring<'a>(
         &self,
         state: &ServiceState,
@@ -439,7 +467,7 @@ impl IdentityApi for IdentityProvider {
 #[cfg(test)]
 mod tests {
     use super::backend::MockIdentityBackend;
-    use super::types::user::UserCreateBuilder;
+    use super::types::user::{UserCreateBuilder, UserResponseBuilder};
     use super::*;
     use crate::tests::get_state_mock;
 
@@ -447,9 +475,15 @@ mod tests {
     async fn test_create_user() {
         let state = get_state_mock();
         let mut backend = MockIdentityBackend::default();
-        backend
-            .expect_create_user()
-            .returning(|_, _| Ok(UserResponse::default()));
+        backend.expect_create_user().returning(|_, _| {
+            Ok(UserResponseBuilder::default()
+                .id("id")
+                .domain_id("domain_id")
+                .enabled(true)
+                .name("name")
+                .build()
+                .unwrap())
+        });
         let provider = IdentityProvider::from_driver(backend);
 
         assert_eq!(
@@ -464,7 +498,13 @@ mod tests {
                 )
                 .await
                 .unwrap(),
-            UserResponse::default()
+            UserResponseBuilder::default()
+                .domain_id("domain_id")
+                .enabled(true)
+                .id("id")
+                .name("name")
+                .build()
+                .unwrap()
         );
     }
 
@@ -475,7 +515,17 @@ mod tests {
         backend
             .expect_get_user()
             .withf(|_, uid: &'_ str| uid == "uid")
-            .returning(|_, _| Ok(Some(UserResponse::default())));
+            .returning(|_, _| {
+                Ok(Some(
+                    UserResponseBuilder::default()
+                        .id("id")
+                        .domain_id("domain_id")
+                        .enabled(true)
+                        .name("name")
+                        .build()
+                        .unwrap(),
+                ))
+            });
         let provider = IdentityProvider::from_driver(backend);
 
         assert_eq!(
@@ -484,7 +534,13 @@ mod tests {
                 .await
                 .unwrap()
                 .expect("user should be there"),
-            UserResponse::default()
+            UserResponseBuilder::default()
+                .domain_id("domain_id")
+                .enabled(true)
+                .id("id")
+                .name("name")
+                .build()
+                .unwrap(),
         );
     }
 

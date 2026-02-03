@@ -12,70 +12,43 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use chrono::Local;
+use chrono::{DateTime, Utc};
 use sea_orm::DatabaseConnection;
 use sea_orm::entity::*;
 use sea_orm::{ConnectionTrait, TransactionTrait};
-use serde_json::json;
-use uuid::Uuid;
 
 use crate::common::password_hashing;
 use crate::config::Config;
 use crate::db::entity::{
-    federated_user as db_federated_user, local_user as db_local_user, password as db_password,
-    user as db_user,
+    federated_user as db_federated_user, password as db_password, user as db_user,
 };
 use crate::error::DbContextExt;
 use crate::identity::backend::sql::IdentityDatabaseError;
 use crate::identity::types::*;
 
 use super::super::federated_user;
+use super::super::local_user;
 use super::super::password;
+use super::super::user_option;
 
-async fn create_main<C>(
+#[tracing::instrument(skip_all)]
+pub async fn create_main<C>(
     conf: &Config,
     db: &C,
     user: &UserCreate,
+    created_at: Option<DateTime<Utc>>,
 ) -> Result<db_user::Model, IdentityDatabaseError>
 where
     C: ConnectionTrait,
 {
-    let now = Local::now().naive_utc();
-    // Set last_active to now if compliance disabling is on
-    let last_active_at = if let Some(true) = &user.enabled {
-        if conf
-            .security_compliance
-            .disable_user_account_days_inactive
-            .is_some()
-        {
-            Set(Some(now.date()))
-        } else {
-            NotSet
-        }
-    } else {
-        NotSet
-    };
-
-    Ok(db_user::ActiveModel {
-        id: Set(user
-            .id
-            .clone()
-            .unwrap_or(Uuid::new_v4().simple().to_string())),
-        enabled: Set(user.enabled),
-        extra: Set(Some(serde_json::to_string(
-            // For keystone it is important to have at least "{}"
-            &user.extra.as_ref().or(Some(&json!({}))),
-        )?)),
-        default_project_id: Set(user.default_project_id.clone()),
-        last_active_at,
-        created_at: Set(Some(now)),
-        domain_id: Set(user.domain_id.clone()),
-    }
-    .insert(db)
-    .await
-    .context("inserting user entry")?)
+    Ok(user
+        .to_user_active_model(conf, created_at)?
+        .insert(db)
+        .await
+        .context("inserting user entry")?)
 }
 
+#[tracing::instrument(skip(conf, db))]
 pub async fn create(
     conf: &Config,
     db: &DatabaseConnection,
@@ -87,9 +60,21 @@ pub async fn create(
         .begin()
         .await
         .context("starting transaction for persisting user")?;
-    let main_user = create_main(conf, &txn, &user).await?;
+
+    let now = Utc::now();
+    let main_user = create_main(conf, &txn, &user, Some(now)).await?;
+    if let Some(opts) = &user.options {
+        // Persist user options when passed
+        user_option::create(&txn, main_user.id.clone(), opts).await?;
+    }
+
     let mut response_builder = UserResponseBuilder::default();
-    response_builder.merge_user_data(&main_user, &UserOptions::default(), None);
+    response_builder.merge_user_data(
+        &main_user,
+        user.options.as_ref().unwrap_or(&UserOptions::default()),
+        None,
+    );
+
     if let Some(federation_data) = &user.federated {
         let mut federated_entities: Vec<db_federated_user::Model> = Vec::new();
         for federated_user in federation_data {
@@ -110,6 +95,7 @@ pub async fn create(
                 );
             } else {
                 for proto in &federated_user.protocols {
+                    //for proto in &federated_user.protocol_ids {
                     federated_entities.push(
                         federated_user::create(
                             &txn,
@@ -118,7 +104,7 @@ pub async fn create(
                                 user_id: Set(main_user.id.clone()),
                                 idp_id: Set(federated_user.idp_id.clone()),
                                 protocol_id: Set(proto.protocol_id.clone()),
-                                unique_id: Set(proto.unique_id.clone()),
+                                unique_id: Set(federated_user.unique_id.clone()),
                                 display_name: Set(Some(user.name.clone())),
                             },
                         )
@@ -127,33 +113,16 @@ pub async fn create(
                 }
             }
         }
-
         response_builder.merge_federated_user_data(federated_entities);
     } else {
-        // Local user
-        let local_user = db_local_user::ActiveModel {
-            id: NotSet,
-            user_id: Set(main_user.id.clone()),
-            domain_id: Set(user.domain_id.clone()),
-            name: Set(user.name.clone()),
-            failed_auth_count: if user.enabled.is_some_and(|x| x)
-                && conf
-                    .security_compliance
-                    .disable_user_account_days_inactive
-                    .is_some()
-            {
-                Set(Some(0))
-            } else {
-                NotSet
-            },
-            failed_auth_at: NotSet,
-        }
-        .insert(&txn)
-        .await
-        .context("inserting new user record")?;
+        // When the user is not a federated one we can only assume it is a local user.
+        // For creating nonlocal user or service account dedicated API should be
+        // used.
+        let local_user = local_user::create(conf, &txn, &main_user, &user).await?;
+        response_builder.merge_local_user_data(&local_user);
 
-        let mut passwords: Vec<db_password::Model> = Vec::new();
         if let Some(password) = &user.password {
+            let mut passwords: Vec<db_password::Model> = Vec::new();
             let password_entry = password::create(
                 &txn,
                 local_user.id,
@@ -163,11 +132,10 @@ pub async fn create(
             .await?;
 
             passwords.push(password_entry);
+            response_builder.merge_passwords_data(passwords);
         }
-        response_builder
-            .merge_local_user_data(&local_user)
-            .merge_passwords_data(passwords);
     }
+
     txn.commit()
         .await
         .context("committing the user creation transaction")?;
@@ -177,6 +145,168 @@ pub async fn create(
 
 #[cfg(test)]
 mod tests {
-    // use sea_orm::{DatabaseBackend, MockDatabase, MockExecResult,
-    // Transaction};
+    use sea_orm::{DatabaseBackend, MockDatabase, MockExecResult, Transaction};
+
+    use super::*;
+    use crate::config::Config;
+    use crate::identity::backend::sql::{
+        federated_user::tests::get_federated_user_mock, local_user::tests::get_local_user_mock,
+        password::tests::get_password_mock, user::tests::get_user_mock,
+    };
+
+    #[tokio::test]
+    async fn test_create_main() {
+        let sot_db_res = db_user::Model {
+            id: "1".into(),
+            domain_id: "did".into(),
+            enabled: Some(true),
+            ..Default::default()
+        };
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([vec![sot_db_res.clone()]])
+            .into_connection();
+
+        let now = Utc::now();
+        let req = UserCreateBuilder::default()
+            .default_project_id("dpid")
+            .domain_id("did")
+            .id("1")
+            .name("foo")
+            .enabled(true)
+            .build()
+            .unwrap();
+        assert_eq!(
+            create_main(&Config::default(), &db, &req, Some(now))
+                .await
+                .unwrap(),
+            sot_db_res
+        );
+        assert_eq!(
+            db.into_transaction_log(),
+            [Transaction::from_sql_and_values(
+                DatabaseBackend::Postgres,
+                r#"INSERT INTO "user" ("created_at", "default_project_id", "domain_id", "enabled", "extra", "id") VALUES ($1, $2, $3, $4, $5, $6) RETURNING "created_at", "default_project_id", "domain_id", "enabled", "extra", "id", "last_active_at""#,
+                [
+                    now.naive_utc().into(),
+                    "dpid".into(),
+                    "did".into(),
+                    true.into(),
+                    "{}".into(),
+                    "1".into(),
+                ]
+            ),]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_create_main_disable_inactivity_tracking() {
+        let sot_db_res = db_user::Model {
+            id: "1".into(),
+            domain_id: "did".into(),
+            enabled: Some(true),
+            ..Default::default()
+        };
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([vec![sot_db_res.clone()]])
+            .into_connection();
+
+        let now = Utc::now();
+        let req = UserCreateBuilder::default()
+            .default_project_id("dpid")
+            .domain_id("did")
+            .id("1")
+            .name("foo")
+            .enabled(true)
+            .build()
+            .unwrap();
+        let mut cfg = Config::default();
+        cfg.security_compliance.disable_user_account_days_inactive = Some(1);
+        assert_eq!(
+            create_main(&cfg, &db, &req, Some(now)).await.unwrap(),
+            sot_db_res
+        );
+        assert_eq!(
+            db.into_transaction_log(),
+            [Transaction::from_sql_and_values(
+                DatabaseBackend::Postgres,
+                r#"INSERT INTO "user" ("created_at", "default_project_id", "domain_id", "enabled", "extra", "id", "last_active_at") VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING "created_at", "default_project_id", "domain_id", "enabled", "extra", "id", "last_active_at""#,
+                [
+                    now.naive_utc().into(),
+                    "dpid".into(),
+                    "did".into(),
+                    true.into(),
+                    "{}".into(),
+                    "1".into(),
+                    now.naive_utc().date().into(),
+                ]
+            ),]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_create_federated() {
+        let user_opts = UserOptions {
+            ignore_password_expiry: Some(true),
+            ..Default::default()
+        };
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([vec![get_user_mock("1")]])
+            .append_exec_results([MockExecResult {
+                rows_affected: 1,
+                ..Default::default()
+            }])
+            .append_query_results([vec![get_federated_user_mock("1")]])
+            .into_connection();
+        let mut federation_data = FederationBuilder::default();
+        federation_data
+            .idp_id("idp_id")
+            .unique_id("unique_id")
+            .protocols(vec![FederationProtocol {
+                protocol_id: "oidc".into(),
+                unique_id: "unique_id".into(),
+            }]);
+        let req = UserCreateBuilder::default()
+            .default_project_id("dpid")
+            .domain_id("did")
+            .id("1")
+            .name("foo")
+            .enabled(true)
+            .federated(vec![federation_data.build().unwrap()])
+            .options(user_opts.clone())
+            .build()
+            .unwrap();
+        let sot = create(&Config::default(), &db, req).await.unwrap();
+        assert_eq!(sot.name, "foo");
+        assert_eq!(sot.options, user_opts);
+    }
+
+    #[tokio::test]
+    async fn test_create_local() {
+        let user_opts = UserOptions {
+            ignore_password_expiry: Some(true),
+            ..Default::default()
+        };
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([vec![get_user_mock("1")]])
+            .append_exec_results([MockExecResult {
+                rows_affected: 1,
+                ..Default::default()
+            }])
+            .append_query_results([vec![get_local_user_mock("1")]])
+            .append_query_results([vec![get_password_mock(1)]])
+            .into_connection();
+        let req = UserCreateBuilder::default()
+            .default_project_id("dpid")
+            .domain_id("did")
+            .id("1")
+            .name("foo")
+            .enabled(true)
+            .password("foobar")
+            .options(user_opts.clone())
+            .build()
+            .unwrap();
+        let sot = create(&Config::default(), &db, req).await.unwrap();
+        assert_eq!(sot.name, "foo_domain");
+        assert_eq!(sot.options, user_opts);
+    }
 }

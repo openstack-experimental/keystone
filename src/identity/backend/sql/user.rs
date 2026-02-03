@@ -12,12 +12,15 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use chrono::NaiveDate;
-use serde_json::Value;
+use chrono::{DateTime, NaiveDate, Utc};
+use sea_orm::entity::*;
+use serde_json::{Value, json};
 use tracing::error;
+use uuid::Uuid;
 
 use crate::db::entity::user as db_user;
 use crate::identity::types::*;
+use crate::{config::Config, identity::backend::error::IdentityDatabaseError};
 
 mod create;
 mod delete;
@@ -84,6 +87,70 @@ impl UserResponseBuilder {
         }
         self.options(options.clone());
         self
+    }
+}
+
+impl UserCreate {
+    /// Get `user::ActiveModel` from the `UserCreate` request.
+    pub(super) fn to_user_active_model(
+        &self,
+        config: &Config,
+        created_at: Option<DateTime<Utc>>,
+    ) -> Result<db_user::ActiveModel, IdentityDatabaseError> {
+        let created_at = created_at.unwrap_or_else(Utc::now).naive_utc();
+
+        Ok(db_user::ActiveModel {
+            id: Set(self
+                .id
+                .clone()
+                .unwrap_or(Uuid::new_v4().simple().to_string())),
+            enabled: Set(Some(self.enabled.unwrap_or(true))),
+            extra: Set(Some(serde_json::to_string(
+                // For keystone it is important to have at least "{}"
+                &self.extra.as_ref().or(Some(&json!({}))),
+            )?)),
+            default_project_id: self
+                .default_project_id
+                .clone()
+                .map(Set)
+                .unwrap_or(NotSet)
+                .into(),
+            // Set last_active to now if compliance disabling is on
+            last_active_at: get_user_last_active_at(config, self.enabled, created_at)
+                .map(Set)
+                .unwrap_or(NotSet)
+                .into(),
+            created_at: Set(Some(created_at)),
+            domain_id: Set(self.domain_id.clone()),
+        })
+    }
+}
+
+impl ServiceAccountCreate {
+    /// Get a `db_user::ActiveModel` from the `ServiceAccountCreate` request.
+    pub(super) fn to_user_active_model(
+        &self,
+        conf: &Config,
+        created_at: Option<DateTime<Utc>>,
+    ) -> Result<db_user::ActiveModel, IdentityDatabaseError> {
+        let created_at = created_at.unwrap_or_else(Utc::now).naive_utc();
+
+        Ok(db_user::ActiveModel {
+            id: Set(self
+                .id
+                .clone()
+                .unwrap_or(Uuid::new_v4().simple().to_string())),
+            enabled: Set(Some(self.enabled.unwrap_or(true))),
+            extra: Set(Some("{}".to_string())),
+            default_project_id: NotSet,
+            // Set last_active to now if compliance disabling is on
+            last_active_at: get_user_last_active_at(conf, self.enabled, created_at)
+                .map(Set)
+                .unwrap_or(NotSet)
+                .into(),
+            created_at: Set(Some(created_at)),
+            domain_id: Set(self.domain_id.clone()),
+        })
     }
 }
 
@@ -231,5 +298,61 @@ pub(super) mod tests {
                 .unwrap(),
             "last active in the past and cutof now with exempt is enabled"
         );
+    }
+
+    #[test]
+    fn test_active_record_from_user_create() {
+        let now = Utc::now();
+        let req = UserCreateBuilder::default()
+            .default_project_id("dpid")
+            .domain_id("did")
+            .id("1")
+            .name("foo")
+            .enabled(true)
+            .build()
+            .unwrap();
+        let cfg = Config::default();
+        let sot = req.to_user_active_model(&cfg, Some(now)).unwrap();
+        assert_eq!(sot.default_project_id, Set(Some("dpid".into())));
+        assert_eq!(sot.domain_id, Set("did".into()));
+        assert_eq!(sot.enabled, Set(Some(true)));
+        assert_eq!(sot.extra, Set(Some("{}".into())));
+        assert_eq!(sot.id, Set("1".into()));
+        assert_eq!(sot.last_active_at, NotSet);
+    }
+
+    #[test]
+    fn test_active_record_from_user_create_track_user_activity() {
+        let now = Utc::now();
+        let req = UserCreateBuilder::default()
+            .domain_id("did")
+            .id("1")
+            .name("foo")
+            .enabled(true)
+            .build()
+            .unwrap();
+        let mut cfg = Config::default();
+        cfg.security_compliance.disable_user_account_days_inactive = Some(1);
+        let sot = req.to_user_active_model(&cfg, Some(now)).unwrap();
+        assert_eq!(sot.last_active_at, Set(Some(now.naive_utc().date())));
+    }
+
+    #[test]
+    fn test_active_record_from_sa_create() {
+        let now = Utc::now();
+        let req = ServiceAccountCreate {
+            domain_id: "did".into(),
+            enabled: Some(true),
+            id: Some("said".into()),
+            name: "sa_name".into(),
+        };
+        let cfg = Config::default();
+        let sot = req.to_user_active_model(&cfg, Some(now)).unwrap();
+        assert_eq!(sot.default_project_id, NotSet);
+        assert_eq!(sot.domain_id, Set("did".into()));
+        assert_eq!(sot.enabled, Set(Some(true)));
+        assert_eq!(sot.extra, Set(Some("{}".into())));
+        assert_eq!(sot.id, Set("said".into()));
+        assert_eq!(sot.last_active_at, NotSet);
     }
 }

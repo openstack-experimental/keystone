@@ -26,20 +26,26 @@ use sea_orm::entity::prelude::*;
 #[cfg_attr(test, derive(Builder))]
 #[cfg_attr(test, builder(setter(strip_option, into)))]
 pub struct Model {
-    #[sea_orm(primary_key, auto_increment = false)]
-    pub id: String,
+    #[cfg_attr(test, builder(default))]
+    pub created_at: Option<DateTime>,
+
+    #[cfg_attr(test, builder(default))]
+    pub default_project_id: Option<String>,
+
+    pub domain_id: String,
+
+    #[cfg_attr(test, builder(default))]
+    pub enabled: Option<bool>,
+
     #[sea_orm(column_type = "Text", nullable)]
     #[cfg_attr(test, builder(default))]
     pub extra: Option<String>,
-    #[cfg_attr(test, builder(default))]
-    pub enabled: Option<bool>,
-    #[cfg_attr(test, builder(default))]
-    pub default_project_id: Option<String>,
-    #[cfg_attr(test, builder(default))]
-    pub created_at: Option<DateTime>,
+
+    #[sea_orm(primary_key, auto_increment = false)]
+    pub id: String,
+
     #[cfg_attr(test, builder(default))]
     pub last_active_at: Option<Date>,
-    pub domain_id: String,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

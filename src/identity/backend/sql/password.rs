@@ -21,11 +21,10 @@ mod create;
 
 pub use create::create;
 
-/// Verify whether the password is expired or not.
+/// Verify whether the password has expired or not.
 pub(super) fn is_password_expired(
     password_entry: &db_password::Model,
 ) -> Result<bool, IdentityDatabaseError> {
-    //if let Some(expires_et)
     if let Some(expires) = password_entry
         .expires_at_int
         .and_then(DateTime::from_timestamp_secs)
@@ -55,11 +54,25 @@ impl UserResponseBuilder {
 }
 
 #[cfg(test)]
-pub(super) mod tests {
+pub(crate) mod tests {
     use crate::db::entity::password as db_password;
     use chrono::{DateTime, TimeDelta, Utc};
 
     use super::*;
+
+    pub fn get_password_mock(user_id: i32) -> db_password::Model {
+        let datetime = Utc::now();
+        db_password::Model {
+            id: user_id.clone(),
+            local_user_id: user_id,
+            self_service: false,
+            expires_at: None,
+            password_hash: Some("fake_hash".into()),
+            created_at: datetime.naive_utc(),
+            created_at_int: datetime.naive_utc().and_utc().timestamp_micros(),
+            expires_at_int: None,
+        }
+    }
 
     impl db_password::ModelBuilder {
         pub fn expires(&mut self, value: DateTime<Utc>) -> &mut Self {

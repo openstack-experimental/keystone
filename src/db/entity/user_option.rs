@@ -21,8 +21,10 @@ use sea_orm::entity::prelude::*;
 pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
     pub user_id: String,
+
     #[sea_orm(primary_key, auto_increment = false)]
     pub option_id: String,
+
     #[sea_orm(column_type = "Text", nullable)]
     pub option_value: Option<String>,
 }

@@ -194,6 +194,7 @@ impl From<UserOptions> for identity_types::UserOptions {
             ignore_user_inactivity: value.ignore_user_inactivity,
             multi_factor_auth_rules: value.multi_factor_auth_rules,
             multi_factor_auth_enabled: value.multi_factor_auth_enabled,
+            is_service_account: None,
         }
     }
 }

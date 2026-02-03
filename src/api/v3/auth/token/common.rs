@@ -149,7 +149,7 @@ mod tests {
     use crate::config::Config;
     use crate::identity::{
         MockIdentityProvider,
-        types::{UserPasswordAuthRequest, UserResponse},
+        types::{UserPasswordAuthRequest, UserResponseBuilder},
     };
     use crate::keystone::Service;
     use crate::policy::MockPolicyFactory;
@@ -165,12 +165,15 @@ mod tests {
         let config = Config::default();
         let auth_info = AuthenticatedInfo::builder()
             .user_id("uid")
-            .user(UserResponse {
-                id: "uid".to_string(),
-                domain_id: "udid".into(),
-                enabled: true,
-                ..Default::default()
-            })
+            .user(
+                UserResponseBuilder::default()
+                    .id("uid")
+                    .domain_id("udid")
+                    .enabled(true)
+                    .name("name")
+                    .build()
+                    .unwrap(),
+            )
             .build()
             .unwrap();
         let auth_clone = auth_info.clone();
@@ -247,12 +250,15 @@ mod tests {
             .expect_get_user()
             .withf(|_, id: &'_ str| id == "uid")
             .returning(|_, id: &'_ str| {
-                Ok(Some(UserResponse {
-                    id: id.to_string(),
-                    domain_id: "user_domain_id".into(),
-                    enabled: true,
-                    ..Default::default()
-                }))
+                Ok(Some(
+                    UserResponseBuilder::default()
+                        .id(id)
+                        .domain_id("user_domain_id")
+                        .enabled(true)
+                        .name("name")
+                        .build()
+                        .unwrap(),
+                ))
             });
 
         let provider = Provider::mocked_builder()
@@ -275,12 +281,15 @@ mod tests {
         assert_eq!(
             AuthenticatedInfo::builder()
                 .user_id("uid")
-                .user(UserResponse {
-                    id: "uid".to_string(),
-                    domain_id: "user_domain_id".into(),
-                    enabled: true,
-                    ..Default::default()
-                })
+                .user(
+                    UserResponseBuilder::default()
+                        .id("uid")
+                        .domain_id("user_domain_id")
+                        .enabled(true)
+                        .name("name")
+                        .build()
+                        .unwrap(),
+                )
                 .build()
                 .unwrap(),
             authenticate_request(
