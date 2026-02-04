@@ -103,6 +103,7 @@ allow = [
     "MIT",
     "MPL-2.0",
     "NCSA",
+    "OpenSSL",
     "Unicode-3.0",
     "Unicode-DFS-2016",
     "Zlib"

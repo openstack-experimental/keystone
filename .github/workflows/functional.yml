@@ -165,12 +165,14 @@ jobs:
           docker run -d -p 5556:5556 -d -v $PWD/tools/dex.config.yaml:/etc/dex/config.docker.yaml --name dex ghcr.io/dexidp/dex:latest
 
       - name: Run keycloak tests
+        working-directory: "tests/federation"
         env:
           KEYCLOAK_USER: admin
           KEYCLOAK_PASSWORD: password
         run: cargo test --test keycloak
 
       - name: Run dex tests
+        working-directory: "tests/federation"
         env:
           DEX_URL: http://localhost:5556
         run: cargo test --test dex
@@ -235,6 +237,7 @@ jobs:
           echo "token=$TOKEN" >> $GITHUB_OUTPUT
 
       - name: Run github tests
+        working-directory: "tests/federation"
         env:
           GITHUB_JWT: ${{ steps.get_token.outputs.token }}
           GITHUB_SUB: "repo:openstack-experimental/keystone:pull_request"
