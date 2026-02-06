@@ -27,7 +27,6 @@ use crate::revoke::types::{RevocationEvent, RevocationEventListParameters};
 fn build_query_filters(
     params: &RevocationEventListParameters,
 ) -> Result<Select<DbRevocationEvent>, RevokeDatabaseError> {
-    tracing::info!("Query parameters: {:?}", params);
     let mut select = DbRevocationEvent::find();
 
     //if let Some(val) = &params.access_token_id {

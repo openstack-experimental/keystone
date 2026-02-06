@@ -88,6 +88,14 @@ pub struct ServiceAccountListParameters {
     #[validate(length(max = 64))]
     pub domain_id: Option<String>,
 
+    /// Limit number of entries on the single response page (Maximal 100).
+    #[validate(range(min = 1, max = 100))]
+    pub limit: Option<u64>,
+
+    /// Page marker (id of the last entry on the previous page).
+    #[validate(length(max = 64))]
+    pub marker: Option<String>,
+
     /// Filter users by the name attribute.
     #[builder(default)]
     #[validate(length(max = 255))]

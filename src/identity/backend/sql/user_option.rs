@@ -12,6 +12,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use std::fmt;
+
 use crate::db::entity::user_option;
 use crate::identity::backend::sql::IdentityDatabaseError;
 use crate::identity::types::*;
@@ -22,33 +24,78 @@ mod list;
 pub use create::create;
 pub use list::list_by_user_id;
 
+#[derive()]
+pub enum UserOption {
+    IgnoreChangePasswordUponFirstUse,
+    IgnorePasswordExpiry,
+    IgnoreLockoutFailureAttempts,
+    LockPassword,
+    IgnoreUserInactivity,
+    MultiFactorAuthRules,
+    MultiFactorAuthEnabled,
+    IsServiceAccount,
+    Unsupported,
+}
+
+impl fmt::Display for UserOption {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Self::IgnoreChangePasswordUponFirstUse => write!(f, "1000"),
+            Self::IgnorePasswordExpiry => write!(f, "1001"),
+            Self::IgnoreLockoutFailureAttempts => write!(f, "1002"),
+            Self::LockPassword => write!(f, "1003"),
+            Self::IgnoreUserInactivity => write!(f, "1004"),
+            Self::MultiFactorAuthRules => write!(f, "MFAR"),
+            Self::MultiFactorAuthEnabled => write!(f, "MFAE"),
+            Self::IsServiceAccount => write!(f, "ISSA"),
+            Self::Unsupported => write!(f, ""),
+        }
+    }
+}
+
+impl From<&str> for UserOption {
+    fn from(val: &str) -> Self {
+        match val {
+            "1000" => Self::IgnoreChangePasswordUponFirstUse,
+            "1001" => Self::IgnorePasswordExpiry,
+            "1002" => Self::IgnoreLockoutFailureAttempts,
+            "1003" => Self::LockPassword,
+            "1004" => Self::IgnoreUserInactivity,
+            "MFAR" => Self::MultiFactorAuthRules,
+            "MFAE" => Self::MultiFactorAuthEnabled,
+            "ISSA" => Self::IsServiceAccount,
+            _ => Self::Unsupported,
+        }
+    }
+}
+
 impl FromIterator<user_option::Model> for UserOptions {
     fn from_iter<I: IntoIterator<Item = user_option::Model>>(iter: I) -> Self {
         let mut user_opts: UserOptions = UserOptions::default();
         for opt in iter.into_iter() {
-            match (opt.option_id.as_str(), opt.option_value) {
-                ("1000", Some(val)) => {
+            match (UserOption::from(opt.option_id.as_ref()), opt.option_value) {
+                (UserOption::IgnoreChangePasswordUponFirstUse, Some(val)) => {
                     user_opts.ignore_change_password_upon_first_use = val.parse().ok();
                 }
-                ("1001", Some(val)) => {
+                (UserOption::IgnorePasswordExpiry, Some(val)) => {
                     user_opts.ignore_password_expiry = val.parse().ok();
                 }
-                ("1002", Some(val)) => {
+                (UserOption::IgnoreLockoutFailureAttempts, Some(val)) => {
                     user_opts.ignore_lockout_failure_attempts = val.parse().ok();
                 }
-                ("1003", Some(val)) => {
+                (UserOption::LockPassword, Some(val)) => {
                     user_opts.lock_password = val.parse().ok();
                 }
-                ("1004", Some(val)) => {
+                (UserOption::IgnoreUserInactivity, Some(val)) => {
                     user_opts.ignore_user_inactivity = val.parse().ok();
                 }
-                ("MFAR", Some(val)) => {
+                (UserOption::MultiFactorAuthRules, Some(val)) => {
                     user_opts.multi_factor_auth_rules = serde_json::from_str(val.as_ref()).ok();
                 }
-                ("MFAE", Some(val)) => {
+                (UserOption::MultiFactorAuthEnabled, Some(val)) => {
                     user_opts.multi_factor_auth_enabled = val.parse().ok();
                 }
-                ("ISSA", Some(val)) => {
+                (UserOption::IsServiceAccount, Some(val)) => {
                     user_opts.is_service_account = val.parse().ok();
                 }
                 _ => {}
@@ -68,56 +115,56 @@ impl UserOptions {
         if let Some(val) = &self.ignore_change_password_upon_first_use {
             res.push(user_option::Model {
                 user_id: uid.clone(),
-                option_id: "1000".into(),
+                option_id: UserOption::IgnoreChangePasswordUponFirstUse.to_string(),
                 option_value: Some(val.to_string()),
             });
         }
         if let Some(val) = &self.ignore_password_expiry {
             res.push(user_option::Model {
                 user_id: uid.clone(),
-                option_id: "1001".into(),
+                option_id: UserOption::IgnorePasswordExpiry.to_string(),
                 option_value: Some(val.to_string()),
             });
         }
         if let Some(val) = &self.ignore_lockout_failure_attempts {
             res.push(user_option::Model {
                 user_id: uid.clone(),
-                option_id: "1002".into(),
+                option_id: UserOption::IgnoreLockoutFailureAttempts.to_string(),
                 option_value: Some(val.to_string()),
             });
         }
         if let Some(val) = &self.lock_password {
             res.push(user_option::Model {
                 user_id: uid.clone(),
-                option_id: "1003".into(),
+                option_id: UserOption::LockPassword.to_string(),
                 option_value: Some(val.to_string()),
             });
         }
         if let Some(val) = &self.ignore_user_inactivity {
             res.push(user_option::Model {
                 user_id: uid.clone(),
-                option_id: "1004".into(),
+                option_id: UserOption::IgnoreUserInactivity.to_string(),
                 option_value: Some(val.to_string()),
             });
         }
         if let Some(val) = &self.multi_factor_auth_rules {
             res.push(user_option::Model {
                 user_id: uid.clone(),
-                option_id: "MFAR".into(),
+                option_id: UserOption::MultiFactorAuthRules.to_string(),
                 option_value: Some(serde_json::to_string(val)?),
             });
         }
         if let Some(val) = &self.multi_factor_auth_enabled {
             res.push(user_option::Model {
                 user_id: uid.clone(),
-                option_id: "MFAE".into(),
+                option_id: UserOption::MultiFactorAuthEnabled.to_string(),
                 option_value: Some(val.to_string()),
             });
         }
         if let Some(val) = &self.is_service_account {
             res.push(user_option::Model {
                 user_id: uid.clone(),
-                option_id: "ISSA".into(),
+                option_id: UserOption::IsServiceAccount.to_string(),
                 option_value: Some(val.to_string()),
             });
         }
