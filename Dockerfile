@@ -14,23 +14,27 @@ RUN USER=root cargo new keystone
 
 # We want dependencies cached, so copy those first.
 COPY Cargo.toml Cargo.lock /usr/src/keystone/
-RUN mkdir -p keystone/src/bin && touch keystone/src/lib.rs &&\
-  cp keystone/src/main.rs keystone/src/bin/keystone.rs &&\
-  cp keystone/src/main.rs keystone/src/bin/keystone_db.rs &&\
-  mkdir -p keystone/benches && touch keystone/benches/fernet_token.rs
+COPY crates/keystone/Cargo.toml /usr/src/keystone/crates/keystone/
+COPY tests/federation/Cargo.toml /usr/src/keystone/tests/federation/
+COPY tests/integration/Cargo.toml /usr/src/keystone/tests/integration/
+COPY tests/api/Cargo.toml /usr/src/keystone/tests/api/
+COPY tests/loadtest/Cargo.toml /usr/src/keystone/tests/loadtest/
+RUN mkdir -p keystone/crates/keystone/src/bin && touch keystone/crates/keystone/src/lib.rs &&\
+  cp keystone/src/main.rs keystone/crates/keystone/src/bin/keystone.rs &&\
+  cp keystone/src/main.rs keystone/crates/keystone/src/bin/keystone_db.rs
 
 # Set the working directory
 WORKDIR /usr/src/keystone
 
 ## This is a dummy build to get the dependencies cached.
 #RUN cargo build --target x86_64-unknown-linux-musl --release
-RUN cargo build --release
+RUN cargo build -p openstack_keystone --release
 
 # Now copy in the rest of the sources
-COPY . /usr/src/keystone/
+COPY crates/keystone/ /usr/src/keystone/crates/keystone
 
 ## Touch main.rs to prevent cached release build
-RUN touch src/lib.rs && touch src/bin/keystone.rs
+RUN touch crates/keystone/src/lib.rs && touch crates/keystone/src/bin/keystone.rs
 
 # This is the actual application build.
 RUN cargo build --release --bins

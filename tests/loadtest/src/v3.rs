@@ -12,5 +12,5 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-pub(crate) mod user;
 pub(crate) mod auth;
+pub(crate) mod user;

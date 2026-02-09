@@ -1,0 +1,43 @@
+[package]
+name = "federation"
+description = "OpenStack Keystone service"
+version = "0.1.1"
+edition = "2024"
+license.workspace = true
+authors = ["Artem Goncharov (gtema)"]
+
+[package.metadata.dist]
+dist = false
+
+[dependencies]
+bytes = { version = "1.11" }
+http-body-util = "0.1"
+hyper = { version = "1.8", features = ["http1"] }
+hyper-util = { version = "0.1", features = ["tokio", "http1"] }
+eyre = { version = "0.6" }
+keycloak = { version = "26.4" }
+openstack_keystone = { path = "../../crates/keystone" }
+reqwest = { version = "0.12", features = ["json", "http2", "multipart", "gzip", "deflate"] }
+serde = { version = "1.0" }
+serde_json = { version = "1.0" }
+serde_urlencoded = { version = "0.7" }
+thirtyfour = "0.36"
+tracing = { version = "0.1" }
+tokio = { version = "1.49" }
+tokio-util = { version = "0.7" }
+tracing-test = { version = "0.2", features = ["no-env-filter"] }
+
+[[test]]
+name = "keycloak"
+path = "keycloak.rs"
+test = false
+
+[[test]]
+name = "github"
+path = "github.rs"
+test = false
+
+[[test]]
+name = "dex"
+path = "dex.rs"
+test = false
