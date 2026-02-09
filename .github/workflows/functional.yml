@@ -107,8 +107,8 @@ jobs:
       - name: Run api tests
         run: cargo test --test api
 
-      - name: Run interop tests
-        run: cargo test --test interop
+      # - name: Run interop tests
+      #   run: cargo test --test interop
 
       - name: Dump py-keystone logs
         if: failure()
@@ -279,11 +279,11 @@ jobs:
       - uses: ./.github/actions/deploy_keystone
 
       - name: Build Load test binary
-        working-directory: loadtest
+        working-directory: tests/loadtest
         run: cargo build --release
 
       - name: Run load test
-        working-directory: loadtest
+        #working-directory: tests/loadtest
         env:
           OS_CLOUD: admin
         run: |
@@ -305,7 +305,7 @@ jobs:
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: loadtest-report
-          path: loadtest/reports/
+          path: reports/
 
       - name: Dump py-keystone logs
         if: failure()

@@ -1,0 +1,96 @@
+[package]
+name = "openstack_keystone"
+description = "OpenStack Keystone service"
+version = "0.1.1"
+rust-version.workspace = true
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+#[package.metadata.clippy]
+#warn = ["clippy::unused_results"]
+
+[[bin]]
+name="keystone"
+path="src/bin/keystone.rs"
+
+[[bin]]
+name="keystone-db"
+path="src/bin/keystone_db.rs"
+
+[[bench]]
+name = "fernet_token"
+path = "../../benches/fernet_token.rs"
+harness = false
+
+[dependencies]
+async-trait.workspace = true
+axum = { workspace = true, features = ["macros"] }
+base64.workspace = true
+bcrypt = { workspace = true, features = ["alloc"] }
+byteorder.workspace = true
+bytes.workspace = true
+chrono.workspace = true
+clap = { workspace = true, features = ["derive"] }
+color-eyre.workspace = true
+config = { workspace = true, features = ["async", "ini"] }
+derive_builder.workspace = true
+dyn-clone.workspace = true
+eyre.workspace = true
+fernet = { workspace = true, features = ["rustcrypto"] }
+futures-util.workspace = true
+itertools.workspace = true
+mockall_double.workspace = true
+nix = { workspace = true, features = ["fs", "user"] }
+openidconnect.workspace = true
+rand.workspace = true
+regex.workspace = true
+reqwest = { workspace = true, features = ["json", "http2", "gzip", "deflate"] }
+rmp.workspace = true
+schemars.workspace = true
+scopeguard.workspace = true
+sea-orm = { workspace = true, features = ["debug-print", "sqlx-mysql", "sqlx-postgres", "runtime-tokio", "runtime-tokio-native-tls"] }
+sea-orm-migration = { workspace = true, features = ["sqlx-mysql", "sqlx-postgres", "runtime-tokio"] }
+secrecy = { workspace = true, features = ["serde"] }
+serde.workspace = true
+serde_bytes.workspace = true
+serde_json.workspace = true
+serde_urlencoded.workspace = true
+tempfile.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["fs", "macros", "signal", "rt-multi-thread"] }
+tokio-util.workspace = true
+tower.workspace = true
+tower-http = { workspace = true, features = ["compression-full", "request-id", "sensitive-headers", "trace", "util"] }
+tracing.workspace = true
+tracing-appender.workspace = true
+tracing-subscriber = { workspace = true, features = [] }
+url = { workspace = true, features = ["serde"] }
+url-macro.workspace = true
+utoipa = { workspace = true, features = ["axum_extras", "chrono", "yaml"] }
+utoipa-axum.workspace = true
+utoipa-swagger-ui = { workspace = true, features = ["axum", "vendored"] }
+uuid = { workspace = true, features = ["v4"] }
+validator = { workspace = true, features = ["derive"] }
+webauthn-rs = { workspace = true, features = ["danger-allow-state-serialisation"] }
+webauthn-rs-proto.workspace = true
+
+[dev-dependencies]
+base64urlsafedata.workspace = true
+criterion = { workspace = true, features = ["async_tokio"] }
+http-body-util.workspace = true
+hyper = { workspace = true, features = ["http1"] }
+hyper-util = { workspace = true, features = ["tokio", "http1"] }
+mockall.workspace = true
+rstest.workspace = true
+sea-orm = { workspace = true, features = ["mock", "sqlx-sqlite" ]}
+tracing-test = { workspace = true, features = ["no-env-filter"] }
+url.workspace = true
+webauthn-authenticator-rs = { workspace = true, features = ["softtoken"] }
+webauthn-rs = { workspace = true, features = ["danger-credential-internals"] }
+
+[features]
+default = []
+# wasm = ["dep:opa-wasm"]
+bench_internals = []

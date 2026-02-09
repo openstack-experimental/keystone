@@ -19,8 +19,8 @@ use openstack_sdk::{AsyncOpenStack, config::ConfigFile};
 
 mod v3;
 
-use crate::v3::user::list as user_list;
 use crate::v3::auth::validate as validate_token;
+use crate::v3::user::list as user_list;
 
 struct Session {
     token: String,

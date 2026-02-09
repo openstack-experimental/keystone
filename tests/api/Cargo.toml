@@ -1,5 +1,5 @@
 [package]
-name = "test_federation"
+name = "test_api"
 rust-version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -10,34 +10,24 @@ repository.workspace = true
 dist = false
 
 [dependencies]
+axum = { workspace = true, features = ["macros"] }
+base64.workspace = true
 bytes.workspace = true
-http-body-util.workspace = true
-hyper = { workspace = true, features = ["http1"] }
-hyper-util = { workspace = true, features = ["tokio", "http1"] }
 eyre.workspace = true
-keycloak = { version = "26.5" }
 openstack_keystone = { path = "../../crates/keystone" }
-reqwest = { version = "0.13", features = ["json", "http2", "multipart", "gzip", "deflate"] }
+reqwest = { workspace = true, features = ["json", "http2", "multipart", "gzip", "deflate"] }
+secrecy = { workspace = true, features = ["serde"] }
 serde.workspace = true
 serde_json.workspace = true
 serde_urlencoded.workspace = true
-thirtyfour = "0.36"
 tracing.workspace = true
 tokio.workspace = true
-tokio-util.workspace = true
 tracing-test = { workspace = true, features = ["no-env-filter"] }
+webauthn-authenticator-rs = { workspace = true, features = ["softtoken"] }
+url = { workspace = true }
+uuid = { workspace = true, features = ["v4"] }
 
 [[test]]
-name = "keycloak"
-path = "src/keycloak.rs"
-test = false
-
-[[test]]
-name = "github"
-path = "src/github.rs"
-test = false
-
-[[test]]
-name = "dex"
-path = "src/dex.rs"
+name = "api"
+path = "src/api.rs"
 test = false

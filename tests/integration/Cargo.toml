@@ -1,0 +1,32 @@
+[package]
+name = "test_integration"
+rust-version.workspace = true
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[package.metadata.dist]
+dist = false
+
+[dependencies]
+chrono.workspace = true
+eyre = { version = "0.6" }
+itertools.workspace = true
+openstack_keystone = { path = "../../crates/keystone" }
+sea-orm = { workspace = true, features = ["mock", "sqlx-sqlite" ]}
+secrecy = { workspace = true, features = ["serde"] }
+serde = { version = "1.0" }
+serde_json = { version = "1.0" }
+serde_urlencoded = { version = "0.7" }
+tempfile.workspace = true
+tracing = { version = "0.1" }
+tokio = { version = "1.49" }
+tokio-util = { version = "0.7" }
+tracing-test = { version = "0.2", features = ["no-env-filter"] }
+uuid = { workspace = true, features = ["v4"] }
+
+[[test]]
+name = "integration"
+path = "src/integration.rs"
+test = false
