@@ -32,7 +32,6 @@ use crate::{
     assignment::{AssignmentApi, types::AssignmentBuilder, types::AssignmentType},
     identity::IdentityApi,
     resource::ResourceApi,
-    revoke::{RevocationEventCreate, RevokeApi},
 };
 
 /// Revoke role from user on project
@@ -131,28 +130,6 @@ pub(super) async fn revoke(
         .provider
         .get_assignment_provider()
         .revoke_grant(&state, grant)
-        .await?;
-
-    // Create revocation event
-    let revocation_event = RevocationEventCreate {
-        domain_id: None,
-        project_id: Some(project.id.clone()),
-        user_id: Some(user.id.clone()),
-        role_id: Some(role.id.clone()),
-        trust_id: None,
-        consumer_id: None,
-        access_token_id: None,
-        issued_before: chrono::Utc::now(),
-        expires_at: None,
-        audit_id: None,
-        audit_chain_id: None,
-        revoked_at: chrono::Utc::now(),
-    };
-
-    state
-        .provider
-        .get_revoke_provider()
-        .create_revocation_event(&state, revocation_event)
         .await?;
 
     Ok(StatusCode::NO_CONTENT.into_response())
@@ -424,117 +401,5 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
-    }
-
-    #[tokio::test]
-    #[traced_test]
-    async fn test_revoke_creates_revocation_event() {
-        let mut identity_mock = MockIdentityProvider::default();
-        identity_mock
-            .expect_get_user()
-            .withf(|_, id: &'_ str| id == "user_id")
-            .returning(|_, _| {
-                Ok(Some(
-                    UserResponseBuilder::default()
-                        .id("user_id")
-                        .domain_id("did")
-                        .enabled(true)
-                        .name("uname")
-                        .build()
-                        .unwrap(),
-                ))
-            });
-
-        let mut assignment_mock = MockAssignmentProvider::default();
-        assignment_mock
-            .expect_get_role()
-            .withf(|_, rid: &'_ str| rid == "role_id")
-            .returning(|_, _| {
-                Ok(Some(Role {
-                    id: "role_id".into(),
-                    name: "test_role".into(),
-                    ..Default::default()
-                }))
-            });
-
-        // Mock revoke_grant to succeed
-        assignment_mock
-            .expect_revoke_grant()
-            .withf(|_, grant: &Assignment| {
-                grant.actor_id == "user_id"
-                    && grant.target_id == "project_id"
-                    && grant.role_id == "role_id"
-                    && grant.r#type == AssignmentType::UserProject
-                    && !grant.inherited
-            })
-            .returning(|_, _| Ok(()));
-
-        let mut resource_mock = MockResourceProvider::default();
-        resource_mock
-            .expect_get_project()
-            .withf(|_, pid: &'_ str| pid == "project_id")
-            .returning(|_, id: &'_ str| {
-                Ok(Some(Project {
-                    id: id.to_string(),
-                    domain_id: "project_domain_id".into(),
-                    ..Default::default()
-                }))
-            });
-
-        // Mock revoke provider to verify revocation event is created
-        let mut revoke_mock = MockRevokeProvider::default();
-        revoke_mock
-            .expect_create_revocation_event()
-            .withf(|_, event: &RevocationEventCreate| {
-                event.user_id == Some("user_id".to_string())
-                    && event.project_id == Some("project_id".to_string())
-                    && event.role_id == Some("role_id".to_string())
-                    && event.domain_id.is_none()
-                    && event.trust_id.is_none()
-            })
-            .times(1) // Verify it's called exactly once
-            .returning(|_, _| {
-                Ok(crate::revoke::types::RevocationEvent {
-                    domain_id: None,
-                    project_id: Some("project_id".to_string()),
-                    user_id: Some("user_id".to_string()),
-                    role_id: Some("role_id".to_string()),
-                    trust_id: None,
-                    consumer_id: None,
-                    access_token_id: None,
-                    issued_before: chrono::Utc::now(),
-                    expires_at: None,
-                    revoked_at: chrono::Utc::now(),
-                    audit_id: None,
-                    audit_chain_id: None,
-                })
-            });
-
-        let provider_builder = Provider::mocked_builder()
-            .assignment(assignment_mock)
-            .identity(identity_mock)
-            .resource(resource_mock)
-            .revoke(revoke_mock); // Add revoke provider mock
-
-        let state = get_mocked_state(provider_builder, true); // Policy allowed
-        let mut api = openapi_router()
-            .layer(TraceLayer::new_for_http())
-            .with_state(state);
-
-        let response = api
-            .as_service()
-            .oneshot(
-                Request::builder()
-                    .method("DELETE")
-                    .uri("/projects/project_id/users/user_id/roles/role_id")
-                    .header("x-auth-token", "foo")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        // Should succeed
-        assert_eq!(response.status(), StatusCode::NO_CONTENT);
     }
 }
