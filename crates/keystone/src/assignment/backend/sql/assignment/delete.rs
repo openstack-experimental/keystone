@@ -24,7 +24,7 @@ use crate::error::DbContextExt;
 /// Delete assignment grant.
 pub async fn delete(
     db: &DatabaseConnection,
-    grant: Assignment,
+    grant: &Assignment,
 ) -> Result<(), AssignmentDatabaseError> {
     let rows_affected = match &grant.r#type {
         AssignmentType::GroupDomain
@@ -96,7 +96,7 @@ mod tests {
             implied_via: None,
         };
 
-        delete(&db, grant).await.unwrap();
+        delete(&db, &grant).await.unwrap();
 
         // Update expected SQL to match delete_by_id order
         assert_eq!(
@@ -134,7 +134,7 @@ mod tests {
             implied_via: None,
         };
 
-        delete(&db, grant).await.unwrap();
+        delete(&db, &grant).await.unwrap();
 
         assert_eq!(
             db.into_transaction_log(),
@@ -171,7 +171,7 @@ mod tests {
             implied_via: None,
         };
 
-        delete(&db, grant).await.unwrap();
+        delete(&db, &grant).await.unwrap();
 
         assert_eq!(
             db.into_transaction_log(),
@@ -208,7 +208,7 @@ mod tests {
             implied_via: None,
         };
 
-        delete(&db, grant).await.unwrap();
+        delete(&db, &grant).await.unwrap();
 
         assert_eq!(
             db.into_transaction_log(),
@@ -245,7 +245,7 @@ mod tests {
             implied_via: None,
         };
 
-        delete(&db, grant).await.unwrap();
+        delete(&db, &grant).await.unwrap();
 
         assert_eq!(
             db.into_transaction_log(),
@@ -282,7 +282,7 @@ mod tests {
             implied_via: None,
         };
 
-        delete(&db, grant).await.unwrap();
+        delete(&db, &grant).await.unwrap();
 
         assert_eq!(
             db.into_transaction_log(),
@@ -319,7 +319,7 @@ mod tests {
             implied_via: None,
         };
 
-        let result = delete(&db, grant).await;
+        let result = delete(&db, &grant).await;
 
         assert!(result.is_err());
 

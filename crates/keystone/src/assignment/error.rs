@@ -17,6 +17,7 @@ use thiserror::Error;
 use crate::assignment::backend::error::*;
 use crate::identity::error::IdentityProviderError;
 use crate::resource::error::ResourceProviderError;
+use crate::revoke::error::RevokeProviderError;
 
 /// Assignment provider error.
 #[derive(Error, Debug)]
@@ -45,6 +46,13 @@ pub enum AssignmentProviderError {
     ResourceProvider {
         #[from]
         source: ResourceProviderError,
+    },
+
+    /// Revoke provider error.
+    #[error(transparent)]
+    RevokeProvider {
+        #[from]
+        source: RevokeProviderError,
     },
 
     /// Role not found.

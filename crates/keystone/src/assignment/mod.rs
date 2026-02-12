@@ -64,6 +64,7 @@ use crate::identity::IdentityApi;
 use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManager;
 use crate::resource::ResourceApi;
+use crate::revoke::{RevokeApi, types::RevocationEventCreate};
 
 #[cfg(test)]
 pub use mock::MockAssignmentProvider;
@@ -238,6 +239,52 @@ impl AssignmentApi for AssignmentProvider {
         state: &ServiceState,
         grant: Assignment,
     ) -> Result<(), AssignmentProviderError> {
-        self.backend_driver.revoke_grant(state, grant).await
+        // Call backend with reference (no move)
+        self.backend_driver.revoke_grant(state, &grant).await?;
+
+        // Determine user_id or group_id
+        let user_id = match &grant.r#type {
+            AssignmentType::UserDomain
+            | AssignmentType::UserProject
+            | AssignmentType::UserSystem => Some(grant.actor_id.clone()),
+
+            AssignmentType::GroupDomain
+            | AssignmentType::GroupProject
+            | AssignmentType::GroupSystem => None,
+        };
+
+        // Determine project_id or domain_id
+        let (project_id, domain_id) = match &grant.r#type {
+            AssignmentType::UserProject | AssignmentType::GroupProject => {
+                (Some(grant.target_id.clone()), None)
+            }
+            AssignmentType::UserDomain | AssignmentType::GroupDomain => {
+                (None, Some(grant.target_id.clone()))
+            }
+            AssignmentType::UserSystem | AssignmentType::GroupSystem => (None, None),
+        };
+
+        let revocation_event = RevocationEventCreate {
+            domain_id,
+            project_id,
+            user_id,
+            role_id: Some(grant.role_id.clone()),
+            trust_id: None,
+            consumer_id: None,
+            access_token_id: None,
+            issued_before: chrono::Utc::now(),
+            expires_at: None,
+            audit_id: None,
+            audit_chain_id: None,
+            revoked_at: chrono::Utc::now(),
+        };
+
+        state
+            .provider
+            .get_revoke_provider()
+            .create_revocation_event(state, revocation_event)
+            .await?;
+
+        Ok(())
     }
 }
