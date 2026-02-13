@@ -26,6 +26,7 @@ mod catalog;
 mod common;
 mod database;
 mod default;
+mod distributed_storage;
 mod federation;
 mod fernet_token;
 mod identity;
@@ -44,6 +45,7 @@ use auth::AuthProvider;
 use catalog::CatalogProvider;
 use database::DatabaseSection;
 pub use default::DefaultSection;
+use distributed_storage::DistributedStorageConfiguration;
 use federation::FederationProvider;
 pub use fernet_token::FernetTokenProvider;
 pub use identity::*;
@@ -86,6 +88,10 @@ pub struct Config {
     /// Global configuration options.
     #[serde(rename = "DEFAULT", default)]
     pub default: DefaultSection,
+
+    /// Distributed storage configuration.
+    #[serde(default)]
+    pub distributed_storage: Option<DistributedStorageConfiguration>,
 
     /// Federation provider configuration.
     #[serde(default)]
