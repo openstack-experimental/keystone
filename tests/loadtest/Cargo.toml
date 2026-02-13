@@ -14,6 +14,6 @@ goose = { version = "^0.18" }
 tokio.workspace = true
 openstack_sdk = { version = "^0.22", default-features = false, features = ["async", "identity"] }
 
-[[test]]
+[[bin]]
 name="load_test"
 path="src/main.rs"

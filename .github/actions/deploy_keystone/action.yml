@@ -18,6 +18,10 @@ runs:
       with:
         toolchain: stable
 
+    - name: Install protobuf-compiler
+      shell: bash
+      run: sudo apt install -y protobuf-compiler
+
     - name: Fetch pre-built artifacts
       uses: actions/download-artifact@abefc31eafcfbdf6c5336127c1346fdae79ff41c # v5.0.0
       with:

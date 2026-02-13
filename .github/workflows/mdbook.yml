@@ -63,6 +63,9 @@ jobs:
       #    cargo install --version ${MDBOOK_VERSION} mdbook
       #    cargo install mdbook-mermaid
 
+      - name: Install protobuf-compiler
+        run: sudo apt install -y protobuf-compiler
+
       - name: Generate OpenAPI
         run: cargo run --bin keystone -- --dump-openapi yaml > doc/src/openapi.yaml
 

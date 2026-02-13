@@ -1,0 +1,19 @@
+syntax = "proto3";
+
+package keystone.api;
+
+import "google/protobuf/empty.proto";
+import "google/protobuf/wrappers.proto";
+//import "raft.proto";
+import "identity_types.proto";
+
+
+// ApiService provides the key-value store API operations
+service IdentityService {
+  // Get retrieves the value associated with a given key
+  rpc Get(GetRequest) returns (Response) {}
+
+  // Set stores a key-value pair in the distributed store
+  rpc Set(SetRequest) returns (Response) {}
+}
+

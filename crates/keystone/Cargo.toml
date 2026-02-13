@@ -41,6 +41,7 @@ eyre.workspace = true
 fernet = { workspace = true, features = ["rustcrypto"] }
 futures-util.workspace = true
 itertools.workspace = true
+openstack_keystone_distributed_storage = { version = "0.1", path = "../keystone_distributed_storage/"}
 mockall_double.workspace = true
 nix = { workspace = true, features = ["fs", "user"] }
 openidconnect.workspace = true
