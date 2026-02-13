@@ -1,5 +1,6 @@
 [workspace]
 members = [
+  "crates/keystone_distributed_storage",
   "crates/keystone",
   "tests/federation",
   "tests/integration",
@@ -40,6 +41,7 @@ derive_builder = { version = "0.20" }
 dyn-clone = { version = "1.0" }
 eyre = { version = "0.6" }
 fernet = { version = "0.2", default-features = false }
+futures = { version = "0.3" }
 futures-util = { version = "0.3" }
 http-body-util = "0.1"
 hyper = { version = "1.8" }
@@ -50,6 +52,8 @@ mockall_double = { version = "0.3" }
 nix = { version = "0.31", default-features = false }
 # opa-wasm = { version = "^0.1", optional = true }
 openidconnect = { version = "4.0" }
+openraft = { version = "0.10" }
+prost = { version = "0.14" }
 rand = { version = "0.9" }
 regex = { version = "1.12" }
 reqwest = { version = "0.13" }
@@ -69,6 +73,7 @@ thiserror = { version = "2.0" }
 tokio = { version = "1.49" }
 tokio-util = { version = "0.7" }
 tonic = { version = "0.14" }
+tonic-prost-build = { version = "0.14" }
 tonic-prost = { version = "0.14" }
 tower = { version = "0.5" }
 tower-http = { version = "0.6" }
@@ -107,3 +112,6 @@ expect_used = "deny"
 print_stdout = "deny"
 unwrap_used = "deny"
 doc_paragraphs_missing_punctuation = "warn"
+
+[patch.crates-io]
+openraft = { git = "https://github.com/databendlabs/openraft", tag = "v0.10.0-alpha.13" }
