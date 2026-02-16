@@ -21,6 +21,7 @@
 //! same is valid for the authorization validation (project/domain must exist
 //! and be enabled).
 
+use chrono::{DateTime, Utc};
 use derive_builder::Builder;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -76,8 +77,29 @@ pub struct AuthenticatedInfo {
     #[builder(default)]
     pub application_credential: Option<ApplicationCredential>,
 
-    /// User id.
-    pub user_id: String,
+    /// Audit IDs.
+    #[builder(default)]
+    pub audit_ids: Vec<String>,
+
+    /// Authentication expiration.
+    #[builder(default)]
+    pub expires_at: Option<DateTime<Utc>>,
+
+    /// Federated IDP id.
+    #[builder(default)]
+    pub idp_id: Option<String>,
+
+    /// Authentication methods.
+    #[builder(default)]
+    pub methods: Vec<String>,
+
+    /// Federated protocol id.
+    #[builder(default)]
+    pub protocol_id: Option<String>,
+
+    /// Token restriction.
+    #[builder(default)]
+    pub token_restriction_id: Option<String>,
 
     /// Resolved user object.
     #[builder(default)]
@@ -91,25 +113,8 @@ pub struct AuthenticatedInfo {
     #[builder(default)]
     pub user_groups: Vec<Group>,
 
-    /// Authentication methods.
-    #[builder(default)]
-    pub methods: Vec<String>,
-
-    /// Audit IDs.
-    #[builder(default)]
-    pub audit_ids: Vec<String>,
-
-    /// Federated IDP id.
-    #[builder(default)]
-    pub idp_id: Option<String>,
-
-    /// Federated protocol id.
-    #[builder(default)]
-    pub protocol_id: Option<String>,
-
-    /// Token restriction.
-    #[builder(default)]
-    pub token_restriction_id: Option<String>,
+    /// User id.
+    pub user_id: String,
 }
 
 impl AuthenticatedInfo {

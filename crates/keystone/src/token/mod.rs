@@ -75,10 +75,16 @@ impl TokenProvider {
         })
     }
 
-    fn get_new_token_expiry(&self) -> Result<DateTime<Utc>, TokenProviderError> {
-        Utc::now()
+    fn get_new_token_expiry(
+        &self,
+        auth_expiration: &Option<DateTime<Utc>>,
+    ) -> Result<DateTime<Utc>, TokenProviderError> {
+        let default_expiry = Utc::now()
             .checked_add_signed(TimeDelta::seconds(self.config.token.expiration as i64))
-            .ok_or(TokenProviderError::ExpiryCalculation)
+            .ok_or(TokenProviderError::ExpiryCalculation)?;
+        Ok(auth_expiration
+            .map(|x| std::cmp::min(x, default_expiry))
+            .unwrap_or(default_expiry))
     }
 
     /// Create unscoped token.
@@ -92,7 +98,7 @@ impl TokenProvider {
                 .user(authentication_info.user.clone())
                 .methods(authentication_info.methods.clone().iter())
                 .audit_ids(authentication_info.audit_ids.clone().iter())
-                .expires_at(self.get_new_token_expiry()?)
+                .expires_at(self.get_new_token_expiry(&authentication_info.expires_at)?)
                 .build()?,
         ))
     }
@@ -103,7 +109,7 @@ impl TokenProvider {
         authentication_info: &AuthenticatedInfo,
         project: &Project,
     ) -> Result<Token, TokenProviderError> {
-        let token_expiry = self.get_new_token_expiry()?;
+        let token_expiry = self.get_new_token_expiry(&authentication_info.expires_at)?;
         if let Some(application_credential) = &authentication_info.application_credential {
             // Token for the application credential authentication
             Ok(Token::ApplicationCredential(
@@ -152,7 +158,7 @@ impl TokenProvider {
                 .user(authentication_info.user.clone())
                 .methods(authentication_info.methods.clone().iter())
                 .audit_ids(authentication_info.audit_ids.clone().iter())
-                .expires_at(self.get_new_token_expiry()?)
+                .expires_at(self.get_new_token_expiry(&authentication_info.expires_at)?)
                 .domain_id(domain.id.clone())
                 .domain(domain.clone())
                 .build()?,
@@ -174,7 +180,7 @@ impl TokenProvider {
                     .user(authentication_info.user.clone())
                     .methods(authentication_info.methods.clone().iter())
                     .audit_ids(authentication_info.audit_ids.clone().iter())
-                    .expires_at(self.get_new_token_expiry()?)
+                    .expires_at(self.get_new_token_expiry(&authentication_info.expires_at)?)
                     .idp_id(idp_id)
                     .protocol_id(protocol_id)
                     .group_ids(vec![])
@@ -201,7 +207,7 @@ impl TokenProvider {
                     .user(authentication_info.user.clone())
                     .methods(authentication_info.methods.clone().iter())
                     .audit_ids(authentication_info.audit_ids.clone().iter())
-                    .expires_at(self.get_new_token_expiry()?)
+                    .expires_at(self.get_new_token_expiry(&authentication_info.expires_at)?)
                     .idp_id(idp_id)
                     .protocol_id(protocol_id)
                     .group_ids(
@@ -237,7 +243,7 @@ impl TokenProvider {
                     .user(authentication_info.user.clone())
                     .methods(authentication_info.methods.clone().iter())
                     .audit_ids(authentication_info.audit_ids.clone().iter())
-                    .expires_at(self.get_new_token_expiry()?)
+                    .expires_at(self.get_new_token_expiry(&authentication_info.expires_at)?)
                     .idp_id(idp_id)
                     .protocol_id(protocol_id)
                     .group_ids(
@@ -275,7 +281,7 @@ impl TokenProvider {
                 .user(authentication_info.user.clone())
                 .methods(authentication_info.methods.clone().iter())
                 .audit_ids(authentication_info.audit_ids.clone().iter())
-                .expires_at(self.get_new_token_expiry()?)
+                .expires_at(self.get_new_token_expiry(&authentication_info.expires_at)?)
                 .token_restriction_id(restriction.id.clone())
                 .project_id(
                     restriction
@@ -306,7 +312,7 @@ impl TokenProvider {
                 .methods(authentication_info.methods.clone().iter())
                 .audit_ids(authentication_info.audit_ids.clone().iter())
                 .system_id("system")
-                .expires_at(self.get_new_token_expiry()?)
+                .expires_at(self.get_new_token_expiry(&authentication_info.expires_at)?)
                 .build()?,
         ))
     }
@@ -324,7 +330,7 @@ impl TokenProvider {
                     .user(authentication_info.user.clone())
                     .methods(authentication_info.methods.clone().iter())
                     .audit_ids(authentication_info.audit_ids.clone().iter())
-                    .expires_at(self.get_new_token_expiry()?)
+                    .expires_at(self.get_new_token_expiry(&authentication_info.expires_at)?)
                     .trust_id(trust.id.clone())
                     .project_id(project_id.clone())
                     .build()?,
@@ -337,7 +343,7 @@ impl TokenProvider {
                     .user(authentication_info.user.clone())
                     .methods(authentication_info.methods.clone().iter())
                     .audit_ids(authentication_info.audit_ids.clone().iter())
-                    .expires_at(self.get_new_token_expiry()?)
+                    .expires_at(self.get_new_token_expiry(&authentication_info.expires_at)?)
                     .build()?,
             ))
         }
@@ -784,6 +790,7 @@ impl TokenApi for TokenProvider {
         auth_info_builder.user_id(token.user_id());
         auth_info_builder.methods(token.methods().clone());
         auth_info_builder.audit_ids(token.audit_ids().clone());
+        auth_info_builder.expires_at(*token.expires_at());
         if let Token::Restricted(restriction) = &token {
             auth_info_builder.token_restriction_id(restriction.token_restriction_id.clone());
         }
@@ -993,12 +1000,14 @@ mod tests {
         MockAssignmentProvider,
         types::{Assignment, AssignmentType, Role, RoleAssignmentListParameters},
     };
+    use crate::auth::AuthenticatedInfoBuilder;
     use crate::config::Config;
     use crate::identity::{MockIdentityProvider, types::UserResponseBuilder};
     use crate::keystone::Service;
     use crate::provider::Provider;
-    use crate::resource::{MockResourceProvider, types::Project};
+    use crate::resource::{MockResourceProvider, types::*};
     use crate::revoke::MockRevokeProvider;
+    use crate::trust::types::*;
 
     pub(super) fn setup_config() -> Config {
         let keys_dir = tempdir().unwrap();
@@ -1409,6 +1418,270 @@ mod tests {
             panic!(
                 "role expansion for application credential with roles the user does not have anymore should fail"
             );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_create_unscoped_token() {
+        let token_provider = TokenProvider::new(&Config::default()).unwrap();
+        let now = Utc::now();
+        let token = token_provider
+            .create_unscoped_token(
+                &AuthenticatedInfoBuilder::default()
+                    .user_id("uid")
+                    .expires_at(now)
+                    .build()
+                    .unwrap(),
+            )
+            .unwrap();
+        assert_eq!(*token.expires_at(), now);
+        assert_eq!(*token.user_id(), "uid");
+        let token = token_provider
+            .create_unscoped_token(
+                &AuthenticatedInfoBuilder::default()
+                    .user_id("uid")
+                    .build()
+                    .unwrap(),
+            )
+            .unwrap();
+        assert!(now < *token.expires_at());
+        assert_eq!(*token.user_id(), "uid");
+        assert!(token.project_id().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_create_project_scope_token() {
+        let token_provider = TokenProvider::new(&Config::default()).unwrap();
+        let now = Utc::now();
+        let token = token_provider
+            .create_project_scope_token(
+                &AuthenticatedInfoBuilder::default()
+                    .user_id("uid")
+                    .expires_at(now)
+                    .build()
+                    .unwrap(),
+                &ProjectBuilder::default()
+                    .id("pid")
+                    .domain_id("did")
+                    .name("pname")
+                    .enabled(true)
+                    .build()
+                    .unwrap(),
+            )
+            .unwrap();
+        assert_eq!(*token.expires_at(), now);
+        assert_eq!(*token.user_id(), "uid");
+        let token = token_provider
+            .create_project_scope_token(
+                &AuthenticatedInfoBuilder::default()
+                    .user_id("uid")
+                    .build()
+                    .unwrap(),
+                &ProjectBuilder::default()
+                    .id("pid")
+                    .domain_id("did")
+                    .name("pname")
+                    .enabled(true)
+                    .build()
+                    .unwrap(),
+            )
+            .unwrap();
+        assert!(now < *token.expires_at());
+        assert_eq!(*token.user_id(), "uid");
+        assert_eq!(*token.project_id().unwrap(), "pid");
+    }
+
+    #[tokio::test]
+    async fn test_create_domain_scope_token() {
+        let token_provider = TokenProvider::new(&Config::default()).unwrap();
+        let now = Utc::now();
+        let token = token_provider
+            .create_domain_scope_token(
+                &AuthenticatedInfoBuilder::default()
+                    .user_id("uid")
+                    .expires_at(now)
+                    .build()
+                    .unwrap(),
+                &DomainBuilder::default()
+                    .id("did")
+                    .name("pname")
+                    .enabled(true)
+                    .build()
+                    .unwrap(),
+            )
+            .unwrap();
+        assert_eq!(*token.expires_at(), now);
+        assert_eq!(*token.user_id(), "uid");
+        let token = token_provider
+            .create_domain_scope_token(
+                &AuthenticatedInfoBuilder::default()
+                    .user_id("uid")
+                    .build()
+                    .unwrap(),
+                &DomainBuilder::default()
+                    .id("did")
+                    .name("pname")
+                    .enabled(true)
+                    .build()
+                    .unwrap(),
+            )
+            .unwrap();
+        assert!(now < *token.expires_at());
+        assert_eq!(*token.user_id(), "uid");
+        assert_eq!(token.domain().unwrap().id, "did");
+    }
+
+    #[tokio::test]
+    async fn test_create_system_token() {
+        let token_provider = TokenProvider::new(&Config::default()).unwrap();
+        let now = Utc::now();
+        let token = token_provider
+            .create_system_scoped_token(
+                &AuthenticatedInfoBuilder::default()
+                    .user_id("uid")
+                    .expires_at(now)
+                    .build()
+                    .unwrap(),
+            )
+            .unwrap();
+        assert_eq!(*token.expires_at(), now);
+        assert_eq!(*token.user_id(), "uid");
+        let token = token_provider
+            .create_system_scoped_token(
+                &AuthenticatedInfoBuilder::default()
+                    .user_id("uid")
+                    .build()
+                    .unwrap(),
+            )
+            .unwrap();
+        assert!(now < *token.expires_at());
+        assert_eq!(*token.user_id(), "uid");
+        if let Token::SystemScope(data) = token {
+            assert_eq!(data.system_id, "system");
+        } else {
+            panic!("wrong token type");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_create_trust_token() {
+        let token_provider = TokenProvider::new(&Config::default()).unwrap();
+        let now = Utc::now();
+        let token = token_provider
+            .create_trust_token(
+                &AuthenticatedInfoBuilder::default()
+                    .user_id("uid")
+                    .expires_at(now)
+                    .build()
+                    .unwrap(),
+                &TrustBuilder::default()
+                    .id("tid")
+                    .impersonation(false)
+                    .trustor_user_id("trustor_uid")
+                    .trustee_user_id("trustor_uid")
+                    .build()
+                    .unwrap(),
+            )
+            .unwrap();
+        assert_eq!(*token.expires_at(), now);
+        assert_eq!(*token.user_id(), "uid");
+        let token = token_provider
+            .create_trust_token(
+                &AuthenticatedInfoBuilder::default()
+                    .user_id("uid")
+                    .build()
+                    .unwrap(),
+                &TrustBuilder::default()
+                    .id("tid")
+                    .impersonation(false)
+                    .trustor_user_id("trustor_uid")
+                    .trustee_user_id("trustor_uid")
+                    .project_id("pid")
+                    .build()
+                    .unwrap(),
+            )
+            .unwrap();
+        assert!(now < *token.expires_at());
+        assert_eq!(*token.user_id(), "uid");
+        if let Token::Trust(data) = token {
+            assert_eq!(data.trust_id, "tid");
+        } else {
+            panic!("wrong token type");
+        }
+
+        // unscoped
+        let token = token_provider
+            .create_trust_token(
+                &AuthenticatedInfoBuilder::default()
+                    .user_id("uid")
+                    .build()
+                    .unwrap(),
+                &TrustBuilder::default()
+                    .id("tid")
+                    .impersonation(false)
+                    .trustor_user_id("trustor_uid")
+                    .trustee_user_id("trustor_uid")
+                    .build()
+                    .unwrap(),
+            )
+            .unwrap();
+        assert!(now < *token.expires_at());
+        assert_eq!(*token.user_id(), "uid");
+        if let Token::Unscoped(_data) = token {
+        } else {
+            panic!("wrong token type");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_create_restricted_token() {
+        let token_provider = TokenProvider::new(&Config::default()).unwrap();
+        let now = Utc::now();
+        let token = token_provider
+            .create_restricted_token(
+                &AuthenticatedInfoBuilder::default()
+                    .user_id("uid")
+                    .expires_at(now)
+                    .build()
+                    .unwrap(),
+                &AuthzInfo::System,
+                &TokenRestrictionBuilder::default()
+                    .id("rid")
+                    .domain_id("did")
+                    .project_id("pid")
+                    .allow_renew(true)
+                    .allow_rescope(true)
+                    .role_ids([])
+                    .build()
+                    .unwrap(),
+            )
+            .unwrap();
+        assert_eq!(*token.expires_at(), now);
+        assert_eq!(*token.user_id(), "uid");
+        let token = token_provider
+            .create_restricted_token(
+                &AuthenticatedInfoBuilder::default()
+                    .user_id("uid")
+                    .build()
+                    .unwrap(),
+                &AuthzInfo::System,
+                &TokenRestrictionBuilder::default()
+                    .id("rid")
+                    .domain_id("did")
+                    .project_id("pid")
+                    .allow_renew(true)
+                    .allow_rescope(true)
+                    .role_ids([])
+                    .build()
+                    .unwrap(),
+            )
+            .unwrap();
+        assert!(now < *token.expires_at());
+        assert_eq!(*token.user_id(), "uid");
+        if let Token::Restricted(data) = token {
+            assert_eq!(data.token_restriction_id, "rid");
+        } else {
+            panic!("wrong token type");
         }
     }
 }

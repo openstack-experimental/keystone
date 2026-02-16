@@ -98,6 +98,7 @@ impl From<RestrictedPayload> for Token {
 /// Token restriction information.
 #[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 #[builder(build_fn(error = "BuilderError"))]
+#[builder(setter(into, strip_option))]
 pub struct TokenRestriction {
     /// Whether the restriction allows to rescope the token.
     pub allow_rescope: bool,
@@ -108,12 +109,15 @@ pub struct TokenRestriction {
     /// Domain Id the token restriction belongs to.
     pub domain_id: String,
     /// Optional project ID to be used with this restriction.
+    #[builder(default)]
     pub project_id: Option<String>,
     /// Roles bound to the restriction.
     pub role_ids: Vec<String>,
     /// Optional list of full Role information.
+    #[builder(default)]
     pub roles: Option<Vec<crate::assignment::types::Role>>,
     /// User id.
+    #[builder(default)]
     pub user_id: Option<String>,
 }
 
