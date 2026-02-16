@@ -114,7 +114,7 @@
 
 use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose};
-use rand::{Rng, rng};
+use rand::{RngExt, rng};
 use secrecy::SecretString;
 use std::sync::Arc;
 use uuid::Uuid;

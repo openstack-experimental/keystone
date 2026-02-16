@@ -11,18 +11,18 @@ dist = false
 
 [dependencies]
 chrono.workspace = true
-eyre = { version = "0.6" }
+eyre.workspace = true
 itertools.workspace = true
 openstack_keystone = { path = "../../crates/keystone" }
 sea-orm = { workspace = true, features = ["mock", "sqlx-sqlite" ]}
 secrecy = { workspace = true, features = ["serde"] }
-serde = { version = "1.0" }
-serde_json = { version = "1.0" }
-serde_urlencoded = { version = "0.7" }
+serde.workspace = true
+serde_json.workspace = true
+serde_urlencoded.workspace = true
 tempfile.workspace = true
-tracing = { version = "0.1" }
-tokio = { version = "1.49" }
-tokio-util = { version = "0.7" }
+tracing.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
 tracing-test = { version = "0.2", features = ["no-env-filter"] }
 uuid = { workspace = true, features = ["v4"] }
 

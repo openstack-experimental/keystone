@@ -54,7 +54,7 @@ nix = { version = "0.31", default-features = false }
 openidconnect = { version = "4.0" }
 openraft = { version = "0.10" }
 prost = { version = "0.14" }
-rand = { version = "0.9" }
+rand = { version = "0.10" }
 regex = { version = "1.12" }
 reqwest = { version = "0.13" }
 rmp = { version = "0.8" }
@@ -86,7 +86,7 @@ url-macro = { version = "0.2" }
 utoipa = { version = "5.4" }
 utoipa-axum = { version = "0.2" }
 utoipa-swagger-ui = { version = "9.0", default-features = false }
-uuid = { version = "1.20" }
+uuid = { version = "1.21" }
 validator = { version = "0.20" }
 webauthn-authenticator-rs = { version = "0.5" }
 webauthn-rs = { version = "0.5" }
