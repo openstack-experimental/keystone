@@ -151,7 +151,6 @@ mod tests {
     use crate::identity::{MockIdentityProvider, types::*};
     use crate::provider::Provider;
     use crate::resource::{MockResourceProvider, types::Project};
-
     #[tokio::test]
     #[traced_test]
     async fn test_revoke_success() {
