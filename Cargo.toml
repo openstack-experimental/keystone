@@ -13,7 +13,7 @@ resolver = "3"
 edition = "2024"
 license = "Apache-2.0"
 authors = ["Artem Goncharov (gtema)"]
-rust-version = "1.90"  # MSRV
+rust-version = "1.91"  # MSRV
 repository = "https://github.com/openstack-experimental/keystone"
 homepage = "https://openstack-experimental.github.io/keystone"
 # Exclude content not relevant for the package
