@@ -1,6 +1,4 @@
 **/target
-# Ignore rust files in the root folder
-/*.rs
 # no OpenPolicyAgent data
 bundle.tar.gz
 /*.rego

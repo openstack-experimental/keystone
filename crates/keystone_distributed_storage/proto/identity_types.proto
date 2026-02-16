@@ -1,0 +1,23 @@
+syntax = "proto3";
+
+package keystone.api;
+
+// SetRequest represents a key-value pair to be stored.
+message SetRequest {
+  // Key to store.
+  string key = 1;
+  // Value to associate with the key.
+  string value = 2;
+}
+
+// GetRequest represents a key lookup request.
+message GetRequest {
+  // Key to look up.
+  string key = 1;
+}
+
+// GetResponse contains the value associated with the requested key.
+message Response {
+  // Retrieved value.
+  optional string value = 1;
+}

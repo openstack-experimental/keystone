@@ -54,6 +54,7 @@ use openstack_keystone::plugin_manager::PluginManager;
 use openstack_keystone::policy::PolicyFactory;
 use openstack_keystone::provider::Provider;
 use openstack_keystone::webauthn;
+use openstack_keystone_distributed_storage::app::get_app_server;
 
 // Default body limit 256kB
 const DEFAULT_BODY_LIMIT: usize = 1024 * 256;
@@ -200,7 +201,7 @@ async fn main() -> Result<(), Report> {
 
     let policy = PolicyFactory::http(cfg.api_policy.opa_base_url.clone()).await?;
 
-    let shared_state = Arc::new(Service::new(cfg, conn, provider, policy)?);
+    let shared_state = Arc::new(Service::new(cfg.clone(), conn, provider, policy)?);
 
     spawn(cleanup(cloned_token, shared_state.clone()));
 
@@ -265,10 +266,31 @@ async fn main() -> Result<(), Report> {
 
     let address = SocketAddr::from((Ipv4Addr::UNSPECIFIED, 8080));
     let listener = TcpListener::bind(&address).await?;
-    axum::serve(listener, app.into_make_service())
-        .with_graceful_shutdown(shutdown_signal(shared_state))
-        .await?;
 
+    let mut handles = tokio::task::JoinSet::new();
+    if let Some(ds) = &cfg.distributed_storage {
+        let storage_app = get_app_server(ds.node_id, &ds.path).await?;
+
+        let grpc_addr: SocketAddr = ds.cluster_addr.parse()?;
+
+        let state_clone = shared_state.clone();
+        handles.spawn(async move {
+            storage_app
+                .serve_with_shutdown(grpc_addr, shutdown_signal(state_clone))
+                .await
+                .unwrap();
+        });
+    }
+
+    handles.spawn(async move {
+        axum::serve(listener, app.into_make_service())
+            .with_graceful_shutdown(shutdown_signal(shared_state))
+            .await
+            .unwrap();
+    });
+
+    // Wait for both (or handle errors)
+    handles.join_all().await;
     token.cancel();
     Ok(())
 }

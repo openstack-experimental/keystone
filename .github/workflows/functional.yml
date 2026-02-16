@@ -45,6 +45,9 @@ jobs:
         with:
           toolchain: stable
 
+      - name: Install protobuf-compiler
+        run: sudo apt install -y protobuf-compiler
+
       - name: Build Keystone
         run: cargo build --release
 
