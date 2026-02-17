@@ -22,8 +22,8 @@ use validator::Validate;
 use super::types::{RoleCreate, RoleResponse};
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
-use crate::assignment::AssignmentApi;
 use crate::keystone::ServiceState;
+use crate::role::RoleApi;
 
 /// Create Role
 #[utoipa::path(
@@ -50,7 +50,7 @@ pub(super) async fn create(
     // Create the role
     let created_role = state
         .provider
-        .get_assignment_provider()
+        .get_role_provider()
         .create_role(&state, payload.into())
         .await?;
 
@@ -78,15 +78,15 @@ mod tests {
     use super::super::openapi_router;
     use super::super::tests::get_mocked_state;
     use crate::api::v3::role::types::{Role as ApiRole, RoleResponse};
-    use crate::assignment::{
-        MockAssignmentProvider,
+    use crate::role::{
+        MockRoleProvider,
         types::{Role, RoleCreate},
     };
 
     #[tokio::test]
     async fn test_create() {
-        let mut assignment_mock = MockAssignmentProvider::default();
-        assignment_mock
+        let mut role_mock = MockRoleProvider::default();
+        role_mock
             .expect_create_role()
             .withf(|_, role_create: &RoleCreate| {
                 role_create.name == "new_role"
@@ -104,7 +104,7 @@ mod tests {
                 })
             });
 
-        let state = get_mocked_state(assignment_mock);
+        let state = get_mocked_state(role_mock);
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())

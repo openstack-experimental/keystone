@@ -235,8 +235,8 @@ impl From<TokenRestrictionUpdateRequest> for ProviderTokenRestrictionUpdate {
     }
 }
 
-impl From<crate::assignment::types::role::Role> for Role {
-    fn from(value: crate::assignment::types::role::Role) -> Self {
+impl From<crate::role::types::Role> for Role {
+    fn from(value: crate::role::types::Role) -> Self {
         Self {
             id: value.id,
             name: value.name.into(),

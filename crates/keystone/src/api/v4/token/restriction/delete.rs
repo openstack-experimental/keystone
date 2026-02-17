@@ -93,18 +93,14 @@ mod tests {
         body::Body,
         http::{Request, StatusCode},
     };
-
     use tower::ServiceExt; // for `call`, `oneshot`, and `ready`
     use tower_http::trace::TraceLayer;
-    use tracing_test::traced_test;
 
     use super::super::{openapi_router, tests::get_mocked_state};
-
-    use crate::assignment::types::Role as ProviderRole;
+    use crate::role::types::Role as ProviderRole;
     use crate::token::{MockTokenProvider, TokenProviderError, types as provider_types};
 
     #[tokio::test]
-    #[traced_test]
     async fn test_delete() {
         let mut token_mock = MockTokenProvider::default();
         token_mock

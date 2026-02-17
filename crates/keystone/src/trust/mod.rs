@@ -233,11 +233,11 @@ mod tests {
 
     use super::backend::MockTrustBackend;
     use super::*;
-    use crate::assignment::types::Role;
     use crate::config::Config;
     use crate::keystone::Service;
     use crate::policy::MockPolicyFactory;
     use crate::provider::Provider;
+    use crate::role::types::Role;
 
     fn get_state_mock() -> Arc<Service> {
         Arc::new(

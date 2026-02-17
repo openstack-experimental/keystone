@@ -21,7 +21,7 @@ use uuid::Uuid;
 use super::get_state;
 use openstack_keystone::application_credential::ApplicationCredentialApi;
 use openstack_keystone::application_credential::types::*;
-use openstack_keystone::assignment::types::Role;
+use openstack_keystone::role::types::Role;
 
 #[tokio::test]
 #[traced_test]

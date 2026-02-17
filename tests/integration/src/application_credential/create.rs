@@ -24,7 +24,7 @@ use openstack_keystone::application_credential::types::*;
 use openstack_keystone::application_credential::{
     ApplicationCredentialApi, ApplicationCredentialProviderError,
 };
-use openstack_keystone::assignment::types::*;
+use openstack_keystone::role::types::*;
 
 #[tokio::test]
 #[traced_test]

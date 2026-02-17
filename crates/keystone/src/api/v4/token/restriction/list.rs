@@ -90,21 +90,18 @@ mod tests {
         http::{Request, StatusCode},
     };
     use http_body_util::BodyExt; // for `collect`
-
     use tower::ServiceExt; // for `call`, `oneshot`, and `ready`
     use tower_http::trace::TraceLayer;
-    use tracing_test::traced_test;
 
     use super::{
         super::{openapi_router, tests::get_mocked_state},
         *,
     };
     use crate::api::v3::role_assignment::types::Role;
-    use crate::assignment::types::Role as ProviderRole;
+    use crate::role::types::Role as ProviderRole;
     use crate::token::{MockTokenProvider, types as provider_types};
 
     #[tokio::test]
-    #[traced_test]
     async fn test_list() {
         let mut token_mock = MockTokenProvider::default();
         token_mock
@@ -179,7 +176,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[traced_test]
     async fn test_list_qp() {
         let mut token_mock = MockTokenProvider::default();
         token_mock
@@ -239,7 +235,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[traced_test]
     async fn test_list_forbidden() {
         let token_mock = MockTokenProvider::default();
         let state = get_mocked_state(token_mock, false, None);

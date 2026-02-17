@@ -20,8 +20,8 @@ use axum::{
 use super::types::RoleResponse;
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
-use crate::assignment::AssignmentApi;
 use crate::keystone::ServiceState;
+use crate::role::RoleApi;
 
 /// Get single role
 #[utoipa::path(
@@ -43,7 +43,7 @@ pub(super) async fn show(
 ) -> Result<impl IntoResponse, KeystoneApiError> {
     state
         .provider
-        .get_assignment_provider()
+        .get_role_provider()
         .get_role(&state, &role_id)
         .await
         .map(|x| {
@@ -68,17 +68,17 @@ mod tests {
     use super::super::openapi_router;
     use super::super::tests::get_mocked_state;
     use crate::api::v3::role::types::{Role as ApiRole, RoleResponse};
-    use crate::assignment::{MockAssignmentProvider, types::Role};
+    use crate::role::{MockRoleProvider, types::Role};
 
     #[tokio::test]
     async fn test_get() {
-        let mut assignment_mock = MockAssignmentProvider::default();
-        assignment_mock
+        let mut role_mock = MockRoleProvider::default();
+        role_mock
             .expect_get_role()
             .withf(|_, id: &'_ str| id == "foo")
             .returning(|_, _| Ok(None));
 
-        assignment_mock
+        role_mock
             .expect_get_role()
             .withf(|_, id: &'_ str| id == "bar")
             .returning(|_, _| {
@@ -88,7 +88,7 @@ mod tests {
                 }))
             });
 
-        let state = get_mocked_state(assignment_mock);
+        let state = get_mocked_state(role_mock);
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())

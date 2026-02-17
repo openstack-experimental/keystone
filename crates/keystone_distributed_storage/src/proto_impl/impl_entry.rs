@@ -30,8 +30,8 @@ impl fmt::Display for pb::raft::Entry {
 
 impl RaftPayload<TypeConfig> for pb::raft::Entry {
     fn get_membership(&self) -> Option<Membership<TypeConfig>> {
-        // NOTE: Converting the membership is fallible. This interface does not allow us to handle
-        // it properly, so the conversion error is treated as `None`.
+        // NOTE: Converting the membership is fallible. This interface does not allow us
+        // to handle it properly, so the conversion error is treated as `None`.
         self.membership
             .clone()
             .map(TryInto::try_into)

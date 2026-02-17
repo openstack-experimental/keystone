@@ -19,8 +19,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use validator::Validate;
 
-use crate::assignment::types::Role;
 use crate::error::BuilderError;
+use crate::role::types::Role;
 
 /// A trust object.
 #[derive(Builder, Clone, Debug, Default, Deserialize, Serialize, PartialEq, Validate)]

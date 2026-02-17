@@ -47,6 +47,9 @@ use crate::resource::ResourceProvider;
 use crate::revoke::RevokeApi;
 #[double]
 use crate::revoke::RevokeProvider;
+use crate::role::RoleApi;
+#[double]
+use crate::role::RoleProvider;
 use crate::token::TokenApi;
 #[double]
 use crate::token::TokenProvider;
@@ -78,6 +81,8 @@ pub struct Provider {
     resource: ResourceProvider,
     /// Revoke provider.
     revoke: RevokeProvider,
+    /// Role provider.
+    role: RoleProvider,
     /// Token provider.
     token: TokenProvider,
     /// Trust provider.
@@ -95,6 +100,7 @@ impl Provider {
         let identity_mapping_provider = IdentityMappingProvider::new(&cfg, &plugin_manager)?;
         let resource_provider = ResourceProvider::new(&cfg, &plugin_manager)?;
         let revoke_provider = RevokeProvider::new(&cfg, &plugin_manager)?;
+        let role_provider = RoleProvider::new(&cfg, &plugin_manager)?;
         let token_provider = TokenProvider::new(&cfg)?;
         let trust_provider = TrustProvider::new(&cfg, &plugin_manager)?;
 
@@ -108,6 +114,7 @@ impl Provider {
             identity_mapping: identity_mapping_provider,
             resource: resource_provider,
             revoke: revoke_provider,
+            role: role_provider,
             token: token_provider,
             trust: trust_provider,
         })
@@ -153,6 +160,11 @@ impl Provider {
         &self.revoke
     }
 
+    /// Get the role provider.
+    pub fn get_role_provider(&self) -> &impl RoleApi {
+        &self.role
+    }
+
     /// Get the token provider.
     pub fn get_token_provider(&self) -> &impl TokenApi {
         &self.token
@@ -177,6 +189,7 @@ impl Provider {
         let federation_mock = crate::federation::MockFederationProvider::default();
         let resource_mock = crate::resource::MockResourceProvider::default();
         let revoke_mock = crate::revoke::MockRevokeProvider::default();
+        let role_mock = crate::role::MockRoleProvider::default();
         let token_mock = crate::token::MockTokenProvider::default();
         let trust_mock = crate::trust::MockTrustProvider::default();
 
@@ -190,6 +203,7 @@ impl Provider {
             .federation(federation_mock)
             .resource(resource_mock)
             .revoke(revoke_mock)
+            .role(role_mock)
             .token(token_mock)
             .trust(trust_mock)
     }

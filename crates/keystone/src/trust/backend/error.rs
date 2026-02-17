@@ -16,6 +16,7 @@ use thiserror::Error;
 
 use crate::assignment::backend::error::AssignmentDatabaseError;
 use crate::error::{BuilderError, DatabaseError};
+use crate::role::backend::error::RoleDatabaseError;
 
 /// Database backend error for the database driver.
 #[derive(Error, Debug)]
@@ -34,6 +35,10 @@ pub enum TrustDatabaseError {
     /// DateTime parsing error.
     #[error("error parsing int column as datetime: {expires_at}")]
     ExpirationDateTimeParse { id: String, expires_at: i64 },
+
+    /// Role database error.
+    #[error(transparent)]
+    RoleDatabase(#[from] RoleDatabaseError),
 
     /// The trust has not been found.
     #[error("{0}")]

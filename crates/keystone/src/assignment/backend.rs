@@ -20,7 +20,7 @@ use async_trait::async_trait;
 use crate::assignment::AssignmentProviderError;
 use crate::keystone::ServiceState;
 
-use crate::assignment::types::{assignment::*, role::*};
+use crate::assignment::types::assignment::*;
 pub use sql::SqlBackend;
 
 #[cfg_attr(test, mockall::automock)]
@@ -40,27 +40,6 @@ pub trait AssignmentBackend: Send + Sync {
         params: AssignmentCreate,
     ) -> Result<Assignment, AssignmentProviderError>;
 
-    /// Create Role.
-    async fn create_role(
-        &self,
-        state: &ServiceState,
-        params: RoleCreate,
-    ) -> Result<Role, AssignmentProviderError>;
-
-    /// Get single role by ID
-    async fn get_role<'a>(
-        &self,
-        state: &ServiceState,
-        id: &'a str,
-    ) -> Result<Option<Role>, AssignmentProviderError>;
-
-    /// Expand implied roles.
-    async fn expand_implied_roles(
-        &self,
-        state: &ServiceState,
-        roles: &mut Vec<Role>,
-    ) -> Result<(), AssignmentProviderError>;
-
     /// List Role assignments
     async fn list_assignments(
         &self,
@@ -79,13 +58,6 @@ pub trait AssignmentBackend: Send + Sync {
         state: &ServiceState,
         params: &RoleAssignmentListForMultipleActorTargetParameters,
     ) -> Result<Vec<Assignment>, AssignmentProviderError>;
-
-    /// List Roles
-    async fn list_roles(
-        &self,
-        state: &ServiceState,
-        params: &RoleListParameters,
-    ) -> Result<Vec<Role>, AssignmentProviderError>;
 
     /// Revoke assignment grant.
     async fn revoke_grant(

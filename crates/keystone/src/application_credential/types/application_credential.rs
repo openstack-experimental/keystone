@@ -20,8 +20,8 @@ use serde::{Deserialize, Serialize};
 use validator::Validate;
 
 use super::{AccessRule, AccessRuleCreate};
-use crate::assignment::types::Role;
 use crate::error::BuilderError;
+use crate::role::types::Role;
 
 /// The application credential object.
 #[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]

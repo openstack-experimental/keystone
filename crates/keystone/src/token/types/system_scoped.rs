@@ -17,9 +17,9 @@ use derive_builder::Builder;
 use serde::Serialize;
 use validator::Validate;
 
-use crate::assignment::types::Role;
 use crate::error::BuilderError;
 use crate::identity::types::UserResponse;
+use crate::role::types::Role;
 use crate::token::types::Token;
 use crate::token::types::common;
 

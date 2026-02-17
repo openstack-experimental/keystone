@@ -209,7 +209,7 @@ mod tests {
 
     use crate::api::v3::auth::token::types::Token;
     use crate::api::v3::role::types::Role;
-    use crate::assignment::types::Role as ProviderRole;
+    use crate::role::types::Role as ProviderRole;
 
     use crate::config::Config;
     use crate::identity::{MockIdentityProvider, types::UserResponseBuilder};

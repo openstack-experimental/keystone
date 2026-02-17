@@ -18,7 +18,6 @@ use sea_orm::query::*;
 
 use crate::application_credential::backend::error::ApplicationCredentialDatabaseError;
 use crate::application_credential::types::*;
-use crate::assignment::types::Role;
 use crate::db::entity::{
     application_credential as db_application_credential,
     prelude::{
@@ -27,6 +26,7 @@ use crate::db::entity::{
     },
 };
 use crate::error::DbContextExt;
+use crate::role::types::Role;
 
 /// Get application credential by the ID.
 pub async fn get<I: AsRef<str>>(
@@ -72,7 +72,7 @@ mod tests {
 
     use super::super::tests::*;
     use super::*;
-    use crate::assignment::backend::sql::role::tests::get_role_mock;
+    use crate::role::backend::sql::role::tests::get_role_mock;
 
     #[tokio::test]
     async fn test_get() {

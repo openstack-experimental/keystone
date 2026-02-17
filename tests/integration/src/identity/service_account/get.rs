@@ -41,14 +41,14 @@ async fn test_get() -> Result<()> {
         )
         .await?;
 
-    let user = state
+    let _user = state
         .provider
         .get_identity_provider()
         .get_user(&state, &sa.id)
         .await?
         .expect("user found");
 
-    let sa = state
+    let _sa = state
         .provider
         .get_identity_provider()
         .get_service_account(&state, &sa.id)

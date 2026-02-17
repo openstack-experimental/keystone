@@ -172,6 +172,14 @@ pub enum TokenProviderError {
     #[error("rmp value error")]
     RmpValueRead(#[from] rmp::decode::ValueReadError),
 
+    /// Role provider error.
+    #[error(transparent)]
+    RoleProvider {
+        /// The source of the error.
+        #[from]
+        source: crate::role::error::RoleProviderError,
+    },
+
     /// Target scope information is not found in the token.
     #[error("scope information missing")]
     ScopeMissing,

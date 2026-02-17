@@ -111,14 +111,14 @@ mod tests {
     use sea_orm::DatabaseConnection;
     use std::sync::Arc;
 
-    use crate::assignment::MockAssignmentProvider;
     use crate::config::Config;
     use crate::keystone::{Service, ServiceState};
     use crate::policy::MockPolicyFactory;
     use crate::provider::Provider;
+    use crate::role::MockRoleProvider;
     use crate::token::{MockTokenProvider, Token, UnscopedPayload};
 
-    pub fn get_mocked_state(assignment_mock: MockAssignmentProvider) -> ServiceState {
+    pub fn get_mocked_state(role_mock: MockRoleProvider) -> ServiceState {
         let mut token_mock = MockTokenProvider::default();
         token_mock.expect_validate_token().returning(|_, _, _, _| {
             Ok(Token::Unscoped(UnscopedPayload {
@@ -136,7 +136,7 @@ mod tests {
             });
 
         let provider = Provider::mocked_builder()
-            .assignment(assignment_mock)
+            .role(role_mock)
             .token(token_mock)
             .build()
             .unwrap();

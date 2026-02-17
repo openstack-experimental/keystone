@@ -34,30 +34,6 @@ mock! {
             params: AssignmentCreate,
         ) -> Result<Assignment, AssignmentProviderError>;
 
-        async fn create_role(
-            &self,
-            state: &ServiceState,
-            params: RoleCreate,
-        ) -> Result<Role, AssignmentProviderError>;
-
-        async fn get_role<'a>(
-            &self,
-            state: &ServiceState,
-            id: &'a str,
-        ) -> Result<Option<Role>, AssignmentProviderError>;
-
-        async fn expand_implied_roles(
-            &self,
-            state: &ServiceState,
-            roles: &mut Vec<Role>,
-        ) -> Result<(), AssignmentProviderError>;
-
-        async fn list_roles(
-            &self,
-            state: &ServiceState,
-            params: &RoleListParameters,
-        ) -> Result<Vec<Role>, AssignmentProviderError>;
-
         async fn list_role_assignments(
             &self,
             state: &ServiceState,

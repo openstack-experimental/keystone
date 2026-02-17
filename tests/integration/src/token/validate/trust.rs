@@ -14,7 +14,6 @@
 //
 
 use eyre::Report;
-use openstack_keystone::assignment::types::RoleCreate;
 use sea_orm::{DbConn, entity::*};
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -22,11 +21,11 @@ use tracing_test::traced_test;
 
 use super::{create_user, get_state, grant_role_to_user_on_project};
 use crate::common::create_role;
-use openstack_keystone::assignment::AssignmentApi;
 use openstack_keystone::auth::*;
 use openstack_keystone::db::entity::prelude::{Trust as DbTrust, TrustRole as DbTrustRole};
 use openstack_keystone::db::entity::{trust as db_trust, trust_role as db_trust_role};
 use openstack_keystone::keystone::Service;
+use openstack_keystone::role::{RoleApi, types::RoleCreate};
 use openstack_keystone::token::{Token, TokenApi, TokenProviderError};
 use openstack_keystone::trust::TrustApi;
 use openstack_keystone::trust::types::*;
@@ -270,7 +269,7 @@ async fn test_exclude_local_roles() -> Result<(), Report> {
 
     let role_x = state
         .provider
-        .get_assignment_provider()
+        .get_role_provider()
         .create_role(
             &state,
             RoleCreate {

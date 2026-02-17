@@ -48,8 +48,9 @@ use crate::{
     assignment::{
         AssignmentApi,
         error::AssignmentProviderError,
-        types::{Role, RoleAssignmentListParameters, RoleAssignmentListParametersBuilder},
+        types::{RoleAssignmentListParameters, RoleAssignmentListParametersBuilder},
     },
+    role::{RoleApi, types::Role},
     trust::{TrustApi, types::Trust},
 };
 use backend::{TokenBackend, fernet::FernetTokenProvider};
@@ -742,7 +743,7 @@ impl TokenProvider {
                         // Expand the implied roles
                         state
                             .provider
-                            .get_assignment_provider()
+                            .get_role_provider()
                             .expand_implied_roles(state, trust_roles)
                             .await?;
                         if !trust_roles
@@ -998,7 +999,7 @@ mod tests {
     };
     use crate::assignment::{
         MockAssignmentProvider,
-        types::{Assignment, AssignmentType, Role, RoleAssignmentListParameters},
+        types::{Assignment, AssignmentType, RoleAssignmentListParameters},
     };
     use crate::auth::AuthenticatedInfoBuilder;
     use crate::config::Config;
@@ -1007,6 +1008,7 @@ mod tests {
     use crate::provider::Provider;
     use crate::resource::{MockResourceProvider, types::*};
     use crate::revoke::MockRevokeProvider;
+    use crate::role::types::Role;
     use crate::trust::types::*;
 
     pub(super) fn setup_config() -> Config {

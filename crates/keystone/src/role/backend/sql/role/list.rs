@@ -16,15 +16,15 @@ use sea_orm::DatabaseConnection;
 use sea_orm::entity::*;
 use sea_orm::query::*;
 
-use crate::assignment::backend::error::AssignmentDatabaseError;
-use crate::assignment::types::*;
 use crate::db::entity::{prelude::Role as DbRole, role as db_role};
 use crate::error::DbContextExt;
+use crate::role::backend::error::RoleDatabaseError;
+use crate::role::types::*;
 
 pub async fn list(
     db: &DatabaseConnection,
     params: &RoleListParameters,
-) -> Result<Vec<Role>, AssignmentDatabaseError> {
+) -> Result<Vec<Role>, RoleDatabaseError> {
     let mut select = DbRole::find();
 
     if let Some(domain_id) = &params.domain_id {

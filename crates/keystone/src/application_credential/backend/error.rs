@@ -52,6 +52,14 @@ pub enum ApplicationCredentialDatabaseError {
         source: PasswordHashError,
     },
 
+    /// Role Database error.
+    #[error(transparent)]
+    Role {
+        /// The source of the error.
+        #[from]
+        source: crate::role::backend::error::RoleDatabaseError,
+    },
+
     /// Secret is missing.
     #[error("secret missing")]
     SecretMissing,

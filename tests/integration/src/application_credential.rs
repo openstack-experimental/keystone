@@ -19,7 +19,6 @@ use uuid::Uuid;
 
 use openstack_keystone::application_credential::ApplicationCredentialApi;
 use openstack_keystone::application_credential::types;
-use openstack_keystone::assignment::types as as_types;
 use openstack_keystone::config::Config;
 use openstack_keystone::db::entity::prelude::*;
 use openstack_keystone::db::entity::project;
@@ -27,6 +26,7 @@ use openstack_keystone::keystone::Service;
 use openstack_keystone::plugin_manager::PluginManager;
 use openstack_keystone::policy::PolicyFactory;
 use openstack_keystone::provider::Provider;
+use openstack_keystone::role::types as role_types;
 
 mod create;
 mod get;
@@ -106,12 +106,12 @@ where
                     .unwrap_or(Uuid::new_v4().to_string()),
                 project_id: "project_a".into(),
                 roles: vec![
-                    as_types::Role {
+                    role_types::Role {
                         id: "role_a".into(),
                         name: "role_a".into(),
                         ..Default::default()
                     },
-                    as_types::Role {
+                    role_types::Role {
                         id: "role_b".into(),
                         name: "role_b".into(),
                         ..Default::default()

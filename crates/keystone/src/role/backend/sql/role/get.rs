@@ -15,15 +15,15 @@
 use sea_orm::DatabaseConnection;
 use sea_orm::entity::*;
 
-use crate::assignment::backend::error::AssignmentDatabaseError;
-use crate::assignment::types::*;
 use crate::db::entity::{prelude::Role as DbRole, role as db_role};
 use crate::error::DbContextExt;
+use crate::role::backend::error::RoleDatabaseError;
+use crate::role::types::*;
 
 pub async fn get<I: AsRef<str>>(
     db: &DatabaseConnection,
     id: I,
-) -> Result<Option<Role>, AssignmentDatabaseError> {
+) -> Result<Option<Role>, RoleDatabaseError> {
     let role_select = DbRole::find_by_id(id.as_ref());
 
     let entry: Option<db_role::Model> = role_select.one(db).await.context("fetching role by id")?;
