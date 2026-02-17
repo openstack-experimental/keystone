@@ -18,10 +18,10 @@ use derive_builder::Builder;
 use serde::{Deserialize, Serialize};
 use validator::Validate;
 
-use crate::assignment::types::Role;
 use crate::error::BuilderError;
 use crate::identity::types::UserResponse;
 use crate::resource::types::Project;
+use crate::role::types::Role;
 use crate::token::types::Token;
 use crate::token::types::common;
 
@@ -115,7 +115,7 @@ pub struct TokenRestriction {
     pub role_ids: Vec<String>,
     /// Optional list of full Role information.
     #[builder(default)]
-    pub roles: Option<Vec<crate::assignment::types::Role>>,
+    pub roles: Option<Vec<Role>>,
     /// User id.
     #[builder(default)]
     pub user_id: Option<String>,

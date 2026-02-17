@@ -31,6 +31,7 @@ use crate::{
     assignment::{AssignmentApi, types::RoleAssignmentListParameters},
     identity::IdentityApi,
     resource::ResourceApi,
+    role::RoleApi,
 };
 
 /// Check whether user has role assignment on project.
@@ -80,7 +81,7 @@ pub(super) async fn check(
             .get_user(&state, &user_id),
         state
             .provider
-            .get_assignment_provider()
+            .get_role_provider()
             .get_role(&state, &role_id),
         state
             .provider
@@ -148,9 +149,9 @@ mod tests {
     use crate::api::v3::role_assignment::openapi_router;
     use crate::assignment::{MockAssignmentProvider, types::*};
     use crate::identity::{MockIdentityProvider, types::*};
-
     use crate::provider::Provider;
     use crate::resource::{MockResourceProvider, types::Project};
+    use crate::role::{MockRoleProvider, types::*};
 
     #[tokio::test]
     #[traced_test]
@@ -171,16 +172,6 @@ mod tests {
                 ))
             });
         let mut assignment_mock = MockAssignmentProvider::default();
-        assignment_mock
-            .expect_get_role()
-            .withf(|_, rid: &'_ str| rid == "role_id")
-            .returning(|_, _| {
-                Ok(Some(Role {
-                    id: "role_id".into(),
-                    name: "new_role".into(),
-                    ..Default::default()
-                }))
-            });
         assignment_mock
             .expect_list_role_assignments()
             .withf(|_, params: &RoleAssignmentListParameters| {
@@ -204,6 +195,17 @@ mod tests {
                 }])
             });
 
+        let mut role_mock = MockRoleProvider::default();
+        role_mock
+            .expect_get_role()
+            .withf(|_, rid: &'_ str| rid == "role_id")
+            .returning(|_, _| {
+                Ok(Some(Role {
+                    id: "role_id".into(),
+                    name: "new_role".into(),
+                    ..Default::default()
+                }))
+            });
         let mut resource_mock = MockResourceProvider::default();
         resource_mock
             .expect_get_project()
@@ -218,7 +220,8 @@ mod tests {
         let provider_builder = Provider::mocked_builder()
             .assignment(assignment_mock)
             .identity(identity_mock)
-            .resource(resource_mock);
+            .resource(resource_mock)
+            .role(role_mock);
         let state = get_mocked_state(provider_builder, true);
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -260,16 +263,6 @@ mod tests {
             });
         let mut assignment_mock = MockAssignmentProvider::default();
         assignment_mock
-            .expect_get_role()
-            .withf(|_, rid: &'_ str| rid == "role_id")
-            .returning(|_, _| {
-                Ok(Some(Role {
-                    id: "role_id".into(),
-                    name: "new_role".into(),
-                    ..Default::default()
-                }))
-            });
-        assignment_mock
             .expect_list_role_assignments()
             .withf(|_, params: &RoleAssignmentListParameters| {
                 params.role_id.is_none()
@@ -292,6 +285,17 @@ mod tests {
                 }])
             });
 
+        let mut role_mock = MockRoleProvider::default();
+        role_mock
+            .expect_get_role()
+            .withf(|_, rid: &'_ str| rid == "role_id")
+            .returning(|_, _| {
+                Ok(Some(Role {
+                    id: "role_id".into(),
+                    name: "new_role".into(),
+                    ..Default::default()
+                }))
+            });
         let mut resource_mock = MockResourceProvider::default();
         resource_mock
             .expect_get_project()
@@ -306,7 +310,8 @@ mod tests {
         let provider_builder = Provider::mocked_builder()
             .assignment(assignment_mock)
             .identity(identity_mock)
-            .resource(resource_mock);
+            .resource(resource_mock)
+            .role(role_mock);
         let state = get_mocked_state(provider_builder, true);
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -348,16 +353,6 @@ mod tests {
             });
         let mut assignment_mock = MockAssignmentProvider::default();
         assignment_mock
-            .expect_get_role()
-            .withf(|_, rid: &'_ str| rid == "role_id")
-            .returning(|_, _| {
-                Ok(Some(Role {
-                    id: "role_id".into(),
-                    name: "new_role".into(),
-                    ..Default::default()
-                }))
-            });
-        assignment_mock
             .expect_list_role_assignments()
             .withf(|_, params: &RoleAssignmentListParameters| {
                 params.role_id.is_none()
@@ -379,6 +374,17 @@ mod tests {
                     implied_via: None,
                 }])
             });
+        let mut role_mock = MockRoleProvider::default();
+        role_mock
+            .expect_get_role()
+            .withf(|_, rid: &'_ str| rid == "role_id")
+            .returning(|_, _| {
+                Ok(Some(Role {
+                    id: "role_id".into(),
+                    name: "new_role".into(),
+                    ..Default::default()
+                }))
+            });
 
         let mut resource_mock = MockResourceProvider::default();
         resource_mock
@@ -394,7 +400,8 @@ mod tests {
         let provider_builder = Provider::mocked_builder()
             .assignment(assignment_mock)
             .identity(identity_mock)
-            .resource(resource_mock);
+            .resource(resource_mock)
+            .role(role_mock);
         let state = get_mocked_state(provider_builder, false);
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -426,17 +433,6 @@ mod tests {
             .returning(|_, _| Ok(None));
         let mut assignment_mock = MockAssignmentProvider::default();
         assignment_mock
-            .expect_get_role()
-            .withf(|_, rid: &'_ str| rid == "role_id")
-            .returning(|_, _| {
-                Ok(Some(Role {
-                    id: "role_id".into(),
-                    name: "new_role".into(),
-                    ..Default::default()
-                }))
-            });
-
-        assignment_mock
             .expect_list_role_assignments()
             .withf(|_, params: &RoleAssignmentListParameters| {
                 params.role_id.is_none()
@@ -448,6 +444,18 @@ mod tests {
                     && params.effective.is_some_and(|x| x)
             })
             .returning(|_, _| Ok(vec![]));
+        let mut role_mock = MockRoleProvider::default();
+        role_mock
+            .expect_get_role()
+            .withf(|_, rid: &'_ str| rid == "role_id")
+            .returning(|_, _| {
+                Ok(Some(Role {
+                    id: "role_id".into(),
+                    name: "new_role".into(),
+                    ..Default::default()
+                }))
+            });
+
         let mut resource_mock = MockResourceProvider::default();
         resource_mock
             .expect_get_project()
@@ -462,7 +470,8 @@ mod tests {
         let provider_builder = Provider::mocked_builder()
             .assignment(assignment_mock)
             .identity(identity_mock)
-            .resource(resource_mock);
+            .resource(resource_mock)
+            .role(role_mock);
         let state = get_mocked_state(provider_builder, true);
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -502,8 +511,8 @@ mod tests {
                         .unwrap(),
                 ))
             });
-        let mut assignment_mock = MockAssignmentProvider::default();
-        assignment_mock
+        let mut role_mock = MockRoleProvider::default();
+        role_mock
             .expect_get_role()
             .withf(|_, rid: &'_ str| rid == "role_id")
             .returning(|_, _| {
@@ -513,6 +522,7 @@ mod tests {
                     ..Default::default()
                 }))
             });
+        let mut assignment_mock = MockAssignmentProvider::default();
         assignment_mock
             .expect_list_role_assignments()
             .withf(|_, params: &RoleAssignmentListParameters| {
@@ -534,7 +544,8 @@ mod tests {
         let provider_builder = Provider::mocked_builder()
             .assignment(assignment_mock)
             .identity(identity_mock)
-            .resource(resource_mock);
+            .resource(resource_mock)
+            .role(role_mock);
         let state = get_mocked_state(provider_builder, true);
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -576,10 +587,6 @@ mod tests {
             });
         let mut assignment_mock = MockAssignmentProvider::default();
         assignment_mock
-            .expect_get_role()
-            .withf(|_, rid: &'_ str| rid == "role_id")
-            .returning(|_, _| Ok(None));
-        assignment_mock
             .expect_list_role_assignments()
             .withf(|_, params: &RoleAssignmentListParameters| {
                 params.role_id.is_none()
@@ -591,6 +598,11 @@ mod tests {
                     && params.effective.is_some_and(|x| x)
             })
             .returning(|_, _| Ok(vec![]));
+        let mut role_mock = MockRoleProvider::default();
+        role_mock
+            .expect_get_role()
+            .withf(|_, rid: &'_ str| rid == "role_id")
+            .returning(|_, _| Ok(None));
 
         let mut resource_mock = MockResourceProvider::default();
         resource_mock
@@ -606,7 +618,8 @@ mod tests {
         let provider_builder = Provider::mocked_builder()
             .assignment(assignment_mock)
             .identity(identity_mock)
-            .resource(resource_mock);
+            .resource(resource_mock)
+            .role(role_mock);
         let state = get_mocked_state(provider_builder, true);
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())

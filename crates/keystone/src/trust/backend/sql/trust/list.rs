@@ -17,12 +17,12 @@ use sea_orm::entity::*;
 use sea_orm::query::*;
 use sea_orm::{Cursor, SelectModel};
 
-use crate::assignment::types::Role;
 use crate::db::entity::{
     prelude::{Role as DbRole, Trust as DbTrust, TrustRole as DbTrustRole},
     trust as db_trust,
 };
 use crate::error::DbContextExt;
+use crate::role::types::Role;
 use crate::trust::backend::error::TrustDatabaseError;
 use crate::trust::types::*;
 
@@ -86,8 +86,8 @@ mod tests {
     use sea_orm::{DatabaseBackend, MockDatabase, QueryOrder, Transaction, sea_query::*};
 
     use super::super::tests::get_trust_mock;
-    use crate::assignment::backend::sql::role::tests::get_role_mock;
     use crate::db::entity::trust_role as db_trust_role;
+    use crate::role::backend::sql::role::tests::get_role_mock;
 
     use super::*;
 

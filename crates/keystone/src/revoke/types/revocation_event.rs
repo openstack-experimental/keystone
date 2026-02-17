@@ -195,9 +195,8 @@ impl TryFrom<&Token> for RevocationEventCreate {
 mod tests {
     use super::*;
     use crate::identity::types::UserResponseBuilder;
+    use crate::role::types::Role;
     use crate::token::{ProjectScopePayload, TrustPayload};
-    //use crate::resource::types::Domain;
-    use crate::assignment::types::Role;
     use crate::trust::types::Trust;
 
     #[test]

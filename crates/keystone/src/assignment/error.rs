@@ -59,6 +59,13 @@ pub enum AssignmentProviderError {
     #[error("role {0} not found")]
     RoleNotFound(String),
 
+    /// Role provider error.
+    #[error(transparent)]
+    RoleProvider {
+        #[from]
+        source: crate::role::error::RoleProviderError,
+    },
+
     /// Structures builder error.
     #[error(transparent)]
     StructBuilder {

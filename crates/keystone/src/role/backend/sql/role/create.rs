@@ -17,16 +17,16 @@ use sea_orm::entity::*;
 use serde_json::json;
 use uuid::Uuid;
 
-use crate::assignment::backend::error::AssignmentDatabaseError;
-use crate::assignment::types::role::{Role, RoleCreate};
 use crate::db::entity::role as db_role;
 use crate::error::DbContextExt;
+use crate::role::backend::error::RoleDatabaseError;
+use crate::role::types::role::{Role, RoleCreate};
 
 /// Create a new role.
 pub async fn create(
     db: &DatabaseConnection,
     role: RoleCreate, // ← Using RoleCreate instead of Role
-) -> Result<Role, AssignmentDatabaseError> {
+) -> Result<Role, RoleDatabaseError> {
     db_role::ActiveModel {
         id: Set(role
             // Use provided ID or generate a new UUID as fallback

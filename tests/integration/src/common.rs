@@ -21,11 +21,11 @@ use sea_orm::{
 use std::sync::Arc;
 use uuid::Uuid;
 
-use openstack_keystone::assignment::{AssignmentApi, types::RoleCreate};
 use openstack_keystone::db::entity::prelude::*;
 use openstack_keystone::db::entity::{local_user, project, user};
 use openstack_keystone::identity::{IdentityApi, types::*};
 use openstack_keystone::keystone::Service;
+use openstack_keystone::role::{RoleApi, types::RoleCreate};
 
 /// Create table with the related types and indexes (when known)
 async fn create_table<C, E>(conn: &C, schema: &Schema, entity: E) -> Result<()>
@@ -259,7 +259,7 @@ pub async fn create_role<U: Into<String>>(state: &Arc<Service>, role_id: U) -> R
     let id: String = role_id.into();
     state
         .provider
-        .get_assignment_provider()
+        .get_role_provider()
         .create_role(
             state,
             RoleCreate {

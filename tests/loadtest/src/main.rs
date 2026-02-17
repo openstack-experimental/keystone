@@ -58,7 +58,7 @@ async fn openstack_login(user: &mut GooseUser) -> TransactionResult {
         .await
         .expect("cannot connect to the cloud");
     if let Some(token) = session.get_auth_token() {
-        user.set_session_data(Session { token: token });
+        user.set_session_data(Session { token });
     }
 
     Ok(())

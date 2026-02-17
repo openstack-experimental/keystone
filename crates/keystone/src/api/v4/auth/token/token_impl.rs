@@ -198,9 +198,8 @@ mod tests {
     use crate::api::v3::role::types::Role;
     use crate::assignment::{
         MockAssignmentProvider,
-        types::{Assignment, AssignmentType, Role as ProviderRole, RoleAssignmentListParameters},
+        types::{Assignment, AssignmentType, RoleAssignmentListParameters},
     };
-
     use crate::config::Config;
     use crate::identity::{MockIdentityProvider, types::UserResponseBuilder};
     use crate::keystone::Service;
@@ -210,6 +209,7 @@ mod tests {
         MockResourceProvider,
         types::{Domain, Project},
     };
+    use crate::role::types::Role as ProviderRole;
     use crate::token::{
         DomainScopePayload, ProjectScopePayload, Token as ProviderToken, UnscopedPayload,
     };

@@ -31,6 +31,7 @@ use crate::{
     assignment::{AssignmentApi, types::AssignmentCreate},
     identity::IdentityApi,
     resource::ResourceApi,
+    role::RoleApi,
 };
 
 /// Assign role to user on project
@@ -73,7 +74,7 @@ pub(super) async fn grant(
             .get_user(&state, &user_id),
         state
             .provider
-            .get_assignment_provider()
+            .get_role_provider()
             .get_role(&state, &role_id),
         state
             .provider
@@ -137,9 +138,9 @@ mod tests {
     use crate::api::v3::role_assignment::openapi_router;
     use crate::assignment::{MockAssignmentProvider, types::*};
     use crate::identity::{MockIdentityProvider, types::*};
-
     use crate::provider::Provider;
     use crate::resource::{MockResourceProvider, types::Project};
+    use crate::role::{MockRoleProvider, types::*};
 
     #[tokio::test]
     #[traced_test]
@@ -161,16 +162,6 @@ mod tests {
             });
         let mut assignment_mock = MockAssignmentProvider::default();
         assignment_mock
-            .expect_get_role()
-            .withf(|_, rid: &'_ str| rid == "role_id")
-            .returning(|_, _| {
-                Ok(Some(Role {
-                    id: "role_id".into(),
-                    name: "new_role".into(),
-                    ..Default::default()
-                }))
-            });
-        assignment_mock
             .expect_create_grant()
             .withf(|_, params: &AssignmentCreate| {
                 params.role_id == "role_id"
@@ -190,6 +181,17 @@ mod tests {
                     implied_via: None,
                 })
             });
+        let mut role_mock = MockRoleProvider::default();
+        role_mock
+            .expect_get_role()
+            .withf(|_, rid: &'_ str| rid == "role_id")
+            .returning(|_, _| {
+                Ok(Some(Role {
+                    id: "role_id".into(),
+                    name: "new_role".into(),
+                    ..Default::default()
+                }))
+            });
 
         let mut resource_mock = MockResourceProvider::default();
         resource_mock
@@ -205,7 +207,8 @@ mod tests {
         let provider_builder = Provider::mocked_builder()
             .assignment(assignment_mock)
             .identity(identity_mock)
-            .resource(resource_mock);
+            .resource(resource_mock)
+            .role(role_mock);
         let state = get_mocked_state(provider_builder, true);
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -245,8 +248,8 @@ mod tests {
                         .unwrap(),
                 ))
             });
-        let mut assignment_mock = MockAssignmentProvider::default();
-        assignment_mock
+        let mut role_mock = MockRoleProvider::default();
+        role_mock
             .expect_get_role()
             .withf(|_, rid: &'_ str| rid == "role_id")
             .returning(|_, _| {
@@ -269,9 +272,9 @@ mod tests {
                 }))
             });
         let provider_builder = Provider::mocked_builder()
-            .assignment(assignment_mock)
             .identity(identity_mock)
-            .resource(resource_mock);
+            .resource(resource_mock)
+            .role(role_mock);
         let state = get_mocked_state(provider_builder, false);
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -301,8 +304,8 @@ mod tests {
             .expect_get_user()
             .withf(|_, id: &'_ str| id == "user_id")
             .returning(|_, _| Ok(None));
-        let mut assignment_mock = MockAssignmentProvider::default();
-        assignment_mock
+        let mut role_mock = MockRoleProvider::default();
+        role_mock
             .expect_get_role()
             .withf(|_, rid: &'_ str| rid == "role_id")
             .returning(|_, _| {
@@ -325,9 +328,9 @@ mod tests {
                 }))
             });
         let provider_builder = Provider::mocked_builder()
-            .assignment(assignment_mock)
             .identity(identity_mock)
-            .resource(resource_mock);
+            .resource(resource_mock)
+            .role(role_mock);
         let state = get_mocked_state(provider_builder, true);
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -366,8 +369,8 @@ mod tests {
                         .unwrap(),
                 ))
             });
-        let mut assignment_mock = MockAssignmentProvider::default();
-        assignment_mock
+        let mut role_mock = MockRoleProvider::default();
+        role_mock
             .expect_get_role()
             .withf(|_, rid: &'_ str| rid == "role_id")
             .returning(|_, _| {
@@ -384,9 +387,9 @@ mod tests {
             .withf(|_, pid: &'_ str| pid == "project_id")
             .returning(|_, _| Ok(None));
         let provider_builder = Provider::mocked_builder()
-            .assignment(assignment_mock)
             .identity(identity_mock)
-            .resource(resource_mock);
+            .resource(resource_mock)
+            .role(role_mock);
         let state = get_mocked_state(provider_builder, true);
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -426,8 +429,8 @@ mod tests {
                         .unwrap(),
                 ))
             });
-        let mut assignment_mock = MockAssignmentProvider::default();
-        assignment_mock
+        let mut role_mock = MockRoleProvider::default();
+        role_mock
             .expect_get_role()
             .withf(|_, rid: &'_ str| rid == "role_id")
             .returning(|_, _| Ok(None));
@@ -444,9 +447,9 @@ mod tests {
                 }))
             });
         let provider_builder = Provider::mocked_builder()
-            .assignment(assignment_mock)
             .identity(identity_mock)
-            .resource(resource_mock);
+            .resource(resource_mock)
+            .role(role_mock);
         let state = get_mocked_state(provider_builder, true);
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())

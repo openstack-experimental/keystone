@@ -63,7 +63,7 @@ pub(crate) mod tests {
     pub fn get_password_mock(user_id: i32) -> db_password::Model {
         let datetime = Utc::now();
         db_password::Model {
-            id: user_id.clone(),
+            id: user_id,
             local_user_id: user_id,
             self_service: false,
             expires_at: None,

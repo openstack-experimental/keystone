@@ -25,6 +25,7 @@ use crate::identity_mapping::error::*;
 use crate::policy::*;
 use crate::resource::error::*;
 use crate::revoke::error::*;
+use crate::role::error::RoleProviderError;
 use crate::token::TokenProviderError;
 use crate::trust::TrustError;
 use crate::webauthn::WebauthnError;
@@ -122,6 +123,14 @@ pub enum KeystoneError {
         /// The source of the error.
         #[from]
         source: RevokeProviderError,
+    },
+
+    /// Role provider.
+    #[error(transparent)]
+    RoleProvider {
+        /// The source of the error.
+        #[from]
+        source: RoleProviderError,
     },
 
     /// Token provider.

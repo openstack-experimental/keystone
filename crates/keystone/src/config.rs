@@ -34,6 +34,7 @@ mod identity_mapping;
 mod policy;
 mod resource;
 mod revoke;
+mod role;
 mod security_compliance;
 mod token;
 mod trust;
@@ -53,6 +54,7 @@ use identity_mapping::IdentityMappingProvider;
 use policy::PolicyProvider;
 use resource::ResourceProvider;
 use revoke::RevokeProvider;
+use role::RoleProvider;
 use security_compliance::SecurityComplianceProvider;
 use token::TokenProvider;
 pub use token::TokenProviderDriver;
@@ -116,6 +118,10 @@ pub struct Config {
     /// Revoke provider configuration.
     #[serde(default)]
     pub revoke: RevokeProvider,
+
+    /// Role provider configuration.
+    #[serde(default)]
+    pub role: RoleProvider,
 
     /// Security compliance configuration.
     #[serde(default)]

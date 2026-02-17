@@ -91,6 +91,7 @@ pub mod policy;
 pub mod provider;
 pub mod resource;
 pub mod revoke;
+pub mod role;
 pub mod token;
 pub mod trust;
 pub mod webauthn;

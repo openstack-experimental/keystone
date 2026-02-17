@@ -35,19 +35,8 @@
 //! itself. This way for an assignment on the domain level the actor
 //! will get the role on the every project of the domain, but not the domain
 //! itself.
-//!
-//! Following Keystone concepts are covered by the provider:
-//!
-//! ## Role
-//!
-//! A personality with a defined set of user rights and privileges to perform a
-//! specific set of operations. The Identity service issues a token to a user
-//! that includes a list of roles. When a user calls a service, that service
-//! interprets the user role set, and determines to which operations or
-//! resources each role grants access.
 use async_trait::async_trait;
 use std::sync::Arc;
-use uuid::Uuid;
 use validator::Validate;
 
 pub mod backend;
@@ -56,15 +45,15 @@ pub mod error;
 mod mock;
 pub mod types;
 
-use crate::assignment::backend::{AssignmentBackend, SqlBackend};
-use crate::assignment::error::AssignmentProviderError;
-use crate::assignment::types::*;
 use crate::config::Config;
 use crate::identity::IdentityApi;
 use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManager;
 use crate::resource::ResourceApi;
 use crate::revoke::{RevokeApi, types::RevocationEventCreate};
+use backend::{AssignmentBackend, SqlBackend};
+use error::AssignmentProviderError;
+use types::*;
 
 #[cfg(test)]
 pub use mock::MockAssignmentProvider;
@@ -107,62 +96,6 @@ impl AssignmentApi for AssignmentProvider {
         grant: AssignmentCreate,
     ) -> Result<Assignment, AssignmentProviderError> {
         self.backend_driver.create_grant(state, grant).await
-    }
-
-    /// Create role.
-    #[tracing::instrument(level = "info", skip(self, state))]
-    async fn create_role(
-        &self,
-        state: &ServiceState,
-        params: RoleCreate,
-    ) -> Result<Role, AssignmentProviderError> {
-        params.validate()?;
-
-        let mut new_params = params;
-
-        if new_params.id.is_none() {
-            new_params.id = Some(Uuid::new_v4().simple().to_string());
-        }
-        self.backend_driver.create_role(state, new_params).await
-    }
-
-    /// Get single role.
-    #[tracing::instrument(level = "info", skip(self, state))]
-    async fn get_role<'a>(
-        &self,
-        state: &ServiceState,
-        id: &'a str,
-    ) -> Result<Option<Role>, AssignmentProviderError> {
-        self.backend_driver.get_role(state, id).await
-    }
-
-    /// Expand implied roles.
-    ///
-    /// Return list of the roles with the imply rules being considered.
-    #[tracing::instrument(level = "info", skip(self, state))]
-    async fn expand_implied_roles(
-        &self,
-        state: &ServiceState,
-        roles: &mut Vec<Role>,
-    ) -> Result<(), AssignmentProviderError> {
-        // In most of the cases a logic for expanding the roles may be implemented by
-        // the provider itself, but some backend drivers may have more efficient
-        // methods.
-        self.backend_driver
-            .expand_implied_roles(state, roles)
-            .await?;
-        Ok(())
-    }
-
-    /// List roles
-    #[tracing::instrument(level = "info", skip(self, state))]
-    async fn list_roles(
-        &self,
-        state: &ServiceState,
-        params: &RoleListParameters,
-    ) -> Result<Vec<Role>, AssignmentProviderError> {
-        params.validate()?;
-        self.backend_driver.list_roles(state, params).await
     }
 
     /// List role assignments

@@ -20,8 +20,8 @@ use axum::{
 use super::types::{Role, RoleList, RoleListParameters};
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
-use crate::assignment::AssignmentApi;
 use crate::keystone::ServiceState;
+use crate::role::RoleApi;
 
 /// List roles
 #[utoipa::path(
@@ -43,7 +43,7 @@ pub(super) async fn list(
 ) -> Result<impl IntoResponse, KeystoneApiError> {
     let roles: Vec<Role> = state
         .provider
-        .get_assignment_provider()
+        .get_role_provider()
         .list_roles(&state, &query.into())
         .await?
         .into_iter()
@@ -71,8 +71,8 @@ mod tests {
         Role as ApiRole, //GroupCreate as ApiGroupCreate, GroupCreateRequest,
         RoleList,
     };
-    use crate::assignment::{
-        MockAssignmentProvider,
+    use crate::role::{
+        MockRoleProvider,
         types::{Role, RoleListParameters},
     };
 
@@ -80,8 +80,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_list() {
-        let mut assignment_mock = MockAssignmentProvider::default();
-        assignment_mock
+        let mut role_mock = MockRoleProvider::default();
+        role_mock
             .expect_list_roles()
             .withf(|_, _: &RoleListParameters| true)
             .returning(|_, _| {
@@ -92,7 +92,7 @@ mod tests {
                 }])
             });
 
-        let state = get_mocked_state(assignment_mock);
+        let state = get_mocked_state(role_mock);
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -129,8 +129,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_list_qp() {
-        let mut assignment_mock = MockAssignmentProvider::default();
-        assignment_mock
+        let mut role_mock = MockRoleProvider::default();
+        role_mock
             .expect_list_roles()
             .withf(|_, qp: &RoleListParameters| {
                 RoleListParameters {
@@ -140,7 +140,7 @@ mod tests {
             })
             .returning(|_, _| Ok(Vec::new()));
 
-        let state = get_mocked_state(assignment_mock);
+        let state = get_mocked_state(role_mock);
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())

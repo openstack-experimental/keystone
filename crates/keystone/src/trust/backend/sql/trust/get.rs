@@ -16,12 +16,12 @@ use sea_orm::DatabaseConnection;
 use sea_orm::entity::*;
 use sea_orm::query::*;
 
-use crate::assignment::types::Role;
 use crate::db::entity::{
     prelude::{Role as DbRole, Trust as DbTrust, TrustRole as DbTrustRole},
     trust_role as db_trust_role,
 };
 use crate::error::DbContextExt;
+use crate::role::types::Role;
 use crate::trust::backend::error::TrustDatabaseError;
 use crate::trust::types::*;
 
@@ -97,7 +97,7 @@ mod tests {
 
     use super::super::tests::*;
     use super::*;
-    use crate::assignment::backend::sql::role::tests::get_role_mock;
+    use crate::role::backend::sql::role::tests::get_role_mock;
 
     #[tokio::test]
     async fn test_get() {

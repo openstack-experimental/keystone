@@ -18,4 +18,5 @@ mod application_credential;
 mod assignment;
 mod common;
 mod identity;
+mod role;
 mod token;

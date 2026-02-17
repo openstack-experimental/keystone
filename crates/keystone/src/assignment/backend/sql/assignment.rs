@@ -146,16 +146,10 @@ impl TryFrom<&str> for AssignmentType {
 }
 
 #[cfg(test)]
-mod tests {
-    use sea_orm::Value;
-    use std::collections::BTreeMap;
+pub mod tests {
+    use crate::db::entity::{assignment, sea_orm_active_enums, system_assignment};
 
-    use super::super::role::tests::get_role_mock;
-    use crate::db::entity::{
-        assignment, implied_role, role, sea_orm_active_enums, system_assignment,
-    };
-
-    pub(super) fn get_role_assignment_mock<S: Into<String>>(role_id: S) -> assignment::Model {
+    pub fn get_role_assignment_mock<S: Into<String>>(role_id: S) -> assignment::Model {
         assignment::Model {
             role_id: role_id.into(),
             actor_id: "actor".into(),
@@ -165,7 +159,7 @@ mod tests {
         }
     }
 
-    pub(super) fn get_role_system_assignment_mock<S: Into<String>>(
+    pub fn get_role_system_assignment_mock<S: Into<String>>(
         role_id: S,
     ) -> system_assignment::Model {
         system_assignment::Model {
@@ -175,46 +169,5 @@ mod tests {
             r#type: "UserSystem".into(),
             inherited: false,
         }
-    }
-
-    pub(super) fn get_short_role_mock<SI: AsRef<str>, SN: AsRef<str>>(
-        role_id: SI,
-        role_name: SN,
-    ) -> BTreeMap<String, Value> {
-        BTreeMap::from([
-            (
-                "id".to_string(),
-                Value::String(Some(Box::new(role_id.as_ref().to_string()))),
-            ),
-            (
-                "name".to_string(),
-                Value::String(Some(Box::new(role_name.as_ref().to_string()))),
-            ),
-        ])
-    }
-
-    pub(super) fn get_implied_rules_mock() -> Vec<implied_role::Model> {
-        vec![implied_role::Model {
-            prior_role_id: "1".to_string(),
-            implied_role_id: "2".to_string(),
-        }]
-    }
-
-    pub(super) fn get_role_assignment_with_role_mock<S: AsRef<str>>(
-        role_id: S,
-    ) -> (assignment::Model, role::Model) {
-        (
-            get_role_assignment_mock(role_id.as_ref()),
-            get_role_mock(role_id.as_ref(), role_id.as_ref()),
-        )
-    }
-
-    pub(super) fn get_role_system_assignment_with_role_mock<S: AsRef<str>>(
-        role_id: S,
-    ) -> (system_assignment::Model, role::Model) {
-        (
-            get_role_system_assignment_mock(role_id.as_ref()),
-            get_role_mock(role_id.as_ref(), role_id.as_ref()),
-        )
     }
 }

@@ -41,22 +41,18 @@ mod tests {
         RoleList,
         RoleResponse,
     };
-    use crate::assignment::{
-        MockAssignmentProvider,
-        types::{Role, RoleListParameters},
-    };
-
     use crate::config::Config;
-
     use crate::keystone::{Service, ServiceState};
     use crate::policy::MockPolicyFactory;
     use crate::provider::Provider;
-
+    use crate::role::{
+        MockRoleProvider,
+        types::{Role, RoleListParameters},
+    };
+    use crate::tests::api::get_mocked_state_unauthed;
     use crate::token::{MockTokenProvider, Token, UnscopedPayload};
 
-    use crate::tests::api::get_mocked_state_unauthed;
-
-    fn get_mocked_state(assignment_mock: MockAssignmentProvider) -> ServiceState {
+    fn get_mocked_state(role_mock: MockRoleProvider) -> ServiceState {
         let mut token_mock = MockTokenProvider::default();
         token_mock.expect_validate_token().returning(|_, _, _, _| {
             Ok(Token::Unscoped(UnscopedPayload {
@@ -74,7 +70,7 @@ mod tests {
             });
 
         let provider = Provider::mocked_builder()
-            .assignment(assignment_mock)
+            .role(role_mock)
             .token(token_mock)
             .build()
             .unwrap();
@@ -92,8 +88,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_list() {
-        let mut assignment_mock = MockAssignmentProvider::default();
-        assignment_mock
+        let mut role_mock = MockRoleProvider::default();
+        role_mock
             .expect_list_roles()
             .withf(|_, _: &RoleListParameters| true)
             .returning(|_, _| {
@@ -104,7 +100,7 @@ mod tests {
                 }])
             });
 
-        let state = get_mocked_state(assignment_mock);
+        let state = get_mocked_state(role_mock);
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -141,8 +137,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_list_qp() {
-        let mut assignment_mock = MockAssignmentProvider::default();
-        assignment_mock
+        let mut role_mock = MockRoleProvider::default();
+        role_mock
             .expect_list_roles()
             .withf(|_, qp: &RoleListParameters| {
                 RoleListParameters {
@@ -152,7 +148,7 @@ mod tests {
             })
             .returning(|_, _| Ok(Vec::new()));
 
-        let state = get_mocked_state(assignment_mock);
+        let state = get_mocked_state(role_mock);
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -195,13 +191,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_get() {
-        let mut assignment_mock = MockAssignmentProvider::default();
-        assignment_mock
+        let mut role_mock = MockRoleProvider::default();
+        role_mock
             .expect_get_role()
             .withf(|_, id: &'_ str| id == "foo")
             .returning(|_, _| Ok(None));
 
-        assignment_mock
+        role_mock
             .expect_get_role()
             .withf(|_, id: &'_ str| id == "bar")
             .returning(|_, _| {
@@ -211,7 +207,7 @@ mod tests {
                 }))
             });
 
-        let state = get_mocked_state(assignment_mock);
+        let state = get_mocked_state(role_mock);
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())

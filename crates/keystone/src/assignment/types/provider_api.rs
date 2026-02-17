@@ -15,10 +15,11 @@
 use async_trait::async_trait;
 
 use super::assignment::*;
-use super::role::*;
 use crate::assignment::AssignmentProviderError;
 use crate::keystone::ServiceState;
 
+/// The trait covering `[Role](crate::role::Role)` assignments between `actors`
+/// and `objects`.
 #[async_trait]
 pub trait AssignmentApi: Send + Sync {
     /// Create assignment grant.
@@ -28,34 +29,6 @@ pub trait AssignmentApi: Send + Sync {
         params: AssignmentCreate,
     ) -> Result<Assignment, AssignmentProviderError>;
 
-    /// Create Role.
-    async fn create_role(
-        &self,
-        state: &ServiceState,
-        params: RoleCreate,
-    ) -> Result<Role, AssignmentProviderError>;
-
-    /// Get a single role.
-    async fn get_role<'a>(
-        &self,
-        state: &ServiceState,
-        role_id: &'a str,
-    ) -> Result<Option<Role>, AssignmentProviderError>;
-
-    /// Expand implied roles.
-    async fn expand_implied_roles(
-        &self,
-        state: &ServiceState,
-        roles: &mut Vec<Role>,
-    ) -> Result<(), AssignmentProviderError>;
-
-    /// List Roles.
-    async fn list_roles(
-        &self,
-        state: &ServiceState,
-        params: &RoleListParameters,
-    ) -> Result<Vec<Role>, AssignmentProviderError>;
-
     /// List role assignments for given target/role/actor.
     async fn list_role_assignments(
         &self,
@@ -63,7 +36,7 @@ pub trait AssignmentApi: Send + Sync {
         params: &RoleAssignmentListParameters,
     ) -> Result<Vec<Assignment>, AssignmentProviderError>;
 
-    /// Revoke assignment grant.
+    /// Revoke role assignment grant.
     async fn revoke_grant(
         &self,
         state: &ServiceState,

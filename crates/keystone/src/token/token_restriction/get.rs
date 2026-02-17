@@ -69,8 +69,8 @@ pub async fn get<S: AsRef<str>>(
 mod tests {
     #![allow(clippy::derivable_impls)]
 
-    use crate::assignment::types::Role;
     use crate::db::entity::{role, token_restriction_role_association};
+    use crate::role::types::Role;
     use sea_orm::{DatabaseBackend, MockDatabase, Transaction};
 
     use super::super::tests::get_restriction_mock;

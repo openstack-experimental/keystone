@@ -17,10 +17,10 @@ use chrono::{DateTime, Utc};
 use serde::Serialize;
 use validator::Validate;
 
-use crate::assignment::types::Role;
 use crate::identity::{IdentityApi, types::UserResponse};
 use crate::keystone::ServiceState;
 use crate::resource::{ResourceApi, types::*};
+use crate::role::types::Role;
 use crate::token::error::TokenProviderError;
 use crate::trust::TrustApi;
 

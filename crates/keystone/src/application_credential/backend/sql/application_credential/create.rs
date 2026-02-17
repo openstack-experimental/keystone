@@ -195,8 +195,8 @@ mod tests {
 
     use super::super::tests::*;
     use super::*;
-    use crate::assignment::types::Role;
     use crate::config::PasswordHashingAlgo;
+    use crate::role::types::Role;
 
     #[tokio::test]
     async fn test_create() {

@@ -19,7 +19,6 @@ use sea_orm::{Cursor, SelectModel};
 
 use crate::application_credential::backend::error::ApplicationCredentialDatabaseError;
 use crate::application_credential::types::*;
-use crate::assignment::types::Role;
 use crate::db::entity::{
     application_credential as db_application_credential,
     prelude::{
@@ -29,6 +28,7 @@ use crate::db::entity::{
     },
 };
 use crate::error::DbContextExt;
+use crate::role::types::Role;
 
 /// Prepare the paginated query for listing application credentials.
 fn get_list_query(
@@ -105,11 +105,11 @@ mod tests {
     use super::super::tests::*;
     use super::*;
 
-    use crate::assignment::backend::sql::role::tests::get_role_mock;
     use crate::db::entity::{
         application_credential_access_rule as db_application_credential_access_rule,
         application_credential_role as db_application_credential_role,
     };
+    use crate::role::backend::sql::role::tests::get_role_mock;
 
     #[tokio::test]
     async fn test_list() {

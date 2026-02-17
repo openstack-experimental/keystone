@@ -31,6 +31,7 @@ use crate::identity::backend::IdentityBackend;
 use crate::identity_mapping::backend::IdentityMappingBackend;
 use crate::resource::backend::ResourceBackend;
 use crate::revoke::backend::RevokeBackend;
+use crate::role::backend::RoleBackend;
 use crate::trust::backend::TrustBackend;
 
 /// Plugin manager allowing to pass custom backend plugins implementing required
@@ -53,6 +54,8 @@ pub struct PluginManager {
     resource_backends: HashMap<String, Arc<dyn ResourceBackend>>,
     /// Revoke backend plugins.
     revoke_backends: HashMap<String, Arc<dyn RevokeBackend>>,
+    /// Role backend plugins.
+    role_backends: HashMap<String, Arc<dyn RoleBackend>>,
     /// Trust backend plugins.
     trust_backends: HashMap<String, Arc<dyn TrustBackend>>,
 }
@@ -132,6 +135,12 @@ impl PluginManager {
     #[allow(clippy::borrowed_box)]
     pub fn get_revoke_backend<S: AsRef<str>>(&self, name: S) -> Option<&Arc<dyn RevokeBackend>> {
         self.revoke_backends.get(name.as_ref())
+    }
+
+    /// Get role resource backend.
+    #[allow(clippy::borrowed_box)]
+    pub fn get_role_backend<S: AsRef<str>>(&self, name: S) -> Option<&Arc<dyn RoleBackend>> {
+        self.role_backends.get(name.as_ref())
     }
 
     /// Get registered trust backend.

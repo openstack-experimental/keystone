@@ -22,7 +22,7 @@ use serde_json::Value;
 use utoipa::{IntoParams, ToSchema};
 use validator::Validate;
 
-use crate::assignment::types;
+use crate::role::types;
 
 /// The role data.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]

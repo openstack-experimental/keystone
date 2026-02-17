@@ -30,6 +30,7 @@ use crate::identity::error::IdentityProviderError;
 use crate::policy::PolicyError;
 use crate::resource::error::ResourceProviderError;
 use crate::revoke::error::RevokeProviderError;
+use crate::role::error::RoleProviderError;
 use crate::token::error::TokenProviderError;
 
 /// Keystone API operation errors.
@@ -195,6 +196,20 @@ impl From<AssignmentProviderError> for KeystoneApiError {
 impl From<BuilderError> for KeystoneApiError {
     fn from(value: crate::error::BuilderError) -> Self {
         Self::InternalError(value.to_string())
+    }
+}
+
+impl From<RoleProviderError> for KeystoneApiError {
+    fn from(source: RoleProviderError) -> Self {
+        match source {
+            RoleProviderError::RoleNotFound(x) => Self::NotFound {
+                resource: "role".into(),
+                identifier: x,
+            },
+            ref err @ RoleProviderError::Conflict(..) => Self::Conflict(err.to_string()),
+            ref err @ RoleProviderError::Validation { .. } => Self::BadRequest(err.to_string()),
+            other => Self::InternalError(other.to_string()),
+        }
     }
 }
 

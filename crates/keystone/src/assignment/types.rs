@@ -14,8 +14,6 @@
 
 pub mod assignment;
 pub mod provider_api;
-pub mod role;
 
 pub use crate::assignment::types::assignment::*;
-pub use crate::assignment::types::role::*;
 pub use provider_api::*;
