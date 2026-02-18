@@ -13,12 +13,16 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 
+use std::future::Future;
+use std::ops::Deref;
+use std::pin::Pin;
+use std::sync::Arc;
+
 use eyre::{Result, WrapErr};
 use sea_orm::{
     ConnectOptions, ConnectionTrait, Database, DatabaseConnection, DbConn, EntityTrait, entity::*,
     schema::Schema, sea_query::*,
 };
-use std::sync::Arc;
 use uuid::Uuid;
 
 use openstack_keystone::db::entity::prelude::*;
@@ -129,6 +133,11 @@ pub async fn setup_schema(db: &DbConn) -> Result<()> {
     create_table(db, &schema, Trust).await?;
     create_table(db, &schema, TrustRole).await?;
 
+    create_table(db, &schema, TokenRestriction).await?;
+    create_table(db, &schema, TokenRestrictionRoleAssociation).await?;
+    create_table(db, &schema, KubernetesAuth).await?;
+    create_table(db, &schema, KubernetesAuthRole).await?;
+
     Ok(())
 }
 
@@ -213,6 +222,67 @@ pub async fn get_isolated_database() -> Result<DatabaseConnection> {
     setup_schema(&db).await?;
 
     Ok(db)
+}
+
+/// Trait to allow State to delete various resource types T
+pub trait ResourceDeleter<T>: Send + Sync + 'static {
+    fn delete(&self, resource: T) -> Pin<Box<dyn Future<Output = ()> + Send + '_>>;
+}
+
+pub struct AsyncResourceGuard<T, S>
+where
+    T: Clone + Send + Sync + 'static,
+    S: ResourceDeleter<T> + Clone + Send + Sync + 'static,
+{
+    pub resource: T,
+    pub state: S,
+}
+
+impl<T, S> AsyncResourceGuard<T, S>
+where
+    T: Clone + Send + Sync + 'static,
+    S: ResourceDeleter<T> + Clone + Send + Sync + 'static,
+{
+    pub fn new(resource: T, state: S) -> Self {
+        Self { resource, state }
+    }
+
+    /// Use this at the end of a test if you want to WAIT for cleanup
+    /// instead of letting it happen in the background.
+    #[allow(unused)]
+    pub async fn cleanup(self) {
+        let state = self.state.clone();
+        let res = self.resource.clone();
+        state.delete(res).await;
+        std::mem::forget(self);
+    }
+}
+
+impl<T, S> Drop for AsyncResourceGuard<T, S>
+where
+    T: Clone + Send + Sync + 'static,
+    S: ResourceDeleter<T> + Clone + Send + Sync + 'static,
+{
+    fn drop(&mut self) {
+        let state = self.state.clone();
+        let res = self.resource.clone();
+
+        // Safety net for test panics
+        tokio::spawn(async move {
+            state.delete(res).await;
+        });
+    }
+}
+
+impl<T, S> Deref for AsyncResourceGuard<T, S>
+where
+    T: Clone + Send + Sync + 'static,
+    S: ResourceDeleter<T> + Clone + Send + Sync + 'static,
+{
+    type Target = T;
+    fn deref(&self) -> &Self::Target {
+        &self.resource
+    }
 }
 
 pub async fn create_user<U: Into<String>>(

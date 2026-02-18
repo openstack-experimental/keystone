@@ -39,6 +39,8 @@ pub mod id_mapping;
 pub mod identity_provider;
 pub mod idp_remote_ids;
 pub mod implied_role;
+pub mod kubernetes_auth;
+pub mod kubernetes_auth_role;
 pub mod limit;
 pub mod local_user;
 pub mod mapping;

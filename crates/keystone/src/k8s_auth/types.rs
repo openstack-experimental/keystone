@@ -11,17 +11,12 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-//! # Integration tests
-//!
-//! Test the functionality on the provider level (not through the API).
+//! # K8s auth provider types definitions.
 
-mod application_credential;
-mod assignment;
-mod common;
-mod identity;
 mod k8s_auth;
-mod role;
-mod token;
+mod k8s_auth_role;
+mod provider_api;
 
-#[macro_use]
-mod macros;
+pub use k8s_auth::*;
+pub use k8s_auth_role::*;
+pub use provider_api::K8sAuthApi;

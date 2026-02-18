@@ -17,6 +17,7 @@ pub use sea_orm_migration::prelude::*;
 mod m20250301_000001_passkey;
 mod m20250414_000001_idp;
 mod m20251005_131042_token_restriction;
+mod m20260217_164934_k8;
 
 pub struct Migrator;
 
@@ -27,6 +28,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20250301_000001_passkey::Migration),
             Box::new(m20250414_000001_idp::Migration),
             Box::new(m20251005_131042_token_restriction::Migration),
+            Box::new(m20260217_164934_k8::Migration),
         ]
     }
 }

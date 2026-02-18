@@ -31,6 +31,7 @@ mod federation;
 mod fernet_token;
 mod identity;
 mod identity_mapping;
+mod k8s_auth;
 mod policy;
 mod resource;
 mod revoke;
@@ -51,6 +52,7 @@ use federation::FederationProvider;
 pub use fernet_token::FernetTokenProvider;
 pub use identity::*;
 use identity_mapping::IdentityMappingProvider;
+use k8s_auth::K8sAuthProvider;
 use policy::PolicyProvider;
 use resource::ResourceProvider;
 use revoke::RevokeProvider;
@@ -110,6 +112,10 @@ pub struct Config {
     /// Identity mapping provider configuration.
     #[serde(default)]
     pub identity_mapping: IdentityMappingProvider,
+
+    /// K8s Auth provider configuration.
+    #[serde(default)]
+    pub k8s_auth: K8sAuthProvider,
 
     /// Resource provider configuration.
     #[serde(default)]

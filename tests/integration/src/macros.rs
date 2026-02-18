@@ -11,17 +11,19 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-//! # Integration tests
-//!
-//! Test the functionality on the provider level (not through the API).
 
-mod application_credential;
-mod assignment;
-mod common;
-mod identity;
-mod k8s_auth;
-mod role;
-mod token;
-
-#[macro_use]
-mod macros;
+#[macro_export]
+macro_rules! impl_deleter {
+    ($state:ty, $resource:ty, $provider_getter:ident, $method:ident) => {
+        impl ResourceDeleter<$resource> for Arc<$state> {
+            fn delete(&self, resource: $resource) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
+                Box::pin(async move {
+                    self.provider
+                        .$provider_getter()
+                        .$method(self, &resource.id)
+                        .await;
+                })
+            }
+        }
+    };
+}
