@@ -16,15 +16,17 @@ mod list;
 mod revoke;
 
 use eyre::Report;
-use sea_orm::{DbConn, entity::*};
-use std::sync::Arc;
-
+use openstack_keystone::assignment::AssignmentApi;
+use openstack_keystone::assignment::types::AssignmentCreate;
 use openstack_keystone::config::Config;
 use openstack_keystone::db::entity::{prelude::*, project};
 use openstack_keystone::keystone::Service;
 use openstack_keystone::plugin_manager::PluginManager;
 use openstack_keystone::policy::PolicyFactory;
 use openstack_keystone::provider::Provider;
+use sea_orm::{DbConn, entity::*};
+use std::sync::Arc;
+use tempfile::TempDir;
 
 //use super::setup_schema;
 use crate::common::{bootstrap, get_isolated_database};
@@ -70,18 +72,26 @@ async fn setup_assignment_data(db: &DbConn) -> Result<(), Report> {
     Ok(())
 }
 
-async fn get_state() -> Result<Arc<Service>, Report> {
+async fn get_state() -> Result<(Arc<Service>, TempDir), Report> {
     let db = get_isolated_database().await?;
     setup_assignment_data(&db).await?;
 
-    let cfg: Config = Config::default();
+    let tmp_fernet_repo = TempDir::new()?;
+
+    let mut cfg: Config = Config::default();
+    cfg.auth.methods = vec!["application_credential".into(), "password".into()];
+    cfg.fernet_tokens.key_repository = tmp_fernet_repo.path().to_path_buf();
+    let fernet_utils = openstack_keystone::token::backend::fernet::utils::FernetUtils {
+        key_repository: cfg.fernet_tokens.key_repository.clone(),
+        max_active_keys: cfg.fernet_tokens.max_active_keys,
+    };
+    fernet_utils.initialize_key_repository()?;
 
     let plugin_manager = PluginManager::default();
     let provider = Provider::new(cfg.clone(), plugin_manager)?;
-    Ok(Arc::new(Service::new(
-        cfg,
-        db,
-        provider,
-        PolicyFactory::default(),
-    )?))
+
+    Ok((
+        Arc::new(Service::new(cfg, db, provider, PolicyFactory::default())?),
+        tmp_fernet_repo,
+    ))
 }
