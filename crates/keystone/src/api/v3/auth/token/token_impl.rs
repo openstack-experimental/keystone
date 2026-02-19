@@ -27,30 +27,30 @@ use crate::trust::TrustApi;
 
 use super::common::*;
 
-impl Token {
-    pub async fn from_provider_token(
+impl ProviderToken {
+    pub async fn build_api_token_v3(
+        &self,
         state: &ServiceState,
-        token: &ProviderToken,
     ) -> Result<Token, KeystoneApiError> {
         let mut response = TokenBuilder::default();
-        let mut project: Option<Project> = token.project().cloned();
-        let mut domain: Option<Domain> = token.domain().cloned();
-        response.audit_ids(token.audit_ids().clone());
-        response.methods(token.methods().clone());
-        response.expires_at(*token.expires_at());
-        response.issued_at(*token.issued_at());
+        let mut project: Option<Project> = self.project().cloned();
+        let mut domain: Option<Domain> = self.domain().cloned();
+        response.audit_ids(self.audit_ids().clone());
+        response.methods(self.methods().clone());
+        response.expires_at(*self.expires_at());
+        response.issued_at(*self.issued_at());
 
-        let user = if let Some(user) = token.user() {
+        let user = if let Some(user) = self.user() {
             user
         } else {
             &state
                 .provider
                 .get_identity_provider()
-                .get_user(state, token.user_id())
+                .get_user(state, self.user_id())
                 .await?
                 .ok_or_else(|| KeystoneApiError::NotFound {
                     resource: "user".into(),
-                    identifier: token.user_id().clone(),
+                    identifier: self.user_id().clone(),
                 })?
         };
 
@@ -65,7 +65,7 @@ impl Token {
         user_response.domain(user_domain.clone());
         response.user(user_response.build()?);
 
-        if let Some(roles) = token.roles() {
+        if let Some(roles) = self.roles() {
             response.roles(
                 roles
                     .clone()
@@ -75,7 +75,7 @@ impl Token {
             );
         }
 
-        match token {
+        match self {
             ProviderToken::ApplicationCredential(token) => {
                 if project.is_none() {
                     project = Some(
@@ -207,7 +207,6 @@ mod tests {
     use sea_orm::DatabaseConnection;
     use std::sync::Arc;
 
-    use crate::api::v3::auth::token::types::Token;
     use crate::api::v3::role::types::Role;
     use crate::role::types::Role as ProviderRole;
 
@@ -270,13 +269,11 @@ mod tests {
             .unwrap(),
         );
 
-        let api_token = Token::from_provider_token(
-            &state,
-            &ProviderToken::Unscoped(UnscopedPayload {
-                user_id: "bar".into(),
-                ..Default::default()
-            }),
-        )
+        let api_token = ProviderToken::Unscoped(UnscopedPayload {
+            user_id: "bar".into(),
+            ..Default::default()
+        })
+        .build_api_token_v3(&state)
         .await
         .unwrap();
         assert_eq!("bar", api_token.user.id);
@@ -328,14 +325,12 @@ mod tests {
             .unwrap(),
         );
 
-        let api_token = Token::from_provider_token(
-            &state,
-            &ProviderToken::DomainScope(DomainScopePayload {
-                user_id: "bar".into(),
-                domain_id: "domain_id".into(),
-                ..Default::default()
-            }),
-        )
+        let api_token = ProviderToken::DomainScope(DomainScopePayload {
+            user_id: "bar".into(),
+            domain_id: "domain_id".into(),
+            ..Default::default()
+        })
+        .build_api_token_v3(&state)
         .await
         .unwrap();
 
@@ -410,7 +405,7 @@ mod tests {
             ..Default::default()
         });
 
-        let api_token = Token::from_provider_token(&state, &token).await.unwrap();
+        let api_token = token.build_api_token_v3(&state).await.unwrap();
 
         assert_eq!("bar", api_token.user.id);
         assert_eq!(Some("user_domain_id"), api_token.user.domain.id.as_deref());
@@ -497,7 +492,7 @@ mod tests {
             ..Default::default()
         });
 
-        let api_token = Token::from_provider_token(&state, &token).await.unwrap();
+        let api_token = token.build_api_token_v3(&state).await.unwrap();
 
         assert_eq!("bar", api_token.user.id);
         assert_eq!(Some("user_domain_id"), api_token.user.domain.id.as_deref());

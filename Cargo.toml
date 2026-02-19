@@ -1,6 +1,7 @@
 [workspace]
 members = [
   "crates/keystone_distributed_storage",
+  "crates/keystone_api_types",
   "crates/keystone",
   "tests/federation",
   "tests/integration",

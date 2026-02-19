@@ -16,16 +16,17 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use validator::Validate;
 
-use super::attestation_conveyance_preference::AttestationConveyancePreference;
-use super::attestation_format::AttestationFormat;
-use super::authenticator_selection_criteria::AuthenticatorSelectionCriteria;
-use super::pub_key_cred_params::PubKeyCredParams;
-use super::public_key_credential_descriptor::PublicKeyCredentialDescriptor;
-use super::public_key_credential_hints::PublicKeyCredentialHints;
-use super::relying_party::RelyingParty;
-use super::request_registration_extension::RequestRegistrationExtensions;
 use super::user::User;
 use crate::webauthn::WebauthnError;
+use crate::webauthn::{
+    attestation_conveyance_preference::AttestationConveyancePreference,
+    attestation_format::AttestationFormat,
+    authenticator_selection_criteria::AuthenticatorSelectionCriteria,
+    pub_key_cred_params::PubKeyCredParams,
+    public_key_credential_descriptor::PublicKeyCredentialDescriptor,
+    public_key_credential_hints::PublicKeyCredentialHints, relying_party::RelyingParty,
+    request_registration_extension::RequestRegistrationExtensions,
+};
 
 /// The requested options for the authentication.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]

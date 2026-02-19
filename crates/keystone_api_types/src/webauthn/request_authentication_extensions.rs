@@ -15,8 +15,8 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use validator::Validate;
 
-use super::hmac_get_secret_input::HmacGetSecretInput;
 use crate::webauthn::WebauthnError;
+use crate::webauthn::hmac_get_secret_input::HmacGetSecretInput;
 
 /// Extension option inputs for PublicKeyCredentialRequestOptions.
 ///

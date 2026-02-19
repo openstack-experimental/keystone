@@ -195,6 +195,17 @@ impl From<String> for BuilderError {
     }
 }
 
+impl From<openstack_keystone_api_types::error::BuilderError> for BuilderError {
+    fn from(value: openstack_keystone_api_types::error::BuilderError) -> Self {
+        match value {
+            openstack_keystone_api_types::error::BuilderError::UninitializedField(e) => {
+                Self::UninitializedField(e)
+            }
+            openstack_keystone_api_types::error::BuilderError::Validation(e) => Self::Validation(e),
+        }
+    }
+}
+
 impl From<derive_builder::UninitializedFieldError> for BuilderError {
     fn from(ufe: derive_builder::UninitializedFieldError) -> Self {
         Self::UninitializedField(ufe.to_string())
@@ -232,6 +243,7 @@ pub enum DatabaseError {
     },
 }
 
+/// The trait wrapping the SQL error with the context information.
 pub trait DbContextExt<T> {
     fn context(self, msg: impl Into<String>) -> Result<T, DatabaseError>;
 }

@@ -16,11 +16,12 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use validator::Validate;
 
-use super::allow_credentials::AllowCredentials;
-use super::public_key_credential_hints::PublicKeyCredentialHints;
-use super::request_authentication_extensions::RequestAuthenticationExtensions;
-use super::user_verification_policy::UserVerificationPolicy;
 use crate::webauthn::WebauthnError;
+use crate::webauthn::{
+    allow_credentials::AllowCredentials, public_key_credential_hints::PublicKeyCredentialHints,
+    request_authentication_extensions::RequestAuthenticationExtensions,
+    user_verification_policy::UserVerificationPolicy,
+};
 
 /// The requested options for the authentication.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]

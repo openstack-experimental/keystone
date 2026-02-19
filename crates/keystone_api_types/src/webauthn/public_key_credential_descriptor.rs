@@ -16,8 +16,8 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use validator::Validate;
 
-use super::authenticator_transport::AuthenticatorTransport;
 use crate::webauthn::WebauthnError;
+use crate::webauthn::authenticator_transport::AuthenticatorTransport;
 
 /// <https://www.w3.org/TR/webauthn/#dictdef-publickeycredentialdescriptor>.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]

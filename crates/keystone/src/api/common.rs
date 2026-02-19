@@ -15,8 +15,10 @@
 use serde::Serialize;
 use url::Url;
 
+use openstack_keystone_api_types::Link;
+
 use crate::api::KeystoneApiError;
-use crate::api::types::{Link, ScopeProject};
+use crate::api::types::ScopeProject;
 use crate::config::Config;
 use crate::keystone::ServiceState;
 use crate::resource::{

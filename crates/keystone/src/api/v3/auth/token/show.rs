@@ -31,10 +31,8 @@ use mockall_double::double;
 use serde_json::{json, to_value};
 use tracing::error;
 
-use crate::api::v3::auth::token::types::{
-    Token as ApiResponseToken, TokenResponse, ValidateTokenParameters,
-};
-use crate::api::{Catalog, auth::Auth, error::KeystoneApiError};
+use crate::api::v3::auth::token::types::{TokenResponse, ValidateTokenParameters};
+use crate::api::{Catalog, CatalogService, auth::Auth, error::KeystoneApiError};
 use crate::catalog::CatalogApi;
 use crate::keystone::ServiceState;
 #[double]
@@ -101,22 +99,25 @@ pub(super) async fn show(
         .await?;
 
     //// Expand the token since we didn't expand it before.
-    //token = state
-    //    .provider
-    //    .get_token_provider()
-    //    .expand_token_information(&state, &token)
-    //    .await
-    //    .map_err(|_| KeystoneApiError::Forbidden)?;
-
-    let mut response_token = ApiResponseToken::from_provider_token(&state, &token).await?;
+    let mut response_token = token.build_api_token_v3(&state).await?;
 
     if !query.nocatalog.is_some_and(|x| x) {
-        let catalog: Catalog = state
-            .provider
-            .get_catalog_provider()
-            .get_catalog(&state, true)
-            .await?
-            .into();
+        let catalog: Catalog = Catalog(
+            state
+                .provider
+                .get_catalog_provider()
+                .get_catalog(&state, true)
+                .await?
+                .into_iter()
+                .map(|(s, es)| CatalogService {
+                    id: s.id.clone(),
+                    name: s.name.clone(),
+                    r#type: s.r#type,
+                    endpoints: es.into_iter().map(Into::into).collect(),
+                })
+                .collect::<Vec<_>>(),
+        );
+
         response_token.catalog = Some(catalog);
     }
 

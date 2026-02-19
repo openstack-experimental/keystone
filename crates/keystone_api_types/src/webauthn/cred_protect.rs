@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use validator::Validate;
 
-use super::credential_protection_policy::CredentialProtectionPolicy;
+use crate::webauthn::credential_protection_policy::CredentialProtectionPolicy;
 
 /// The desired options for the client's use of the credProtect extension.
 ///

@@ -15,9 +15,11 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use validator::Validate;
 
-use super::authenticator_attachment::AuthenticatorAttachment;
-use super::resident_key_requirement::ResidentKeyRequirement;
-use super::user_verification_policy::UserVerificationPolicy;
+use crate::webauthn::{
+    authenticator_attachment::AuthenticatorAttachment,
+    resident_key_requirement::ResidentKeyRequirement,
+    user_verification_policy::UserVerificationPolicy,
+};
 
 /// <https://www.w3.org/TR/webauthn/#dictdef-authenticatorselectioncriteria>.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
