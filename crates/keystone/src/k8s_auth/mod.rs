@@ -26,13 +26,13 @@ use crate::config::Config;
 use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManager;
 use backend::{K8sAuthBackend, sql::SqlBackend};
-//
+use types::*;
+
 pub use error::K8sAuthProviderError;
 #[cfg(test)]
 pub use mock::MockK8sAuthProvider;
 pub use types::K8sAuthApi;
-use types::*;
-//
+
 /// K8s Auth provider.
 pub struct K8sAuthProvider {
     /// Backend driver.

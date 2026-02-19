@@ -7,6 +7,7 @@ metadata:
 spec:
   replicas: 1
   revisionHistoryLimit: 10
+  progressDeadlineSeconds: 300
   selector:
     matchLabels:
       app.kubernetes.io/name: keystone-rs
@@ -21,13 +22,6 @@ spec:
           imagePullPolicy: IfNotPresent
           command: ['sh', '-c', 'echo "Waiting for PostgreSQL to be available..."; while ! nc -z -w 1 keystone-db-rw 5432; do echo "Still waiting for postgres-service..."; sleep 2; done; echo "PostgreSQL is available! Starting application."']
 
-        - name: policy-loader
-          image: localhost:5000/keystone-opa-policies
-          command: ["cp", "-R", "/policy/.", "/opa-policy/"]
-          volumeMounts:
-            - name: policy
-              mountPath: /opa-policy
-
       containers:
         - env:
             - name: OS_DATABASE__CONNECTION
@@ -40,8 +34,34 @@ spec:
           name: keystone
           ports:
             - containerPort: 8080
-              name: opa
+              name: keystone-rs
               protocol: TCP
+
+          livenessProbe:
+            failureThreshold: 3
+            httpGet:
+              path: /
+              port: keystone-rs
+              scheme: HTTP
+            periodSeconds: 10
+          readinessProbe:
+            failureThreshold: 3
+            httpGet:
+              path: /
+              port: keystone-rs
+              scheme: HTTP
+            periodSeconds: 10
+            successThreshold: 1
+            timeoutSeconds: 1
+          startupProbe:
+            failureThreshold: 600
+            httpGet:
+              path: /
+              port: keystone-rs
+              scheme: HTTP
+            periodSeconds: 1
+            successThreshold: 1
+            timeoutSeconds: 1
           volumeMounts:
             - mountPath: /etc/keystone/fernet-keys
               name: fernet
@@ -49,20 +69,35 @@ spec:
               name: config
               subPath: keystone.conf
 
-        - command: ["opa", "run", "--server", "/policy", "--addr", ":8181"]
+        - command: ["opa", "run", "--server", "/policy", "--addr", ":8181", "--log-level", "debug"]
           image: opa
           name: opa
           ports:
             - containerPort: 8181
               name: http
-              protocol: TCP
-          volumeMounts:
-            - name: policy
-              mountPath: /policy
+          livenessProbe:
+            failureThreshold: 3
+            httpGet:
+              path: /
+              port: 8181
+              scheme: HTTP
+          readinessProbe:
+            failureThreshold: 3
+            httpGet:
+              path: /
+              port: 8181
+              scheme: HTTP
+            periodSeconds: 10
+            successThreshold: 1
+            timeoutSeconds: 1
+
       volumes:
         - name: config
           configMap:
             name: keystone
+        - name: config-opa
+          configMap:
+            name: keystone-opa
         - name: fernet
           secret:
             defaultMode: 420
@@ -73,5 +108,3 @@ spec:
                 path: "0"
               - key: "k1"
                 path: "1"
-        - name: policy
-          emptyDir: {}

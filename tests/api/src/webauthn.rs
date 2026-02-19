@@ -12,7 +12,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 use base64::{Engine as _, engine::general_purpose::URL_SAFE};
-use eyre::{Result, eyre};
+use eyre::{Context, Result, WrapErr, eyre};
 use reqwest::{
     ClientBuilder, StatusCode,
     header::{HeaderMap, HeaderName, HeaderValue},
@@ -46,7 +46,8 @@ pub async fn start_registration<U: AsRef<str>>(
         .send()
         .await?
         .json::<UserPasskeyRegistrationStartResponse>()
-        .await?)
+        .await
+        .wrap_err("unexpected response for register_start")?)
 }
 
 pub async fn finish_registration<U: AsRef<str>>(
@@ -64,7 +65,8 @@ pub async fn finish_registration<U: AsRef<str>>(
         .send()
         .await?
         .json::<PasskeyResponse>()
-        .await?)
+        .await
+        .wrap_err("unexpected result for register_finish")?)
 }
 
 pub async fn start_auth<U: AsRef<str>>(
@@ -82,7 +84,8 @@ pub async fn start_auth<U: AsRef<str>>(
         .send()
         .await?
         .json::<PasskeyAuthenticationStartResponse>()
-        .await?)
+        .await
+        .wrap_err("unexpected response for passkey auth start")?)
 }
 
 pub async fn finish_auth(
@@ -94,7 +97,8 @@ pub async fn finish_auth(
         .post(tc.base_url.join("v4/auth/passkey/finish")?)
         .json(&data)
         .send()
-        .await?)
+        .await
+        .wrap_err("unexpected response for passkey auth finish")?)
 }
 
 pub async fn register_user_passkey<B, U: AsRef<str>, D: Into<String>>(
@@ -107,22 +111,28 @@ pub async fn register_user_passkey<B, U: AsRef<str>, D: Into<String>>(
 where
     B: AuthenticatorBackend,
 {
-    let reg_challenge = start_registration(tc, user_id.as_ref(), PasskeyCreate::default()).await?;
+    let reg_challenge = start_registration(tc, user_id.as_ref(), PasskeyCreate::default())
+        .await
+        .wrap_err("start registration")?;
     info!("registration challenge data: {:?}", reg_challenge);
 
-    let reg_result = authenticator.do_registration(
-        origin.clone(),
-        webauthn_authenticator_rs::prelude::CreationChallengeResponse {
-            public_key: reg_challenge.public_key.try_into()?,
-        },
-    )?;
+    let reg_result = authenticator
+        .do_registration(
+            origin.clone(),
+            webauthn_authenticator_rs::prelude::CreationChallengeResponse {
+                public_key: reg_challenge.public_key.try_into()?,
+            },
+        )
+        .wrap_err("do registration")?;
     info!("registration challenge response: {:?}", reg_result);
 
     let mut finish_req: UserPasskeyRegistrationFinishRequest = reg_result.into();
     if let Some(val) = description {
         finish_req.description = Some(val.into());
     }
-    let reg_finish_response = finish_registration(tc, user_id.as_ref(), finish_req).await?;
+    let reg_finish_response = finish_registration(tc, user_id.as_ref(), finish_req)
+        .await
+        .wrap_err("finish registration")?;
     info!("registration finish response: {:?}", reg_finish_response);
     Ok(())
 }

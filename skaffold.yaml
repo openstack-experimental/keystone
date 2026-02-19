@@ -1,3 +1,11 @@
+# Skaffold configuration for deploying keystone development environment
+#
+# # Requirements:
+# * local registry running at `localhost:5000` when `local` profile is used
+#
+# # Usage
+#
+# `skaffold run --cleanup=false -p local --default-repo localhost:5000
 apiVersion: skaffold/v4beta13
 kind: Config
 metadata:
@@ -6,23 +14,52 @@ build:
   insecureRegistries:
     - localhost:5000
   artifacts:
-    - image: localhost:5000/keystone-rs
+    - image: keystone-rs
       context: .
       docker:
         dockerfile: Dockerfile
-    - image: localhost:5000/keystone-opa-policies
-      context: policy
+    - image: keystone-opa
+      context: .
       docker:
-        dockerfile: ../tools/Dockerfile.opa # Just FROM opa, but allows syncing
+        dockerfile: tools/Dockerfile.opa
+    - image: keystone-tests
+      context: .
+      docker:
+        dockerfile: tools/Dockerfile.functest
   local:
-    useDockerCLI: true
-    #tryImportMissing: true
+    concurrency: 0
+
+profiles:
+  - name: github-ci
+    build:
+      local:
+        useBuildkit: true
+        concurrency: 0
+        tryImportMissing: true
+  - name: local
+    build:
+      insecureRegistries:
+        - localhost:5000
+      local:
+        useDockerCLI: true
+        concurrency: 0
+        tryImportMissing: true
 manifests:
   kustomize:
     paths:
       - tools/k8s/keystone/overlays/dev
 deploy:
-  kubectl: {}
+  statusCheck: true
+  statusCheckDeadlineSeconds: 300
+  tolerateFailuresUntilDeadline: true
+  kubectl:
+    flags:
+      apply: ["--wait"]
+    hooks:
+      after:
+        - host:
+            # This command will block Skaffold until the bootstrap job hits 'Completed'
+            command: ["kubectl", "wait", "--for=condition=complete", "job/keystone-bootstrap", "--timeout=60s"]
   helm:
     releases:
       - name: cloudnative-pg
@@ -30,3 +67,13 @@ deploy:
         remoteChart: cloudnative-pg
         createNamespace: true
         namespace: cnpg
+verify:
+  - name: api-test
+    container:
+      image: keystone-tests
+      name: api-test
+      env:
+        - name: KEYSTONE_URL
+          value: http://keystone-rs.default.svc.cluster.local:8080
+    executionMode:
+      kubernetesCluster: {}

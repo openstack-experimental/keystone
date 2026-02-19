@@ -1,0 +1,24 @@
+configMapGenerator:
+  - name: keystone
+    files:
+      - conf/keystone.conf
+images:
+  - name: py-keystone
+    newName: ghcr.io/openstack-experimental/keystone/py-keystone
+    newTag: main
+  - name: opa
+    newName: keystone-opa
+secretGenerator:
+  - name: fernet-keys
+    # NOTE: Secret keys cannot be digits,so prefix them with letter
+    literals:
+      - k0=2Rlc-npWYOGqqG1zM-bmfBj2apLacLXhIbBsdyqQ0zg=
+      - k1=sQyQVikArus5DRomTHCLPEIJO2yYkeB5nDdaasIKHVQ=
+    type: generic
+resources:
+  - bootstrap-job.yaml
+  - deployment-py.yaml
+  - deployment-rs.yaml
+  - db.yaml
+  - service.yaml
+  - ingress.yaml

@@ -17,6 +17,8 @@ env:
   KEYSTONE_URL: http://localhost:8080
   OPA_URL: http://localhost:8181
   OS_KEYSTONE_CONFIG_DIR: ${{ github.workspace }}/etc
+  REGISTRY: ghcr.io
+
 
 defaults:
   run:
@@ -354,3 +356,84 @@ jobs:
             ${{ steps.metrics.outputs.summary }}
 
             [View full report](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
+
+  k3s-test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write # Required to push to GHCR
+    steps:
+
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+      - name: Install K3s
+        run: |
+          # Install k3s without the heavy default components (Traefik/ServiceLB)
+          curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="--disable traefik --disable servicelb --write-kubeconfig-mode 644" sh -s -
+
+          # Export KUBECONFIG for the next steps
+          echo "KUBECONFIG=/etc/rancher/k3s/k3s.yaml" >> $GITHUB_ENV
+
+      - name: Install Skaffold
+        run: |
+          curl -Lo skaffold https://storage.googleapis.com/skaffold/builds/latest/skaffold-linux-amd64 && \
+          sudo install skaffold /usr/local/bin/
+
+      - name: Log in to GHCR
+        uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772  # v3.4.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+        with:
+          driver: docker-container
+
+      - name: Wait for Cluster Ready
+        run: |
+          # Wait up to 60 seconds for the node to be ready
+          timeout 60s bash -c 'until kubectl get nodes | grep -w "Ready"; do sleep 2; done'
+          kubectl get nodes
+
+      - name: Create GHCR Pull Secret
+        run: |
+          # Use --dry-run and pipe to 'apply' to make this step idempotent
+          kubectl create secret docker-registry ghcr-pull-secret \
+            --docker-server=ghcr.io \
+            --docker-username=${{ github.actor }} \
+            --docker-password=${{ secrets.GITHUB_TOKEN }} \
+            --namespace=default \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Patch ServiceAccount for Automatic Pulling
+        run: |
+          # This ensures all pods in the namespace can pull from GHCR 
+          # without you needing to edit every deployment.yaml
+          kubectl patch serviceaccount default -p '{"imagePullSecrets": [{"name": "ghcr-pull-secret"}]}'
+
+      - name: Deploy the development stack
+        env:
+          # This tells the underlying Docker Buildx to use GHA for cache
+          # mode=max ensures all intermediate layers (like Cargo dependencies) are saved
+          BUILDKIT_STEP_LOG_MAX_SIZE: 10485760
+        run: |
+          export BUILDX_NO_DEFAULT_ATTESTATIONS=1
+          # first build artifacts preparing metadata file
+          skaffold build --profile github-ci --default-repo ghcr.io/openstack-experimental/keystone --file-output build.artifacts
+          # deploy built artifacts
+          skaffold deploy -a build.artifacts --status-check
+
+      - name: Run tests
+        run: |
+          # run tests referring to the artifacts metadata file
+          skaffold verify -a build.artifacts
+
+      - name: Dump K8 pods
+        if: failure()
+        run: kubectl get pods
+
+      - name: Dump K8 pods - extended
+        if: failure()
+        run: kubectl get pods -o custom-columns="NAMESPACE:.metadata.namespace,POD:.metadata.name,STATUS:.status.phase,CONTAINER:.spec.containers[*].name,IMAGE:.spec.containers[*].image"

@@ -1,0 +1,28 @@
+# Stage 1: Build
+FROM rust:1.93.1-slim-trixie AS builder
+
+RUN apt update &&\
+    apt install -y openssl libssl-dev libssl3 pkg-config musl-tools musl-dev &&\
+    update-ca-certificates
+
+WORKDIR /app
+COPY . .
+# Compile the specific functional test file
+RUN cargo test --test api --no-run && \
+    cp $(find target/debug/deps -name "api-*" -type f -executable) /usr/local/bin/test-api
+
+# Stage 2: Package
+FROM debian:trixie-slim AS runtime
+
+LABEL maintainer="Artem Goncharov"
+
+RUN apt update &&\
+    apt install -y ca-certificates openssl libssl-dev libssl3 pkg-config &&\
+    update-ca-certificates
+
+WORKDIR /tests
+# You'll need to find the binary path (usually target/debug/deps/my_functional_tests-HASH)
+# In CI, it's often easier to rename it or use a script to find it
+COPY --from=builder /usr/local/bin/test-api /tests/api
+
+ENTRYPOINT ["/tests/api"]
