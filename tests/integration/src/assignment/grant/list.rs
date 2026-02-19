@@ -73,7 +73,7 @@ async fn init_data(state: &ServiceState) -> Result<()> {
 #[traced_test]
 #[tokio::test]
 async fn test_list_user_domain() -> Result<()> {
-    let state = get_state().await?;
+    let (state, _) = get_state().await?;
     init_data(&state).await?;
 
     assert_eq!(
@@ -119,7 +119,7 @@ async fn test_list_user_domain() -> Result<()> {
 
 #[tokio::test]
 async fn test_list_user_tl_project() -> Result<()> {
-    let state = get_state().await?;
+    let (state, _) = get_state().await?;
     init_data(&state).await?;
 
     assert_eq!(
@@ -158,7 +158,7 @@ async fn test_list_user_tl_project() -> Result<()> {
 
 #[tokio::test]
 async fn test_list_user_sub_project() -> Result<()> {
-    let state = get_state().await?;
+    let (state, _) = get_state().await?;
     init_data(&state).await?;
 
     assert_eq!(
