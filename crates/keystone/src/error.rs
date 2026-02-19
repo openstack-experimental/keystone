@@ -16,15 +16,16 @@
 //! Diverse errors that can occur during the Keystone processing (not the API).
 use thiserror::Error;
 
-use crate::application_credential::error::*;
-use crate::assignment::error::*;
-use crate::catalog::error::*;
-use crate::federation::error::*;
-use crate::identity::error::*;
-use crate::identity_mapping::error::*;
-use crate::policy::*;
-use crate::resource::error::*;
-use crate::revoke::error::*;
+use crate::application_credential::error::ApplicationCredentialProviderError;
+use crate::assignment::error::AssignmentProviderError;
+use crate::catalog::error::CatalogProviderError;
+use crate::federation::error::FederationProviderError;
+use crate::identity::error::IdentityProviderError;
+use crate::identity_mapping::error::IdentityMappingError;
+use crate::k8s_auth::error::K8sAuthProviderError;
+use crate::policy::PolicyError;
+use crate::resource::error::ResourceProviderError;
+use crate::revoke::error::RevokeProviderError;
 use crate::role::error::RoleProviderError;
 use crate::token::TokenProviderError;
 use crate::trust::TrustError;
@@ -95,6 +96,14 @@ pub enum KeystoneError {
         /// The source of the error.
         #[from]
         source: serde_json::Error,
+    },
+
+    /// K8s auth provider.
+    #[error(transparent)]
+    K8sAuthProvider {
+        /// The source of the error.
+        #[from]
+        source: K8sAuthProviderError,
     },
 
     /// Policy engine.

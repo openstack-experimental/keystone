@@ -18,8 +18,8 @@ use super::assignment::*;
 use crate::assignment::AssignmentProviderError;
 use crate::keystone::ServiceState;
 
-/// The trait covering `[Role](crate::role::Role)` assignments between `actors`
-/// and `objects`.
+/// The trait covering [`Role`](crate::role::types::Role) assignments between
+/// `actors` and `objects`.
 #[async_trait]
 pub trait AssignmentApi: Send + Sync {
     /// Create assignment grant.

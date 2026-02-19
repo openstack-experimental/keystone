@@ -16,7 +16,6 @@
 use eyre::Result;
 use uuid::Uuid;
 
-use openstack_keystone::keystone::ServiceState;
 use openstack_keystone::role::{RoleApi, types::*};
 
 use super::get_state;

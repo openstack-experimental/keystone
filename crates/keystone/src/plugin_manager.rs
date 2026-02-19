@@ -29,6 +29,7 @@ use crate::catalog::backend::CatalogBackend;
 use crate::federation::backend::FederationBackend;
 use crate::identity::backend::IdentityBackend;
 use crate::identity_mapping::backend::IdentityMappingBackend;
+use crate::k8s_auth::backend::K8sAuthBackend;
 use crate::resource::backend::ResourceBackend;
 use crate::revoke::backend::RevokeBackend;
 use crate::role::backend::RoleBackend;
@@ -50,6 +51,8 @@ pub struct PluginManager {
     identity_backends: HashMap<String, Arc<dyn IdentityBackend>>,
     /// Identity mapping backend plugins.
     identity_mapping_backends: HashMap<String, Arc<dyn IdentityMappingBackend>>,
+    /// K8s auth backend plugins.
+    k8s_auth_backends: HashMap<String, Arc<dyn K8sAuthBackend>>,
     /// Resource backend plugins.
     resource_backends: HashMap<String, Arc<dyn ResourceBackend>>,
     /// Revoke backend plugins.
@@ -120,6 +123,12 @@ impl PluginManager {
         name: S,
     ) -> Option<&Arc<dyn IdentityMappingBackend>> {
         self.identity_mapping_backends.get(name.as_ref())
+    }
+
+    /// Get registered k8s auth backend.
+    #[allow(clippy::borrowed_box)]
+    pub fn get_k8s_auth_backend<S: AsRef<str>>(&self, name: S) -> Option<&Arc<dyn K8sAuthBackend>> {
+        self.k8s_auth_backends.get(name.as_ref())
     }
 
     /// Get registered resource backend.

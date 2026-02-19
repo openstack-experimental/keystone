@@ -49,7 +49,7 @@ pub async fn create(
 
     let txn = db.begin().await.context("starting the transaction")?;
     let db_entry: token_restriction::Model = entry
-        .insert(db)
+        .insert(&txn)
         .await
         .context("creating token restriction")?;
 
@@ -62,7 +62,7 @@ pub async fn create(
                 }
             }),
         )
-        .exec(db)
+        .exec(&txn)
         .await
         .context("persisting token restriction role association")?;
     }

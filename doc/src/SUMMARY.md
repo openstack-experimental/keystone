@@ -24,6 +24,7 @@
     - [PCI-DSS: Account Password Expiration](adr/0012-pci-dss-account-password-expiry.md)
     - [Federation OIDC: Expiring Group Membership](adr/0013-federation-oidc-expiring-group-membership.md)
     - [Application Credentials](adr/0014-application-credentials.md)
+    - [Kubernetes Auth](adr/0015-kubernetes-auth.md)
 - [Policy enforcement](policy.md)
 - [Fernet token]()
   - [Token payloads]()

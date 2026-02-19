@@ -85,6 +85,7 @@ pub mod error;
 pub mod federation;
 pub mod identity;
 pub mod identity_mapping;
+pub mod k8s_auth;
 pub mod keystone;
 pub mod plugin_manager;
 pub mod policy;

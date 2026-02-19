@@ -56,22 +56,22 @@ A series of brand new API endpoints have been added to the Keystone API.
 
 Following tables are added:
 
-- federated_identity_provider
+- `federated_identity_provider`
 
 ```rust
-{{#rustdoc_include ../../../src/db/entity/federated_identity_provider.rs:15:30}}
+{{#rustdoc_include ../../../crates/keystone/src/db/entity/federated_identity_provider.rs:15:30}}
 ```
 
-- federated_mapping
+- `federated_mapping`
 
 ```rust
-{{#include ../../../src/db/entity/federated_mapping.rs:15:32}}
+{{#include ../../../crates/keystone/src/db/entity/federated_mapping.rs:15:32}}
 ```
 
-- federated_auth_state
+- `federated_auth_state`
 
 ```rust
-{{#include ../../../src/db/entity/federated_auth_state.rs:8:16}}
+{{#include ../../../crates/keystone/src/db/entity/federated_auth_state.rs:8:16}}
 ```
 
 ## Compatibility notes
@@ -79,11 +79,11 @@ Following tables are added:
 Since the federation is implemented very differently to how it was done before
 it certain compatibility steps are implemented:
 
-- Identity provider is "mirrored" into the existing identity_provider with the
+- Identity provider is "mirrored" into the existing `identity_provider` with the
   subset of attributes
 
 - For every identity provider "oidc" and "jwt" protocol entries in the
-  federation_protocol table is created pointing to the "\<\<null\>\>" mapping.
+  `federation_protocol` table is created pointing to the "\<\<null\>\>" mapping.
 
 ## Testing
 

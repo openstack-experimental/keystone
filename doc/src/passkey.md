@@ -31,29 +31,29 @@ sequenceDiagram
 
 Few dedicated API resources are added controlling the necessary aspects:
 
-- /users/{user_id}/passkeys/register_start (initialize registering of the
+- `/users/{user_id}/passkeys/register_start` (initialize registering of the
   security device of the user)
 
-- /users/{user_id}/passkeys/register_finish (complete the security key
+- `/users/{user_id}/passkeys/register_finish` (complete the security key
   registration)
 
-- /users/{user_id}/passkeys/login_start (initialize login of the security device
+- `/users/{user_id}/passkeys/login_start` (initialize login of the security device
   of the user)
 
-- /users/{user_id}/passkeys/login_finish (complete the security key login)
+- `/users/{user_id}/passkeys/login_finish` (complete the security key login)
 
 ## DB changes
 
 Following DB tables are added:
 
-- webauthn_credential
+- `webauthn_credential`
 
 ```rust
-{{#include ../../src/db/entity/webauthn_credential.rs:9:17}}
+{{#include ../../crates/keystone/src/db/entity/webauthn_credential.rs:9:17}}
 ```
 
-- webauthn_state
+- `webauthn_state`
 
-```rust
-{{#include ../../src/db/entity/webauthn_state.rs:9:12}}
+````rust
+{{#include ../../crates/keystone/src/db/entity/webauthn_state.rs:9:12}}
 ```

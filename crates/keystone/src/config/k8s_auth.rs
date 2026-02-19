@@ -11,17 +11,22 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-//! # Integration tests
-//!
-//! Test the functionality on the provider level (not through the API).
+use serde::Deserialize;
 
-mod application_credential;
-mod assignment;
-mod common;
-mod identity;
-mod k8s_auth;
-mod role;
-mod token;
+use crate::config::common::default_sql_driver;
 
-#[macro_use]
-mod macros;
+/// K8s auth provider.
+#[derive(Debug, Deserialize, Clone)]
+pub struct K8sAuthProvider {
+    /// K8s auth provider backend.
+    #[serde(default = "default_sql_driver")]
+    pub driver: String,
+}
+
+impl Default for K8sAuthProvider {
+    fn default() -> Self {
+        Self {
+            driver: default_sql_driver(),
+        }
+    }
+}

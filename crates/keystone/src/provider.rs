@@ -40,6 +40,9 @@ use crate::identity::IdentityProvider;
 use crate::identity_mapping::IdentityMappingApi;
 #[double]
 use crate::identity_mapping::IdentityMappingProvider;
+use crate::k8s_auth::K8sAuthApi;
+#[double]
+use crate::k8s_auth::K8sAuthProvider;
 use crate::plugin_manager::PluginManager;
 use crate::resource::ResourceApi;
 #[double]
@@ -77,6 +80,8 @@ pub struct Provider {
     identity: IdentityProvider,
     /// Identity mapping provider.
     identity_mapping: IdentityMappingProvider,
+    /// K8s auth provider.
+    k8s_auth: K8sAuthProvider,
     /// Resource provider.
     resource: ResourceProvider,
     /// Revoke provider.
@@ -98,6 +103,7 @@ impl Provider {
         let federation_provider = FederationProvider::new(&cfg, &plugin_manager)?;
         let identity_provider = IdentityProvider::new(&cfg, &plugin_manager)?;
         let identity_mapping_provider = IdentityMappingProvider::new(&cfg, &plugin_manager)?;
+        let k8s_auth_provider = K8sAuthProvider::new(&cfg, &plugin_manager)?;
         let resource_provider = ResourceProvider::new(&cfg, &plugin_manager)?;
         let revoke_provider = RevokeProvider::new(&cfg, &plugin_manager)?;
         let role_provider = RoleProvider::new(&cfg, &plugin_manager)?;
@@ -112,6 +118,7 @@ impl Provider {
             federation: federation_provider,
             identity: identity_provider,
             identity_mapping: identity_mapping_provider,
+            k8s_auth: k8s_auth_provider,
             resource: resource_provider,
             revoke: revoke_provider,
             role: role_provider,
@@ -151,6 +158,11 @@ impl Provider {
     }
 
     /// Get the resource provider.
+    pub fn get_k8s_auth_provider(&self) -> &impl K8sAuthApi {
+        &self.k8s_auth
+    }
+
+    /// Get the resource provider.
     pub fn get_resource_provider(&self) -> &impl ResourceApi {
         &self.resource
     }
@@ -187,6 +199,7 @@ impl Provider {
         let identity_mock = crate::identity::MockIdentityProvider::default();
         let identity_mapping_mock = crate::identity_mapping::MockIdentityMappingProvider::default();
         let federation_mock = crate::federation::MockFederationProvider::default();
+        let k8s_auth_mock = crate::k8s_auth::MockK8sAuthProvider::default();
         let resource_mock = crate::resource::MockResourceProvider::default();
         let revoke_mock = crate::revoke::MockRevokeProvider::default();
         let role_mock = crate::role::MockRoleProvider::default();
@@ -201,6 +214,7 @@ impl Provider {
             .identity(identity_mock)
             .identity_mapping(identity_mapping_mock)
             .federation(federation_mock)
+            .k8s_auth(k8s_auth_mock)
             .resource(resource_mock)
             .revoke(revoke_mock)
             .role(role_mock)
