@@ -12,7 +12,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use eyre::Result;
+use eyre::{Result, WrapErr};
 use tracing_test::traced_test;
 use url::Url;
 use uuid::Uuid;
@@ -49,7 +49,8 @@ async fn test_register_empty_description() -> Result<()> {
         &mut authenticator,
         None::<String>,
     )
-    .await?;
+    .await
+    .wrap_err("register user passkey")?;
 
     Ok(())
 }
@@ -58,18 +59,20 @@ async fn test_register_empty_description() -> Result<()> {
 #[traced_test]
 async fn test_register_description() -> Result<()> {
     let mut test_client = TestClient::default()?;
-    test_client.auth_admin().await?;
+    test_client.auth_admin().await.wrap_err("admin auth")?;
 
     let user_create = UserCreate {
         name: Uuid::new_v4().to_string(),
         domain_id: "default".into(),
         ..Default::default()
     };
-    let user = create_user(&test_client, user_create).await?;
+    let user = create_user(&test_client, user_create)
+        .await
+        .wrap_err("creating user")?;
 
     let authenticator_backend = SoftToken::new(true)?.0;
     let mut authenticator = WebauthnAuthenticator::new(authenticator_backend);
-    let origin = Url::parse("https://keystone.local")?;
+    let origin = Url::parse("https://keystone.local").wrap_err("parsing origin")?;
 
     register_user_passkey(
         &test_client,
@@ -78,7 +81,8 @@ async fn test_register_description() -> Result<()> {
         &mut authenticator,
         Some("softkey"),
     )
-    .await?;
+    .await
+    .wrap_err("register user passkey")?;
 
     Ok(())
 }
