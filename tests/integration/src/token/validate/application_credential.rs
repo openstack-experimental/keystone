@@ -19,14 +19,15 @@ use std::collections::HashSet;
 use tracing_test::traced_test;
 use uuid::Uuid;
 
-use super::{create_user, get_state, grant_role_to_user_on_project};
-use crate::common::create_role;
 use openstack_keystone::application_credential::ApplicationCredentialApi;
 use openstack_keystone::application_credential::types::*;
 use openstack_keystone::auth::*;
 use openstack_keystone::resource::types::ProjectBuilder;
 use openstack_keystone::role::types::*;
 use openstack_keystone::token::{Token, TokenApi, TokenProviderError};
+
+use super::{create_user, get_state, grant_role_to_user_on_project};
+use crate::common::create_role;
 
 #[tokio::test]
 #[traced_test]

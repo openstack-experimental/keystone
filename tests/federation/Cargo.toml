@@ -12,18 +12,18 @@ dist = false
 [dependencies]
 bytes.workspace = true
 http-body-util.workspace = true
-hyper = { workspace = true, features = ["http1"] }
+hyper = { workspace = true, features = ["http1", "server"] }
 hyper-util = { workspace = true, features = ["tokio", "http1"] }
 eyre.workspace = true
 keycloak = { version = "26.5" }
-openstack_keystone = { path = "../../crates/keystone" }
-reqwest = { version = "0.13", features = ["json", "http2", "multipart", "gzip", "deflate"] }
+openstack_keystone_api_types = { version = "0.1", path = "../../crates/keystone_api_types" }
+reqwest = { workspace = true, features = ["json", "http2", "multipart", "gzip", "deflate"] }
 serde.workspace = true
 serde_json.workspace = true
 serde_urlencoded.workspace = true
 thirtyfour = "0.36"
 tracing.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["signal"] }
 tokio-util.workspace = true
 tracing-test = { workspace = true, features = ["no-env-filter"] }
 

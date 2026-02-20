@@ -9,14 +9,13 @@ homepage.workspace = true
 repository.workspace = true
 
 [dependencies]
-axum.workspace = true
+axum = { workspace = true, features = ["json"] }
 base64.workspace = true
 chrono = { workspace = true, features = ["serde"] }
 derive_builder.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
-tracing.workspace = true
 utoipa = { workspace = true, features = ["chrono"] }
 validator = { workspace = true, features = ["derive"] }
 webauthn-rs-proto.workspace = true

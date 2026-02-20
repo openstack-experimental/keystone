@@ -18,10 +18,11 @@ use std::collections::BTreeSet;
 use tracing_test::traced_test;
 use uuid::Uuid;
 
-use super::get_state;
 use openstack_keystone::application_credential::ApplicationCredentialApi;
 use openstack_keystone::application_credential::types::*;
 use openstack_keystone::role::types::Role;
+
+use super::get_state;
 
 #[tokio::test]
 #[traced_test]

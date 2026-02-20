@@ -19,12 +19,12 @@ use serde_json::json;
 use std::env;
 use tracing_test::traced_test;
 
+use openstack_keystone_api_types::federation::{identity_provider::*, mapping::*};
+use openstack_keystone_api_types::v4::user::*;
+
 mod keystone_utils;
 
 use keystone_utils::*;
-
-use openstack_keystone::api::v4::user::types::*;
-use openstack_keystone::federation::api::types::*;
 
 pub async fn setup_github_idp<T: AsRef<str>>(
     token: T,

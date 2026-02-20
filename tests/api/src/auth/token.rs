@@ -12,8 +12,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use axum::http::HeaderValue;
 use eyre::Result;
+use reqwest::header::HeaderValue;
 use secrecy::{ExposeSecret, SecretString};
 
 mod password;

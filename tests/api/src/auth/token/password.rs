@@ -15,8 +15,8 @@
 use eyre::Result;
 use std::env;
 
-use openstack_keystone::api::types::*;
-use openstack_keystone::api::v3::auth::token::types::IdentityBuilder;
+use openstack_keystone_api_types::scope::*;
+use openstack_keystone_api_types::v3::auth::token::IdentityBuilder;
 
 use crate::common::*;
 

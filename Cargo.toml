@@ -3,9 +3,11 @@ members = [
   "crates/keystone_distributed_storage",
   "crates/keystone_api_types",
   "crates/keystone",
-  "tests/federation",
-  "tests/integration",
   "tests/api",
+  "tests/integration",
+  "tests/federation",
+]
+exclude = [
   "tests/loadtest"
 ]
 resolver = "3"
@@ -27,7 +29,7 @@ exclude = [
 
 [workspace.dependencies]
 async-trait = { version = "0.1" }
-axum = { version = "0.8" }
+axum = { version = "0.8", default-features = false }
 base64 = { version = "0.22" }
 base64urlsafedata = "0.5"
 bcrypt = { version = "0.18" }

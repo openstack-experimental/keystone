@@ -19,8 +19,6 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use tracing_test::traced_test;
 
-use super::{create_user, get_state, grant_role_to_user_on_project};
-use crate::common::create_role;
 use openstack_keystone::auth::*;
 use openstack_keystone::db::entity::prelude::{Trust as DbTrust, TrustRole as DbTrustRole};
 use openstack_keystone::db::entity::{trust as db_trust, trust_role as db_trust_role};
@@ -29,6 +27,9 @@ use openstack_keystone::role::{RoleApi, types::RoleCreate};
 use openstack_keystone::token::{Token, TokenApi, TokenProviderError};
 use openstack_keystone::trust::TrustApi;
 use openstack_keystone::trust::types::*;
+
+use super::{create_user, get_state, grant_role_to_user_on_project};
+use crate::common::create_role;
 
 async fn setup(db: &DbConn) -> Result<(), Report> {
     DbTrust::insert_many([

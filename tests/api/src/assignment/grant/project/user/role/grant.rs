@@ -17,8 +17,8 @@ use std::collections::HashMap;
 use tracing_test::traced_test;
 use uuid::Uuid;
 
-use openstack_keystone::api::v3::project::types::ProjectCreate;
-use openstack_keystone::api::v3::user::types::UserCreate;
+use openstack_keystone_api_types::v3::project::ProjectCreate;
+use openstack_keystone_api_types::v3::user::UserCreate;
 
 use super::*;
 use crate::common::*;

@@ -14,7 +14,7 @@
 
 use eyre::Result;
 
-use openstack_keystone::api::types::*;
+use openstack_keystone_api_types::scope::*;
 
 use crate::auth::project::list_auth_projects;
 use crate::common::*;

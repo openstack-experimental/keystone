@@ -23,6 +23,8 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, info};
 use tracing_test::traced_test;
 
+use openstack_keystone_api_types::federation::{identity_provider::*, mapping::*};
+
 mod keystone_utils;
 mod keycloak {
     pub mod utils;
@@ -30,8 +32,6 @@ mod keycloak {
 
 use crate::keycloak::utils::*;
 use crate::keystone_utils::*;
-
-use openstack_keystone::federation::api::types::*;
 
 pub async fn setup_keycloak_idp<T: AsRef<str>, K: AsRef<str>, S: AsRef<str>>(
     token: T,

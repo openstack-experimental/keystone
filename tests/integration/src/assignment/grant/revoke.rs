@@ -17,10 +17,11 @@
 use eyre::Result;
 use tracing_test::traced_test;
 
-use super::get_state;
-use crate::common::create_role;
 use openstack_keystone::assignment::{AssignmentApi, types::*};
 use openstack_keystone::keystone::ServiceState;
+
+use super::get_state;
+use crate::common::create_role;
 
 async fn grant_exists(
     state: &ServiceState,

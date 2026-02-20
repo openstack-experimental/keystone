@@ -14,7 +14,7 @@
 
 use eyre::Result;
 
-use openstack_keystone::api::v3::auth::token::types::*;
+use openstack_keystone_api_types::v3::auth::token::*;
 
 use crate::auth::token::check_token;
 use crate::common::*;

@@ -18,9 +18,6 @@ use sea_orm::{DbConn, entity::*};
 use std::sync::Arc;
 use tempfile::TempDir;
 
-mod application_credential;
-mod trust;
-
 use openstack_keystone::assignment::{AssignmentApi, types::AssignmentCreate};
 use openstack_keystone::config::Config;
 use openstack_keystone::db::entity::prelude::Project;
@@ -30,6 +27,9 @@ use openstack_keystone::keystone::Service;
 use openstack_keystone::plugin_manager::PluginManager;
 use openstack_keystone::policy::PolicyFactory;
 use openstack_keystone::provider::Provider;
+
+mod application_credential;
+mod trust;
 
 use crate::common::{bootstrap, get_isolated_database};
 
