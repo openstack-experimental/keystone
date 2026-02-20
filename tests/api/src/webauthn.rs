@@ -23,8 +23,8 @@ use url::Url;
 
 use webauthn_authenticator_rs::{AuthenticatorBackend, WebauthnAuthenticator};
 
-use openstack_keystone::webauthn::api::types::auth::*;
-use openstack_keystone::webauthn::api::types::register::*;
+use openstack_keystone_api_types::webauthn::auth::*;
+use openstack_keystone_api_types::webauthn::register::*;
 
 use crate::common::*;
 

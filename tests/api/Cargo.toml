@@ -10,11 +10,10 @@ repository.workspace = true
 dist = false
 
 [dependencies]
-axum = { workspace = true, features = ["macros"] }
 base64.workspace = true
 bytes.workspace = true
 eyre.workspace = true
-openstack_keystone = { path = "../../crates/keystone" }
+openstack_keystone_api_types = { version = "0.1", path = "../../crates/keystone_api_types" }
 reqwest = { workspace = true, features = ["json", "http2", "multipart", "gzip", "deflate"] }
 secrecy = { workspace = true, features = ["serde"] }
 serde.workspace = true

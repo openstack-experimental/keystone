@@ -17,9 +17,6 @@ use std::sync::Arc;
 
 use eyre::Result;
 
-use crate::common::*;
-use crate::impl_deleter;
-
 use openstack_keystone::k8s_auth::{K8sAuthApi, types::*};
 use openstack_keystone::keystone::Service;
 use openstack_keystone::keystone::ServiceState;
@@ -29,6 +26,9 @@ mod delete;
 mod get;
 mod list;
 mod update;
+
+use crate::common::*;
+use crate::impl_deleter;
 
 impl_deleter!(
     Service,

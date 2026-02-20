@@ -29,4 +29,3 @@ uuid = { workspace = true, features = ["v4"] }
 [[test]]
 name = "integration"
 path = "src/integration.rs"
-test = false

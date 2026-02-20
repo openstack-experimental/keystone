@@ -33,9 +33,9 @@ use std::time::Duration;
 use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;
 
-use openstack_keystone::api::v4::auth::token::types::TokenResponse;
-use openstack_keystone::api::v4::user::types::*;
-use openstack_keystone::federation::api::types::*;
+use openstack_keystone_api_types::federation::{auth::*, identity_provider::*, mapping::*};
+use openstack_keystone_api_types::v4::auth::token::TokenResponse;
+use openstack_keystone_api_types::v4::user::*;
 
 static CONFIG: OnceLock<TestConfig> = OnceLock::new();
 

@@ -20,7 +20,7 @@ use uuid::Uuid;
 use webauthn_authenticator_rs::WebauthnAuthenticator;
 use webauthn_authenticator_rs::softtoken::SoftToken;
 
-use openstack_keystone::api::v3::user::types::UserCreate;
+use openstack_keystone_api_types::v3::user::UserCreate;
 
 use super::*;
 use crate::identity::user::*;

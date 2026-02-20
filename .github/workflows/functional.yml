@@ -286,7 +286,7 @@ jobs:
         run: cargo build --release
 
       - name: Run load test
-        #working-directory: tests/loadtest
+        working-directory: tests/loadtest
         env:
           OS_CLOUD: admin
         run: |
@@ -308,7 +308,7 @@ jobs:
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: loadtest-report
-          path: reports/
+          path: tests/loadtest/reports/
 
       - name: Dump py-keystone logs
         if: failure()

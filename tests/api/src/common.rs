@@ -22,8 +22,8 @@ use secrecy::{ExposeSecret, SecretString};
 use std::env;
 use url::Url;
 
-use openstack_keystone::api::types::*;
-use openstack_keystone::api::v3::auth::token::types::*;
+use openstack_keystone_api_types::scope::*;
+use openstack_keystone_api_types::v3::auth::token::*;
 
 pub struct TestClient {
     pub client: Client,

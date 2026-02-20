@@ -17,12 +17,12 @@ use std::sync::Arc;
 
 use eyre::Result;
 
-use crate::common::*;
-use crate::impl_deleter;
-
 use openstack_keystone::keystone::Service;
 use openstack_keystone::keystone::ServiceState;
 use openstack_keystone::token::{TokenApi, types::*};
+
+use crate::common::*;
+use crate::impl_deleter;
 
 impl_deleter!(
     Service,

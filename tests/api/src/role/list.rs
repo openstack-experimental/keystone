@@ -15,7 +15,7 @@
 use eyre::Result;
 use tracing_test::traced_test;
 
-use openstack_keystone::api::v3::role::types::Role;
+use openstack_keystone_api_types::v3::role::Role;
 
 use crate::common::*;
 use crate::role::*;

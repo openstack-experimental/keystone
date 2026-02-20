@@ -19,12 +19,13 @@ use secrecy::ExposeSecret;
 use tracing_test::traced_test;
 use uuid::Uuid;
 
-use super::get_state;
 use openstack_keystone::application_credential::types::*;
 use openstack_keystone::application_credential::{
     ApplicationCredentialApi, ApplicationCredentialProviderError,
 };
 use openstack_keystone::role::types::*;
+
+use super::get_state;
 
 #[tokio::test]
 #[traced_test]

@@ -14,7 +14,7 @@
 
 use eyre::Result;
 
-use openstack_keystone::api::v3::project::types::{ProjectShort, ProjectShortList};
+use openstack_keystone_api_types::v3::project::{ProjectShort, ProjectShortList};
 
 use crate::common::*;
 
