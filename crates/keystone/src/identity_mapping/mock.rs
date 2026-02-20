@@ -16,13 +16,13 @@ use async_trait::async_trait;
 use mockall::mock;
 
 use crate::config::Config;
-use crate::identity_mapping::{IdentityMappingApi, IdentityMappingError, types::*};
+use crate::identity_mapping::{IdentityMappingApi, IdentityMappingProviderError, types::*};
 use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManager;
 
 mock! {
     pub IdentityMappingProvider {
-        pub fn new(cfg: &Config, plugin_manager: &PluginManager) -> Result<Self, IdentityMappingError>;
+        pub fn new(cfg: &Config, plugin_manager: &PluginManager) -> Result<Self, IdentityMappingProviderError>;
     }
 
     #[async_trait]
@@ -33,12 +33,12 @@ mock! {
             local_id: &'a str,
             domain_id: &'a str,
             entity_type: IdMappingEntityType,
-        ) -> Result<Option<IdMapping>, IdentityMappingError>;
+        ) -> Result<Option<IdMapping>, IdentityMappingProviderError>;
 
         async fn get_by_public_id<'a>(
             &self,
             state: &ServiceState,
             public_id: &'a str,
-        ) -> Result<Option<IdMapping>, IdentityMappingError>;
+        ) -> Result<Option<IdMapping>, IdentityMappingProviderError>;
     }
 }

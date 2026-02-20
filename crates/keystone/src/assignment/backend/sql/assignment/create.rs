@@ -15,8 +15,10 @@
 use sea_orm::DatabaseConnection;
 use sea_orm::entity::*;
 
-use crate::assignment::backend::error::AssignmentDatabaseError;
-use crate::assignment::types::*;
+use crate::assignment::{
+    AssignmentProviderError,
+    types::{Assignment, AssignmentCreate, AssignmentType},
+};
 use crate::db::entity::{
     assignment as db_assignment, sea_orm_active_enums::Type as DbAssignmentType,
     system_assignment as db_system_assignment,
@@ -27,7 +29,7 @@ use crate::error::DbContextExt;
 pub async fn create(
     db: &DatabaseConnection,
     assignment: AssignmentCreate,
-) -> Result<Assignment, AssignmentDatabaseError> {
+) -> Result<Assignment, AssignmentProviderError> {
     match assignment.r#type {
         AssignmentType::GroupDomain
         | AssignmentType::GroupProject

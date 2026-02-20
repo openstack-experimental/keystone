@@ -17,13 +17,13 @@ use sea_orm::entity::*;
 
 use crate::db::entity::federated_user;
 use crate::error::DbContextExt;
-use crate::identity::backend::sql::IdentityDatabaseError;
+use crate::identity::IdentityProviderError;
 
 #[tracing::instrument(skip_all)]
 pub async fn create<A, C>(
     db: &C,
     federation: A,
-) -> Result<federated_user::Model, IdentityDatabaseError>
+) -> Result<federated_user::Model, IdentityProviderError>
 where
     A: Into<federated_user::ActiveModel>,
     C: ConnectionTrait,

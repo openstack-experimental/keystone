@@ -12,12 +12,15 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::db::entity::trust as db_trust;
-use crate::trust::backend::error::TrustDatabaseError;
-use crate::trust::types::*;
 use chrono::DateTime;
 use serde_json::Value;
 use tracing::error;
+
+use crate::db::entity::trust as db_trust;
+use crate::trust::{
+    TrustProviderError,
+    types::{Trust, TrustBuilder},
+};
 
 mod get;
 mod list;
@@ -26,7 +29,7 @@ pub use get::{get, get_delegation_chain};
 pub use list::list;
 
 impl TryFrom<db_trust::Model> for Trust {
-    type Error = TrustDatabaseError;
+    type Error = TrustProviderError;
 
     fn try_from(value: db_trust::Model) -> Result<Self, Self::Error> {
         let mut builder = TrustBuilder::default();
@@ -79,7 +82,7 @@ impl TryFrom<db_trust::Model> for Trust {
 }
 
 impl TryFrom<&db_trust::Model> for Trust {
-    type Error = TrustDatabaseError;
+    type Error = TrustProviderError;
 
     fn try_from(value: &db_trust::Model) -> Result<Self, Self::Error> {
         Self::try_from(value.clone())

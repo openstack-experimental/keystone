@@ -17,8 +17,13 @@ use sea_orm::entity::*;
 use sea_orm::query::*;
 use sea_orm::{Cursor, SelectModel};
 
-use crate::application_credential::backend::error::ApplicationCredentialDatabaseError;
-use crate::application_credential::types::*;
+use crate::application_credential::{
+    ApplicationCredentialProviderError,
+    types::{
+        AccessRule, ApplicationCredential, ApplicationCredentialBuilder,
+        ApplicationCredentialListParameters,
+    },
+};
 use crate::db::entity::{
     application_credential as db_application_credential,
     prelude::{
@@ -33,7 +38,7 @@ use crate::role::types::Role;
 /// Prepare the paginated query for listing application credentials.
 fn get_list_query(
     params: &ApplicationCredentialListParameters,
-) -> Result<Cursor<SelectModel<db_application_credential::Model>>, ApplicationCredentialDatabaseError>
+) -> Result<Cursor<SelectModel<db_application_credential::Model>>, ApplicationCredentialProviderError>
 {
     let mut select = DbApplicationCredential::find()
         .filter(db_application_credential::Column::UserId.eq(&params.user_id));
@@ -56,7 +61,7 @@ fn get_list_query(
 pub async fn list(
     db: &DatabaseConnection,
     params: &ApplicationCredentialListParameters,
-) -> Result<Vec<ApplicationCredential>, ApplicationCredentialDatabaseError> {
+) -> Result<Vec<ApplicationCredential>, ApplicationCredentialProviderError> {
     let db_entities: Vec<db_application_credential::Model> = get_list_query(params)?
         .all(db)
         .await

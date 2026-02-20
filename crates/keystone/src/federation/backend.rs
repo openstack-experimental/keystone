@@ -18,7 +18,6 @@ use crate::federation::FederationProviderError;
 use crate::federation::types::*;
 use crate::keystone::ServiceState;
 
-pub mod error;
 pub mod sql;
 
 pub use sql::SqlBackend;

@@ -14,21 +14,21 @@
 //! # Federation provider error
 use thiserror::Error;
 
-use crate::federation::backend::error::*;
+use crate::error::BuilderError;
 
 /// Federation provider error.
 #[derive(Error, Debug)]
 pub enum FederationProviderError {
-    /// SQL backend error.
-    #[error(transparent)]
-    Backend {
-        /// The source of the error.
-        source: FederationDatabaseError,
-    },
+    #[error("authentication state is not found")]
+    AuthStateNotFound(String),
 
     /// Conflict.
     #[error("conflict: {0}")]
     Conflict(String),
+
+    /// Driver error.
+    #[error("backend driver error: {0}")]
+    Driver(String),
 
     /// IDP not found.
     #[error("identity provider {0} not found")]
@@ -53,28 +53,15 @@ pub enum FederationProviderError {
         source: serde_json::Error,
     },
 
+    /// Structures builder error.
+    #[error(transparent)]
+    StructBuilder {
+        /// The source of the error.
+        #[from]
+        source: BuilderError,
+    },
+
     /// Unsupported driver.
     #[error("unsupported driver {0}")]
     UnsupportedDriver(String),
-}
-
-impl From<FederationDatabaseError> for FederationProviderError {
-    fn from(source: FederationDatabaseError) -> Self {
-        match source {
-            FederationDatabaseError::Database { source } => match source {
-                cfl @ crate::error::DatabaseError::Conflict { .. } => {
-                    Self::Conflict(cfl.to_string())
-                }
-                other => Self::Backend {
-                    source: FederationDatabaseError::Database { source: other },
-                },
-            },
-            FederationDatabaseError::IdentityProviderNotFound(x) => {
-                Self::IdentityProviderNotFound(x)
-            }
-            FederationDatabaseError::MappingNotFound(x) => Self::MappingNotFound(x),
-            FederationDatabaseError::Serde { source } => Self::Serde { source },
-            _ => Self::Backend { source },
-        }
-    }
 }

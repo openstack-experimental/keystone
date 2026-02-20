@@ -10,7 +10,7 @@ on:
       - 'Cargo.lock'
       - '.github/workflows/container-build.yml'
       - '.github/workflows/container-publish.yml'
-      - 'src/**'
+      - 'crates/**'
       - 'Dockerfile'
       - '.dockerignore'
 

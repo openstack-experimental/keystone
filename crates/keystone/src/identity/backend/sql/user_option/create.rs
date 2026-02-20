@@ -18,8 +18,7 @@ use sea_orm::entity::*;
 use crate::db::entity::prelude::UserOption as DbUserOption;
 use crate::db::entity::user_option as db_user_option;
 use crate::error::DbContextExt;
-use crate::identity::backend::sql::IdentityDatabaseError;
-use crate::identity::types::UserOptions;
+use crate::identity::{IdentityProviderError, types::UserOptions};
 
 /// Persist user options.
 #[tracing::instrument(skip_all)]
@@ -27,7 +26,7 @@ pub async fn create<C, U>(
     db: &C,
     user_id: U,
     opts: &UserOptions,
-) -> Result<(), IdentityDatabaseError>
+) -> Result<(), IdentityProviderError>
 where
     C: ConnectionTrait,
     U: Into<String>,

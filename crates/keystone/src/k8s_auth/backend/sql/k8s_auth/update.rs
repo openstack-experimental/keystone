@@ -20,7 +20,7 @@ use sea_orm::entity::*;
 use crate::db::entity::prelude::KubernetesAuth;
 use crate::error::DbContextExt;
 use crate::k8s_auth::{
-    backend::error::K8sAuthDatabaseError,
+    K8sAuthProviderError,
     types::{K8sAuthConfiguration, K8sAuthConfigurationUpdate},
 };
 
@@ -32,7 +32,7 @@ pub async fn update<S: AsRef<str>>(
     db: &DatabaseConnection,
     id: S,
     data: K8sAuthConfigurationUpdate,
-) -> Result<K8sAuthConfiguration, K8sAuthDatabaseError> {
+) -> Result<K8sAuthConfiguration, K8sAuthProviderError> {
     // Start transaction to prevent TOCTOU
     let txn = db
         .begin()
@@ -50,7 +50,7 @@ pub async fn update<S: AsRef<str>>(
             .context("updating k8s auth configuration")?
             .into())
     } else {
-        Err(K8sAuthDatabaseError::ConfigurationNotFound(
+        Err(K8sAuthProviderError::ConfigurationNotFound(
             id.as_ref().to_string(),
         ))
     };

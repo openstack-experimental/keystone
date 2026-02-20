@@ -118,3 +118,12 @@ impl ResourceBackend for SqlBackend {
         Ok(project::list(&state.db, params).await?)
     }
 }
+
+impl From<crate::error::DatabaseError> for ResourceProviderError {
+    fn from(source: crate::error::DatabaseError) -> Self {
+        match source {
+            cfl @ crate::error::DatabaseError::Conflict { .. } => Self::Conflict(cfl.to_string()),
+            other => Self::Driver(other.to_string()),
+        }
+    }
+}

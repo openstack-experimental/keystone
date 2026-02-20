@@ -31,7 +31,6 @@ use super::super::types::*;
 use crate::auth::AuthenticatedInfo;
 use crate::identity::IdentityProviderError;
 use crate::identity::backend::IdentityBackend;
-use crate::identity::backend::error::IdentityDatabaseError;
 use crate::keystone::ServiceState;
 
 #[derive(Default)]
@@ -319,6 +318,15 @@ impl IdentityBackend for SqlBackend {
             last_verified,
         )
         .await?)
+    }
+}
+
+impl From<crate::error::DatabaseError> for IdentityProviderError {
+    fn from(source: crate::error::DatabaseError) -> Self {
+        match source {
+            cfl @ crate::error::DatabaseError::Conflict { .. } => Self::Conflict(cfl.to_string()),
+            other => Self::Driver(other.to_string()),
+        }
     }
 }
 

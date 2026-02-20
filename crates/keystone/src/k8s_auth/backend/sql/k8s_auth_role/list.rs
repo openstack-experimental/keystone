@@ -22,14 +22,14 @@ use crate::db::entity::kubernetes_auth_role;
 use crate::db::entity::prelude::KubernetesAuthRole;
 use crate::error::DbContextExt;
 use crate::k8s_auth::{
-    backend::error::K8sAuthDatabaseError,
+    K8sAuthProviderError,
     types::{K8sAuthRole, K8sAuthRoleListParameters},
 };
 
 /// Prepare the query for listing k8s auth roles.
 fn get_list_query(
     params: &K8sAuthRoleListParameters,
-) -> Result<Cursor<SelectModel<kubernetes_auth_role::Model>>, K8sAuthDatabaseError> {
+) -> Result<Cursor<SelectModel<kubernetes_auth_role::Model>>, K8sAuthProviderError> {
     let mut select = KubernetesAuthRole::find();
     if let Some(val) = &params.auth_configuration_id {
         select = select.filter(kubernetes_auth_role::Column::AuthConfigurationId.eq(val));
@@ -48,7 +48,7 @@ fn get_list_query(
 pub async fn list(
     db: &DatabaseConnection,
     params: &K8sAuthRoleListParameters,
-) -> Result<Vec<K8sAuthRole>, K8sAuthDatabaseError> {
+) -> Result<Vec<K8sAuthRole>, K8sAuthProviderError> {
     Ok(get_list_query(params)?
         .all(db)
         .await

@@ -22,13 +22,15 @@ use crate::db::entity::{
     prelude::FederatedIdentityProvider as DbFederatedIdentityProvider,
 };
 use crate::error::DbContextExt;
-use crate::federation::backend::error::FederationDatabaseError;
-use crate::federation::types::*;
+use crate::federation::{
+    FederationProviderError,
+    types::{IdentityProvider, IdentityProviderListParameters},
+};
 
 /// Prepare the paginated query for listing identity providers.
 fn get_list_query(
     params: &IdentityProviderListParameters,
-) -> Result<Cursor<SelectModel<db_federated_identity_provider::Model>>, FederationDatabaseError> {
+) -> Result<Cursor<SelectModel<db_federated_identity_provider::Model>>, FederationProviderError> {
     let mut select = DbFederatedIdentityProvider::find();
 
     if let Some(val) = &params.name {
@@ -62,7 +64,7 @@ fn get_list_query(
 pub async fn list(
     db: &DatabaseConnection,
     params: &IdentityProviderListParameters,
-) -> Result<Vec<IdentityProvider>, FederationDatabaseError> {
+) -> Result<Vec<IdentityProvider>, FederationProviderError> {
     get_list_query(params)?
         .all(db)
         .await

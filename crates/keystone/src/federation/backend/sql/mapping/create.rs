@@ -17,13 +17,12 @@ use sea_orm::entity::*;
 
 use crate::db::entity::federated_mapping as db_federated_mapping;
 use crate::error::DbContextExt;
-use crate::federation::backend::error::FederationDatabaseError;
-use crate::federation::types::*;
+use crate::federation::{FederationProviderError, types::Mapping};
 
 pub async fn create(
     db: &DatabaseConnection,
     mapping: Mapping,
-) -> Result<Mapping, FederationDatabaseError> {
+) -> Result<Mapping, FederationProviderError> {
     db_federated_mapping::ActiveModel {
         id: Set(mapping.id.clone()),
         domain_id: Set(mapping.domain_id.clone()),
@@ -100,6 +99,7 @@ mod tests {
 
     use super::super::tests::get_mapping_mock;
     use super::*;
+    use crate::federation::types::MappingType;
 
     #[tokio::test]
     async fn test_create() {

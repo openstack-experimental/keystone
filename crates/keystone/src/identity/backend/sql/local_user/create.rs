@@ -18,8 +18,7 @@ use sea_orm::entity::*;
 use crate::config::Config;
 use crate::db::entity::{local_user, user};
 use crate::error::DbContextExt;
-use crate::identity::backend::sql::IdentityDatabaseError;
-use crate::identity::types::UserCreate;
+use crate::identity::{IdentityProviderError, types::UserCreate};
 
 #[tracing::instrument(skip_all)]
 pub async fn create<C>(
@@ -27,7 +26,7 @@ pub async fn create<C>(
     db: &C,
     main_record: &user::Model,
     user: &UserCreate,
-) -> Result<local_user::Model, IdentityDatabaseError>
+) -> Result<local_user::Model, IdentityProviderError>
 where
     C: ConnectionTrait,
 {

@@ -13,7 +13,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::db::entity::federated_identity_provider as db_federated_identity_provider;
-use crate::federation::backend::error::FederationDatabaseError;
+use crate::federation::error::FederationProviderError;
 use crate::federation::types::*;
 
 mod create;
@@ -29,7 +29,7 @@ pub use list::list;
 pub use update::update;
 
 impl TryFrom<db_federated_identity_provider::Model> for IdentityProvider {
-    type Error = FederationDatabaseError;
+    type Error = FederationProviderError;
 
     fn try_from(value: db_federated_identity_provider::Model) -> Result<Self, Self::Error> {
         let mut builder = IdentityProviderBuilder::default();

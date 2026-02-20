@@ -21,12 +21,13 @@ pub use get::{get_domain_by_id, get_domain_by_name, get_domain_enabled};
 pub use list::list;
 
 use crate::db::entity::project as db_project;
-use crate::resource::backend::error::ResourceDatabaseError;
-use crate::resource::types::Domain;
-use crate::resource::types::DomainBuilder;
+use crate::resource::{
+    ResourceProviderError,
+    types::{Domain, DomainBuilder},
+};
 
 impl TryFrom<db_project::Model> for Domain {
-    type Error = ResourceDatabaseError;
+    type Error = ResourceProviderError;
 
     fn try_from(value: db_project::Model) -> Result<Self, Self::Error> {
         let mut domain_builder = DomainBuilder::default();

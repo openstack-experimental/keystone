@@ -12,7 +12,6 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //! # Application credential provider backend
-pub mod error;
 pub mod sql;
 
 use async_trait::async_trait;

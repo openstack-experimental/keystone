@@ -22,12 +22,12 @@ use crate::db::entity::{
     prelude::FederatedAuthState as DbFederatedAuthState,
 };
 use crate::error::DbContextExt;
-use crate::federation::backend::error::FederationDatabaseError;
+use crate::federation::FederationProviderError;
 
 pub async fn delete<S: AsRef<str>>(
     db: &DatabaseConnection,
     id: S,
-) -> Result<(), FederationDatabaseError> {
+) -> Result<(), FederationProviderError> {
     let res = DbFederatedAuthState::delete_by_id(id.as_ref())
         .exec(db)
         .await
@@ -35,13 +35,13 @@ pub async fn delete<S: AsRef<str>>(
     if res.rows_affected == 1 {
         Ok(())
     } else {
-        Err(FederationDatabaseError::AuthStateNotFound(
+        Err(FederationProviderError::AuthStateNotFound(
             id.as_ref().to_string(),
         ))
     }
 }
 
-pub async fn delete_expired(db: &DatabaseConnection) -> Result<(), FederationDatabaseError> {
+pub async fn delete_expired(db: &DatabaseConnection) -> Result<(), FederationProviderError> {
     DbFederatedAuthState::delete_many()
         .filter(db_federated_auth_state::Column::ExpiresAt.lt(Utc::now()))
         .exec(db)

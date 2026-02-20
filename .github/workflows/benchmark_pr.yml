@@ -10,7 +10,7 @@ on:
       - '.github/workflows/benchmark*.yml'
       - 'Cargo.toml'
       - 'benches/**'
-      - 'src/**'
+      - 'crates/**'
 
 env:
   CARGO_TERM_COLOR: always

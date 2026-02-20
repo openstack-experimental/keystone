@@ -23,13 +23,15 @@ use crate::db::entity::{
 };
 use crate::error::DbContextExt;
 use crate::role::types::Role;
-use crate::trust::backend::error::TrustDatabaseError;
-use crate::trust::types::*;
+use crate::trust::{
+    TrustProviderError,
+    types::{Trust, TrustListParameters},
+};
 
 /// Prepare the paginated query for listing trusts.
 fn get_list_query(
     params: &TrustListParameters,
-) -> Result<Cursor<SelectModel<db_trust::Model>>, TrustDatabaseError> {
+) -> Result<Cursor<SelectModel<db_trust::Model>>, TrustProviderError> {
     let mut select = DbTrust::find();
 
     if !params.include_deleted.is_some_and(|x| x) {
@@ -50,7 +52,7 @@ fn get_list_query(
 pub async fn list(
     db: &DatabaseConnection,
     params: &TrustListParameters,
-) -> Result<Vec<Trust>, TrustDatabaseError> {
+) -> Result<Vec<Trust>, TrustProviderError> {
     let db_trusts: Vec<db_trust::Model> = get_list_query(params)?
         .all(db)
         .await
@@ -78,7 +80,7 @@ pub async fn list(
             }
             Ok(res)
         })
-        .collect::<Result<Vec<_>, TrustDatabaseError>>()
+        .collect::<Result<Vec<_>, TrustProviderError>>()
 }
 
 #[cfg(test)]

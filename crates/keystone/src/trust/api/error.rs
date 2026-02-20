@@ -13,16 +13,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::api::error::KeystoneApiError;
-use crate::trust::TrustError;
+use crate::trust::TrustProviderError;
 
-impl From<TrustError> for KeystoneApiError {
-    fn from(source: TrustError) -> Self {
+impl From<TrustProviderError> for KeystoneApiError {
+    fn from(source: TrustProviderError) -> Self {
         match source {
-            TrustError::Conflict(x) => Self::Conflict(x),
-            TrustError::ExpirationImpossible => Self::Forbidden,
-            TrustError::RedelegatedRolesNotAvailable => Self::Forbidden,
-            TrustError::RedelegationDeepnessExceed { .. } => Self::Forbidden,
-            TrustError::RemainingUsesExceed => Self::Forbidden,
+            TrustProviderError::Conflict(x) => Self::Conflict(x),
+            TrustProviderError::ExpirationImpossible => Self::Forbidden,
+            TrustProviderError::RedelegatedRolesNotAvailable => Self::Forbidden,
+            TrustProviderError::RedelegationDeepnessExceed { .. } => Self::Forbidden,
+            TrustProviderError::RemainingUsesExceed => Self::Forbidden,
             other => Self::InternalError(other.to_string()),
         }
     }

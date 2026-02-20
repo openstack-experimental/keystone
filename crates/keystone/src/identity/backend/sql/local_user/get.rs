@@ -18,7 +18,7 @@ use sea_orm::query::*;
 
 use crate::db::entity::{local_user, prelude::LocalUser};
 use crate::error::DbContextExt;
-use crate::identity::backend::sql::IdentityDatabaseError;
+use crate::identity::IdentityProviderError;
 
 #[allow(unused)]
 #[tracing::instrument(skip_all)]
@@ -26,7 +26,7 @@ pub async fn get_by_name_and_domain<N: AsRef<str>, D: AsRef<str>>(
     db: &DatabaseConnection,
     name: N,
     domain_id: D,
-) -> Result<Option<local_user::Model>, IdentityDatabaseError> {
+) -> Result<Option<local_user::Model>, IdentityProviderError> {
     Ok(LocalUser::find()
         .filter(local_user::Column::Name.eq(name.as_ref()))
         .filter(local_user::Column::DomainId.eq(domain_id.as_ref()))
@@ -40,7 +40,7 @@ pub async fn get_by_name_and_domain<N: AsRef<str>, D: AsRef<str>>(
 pub async fn get_by_user_id<U: AsRef<str>>(
     db: &DatabaseConnection,
     user_id: U,
-) -> Result<Option<local_user::Model>, IdentityDatabaseError> {
+) -> Result<Option<local_user::Model>, IdentityProviderError> {
     Ok(LocalUser::find()
         .filter(local_user::Column::UserId.eq(user_id.as_ref()))
         .one(db)

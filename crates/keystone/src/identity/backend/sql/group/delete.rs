@@ -17,13 +17,13 @@ use sea_orm::entity::*;
 
 use crate::db::entity::prelude::Group as DbGroup;
 use crate::error::DbContextExt;
-use crate::identity::backend::sql::IdentityDatabaseError;
+use crate::identity::IdentityProviderError;
 
 #[tracing::instrument(skip_all)]
 pub async fn delete<S: AsRef<str>>(
     db: &DatabaseConnection,
     group_id: S,
-) -> Result<(), IdentityDatabaseError> {
+) -> Result<(), IdentityProviderError> {
     let res = DbGroup::delete_by_id(group_id.as_ref())
         .exec(db)
         .await
@@ -31,7 +31,7 @@ pub async fn delete<S: AsRef<str>>(
     if res.rows_affected == 1 {
         Ok(())
     } else {
-        Err(IdentityDatabaseError::GroupNotFound(
+        Err(IdentityProviderError::GroupNotFound(
             group_id.as_ref().to_string(),
         ))
     }

@@ -18,7 +18,7 @@ use sea_orm::entity::*;
 
 use crate::db::entity::password;
 use crate::error::DbContextExt;
-use crate::identity::backend::sql::IdentityDatabaseError;
+use crate::identity::IdentityProviderError;
 
 #[tracing::instrument(skip_all)]
 pub async fn create<C: ConnectionTrait, S: AsRef<str>>(
@@ -26,7 +26,7 @@ pub async fn create<C: ConnectionTrait, S: AsRef<str>>(
     local_user_id: i32,
     password_hash: S,
     expires_at: Option<DateTime<Utc>>,
-) -> Result<password::Model, IdentityDatabaseError> {
+) -> Result<password::Model, IdentityProviderError> {
     let now = Utc::now().naive_utc();
     Ok(password::ActiveModel {
         id: NotSet,

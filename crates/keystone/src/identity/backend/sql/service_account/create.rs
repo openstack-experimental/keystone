@@ -20,7 +20,8 @@ use sea_orm::entity::*;
 use crate::config::Config;
 use crate::error::DbContextExt;
 use crate::identity::{
-    backend::sql::{IdentityDatabaseError, nonlocal_user, user_option},
+    IdentityProviderError,
+    backend::sql::{nonlocal_user, user_option},
     types::*,
 };
 
@@ -36,7 +37,7 @@ pub async fn create(
     db: &DatabaseConnection,
     sa: ServiceAccountCreate,
     created_at: Option<DateTime<Utc>>,
-) -> Result<ServiceAccount, IdentityDatabaseError> {
+) -> Result<ServiceAccount, IdentityProviderError> {
     let txn = db
         .begin()
         .await

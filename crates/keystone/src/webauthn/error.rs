@@ -59,6 +59,10 @@ pub enum WebauthnError {
         source: DatabaseError,
     },
 
+    /// Driver error.
+    #[error("backend driver error: {0}")]
+    Driver(String),
+
     /// Relying party configuration is missing.
     #[error("webauthn relying party configuration is missing")]
     RelyingPartyConfigurationUnset,

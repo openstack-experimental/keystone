@@ -19,14 +19,16 @@ use crate::db::entity::{
     federated_mapping as db_federated_mapping, prelude::FederatedMapping as DbFederatedMapping,
 };
 use crate::error::DbContextExt;
-use crate::federation::backend::error::FederationDatabaseError;
-use crate::federation::types::*;
+use crate::federation::{
+    FederationProviderError,
+    types::{Mapping, MappingUpdate},
+};
 
 pub async fn update<S: AsRef<str>>(
     db: &DatabaseConnection,
     id: S,
     mapping: MappingUpdate,
-) -> Result<Mapping, FederationDatabaseError> {
+) -> Result<Mapping, FederationProviderError> {
     if let Some(current) = DbFederatedMapping::find_by_id(id.as_ref())
         .one(db)
         .await
@@ -83,7 +85,7 @@ pub async fn update<S: AsRef<str>>(
             entry.update(db).await.context("updating the mapping")?;
         db_entry.try_into()
     } else {
-        Err(FederationDatabaseError::MappingNotFound(
+        Err(FederationProviderError::MappingNotFound(
             id.as_ref().to_string(),
         ))
     }
@@ -96,6 +98,7 @@ mod tests {
 
     use super::super::tests::get_mapping_mock;
     use super::*;
+    use crate::federation::mapping::MappingType;
 
     #[tokio::test]
     async fn test_update() {

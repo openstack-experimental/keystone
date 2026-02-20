@@ -17,7 +17,7 @@ use async_trait::async_trait;
 
 use super::TrustBackend;
 use crate::keystone::ServiceState;
-use crate::trust::{TrustError, types::*};
+use crate::trust::{TrustProviderError, types::*};
 
 pub(crate) mod trust;
 
@@ -33,7 +33,7 @@ impl TrustBackend for SqlBackend {
         &self,
         state: &ServiceState,
         id: &'a str,
-    ) -> Result<Option<Trust>, TrustError> {
+    ) -> Result<Option<Trust>, TrustProviderError> {
         Ok(trust::get(&state.db, id).await?)
     }
 
@@ -43,7 +43,7 @@ impl TrustBackend for SqlBackend {
         &self,
         state: &ServiceState,
         id: &'a str,
-    ) -> Result<Option<Vec<Trust>>, TrustError> {
+    ) -> Result<Option<Vec<Trust>>, TrustProviderError> {
         Ok(trust::get_delegation_chain(&state.db, id).await?)
     }
 
@@ -53,8 +53,17 @@ impl TrustBackend for SqlBackend {
         &self,
         state: &ServiceState,
         params: &TrustListParameters,
-    ) -> Result<Vec<Trust>, TrustError> {
+    ) -> Result<Vec<Trust>, TrustProviderError> {
         Ok(trust::list(&state.db, params).await?)
+    }
+}
+
+impl From<crate::error::DatabaseError> for TrustProviderError {
+    fn from(source: crate::error::DatabaseError) -> Self {
+        match source {
+            cfl @ crate::error::DatabaseError::Conflict { .. } => Self::Conflict(cfl.to_string()),
+            other => Self::Driver(other.to_string()),
+        }
     }
 }
 

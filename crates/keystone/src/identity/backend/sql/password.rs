@@ -14,8 +14,7 @@
 use chrono::{DateTime, Utc};
 
 use crate::db::entity::password as db_password;
-use crate::identity::backend::error::IdentityDatabaseError;
-use crate::identity::types::UserResponseBuilder;
+use crate::identity::{IdentityProviderError, types::UserResponseBuilder};
 
 mod create;
 
@@ -24,7 +23,7 @@ pub use create::create;
 /// Verify whether the password has expired or not.
 pub(super) fn is_password_expired(
     password_entry: &db_password::Model,
-) -> Result<bool, IdentityDatabaseError> {
+) -> Result<bool, IdentityProviderError> {
     if let Some(expires) = password_entry
         .expires_at_int
         .and_then(DateTime::from_timestamp_secs)

@@ -78,6 +78,10 @@ pub enum TokenProviderError {
     #[error("domain is disabled")]
     DomainDisabled(String),
 
+    /// Driver error.
+    #[error("backend driver error: {0}")]
+    Driver(String),
+
     /// Expired token.
     #[error("token expired")]
     Expired,
@@ -211,7 +215,7 @@ pub enum TokenProviderError {
 
     /// Trust provider error.
     #[error(transparent)]
-    TrustProvider(#[from] crate::trust::TrustError),
+    TrustProvider(#[from] crate::trust::TrustProviderError),
 
     /// The user domain of the trustee is disabled.
     #[error("trustee domain disabled")]

@@ -15,19 +15,11 @@
 
 use thiserror::Error;
 
-use crate::error::DatabaseError;
-use crate::k8s_auth::backend::error::K8sAuthDatabaseError;
+use crate::error::BuilderError;
 
 /// K8s auth provider error.
 #[derive(Error, Debug)]
 pub enum K8sAuthProviderError {
-    /// SQL backend error.
-    #[error(transparent)]
-    Backend {
-        /// The source of the error.
-        source: K8sAuthDatabaseError,
-    },
-
     /// K8s auth configuration not found.
     #[error("k8s configuration {0} not found")]
     ConfigurationNotFound(String),
@@ -36,34 +28,23 @@ pub enum K8sAuthProviderError {
     #[error("conflict: {0}")]
     Conflict(String),
 
-    /// Database error.
-    #[error(transparent)]
-    Database(#[from] DatabaseError),
+    /// Driver error.
+    #[error("backend driver error: {0}")]
+    Driver(String),
 
     /// K8s auth role not found.
     #[error("k8s role {0} not found")]
     RoleNotFound(String),
 
+    /// Structures builder error.
+    #[error(transparent)]
+    StructBuilder {
+        /// The source of the error.
+        #[from]
+        source: BuilderError,
+    },
+
     /// Unsupported driver.
     #[error("unsupported driver {0}")]
     UnsupportedDriver(String),
-}
-
-impl From<K8sAuthDatabaseError> for K8sAuthProviderError {
-    fn from(source: K8sAuthDatabaseError) -> Self {
-        match source {
-            K8sAuthDatabaseError::Database { source } => match source {
-                cfl @ crate::error::DatabaseError::Conflict { .. } => {
-                    Self::Conflict(cfl.to_string())
-                }
-                other => Self::Backend {
-                    source: K8sAuthDatabaseError::Database { source: other },
-                },
-            },
-            K8sAuthDatabaseError::ConfigurationNotFound(val) => Self::ConfigurationNotFound(val),
-            K8sAuthDatabaseError::RoleNotFound(val) => Self::RoleNotFound(val),
-
-            _ => Self::Backend { source },
-        }
-    }
 }

@@ -22,7 +22,7 @@ use crate::db::entity::{
     user_group_membership,
 };
 use crate::error::DbContextExt;
-use crate::identity::backend::sql::IdentityDatabaseError;
+use crate::identity::IdentityProviderError;
 
 /// Remove the user from the group.
 #[tracing::instrument(skip_all)]
@@ -30,7 +30,7 @@ pub async fn remove_user_from_group<U: AsRef<str>, G: AsRef<str>>(
     db: &DatabaseConnection,
     user_id: U,
     group_id: G,
-) -> Result<(), IdentityDatabaseError> {
+) -> Result<(), IdentityProviderError> {
     UserGroupMembership::delete_by_id((user_id.as_ref().into(), group_id.as_ref().into()))
         .exec(db)
         .await
@@ -45,7 +45,7 @@ pub async fn remove_user_from_groups<I, U, G>(
     db: &DatabaseConnection,
     user_id: U,
     group_ids: I,
-) -> Result<(), IdentityDatabaseError>
+) -> Result<(), IdentityProviderError>
 where
     I: IntoIterator<Item = G>,
     U: AsRef<str>,
@@ -74,7 +74,7 @@ pub async fn remove_user_from_group_expiring<U: AsRef<str>, G: AsRef<str>, IDP: 
     user_id: U,
     group_id: G,
     idp_id: IDP,
-) -> Result<(), IdentityDatabaseError> {
+) -> Result<(), IdentityProviderError> {
     ExpiringUserGroupMembership::delete_by_id((
         user_id.as_ref().into(),
         group_id.as_ref().into(),
@@ -94,7 +94,7 @@ pub async fn remove_user_from_groups_expiring<I, U, G, IDP>(
     user_id: U,
     group_ids: I,
     idp_id: IDP,
-) -> Result<(), IdentityDatabaseError>
+) -> Result<(), IdentityProviderError>
 where
     I: IntoIterator<Item = G>,
     U: AsRef<str>,

@@ -18,13 +18,12 @@ use sea_orm::query::*;
 
 use crate::db::entity::{prelude::Project as DbProject, project as db_project};
 use crate::error::DbContextExt;
-use crate::resource::backend::error::ResourceDatabaseError;
-use crate::resource::types::Domain;
+use crate::resource::{ResourceProviderError, types::Domain};
 
 pub async fn get_domain_enabled<I: AsRef<str>>(
     db: &DatabaseConnection,
     domain_id: I,
-) -> Result<bool, ResourceDatabaseError> {
+) -> Result<bool, ResourceProviderError> {
     DbProject::find_by_id(domain_id.as_ref())
         .filter(db_project::Column::IsDomain.eq(true))
         .select_only()
@@ -34,7 +33,7 @@ pub async fn get_domain_enabled<I: AsRef<str>>(
         .await
         .context("fetching domain `enabled` by id")?
         .map(|x: Option<bool>| x.unwrap_or(true)) // python keystone defaults to `true` when unset
-        .ok_or(ResourceDatabaseError::DomainNotFound(
+        .ok_or(ResourceProviderError::DomainNotFound(
             domain_id.as_ref().to_string(),
         ))
 }
@@ -42,7 +41,7 @@ pub async fn get_domain_enabled<I: AsRef<str>>(
 pub async fn get_domain_by_id<I: AsRef<str>>(
     db: &DatabaseConnection,
     domain_id: I,
-) -> Result<Option<Domain>, ResourceDatabaseError> {
+) -> Result<Option<Domain>, ResourceProviderError> {
     DbProject::find_by_id(domain_id.as_ref())
         .filter(db_project::Column::IsDomain.eq(true))
         .one(db)
@@ -55,7 +54,7 @@ pub async fn get_domain_by_id<I: AsRef<str>>(
 pub async fn get_domain_by_name<N: AsRef<str>>(
     db: &DatabaseConnection,
     domain_name: N,
-) -> Result<Option<Domain>, ResourceDatabaseError> {
+) -> Result<Option<Domain>, ResourceProviderError> {
     let domain_select = DbProject::find()
         .filter(db_project::Column::IsDomain.eq(true))
         .filter(db_project::Column::Name.eq(domain_name.as_ref()));

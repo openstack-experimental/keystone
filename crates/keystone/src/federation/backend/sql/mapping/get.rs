@@ -19,13 +19,12 @@ use crate::db::entity::{
     federated_mapping as db_federated_mapping, prelude::FederatedMapping as DbFederatedMapping,
 };
 use crate::error::DbContextExt;
-use crate::federation::backend::error::FederationDatabaseError;
-use crate::federation::types::*;
+use crate::federation::{FederationProviderError, types::Mapping};
 
 pub async fn get<I: AsRef<str>>(
     db: &DatabaseConnection,
     id: I,
-) -> Result<Option<Mapping>, FederationDatabaseError> {
+) -> Result<Option<Mapping>, FederationProviderError> {
     let select = DbFederatedMapping::find_by_id(id.as_ref());
 
     let entry: Option<db_federated_mapping::Model> = select

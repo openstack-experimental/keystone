@@ -25,8 +25,10 @@ use crate::db::entity::{
     user as db_user,
 };
 use crate::error::DbContextExt;
-use crate::identity::backend::error::IdentityDatabaseError;
-use crate::identity::types::*;
+use crate::identity::{
+    IdentityProviderError,
+    types::{UserListParameters, UserOptions, UserResponse, UserResponseBuilder, UserType},
+};
 
 /// List users.
 ///
@@ -40,7 +42,7 @@ pub async fn list(
     conf: &Config,
     db: &DatabaseConnection,
     params: &UserListParameters,
-) -> Result<Vec<UserResponse>, IdentityDatabaseError> {
+) -> Result<Vec<UserResponse>, IdentityProviderError> {
     // Prepare basic selects
     let mut user_select = DbUser::find();
     let mut local_user_select = LocalUser::find();

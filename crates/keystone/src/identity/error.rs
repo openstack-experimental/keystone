@@ -16,7 +16,6 @@ use thiserror::Error;
 
 use crate::common::password_hashing::PasswordHashError;
 use crate::error::BuilderError;
-use crate::identity::backend::error::*;
 use crate::resource::error::ResourceProviderError;
 
 /// Identity provider error.
@@ -29,20 +28,41 @@ pub enum IdentityProviderError {
         source: crate::auth::AuthenticationError,
     },
 
-    /// SQL backend error.
-    #[error(transparent)]
-    Backend {
-        /// The source of the error.
-        source: IdentityDatabaseError,
-    },
-
     /// Conflict.
     #[error("conflict: {0}")]
     Conflict(String),
 
+    #[error("Date calculation error")]
+    DateError,
+
+    /// Driver error.
+    #[error("backend driver error: {0}")]
+    Driver(String),
+
     /// The group has not been found.
     #[error("group {0} not found")]
     GroupNotFound(String),
+
+    #[error(transparent)]
+    Join {
+        #[from]
+        source: tokio::task::JoinError,
+    },
+
+    #[error("corrupted database entries for user {0}")]
+    MalformedUser(String),
+
+    /// No data for local_user and passwords.
+    #[error("no passwords for the user {0}")]
+    NoPasswordsForUser(String),
+
+    /// Row does not contain password hash.
+    #[error("no passwords hash on the row id: {0}")]
+    NoPasswordHash(String),
+
+    /// No entry in the `user` table for the user.
+    #[error("no entry in the `user` table found for user_id: {0}")]
+    NoMainUserEntry(String),
 
     /// Password hashing error.
     #[error("password hashing error")]
@@ -77,6 +97,9 @@ pub enum IdentityProviderError {
     #[error("unsupported driver {0}")]
     UnsupportedDriver(String),
 
+    #[error("user id must be given")]
+    UserIdMissing,
+
     /// User ID or Name with Domain must be specified.
     #[error("either user id or user name with user domain id or name must be given")]
     UserIdOrNameWithDomain,
@@ -92,29 +115,4 @@ pub enum IdentityProviderError {
         #[from]
         source: validator::ValidationErrors,
     },
-}
-
-impl From<IdentityDatabaseError> for IdentityProviderError {
-    fn from(source: IdentityDatabaseError) -> Self {
-        match source {
-            IdentityDatabaseError::Database { source } => match source {
-                cfl @ crate::error::DatabaseError::Conflict { .. } => {
-                    Self::Conflict(cfl.to_string())
-                }
-                other => Self::Backend {
-                    source: IdentityDatabaseError::Database { source: other },
-                },
-            },
-            IdentityDatabaseError::UserNotFound(x) => Self::UserNotFound(x),
-            IdentityDatabaseError::GroupNotFound(x) => Self::GroupNotFound(x),
-            IdentityDatabaseError::Serde { source } => Self::Serde { source },
-            IdentityDatabaseError::StructBuilder { source } => Self::StructBuilder { source },
-            IdentityDatabaseError::PasswordHash { source } => Self::PasswordHash { source },
-            IdentityDatabaseError::NoPasswordHash(..) => Self::Authentication {
-                source: crate::auth::AuthenticationError::UserNameOrPasswordWrong,
-            },
-            IdentityDatabaseError::AuthenticationInfo { source } => Self::Authentication { source },
-            _ => Self::Backend { source },
-        }
-    }
 }

@@ -17,13 +17,13 @@ use sea_orm::entity::*;
 
 use crate::db::entity::local_user as db_local_user;
 use crate::error::DbContextExt;
-use crate::identity::backend::sql::IdentityDatabaseError;
+use crate::identity::IdentityProviderError;
 
 #[tracing::instrument(skip_all)]
 pub async fn reset_failed_auth(
     db: &DatabaseConnection,
     user: &db_local_user::Model,
-) -> Result<db_local_user::Model, IdentityDatabaseError> {
+) -> Result<db_local_user::Model, IdentityProviderError> {
     let mut update: db_local_user::ActiveModel = user.clone().into();
     update.failed_auth_count = Set(None);
     update.failed_auth_at = Set(None);

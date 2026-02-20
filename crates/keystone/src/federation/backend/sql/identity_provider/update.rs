@@ -20,14 +20,16 @@ use crate::db::entity::{
     prelude::FederatedIdentityProvider as DbFederatedIdentityProvider,
 };
 use crate::error::DbContextExt;
-use crate::federation::backend::error::FederationDatabaseError;
-use crate::federation::types::*;
+use crate::federation::{
+    FederationProviderError,
+    types::{IdentityProvider, IdentityProviderUpdate},
+};
 
 pub async fn update<S: AsRef<str>>(
     db: &DatabaseConnection,
     id: S,
     idp: IdentityProviderUpdate,
-) -> Result<IdentityProvider, FederationDatabaseError> {
+) -> Result<IdentityProvider, FederationProviderError> {
     if let Some(current) = DbFederatedIdentityProvider::find_by_id(id.as_ref())
         .one(db)
         .await
@@ -77,7 +79,7 @@ pub async fn update<S: AsRef<str>>(
             .context("updating identity provider")?;
         db_entry.try_into()
     } else {
-        Err(FederationDatabaseError::IdentityProviderNotFound(
+        Err(FederationProviderError::IdentityProviderNotFound(
             id.as_ref().to_string(),
         ))
     }

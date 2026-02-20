@@ -13,8 +13,10 @@
 // SPDX-License-Identifier: Apache-2.0
 use sea_orm::{DatabaseConnection, EntityTrait};
 
-use crate::assignment::backend::error::AssignmentDatabaseError;
-use crate::assignment::types::*;
+use crate::assignment::{
+    AssignmentProviderError,
+    types::{Assignment, AssignmentType},
+};
 use crate::db::entity::{
     assignment as db_assignment, sea_orm_active_enums::Type as DbAssignmentType,
     system_assignment as db_system_assignment,
@@ -25,7 +27,7 @@ use crate::error::DbContextExt;
 pub async fn delete(
     db: &DatabaseConnection,
     grant: &Assignment,
-) -> Result<(), AssignmentDatabaseError> {
+) -> Result<(), AssignmentProviderError> {
     let rows_affected = match &grant.r#type {
         AssignmentType::GroupDomain
         | AssignmentType::GroupProject
@@ -63,7 +65,7 @@ pub async fn delete(
     };
 
     if rows_affected == 0 {
-        return Err(AssignmentDatabaseError::AssignmentNotFound(format!(
+        return Err(AssignmentProviderError::AssignmentNotFound(format!(
             "actor={}, target={}, role={}, type={:?}, inherited={}",
             grant.actor_id, grant.target_id, grant.role_id, grant.r#type, grant.inherited
         )));
@@ -324,7 +326,7 @@ mod tests {
         assert!(result.is_err());
 
         match result {
-            Err(AssignmentDatabaseError::AssignmentNotFound(msg)) => {
+            Err(AssignmentProviderError::AssignmentNotFound(msg)) => {
                 assert!(msg.contains("nonexistent_role"));
                 assert!(msg.contains("user_id"));
                 assert!(msg.contains("project_id"));

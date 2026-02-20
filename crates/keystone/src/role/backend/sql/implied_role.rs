@@ -18,7 +18,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::db::entity::prelude::ImpliedRole as DbImpliedRole;
 use crate::error::DbContextExt;
-use crate::role::backend::error::RoleDatabaseError;
+use crate::role::RoleProviderError;
 
 /// Build a resolved tree of role inference.
 fn expand_implied_role_ids(
@@ -54,7 +54,7 @@ fn get_implied_role_ids(
 pub async fn list_rules(
     db: &DatabaseConnection,
     resolve: bool,
-) -> Result<BTreeMap<String, BTreeSet<String>>, RoleDatabaseError> {
+) -> Result<BTreeMap<String, BTreeSet<String>>, RoleProviderError> {
     let mut implied_rules: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     for imply in DbImpliedRole::find()
         .all(db)

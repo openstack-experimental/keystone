@@ -23,8 +23,10 @@ use crate::db::entity::{
     federated_user as db_federated_user, password as db_password, user as db_user,
 };
 use crate::error::DbContextExt;
-use crate::identity::backend::sql::IdentityDatabaseError;
-use crate::identity::types::*;
+use crate::identity::{
+    IdentityProviderError,
+    types::{UserCreate, UserOptions, UserResponse, UserResponseBuilder},
+};
 
 use super::super::federated_user;
 use super::super::local_user;
@@ -37,7 +39,7 @@ pub async fn create_main<C>(
     db: &C,
     user: &UserCreate,
     created_at: Option<DateTime<Utc>>,
-) -> Result<db_user::Model, IdentityDatabaseError>
+) -> Result<db_user::Model, IdentityProviderError>
 where
     C: ConnectionTrait,
 {
@@ -53,7 +55,7 @@ pub async fn create(
     conf: &Config,
     db: &DatabaseConnection,
     user: UserCreate,
-) -> Result<UserResponse, IdentityDatabaseError> {
+) -> Result<UserResponse, IdentityProviderError> {
     // Do a lot of stuff in a transaction
 
     let txn = db
@@ -152,6 +154,10 @@ mod tests {
     use crate::identity::backend::sql::{
         federated_user::tests::get_federated_user_mock, local_user::tests::get_local_user_mock,
         password::tests::get_password_mock, user::tests::get_user_mock,
+    };
+    use crate::identity::types::{
+        UserCreateBuilder,
+        user::{FederationBuilder, FederationProtocol},
     };
 
     #[tokio::test]

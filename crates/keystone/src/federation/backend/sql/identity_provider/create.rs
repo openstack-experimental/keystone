@@ -23,13 +23,15 @@ use crate::db::entity::{
     identity_provider as db_old_identity_provider, mapping as db_old_mapping,
 };
 use crate::error::DbContextExt;
-use crate::federation::backend::error::FederationDatabaseError;
-use crate::federation::types::*;
+use crate::federation::{
+    FederationProviderError,
+    types::{IdentityProvider, IdentityProviderCreate},
+};
 
 pub async fn create(
     db: &DatabaseConnection,
     idp: IdentityProviderCreate,
-) -> Result<IdentityProvider, FederationDatabaseError> {
+) -> Result<IdentityProvider, FederationProviderError> {
     let entry = db_federated_identity_provider::ActiveModel {
         id: Set(idp.id.unwrap_or(Uuid::new_v4().simple().to_string())),
         domain_id: Set(idp.domain_id.clone()),

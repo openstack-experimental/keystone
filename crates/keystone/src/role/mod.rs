@@ -47,7 +47,7 @@ use crate::config::Config;
 use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManager;
 use backend::{RoleBackend, SqlBackend};
-use error::RoleProviderError;
+pub use error::RoleProviderError;
 use types::*;
 
 #[cfg(test)]

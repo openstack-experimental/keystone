@@ -17,7 +17,6 @@ use async_trait::async_trait;
 use crate::k8s_auth::{K8sAuthProviderError, types::*};
 use crate::keystone::ServiceState;
 
-pub mod error;
 pub mod sql;
 
 /// K8s auth Backend trait.

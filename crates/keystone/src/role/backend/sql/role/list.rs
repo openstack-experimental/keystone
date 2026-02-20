@@ -18,13 +18,15 @@ use sea_orm::query::*;
 
 use crate::db::entity::{prelude::Role as DbRole, role as db_role};
 use crate::error::DbContextExt;
-use crate::role::backend::error::RoleDatabaseError;
-use crate::role::types::*;
+use crate::role::{
+    RoleProviderError,
+    types::{Role, RoleListParameters},
+};
 
 pub async fn list(
     db: &DatabaseConnection,
     params: &RoleListParameters,
-) -> Result<Vec<Role>, RoleDatabaseError> {
+) -> Result<Vec<Role>, RoleProviderError> {
     let mut select = DbRole::find();
 
     if let Some(domain_id) = &params.domain_id {

@@ -15,8 +15,10 @@
 use serde_json::Value;
 use tracing::error;
 
-use crate::catalog::backend::error::CatalogDatabaseError;
-use crate::catalog::types::*;
+use crate::catalog::{
+    CatalogProviderError,
+    types::{Service, ServiceBuilder},
+};
 use crate::db::entity::service as db_service;
 
 mod get;
@@ -26,7 +28,7 @@ pub use get::get;
 pub use list::list;
 
 impl TryFrom<db_service::Model> for Service {
-    type Error = CatalogDatabaseError;
+    type Error = CatalogProviderError;
 
     fn try_from(value: db_service::Model) -> Result<Self, Self::Error> {
         let mut builder = ServiceBuilder::default();

@@ -16,15 +16,17 @@ use sea_orm::DatabaseConnection;
 use sea_orm::entity::*;
 use sea_orm::query::*;
 
-use crate::catalog::backend::error::CatalogDatabaseError;
-use crate::catalog::types::*;
+use crate::catalog::{
+    CatalogProviderError,
+    types::{Endpoint, EndpointListParameters},
+};
 use crate::db::entity::{endpoint as db_endpoint, prelude::Endpoint as DbEndpoint};
 use crate::error::DbContextExt;
 
 pub async fn list(
     db: &DatabaseConnection,
     params: &EndpointListParameters,
-) -> Result<Vec<Endpoint>, CatalogDatabaseError> {
+) -> Result<Vec<Endpoint>, CatalogProviderError> {
     let mut select = DbEndpoint::find();
 
     if let Some(val) = &params.interface {

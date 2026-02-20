@@ -16,7 +16,7 @@ use async_trait::async_trait;
 
 mod id_mapping;
 
-use crate::identity_mapping::IdentityMappingError;
+use crate::identity_mapping::IdentityMappingProviderError;
 use crate::identity_mapping::backend::IdentityMappingBackend;
 use crate::identity_mapping::types::*;
 use crate::keystone::ServiceState;
@@ -33,7 +33,7 @@ impl IdentityMappingBackend for SqlBackend {
         local_id: &'a str,
         domain_id: &'a str,
         entity_type: IdMappingEntityType,
-    ) -> Result<Option<IdMapping>, IdentityMappingError> {
+    ) -> Result<Option<IdMapping>, IdentityMappingProviderError> {
         Ok(id_mapping::get_by_local_id(&state.db, local_id, domain_id, entity_type).await?)
     }
 
@@ -42,7 +42,16 @@ impl IdentityMappingBackend for SqlBackend {
         &self,
         state: &ServiceState,
         public_id: &'a str,
-    ) -> Result<Option<IdMapping>, IdentityMappingError> {
+    ) -> Result<Option<IdMapping>, IdentityMappingProviderError> {
         Ok(id_mapping::get_by_public_id(&state.db, public_id).await?)
+    }
+}
+
+impl From<crate::error::DatabaseError> for IdentityMappingProviderError {
+    fn from(source: crate::error::DatabaseError) -> Self {
+        match source {
+            cfl @ crate::error::DatabaseError::Conflict { .. } => Self::Conflict(cfl.to_string()),
+            other => Self::Driver(other.to_string()),
+        }
     }
 }

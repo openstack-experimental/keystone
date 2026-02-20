@@ -29,11 +29,13 @@ pub use list::list;
 pub use tree::get_project_parents;
 
 use crate::db::entity::project as db_project;
-use crate::resource::backend::error::ResourceDatabaseError;
-use crate::resource::types::{Project, ProjectBuilder, ProjectCreate};
+use crate::resource::{
+    ResourceProviderError,
+    types::{Project, ProjectBuilder, ProjectCreate},
+};
 
 impl TryFrom<db_project::Model> for Project {
-    type Error = ResourceDatabaseError;
+    type Error = ResourceProviderError;
 
     fn try_from(value: db_project::Model) -> Result<Self, Self::Error> {
         let mut project_builder = ProjectBuilder::default();
@@ -68,7 +70,7 @@ impl TryFrom<db_project::Model> for Project {
 }
 
 impl TryFrom<ProjectCreate> for db_project::ActiveModel {
-    type Error = ResourceDatabaseError;
+    type Error = ResourceProviderError;
 
     fn try_from(value: ProjectCreate) -> Result<Self, Self::Error> {
         Ok(Self {

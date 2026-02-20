@@ -23,9 +23,11 @@ use crate::auth::{AuthenticatedInfo, AuthenticationError};
 use crate::common::password_hashing;
 use crate::config::Config;
 use crate::db::entity::{local_user as db_local_user, password as db_password};
-use crate::identity::backend::error::IdentityDatabaseError;
-use crate::identity::backend::sql::password;
-use crate::identity::types::*;
+use crate::identity::{
+    IdentityProviderError,
+    backend::sql::password,
+    types::{UserPasswordAuthRequest, UserResponseBuilder},
+};
 
 /// Authenticate a user by a password.
 ///
@@ -45,7 +47,7 @@ pub async fn authenticate_by_password(
     config: &Config,
     db: &DatabaseConnection,
     auth: &UserPasswordAuthRequest,
-) -> Result<AuthenticatedInfo, IdentityDatabaseError> {
+) -> Result<AuthenticatedInfo, IdentityProviderError> {
     let user_with_passwords = local_user::load_local_user_with_passwords(
         db,
         auth.id.as_ref(),
@@ -72,14 +74,14 @@ pub async fn authenticate_by_password(
     let passwords: Vec<db_password::Model> = password.into_iter().collect();
     let latest_password = passwords
         .first()
-        .ok_or(IdentityDatabaseError::NoPasswordsForUser(
+        .ok_or(IdentityProviderError::NoPasswordsForUser(
             local_user.user_id.clone(),
         ))?;
     let expected_hash =
         latest_password
             .password_hash
             .as_ref()
-            .ok_or(IdentityDatabaseError::NoPasswordHash(
+            .ok_or(IdentityProviderError::NoPasswordHash(
                 latest_password.id.clone().to_string(),
             ))?;
 
@@ -98,7 +100,7 @@ pub async fn authenticate_by_password(
     }
 
     let user_entry = user::get_main_entry(db, &local_user.user_id).await?.ok_or(
-        IdentityDatabaseError::NoMainUserEntry(local_user.user_id.clone()),
+        IdentityProviderError::NoMainUserEntry(local_user.user_id.clone()),
     )?;
 
     // Reset the last_active_at for the user that successfully authenticated.
@@ -136,7 +138,7 @@ async fn should_lock(
     config: &Config,
     db: &DatabaseConnection,
     local_user: &db_local_user::Model,
-) -> Result<bool, IdentityDatabaseError> {
+) -> Result<bool, IdentityProviderError> {
     if let Some(lockout_failure_attempts) = config.security_compliance.lockout_failure_attempts
         && let Some(attempts) = local_user.failed_auth_count
         && attempts >= lockout_failure_attempts.into()
@@ -484,7 +486,7 @@ mod tests {
         )
         .await
         {
-            Err(IdentityDatabaseError::AuthenticationInfo {
+            Err(IdentityProviderError::Authentication {
                 source: AuthenticationError::UserLocked(user_id),
             }) => {
                 assert_eq!(user_id, "user_id");
@@ -574,7 +576,7 @@ mod tests {
         )
         .await
         {
-            Err(IdentityDatabaseError::AuthenticationInfo {
+            Err(IdentityProviderError::Authentication {
                 source: AuthenticationError::UserNameOrPasswordWrong,
             }) => {}
             other => {
@@ -618,7 +620,7 @@ mod tests {
         )
         .await
         {
-            Err(IdentityDatabaseError::AuthenticationInfo {
+            Err(IdentityProviderError::Authentication {
                 source: AuthenticationError::UserPasswordExpired(..),
             }) => {}
             other => {

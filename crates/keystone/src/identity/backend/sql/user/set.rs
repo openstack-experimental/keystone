@@ -19,14 +19,14 @@ use sea_orm::entity::*;
 
 use crate::db::entity::user as db_user;
 use crate::error::DbContextExt;
-use crate::identity::backend::sql::IdentityDatabaseError;
+use crate::identity::IdentityProviderError;
 
 /// Reset the `user.last_active_at` to the current date.
 #[tracing::instrument(skip_all)]
 pub async fn reset_last_active(
     db: &DatabaseConnection,
     user: &db_user::Model,
-) -> Result<db_user::Model, IdentityDatabaseError> {
+) -> Result<db_user::Model, IdentityProviderError> {
     let mut update: db_user::ActiveModel = user.clone().into();
     update.last_active_at = Set(Some(Utc::now().date_naive()));
     Ok(update

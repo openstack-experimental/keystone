@@ -15,8 +15,10 @@
 use serde_json::Value;
 use tracing::error;
 
-use crate::catalog::backend::error::CatalogDatabaseError;
-use crate::catalog::types::*;
+use crate::catalog::{
+    CatalogProviderError,
+    types::{Endpoint, EndpointBuilder},
+};
 use crate::db::entity::endpoint as db_endpoint;
 
 mod get;
@@ -26,7 +28,7 @@ pub use get::get;
 pub use list::list;
 
 impl TryFrom<db_endpoint::Model> for Endpoint {
-    type Error = CatalogDatabaseError;
+    type Error = CatalogProviderError;
 
     fn try_from(value: db_endpoint::Model) -> Result<Self, Self::Error> {
         let mut builder = EndpointBuilder::default();

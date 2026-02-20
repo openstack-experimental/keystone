@@ -14,7 +14,6 @@
 //! # Assignment provider error types
 use thiserror::Error;
 
-use crate::assignment::backend::error::*;
 use crate::identity::error::IdentityProviderError;
 use crate::resource::error::ResourceProviderError;
 use crate::revoke::error::RevokeProviderError;
@@ -26,13 +25,13 @@ pub enum AssignmentProviderError {
     #[error("assignment not found: {0}")]
     AssignmentNotFound(String),
 
-    /// Assignment provider error.
-    #[error(transparent)]
-    Backend { source: AssignmentDatabaseError },
-
     /// Conflict.
     #[error("conflict: {0}")]
     Conflict(String),
+
+    /// Driver error.
+    #[error("backend driver error: {0}")]
+    Driver(String),
 
     /// Identity provider error.
     #[error(transparent)]
@@ -40,6 +39,10 @@ pub enum AssignmentProviderError {
         #[from]
         source: IdentityProviderError,
     },
+
+    /// Invalid assignment type.
+    #[error("{0}")]
+    InvalidAssignmentType(String),
 
     /// Resource provider error.
     #[error(transparent)]
@@ -66,6 +69,13 @@ pub enum AssignmentProviderError {
         source: crate::role::error::RoleProviderError,
     },
 
+    /// (de)serialize error.
+    #[error(transparent)]
+    Serde {
+        #[from]
+        source: serde_json::Error,
+    },
+
     /// Structures builder error.
     #[error(transparent)]
     StructBuilder {
@@ -85,25 +95,4 @@ pub enum AssignmentProviderError {
         #[from]
         source: validator::ValidationErrors,
     },
-}
-
-impl From<AssignmentDatabaseError> for AssignmentProviderError {
-    fn from(source: AssignmentDatabaseError) -> Self {
-        match source {
-            AssignmentDatabaseError::AssignmentNotFound(msg) => {
-                AssignmentProviderError::AssignmentNotFound(msg)
-            }
-            AssignmentDatabaseError::Database { source } => match source {
-                cfl @ crate::error::DatabaseError::Conflict { .. } => {
-                    Self::Conflict(cfl.to_string())
-                }
-                other => Self::Backend {
-                    source: AssignmentDatabaseError::Database { source: other },
-                },
-            },
-            AssignmentDatabaseError::RoleNotFound(x) => Self::RoleNotFound(x),
-            AssignmentDatabaseError::StructBuilder { source } => Self::StructBuilder { source },
-            _ => Self::Backend { source },
-        }
-    }
 }

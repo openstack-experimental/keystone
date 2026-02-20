@@ -22,19 +22,19 @@ use crate::db::entity::{
 };
 use crate::error::DbContextExt;
 use crate::role::types::Role;
-use crate::trust::backend::error::TrustDatabaseError;
-use crate::trust::types::*;
+use crate::trust::{TrustProviderError, types::Trust};
 
 /// Get trust credential by the ID.
 pub async fn get<I: AsRef<str>>(
     db: &DatabaseConnection,
     id: I,
-) -> Result<Option<Trust>, TrustDatabaseError> {
+) -> Result<Option<Trust>, TrustProviderError> {
     if let Some(ref entry) = DbTrust::find_by_id(id.as_ref())
         .one(db)
         .await
         .context("fetching trust by id")?
     {
+        // TODO: roles must be fetched with the provider api
         let roles = entry
             .find_related(DbRole)
             .all(db)
@@ -60,7 +60,7 @@ pub async fn get<I: AsRef<str>>(
 pub async fn get_delegation_chain<I: Into<String>>(
     db: &DatabaseConnection,
     id: I,
-) -> Result<Option<Vec<Trust>>, TrustDatabaseError> {
+) -> Result<Option<Vec<Trust>>, TrustProviderError> {
     let mut chain: Vec<Trust> = Vec::new();
     let mut trust_id = Some(id.into());
     while let Some(id) = &trust_id {

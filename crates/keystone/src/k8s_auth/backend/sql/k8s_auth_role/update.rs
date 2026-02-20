@@ -20,7 +20,7 @@ use sea_orm::entity::*;
 use crate::db::entity::prelude::KubernetesAuthRole;
 use crate::error::DbContextExt;
 use crate::k8s_auth::{
-    backend::error::K8sAuthDatabaseError,
+    K8sAuthProviderError,
     types::{K8sAuthRole, K8sAuthRoleUpdate},
 };
 
@@ -31,7 +31,7 @@ pub async fn update<S: AsRef<str>>(
     db: &DatabaseConnection,
     id: S,
     data: K8sAuthRoleUpdate,
-) -> Result<K8sAuthRole, K8sAuthDatabaseError> {
+) -> Result<K8sAuthRole, K8sAuthProviderError> {
     // Start transaction to prevent TOCTOU
     let txn = db
         .begin()
@@ -49,7 +49,7 @@ pub async fn update<S: AsRef<str>>(
             .context("updating k8s auth role")?
             .into())
     } else {
-        Err(K8sAuthDatabaseError::RoleNotFound(id.as_ref().to_string()))
+        Err(K8sAuthProviderError::RoleNotFound(id.as_ref().to_string()))
     };
     txn.commit()
         .await

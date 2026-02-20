@@ -20,14 +20,13 @@ use crate::db::entity::{
     id_mapping, prelude::IdMapping as DbIdMapping, sea_orm_active_enums::EntityType,
 };
 use crate::error::DbContextExt;
-use crate::identity_mapping::backend::error::IdentityMappingDatabaseError;
-use crate::identity_mapping::types::*;
+use crate::identity_mapping::{IdentityMappingProviderError, types::IdMapping};
 
 /// Get the `IdMapping` by the public_id.
 pub async fn get_by_public_id<P: AsRef<str>>(
     db: &DatabaseConnection,
     public_id: P,
-) -> Result<Option<IdMapping>, IdentityMappingDatabaseError> {
+) -> Result<Option<IdMapping>, IdentityMappingProviderError> {
     Ok(DbIdMapping::find_by_id(public_id.as_ref())
         .one(db)
         .await
@@ -41,7 +40,7 @@ pub async fn get_by_local_id<L: AsRef<str>, D: AsRef<str>, E: Into<EntityType>>(
     local_id: L,
     domain_id: D,
     entity_type: E,
-) -> Result<Option<IdMapping>, IdentityMappingDatabaseError> {
+) -> Result<Option<IdMapping>, IdentityMappingProviderError> {
     Ok(DbIdMapping::find()
         .filter(id_mapping::Column::LocalId.eq(local_id.as_ref()))
         .filter(id_mapping::Column::DomainId.eq(domain_id.as_ref()))
