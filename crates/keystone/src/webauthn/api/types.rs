@@ -25,31 +25,8 @@ use crate::policy::Policy;
 
 use crate::webauthn::{WebauthnError, driver::SqlDriver};
 
-mod allow_credentials;
-mod attestation_conveyance_preference;
-mod attestation_format;
 pub mod auth;
-mod authentication_extensions_client_outputs;
-mod authenticator_assertion_response_raw;
-mod authenticator_attachment;
-mod authenticator_selection_criteria;
-mod authenticator_transport;
-mod cred_protect;
-mod credential_protection_policy;
-mod hmac_get_secret_input;
-mod hmac_get_secret_output;
-mod pub_key_cred_params;
-mod public_key_credential_creation_options;
-mod public_key_credential_descriptor;
-mod public_key_credential_hints;
-mod public_key_credential_request_options;
 pub mod register;
-mod relying_party;
-mod request_authentication_extensions;
-mod request_registration_extension;
-mod resident_key_requirement;
-mod user;
-mod user_verification_policy;
 
 /// WebAuthN extension state.
 #[derive()]
@@ -96,6 +73,14 @@ impl From<WebauthnError> for KeystoneApiError {
         match value {
             WebauthnError::AuthenticationInfo { source } => source.into(),
             ref err @ WebauthnError::Conflict { .. } => Self::Conflict(err.to_string()),
+            other => Self::InternalError(other.to_string()),
+        }
+    }
+}
+
+impl From<openstack_keystone_api_types::webauthn::error::WebauthnError> for KeystoneApiError {
+    fn from(value: openstack_keystone_api_types::webauthn::error::WebauthnError) -> Self {
+        match value {
             other => Self::InternalError(other.to_string()),
         }
     }

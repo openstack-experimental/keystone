@@ -199,6 +199,12 @@ impl From<BuilderError> for KeystoneApiError {
     }
 }
 
+impl From<openstack_keystone_api_types::error::BuilderError> for KeystoneApiError {
+    fn from(value: openstack_keystone_api_types::error::BuilderError) -> Self {
+        Self::InternalError(value.to_string())
+    }
+}
+
 impl From<RoleProviderError> for KeystoneApiError {
     fn from(source: RoleProviderError) -> Self {
         match source {

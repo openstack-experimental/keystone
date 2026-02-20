@@ -15,8 +15,8 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use validator::Validate;
 
-use super::hmac_get_secret_output::HmacGetSecretOutput;
 use crate::webauthn::WebauthnError;
+use crate::webauthn::hmac_get_secret_output::HmacGetSecretOutput;
 
 /// [AuthenticationExtensionsClientOutputs](https://w3c.github.io/webauthn/#dictdef-authenticationextensionsclientoutputs).
 ///

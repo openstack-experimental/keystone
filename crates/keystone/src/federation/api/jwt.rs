@@ -34,10 +34,11 @@ use openidconnect::reqwest;
 use openidconnect::{Client, ClientId, IdToken, IssuerUrl, JsonWebKeySet, JsonWebKeySetUrl, Nonce};
 
 use super::error::OidcError;
-use crate::api::v4::auth::token::types::{
-    Token as ApiResponseToken, TokenResponse as KeystoneTokenResponse,
+use crate::api::v4::auth::token::types::TokenResponse as KeystoneTokenResponse;
+use crate::api::{
+    KeystoneApiError,
+    types::{Catalog, CatalogService},
 };
-use crate::api::{KeystoneApiError, types::Catalog};
 use crate::auth::{AuthenticatedInfo, AuthenticationError};
 use crate::catalog::CatalogApi;
 use crate::common::types as provider_types;
@@ -335,14 +336,23 @@ pub async fn login(
         .map_err(|_| KeystoneApiError::Forbidden)?;
 
     let mut api_token = KeystoneTokenResponse {
-        token: ApiResponseToken::from_provider_token(&state, &token).await?,
+        token: token.build_api_token_v4(&state).await?,
     };
-    let catalog: Catalog = state
-        .provider
-        .get_catalog_provider()
-        .get_catalog(&state, true)
-        .await?
-        .into();
+    let catalog: Catalog = Catalog(
+        state
+            .provider
+            .get_catalog_provider()
+            .get_catalog(&state, true)
+            .await?
+            .into_iter()
+            .map(|(s, es)| CatalogService {
+                id: s.id.clone(),
+                name: s.name.clone(),
+                r#type: s.r#type,
+                endpoints: es.into_iter().map(Into::into).collect(),
+            })
+            .collect::<Vec<_>>(),
+    );
     api_token.token.catalog = Some(catalog);
 
     Ok((

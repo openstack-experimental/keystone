@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use validator::Validate;
 
-use super::cred_protect::CredProtect;
+use crate::webauthn::cred_protect::CredProtect;
 
 /// Extension option inputs for PublicKeyCredentialCreationOptions.
 ///

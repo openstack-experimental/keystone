@@ -19,6 +19,14 @@ use crate::error::DatabaseError;
 /// WebAuthN extension error.
 #[derive(Error, Debug)]
 pub enum WebauthnError {
+    /// API types error.
+    #[error("api types error: {}", source)]
+    ApiTypes {
+        /// The source of the error.
+        #[from]
+        source: openstack_keystone_api_types::webauthn::error::WebauthnError,
+    },
+
     /// Supported authentication error.
     #[error(transparent)]
     AuthenticationInfo {

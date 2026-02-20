@@ -12,52 +12,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //! Federated auth OIDC auth types.
-use axum::{
-    Json,
-    http::StatusCode,
-    response::{IntoResponse, Response},
-};
-use serde::{Deserialize, Serialize};
-use utoipa::ToSchema;
-use validator::Validate;
 
-/// Request for initializing the federated authentication.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
-pub struct IdentityProviderAuthRequest {
-    /// Redirect URI to include in the auth request.
-    #[validate(url)]
-    pub redirect_uri: String,
-    /// IDP mapping id.
-    #[validate(length(max = 64))]
-    pub mapping_id: Option<String>,
-    /// IDP mapping name.
-    #[validate(length(max = 64))]
-    pub mapping_name: Option<String>,
-    /// Authentication scope.
-    #[validate(nested)]
-    pub scope: Option<crate::api::types::Scope>,
-}
-
-/// Authentication initialization response.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
-pub struct IdentityProviderAuthResponse {
-    /// Url the client must open in the browser to continue the authentication.
-    #[validate(url)]
-    pub auth_url: String,
-}
-
-/// Authentication callback request the user is sending to complete the
-/// authentication request.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
-pub struct AuthCallbackParameters {
-    /// Authentication state.
-    pub state: String,
-    /// Authorization code.
-    pub code: String,
-}
-
-impl IntoResponse for IdentityProviderAuthResponse {
-    fn into_response(self) -> Response {
-        (StatusCode::OK, Json(self)).into_response()
-    }
-}
+pub use openstack_keystone_api_types::federation::auth::AuthCallbackParameters;
+pub use openstack_keystone_api_types::federation::auth::IdentityProviderAuthRequest;
+pub use openstack_keystone_api_types::federation::auth::IdentityProviderAuthResponse;

@@ -32,8 +32,8 @@ pub use update::update;
 impl From<kubernetes_auth_role::Model> for K8sAuthRole {
     fn from(value: kubernetes_auth_role::Model) -> Self {
         Self {
-            auth_configuration_id: value.auth_configuration_id.into(),
-            bound_audience: value.bound_audience.into(),
+            auth_configuration_id: value.auth_configuration_id,
+            bound_audience: value.bound_audience,
             bound_service_account_names: value
                 .bound_service_account_names
                 .split(',')
@@ -44,11 +44,11 @@ impl From<kubernetes_auth_role::Model> for K8sAuthRole {
                 .split(',')
                 .map(String::from)
                 .collect(),
-            domain_id: value.domain_id.into(),
+            domain_id: value.domain_id,
             enabled: value.enabled,
-            id: value.id.into(),
-            name: value.name.into(),
-            token_restriction_id: value.token_restriction_id.into(),
+            id: value.id,
+            name: value.name,
+            token_restriction_id: value.token_restriction_id,
         }
     }
 }
@@ -62,21 +62,18 @@ impl From<&kubernetes_auth_role::Model> for K8sAuthRole {
 impl From<K8sAuthRoleCreate> for kubernetes_auth_role::ActiveModel {
     fn from(value: K8sAuthRoleCreate) -> Self {
         Self {
-            auth_configuration_id: Set(value.auth_configuration_id.into()),
+            auth_configuration_id: Set(value.auth_configuration_id),
             bound_audience: value.bound_audience.map(Set).unwrap_or(NotSet).into(),
-            bound_service_account_names: Set(value.bound_service_account_names.join(",").into()),
-            bound_service_account_namespaces: Set(value
-                .bound_service_account_namespaces
-                .join(",")
-                .into()),
+            bound_service_account_names: Set(value.bound_service_account_names.join(",")),
+            bound_service_account_namespaces: Set(value.bound_service_account_namespaces.join(",")),
             domain_id: Set(value.domain_id),
             enabled: Set(value.enabled),
             id: value
                 .id
                 .map(Set)
                 .unwrap_or(Set(uuid::Uuid::new_v4().simple().to_string())),
-            name: Set(value.name.into()),
-            token_restriction_id: Set(value.token_restriction_id.into()),
+            name: Set(value.name),
+            token_restriction_id: Set(value.token_restriction_id),
         }
     }
 }
@@ -93,13 +90,13 @@ impl kubernetes_auth_role::Model {
             new.bound_audience = Set(Some(val.into()));
         }
         if let Some(val) = update.bound_service_account_names {
-            new.bound_service_account_names = Set(val.join(",").into());
+            new.bound_service_account_names = Set(val.join(","));
         }
         if let Some(val) = update.bound_service_account_namespaces {
-            new.bound_service_account_namespaces = Set(val.join(",").into());
+            new.bound_service_account_namespaces = Set(val.join(","));
         }
         if let Some(val) = update.enabled {
-            new.enabled = Set(val.into());
+            new.enabled = Set(val);
         }
         if let Some(val) = &update.name {
             new.name = Set(val.into());

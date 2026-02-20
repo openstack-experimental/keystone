@@ -32,12 +32,12 @@ pub use update::update;
 impl From<db_k8s_auth::Model> for K8sAuthConfiguration {
     fn from(value: db_k8s_auth::Model) -> Self {
         Self {
-            ca_cert: value.ca_cert.into(),
-            domain_id: value.domain_id.into(),
+            ca_cert: value.ca_cert,
+            domain_id: value.domain_id,
             enabled: value.enabled,
-            host: value.host.into(),
-            id: value.id.into(),
-            name: value.name.into(),
+            host: value.host,
+            id: value.id,
+            name: value.name,
         }
     }
 }
@@ -76,7 +76,7 @@ impl db_k8s_auth::Model {
             new.ca_cert = Set(Some(val.into()));
         }
         if let Some(val) = update.enabled {
-            new.enabled = Set(val.into());
+            new.enabled = Set(val);
         }
         if let Some(val) = &update.host {
             new.host = Set(val.into());

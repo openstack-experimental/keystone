@@ -3354,6 +3354,7 @@ dependencies = [
  "mockall_double",
  "nix",
  "openidconnect",
+ "openstack_keystone_api_types",
  "openstack_keystone_distributed_storage",
  "rand 0.10.0",
  "regex",
@@ -3388,6 +3389,23 @@ dependencies = [
  "validator",
  "webauthn-authenticator-rs",
  "webauthn-rs",
+ "webauthn-rs-proto",
+]
+
+[[package]]
+name = "openstack_keystone_api_types"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "base64 0.22.1",
+ "chrono",
+ "derive_builder",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tracing",
+ "utoipa",
+ "validator",
  "webauthn-rs-proto",
 ]
 

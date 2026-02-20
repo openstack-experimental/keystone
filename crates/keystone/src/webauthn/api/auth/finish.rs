@@ -19,10 +19,7 @@ use chrono::Utc;
 use tracing::debug;
 use validator::Validate;
 
-use crate::api::{
-    KeystoneApiError,
-    v4::auth::token::types::{Token as ApiResponseToken, TokenResponse},
-};
+use crate::api::{KeystoneApiError, v4::auth::token::types::TokenResponse};
 use crate::auth::{AuthenticatedInfo, AuthenticationError, AuthzInfo};
 use crate::identity::IdentityApi;
 use crate::token::TokenApi;
@@ -162,7 +159,7 @@ pub async fn finish(
     )?;
 
     let api_token = TokenResponse {
-        token: ApiResponseToken::from_provider_token(&state.core, &token).await?,
+        token: token.build_api_token_v4(&state.core).await?,
     };
     Ok((
         StatusCode::OK,

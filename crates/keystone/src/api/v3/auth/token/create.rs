@@ -22,10 +22,8 @@ use axum::{
 use validator::Validate;
 
 use crate::api::v3::auth::token::common::{authenticate_request, get_authz_info};
-use crate::api::v3::auth::token::types::{
-    AuthRequest, CreateTokenParameters, Token as ApiResponseToken, TokenResponse,
-};
-use crate::api::{Catalog, error::KeystoneApiError};
+use crate::api::v3::auth::token::types::{AuthRequest, CreateTokenParameters, TokenResponse};
+use crate::api::{Catalog, CatalogService, error::KeystoneApiError};
 use crate::catalog::CatalogApi;
 use crate::keystone::ServiceState;
 use crate::token::TokenApi;
@@ -77,15 +75,24 @@ pub(super) async fn create(
         .await?;
 
     let mut api_token = TokenResponse {
-        token: ApiResponseToken::from_provider_token(&state, &token).await?,
+        token: token.build_api_token_v3(&state).await?,
     };
     if !query.nocatalog.is_some_and(|x| x) {
-        let catalog: Catalog = state
-            .provider
-            .get_catalog_provider()
-            .get_catalog(&state, true)
-            .await?
-            .into();
+        let catalog: Catalog = Catalog(
+            state
+                .provider
+                .get_catalog_provider()
+                .get_catalog(&state, true)
+                .await?
+                .into_iter()
+                .map(|(s, es)| CatalogService {
+                    id: s.id.clone(),
+                    name: s.name.clone(),
+                    r#type: s.r#type,
+                    endpoints: es.into_iter().map(Into::into).collect(),
+                })
+                .collect::<Vec<_>>(),
+        );
         api_token.token.catalog = Some(catalog);
     }
     return Ok((

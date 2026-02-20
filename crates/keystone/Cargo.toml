@@ -41,6 +41,7 @@ eyre.workspace = true
 fernet = { workspace = true, features = ["rustcrypto"] }
 futures-util.workspace = true
 itertools.workspace = true
+openstack_keystone_api_types = { version = "0.1", path = "../keystone_api_types/"}
 openstack_keystone_distributed_storage = { version = "0.1", path = "../keystone_distributed_storage/"}
 mockall_double.workspace = true
 nix = { workspace = true, features = ["fs", "user"] }
@@ -66,16 +67,15 @@ tower.workspace = true
 tower-http = { workspace = true, features = ["compression-full", "request-id", "sensitive-headers", "trace", "util"] }
 tracing.workspace = true
 tracing-appender.workspace = true
-tracing-subscriber = { workspace = true, features = [] }
+tracing-subscriber.workspace = true
 url = { workspace = true, features = ["serde"] }
 url-macro.workspace = true
-utoipa = { workspace = true, features = ["axum_extras", "chrono", "yaml"] }
+utoipa = { workspace = true, features = ["axum_extras", "yaml"] }
 utoipa-axum.workspace = true
 utoipa-swagger-ui = { workspace = true, features = ["axum", "vendored"] }
 uuid = { workspace = true, features = ["v4"] }
 validator = { workspace = true, features = ["derive"] }
 webauthn-rs = { workspace = true, features = ["danger-allow-state-serialisation"] }
-webauthn-rs-proto.workspace = true
 
 [dev-dependencies]
 base64urlsafedata.workspace = true
@@ -90,6 +90,7 @@ tracing-test = { workspace = true, features = ["no-env-filter"] }
 url.workspace = true
 webauthn-authenticator-rs = { workspace = true, features = ["softtoken"] }
 webauthn-rs = { workspace = true, features = ["danger-credential-internals"] }
+webauthn-rs-proto.workspace = true
 
 [features]
 default = []
