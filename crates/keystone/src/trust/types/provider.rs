@@ -16,7 +16,7 @@
 use async_trait::async_trait;
 
 use crate::keystone::ServiceState;
-use crate::trust::{TrustError, types::*};
+use crate::trust::{TrustProviderError, types::*};
 
 /// Trust extension provider interface.
 #[async_trait]
@@ -26,26 +26,26 @@ pub trait TrustApi: Send + Sync {
         &self,
         state: &ServiceState,
         id: &'a str,
-    ) -> Result<Option<Trust>, TrustError>;
+    ) -> Result<Option<Trust>, TrustProviderError>;
 
     /// Resolve trust chain by the trust ID.
     async fn get_trust_delegation_chain<'a>(
         &self,
         state: &ServiceState,
         id: &'a str,
-    ) -> Result<Option<Vec<Trust>>, TrustError>;
+    ) -> Result<Option<Vec<Trust>>, TrustProviderError>;
 
     /// List trusts.
     async fn list_trusts(
         &self,
         state: &ServiceState,
         params: &TrustListParameters,
-    ) -> Result<Vec<Trust>, TrustError>;
+    ) -> Result<Vec<Trust>, TrustProviderError>;
 
     /// Validate trust delegation chain.
     async fn validate_trust_delegation_chain(
         &self,
         state: &ServiceState,
         trust: &Trust,
-    ) -> Result<bool, TrustError>;
+    ) -> Result<bool, TrustProviderError>;
 }

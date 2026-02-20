@@ -24,15 +24,17 @@ use crate::db::entity::{
     user as db_user,
 };
 use crate::error::DbContextExt;
-use crate::identity::backend::sql::IdentityDatabaseError;
-use crate::identity::types::*;
+use crate::identity::{
+    IdentityProviderError,
+    types::{UserOptions, UserResponse, UserResponseBuilder},
+};
 
 /// Get the `user` table entry by the `user_id`.
 #[tracing::instrument(skip_all)]
 pub async fn get_main_entry<U: AsRef<str>>(
     db: &DatabaseConnection,
     user_id: U,
-) -> Result<Option<db_user::Model>, IdentityDatabaseError> {
+) -> Result<Option<db_user::Model>, IdentityProviderError> {
     Ok(DbUser::find_by_id(user_id.as_ref())
         .one(db)
         .await
@@ -44,7 +46,7 @@ pub async fn get(
     conf: &Config,
     db: &DatabaseConnection,
     user_id: &str,
-) -> Result<Option<UserResponse>, IdentityDatabaseError> {
+) -> Result<Option<UserResponse>, IdentityProviderError> {
     let user_entry: Option<db_user::Model> = get_main_entry(db, user_id).await?;
 
     if let Some(user) = user_entry {
@@ -90,7 +92,7 @@ pub async fn get(
                     if !federated_user.is_empty() {
                         user_builder.merge_federated_user_data(federated_user);
                     } else {
-                        return Err(IdentityDatabaseError::MalformedUser(user_id.to_string()))?;
+                        return Err(IdentityProviderError::MalformedUser(user_id.to_string()))?;
                     }
                 }
             },
@@ -107,7 +109,7 @@ pub async fn get(
 pub async fn get_user_domain_id<U: AsRef<str>>(
     db: &DatabaseConnection,
     user_id: U,
-) -> Result<String, IdentityDatabaseError> {
+) -> Result<String, IdentityProviderError> {
     DbUser::find_by_id(user_id.as_ref())
         .select_only()
         .column(db_user::Column::DomainId)
@@ -115,7 +117,7 @@ pub async fn get_user_domain_id<U: AsRef<str>>(
         .one(db)
         .await
         .context("fetching domain_id of a user by ID")?
-        .ok_or(IdentityDatabaseError::UserNotFound(
+        .ok_or(IdentityProviderError::UserNotFound(
             user_id.as_ref().to_string(),
         ))
 }

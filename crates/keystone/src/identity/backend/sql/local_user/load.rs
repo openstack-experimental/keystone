@@ -22,7 +22,7 @@ use crate::db::entity::{
     prelude::{LocalUser, Password},
 };
 use crate::error::DbContextExt;
-use crate::identity::backend::sql::IdentityDatabaseError;
+use crate::identity::IdentityProviderError;
 
 /// Load local user record with passwords from database.
 #[tracing::instrument(skip_all)]
@@ -33,7 +33,7 @@ pub async fn load_local_user_with_passwords<S1: AsRef<str>, S2: AsRef<str>, S3: 
     domain_id: Option<S3>,
 ) -> Result<
     Option<(local_user::Model, impl IntoIterator<Item = password::Model>)>,
-    IdentityDatabaseError,
+    IdentityProviderError,
 > {
     let mut select = LocalUser::find();
     if let Some(user_id) = user_id {
@@ -42,12 +42,12 @@ pub async fn load_local_user_with_passwords<S1: AsRef<str>, S2: AsRef<str>, S3: 
         select = select
             .filter(
                 local_user::Column::Name.eq(name
-                    .ok_or(IdentityDatabaseError::UserIdOrNameWithDomain)?
+                    .ok_or(IdentityProviderError::UserIdOrNameWithDomain)?
                     .as_ref()),
             )
             .filter(
                 local_user::Column::DomainId.eq(domain_id
-                    .ok_or(IdentityDatabaseError::UserIdOrNameWithDomain)?
+                    .ok_or(IdentityProviderError::UserIdOrNameWithDomain)?
                     .as_ref()),
             );
     }
@@ -68,7 +68,7 @@ pub async fn load_local_user_with_passwords<S1: AsRef<str>, S2: AsRef<str>, S3: 
 pub async fn load_local_users_passwords<L: IntoIterator<Item = Option<i32>> + std::fmt::Debug>(
     db: &DatabaseConnection,
     user_ids: L,
-) -> Result<Vec<Option<Vec<password::Model>>>, IdentityDatabaseError> {
+) -> Result<Vec<Option<Vec<password::Model>>>, IdentityProviderError> {
     let ids: Vec<Option<i32>> = user_ids.into_iter().collect();
     // Collect local user IDs that we need to query
     let keys: Vec<i32> = ids.iter().filter_map(Option::as_ref).copied().collect();
@@ -159,7 +159,7 @@ mod tests {
         match load_local_user_with_passwords(&db, None::<String>, Some("user_name"), None::<String>)
             .await
         {
-            Err(IdentityDatabaseError::UserIdOrNameWithDomain) => {}
+            Err(IdentityProviderError::UserIdOrNameWithDomain) => {}
             _ => {
                 panic!("User name without ID should be rejected")
             }
@@ -167,7 +167,7 @@ mod tests {
         match load_local_user_with_passwords(&db, None::<String>, None::<String>, Some("domain_id"))
             .await
         {
-            Err(IdentityDatabaseError::UserIdOrNameWithDomain) => {}
+            Err(IdentityProviderError::UserIdOrNameWithDomain) => {}
             _ => {
                 panic!("Domain ID without user name should be rejected")
             }

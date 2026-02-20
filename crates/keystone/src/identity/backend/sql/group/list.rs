@@ -18,14 +18,16 @@ use sea_orm::query::*;
 
 use crate::db::entity::{group, prelude::Group as DbGroup};
 use crate::error::DbContextExt;
-use crate::identity::backend::sql::IdentityDatabaseError;
-use crate::identity::types::{Group, GroupListParameters};
+use crate::identity::{
+    IdentityProviderError,
+    types::{Group, GroupListParameters},
+};
 
 #[tracing::instrument(skip_all)]
 pub async fn list(
     db: &DatabaseConnection,
     params: &GroupListParameters,
-) -> Result<Vec<Group>, IdentityDatabaseError> {
+) -> Result<Vec<Group>, IdentityProviderError> {
     // Prepare basic selects
     let mut group_select = DbGroup::find();
 

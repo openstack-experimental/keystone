@@ -22,13 +22,15 @@ use crate::db::entity::{
     sea_orm_active_enums::MappingType as db_mapping_type,
 };
 use crate::error::DbContextExt;
-use crate::federation::backend::error::FederationDatabaseError;
-use crate::federation::types::*;
+use crate::federation::{
+    FederationProviderError,
+    types::{Mapping, MappingListParameters},
+};
 
 /// Prepare the paginated query for listing mappings.
 fn get_list_query(
     params: &MappingListParameters,
-) -> Result<Cursor<SelectModel<db_federated_mapping::Model>>, FederationDatabaseError> {
+) -> Result<Cursor<SelectModel<db_federated_mapping::Model>>, FederationProviderError> {
     let mut select = DbFederatedMapping::find();
 
     if let Some(val) = &params.name {
@@ -60,7 +62,7 @@ fn get_list_query(
 pub async fn list(
     db: &DatabaseConnection,
     params: &MappingListParameters,
-) -> Result<Vec<Mapping>, FederationDatabaseError> {
+) -> Result<Vec<Mapping>, FederationProviderError> {
     get_list_query(params)?
         .all(db)
         .await
@@ -76,6 +78,7 @@ mod tests {
 
     use super::super::tests::get_mapping_mock;
     use super::*;
+    use crate::federation::mapping::MappingType;
 
     #[tokio::test]
     async fn test_query_all() {

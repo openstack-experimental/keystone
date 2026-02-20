@@ -132,6 +132,15 @@ impl K8sAuthBackend for SqlBackend {
     }
 }
 
+impl From<crate::error::DatabaseError> for K8sAuthProviderError {
+    fn from(source: crate::error::DatabaseError) -> Self {
+        match source {
+            cfl @ crate::error::DatabaseError::Conflict { .. } => Self::Conflict(cfl.to_string()),
+            other => Self::Driver(other.to_string()),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     //    use crate::db::entity::revocation_event as db_revocation_event;

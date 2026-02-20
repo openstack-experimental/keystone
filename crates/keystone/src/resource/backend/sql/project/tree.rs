@@ -17,13 +17,12 @@ use sea_orm::entity::*;
 
 use crate::db::entity::prelude::Project as DbProject;
 use crate::error::DbContextExt;
-use crate::resource::backend::error::ResourceDatabaseError;
-use crate::resource::types::Project;
+use crate::resource::{ResourceProviderError, types::Project};
 
 pub async fn get_project_parents<I: AsRef<str>>(
     db: &DatabaseConnection,
     id: I,
-) -> Result<Option<Vec<Project>>, ResourceDatabaseError> {
+) -> Result<Option<Vec<Project>>, ResourceProviderError> {
     let mut res: Vec<Project> = Vec::new();
     let mut project_id: Option<String> = Some(id.as_ref().to_string());
     while let Some(pid) = project_id {

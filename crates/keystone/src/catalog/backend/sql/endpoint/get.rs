@@ -15,15 +15,14 @@
 use sea_orm::DatabaseConnection;
 use sea_orm::entity::*;
 
-use crate::catalog::backend::error::CatalogDatabaseError;
-use crate::catalog::types::*;
+use crate::catalog::{CatalogProviderError, types::Endpoint};
 use crate::db::entity::prelude::Endpoint as DbEndpoint;
 use crate::error::DbContextExt;
 
 pub async fn get<I: AsRef<str>>(
     db: &DatabaseConnection,
     id: I,
-) -> Result<Option<Endpoint>, CatalogDatabaseError> {
+) -> Result<Option<Endpoint>, CatalogProviderError> {
     let select = DbEndpoint::find_by_id(id.as_ref());
 
     select

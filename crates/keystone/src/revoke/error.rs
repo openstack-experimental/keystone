@@ -31,6 +31,10 @@ pub enum RevokeProviderError {
     #[error("conflict: {0}")]
     Conflict(String),
 
+    /// Driver error.
+    #[error("backend driver error: {0}")]
+    Driver(String),
+
     /// No audit ID in the token.
     #[error("token does not have the audit_id set")]
     TokenHasNoAuditId,

@@ -70,7 +70,7 @@ use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManager;
 use backend::{SqlBackend, TrustBackend};
 
-pub use error::TrustError;
+pub use error::TrustProviderError;
 #[cfg(test)]
 pub use mock::MockTrustProvider;
 pub use types::*;
@@ -82,7 +82,10 @@ pub struct TrustProvider {
 }
 
 impl TrustProvider {
-    pub fn new(config: &Config, plugin_manager: &PluginManager) -> Result<Self, TrustError> {
+    pub fn new(
+        config: &Config,
+        plugin_manager: &PluginManager,
+    ) -> Result<Self, TrustProviderError> {
         let backend_driver =
             if let Some(driver) = plugin_manager.get_trust_backend(config.trust.driver.clone()) {
                 driver.clone()
@@ -90,7 +93,9 @@ impl TrustProvider {
                 match config.trust.driver.as_str() {
                     "sql" => Arc::new(SqlBackend::default()),
                     _ => {
-                        return Err(TrustError::UnsupportedDriver(config.trust.driver.clone()));
+                        return Err(TrustProviderError::UnsupportedDriver(
+                            config.trust.driver.clone(),
+                        ));
                     }
                 }
             };
@@ -106,7 +111,7 @@ impl TrustApi for TrustProvider {
         &self,
         state: &ServiceState,
         id: &'a str,
-    ) -> Result<Option<Trust>, TrustError> {
+    ) -> Result<Option<Trust>, TrustProviderError> {
         self.backend_driver.get_trust(state, id).await
     }
 
@@ -116,7 +121,7 @@ impl TrustApi for TrustProvider {
         &self,
         state: &ServiceState,
         id: &'a str,
-    ) -> Result<Option<Vec<Trust>>, TrustError> {
+    ) -> Result<Option<Vec<Trust>>, TrustProviderError> {
         self.backend_driver
             .get_trust_delegation_chain(state, id)
             .await
@@ -128,7 +133,7 @@ impl TrustApi for TrustProvider {
         &self,
         state: &ServiceState,
         params: &TrustListParameters,
-    ) -> Result<Vec<Trust>, TrustError> {
+    ) -> Result<Vec<Trust>, TrustProviderError> {
         self.backend_driver.list_trusts(state, params).await
     }
 
@@ -144,12 +149,12 @@ impl TrustApi for TrustProvider {
         &self,
         state: &ServiceState,
         trust: &Trust,
-    ) -> Result<bool, TrustError> {
+    ) -> Result<bool, TrustProviderError> {
         if trust.redelegated_trust_id.is_some()
             && let Some(chain) = self.get_trust_delegation_chain(state, &trust.id).await?
         {
             if chain.len() > state.config.trust.max_redelegation_count {
-                return Err(TrustError::RedelegationDeepnessExceed {
+                return Err(TrustProviderError::RedelegationDeepnessExceed {
                     length: chain.len(),
                     max_depth: state.config.trust.max_redelegation_count,
                 });
@@ -162,13 +167,13 @@ impl TrustApi for TrustProvider {
                 if let Some(current_redelegation_count) = delegation.redelegation_count
                     && current_redelegation_count > state.config.trust.max_redelegation_count as u32
                 {
-                    return Err(TrustError::RedelegationDeepnessExceed {
+                    return Err(TrustProviderError::RedelegationDeepnessExceed {
                         length: current_redelegation_count as usize,
                         max_depth: state.config.trust.max_redelegation_count,
                     });
                 }
                 if delegation.remaining_uses.is_some() {
-                    return Err(TrustError::RemainingUsesMustBeUnset);
+                    return Err(TrustProviderError::RemainingUsesMustBeUnset);
                 }
                 // Check that the parent trust is not expiring earlier than the redelegated
                 if let Some(trust_expiry) = delegation.expires_at {
@@ -178,7 +183,7 @@ impl TrustApi for TrustProvider {
                         .or(parent_expiration)
                     {
                         if trust_expiry > parent_expiry {
-                            return Err(TrustError::ExpirationImpossible);
+                            return Err(TrustProviderError::ExpirationImpossible);
                         }
                         // reset the parent_expiration to the one of the current delegation.
                         parent_expiration = Some(trust_expiry);
@@ -211,11 +216,11 @@ impl TrustApi for TrustProvider {
                         "Trust roles {:?} are missing for the trustor {:?}",
                         trust.roles, parent_trust.roles,
                     );
-                    return Err(TrustError::RedelegatedRolesNotAvailable);
+                    return Err(TrustProviderError::RedelegatedRolesNotAvailable);
                 }
                 // Check the impersonation
                 if delegation.impersonation && !parent_trust.is_some_and(|x| x.impersonation) {
-                    return Err(TrustError::RedelegatedImpersonationNotAllowed);
+                    return Err(TrustProviderError::RedelegatedImpersonationNotAllowed);
                 }
                 parent_trust = Some(delegation.clone());
             }
@@ -432,7 +437,7 @@ mod tests {
             .await
             .unwrap()
             .expect("trust found");
-        if let Err(TrustError::ExpirationImpossible) = trust_provider
+        if let Err(TrustProviderError::ExpirationImpossible) = trust_provider
             .validate_trust_delegation_chain(&state, &trust)
             .await
         {
@@ -495,7 +500,7 @@ mod tests {
             .unwrap()
             .expect("trust found");
 
-        if let Err(TrustError::RedelegatedRolesNotAvailable) = trust_provider
+        if let Err(TrustProviderError::RedelegatedRolesNotAvailable) = trust_provider
             .validate_trust_delegation_chain(&state, &trust)
             .await
         {
@@ -554,7 +559,7 @@ mod tests {
             .validate_trust_delegation_chain(&state, &trust)
             .await
         {
-            Err(TrustError::RedelegatedImpersonationNotAllowed) => {}
+            Err(TrustProviderError::RedelegatedImpersonationNotAllowed) => {}
             other => {
                 panic!(
                     "redelegated trust impersonation cannot be enabled, {:?}",
@@ -650,7 +655,7 @@ mod tests {
             .validate_trust_delegation_chain(&state, &trust)
             .await
         {
-            Err(TrustError::RedelegationDeepnessExceed { .. }) => {}
+            Err(TrustProviderError::RedelegationDeepnessExceed { .. }) => {}
             other => {
                 panic!(
                     "redelegated trust redelegation_count exceeds limit, but {:?}",
@@ -668,7 +673,7 @@ mod tests {
             .validate_trust_delegation_chain(&state, &trust)
             .await
         {
-            Err(TrustError::RedelegationDeepnessExceed { .. }) => {}
+            Err(TrustProviderError::RedelegationDeepnessExceed { .. }) => {}
             other => {
                 panic!("trust redelegation chain exceeds limit, but {:?}", other);
             }

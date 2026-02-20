@@ -17,7 +17,7 @@ use sea_orm::entity::*;
 
 use crate::db::entity::{nonlocal_user, user};
 use crate::error::DbContextExt;
-use crate::identity::backend::sql::IdentityDatabaseError;
+use crate::identity::IdentityProviderError;
 
 /// Persist nonlocal user entry.
 #[tracing::instrument(skip_all)]
@@ -25,7 +25,7 @@ pub async fn create<C, S>(
     db: &C,
     main_record: &user::Model,
     name: S,
-) -> Result<nonlocal_user::Model, IdentityDatabaseError>
+) -> Result<nonlocal_user::Model, IdentityProviderError>
 where
     C: ConnectionTrait,
     S: Into<String>,

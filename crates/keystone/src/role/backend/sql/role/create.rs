@@ -19,14 +19,16 @@ use uuid::Uuid;
 
 use crate::db::entity::role as db_role;
 use crate::error::DbContextExt;
-use crate::role::backend::error::RoleDatabaseError;
-use crate::role::types::role::{Role, RoleCreate};
+use crate::role::{
+    RoleProviderError,
+    types::role::{Role, RoleCreate},
+};
 
 /// Create a new role.
 pub async fn create(
     db: &DatabaseConnection,
     role: RoleCreate, // ← Using RoleCreate instead of Role
-) -> Result<Role, RoleDatabaseError> {
+) -> Result<Role, RoleProviderError> {
     db_role::ActiveModel {
         id: Set(role
             // Use provided ID or generate a new UUID as fallback

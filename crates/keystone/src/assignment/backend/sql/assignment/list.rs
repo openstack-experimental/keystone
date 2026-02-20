@@ -16,8 +16,13 @@ use sea_orm::DatabaseConnection;
 use sea_orm::entity::*;
 use sea_orm::query::*;
 
-use crate::assignment::backend::error::AssignmentDatabaseError;
-use crate::assignment::types::*;
+use crate::assignment::{
+    AssignmentProviderError,
+    types::{
+        Assignment, RoleAssignmentListForMultipleActorTargetParameters,
+        RoleAssignmentListParameters, RoleAssignmentTargetType,
+    },
+};
 use crate::db::entity::{
     assignment as db_assignment,
     prelude::{Assignment as DbAssignment, SystemAssignment as DbSystemAssignment},
@@ -26,10 +31,11 @@ use crate::db::entity::{
 };
 use crate::error::DbContextExt;
 
+/// List direct role assignments.
 pub async fn list(
     db: &DatabaseConnection,
     params: &RoleAssignmentListParameters,
-) -> Result<Vec<Assignment>, AssignmentDatabaseError> {
+) -> Result<Vec<Assignment>, AssignmentProviderError> {
     let mut select_assignment = DbAssignment::find();
     let mut select_system_assignment = DbSystemAssignment::find();
 
@@ -105,7 +111,7 @@ pub async fn list(
 pub async fn list_for_multiple_actors_and_targets(
     db: &DatabaseConnection,
     params: &RoleAssignmentListForMultipleActorTargetParameters,
-) -> Result<Vec<Assignment>, AssignmentDatabaseError> {
+) -> Result<Vec<Assignment>, AssignmentProviderError> {
     // Query both assignment tables in parallel and imply rules
     //let db = &state.db;
     let db_res = tokio::try_join!(
@@ -131,7 +137,7 @@ pub async fn list_for_multiple_actors_and_targets(
 async fn list_for_multiple_actors_and_targets_regular(
     db: &DatabaseConnection,
     params: &RoleAssignmentListForMultipleActorTargetParameters,
-) -> Result<Option<Vec<Assignment>>, AssignmentDatabaseError> {
+) -> Result<Option<Vec<Assignment>>, AssignmentProviderError> {
     let mut select = DbAssignment::find();
     let mut should_return = false;
 
@@ -188,7 +194,7 @@ async fn list_for_multiple_actors_and_targets_regular(
 async fn list_for_multiple_actors_and_targets_system(
     db: &DatabaseConnection,
     params: &RoleAssignmentListForMultipleActorTargetParameters,
-) -> Result<Option<Vec<Assignment>>, AssignmentDatabaseError> {
+) -> Result<Option<Vec<Assignment>>, AssignmentProviderError> {
     let mut select_system = DbSystemAssignment::find();
     let mut should_return = false;
 
@@ -244,6 +250,7 @@ mod tests {
 
     use super::super::tests::*;
     use super::*;
+    use crate::assignment::types::{AssignmentType, RoleAssignmentTarget};
 
     #[tokio::test]
     async fn test_list_no_params() {

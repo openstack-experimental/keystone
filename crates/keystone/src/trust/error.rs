@@ -14,11 +14,11 @@
 //! # Trust Error
 use thiserror::Error;
 
-use crate::trust::backend::error::TrustDatabaseError;
+use crate::error::BuilderError;
 
 /// Trust extension error.
 #[derive(Error, Debug)]
-pub enum TrustError {
+pub enum TrustProviderError {
     /// Supported authentication error.
     #[error(transparent)]
     AuthenticationInfo {
@@ -27,20 +27,21 @@ pub enum TrustError {
         source: crate::auth::AuthenticationError,
     },
 
-    /// SQL backend error.
-    #[error(transparent)]
-    Backend {
-        /// The source of the error.
-        source: TrustDatabaseError,
-    },
-
     /// Conflict.
     #[error("conflict: {0}")]
     Conflict(String),
 
+    /// Driver error.
+    #[error("backend driver error: {0}")]
+    Driver(String),
+
     /// Trust expiration is more than the redelegated trust can provide.
     #[error("requested expiration is more than the redelegated trust can provide")]
     ExpirationImpossible,
+
+    /// DateTime parsing error.
+    #[error("error parsing int column as datetime: {expires_at}")]
+    ExpirationDateTimeParse { id: String, expires_at: i64 },
 
     /// Relegated trust does not allow impersonation.
     #[error(
@@ -64,6 +65,14 @@ pub enum TrustError {
     #[error("remaining uses is set while it must not be set in order to redelegate a trust")]
     RemainingUsesMustBeUnset,
 
+    /// Role provider error.
+    #[error(transparent)]
+    RoleProvider {
+        /// The source of the error.
+        #[from]
+        source: crate::role::RoleProviderError,
+    },
+
     /// (de)serialization error.
     #[error(transparent)]
     Serde {
@@ -72,23 +81,15 @@ pub enum TrustError {
         source: serde_json::Error,
     },
 
+    /// Structures builder error.
+    #[error(transparent)]
+    StructBuilder {
+        /// The source of the error.
+        #[from]
+        source: BuilderError,
+    },
+
     /// Unsupported driver.
     #[error("unsupported driver {0}")]
     UnsupportedDriver(String),
-}
-
-impl From<TrustDatabaseError> for TrustError {
-    fn from(source: TrustDatabaseError) -> Self {
-        match source {
-            TrustDatabaseError::Database { source } => match source {
-                cfl @ crate::error::DatabaseError::Conflict { .. } => {
-                    Self::Conflict(cfl.to_string())
-                }
-                other => Self::Backend {
-                    source: TrustDatabaseError::Database { source: other },
-                },
-            },
-            _ => Self::Backend { source },
-        }
-    }
 }

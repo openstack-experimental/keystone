@@ -14,22 +14,27 @@
 //! # Role provider error types
 use thiserror::Error;
 
-use crate::role::backend::error::*;
-
 /// Role provider error.
 #[derive(Error, Debug)]
 pub enum RoleProviderError {
-    /// Role provider error.
-    #[error(transparent)]
-    Backend { source: RoleDatabaseError },
-
     /// Conflict.
     #[error("conflict: {0}")]
     Conflict(String),
 
+    /// Driver error.
+    #[error("backend driver error: {0}")]
+    Driver(String),
+
     /// Role not found.
     #[error("role {0} not found")]
     RoleNotFound(String),
+
+    /// (de)serialize error.
+    #[error(transparent)]
+    Serde {
+        #[from]
+        source: serde_json::Error,
+    },
 
     /// Structures builder error.
     #[error(transparent)]
@@ -50,22 +55,4 @@ pub enum RoleProviderError {
         #[from]
         source: validator::ValidationErrors,
     },
-}
-
-impl From<RoleDatabaseError> for RoleProviderError {
-    fn from(source: RoleDatabaseError) -> Self {
-        match source {
-            RoleDatabaseError::Database { source } => match source {
-                cfl @ crate::error::DatabaseError::Conflict { .. } => {
-                    Self::Conflict(cfl.to_string())
-                }
-                other => Self::Backend {
-                    source: RoleDatabaseError::Database { source: other },
-                },
-            },
-            RoleDatabaseError::RoleNotFound(x) => Self::RoleNotFound(x),
-            RoleDatabaseError::StructBuilder { source } => Self::StructBuilder { source },
-            _ => Self::Backend { source },
-        }
-    }
 }

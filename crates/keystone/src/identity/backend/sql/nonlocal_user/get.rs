@@ -18,7 +18,7 @@ use sea_orm::query::*;
 
 use crate::db::entity::{nonlocal_user, prelude::NonlocalUser};
 use crate::error::DbContextExt;
-use crate::identity::backend::sql::IdentityDatabaseError;
+use crate::identity::IdentityProviderError;
 
 #[allow(unused)]
 #[tracing::instrument(skip_all)]
@@ -26,7 +26,7 @@ pub async fn get_by_name_and_domain<N: AsRef<str>, D: AsRef<str>>(
     db: &DatabaseConnection,
     name: N,
     domain_id: D,
-) -> Result<Option<nonlocal_user::Model>, IdentityDatabaseError> {
+) -> Result<Option<nonlocal_user::Model>, IdentityProviderError> {
     Ok(NonlocalUser::find()
         .filter(nonlocal_user::Column::Name.eq(name.as_ref()))
         .filter(nonlocal_user::Column::DomainId.eq(domain_id.as_ref()))
@@ -39,7 +39,7 @@ pub async fn get_by_name_and_domain<N: AsRef<str>, D: AsRef<str>>(
 pub async fn get_by_user_id<U: AsRef<str>>(
     db: &DatabaseConnection,
     user_id: U,
-) -> Result<Option<nonlocal_user::Model>, IdentityDatabaseError> {
+) -> Result<Option<nonlocal_user::Model>, IdentityProviderError> {
     Ok(NonlocalUser::find()
         .filter(nonlocal_user::Column::UserId.eq(user_id.as_ref()))
         .one(db)

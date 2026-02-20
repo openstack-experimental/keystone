@@ -14,7 +14,7 @@
 
 use async_trait::async_trait;
 
-use crate::identity_mapping::IdentityMappingError;
+use crate::identity_mapping::IdentityMappingProviderError;
 use crate::identity_mapping::types::id_mapping::*;
 use crate::keystone::ServiceState;
 
@@ -28,12 +28,12 @@ pub trait IdentityMappingApi {
         local_id: &'a str,
         domain_id: &'a str,
         entity_type: IdMappingEntityType,
-    ) -> Result<Option<IdMapping>, IdentityMappingError>;
+    ) -> Result<Option<IdMapping>, IdentityMappingProviderError>;
 
     /// Get the IdMapping by the public_id.
     async fn get_by_public_id<'a>(
         &self,
         state: &ServiceState,
         public_id: &'a str,
-    ) -> Result<Option<IdMapping>, IdentityMappingError>;
+    ) -> Result<Option<IdMapping>, IdentityMappingProviderError>;
 }

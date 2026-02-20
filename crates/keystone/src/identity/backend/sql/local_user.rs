@@ -16,7 +16,7 @@ use sea_orm::entity::*;
 
 use crate::db::entity::{local_user as db_local_user, user as db_user};
 use crate::identity::types::*;
-use crate::{config::Config, identity::backend::error::IdentityDatabaseError};
+use crate::{config::Config, identity::IdentityProviderError};
 
 mod create;
 mod get;
@@ -41,7 +41,7 @@ impl UserCreate {
         &self,
         config: &Config,
         main_record: &db_user::Model,
-    ) -> Result<db_local_user::ActiveModel, IdentityDatabaseError> {
+    ) -> Result<db_local_user::ActiveModel, IdentityProviderError> {
         Ok(db_local_user::ActiveModel {
             id: NotSet,
             user_id: Set(main_record.id.clone()),

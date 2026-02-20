@@ -15,7 +15,7 @@
 
 use chrono::DateTime;
 
-use crate::application_credential::backend::error::ApplicationCredentialDatabaseError;
+use crate::application_credential::ApplicationCredentialProviderError;
 use crate::application_credential::types::*;
 use crate::db::entity::{
     access_rule as db_access_rule, application_credential as db_application_credential,
@@ -30,7 +30,7 @@ pub use get::get;
 pub use list::list;
 
 impl TryFrom<db_application_credential::Model> for ApplicationCredentialBuilder {
-    type Error = ApplicationCredentialDatabaseError;
+    type Error = ApplicationCredentialProviderError;
 
     fn try_from(value: db_application_credential::Model) -> Result<Self, Self::Error> {
         let mut builder = ApplicationCredentialBuilder::default();
@@ -61,7 +61,7 @@ impl TryFrom<db_application_credential::Model> for ApplicationCredentialBuilder 
 }
 
 impl TryFrom<db_application_credential::Model> for ApplicationCredentialCreateResponseBuilder {
-    type Error = ApplicationCredentialDatabaseError;
+    type Error = ApplicationCredentialProviderError;
 
     fn try_from(value: db_application_credential::Model) -> Result<Self, Self::Error> {
         let mut builder = ApplicationCredentialCreateResponseBuilder::default();
@@ -92,7 +92,7 @@ impl TryFrom<db_application_credential::Model> for ApplicationCredentialCreateRe
 }
 
 impl TryFrom<&db_application_credential::Model> for ApplicationCredentialBuilder {
-    type Error = ApplicationCredentialDatabaseError;
+    type Error = ApplicationCredentialProviderError;
 
     fn try_from(value: &db_application_credential::Model) -> Result<Self, Self::Error> {
         ApplicationCredentialBuilder::try_from(value.clone())
@@ -100,7 +100,7 @@ impl TryFrom<&db_application_credential::Model> for ApplicationCredentialBuilder
 }
 
 impl TryFrom<db_access_rule::Model> for AccessRule {
-    type Error = ApplicationCredentialDatabaseError;
+    type Error = ApplicationCredentialProviderError;
     fn try_from(value: db_access_rule::Model) -> Result<Self, Self::Error> {
         Ok(Self {
             id: value

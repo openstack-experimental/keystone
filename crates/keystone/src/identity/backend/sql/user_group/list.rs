@@ -22,8 +22,7 @@ use crate::db::entity::{
     user_group_membership,
 };
 use crate::error::DbContextExt;
-use crate::identity::backend::sql::IdentityDatabaseError;
-use crate::identity::types::Group;
+use crate::identity::{IdentityProviderError, types::Group};
 
 /// List all groups the user is member of.
 ///
@@ -34,7 +33,7 @@ pub async fn list_user_groups<S: AsRef<str>>(
     db: &DatabaseConnection,
     user_id: S,
     last_verified_cutof: &DateTime<Utc>,
-) -> Result<Vec<Group>, IdentityDatabaseError> {
+) -> Result<Vec<Group>, IdentityProviderError> {
     let groups: Vec<Group> = DbGroup::find()
         .filter(
             db_group::Column::Id.in_subquery(

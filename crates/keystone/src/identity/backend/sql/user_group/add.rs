@@ -22,7 +22,7 @@ use crate::db::entity::{
     user_group_membership,
 };
 use crate::error::DbContextExt;
-use crate::identity::backend::sql::IdentityDatabaseError;
+use crate::identity::IdentityProviderError;
 
 /// Add the user to the single group.
 #[tracing::instrument(skip_all)]
@@ -30,7 +30,7 @@ pub async fn add_user_to_group<U: AsRef<str>, G: AsRef<str>>(
     db: &DatabaseConnection,
     user_id: U,
     group_id: G,
-) -> Result<(), IdentityDatabaseError> {
+) -> Result<(), IdentityProviderError> {
     user_group_membership::ActiveModel {
         user_id: Set(user_id.as_ref().into()),
         group_id: Set(group_id.as_ref().into()),
@@ -48,7 +48,7 @@ pub async fn add_user_to_group<U: AsRef<str>, G: AsRef<str>>(
 pub async fn add_users_to_groups<I, U, G>(
     db: &DatabaseConnection,
     iter: I,
-) -> Result<(), IdentityDatabaseError>
+) -> Result<(), IdentityProviderError>
 where
     I: IntoIterator<Item = (U, G)>,
     U: AsRef<str>,
@@ -76,7 +76,7 @@ pub async fn add_user_to_group_expiring<U: AsRef<str>, G: AsRef<str>, IDP: AsRef
     group_id: G,
     idp_id: IDP,
     last_verified: Option<&DateTime<Utc>>,
-) -> Result<(), IdentityDatabaseError> {
+) -> Result<(), IdentityProviderError> {
     expiring_user_group_membership::ActiveModel {
         user_id: Set(user_id.as_ref().into()),
         group_id: Set(group_id.as_ref().into()),
@@ -98,7 +98,7 @@ pub async fn add_users_to_groups_expiring<I, U, G, IDP>(
     iter: I,
     idp_id: IDP,
     last_verified: Option<&DateTime<Utc>>,
-) -> Result<(), IdentityDatabaseError>
+) -> Result<(), IdentityProviderError>
 where
     I: IntoIterator<Item = (U, G)>,
     U: AsRef<str>,

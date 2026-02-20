@@ -19,13 +19,15 @@ use sea_orm::{Cursor, SelectModel};
 
 use crate::db::entity::{prelude::Project as DbProject, project as db_project};
 use crate::error::DbContextExt;
-use crate::resource::backend::error::ResourceDatabaseError;
-use crate::resource::types::*;
+use crate::resource::{
+    ResourceProviderError,
+    types::{Project, ProjectListParameters},
+};
 
 /// Prepare the paginated query for listing projects.
 fn get_list_query(
     params: &ProjectListParameters,
-) -> Result<Cursor<SelectModel<db_project::Model>>, ResourceDatabaseError> {
+) -> Result<Cursor<SelectModel<db_project::Model>>, ResourceProviderError> {
     let mut select = DbProject::find().filter(db_project::Column::IsDomain.eq(false));
 
     if let Some(val) = &params.domain_id {
@@ -48,7 +50,7 @@ fn get_list_query(
 pub async fn list(
     db: &DatabaseConnection,
     params: &ProjectListParameters,
-) -> Result<Vec<Project>, ResourceDatabaseError> {
+) -> Result<Vec<Project>, ResourceProviderError> {
     get_list_query(params)?
         .all(db)
         .await

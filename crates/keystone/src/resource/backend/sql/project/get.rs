@@ -18,13 +18,12 @@ use sea_orm::query::*;
 
 use crate::db::entity::{prelude::Project as DbProject, project as db_project};
 use crate::error::DbContextExt;
-use crate::resource::backend::error::ResourceDatabaseError;
-use crate::resource::types::Project;
+use crate::resource::{ResourceProviderError, types::Project};
 
 pub async fn get_project<I: AsRef<str>>(
     db: &DatabaseConnection,
     id: I,
-) -> Result<Option<Project>, ResourceDatabaseError> {
+) -> Result<Option<Project>, ResourceProviderError> {
     let project_select =
         DbProject::find_by_id(id.as_ref()).filter(db_project::Column::IsDomain.eq(false));
 
@@ -39,7 +38,7 @@ pub async fn get_project_by_name<N: AsRef<str>, D: AsRef<str>>(
     db: &DatabaseConnection,
     name: N,
     domain_id: D,
-) -> Result<Option<Project>, ResourceDatabaseError> {
+) -> Result<Option<Project>, ResourceProviderError> {
     let project_select = DbProject::find()
         .filter(db_project::Column::IsDomain.eq(false))
         .filter(db_project::Column::Name.eq(name.as_ref()))

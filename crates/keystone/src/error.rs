@@ -21,14 +21,14 @@ use crate::assignment::error::AssignmentProviderError;
 use crate::catalog::error::CatalogProviderError;
 use crate::federation::error::FederationProviderError;
 use crate::identity::error::IdentityProviderError;
-use crate::identity_mapping::error::IdentityMappingError;
+use crate::identity_mapping::error::IdentityMappingProviderError;
 use crate::k8s_auth::error::K8sAuthProviderError;
 use crate::policy::PolicyError;
 use crate::resource::error::ResourceProviderError;
 use crate::revoke::error::RevokeProviderError;
 use crate::role::error::RoleProviderError;
 use crate::token::TokenProviderError;
-use crate::trust::TrustError;
+use crate::trust::TrustProviderError;
 use crate::webauthn::WebauthnError;
 
 /// Keystone error.
@@ -79,7 +79,7 @@ pub enum KeystoneError {
     IdentityMapping {
         /// The source of the error.
         #[from]
-        source: IdentityMappingError,
+        source: IdentityMappingProviderError,
     },
 
     /// IO error.
@@ -155,7 +155,7 @@ pub enum KeystoneError {
     TrustProvider {
         /// The source of the error.
         #[from]
-        source: TrustError,
+        source: TrustProviderError,
     },
 
     /// Url parsing error.

@@ -17,13 +17,12 @@ use sea_orm::entity::*;
 
 use crate::db::entity::federated_auth_state as db_federated_auth_state;
 use crate::error::DbContextExt;
-use crate::federation::backend::error::FederationDatabaseError;
-use crate::federation::types::*;
+use crate::federation::{FederationProviderError, types::AuthState};
 
 pub async fn create(
     db: &DatabaseConnection,
     rec: AuthState,
-) -> Result<AuthState, FederationDatabaseError> {
+) -> Result<AuthState, FederationProviderError> {
     let scope: Option<serde_json::Value> = if let Some(scope) = rec.scope {
         Some(serde_json::to_value(&scope)?)
     } else {

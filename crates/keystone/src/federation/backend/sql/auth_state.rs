@@ -14,7 +14,7 @@
 
 use crate::common::types::Scope;
 use crate::db::entity::federated_auth_state as db_federated_auth_state;
-use crate::federation::backend::error::FederationDatabaseError;
+use crate::federation::error::FederationProviderError;
 use crate::federation::types::*;
 
 mod create;
@@ -26,7 +26,7 @@ pub use delete::{delete, delete_expired};
 pub use get::get;
 
 impl TryFrom<db_federated_auth_state::Model> for AuthState {
-    type Error = FederationDatabaseError;
+    type Error = FederationProviderError;
 
     fn try_from(value: db_federated_auth_state::Model) -> Result<Self, Self::Error> {
         let mut builder = AuthStateBuilder::default();

@@ -59,3 +59,12 @@ impl ApplicationCredentialBackend for SqlBackend {
         Ok(application_credential::list(&state.db, params).await?)
     }
 }
+
+impl From<crate::error::DatabaseError> for ApplicationCredentialProviderError {
+    fn from(source: crate::error::DatabaseError) -> Self {
+        match source {
+            cfl @ crate::error::DatabaseError::Conflict { .. } => Self::Conflict(cfl.to_string()),
+            other => Self::Driver(other.to_string()),
+        }
+    }
+}

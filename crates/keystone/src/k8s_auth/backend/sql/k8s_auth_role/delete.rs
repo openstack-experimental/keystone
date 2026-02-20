@@ -18,13 +18,13 @@ use sea_orm::entity::*;
 
 use crate::db::entity::prelude::KubernetesAuthRole;
 use crate::error::DbContextExt;
-use crate::k8s_auth::backend::error::K8sAuthDatabaseError;
+use crate::k8s_auth::K8sAuthProviderError;
 
 /// Delete existing K8s auth configuration.
 pub async fn delete<S: AsRef<str>>(
     db: &DatabaseConnection,
     id: S,
-) -> Result<(), K8sAuthDatabaseError> {
+) -> Result<(), K8sAuthProviderError> {
     KubernetesAuthRole::delete_by_id(id.as_ref())
         .exec(db)
         .await

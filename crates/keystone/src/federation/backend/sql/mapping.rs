@@ -15,7 +15,7 @@
 use crate::db::entity::{
     federated_mapping as db_federated_mapping, sea_orm_active_enums::MappingType as db_mapping_type,
 };
-use crate::federation::backend::error::FederationDatabaseError;
+use crate::federation::error::FederationProviderError;
 use crate::federation::types::*;
 
 mod create;
@@ -49,7 +49,7 @@ impl From<&MappingType> for db_mapping_type {
 }
 
 impl TryFrom<db_federated_mapping::Model> for Mapping {
-    type Error = FederationDatabaseError;
+    type Error = FederationProviderError;
 
     fn try_from(value: db_federated_mapping::Model) -> Result<Self, Self::Error> {
         let mut builder = MappingBuilder::default();

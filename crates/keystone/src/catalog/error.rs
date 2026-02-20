@@ -14,43 +14,36 @@
 
 use thiserror::Error;
 
-use crate::catalog::backend::error::*;
+use crate::error::BuilderError;
 
 #[derive(Error, Debug)]
 pub enum CatalogProviderError {
-    /// SQL backend error.
-    #[error(transparent)]
-    Backend {
-        /// The source of the error.
-        source: CatalogDatabaseError,
-    },
-
     /// Conflict.
     #[error("conflict: {0}")]
     Conflict(String),
 
+    /// Driver error.
+    #[error("backend driver error: {0}")]
+    Driver(String),
+
+    #[error("data serialization error")]
+    Serde {
+        #[from]
+        source: serde_json::Error,
+    },
     /// The service has not been found.
     #[error("service {0} not found")]
     ServiceNotFound(String),
 
+    /// Structures builder error.
+    #[error(transparent)]
+    StructBuilder {
+        /// The source of the error.
+        #[from]
+        source: BuilderError,
+    },
+
     /// Unsupported driver.
     #[error("unsupported driver {0}")]
     UnsupportedDriver(String),
-}
-
-impl From<CatalogDatabaseError> for CatalogProviderError {
-    fn from(source: CatalogDatabaseError) -> Self {
-        match source {
-            CatalogDatabaseError::Database { source } => match source {
-                cfl @ crate::error::DatabaseError::Conflict { .. } => {
-                    Self::Conflict(cfl.to_string())
-                }
-                other => Self::Backend {
-                    source: CatalogDatabaseError::Database { source: other },
-                },
-            },
-            CatalogDatabaseError::ServiceNotFound(x) => Self::ServiceNotFound(x),
-            _ => Self::Backend { source },
-        }
-    }
 }

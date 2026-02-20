@@ -17,14 +17,13 @@ use sea_orm::entity::*;
 
 use crate::db::entity::prelude::Group as DbGroup;
 use crate::error::DbContextExt;
-use crate::identity::backend::sql::IdentityDatabaseError;
-use crate::identity::types::Group;
+use crate::identity::{IdentityProviderError, types::Group};
 
 #[tracing::instrument(skip_all)]
 pub async fn get<S: AsRef<str>>(
     db: &DatabaseConnection,
     group_id: S,
-) -> Result<Option<Group>, IdentityDatabaseError> {
+) -> Result<Option<Group>, IdentityProviderError> {
     Ok(DbGroup::find_by_id(group_id.as_ref())
         .one(db)
         .await

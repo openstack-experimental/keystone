@@ -18,14 +18,14 @@ use mockall::mock;
 
 use crate::config::Config;
 use crate::plugin_manager::PluginManager;
-use crate::trust::{TrustApi, TrustError, types::*};
+use crate::trust::{TrustApi, TrustProviderError, types::*};
 
 use crate::keystone::ServiceState;
 
 #[cfg(test)]
 mock! {
     pub TrustProvider {
-        pub fn new(cfg: &Config, plugin_manager: &PluginManager) -> Result<Self, TrustError>;
+        pub fn new(cfg: &Config, plugin_manager: &PluginManager) -> Result<Self, TrustProviderError>;
     }
 
     #[async_trait]
@@ -34,24 +34,24 @@ mock! {
             &self,
             state: &ServiceState,
             id: &'a str,
-        ) -> Result<Option<Trust>, TrustError>;
+        ) -> Result<Option<Trust>, TrustProviderError>;
 
         async fn get_trust_delegation_chain<'a>(
             &self,
             state: &ServiceState,
             id: &'a str,
-        ) -> Result<Option<Vec<Trust>>, TrustError>;
+        ) -> Result<Option<Vec<Trust>>, TrustProviderError>;
 
         async fn list_trusts(
             &self,
             state: &ServiceState,
             params: &TrustListParameters,
-        ) -> Result<Vec<Trust>, TrustError>;
+        ) -> Result<Vec<Trust>, TrustProviderError>;
 
         async fn validate_trust_delegation_chain(
             &self,
             state: &ServiceState,
             trust: &Trust,
-        ) -> Result<bool, TrustError>;
+        ) -> Result<bool, TrustProviderError>;
     }
 }

@@ -17,8 +17,10 @@ use sea_orm::DatabaseConnection;
 use sea_orm::entity::*;
 use sea_orm::query::*;
 
-use crate::assignment::backend::error::AssignmentDatabaseError;
-use crate::assignment::types::*;
+use crate::assignment::{
+    AssignmentProviderError,
+    types::{Assignment, AssignmentType},
+};
 use crate::db::entity::{
     assignment as db_assignment,
     prelude::{Assignment as DbAssignment, SystemAssignment as DbSystemAssignment},
@@ -36,7 +38,7 @@ use crate::error::DbContextExt;
 pub async fn check(
     db: &DatabaseConnection,
     grant: &Assignment,
-) -> Result<bool, AssignmentDatabaseError> {
+) -> Result<bool, AssignmentProviderError> {
     let count: u64 = match &grant.r#type {
         t @ AssignmentType::GroupDomain
         | t @ AssignmentType::GroupProject

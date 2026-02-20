@@ -17,13 +17,12 @@ use sea_orm::entity::*;
 
 use crate::db::entity::{prelude::Role as DbRole, role as db_role};
 use crate::error::DbContextExt;
-use crate::role::backend::error::RoleDatabaseError;
-use crate::role::types::*;
+use crate::role::{RoleProviderError, types::Role};
 
 pub async fn get<I: AsRef<str>>(
     db: &DatabaseConnection,
     id: I,
-) -> Result<Option<Role>, RoleDatabaseError> {
+) -> Result<Option<Role>, RoleProviderError> {
     let role_select = DbRole::find_by_id(id.as_ref());
 
     let entry: Option<db_role::Model> = role_select.one(db).await.context("fetching role by id")?;

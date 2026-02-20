@@ -14,10 +14,9 @@
 
 use async_trait::async_trait;
 
-use crate::identity_mapping::{IdentityMappingError, types::*};
+use crate::identity_mapping::{IdentityMappingProviderError, types::*};
 use crate::keystone::ServiceState;
 
-pub mod error;
 pub mod sql;
 
 #[cfg_attr(test, mockall::automock)]
@@ -30,12 +29,12 @@ pub trait IdentityMappingBackend: Send + Sync {
         local_id: &'a str,
         domain_id: &'a str,
         entity_type: IdMappingEntityType,
-    ) -> Result<Option<IdMapping>, IdentityMappingError>;
+    ) -> Result<Option<IdMapping>, IdentityMappingProviderError>;
 
     /// Get the IdMapping by the public_id.
     async fn get_by_public_id<'a>(
         &self,
         state: &ServiceState,
         public_id: &'a str,
-    ) -> Result<Option<IdMapping>, IdentityMappingError>;
+    ) -> Result<Option<IdMapping>, IdentityMappingProviderError>;
 }

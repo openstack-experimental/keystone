@@ -19,7 +19,6 @@ use sea_orm::query::*;
 
 use crate::catalog::CatalogProviderError;
 use crate::catalog::backend::CatalogBackend;
-use crate::catalog::backend::error::CatalogDatabaseError;
 use crate::catalog::types::*;
 use crate::db::entity::{
     endpoint as db_endpoint,
@@ -88,10 +87,19 @@ impl CatalogBackend for SqlBackend {
     }
 }
 
+impl From<crate::error::DatabaseError> for CatalogProviderError {
+    fn from(source: crate::error::DatabaseError) -> Self {
+        match source {
+            cfl @ crate::error::DatabaseError::Conflict { .. } => Self::Conflict(cfl.to_string()),
+            other => Self::Driver(other.to_string()),
+        }
+    }
+}
+
 async fn get_catalog(
     db: &DatabaseConnection,
     enabled: bool,
-) -> Result<Vec<(Service, Vec<Endpoint>)>, CatalogDatabaseError> {
+) -> Result<Vec<(Service, Vec<Endpoint>)>, CatalogProviderError> {
     let db_entities: Vec<(db_service::Model, Vec<db_endpoint::Model>)> = DbService::find()
         .filter(db_service::Column::Enabled.eq(enabled))
         .find_with_related(DbEndpoint)

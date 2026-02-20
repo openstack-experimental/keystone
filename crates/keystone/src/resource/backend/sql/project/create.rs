@@ -17,10 +17,12 @@ use sea_orm::entity::*;
 
 use crate::db::entity::project as db_project;
 use crate::error::DbContextExt;
-use crate::resource::backend::error::ResourceDatabaseError;
-use crate::resource::types::{Project, ProjectCreate};
+use crate::resource::{
+    ResourceProviderError,
+    types::{Project, ProjectCreate},
+};
 
-pub async fn create<C>(db: &C, project: ProjectCreate) -> Result<Project, ResourceDatabaseError>
+pub async fn create<C>(db: &C, project: ProjectCreate) -> Result<Project, ResourceProviderError>
 where
     C: ConnectionTrait,
 {

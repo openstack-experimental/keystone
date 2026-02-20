@@ -17,13 +17,13 @@ use sea_orm::entity::*;
 
 use crate::db::entity::prelude::KubernetesAuthRole;
 use crate::error::DbContextExt;
-use crate::k8s_auth::{backend::error::K8sAuthDatabaseError, types::K8sAuthRole};
+use crate::k8s_auth::{K8sAuthProviderError, types::K8sAuthRole};
 
 /// Get existing k8s auth configuration by the ID.
 pub async fn get<S: AsRef<str>>(
     db: &DatabaseConnection,
     id: S,
-) -> Result<Option<K8sAuthRole>, K8sAuthDatabaseError> {
+) -> Result<Option<K8sAuthRole>, K8sAuthProviderError> {
     Ok(KubernetesAuthRole::find_by_id(id.as_ref())
         .one(db)
         .await

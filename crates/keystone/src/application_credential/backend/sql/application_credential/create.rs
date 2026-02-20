@@ -18,8 +18,7 @@ use sea_orm::query::*;
 use secrecy::ExposeSecret;
 use uuid::Uuid;
 
-use crate::application_credential::backend::error::ApplicationCredentialDatabaseError;
-use crate::application_credential::types::*;
+use crate::application_credential::{ApplicationCredentialProviderError, types::*};
 use crate::common::password_hashing;
 use crate::config::Config;
 use crate::db::entity::{
@@ -33,7 +32,7 @@ use crate::db::entity::{
 use crate::error::DbContextExt;
 
 impl TryFrom<ApplicationCredentialCreate> for db_application_credential::ActiveModel {
-    type Error = ApplicationCredentialDatabaseError;
+    type Error = ApplicationCredentialProviderError;
     fn try_from(value: ApplicationCredentialCreate) -> Result<Self, Self::Error> {
         Ok(Self {
             internal_id: NotSet,
@@ -58,7 +57,7 @@ pub async fn create(
     conf: &Config,
     db: &DatabaseConnection,
     rec: ApplicationCredentialCreate,
-) -> Result<ApplicationCredentialCreateResponse, ApplicationCredentialDatabaseError> {
+) -> Result<ApplicationCredentialCreateResponse, ApplicationCredentialProviderError> {
     // Do a lot of stuff in a transaction
     let txn = db
         .begin()
@@ -68,7 +67,7 @@ pub async fn create(
     model.secret_hash = if let Some(secret) = &rec.secret {
         Set(password_hashing::hash_password(conf, secret.expose_secret()).await?)
     } else {
-        return Err(ApplicationCredentialDatabaseError::SecretMissing);
+        return Err(ApplicationCredentialProviderError::SecretMissing);
     };
 
     // Insert main entry
@@ -124,7 +123,7 @@ async fn process_access_rules<C, I, S>(
     rules: I,
     application_credential_internal_id: i32,
     user_id: S,
-) -> Result<Vec<AccessRule>, ApplicationCredentialDatabaseError>
+) -> Result<Vec<AccessRule>, ApplicationCredentialProviderError>
 where
     C: ConnectionTrait,
     I: IntoIterator<Item = AccessRuleCreate>,
@@ -172,7 +171,7 @@ where
         } else if existing_rules.len() == 1 {
             existing_rules.first().cloned()
         } else {
-            return Err(ApplicationCredentialDatabaseError::AccessRuleConflict);
+            return Err(ApplicationCredentialProviderError::AccessRuleConflict);
         };
         if let Some(rule) = existing_rule {
             db_application_credential_access_rule::ActiveModel {

@@ -135,6 +135,15 @@ impl AssignmentBackend for SqlBackend {
     }
 }
 
+impl From<crate::error::DatabaseError> for AssignmentProviderError {
+    fn from(source: crate::error::DatabaseError) -> Self {
+        match source {
+            cfl @ crate::error::DatabaseError::Conflict { .. } => Self::Conflict(cfl.to_string()),
+            other => Self::Driver(other.to_string()),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use sea_orm::{DatabaseBackend, MockDatabase};

@@ -18,14 +18,16 @@ use serde_json::json;
 
 use crate::db::entity::group;
 use crate::error::DbContextExt;
-use crate::identity::backend::sql::IdentityDatabaseError;
-use crate::identity::types::{Group, GroupCreate};
+use crate::identity::{
+    IdentityProviderError,
+    types::{Group, GroupCreate},
+};
 
 #[tracing::instrument(skip_all)]
 pub async fn create(
     db: &DatabaseConnection,
     group: GroupCreate,
-) -> Result<Group, IdentityDatabaseError> {
+) -> Result<Group, IdentityProviderError> {
     let entry = group::ActiveModel {
         id: Set(group.id.clone().unwrap_or_default()),
         domain_id: Set(group.domain_id.clone()),

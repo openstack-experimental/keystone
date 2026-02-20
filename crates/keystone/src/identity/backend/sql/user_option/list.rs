@@ -18,14 +18,13 @@ use sea_orm::query::*;
 
 use crate::db::entity::{prelude::UserOption as DbUserOptions, user_option};
 use crate::error::DbContextExt;
-use crate::identity::backend::sql::IdentityDatabaseError;
-use crate::identity::types::UserOptions;
+use crate::identity::{IdentityProviderError, types::UserOptions};
 
 #[tracing::instrument(skip_all)]
 pub async fn list_by_user_id<S: AsRef<str>>(
     db: &DatabaseConnection,
     user_id: S,
-) -> Result<UserOptions, IdentityDatabaseError> {
+) -> Result<UserOptions, IdentityProviderError> {
     Ok(UserOptions::from_iter(
         DbUserOptions::find()
             .filter(user_option::Column::UserId.eq(user_id.as_ref()))

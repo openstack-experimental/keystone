@@ -18,15 +18,17 @@ use super::super::nonlocal_user;
 use super::super::user;
 use super::super::user_option;
 use crate::config::Config;
-use crate::identity::backend::sql::IdentityDatabaseError;
-use crate::identity::types::*;
+use crate::identity::{
+    IdentityProviderError,
+    types::{ServiceAccount, ServiceAccountBuilder},
+};
 
 #[tracing::instrument(skip_all)]
 pub async fn get<U>(
     conf: &Config,
     db: &DatabaseConnection,
     user_id: U,
-) -> Result<Option<ServiceAccount>, IdentityDatabaseError>
+) -> Result<Option<ServiceAccount>, IdentityProviderError>
 where
     U: AsRef<str>,
 {
@@ -76,6 +78,7 @@ mod tests {
     use crate::identity::backend::sql::nonlocal_user::tests::get_nonlocal_user_mock;
     use crate::identity::backend::sql::user::tests::get_user_mock;
     use crate::identity::backend::sql::user_option::tests::get_user_options_mock;
+    use crate::identity::types::UserOptions;
 
     #[tokio::test]
     async fn test_get() {

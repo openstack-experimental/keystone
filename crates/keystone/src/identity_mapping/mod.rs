@@ -28,9 +28,9 @@ pub mod types;
 
 use crate::config::Config;
 use crate::identity_mapping::backend::{IdentityMappingBackend, sql::SqlBackend};
-pub use crate::identity_mapping::error::IdentityMappingError;
 use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManager;
+pub use error::IdentityMappingProviderError;
 use types::*;
 
 #[cfg(test)]
@@ -46,7 +46,7 @@ impl IdentityMappingProvider {
     pub fn new(
         config: &Config,
         plugin_manager: &PluginManager,
-    ) -> Result<Self, IdentityMappingError> {
+    ) -> Result<Self, IdentityMappingProviderError> {
         let backend_driver = if let Some(driver) =
             plugin_manager.get_identity_mapping_backend(config.identity_mapping.driver.clone())
         {
@@ -55,7 +55,7 @@ impl IdentityMappingProvider {
             match config.identity_mapping.driver.as_str() {
                 "sql" => Arc::new(SqlBackend::default()),
                 _ => {
-                    return Err(IdentityMappingError::UnsupportedDriver(
+                    return Err(IdentityMappingProviderError::UnsupportedDriver(
                         config.identity_mapping.driver.clone(),
                     ));
                 }
@@ -74,7 +74,7 @@ impl IdentityMappingApi for IdentityMappingProvider {
         local_id: &'a str,
         domain_id: &'a str,
         entity_type: IdMappingEntityType,
-    ) -> Result<Option<IdMapping>, IdentityMappingError> {
+    ) -> Result<Option<IdMapping>, IdentityMappingProviderError> {
         self.backend_driver
             .get_by_local_id(state, local_id, domain_id, entity_type)
             .await
@@ -86,7 +86,7 @@ impl IdentityMappingApi for IdentityMappingProvider {
         &self,
         state: &ServiceState,
         public_id: &'a str,
-    ) -> Result<Option<IdMapping>, IdentityMappingError> {
+    ) -> Result<Option<IdMapping>, IdentityMappingProviderError> {
         self.backend_driver.get_by_public_id(state, public_id).await
     }
 }

@@ -18,9 +18,9 @@ use serde_json::{Value, json};
 use tracing::error;
 use uuid::Uuid;
 
+use crate::config::Config;
 use crate::db::entity::user as db_user;
-use crate::identity::types::*;
-use crate::{config::Config, identity::backend::error::IdentityDatabaseError};
+use crate::identity::{IdentityProviderError, types::*};
 
 mod create;
 mod delete;
@@ -96,7 +96,7 @@ impl UserCreate {
         &self,
         config: &Config,
         created_at: Option<DateTime<Utc>>,
-    ) -> Result<db_user::ActiveModel, IdentityDatabaseError> {
+    ) -> Result<db_user::ActiveModel, IdentityProviderError> {
         let created_at = created_at.unwrap_or_else(Utc::now).naive_utc();
 
         Ok(db_user::ActiveModel {
@@ -132,7 +132,7 @@ impl ServiceAccountCreate {
         &self,
         conf: &Config,
         created_at: Option<DateTime<Utc>>,
-    ) -> Result<db_user::ActiveModel, IdentityDatabaseError> {
+    ) -> Result<db_user::ActiveModel, IdentityProviderError> {
         let created_at = created_at.unwrap_or_else(Utc::now).naive_utc();
 
         Ok(db_user::ActiveModel {

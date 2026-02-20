@@ -21,7 +21,6 @@ use crate::identity::IdentityProviderError;
 use crate::identity::types::*;
 use crate::keystone::ServiceState;
 
-pub mod error;
 pub mod sql;
 
 #[cfg_attr(test, mockall::automock)]

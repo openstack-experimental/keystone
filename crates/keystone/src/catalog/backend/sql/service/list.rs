@@ -16,15 +16,17 @@ use sea_orm::DatabaseConnection;
 use sea_orm::entity::*;
 use sea_orm::query::*;
 
-use crate::catalog::backend::error::CatalogDatabaseError;
-use crate::catalog::types::*;
+use crate::catalog::{
+    CatalogProviderError,
+    types::{Service, ServiceListParameters},
+};
 use crate::db::entity::{prelude::Service as DbService, service as db_service};
 use crate::error::DbContextExt;
 
 pub async fn list(
     db: &DatabaseConnection,
     params: &ServiceListParameters,
-) -> Result<Vec<Service>, CatalogDatabaseError> {
+) -> Result<Vec<Service>, CatalogProviderError> {
     let mut select = DbService::find();
 
     if let Some(typ) = &params.r#type {

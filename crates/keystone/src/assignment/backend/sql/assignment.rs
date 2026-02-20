@@ -13,9 +13,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Role assignment database backend.
 
-//use crate::assignment::AssignmentProviderError;
-use crate::assignment::backend::error::AssignmentDatabaseError;
-use crate::assignment::types::*;
+use crate::assignment::{AssignmentProviderError, types::*};
 use crate::db::entity::{
     assignment as db_assignment, role as db_role, sea_orm_active_enums::Type as DbAssignmentType,
     system_assignment as db_system_assignment,
@@ -47,7 +45,7 @@ impl From<db_assignment::Model> for Assignment {
 }
 
 impl TryFrom<db_system_assignment::Model> for Assignment {
-    type Error = AssignmentDatabaseError;
+    type Error = AssignmentProviderError;
 
     fn try_from(value: db_system_assignment::Model) -> Result<Self, Self::Error> {
         let mut builder = AssignmentBuilder::default();
@@ -88,7 +86,7 @@ impl From<(db_assignment::Model, Option<db_role::Model>)> for Assignment {
 }
 
 impl TryFrom<(db_system_assignment::Model, Option<db_role::Model>)> for Assignment {
-    type Error = AssignmentDatabaseError;
+    type Error = AssignmentProviderError;
 
     fn try_from(
         value: (db_system_assignment::Model, Option<db_role::Model>),
@@ -113,7 +111,7 @@ impl From<DbAssignmentType> for AssignmentType {
 }
 
 impl TryFrom<&AssignmentType> for DbAssignmentType {
-    type Error = AssignmentDatabaseError;
+    type Error = AssignmentProviderError;
     fn try_from(value: &AssignmentType) -> Result<Self, Self::Error> {
         match value {
             AssignmentType::GroupDomain => Ok(Self::GroupDomain),
@@ -131,7 +129,7 @@ impl TryFrom<&AssignmentType> for DbAssignmentType {
 }
 
 impl TryFrom<&str> for AssignmentType {
-    type Error = AssignmentDatabaseError;
+    type Error = AssignmentProviderError;
     fn try_from(value: &str) -> Result<Self, Self::Error> {
         match value {
             "GroupDomain" => Ok(Self::GroupDomain),
@@ -140,7 +138,7 @@ impl TryFrom<&str> for AssignmentType {
             "UserDomain" => Ok(Self::UserDomain),
             "UserProject" => Ok(Self::UserProject),
             "UserSystem" => Ok(Self::UserSystem),
-            _ => Err(AssignmentDatabaseError::InvalidAssignmentType(value.into())),
+            _ => Err(AssignmentProviderError::InvalidAssignmentType(value.into())),
         }
     }
 }

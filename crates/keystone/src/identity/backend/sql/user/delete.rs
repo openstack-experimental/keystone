@@ -17,13 +17,13 @@ use sea_orm::entity::*;
 
 use crate::db::entity::prelude::User as DbUser;
 use crate::error::DbContextExt;
-use crate::identity::backend::sql::IdentityDatabaseError;
+use crate::identity::IdentityProviderError;
 
 #[tracing::instrument(skip_all)]
 pub async fn delete<U: AsRef<str>>(
     db: &DatabaseConnection,
     user_id: U,
-) -> Result<(), IdentityDatabaseError> {
+) -> Result<(), IdentityProviderError> {
     let res = DbUser::delete_by_id(user_id.as_ref())
         .exec(db)
         .await
@@ -31,7 +31,7 @@ pub async fn delete<U: AsRef<str>>(
     if res.rows_affected == 1 {
         Ok(())
     } else {
-        Err(IdentityDatabaseError::UserNotFound(
+        Err(IdentityProviderError::UserNotFound(
             user_id.as_ref().to_string(),
         ))
     }

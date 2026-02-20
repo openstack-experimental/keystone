@@ -13,8 +13,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::db::entity::user_option;
-use crate::identity::backend::sql::IdentityDatabaseError;
-use crate::identity::types::*;
+use crate::identity::{IdentityProviderError, types::UserOptions};
 
 mod create;
 mod list;
@@ -62,7 +61,7 @@ impl UserOptions {
     pub(super) fn to_model_iter<U: Into<String>>(
         &self,
         user_id: U,
-    ) -> Result<impl IntoIterator<Item = user_option::Model>, IdentityDatabaseError> {
+    ) -> Result<impl IntoIterator<Item = user_option::Model>, IdentityProviderError> {
         let mut res: Vec<user_option::Model> = Vec::new();
         let uid = user_id.into();
         if let Some(val) = &self.ignore_change_password_upon_first_use {

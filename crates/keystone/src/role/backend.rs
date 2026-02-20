@@ -18,7 +18,6 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::keystone::ServiceState;
 use crate::role::{RoleProviderError, types::role::*};
 
-pub mod error;
 pub mod sql;
 pub use sql::SqlBackend;
 

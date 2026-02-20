@@ -24,13 +24,15 @@ pub use get::get;
 pub use list::list;
 
 use crate::db::entity::role as db_role;
-use crate::role::backend::error::RoleDatabaseError;
-use crate::role::types::role::*;
+use crate::role::{
+    RoleProviderError,
+    types::{Role, RoleBuilder},
+};
 
 static NULL_DOMAIN_ID: &str = "<<null>>";
 
 impl TryFrom<db_role::Model> for Role {
-    type Error = RoleDatabaseError;
+    type Error = RoleProviderError;
 
     fn try_from(value: db_role::Model) -> Result<Self, Self::Error> {
         let mut builder = RoleBuilder::default();

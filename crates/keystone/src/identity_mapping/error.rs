@@ -16,21 +16,17 @@ use thiserror::Error;
 
 use crate::api::error::KeystoneApiError;
 use crate::error::BuilderError;
-use crate::identity_mapping::backend::error::IdentityMappingDatabaseError;
 
 /// Identity mapping provider error.
 #[derive(Error, Debug)]
-pub enum IdentityMappingError {
-    /// SQL backend error.
-    #[error(transparent)]
-    Backend {
-        /// The source of the error.
-        source: IdentityMappingDatabaseError,
-    },
-
+pub enum IdentityMappingProviderError {
     /// Conflict.
     #[error("conflict: {0}")]
     Conflict(String),
+
+    /// Driver error.
+    #[error("backend driver error: {0}")]
+    Driver(String),
 
     /// (de)serialization error.
     #[error("data serialization error")]
@@ -60,29 +56,10 @@ pub enum IdentityMappingError {
     },
 }
 
-impl From<IdentityMappingDatabaseError> for IdentityMappingError {
-    fn from(source: IdentityMappingDatabaseError) -> Self {
+impl From<IdentityMappingProviderError> for KeystoneApiError {
+    fn from(source: IdentityMappingProviderError) -> Self {
         match source {
-            IdentityMappingDatabaseError::Database { source } => match source {
-                cfl @ crate::error::DatabaseError::Conflict { .. } => {
-                    Self::Conflict(cfl.to_string())
-                }
-                other => Self::Backend {
-                    source: IdentityMappingDatabaseError::Database { source: other },
-                },
-            },
-            IdentityMappingDatabaseError::Serde { source } => Self::Serde { source },
-            IdentityMappingDatabaseError::StructBuilder { source } => {
-                Self::StructBuilder { source }
-            } // _ => Self::Backend { source },
-        }
-    }
-}
-
-impl From<IdentityMappingError> for KeystoneApiError {
-    fn from(source: IdentityMappingError) -> Self {
-        match source {
-            IdentityMappingError::Conflict(x) => Self::Conflict(x),
+            IdentityMappingProviderError::Conflict(x) => Self::Conflict(x),
             other => Self::InternalError(other.to_string()),
         }
     }

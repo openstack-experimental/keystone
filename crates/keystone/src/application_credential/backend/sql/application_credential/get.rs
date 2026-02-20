@@ -16,8 +16,10 @@ use sea_orm::DatabaseConnection;
 use sea_orm::entity::*;
 use sea_orm::query::*;
 
-use crate::application_credential::backend::error::ApplicationCredentialDatabaseError;
-use crate::application_credential::types::*;
+use crate::application_credential::{
+    ApplicationCredentialProviderError,
+    types::{AccessRule, ApplicationCredential, ApplicationCredentialBuilder},
+};
 use crate::db::entity::{
     application_credential as db_application_credential,
     prelude::{
@@ -32,7 +34,7 @@ use crate::role::types::Role;
 pub async fn get<I: AsRef<str>>(
     db: &DatabaseConnection,
     id: I,
-) -> Result<Option<ApplicationCredential>, ApplicationCredentialDatabaseError> {
+) -> Result<Option<ApplicationCredential>, ApplicationCredentialProviderError> {
     let select = DbApplicationCredential::find()
         .filter(db_application_credential::Column::Id.eq(id.as_ref()));
 

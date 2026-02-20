@@ -22,14 +22,14 @@ use crate::db::entity::kubernetes_auth;
 use crate::db::entity::prelude::KubernetesAuth;
 use crate::error::DbContextExt;
 use crate::k8s_auth::{
-    backend::error::K8sAuthDatabaseError,
+    K8sAuthProviderError,
     types::{K8sAuthConfiguration, K8sAuthConfigurationListParameters},
 };
 
 /// Prepare the query for listing k8s auth configurations.
 fn get_list_query(
     params: &K8sAuthConfigurationListParameters,
-) -> Result<Cursor<SelectModel<kubernetes_auth::Model>>, K8sAuthDatabaseError> {
+) -> Result<Cursor<SelectModel<kubernetes_auth::Model>>, K8sAuthProviderError> {
     let mut select = KubernetesAuth::find();
     if let Some(val) = &params.domain_id {
         select = select.filter(kubernetes_auth::Column::DomainId.eq(val));
@@ -45,7 +45,7 @@ fn get_list_query(
 pub async fn list(
     db: &DatabaseConnection,
     params: &K8sAuthConfigurationListParameters,
-) -> Result<Vec<K8sAuthConfiguration>, K8sAuthDatabaseError> {
+) -> Result<Vec<K8sAuthConfiguration>, K8sAuthProviderError> {
     Ok(get_list_query(params)?
         .all(db)
         .await

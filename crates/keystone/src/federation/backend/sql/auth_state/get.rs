@@ -20,13 +20,12 @@ use crate::db::entity::{
     prelude::FederatedAuthState as DbFederatedAuthState,
 };
 use crate::error::DbContextExt;
-use crate::federation::backend::error::FederationDatabaseError;
-use crate::federation::types::*;
+use crate::federation::{FederationProviderError, types::AuthState};
 
 pub async fn get<I: AsRef<str>>(
     db: &DatabaseConnection,
     state: I,
-) -> Result<Option<AuthState>, FederationDatabaseError> {
+) -> Result<Option<AuthState>, FederationProviderError> {
     let select = DbFederatedAuthState::find_by_id(state.as_ref());
 
     let entry: Option<db_federated_auth_state::Model> = select

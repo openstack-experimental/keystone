@@ -25,7 +25,7 @@ use crate::db::entity::{
     user_group_membership,
 };
 use crate::error::DbContextExt;
-use crate::identity::backend::sql::IdentityDatabaseError;
+use crate::identity::IdentityProviderError;
 
 use super::*;
 
@@ -39,7 +39,7 @@ pub async fn set_user_groups<I, U, G>(
     db: &DatabaseConnection,
     user_id: U,
     group_ids: I,
-) -> Result<(), IdentityDatabaseError>
+) -> Result<(), IdentityProviderError>
 where
     I: IntoIterator<Item = G>,
     U: AsRef<str>,
@@ -98,7 +98,7 @@ pub async fn set_user_groups_expiring<I, U, G, IDP>(
     group_ids: I,
     idp_id: IDP,
     last_verified: Option<&DateTime<Utc>>,
-) -> Result<(), IdentityDatabaseError>
+) -> Result<(), IdentityProviderError>
 where
     I: IntoIterator<Item = G>,
     U: AsRef<str>,

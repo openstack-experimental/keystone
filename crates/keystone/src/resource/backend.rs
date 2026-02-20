@@ -14,7 +14,6 @@
 
 use async_trait::async_trait;
 
-pub mod error;
 pub mod sql;
 
 use crate::keystone::ServiceState;

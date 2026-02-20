@@ -19,7 +19,7 @@ use sea_orm::entity::*;
 use crate::db::entity::kubernetes_auth;
 use crate::error::DbContextExt;
 use crate::k8s_auth::{
-    backend::error::K8sAuthDatabaseError,
+    K8sAuthProviderError,
     types::{K8sAuthConfiguration, K8sAuthConfigurationCreate},
 };
 
@@ -27,7 +27,7 @@ use crate::k8s_auth::{
 pub async fn create(
     db: &DatabaseConnection,
     data: K8sAuthConfigurationCreate,
-) -> Result<K8sAuthConfiguration, K8sAuthDatabaseError> {
+) -> Result<K8sAuthConfiguration, K8sAuthProviderError> {
     Ok(kubernetes_auth::ActiveModel::from(data)
         .insert(db)
         .await

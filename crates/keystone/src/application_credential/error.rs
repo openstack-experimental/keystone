@@ -14,22 +14,63 @@
 //! # Application credential provider error.
 use thiserror::Error;
 
-use crate::application_credential::backend::error::ApplicationCredentialDatabaseError;
+use crate::common::password_hashing::PasswordHashError;
+use crate::error::BuilderError;
 
 /// Application credential provider error.
 #[derive(Error, Debug)]
 pub enum ApplicationCredentialProviderError {
-    /// SQL backend error.
-    #[error(transparent)]
-    Backend {
-        /// The source of the error.
-        source: ApplicationCredentialDatabaseError,
-    },
+    /// AccessRule with matching ID and another one matching rest of parameters
+    /// is found.
+    #[error("more than one access rule matching the ID and parameters found")]
+    AccessRuleConflict,
 
     /// Conflict.
     #[error("conflict: {0}")]
     Conflict(String),
 
+    /// Driver error.
+    #[error("backend driver error: {0}")]
+    Driver(String),
+
+    /// DateTime parsing error.
+    #[error("error parsing int column as datetime: {expires_at}")]
+    ExpirationDateTimeParse { id: String, expires_at: i64 },
+
+    /// Password hashing error.
+    #[error(transparent)]
+    PasswordHash {
+        /// The source of the error.
+        #[from]
+        source: PasswordHashError,
+    },
+
+    /// Role Database error.
+    #[error(transparent)]
+    Role {
+        /// The source of the error.
+        #[from]
+        source: crate::role::RoleProviderError,
+    },
+
+    /// Secret is missing.
+    #[error("secret missing")]
+    SecretMissing,
+
+    /// (de)serialization error.
+    #[error(transparent)]
+    Serde {
+        #[from]
+        source: serde_json::Error,
+    },
+
+    /// Structures builder error.
+    #[error(transparent)]
+    StructBuilder {
+        /// The source of the error.
+        #[from]
+        source: BuilderError,
+    },
     /// Unsupported driver.
     #[error("unsupported driver {0}")]
     UnsupportedDriver(String),
@@ -41,20 +82,4 @@ pub enum ApplicationCredentialProviderError {
         #[from]
         source: validator::ValidationErrors,
     },
-}
-
-impl From<ApplicationCredentialDatabaseError> for ApplicationCredentialProviderError {
-    fn from(source: ApplicationCredentialDatabaseError) -> Self {
-        match source {
-            ApplicationCredentialDatabaseError::Database { source } => match source {
-                cfl @ crate::error::DatabaseError::Conflict { .. } => {
-                    Self::Conflict(cfl.to_string())
-                }
-                other => Self::Backend {
-                    source: ApplicationCredentialDatabaseError::Database { source: other },
-                },
-            },
-            _ => Self::Backend { source },
-        }
-    }
 }
