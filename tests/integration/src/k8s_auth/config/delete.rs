@@ -31,6 +31,7 @@ async fn test_delete() -> Result<()> {
             &state,
             K8sAuthConfigurationCreate {
                 ca_cert: Some("ca".into()),
+                disable_local_ca_jwt: Some(true),
                 domain_id: "domain_a".into(),
                 enabled: true,
                 host: "host".into(),
@@ -40,7 +41,7 @@ async fn test_delete() -> Result<()> {
         )
         .await?;
 
-    let res = state
+    state
         .provider
         .get_k8s_auth_provider()
         .delete_k8s_auth_configuration(&state, &res.id)

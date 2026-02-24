@@ -16,6 +16,7 @@ use async_trait::async_trait;
 #[cfg(test)]
 use mockall::mock;
 
+use crate::auth::AuthenticatedInfo;
 use crate::config::Config;
 use crate::k8s_auth::{K8sAuthApi, K8sAuthProviderError, types::*};
 use crate::plugin_manager::PluginManager;
@@ -30,6 +31,13 @@ mock! {
 
     #[async_trait]
     impl K8sAuthApi for K8sAuthProvider {
+
+        /// Authenticate (exchange) the K8s Service account token.
+        async fn authenticate_by_k8s_sa_token(
+            &self,
+            state: &ServiceState,
+            req: &K8sAuthRequest,
+        ) -> Result<AuthenticatedInfo, K8sAuthProviderError>;
 
         /// Register new K8s auth.
         async fn create_k8s_auth_configuration(

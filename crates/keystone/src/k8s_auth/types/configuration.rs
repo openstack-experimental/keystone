@@ -29,6 +29,11 @@ pub struct K8sAuthConfiguration {
     #[builder(default)]
     pub ca_cert: Option<String>,
 
+    /// Disable defaulting to the local CA cert and service account JWT when
+    /// running in a Kubernetes pod.
+    #[builder(default)]
+    pub disable_local_ca_jwt: bool,
+
     /// Domain ID owning the K8s auth configuration.
     pub domain_id: String,
 
@@ -55,6 +60,11 @@ pub struct K8sAuthConfigurationCreate {
     /// Kubernetes API. NOTE: Every line must end with a newline: \n If not set,
     /// the local CA cert will be used if running in a Kubernetes pod.
     pub ca_cert: Option<String>,
+
+    /// Disable defaulting to the local CA cert and service account JWT when
+    /// running in a Kubernetes pod.
+    #[builder(default)]
+    pub disable_local_ca_jwt: Option<bool>,
 
     /// Domain ID owning the K8s auth configuration.
     pub domain_id: String,
@@ -83,6 +93,11 @@ pub struct K8sAuthConfigurationUpdate {
     /// the local CA cert will be used if running in a Kubernetes pod.
     #[builder(default)]
     pub ca_cert: Option<String>,
+
+    /// Disable defaulting to the local CA cert and service account JWT when
+    /// running in a Kubernetes pod.
+    #[builder(default)]
+    pub disable_local_ca_jwt: Option<bool>,
 
     #[builder(default)]
     pub enabled: Option<bool>,

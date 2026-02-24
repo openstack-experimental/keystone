@@ -13,18 +13,23 @@
 // SPDX-License-Identifier: Apache-2.0
 //! # Kubernetes authentication.
 
-use async_trait::async_trait;
+use std::collections::HashMap;
 use std::sync::Arc;
 
+use async_trait::async_trait;
+use reqwest::Client;
+use tokio::sync::RwLock;
+
+mod auth;
 pub mod backend;
 pub mod error;
 #[cfg(test)]
 mod mock;
 pub mod types;
 
-use crate::config::Config;
 use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManager;
+use crate::{auth::AuthenticatedInfo, config::Config};
 use backend::{K8sAuthBackend, sql::SqlBackend};
 use types::*;
 
@@ -37,6 +42,9 @@ pub use types::K8sAuthApi;
 pub struct K8sAuthProvider {
     /// Backend driver.
     backend_driver: Arc<dyn K8sAuthBackend>,
+
+    /// Reqwest client.
+    http_clients: RwLock<HashMap<String, Arc<Client>>>,
 }
 
 impl K8sAuthProvider {
@@ -58,12 +66,24 @@ impl K8sAuthProvider {
                 }
             }
         };
-        Ok(Self { backend_driver })
+        Ok(Self {
+            backend_driver,
+            http_clients: RwLock::new(HashMap::new()),
+        })
     }
 }
 
 #[async_trait]
 impl K8sAuthApi for K8sAuthProvider {
+    /// Authenticate (exchange) the K8s Service account token.
+    async fn authenticate_by_k8s_sa_token(
+        &self,
+        state: &ServiceState,
+        req: &K8sAuthRequest,
+    ) -> Result<AuthenticatedInfo, K8sAuthProviderError> {
+        self.authenticate(state, req).await
+    }
+
     /// Register new K8s auth.
     #[tracing::instrument(skip(self, state))]
     async fn create_k8s_auth_configuration(
@@ -186,9 +206,9 @@ impl K8sAuthApi for K8sAuthProvider {
             .await
     }
 }
-//
+
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use sea_orm::DatabaseConnection;
     use std::sync::Arc;
 
@@ -199,7 +219,7 @@ mod tests {
     use crate::policy::MockPolicyFactory;
     use crate::provider::Provider;
 
-    fn get_state_mock() -> Arc<Service> {
+    pub fn get_state_mock() -> Arc<Service> {
         Arc::new(
             Service::new(
                 Config::default(),
@@ -220,6 +240,7 @@ mod tests {
             .returning(|_, _| Ok(K8sAuthConfiguration::default()));
         let provider = K8sAuthProvider {
             backend_driver: Arc::new(backend),
+            http_clients: RwLock::new(HashMap::new()),
         };
 
         assert!(
@@ -228,6 +249,7 @@ mod tests {
                     &state,
                     K8sAuthConfigurationCreate {
                         ca_cert: Some("ca".into()),
+                        disable_local_ca_jwt: Some(true),
                         domain_id: "did".into(),
                         enabled: true,
                         host: "host".into(),
@@ -249,6 +271,7 @@ mod tests {
             .returning(|_, _| Ok(K8sAuthRole::default()));
         let provider = K8sAuthProvider {
             backend_driver: Arc::new(backend),
+            http_clients: RwLock::new(HashMap::new()),
         };
 
         assert!(

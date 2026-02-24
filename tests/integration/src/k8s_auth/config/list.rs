@@ -30,6 +30,7 @@ async fn test_list() -> Result<()> {
         &state,
         K8sAuthConfigurationCreate {
             ca_cert: Some("ca".into()),
+            disable_local_ca_jwt: Some(true),
             domain_id: "domain_a".into(),
             enabled: true,
             host: "host".into(),
@@ -42,6 +43,7 @@ async fn test_list() -> Result<()> {
         &state,
         K8sAuthConfigurationCreate {
             ca_cert: Some("ca".into()),
+            disable_local_ca_jwt: Some(true),
             domain_id: "domain_a".into(),
             enabled: true,
             host: "host".into(),
@@ -70,6 +72,7 @@ async fn test_list_name() -> Result<()> {
         &state,
         K8sAuthConfigurationCreate {
             ca_cert: Some("ca".into()),
+            disable_local_ca_jwt: Some(true),
             domain_id: "domain_a".into(),
             enabled: true,
             host: "host".into(),
@@ -82,6 +85,7 @@ async fn test_list_name() -> Result<()> {
         &state,
         K8sAuthConfigurationCreate {
             ca_cert: Some("ca".into()),
+            disable_local_ca_jwt: Some(false),
             domain_id: "domain_a".into(),
             enabled: true,
             host: "host".into(),
@@ -115,6 +119,7 @@ async fn test_list_domain() -> Result<()> {
         &state,
         K8sAuthConfigurationCreate {
             ca_cert: Some("ca".into()),
+            disable_local_ca_jwt: Some(true),
             domain_id: "domain_a".into(),
             enabled: true,
             host: "host".into(),
@@ -127,6 +132,7 @@ async fn test_list_domain() -> Result<()> {
         &state,
         K8sAuthConfigurationCreate {
             ca_cert: Some("ca".into()),
+            disable_local_ca_jwt: Some(true),
             domain_id: "domain_a".into(),
             enabled: true,
             host: "host".into(),

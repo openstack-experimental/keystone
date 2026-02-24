@@ -52,6 +52,7 @@ mod tests {
         let cid = uuid::Uuid::new_v4().simple().to_string();
         let req = K8sAuthConfigurationCreate {
             ca_cert: Some("ca_cert".into()),
+            disable_local_ca_jwt: Some(true),
             domain_id: "did".into(),
             enabled: true,
             host: "host".into(),
@@ -66,9 +67,10 @@ mod tests {
             db.into_transaction_log(),
             [Transaction::from_sql_and_values(
                 DatabaseBackend::Postgres,
-                r#"INSERT INTO "kubernetes_auth" ("ca_cert", "domain_id", "enabled", "host", "id", "name") VALUES ($1, $2, $3, $4, $5, $6) RETURNING "ca_cert", "domain_id", "enabled", "host", "id", "name""#,
+                r#"INSERT INTO "kubernetes_auth" ("ca_cert", "disable_local_ca_jwt", "domain_id", "enabled", "host", "id", "name") VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING "ca_cert", "disable_local_ca_jwt", "domain_id", "enabled", "host", "id", "name""#,
                 [
                     "ca_cert".into(),
+                    true.into(),
                     "did".into(),
                     true.into(),
                     "host".into(),

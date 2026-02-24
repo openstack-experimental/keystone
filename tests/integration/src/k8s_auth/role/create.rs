@@ -31,6 +31,7 @@ async fn test_create() -> Result<()> {
         &state,
         K8sAuthConfigurationCreate {
             ca_cert: Some("ca".into()),
+            disable_local_ca_jwt: Some(false),
             domain_id: "domain_a".into(),
             enabled: true,
             host: "host".into(),
@@ -91,4 +92,5 @@ async fn test_create() -> Result<()> {
     Ok(())
 }
 
-// TODO: token restriction must be validated to contain user_id, project_id and the roles.
+// TODO: token restriction must be validated to contain user_id, project_id and
+// the roles.

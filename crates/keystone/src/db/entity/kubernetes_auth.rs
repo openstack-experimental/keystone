@@ -21,6 +21,8 @@ pub struct Model {
     #[sea_orm(column_type = "Text", nullable)]
     pub ca_cert: Option<String>,
 
+    pub disable_local_ca_jwt: bool,
+
     pub domain_id: String,
 
     pub enabled: bool,

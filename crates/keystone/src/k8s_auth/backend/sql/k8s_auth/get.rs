@@ -47,7 +47,7 @@ mod tests {
 
         assert_eq!(
             get(&db, "id").await.unwrap(),
-            Some(get_k8s_auth_config_mock("id").try_into().unwrap())
+            Some(get_k8s_auth_config_mock("id").into())
         );
 
         // Checking transaction log
@@ -55,7 +55,7 @@ mod tests {
             db.into_transaction_log(),
             [Transaction::from_sql_and_values(
                 DatabaseBackend::Postgres,
-                r#"SELECT "kubernetes_auth"."ca_cert", "kubernetes_auth"."domain_id", "kubernetes_auth"."enabled", "kubernetes_auth"."host", "kubernetes_auth"."id", "kubernetes_auth"."name" FROM "kubernetes_auth" WHERE "kubernetes_auth"."id" = $1 LIMIT $2"#,
+                r#"SELECT "kubernetes_auth"."ca_cert", "kubernetes_auth"."disable_local_ca_jwt", "kubernetes_auth"."domain_id", "kubernetes_auth"."enabled", "kubernetes_auth"."host", "kubernetes_auth"."id", "kubernetes_auth"."name" FROM "kubernetes_auth" WHERE "kubernetes_auth"."id" = $1 LIMIT $2"#,
                 ["id".into(), 1u64.into()]
             ),]
         );

@@ -47,7 +47,7 @@ mod tests {
 
         assert_eq!(
             get(&db, "id").await.unwrap(),
-            Some(get_k8s_auth_role_mock("id").try_into().unwrap())
+            Some(get_k8s_auth_role_mock("id").into())
         );
 
         // Checking transaction log
