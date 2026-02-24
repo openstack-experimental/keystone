@@ -65,7 +65,7 @@ mod tests {
     #[tokio::test]
     async fn test_query_all() {
         assert_eq!(
-            r#"SELECT "kubernetes_auth"."ca_cert", "kubernetes_auth"."domain_id", "kubernetes_auth"."enabled", "kubernetes_auth"."host", "kubernetes_auth"."id", "kubernetes_auth"."name" FROM "kubernetes_auth""#,
+            r#"SELECT "kubernetes_auth"."ca_cert", "kubernetes_auth"."disable_local_ca_jwt", "kubernetes_auth"."domain_id", "kubernetes_auth"."enabled", "kubernetes_auth"."host", "kubernetes_auth"."id", "kubernetes_auth"."name" FROM "kubernetes_auth""#,
             QueryOrder::query(
                 &mut get_list_query(&K8sAuthConfigurationListParameters::default()).unwrap()
             )
@@ -123,7 +123,7 @@ mod tests {
             db.into_transaction_log(),
             [Transaction::from_sql_and_values(
                 DatabaseBackend::Postgres,
-                r#"SELECT "kubernetes_auth"."ca_cert", "kubernetes_auth"."domain_id", "kubernetes_auth"."enabled", "kubernetes_auth"."host", "kubernetes_auth"."id", "kubernetes_auth"."name" FROM "kubernetes_auth" ORDER BY "kubernetes_auth"."id" ASC"#,
+                r#"SELECT "kubernetes_auth"."ca_cert", "kubernetes_auth"."disable_local_ca_jwt", "kubernetes_auth"."domain_id", "kubernetes_auth"."enabled", "kubernetes_auth"."host", "kubernetes_auth"."id", "kubernetes_auth"."name" FROM "kubernetes_auth" ORDER BY "kubernetes_auth"."id" ASC"#,
                 []
             ),]
         );

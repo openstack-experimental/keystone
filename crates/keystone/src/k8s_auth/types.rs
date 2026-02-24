@@ -13,10 +13,12 @@
 // SPDX-License-Identifier: Apache-2.0
 //! # K8s auth provider types definitions.
 
-mod k8s_auth;
-mod k8s_auth_role;
+mod auth;
+mod configuration;
 mod provider_api;
+mod role;
 
-pub use k8s_auth::*;
-pub use k8s_auth_role::*;
+pub use auth::*;
+pub use configuration::*;
 pub use provider_api::K8sAuthApi;
+pub use role::*;

@@ -33,6 +33,7 @@ impl MigrationTrait for Migration {
                     .col(string_len(KubernetesAuth::Host, 128))
                     .col(boolean(KubernetesAuth::Enabled))
                     .col(text_null(KubernetesAuth::CaCert))
+                    .col(boolean(KubernetesAuth::DisableLocalCaJwt))
                     .foreign_key(
                         ForeignKey::create()
                             .name("fk-k8auth-domain")
@@ -127,6 +128,7 @@ enum KubernetesAuth {
     Enabled,
     Host,
     CaCert,
+    DisableLocalCaJwt,
 }
 
 #[derive(DeriveIden)]

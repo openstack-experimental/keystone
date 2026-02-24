@@ -43,7 +43,7 @@ pub async fn update<S: AsRef<str>>(
         .context("searching for the existing k8s auth role")?
     {
         Ok(current
-            .to_active_model_update(data)
+            .into_active_model_update(data)
             .update(&txn)
             .await
             .context("updating k8s auth role")?

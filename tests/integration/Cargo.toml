@@ -14,7 +14,7 @@ chrono.workspace = true
 eyre.workspace = true
 itertools.workspace = true
 openstack_keystone = { path = "../../crates/keystone" }
-sea-orm = { workspace = true, features = ["mock", "sqlx-sqlite" ]}
+sea-orm = { workspace = true, features = ["sqlx-sqlite"] }
 secrecy = { workspace = true, features = ["serde"] }
 serde.workspace = true
 serde_json.workspace = true

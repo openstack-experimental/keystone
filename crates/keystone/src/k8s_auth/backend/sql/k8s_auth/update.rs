@@ -44,7 +44,7 @@ pub async fn update<S: AsRef<str>>(
         .context("searching for the existing k8s auth configuration for update")?
     {
         Ok(current
-            .to_active_model_update(data)
+            .into_active_model_update(data)
             .update(&txn)
             .await
             .context("updating k8s auth configuration")?
@@ -77,6 +77,7 @@ mod tests {
 
         let req = K8sAuthConfigurationUpdate {
             ca_cert: Some("new_ca".into()),
+            disable_local_ca_jwt: Some(true),
             enabled: Some(true),
             host: Some("new_host".into()),
             name: Some("new_name".into()),
@@ -91,14 +92,15 @@ mod tests {
                 Statement::from_string(DatabaseBackend::Postgres, r#"BEGIN"#,),
                 Statement::from_sql_and_values(
                     DatabaseBackend::Postgres,
-                    r#"SELECT "kubernetes_auth"."ca_cert", "kubernetes_auth"."domain_id", "kubernetes_auth"."enabled", "kubernetes_auth"."host", "kubernetes_auth"."id", "kubernetes_auth"."name" FROM "kubernetes_auth" WHERE "kubernetes_auth"."id" = $1 LIMIT $2"#,
+                    r#"SELECT "kubernetes_auth"."ca_cert", "kubernetes_auth"."disable_local_ca_jwt", "kubernetes_auth"."domain_id", "kubernetes_auth"."enabled", "kubernetes_auth"."host", "kubernetes_auth"."id", "kubernetes_auth"."name" FROM "kubernetes_auth" WHERE "kubernetes_auth"."id" = $1 LIMIT $2"#,
                     ["id1".into(), 1u64.into()]
                 ),
                 Statement::from_sql_and_values(
                     DatabaseBackend::Postgres,
-                    r#"UPDATE "kubernetes_auth" SET "ca_cert" = $1, "enabled" = $2, "host" = $3, "name" = $4 WHERE "kubernetes_auth"."id" = $5 RETURNING "ca_cert", "domain_id", "enabled", "host", "id", "name""#,
+                    r#"UPDATE "kubernetes_auth" SET "ca_cert" = $1, "disable_local_ca_jwt" = $2, "enabled" = $3, "host" = $4, "name" = $5 WHERE "kubernetes_auth"."id" = $6 RETURNING "ca_cert", "disable_local_ca_jwt", "domain_id", "enabled", "host", "id", "name""#,
                     [
                         "new_ca".into(),
+                        true.into(),
                         true.into(),
                         "new_host".into(),
                         "new_name".into(),

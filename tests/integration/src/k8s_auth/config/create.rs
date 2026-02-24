@@ -26,6 +26,7 @@ async fn test_create() -> Result<()> {
     let state = get_state().await?;
     let sot = K8sAuthConfigurationCreate {
         ca_cert: Some("ca".into()),
+        disable_local_ca_jwt: Some(true),
         domain_id: "domain_a".into(),
         enabled: true,
         host: "host".into(),

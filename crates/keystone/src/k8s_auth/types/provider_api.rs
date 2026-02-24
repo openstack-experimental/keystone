@@ -15,12 +15,20 @@
 
 use async_trait::async_trait;
 
+use crate::auth::AuthenticatedInfo;
 use crate::k8s_auth::{K8sAuthProviderError, types::*};
 use crate::keystone::ServiceState;
 
 /// The trait for managing the K8s_auth functionality.
 #[async_trait]
 pub trait K8sAuthApi: Send + Sync {
+    /// Authenticate (exchange) the K8s Service account token.
+    async fn authenticate_by_k8s_sa_token(
+        &self,
+        state: &ServiceState,
+        req: &K8sAuthRequest,
+    ) -> Result<AuthenticatedInfo, K8sAuthProviderError>;
+
     /// Register new K8s auth.
     async fn create_k8s_auth_configuration(
         &self,

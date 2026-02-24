@@ -81,7 +81,7 @@ impl From<K8sAuthRoleCreate> for kubernetes_auth_role::ActiveModel {
 impl kubernetes_auth_role::Model {
     /// Build an [`kubernetes_auth_role::ActiveModel`] for the update operation
     /// using the [`K8sAuthRoleUpdate`].
-    fn to_active_model_update(
+    fn into_active_model_update(
         self,
         update: K8sAuthRoleUpdate,
     ) -> kubernetes_auth_role::ActiveModel {
@@ -215,7 +215,7 @@ pub(crate) mod tests {
             name: "name".into(),
             token_restriction_id: "trid".into(),
         };
-        let update = sot.to_active_model_update(crate::k8s_auth::K8sAuthRoleUpdate {
+        let update = sot.into_active_model_update(crate::k8s_auth::K8sAuthRoleUpdate {
             bound_audience: Some("new_aud".into()),
             bound_service_account_names: Some(vec!["c".into()]),
             bound_service_account_namespaces: Some(vec!["nc".into()]),

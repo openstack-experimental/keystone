@@ -76,16 +76,19 @@ utoipa-swagger-ui = { workspace = true, features = ["axum", "vendored"] }
 uuid = { workspace = true, features = ["v4"] }
 validator = { workspace = true, features = ["derive"] }
 webauthn-rs = { workspace = true, features = ["danger-allow-state-serialisation"] }
+jsonwebtoken = { version = "10.3", features = ["rust_crypto"] }
 
 [dev-dependencies]
 base64urlsafedata.workspace = true
 criterion = { workspace = true, features = ["async_tokio"] }
 http-body-util.workspace = true
+httpmock = { version = "0.8", features = ["http2"] }
 hyper = { workspace = true, features = ["http1"] }
 hyper-util = { workspace = true, features = ["tokio", "http1"] }
 mockall.workspace = true
 rstest.workspace = true
 sea-orm = { workspace = true, features = ["mock", "sqlx-sqlite" ]}
+tempfile.workspace = true
 tracing-test = { workspace = true, features = ["no-env-filter"] }
 url.workspace = true
 webauthn-authenticator-rs = { workspace = true, features = ["softtoken"] }

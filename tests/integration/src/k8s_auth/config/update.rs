@@ -28,6 +28,7 @@ async fn test_update() -> Result<()> {
 
     let sot = K8sAuthConfigurationCreate {
         ca_cert: Some("ca".into()),
+        disable_local_ca_jwt: Some(false),
         domain_id: "domain_a".into(),
         enabled: false,
         host: "host".into(),
@@ -38,6 +39,7 @@ async fn test_update() -> Result<()> {
 
     let req = K8sAuthConfigurationUpdate {
         ca_cert: Some("new_ca".into()),
+        disable_local_ca_jwt: Some(true),
         enabled: Some(true),
         host: Some("new_host".into()),
         name: Some("new_name".into()),
@@ -52,6 +54,7 @@ async fn test_update() -> Result<()> {
     assert_eq!(Some("new_ca".into()), res.ca_cert);
     assert_eq!("new_host", res.host);
     assert!(res.enabled);
+    assert!(res.disable_local_ca_jwt);
 
     Ok(())
 }

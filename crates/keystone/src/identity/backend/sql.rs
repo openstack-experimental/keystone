@@ -194,7 +194,7 @@ impl IdentityBackend for SqlBackend {
         if let Some(federated_user) =
             federated_user::find_by_idp_and_unique_id(&state.db, idp_id, unique_id).await?
         {
-            return Ok(user::get(&state.config, &state.db, &federated_user.user_id).await?);
+            return user::get(&state.config, &state.db, &federated_user.user_id).await;
         }
         Ok(None)
     }
