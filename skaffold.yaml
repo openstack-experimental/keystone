@@ -43,11 +43,14 @@ profiles:
       local:
         useDockerCLI: true
         concurrency: 0
-        tryImportMissing: true
+        push: true
+        #tryImportMissing: true
 manifests:
   kustomize:
     paths:
       - tools/k8s/keystone/overlays/dev
+  rawYaml:
+    - tools/k8s/tests/k8s-auth-test-sa.yaml
 deploy:
   statusCheck: true
   statusCheckDeadlineSeconds: 300
@@ -68,12 +71,22 @@ deploy:
         createNamespace: true
         namespace: cnpg
 verify:
-  - name: api-test
+  #- name: api-test
+  #  container:
+  #    image: keystone-tests
+  #    name: api-test
+  #    env:
+  #      - name: KEYSTONE_URL
+  #        value: http://keystone-rs.default.svc.cluster.local:8080
+  #  executionMode:
+  #    kubernetesCluster: {}
+
+  - name: "k8s-auth-test"
     container:
-      image: keystone-tests
-      name: api-test
-      env:
-        - name: KEYSTONE_URL
-          value: http://keystone-rs.default.svc.cluster.local:8080
+      image: "keystone-tests"
+      name: "api-test"
+      command: ["/tests/test-k8s-auth", "--nocapture"]
     executionMode:
       kubernetesCluster: {}
+        #jobManifestPath: tools/k8s/tests/k8s_auth_job.yaml
+
