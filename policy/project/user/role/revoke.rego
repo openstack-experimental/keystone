@@ -8,14 +8,13 @@ import data.identity.assignment
 default allow := false
 
 allow if {
-    "admin" in input.credentials.roles
+	"admin" in input.credentials.roles
 }
 
 allow if {
-    "manager" in input.credentials.roles
-    assignment.project_role_domain_matches
+	"manager" in input.credentials.roles
+	assignment.project_role_domain_matches
 }
-
 
 violation contains {"field": "domain_id", "msg": "revoking a role from a user on a project requires admin or manager role in the domain scope."} if {
 	not "admin" in input.credentials.roles

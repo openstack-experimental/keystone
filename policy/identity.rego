@@ -67,3 +67,13 @@ own_role_or_global_role if {
 own_role_or_global_role if {
 	own_role
 }
+
+own_target if {
+	input.target.domain_id != null
+	input.target.domain_id == input.credentials.domain_id
+}
+
+foreign_target if {
+	input.target.domain_id != null
+	input.target.domain_id != input.credentials.domain_id
+}
