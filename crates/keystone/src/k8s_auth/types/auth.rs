@@ -24,7 +24,8 @@ use crate::error::BuilderError;
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct K8sAuthRequest {
-    pub configuration_id: String,
+    /// An ID of the auth provider.
+    pub auth_instance_id: String,
 
     pub jwt: SecretString,
 

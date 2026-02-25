@@ -14,11 +14,11 @@
 //! # K8s auth provider types definitions.
 
 mod auth;
-mod configuration;
+mod instance;
 mod provider_api;
 mod role;
 
 pub use auth::*;
-pub use configuration::*;
+pub use instance::*;
 pub use provider_api::K8sAuthApi;
 pub use role::*;

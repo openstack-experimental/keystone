@@ -37,6 +37,7 @@ use super::error::OidcError;
 use crate::api::v4::auth::token::types::TokenResponse as KeystoneTokenResponse;
 use crate::api::{
     KeystoneApiError,
+    common::get_authz_info,
     types::{Catalog, CatalogService},
 };
 use crate::auth::{AuthenticatedInfo, AuthenticationError};
@@ -59,7 +60,7 @@ use crate::identity::{
 use crate::keystone::ServiceState;
 use crate::token::TokenApi;
 
-use super::common::{get_authz_info, map_user_data, validate_bound_claims};
+use super::common::{map_user_data, validate_bound_claims};
 
 pub(super) fn openapi_router() -> OpenApiRouter<ServiceState> {
     OpenApiRouter::new().routes(routes!(login))
@@ -85,14 +86,16 @@ type FullIdToken = IdToken<
     operation_id = "/federation/identity_provider/jwt:login",
     params(
         ("openstack-mapping" = String, Header, description = "Federated attribute mapping"),
-
     ),
     responses(
-        (status = OK, description = "Authentication Token object", body = KeystoneTokenResponse,
-        headers(
-            ("x-subject-token" = String, description = "Keystone token"),
+        (
+            status = OK,
+            description = "Authentication Token object",
+            body = KeystoneTokenResponse,
+            headers(
+                ("x-subject-token" = String, description = "Keystone token"),
+            ),
         ),
-    ),
     ),
     security(("jwt" = [])),
     tag="identity_providers"

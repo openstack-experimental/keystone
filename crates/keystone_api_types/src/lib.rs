@@ -24,6 +24,7 @@ use validator::Validate;
 pub mod catalog;
 pub mod error;
 pub mod federation;
+pub mod k8s_auth;
 pub mod scope;
 pub mod trust;
 pub mod v3;

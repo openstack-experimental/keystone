@@ -4,5 +4,7 @@ bundle.tar.gz
 /*.rego
 policy.wasm
 .manifest
+# skaffold artifacts metadata
+build.artifacts
 
 doc/html

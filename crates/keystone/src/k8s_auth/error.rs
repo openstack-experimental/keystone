@@ -24,17 +24,17 @@ pub enum K8sAuthProviderError {
     #[error("role `bound_audience` does not match")]
     AudienceMismatch,
 
+    /// K8s auth instance disabled.
+    #[error("k8s instance {0} not active")]
+    AuthInstanceNotActive(String),
+
+    /// K8s auth instance not found.
+    #[error("k8s instance {0} not found")]
+    AuthInstanceNotFound(String),
+
     /// K8s CA certificate is unknown.
     #[error("CA certificate of the k8s cannot be identified")]
     CaCertificateUnknown,
-
-    /// K8s auth configuration disabled.
-    #[error("k8s configuration {0} not active")]
-    ConfigurationNotActive(String),
-
-    /// K8s auth configuration not found.
-    #[error("k8s configuration {0} not found")]
-    ConfigurationNotFound(String),
 
     /// Conflict.
     #[error("conflict: {0}")]
@@ -99,16 +99,16 @@ pub enum K8sAuthProviderError {
     InvalidTokenReviewResponse,
 
     /// K8s auth role not found.
-    #[error("k8s role {0} not found")]
+    #[error("k8s auth role {0} not found")]
     RoleNotFound(String),
 
     /// K8s auth role not active.
-    #[error("k8s role {0} not active")]
+    #[error("k8s auth role {0} not active")]
     RoleNotActive(String),
 
     /// Role is bound to the other configuration.
-    #[error("k8s role {0} belongs to the other configuration")]
-    RoleConfigurationOwnershipMismatch(String),
+    #[error("k8s auth role {0} belongs to the other instance")]
+    RoleInstanceOwnershipMismatch(String),
 
     /// Structures builder error.
     #[error(transparent)]
@@ -130,6 +130,10 @@ pub enum K8sAuthProviderError {
     #[error("token restriction {0} not found")]
     TokenRestrictionNotFound(String),
 
+    /// Token restriction MUST specify the `project_id`.
+    #[error("token restriction must specify `project_id`")]
+    TokenRestrictionMustSpecifyProjectId,
+
     /// Token restriction MUST specify the `user_id`.
     #[error("token restriction must specify `user_id`")]
     TokenRestrictionMustSpecifyUserId,
@@ -141,8 +145,4 @@ pub enum K8sAuthProviderError {
     /// User not found.
     #[error("user {0} not found")]
     UserNotFound(String),
-
-    /// User disabled.
-    #[error("user {0} disabled")]
-    UserDisabled(String),
 }

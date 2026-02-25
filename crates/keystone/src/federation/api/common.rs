@@ -17,10 +17,6 @@ use serde_json::Value;
 use openidconnect::IdTokenClaims;
 use openidconnect::core::CoreGenderClaim;
 
-use crate::api::common::{find_project_from_scope, get_domain};
-use crate::api::error::KeystoneApiError;
-use crate::auth::AuthzInfo;
-use crate::common::types::Scope as ProviderScope;
 use crate::federation::api::{
     error::OidcError,
     types::{AllOtherClaims, MappedUserData, MappedUserDataBuilder},
@@ -30,41 +26,6 @@ use crate::federation::types::{
     mapping::Mapping as ProviderMapping,
 };
 use crate::keystone::ServiceState;
-
-/// Convert ProviderScope to AuthZ information.
-///
-/// # Arguments
-/// * `state`: The service state
-/// * `scope`: The scope to extract the AuthZ information from
-///
-/// # Returns
-/// * `Ok(AuthzInfo)`: The AuthZ information
-/// * `Err(KeystoneApiError)`: An error if the scope is not valid
-pub(super) async fn get_authz_info(
-    state: &ServiceState,
-    scope: Option<&ProviderScope>,
-) -> Result<AuthzInfo, KeystoneApiError> {
-    let authz_info = match scope {
-        Some(ProviderScope::Project(scope)) => {
-            if let Some(project) = find_project_from_scope(state, &scope.into()).await? {
-                AuthzInfo::Project(project)
-            } else {
-                return Err(KeystoneApiError::Unauthorized(None));
-            }
-        }
-        Some(ProviderScope::Domain(scope)) => {
-            if let Ok(domain) = get_domain(state, scope.id.as_ref(), scope.name.as_ref()).await {
-                AuthzInfo::Domain(domain)
-            } else {
-                return Err(KeystoneApiError::Unauthorized(None));
-            }
-        }
-        Some(ProviderScope::System(_scope)) => todo!(),
-        None => AuthzInfo::Unscoped,
-    };
-    authz_info.validate()?;
-    Ok(authz_info)
-}
 
 /// Validate bound claims in the token.
 ///

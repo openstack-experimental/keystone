@@ -21,76 +21,76 @@ pub mod sql;
 
 /// K8s auth Backend trait.
 ///
-/// Backend driver interface expected by the revocation provider.
+/// Backend driver interface expected by the revocation auth_instance.
 #[cfg_attr(test, mockall::automock)]
 #[async_trait]
 pub trait K8sAuthBackend: Send + Sync {
-    /// Register new K8s auth.
-    async fn create_k8s_auth_configuration(
+    /// Register new K8s auth auth_instance.
+    async fn create_auth_instance(
         &self,
         state: &ServiceState,
-        config: K8sAuthConfigurationCreate,
-    ) -> Result<K8sAuthConfiguration, K8sAuthProviderError>;
+        auth_instance: K8sAuthInstanceCreate,
+    ) -> Result<K8sAuthInstance, K8sAuthProviderError>;
 
     /// Register new K8s auth role.
-    async fn create_k8s_auth_role(
+    async fn create_auth_role(
         &self,
         state: &ServiceState,
         role: K8sAuthRoleCreate,
     ) -> Result<K8sAuthRole, K8sAuthProviderError>;
 
-    /// Delete K8s auth.
-    async fn delete_k8s_auth_configuration<'a>(
+    /// Delete K8s auth auth_instance.
+    async fn delete_auth_instance<'a>(
         &self,
         state: &ServiceState,
         id: &'a str,
     ) -> Result<(), K8sAuthProviderError>;
 
     /// Delete K8s auth role.
-    async fn delete_k8s_auth_role<'a>(
+    async fn delete_auth_role<'a>(
         &self,
         state: &ServiceState,
         id: &'a str,
     ) -> Result<(), K8sAuthProviderError>;
 
-    /// Register new K8s auth.
-    async fn get_k8s_auth_configuration<'a>(
+    /// Register new K8s auth auth_instance.
+    async fn get_auth_instance<'a>(
         &self,
         state: &ServiceState,
         id: &'a str,
-    ) -> Result<Option<K8sAuthConfiguration>, K8sAuthProviderError>;
+    ) -> Result<Option<K8sAuthInstance>, K8sAuthProviderError>;
 
     /// Register new K8s auth role.
-    async fn get_k8s_auth_role<'a>(
+    async fn get_auth_role<'a>(
         &self,
         state: &ServiceState,
         id: &'a str,
     ) -> Result<Option<K8sAuthRole>, K8sAuthProviderError>;
 
-    /// List K8s auth configurations.
-    async fn list_k8s_auth_configurations(
+    /// List K8s auth auth_instances.
+    async fn list_auth_instances(
         &self,
         state: &ServiceState,
-        params: &K8sAuthConfigurationListParameters,
-    ) -> Result<Vec<K8sAuthConfiguration>, K8sAuthProviderError>;
+        params: &K8sAuthInstanceListParameters,
+    ) -> Result<Vec<K8sAuthInstance>, K8sAuthProviderError>;
 
     /// List K8s auth roles.
-    async fn list_k8s_auth_roles(
+    async fn list_auth_roles(
         &self,
         state: &ServiceState,
         params: &K8sAuthRoleListParameters,
     ) -> Result<Vec<K8sAuthRole>, K8sAuthProviderError>;
 
-    /// Update K8s auth.
-    async fn update_k8s_auth_configuration<'a>(
+    /// Update K8s auth auth_instance.
+    async fn update_auth_instance<'a>(
         &self,
         state: &ServiceState,
         id: &'a str,
-        data: K8sAuthConfigurationUpdate,
-    ) -> Result<K8sAuthConfiguration, K8sAuthProviderError>;
+        data: K8sAuthInstanceUpdate,
+    ) -> Result<K8sAuthInstance, K8sAuthProviderError>;
 
     /// Update K8s auth role.
-    async fn update_k8s_auth_role<'a>(
+    async fn update_auth_role<'a>(
         &self,
         state: &ServiceState,
         id: &'a str,

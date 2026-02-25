@@ -20,6 +20,7 @@ use async_trait::async_trait;
 use reqwest::Client;
 use tokio::sync::RwLock;
 
+pub mod api;
 mod auth;
 pub mod backend;
 pub mod error;
@@ -29,6 +30,7 @@ pub mod types;
 
 use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManager;
+use crate::token::types::TokenRestriction;
 use crate::{auth::AuthenticatedInfo, config::Config};
 use backend::{K8sAuthBackend, sql::SqlBackend};
 use types::*;
@@ -80,29 +82,27 @@ impl K8sAuthApi for K8sAuthProvider {
         &self,
         state: &ServiceState,
         req: &K8sAuthRequest,
-    ) -> Result<AuthenticatedInfo, K8sAuthProviderError> {
+    ) -> Result<(AuthenticatedInfo, TokenRestriction), K8sAuthProviderError> {
         self.authenticate(state, req).await
     }
 
-    /// Register new K8s auth.
+    /// Register new K8s auth instance.
     #[tracing::instrument(skip(self, state))]
-    async fn create_k8s_auth_configuration(
+    async fn create_auth_instance(
         &self,
         state: &ServiceState,
-        config: K8sAuthConfigurationCreate,
-    ) -> Result<K8sAuthConfiguration, K8sAuthProviderError> {
-        let mut new = config;
+        instance: K8sAuthInstanceCreate,
+    ) -> Result<K8sAuthInstance, K8sAuthProviderError> {
+        let mut new = instance;
         if new.id.is_none() {
             new.id = Some(uuid::Uuid::new_v4().simple().to_string());
         }
-        self.backend_driver
-            .create_k8s_auth_configuration(state, new)
-            .await
+        self.backend_driver.create_auth_instance(state, new).await
     }
 
     /// Register new K8s auth role.
     #[tracing::instrument(skip(self, state))]
-    async fn create_k8s_auth_role(
+    async fn create_auth_role(
         &self,
         state: &ServiceState,
         role: K8sAuthRoleCreate,
@@ -111,99 +111,91 @@ impl K8sAuthApi for K8sAuthProvider {
         if new.id.is_none() {
             new.id = Some(uuid::Uuid::new_v4().simple().to_string());
         }
-        self.backend_driver.create_k8s_auth_role(state, new).await
+        self.backend_driver.create_auth_role(state, new).await
     }
 
-    /// Delete K8s auth.
+    /// Delete K8s auth provider.
     #[tracing::instrument(skip(self, state))]
-    async fn delete_k8s_auth_configuration<'a>(
+    async fn delete_auth_instance<'a>(
         &self,
         state: &ServiceState,
         id: &'a str,
     ) -> Result<(), K8sAuthProviderError> {
-        self.backend_driver
-            .delete_k8s_auth_configuration(state, id)
-            .await
+        self.backend_driver.delete_auth_instance(state, id).await
     }
 
     /// Delete K8s auth role.
     #[tracing::instrument(skip(self, state))]
-    async fn delete_k8s_auth_role<'a>(
+    async fn delete_auth_role<'a>(
         &self,
         state: &ServiceState,
         id: &'a str,
     ) -> Result<(), K8sAuthProviderError> {
-        self.backend_driver.delete_k8s_auth_role(state, id).await
+        self.backend_driver.delete_auth_role(state, id).await
     }
 
-    /// Register new K8s auth.
+    /// Register new K8s auth instance.
     #[tracing::instrument(skip(self, state))]
-    async fn get_k8s_auth_configuration<'a>(
+    async fn get_auth_instance<'a>(
         &self,
         state: &ServiceState,
         id: &'a str,
-    ) -> Result<Option<K8sAuthConfiguration>, K8sAuthProviderError> {
-        self.backend_driver
-            .get_k8s_auth_configuration(state, id)
-            .await
+    ) -> Result<Option<K8sAuthInstance>, K8sAuthProviderError> {
+        self.backend_driver.get_auth_instance(state, id).await
     }
 
     /// Register new K8s auth role.
     #[tracing::instrument(skip(self, state))]
-    async fn get_k8s_auth_role<'a>(
+    async fn get_auth_role<'a>(
         &self,
         state: &ServiceState,
         id: &'a str,
     ) -> Result<Option<K8sAuthRole>, K8sAuthProviderError> {
-        self.backend_driver.get_k8s_auth_role(state, id).await
+        self.backend_driver.get_auth_role(state, id).await
     }
 
-    /// List K8s auth configurations.
+    /// List K8s auth instances.
     #[tracing::instrument(skip(self, state))]
-    async fn list_k8s_auth_configurations(
+    async fn list_auth_instances(
         &self,
         state: &ServiceState,
-        params: &K8sAuthConfigurationListParameters,
-    ) -> Result<Vec<K8sAuthConfiguration>, K8sAuthProviderError> {
-        self.backend_driver
-            .list_k8s_auth_configurations(state, params)
-            .await
+        params: &K8sAuthInstanceListParameters,
+    ) -> Result<Vec<K8sAuthInstance>, K8sAuthProviderError> {
+        self.backend_driver.list_auth_instances(state, params).await
     }
 
     /// List K8s auth roles.
     #[tracing::instrument(skip(self, state))]
-    async fn list_k8s_auth_roles(
+    async fn list_auth_roles(
         &self,
         state: &ServiceState,
         params: &K8sAuthRoleListParameters,
     ) -> Result<Vec<K8sAuthRole>, K8sAuthProviderError> {
-        self.backend_driver.list_k8s_auth_roles(state, params).await
+        self.backend_driver.list_auth_roles(state, params).await
     }
 
-    /// Update K8s auth.
+    /// Update K8s auth instance.
     #[tracing::instrument(skip(self, state))]
-    async fn update_k8s_auth_configuration<'a>(
+    async fn update_auth_instance<'a>(
         &self,
         state: &ServiceState,
         id: &'a str,
-        data: K8sAuthConfigurationUpdate,
-    ) -> Result<K8sAuthConfiguration, K8sAuthProviderError> {
+        data: K8sAuthInstanceUpdate,
+    ) -> Result<K8sAuthInstance, K8sAuthProviderError> {
         self.backend_driver
-            .update_k8s_auth_configuration(state, id, data)
+            .update_auth_instance(state, id, data)
             .await
     }
 
     /// Update K8s auth role.
     #[tracing::instrument(skip(self, state))]
-    async fn update_k8s_auth_role<'a>(
+    async fn update_auth_role<'a>(
         &self,
         state: &ServiceState,
         id: &'a str,
         data: K8sAuthRoleUpdate,
     ) -> Result<K8sAuthRole, K8sAuthProviderError> {
-        self.backend_driver
-            .update_k8s_auth_role(state, id, data)
-            .await
+        self.backend_driver.update_auth_role(state, id, data).await
     }
 }
 
@@ -232,12 +224,12 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
-    async fn test_create_k8s_auth_config() {
+    async fn test_create_auth_instance() {
         let state = get_state_mock();
         let mut backend = MockK8sAuthBackend::default();
         backend
-            .expect_create_k8s_auth_configuration()
-            .returning(|_, _| Ok(K8sAuthConfiguration::default()));
+            .expect_create_auth_instance()
+            .returning(|_, _| Ok(K8sAuthInstance::default()));
         let provider = K8sAuthProvider {
             backend_driver: Arc::new(backend),
             http_clients: RwLock::new(HashMap::new()),
@@ -245,9 +237,9 @@ pub(crate) mod tests {
 
         assert!(
             provider
-                .create_k8s_auth_configuration(
+                .create_auth_instance(
                     &state,
-                    K8sAuthConfigurationCreate {
+                    K8sAuthInstanceCreate {
                         ca_cert: Some("ca".into()),
                         disable_local_ca_jwt: Some(true),
                         domain_id: "did".into(),
@@ -263,11 +255,11 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
-    async fn test_create_k8s_auth_role() {
+    async fn test_create_auth_role() {
         let state = get_state_mock();
         let mut backend = MockK8sAuthBackend::default();
         backend
-            .expect_create_k8s_auth_role()
+            .expect_create_auth_role()
             .returning(|_, _| Ok(K8sAuthRole::default()));
         let provider = K8sAuthProvider {
             backend_driver: Arc::new(backend),
@@ -276,10 +268,10 @@ pub(crate) mod tests {
 
         assert!(
             provider
-                .create_k8s_auth_role(
+                .create_auth_role(
                     &state,
                     K8sAuthRoleCreate {
-                        auth_configuration_id: "cid".into(),
+                        auth_instance_id: "cid".into(),
                         bound_audience: Some("aud".into()),
                         bound_service_account_names: vec!["a".into(), "b".into()],
                         bound_service_account_namespaces: vec!["na".into(), "nb".into()],

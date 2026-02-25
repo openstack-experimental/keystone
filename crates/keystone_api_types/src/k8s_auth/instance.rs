@@ -1,0 +1,189 @@
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+// SPDX-License-Identifier: Apache-2.0
+//! # K8s Auth configuration types.
+
+use axum::{
+    Json,
+    http::StatusCode,
+    response::{IntoResponse, Response},
+};
+use derive_builder::Builder;
+use serde::{Deserialize, Serialize};
+use utoipa::{IntoParams, ToSchema};
+use validator::Validate;
+
+use crate::Link;
+use crate::error::BuilderError;
+
+/// K8s authentication instance.
+#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[builder(build_fn(error = "BuilderError"))]
+#[builder(setter(strip_option, into))]
+pub struct K8sAuthInstance {
+    /// PEM encoded CA cert for use by the TLS client used to talk with the
+    /// Kubernetes API. NOTE: Every line must end with a newline: \n If not set,
+    /// the local CA cert will be used if running in a Kubernetes pod.
+    #[builder(default)]
+    pub ca_cert: Option<String>,
+
+    /// Disable defaulting to the local CA cert and service account JWT when
+    /// running in a Kubernetes pod.
+    #[builder(default)]
+    pub disable_local_ca_jwt: bool,
+
+    /// Domain ID owning the K8s auth configuration.
+    #[validate(length(max = 64))]
+    pub domain_id: String,
+
+    pub enabled: bool,
+
+    /// Host must be a host string, a host:port pair, or a URL to the base of
+    /// the Kubernetes API server.
+    pub host: String,
+
+    /// K8s auth configuration ID.
+    #[validate(length(max = 64))]
+    pub id: String,
+
+    /// K8s auth name.
+    #[builder(default)]
+    #[validate(length(max = 255))]
+    pub name: Option<String>,
+}
+
+/// K8s auth instance response.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+pub struct K8sAuthInstanceResponse {
+    /// K8s auth instance object.
+    #[validate(nested)]
+    pub instance: K8sAuthInstance,
+}
+
+/// New K8s authentication instance.
+#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[builder(build_fn(error = "BuilderError"))]
+#[builder(setter(strip_option, into))]
+pub struct K8sAuthInstanceCreate {
+    /// PEM encoded CA cert for use by the TLS client used to talk with the
+    /// Kubernetes API. NOTE: Every line must end with a newline: \n If not set,
+    /// the local CA cert will be used if running in a Kubernetes pod.
+    pub ca_cert: Option<String>,
+
+    /// Disable defaulting to the local CA cert and service account JWT when
+    /// running in a Kubernetes pod.
+    #[builder(default)]
+    pub disable_local_ca_jwt: Option<bool>,
+
+    /// Domain ID owning the K8s auth instance.
+    #[validate(length(max = 64))]
+    pub domain_id: String,
+
+    pub enabled: bool,
+
+    /// Host must be a host string, a host:port pair, or a URL to the base of
+    /// the Kubernetes API server.
+    pub host: String,
+
+    /// K8s auth name.
+    #[builder(default)]
+    #[validate(length(max = 255))]
+    pub name: Option<String>,
+}
+
+/// K8s auth instance create request.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+pub struct K8sAuthInstanceCreateRequest {
+    /// K8s auth instance object.
+    #[validate(nested)]
+    pub instance: K8sAuthInstanceCreate,
+}
+
+/// Update K8s authentication instance.
+#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[builder(build_fn(error = "BuilderError"))]
+#[builder(setter(strip_option, into))]
+pub struct K8sAuthInstanceUpdate {
+    /// PEM encoded CA cert for use by the TLS client used to talk with the
+    /// Kubernetes API. NOTE: Every line must end with a newline: \n If not set,
+    /// the local CA cert will be used if running in a Kubernetes pod.
+    #[builder(default)]
+    pub ca_cert: Option<String>,
+
+    /// Disable defaulting to the local CA cert and service account JWT when
+    /// running in a Kubernetes pod.
+    #[builder(default)]
+    pub disable_local_ca_jwt: Option<bool>,
+
+    #[builder(default)]
+    pub enabled: Option<bool>,
+
+    /// Host must be a host string, a host:port pair, or a URL to the base of
+    /// the Kubernetes API server.
+    #[builder(default)]
+    pub host: Option<String>,
+
+    /// K8s auth name.
+    #[builder(default)]
+    #[validate(length(max = 255))]
+    pub name: Option<String>,
+}
+
+/// K8s auth instance update request.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+pub struct K8sAuthInstanceUpdateRequest {
+    /// K8s auth instance object.
+    #[validate(nested)]
+    pub instance: K8sAuthInstanceUpdate,
+}
+
+/// List of K8s auth instances.
+#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+pub struct K8sAuthInstanceList {
+    /// Collection of k8s auth instance objects.
+    #[validate(nested)]
+    pub instances: Vec<K8sAuthInstance>,
+
+    /// Pagination links.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub links: Option<Vec<Link>>,
+}
+
+impl IntoResponse for K8sAuthInstanceList {
+    fn into_response(self) -> Response {
+        (StatusCode::OK, Json(self)).into_response()
+    }
+}
+
+/// K8s Auth instance list parameters.
+#[derive(
+    Builder,
+    Clone,
+    Debug,
+    Default,
+    Deserialize,
+    IntoParams,
+    PartialEq,
+    Serialize,
+    ToSchema,
+    Validate,
+)]
+#[builder(build_fn(error = "BuilderError"))]
+pub struct K8sAuthInstanceListParameters {
+    /// Domain id.
+    #[validate(length(max = 64))]
+    pub domain_id: Option<String>,
+    /// Name.
+    #[validate(length(max = 255))]
+    pub name: Option<String>,
+}

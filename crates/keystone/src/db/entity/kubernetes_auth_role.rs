@@ -18,7 +18,7 @@ use sea_orm::entity::prelude::*;
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Eq)]
 #[sea_orm(table_name = "kubernetes_auth_role")]
 pub struct Model {
-    pub auth_configuration_id: String,
+    pub auth_instance_id: String,
 
     pub bound_audience: Option<String>,
 
@@ -43,13 +43,13 @@ pub struct Model {
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {
     #[sea_orm(
-        belongs_to = "super::kubernetes_auth::Entity",
-        from = "Column::AuthConfigurationId",
-        to = "super::kubernetes_auth::Column::Id",
+        belongs_to = "super::kubernetes_auth_instance::Entity",
+        from = "Column::AuthInstanceId",
+        to = "super::kubernetes_auth_instance::Column::Id",
         on_update = "NoAction",
         on_delete = "Cascade"
     )]
-    KubernetesAuth,
+    KubernetesAuthInstance,
     #[sea_orm(
         belongs_to = "super::project::Entity",
         from = "Column::DomainId",
@@ -68,9 +68,9 @@ pub enum Relation {
     TokenRestriction,
 }
 
-impl Related<super::kubernetes_auth::Entity> for Entity {
+impl Related<super::kubernetes_auth_instance::Entity> for Entity {
     fn to() -> RelationDef {
-        Relation::KubernetesAuth.def()
+        Relation::KubernetesAuthInstance.def()
     }
 }
 

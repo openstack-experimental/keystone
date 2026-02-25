@@ -24,6 +24,7 @@ use utoipa_axum::{router::OpenApiRouter, routes};
 
 use crate::api::error::KeystoneApiError;
 use crate::federation::api as federation;
+use crate::k8s_auth::api as k8s_auth;
 use crate::keystone::ServiceState;
 
 pub mod auth;
@@ -40,6 +41,7 @@ use crate::api::types::*;
 #[openapi(
     nest(
       (path = "federation", api = federation::ApiDoc),
+      (path = "k8s_auth", api = k8s_auth::ApiDoc),
       (path = "tokens", api = token::ApiDoc),
     ),
 )]
@@ -50,6 +52,7 @@ pub(super) fn openapi_router() -> OpenApiRouter<ServiceState> {
         .nest("/auth", auth::openapi_router())
         .nest("/groups", group::openapi_router())
         .nest("/federation", federation::openapi_router())
+        .nest("/k8s_auth", k8s_auth::openapi_router())
         .nest("/role_assignments", role_assignment::openapi_router())
         .nest("/roles", role::openapi_router())
         .nest("/tokens", token::openapi_router())

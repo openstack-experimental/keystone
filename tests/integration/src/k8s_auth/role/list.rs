@@ -18,8 +18,8 @@ use tracing_test::traced_test;
 
 use openstack_keystone::k8s_auth::{K8sAuthApi, types::*};
 
-use super::super::config::create_k8s_auth_configuration;
 use super::super::get_state;
+use super::super::instance::create_k8s_auth_instance;
 use super::super::role::create_k8s_auth_role;
 use crate::token::token_restriction::create_token_restriction;
 
@@ -28,9 +28,9 @@ use crate::token::token_restriction::create_token_restriction;
 async fn test_list() -> Result<()> {
     let state = get_state().await?;
 
-    let k8s_conf = create_k8s_auth_configuration(
+    let k8s_conf = create_k8s_auth_instance(
         &state,
-        K8sAuthConfigurationCreate {
+        K8sAuthInstanceCreate {
             ca_cert: Some("ca".into()),
             disable_local_ca_jwt: Some(false),
             domain_id: "domain_a".into(),
@@ -57,7 +57,7 @@ async fn test_list() -> Result<()> {
     let k8s_role = create_k8s_auth_role(
         &state,
         K8sAuthRoleCreate {
-            auth_configuration_id: k8s_conf.id.clone(),
+            auth_instance_id: k8s_conf.id.clone(),
             bound_audience: Some("aud".into()),
             bound_service_account_names: vec!["a".into(), "b".into()],
             bound_service_account_namespaces: vec!["na".into(), "nb".into()],
@@ -72,7 +72,7 @@ async fn test_list() -> Result<()> {
     let k8s_role2 = create_k8s_auth_role(
         &state,
         K8sAuthRoleCreate {
-            auth_configuration_id: k8s_conf.id.clone(),
+            auth_instance_id: k8s_conf.id.clone(),
             bound_audience: Some("aud".into()),
             bound_service_account_names: vec!["a".into(), "b".into()],
             bound_service_account_namespaces: vec!["na".into(), "nb".into()],
@@ -88,7 +88,7 @@ async fn test_list() -> Result<()> {
     let res = state
         .provider
         .get_k8s_auth_provider()
-        .list_k8s_auth_roles(&state, &K8sAuthRoleListParameters::default())
+        .list_auth_roles(&state, &K8sAuthRoleListParameters::default())
         .await?;
 
     assert!(res.contains(&k8s_role));
@@ -101,9 +101,9 @@ async fn test_list() -> Result<()> {
 async fn test_list_name() -> Result<()> {
     let state = get_state().await?;
 
-    let k8s_conf = create_k8s_auth_configuration(
+    let k8s_conf = create_k8s_auth_instance(
         &state,
-        K8sAuthConfigurationCreate {
+        K8sAuthInstanceCreate {
             ca_cert: Some("ca".into()),
             disable_local_ca_jwt: Some(false),
             domain_id: "domain_a".into(),
@@ -130,7 +130,7 @@ async fn test_list_name() -> Result<()> {
     let k8s_role = create_k8s_auth_role(
         &state,
         K8sAuthRoleCreate {
-            auth_configuration_id: k8s_conf.id.clone(),
+            auth_instance_id: k8s_conf.id.clone(),
             bound_audience: Some("aud".into()),
             bound_service_account_names: vec!["a".into(), "b".into()],
             bound_service_account_namespaces: vec!["na".into(), "nb".into()],
@@ -145,7 +145,7 @@ async fn test_list_name() -> Result<()> {
     let k8s_role2 = create_k8s_auth_role(
         &state,
         K8sAuthRoleCreate {
-            auth_configuration_id: k8s_conf.id.clone(),
+            auth_instance_id: k8s_conf.id.clone(),
             bound_audience: Some("aud".into()),
             bound_service_account_names: vec!["a".into(), "b".into()],
             bound_service_account_namespaces: vec!["na".into(), "nb".into()],
@@ -161,7 +161,7 @@ async fn test_list_name() -> Result<()> {
     let res = state
         .provider
         .get_k8s_auth_provider()
-        .list_k8s_auth_roles(
+        .list_auth_roles(
             &state,
             &K8sAuthRoleListParameters {
                 name: Some(k8s_role.name.clone()),
@@ -180,9 +180,9 @@ async fn test_list_name() -> Result<()> {
 async fn test_list_config() -> Result<()> {
     let state = get_state().await?;
 
-    let k8s_conf = create_k8s_auth_configuration(
+    let k8s_conf = create_k8s_auth_instance(
         &state,
-        K8sAuthConfigurationCreate {
+        K8sAuthInstanceCreate {
             ca_cert: Some("ca".into()),
             disable_local_ca_jwt: Some(false),
             domain_id: "domain_a".into(),
@@ -193,9 +193,9 @@ async fn test_list_config() -> Result<()> {
         },
     )
     .await?;
-    let k8s_conf2 = create_k8s_auth_configuration(
+    let k8s_conf2 = create_k8s_auth_instance(
         &state,
-        K8sAuthConfigurationCreate {
+        K8sAuthInstanceCreate {
             ca_cert: Some("ca".into()),
             disable_local_ca_jwt: Some(false),
             domain_id: "domain_a".into(),
@@ -222,7 +222,7 @@ async fn test_list_config() -> Result<()> {
     let k8s_role = create_k8s_auth_role(
         &state,
         K8sAuthRoleCreate {
-            auth_configuration_id: k8s_conf.id.clone(),
+            auth_instance_id: k8s_conf.id.clone(),
             bound_audience: Some("aud".into()),
             bound_service_account_names: vec!["a".into(), "b".into()],
             bound_service_account_namespaces: vec!["na".into(), "nb".into()],
@@ -237,7 +237,7 @@ async fn test_list_config() -> Result<()> {
     let k8s_role2 = create_k8s_auth_role(
         &state,
         K8sAuthRoleCreate {
-            auth_configuration_id: k8s_conf2.id.clone(),
+            auth_instance_id: k8s_conf2.id.clone(),
             bound_audience: Some("aud".into()),
             bound_service_account_names: vec!["a".into(), "b".into()],
             bound_service_account_namespaces: vec!["na".into(), "nb".into()],
@@ -253,10 +253,10 @@ async fn test_list_config() -> Result<()> {
     let res = state
         .provider
         .get_k8s_auth_provider()
-        .list_k8s_auth_roles(
+        .list_auth_roles(
             &state,
             &K8sAuthRoleListParameters {
-                auth_configuration_id: Some(k8s_role.auth_configuration_id.clone()),
+                auth_instance_id: Some(k8s_role.auth_instance_id.clone()),
                 ..Default::default()
             },
         )
@@ -268,10 +268,10 @@ async fn test_list_config() -> Result<()> {
     let res = state
         .provider
         .get_k8s_auth_provider()
-        .list_k8s_auth_roles(
+        .list_auth_roles(
             &state,
             &K8sAuthRoleListParameters {
-                auth_configuration_id: Some(k8s_role2.auth_configuration_id.clone()),
+                auth_instance_id: Some(k8s_role2.auth_instance_id.clone()),
                 ..Default::default()
             },
         )
