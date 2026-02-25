@@ -15,20 +15,19 @@
 mod list;
 mod revoke;
 
+use std::sync::Arc;
+
 use eyre::Report;
-use openstack_keystone::assignment::AssignmentApi;
-use openstack_keystone::assignment::types::AssignmentCreate;
+use sea_orm::{DbConn, entity::*};
+use tempfile::TempDir;
+
 use openstack_keystone::config::Config;
 use openstack_keystone::db::entity::{prelude::*, project};
 use openstack_keystone::keystone::Service;
 use openstack_keystone::plugin_manager::PluginManager;
 use openstack_keystone::policy::PolicyFactory;
 use openstack_keystone::provider::Provider;
-use sea_orm::{DbConn, entity::*};
-use std::sync::Arc;
-use tempfile::TempDir;
 
-//use super::setup_schema;
 use crate::common::{bootstrap, get_isolated_database};
 
 async fn setup_assignment_data(db: &DbConn) -> Result<(), Report> {
