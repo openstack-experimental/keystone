@@ -25,19 +25,22 @@ impl MigrationTrait for Migration {
         manager
             .create_table(
                 Table::create()
-                    .table(KubernetesAuth::Table)
+                    .table(KubernetesAuthInstance::Table)
                     .if_not_exists()
-                    .col(string_len(KubernetesAuth::Id, 64).primary_key())
-                    .col(string_len(KubernetesAuth::DomainId, 64))
-                    .col(string_len_null(KubernetesAuth::Name, 255))
-                    .col(string_len(KubernetesAuth::Host, 128))
-                    .col(boolean(KubernetesAuth::Enabled))
-                    .col(text_null(KubernetesAuth::CaCert))
-                    .col(boolean(KubernetesAuth::DisableLocalCaJwt))
+                    .col(string_len(KubernetesAuthInstance::Id, 64).primary_key())
+                    .col(string_len(KubernetesAuthInstance::DomainId, 64))
+                    .col(string_len_null(KubernetesAuthInstance::Name, 255))
+                    .col(string_len(KubernetesAuthInstance::Host, 128))
+                    .col(boolean(KubernetesAuthInstance::Enabled))
+                    .col(text_null(KubernetesAuthInstance::CaCert))
+                    .col(boolean(KubernetesAuthInstance::DisableLocalCaJwt))
                     .foreign_key(
                         ForeignKey::create()
-                            .name("fk-k8auth-domain")
-                            .from(KubernetesAuth::Table, KubernetesAuth::DomainId)
+                            .name("fk-k8auth-provider-domain")
+                            .from(
+                                KubernetesAuthInstance::Table,
+                                KubernetesAuthInstance::DomainId,
+                            )
                             .to(Project, project::Column::Id)
                             .on_delete(ForeignKeyAction::Cascade),
                     )
@@ -45,9 +48,9 @@ impl MigrationTrait for Migration {
                         Index::create()
                             .unique()
                             .nulls_not_distinct()
-                            .name("idx-k8auth-domain-name")
-                            .col(KubernetesAuth::DomainId)
-                            .col(KubernetesAuth::Name),
+                            .name("idx-k8auth-provider-domain-name")
+                            .col(KubernetesAuthInstance::DomainId)
+                            .col(KubernetesAuthInstance::Name),
                     )
                     .to_owned(),
             )
@@ -60,7 +63,7 @@ impl MigrationTrait for Migration {
                     .if_not_exists()
                     .col(string_len(KubernetesAuthRole::Id, 64).primary_key())
                     .col(string_len(KubernetesAuthRole::DomainId, 64))
-                    .col(string_len(KubernetesAuthRole::AuthConfigurationId, 64))
+                    .col(string_len(KubernetesAuthRole::AuthInstanceId, 64))
                     .col(string_len(KubernetesAuthRole::Name, 255))
                     .col(boolean(KubernetesAuthRole::Enabled))
                     .col(text(KubernetesAuthRole::BoundServiceAccountNames))
@@ -79,9 +82,9 @@ impl MigrationTrait for Migration {
                             .name("fk-k8role-k8")
                             .from(
                                 KubernetesAuthRole::Table,
-                                KubernetesAuthRole::AuthConfigurationId,
+                                KubernetesAuthRole::AuthInstanceId,
                             )
-                            .to(KubernetesAuth::Table, KubernetesAuth::Id)
+                            .to(KubernetesAuthInstance::Table, KubernetesAuthInstance::Id)
                             .on_delete(ForeignKeyAction::Cascade),
                     )
                     .foreign_key(
@@ -99,8 +102,8 @@ impl MigrationTrait for Migration {
                             .unique()
                             .nulls_not_distinct()
                             .name("idx-k8role-domain-name")
-                            .col(KubernetesAuth::DomainId)
-                            .col(KubernetesAuth::Name),
+                            .col(KubernetesAuthRole::DomainId)
+                            .col(KubernetesAuthRole::Name),
                     )
                     .to_owned(),
             )
@@ -113,14 +116,18 @@ impl MigrationTrait for Migration {
             .drop_table(Table::drop().table(KubernetesAuthRole::Table).to_owned())
             .await?;
         manager
-            .drop_table(Table::drop().table(KubernetesAuth::Table).to_owned())
+            .drop_table(
+                Table::drop()
+                    .table(KubernetesAuthInstance::Table)
+                    .to_owned(),
+            )
             .await?;
         Ok(())
     }
 }
 
 #[derive(DeriveIden)]
-enum KubernetesAuth {
+enum KubernetesAuthInstance {
     Table,
     Id,
     DomainId,
@@ -136,7 +143,7 @@ enum KubernetesAuthRole {
     Table,
     Id,
     DomainId,
-    AuthConfigurationId,
+    AuthInstanceId,
     Name,
     Enabled,
     BoundServiceAccountNames,

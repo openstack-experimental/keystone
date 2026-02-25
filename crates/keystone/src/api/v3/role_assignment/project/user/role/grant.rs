@@ -42,9 +42,9 @@ use crate::{
     path = "/projects/{project_id}/users/{user_id}/roles/{role_id}",
     operation_id = "/project/user/role:put",
     params(
-      ("role_id" = String, Path, description = "The role ID."),
-      ("project_id" = String, Path, description = "The project ID."),
-      ("user_id" = String, Path, description = "The user ID.")
+        ("role_id" = String, Path, description = "The role ID."),
+        ("project_id" = String, Path, description = "The project ID."),
+        ("user_id" = String, Path, description = "The user ID.")
     ),
     responses(
         (status = NO_CONTENT, description = "Grant is created."),
@@ -209,7 +209,7 @@ mod tests {
             .identity(identity_mock)
             .resource(resource_mock)
             .role(role_mock);
-        let state = get_mocked_state(provider_builder, true);
+        let state = get_mocked_state(provider_builder, true, None);
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
             .with_state(state.clone());
@@ -275,7 +275,7 @@ mod tests {
             .identity(identity_mock)
             .resource(resource_mock)
             .role(role_mock);
-        let state = get_mocked_state(provider_builder, false);
+        let state = get_mocked_state(provider_builder, false, None);
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
             .with_state(state.clone());
@@ -331,7 +331,7 @@ mod tests {
             .identity(identity_mock)
             .resource(resource_mock)
             .role(role_mock);
-        let state = get_mocked_state(provider_builder, true);
+        let state = get_mocked_state(provider_builder, true, None);
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
             .with_state(state.clone());
@@ -390,7 +390,7 @@ mod tests {
             .identity(identity_mock)
             .resource(resource_mock)
             .role(role_mock);
-        let state = get_mocked_state(provider_builder, true);
+        let state = get_mocked_state(provider_builder, true, None);
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
             .with_state(state.clone());
@@ -450,7 +450,7 @@ mod tests {
             .identity(identity_mock)
             .resource(resource_mock)
             .role(role_mock);
-        let state = get_mocked_state(provider_builder, true);
+        let state = get_mocked_state(provider_builder, true, None);
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
             .with_state(state.clone());

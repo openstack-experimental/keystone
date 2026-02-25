@@ -13,6 +13,7 @@ axum = { workspace = true, features = ["json"] }
 base64.workspace = true
 chrono = { workspace = true, features = ["serde"] }
 derive_builder.workspace = true
+secrecy = { workspace = true, features = ["serde"] }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

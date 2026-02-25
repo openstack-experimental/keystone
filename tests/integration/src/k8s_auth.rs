@@ -26,7 +26,7 @@ use openstack_keystone::provider::Provider;
 
 use crate::common::{bootstrap, get_isolated_database};
 
-mod config;
+mod instance;
 mod role;
 
 async fn get_state() -> Result<Arc<Service>, Report> {

@@ -3198,6 +3198,7 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "derive_builder",
+ "secrecy",
  "serde",
  "serde_json",
  "thiserror 2.0.18",

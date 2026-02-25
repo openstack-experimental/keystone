@@ -18,8 +18,8 @@ use tracing_test::traced_test;
 
 use openstack_keystone::k8s_auth::{K8sAuthApi, types::*};
 
-use super::super::config::create_k8s_auth_configuration;
 use super::super::get_state;
+use super::super::instance::create_k8s_auth_instance;
 use crate::token::token_restriction::create_token_restriction;
 
 #[traced_test]
@@ -27,9 +27,9 @@ use crate::token::token_restriction::create_token_restriction;
 async fn test_delete() -> Result<()> {
     let state = get_state().await?;
 
-    let k8s_conf = create_k8s_auth_configuration(
+    let k8s_conf = create_k8s_auth_instance(
         &state,
-        K8sAuthConfigurationCreate {
+        K8sAuthInstanceCreate {
             ca_cert: Some("ca".into()),
             disable_local_ca_jwt: Some(false),
             domain_id: "domain_a".into(),
@@ -54,7 +54,7 @@ async fn test_delete() -> Result<()> {
     )
     .await?;
     let sot = K8sAuthRoleCreate {
-        auth_configuration_id: k8s_conf.id.clone(),
+        auth_instance_id: k8s_conf.id.clone(),
         bound_audience: Some("aud".into()),
         bound_service_account_names: vec!["a".into(), "b".into()],
         bound_service_account_namespaces: vec!["na".into(), "nb".into()],
@@ -67,20 +67,20 @@ async fn test_delete() -> Result<()> {
     let res = state
         .provider
         .get_k8s_auth_provider()
-        .create_k8s_auth_role(&state, sot.clone())
+        .create_auth_role(&state, sot.clone())
         .await?;
 
     state
         .provider
         .get_k8s_auth_provider()
-        .delete_k8s_auth_role(&state, &res.id)
+        .delete_auth_role(&state, &res.id)
         .await?;
 
     assert!(
         state
             .provider
             .get_k8s_auth_provider()
-            .get_k8s_auth_role(&state, &uuid::Uuid::new_v4().to_string())
+            .get_auth_role(&state, &uuid::Uuid::new_v4().to_string())
             .await?
             .is_none()
     );

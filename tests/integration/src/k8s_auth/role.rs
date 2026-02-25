@@ -34,7 +34,7 @@ impl_deleter!(
     Service,
     K8sAuthRole,
     get_k8s_auth_provider,
-    delete_k8s_auth_role
+    delete_auth_role
 );
 
 pub async fn create_k8s_auth_role(
@@ -44,7 +44,7 @@ pub async fn create_k8s_auth_role(
     let res = state
         .provider
         .get_k8s_auth_provider()
-        .create_k8s_auth_role(state, data)
+        .create_auth_role(state, data)
         .await
         .unwrap();
     Ok(AsyncResourceGuard::new(res, state.clone()))

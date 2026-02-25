@@ -38,7 +38,7 @@ pub use super::id_mapping::Entity as IdMapping;
 pub use super::identity_provider::Entity as IdentityProvider;
 pub use super::idp_remote_ids::Entity as IdpRemoteIds;
 pub use super::implied_role::Entity as ImpliedRole;
-pub use super::kubernetes_auth::Entity as KubernetesAuth;
+pub use super::kubernetes_auth_instance::Entity as KubernetesAuthInstance;
 pub use super::kubernetes_auth_role::Entity as KubernetesAuthRole;
 pub use super::limit::Entity as Limit;
 pub use super::local_user::Entity as LocalUser;

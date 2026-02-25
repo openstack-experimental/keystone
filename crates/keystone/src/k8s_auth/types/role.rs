@@ -23,8 +23,8 @@ use crate::error::BuilderError;
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct K8sAuthRole {
-    /// ID of the K8s auth configuration this role belongs to.
-    pub auth_configuration_id: String,
+    /// ID of the K8s auth instance this role belongs to.
+    pub auth_instance_id: String,
 
     ///  Optional Audience claim to verify in the JWT.
     #[builder(default)]
@@ -58,8 +58,8 @@ pub struct K8sAuthRole {
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct K8sAuthRoleCreate {
-    /// ID of the K8s auth configuration this role belongs to.
-    pub auth_configuration_id: String,
+    /// ID of the K8s auth instance this role belongs to.
+    pub auth_instance_id: String,
 
     ///  Optional Audience claim to verify in the JWT.
     #[builder(default)]
@@ -123,8 +123,9 @@ pub struct K8sAuthRoleUpdate {
 #[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 #[builder(build_fn(error = "BuilderError"))]
 pub struct K8sAuthRoleListParameters {
-    /// K8s auth configuration id.
-    pub auth_configuration_id: Option<String>,
+    /// K8s auth instance id.
+    pub auth_instance_id: Option<String>,
+
     /// Domain id.
     pub domain_id: Option<String>,
     /// Name.

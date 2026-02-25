@@ -19,6 +19,8 @@ use openstack_keystone_api_types::Link;
 
 use crate::api::KeystoneApiError;
 use crate::api::types::ScopeProject;
+use crate::auth::AuthzInfo;
+use crate::common::types::Scope as ProviderScope;
 use crate::config::Config;
 use crate::keystone::ServiceState;
 use crate::resource::{
@@ -121,6 +123,41 @@ pub async fn find_project_from_scope(
         return Err(KeystoneApiError::ProjectIdOrName);
     };
     Ok(project)
+}
+
+/// Convert [ProviderScope] to [AuthzInfo].
+///
+/// # Arguments
+/// * `state`: The service state
+/// * `scope`: The scope to extract the AuthZ information from
+///
+/// # Returns
+/// * `Ok(AuthzInfo)`: The AuthZ information
+/// * `Err(KeystoneApiError)`: An error if the scope is not valid
+pub async fn get_authz_info(
+    state: &ServiceState,
+    scope: Option<&ProviderScope>,
+) -> Result<AuthzInfo, KeystoneApiError> {
+    let authz_info = match scope {
+        Some(ProviderScope::Project(scope)) => {
+            if let Some(project) = find_project_from_scope(state, &scope.into()).await? {
+                AuthzInfo::Project(project)
+            } else {
+                return Err(KeystoneApiError::Unauthorized(None));
+            }
+        }
+        Some(ProviderScope::Domain(scope)) => {
+            if let Ok(domain) = get_domain(state, scope.id.as_ref(), scope.name.as_ref()).await {
+                AuthzInfo::Domain(domain)
+            } else {
+                return Err(KeystoneApiError::Unauthorized(None));
+            }
+        }
+        Some(ProviderScope::System(_scope)) => todo!(),
+        None => AuthzInfo::Unscoped,
+    };
+    authz_info.validate()?;
+    Ok(authz_info)
 }
 
 /// Prepare the links for the paginated resource collection.

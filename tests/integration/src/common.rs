@@ -135,7 +135,7 @@ pub async fn setup_schema(db: &DbConn) -> Result<()> {
 
     create_table(db, &schema, TokenRestriction).await?;
     create_table(db, &schema, TokenRestrictionRoleAssociation).await?;
-    create_table(db, &schema, KubernetesAuth).await?;
+    create_table(db, &schema, KubernetesAuthInstance).await?;
     create_table(db, &schema, KubernetesAuthRole).await?;
 
     Ok(())

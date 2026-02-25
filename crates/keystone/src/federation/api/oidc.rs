@@ -31,6 +31,7 @@ use openidconnect::{
 use crate::api::v4::auth::token::types::TokenResponse as KeystoneTokenResponse;
 use crate::api::{
     KeystoneApiError,
+    common::get_authz_info,
     types::{Catalog, CatalogService},
 };
 use crate::auth::{AuthenticatedInfo, AuthenticationError};
@@ -46,7 +47,7 @@ use crate::identity::types::{Group, GroupCreate, GroupListParameters};
 use crate::keystone::ServiceState;
 use crate::token::TokenApi;
 
-use super::common::{get_authz_info, map_user_data, validate_bound_claims};
+use super::common::{map_user_data, validate_bound_claims};
 
 pub(super) fn openapi_router() -> OpenApiRouter<ServiceState> {
     OpenApiRouter::new().routes(routes!(callback))
@@ -65,11 +66,14 @@ pub(super) fn openapi_router() -> OpenApiRouter<ServiceState> {
     path = "/oidc/callback",
     operation_id = "/federation/oidc:callback",
     responses(
-        (status = OK, description = "Authentication Token object", body = KeystoneTokenResponse,
-        headers(
-            ("x-subject-token" = String, description = "Keystone token"),
+        (
+            status = OK,
+            description = "Authentication Token object",
+            body = KeystoneTokenResponse,
+            headers(
+                ("x-subject-token" = String, description = "Keystone token"),
+            ),
         ),
-    ),
     ),
     security(("oauth2" = ["openid"])),
     tag="identity_providers"

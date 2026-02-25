@@ -122,11 +122,12 @@ async fn version(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use sea_orm::DatabaseConnection;
     use std::sync::Arc;
 
     use crate::config::Config;
+    use crate::identity::types::UserResponseBuilder;
     use crate::keystone::{Service, ServiceState};
     use crate::policy::{MockPolicy, MockPolicyFactory, PolicyError, PolicyEvaluationResult};
     use crate::provider::ProviderBuilder;
@@ -135,11 +136,21 @@ mod tests {
     pub fn get_mocked_state(
         provider_builder: ProviderBuilder,
         policy_allowed: bool,
+        policy_allowed_see_other_domains: Option<bool>,
     ) -> ServiceState {
         let mut token_mock = MockTokenProvider::default();
         token_mock.expect_validate_token().returning(|_, _, _, _| {
             Ok(Token::Unscoped(UnscopedPayload {
                 user_id: "bar".into(),
+                user: Some(
+                    UserResponseBuilder::default()
+                        .id("bar")
+                        .domain_id("udid")
+                        .enabled(true)
+                        .name("name")
+                        .build()
+                        .unwrap(),
+                ),
                 ..Default::default()
             }))
         });
@@ -158,9 +169,15 @@ mod tests {
         if policy_allowed {
             policy_factory_mock.expect_instantiate().returning(move || {
                 let mut policy_mock = MockPolicy::default();
-                policy_mock
-                    .expect_enforce()
-                    .returning(|_, _, _, _| Ok(PolicyEvaluationResult::allowed()));
+                if policy_allowed_see_other_domains.is_some_and(|x| x) {
+                    policy_mock
+                        .expect_enforce()
+                        .returning(|_, _, _, _| Ok(PolicyEvaluationResult::allowed_admin()));
+                } else {
+                    policy_mock
+                        .expect_enforce()
+                        .returning(|_, _, _, _| Ok(PolicyEvaluationResult::allowed()));
+                }
                 Ok(policy_mock)
             });
         } else {
