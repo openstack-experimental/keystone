@@ -14,9 +14,10 @@
 
 //! Test role assignment revocation.
 
-use super::get_state;
-use crate::common::{create_role, create_user};
 use eyre::Result;
+use tracing_test::traced_test;
+use uuid::Uuid;
+
 use openstack_keystone::application_credential::ApplicationCredentialApi;
 use openstack_keystone::application_credential::types::*;
 use openstack_keystone::assignment::{AssignmentApi, types::*};
@@ -25,8 +26,10 @@ use openstack_keystone::keystone::ServiceState;
 use openstack_keystone::resource::types::ProjectBuilder;
 use openstack_keystone::role::types::*;
 use openstack_keystone::token::{TokenApi, TokenProviderError};
-use tracing_test::traced_test;
-use uuid::Uuid;
+
+use super::get_state;
+use crate::common::{create_role, create_user};
+
 async fn grant_exists(
     state: &ServiceState,
     user_id: &str,
@@ -106,9 +109,11 @@ async fn test_revoke_user_project_grant_auth_impact() -> Result<()> {
     let (state, _tmp) = get_state().await?;
 
     let user = create_user(&state, Some("user_a")).await?;
+    // Create two roles: one that will be granted and revoked, and another to confirm that revocation is specific
     create_role(&state, "role_revoke_auth").await?;
+    create_role(&state, "role_exist_auth").await?;
 
-    // Grant role to user on project
+    // Grant first role that will be revoked
     let grant = state
         .provider
         .get_assignment_provider()
@@ -123,6 +128,19 @@ async fn test_revoke_user_project_grant_auth_impact() -> Result<()> {
         "Grant should exist after creation"
     );
 
+    // Grant second role that will remain unaffected
+    let _ = state
+        .provider
+        .get_assignment_provider()
+        .create_grant(
+            &state,
+            AssignmentCreate::user_project(&user.id, "project_a", "role_exist_auth", false),
+        )
+        .await?;
+    assert!(
+        grant_exists(&state, &user.id, "project_a", "role_exist_auth", true).await?,
+        "Grant should exist after creation"
+    );
     // Create application credential and issue a token BEFORE revocation
     let cred: ApplicationCredentialCreateResponse = state
         .provider
@@ -133,11 +151,18 @@ async fn test_revoke_user_project_grant_auth_impact() -> Result<()> {
                 access_rules: None,
                 name: Uuid::new_v4().to_string(),
                 project_id: "project_a".into(),
-                roles: vec![Role {
-                    id: "role_revoke_auth".into(),
-                    name: "role_revoke_auth".into(),
-                    ..Default::default()
-                }],
+                roles: vec![
+                    Role {
+                        id: "role_revoke_auth".into(),
+                        name: "role_revoke_auth".into(),
+                        ..Default::default()
+                    },
+                    Role {
+                        id: "role_exist_auth".into(),
+                        name: "role_exist_auth".into(),
+                        ..Default::default()
+                    },
+                ],
                 user_id: user.id.clone(),
                 ..Default::default()
             },
@@ -208,17 +233,16 @@ async fn test_revoke_user_project_grant_auth_impact() -> Result<()> {
         .get_token_provider()
         .encode_token(&post_revoke_token)?;
 
-    assert!(
-        matches!(
-            state
-                .provider
-                .get_token_provider()
-                .validate_token(&state, &post_revoke_encoded, None, None)
-                .await,
-            Err(TokenProviderError::ActorHasNoRolesOnTarget)
-        ),
-        "New token after revocation should fail validation"
-    );
+    let validated = state
+        .provider
+        .get_token_provider()
+        .validate_token(&state, &post_revoke_encoded, None, None)
+        .await?;
+
+    let roles = validated.roles().expect("Token should have roles");
+
+    assert!(roles.iter().any(|r| r.id == "role_exist_auth"));
+    assert!(!roles.iter().any(|r| r.id == "role_revoke_auth"));
 
     // CHECK 3: existing auth (issued before revocation) is no longer accepted
     assert!(
@@ -228,7 +252,7 @@ async fn test_revoke_user_project_grant_auth_impact() -> Result<()> {
                 .get_token_provider()
                 .validate_token(&state, &pre_revoke_encoded, None, None)
                 .await,
-            Err(TokenProviderError::ActorHasNoRolesOnTarget)
+            Err(TokenProviderError::TokenRevoked)
         ),
         "Pre-revocation token should fail validation after grant is revoked"
     );

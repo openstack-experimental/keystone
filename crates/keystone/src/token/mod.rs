@@ -559,6 +559,8 @@ impl TokenProvider {
                         .map(|x| x.role_id.clone())
                         .collect();
                     // Filter out roles referred in the AC that the user does not have anymore.
+                    // NOTE: Roles removed here must still be considered during the revocation
+                    // check in is_token_revoked otherwise revocation event check can not detect the revocation
                     ac.roles.retain(|role| user_role_ids.contains(&role.id));
                     if ac.roles.is_empty() {
                         return Err(TokenProviderError::ActorHasNoRolesOnTarget);
