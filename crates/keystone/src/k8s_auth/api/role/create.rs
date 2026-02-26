@@ -33,7 +33,7 @@ use crate::policy::Policy;
 /// Create K8s auth role.
 #[utoipa::path(
     post,
-    path = "/instance/{instance_id}/role",
+    path = "/instances/{instance_id}/roles",
     operation_id = "/k8s_auth/instance/role:create",
     params(
       ("instance_id" = String, Path, description = "The ID of the k8s auth instance"),
@@ -59,7 +59,7 @@ pub(super) async fn create_nested(
 ) -> Result<impl IntoResponse, KeystoneApiError> {
     req.validate()?;
 
-    let config = state
+    let instance = state
         .provider
         .get_k8s_auth_provider()
         .get_auth_instance(&state, &instance_id)
@@ -75,7 +75,7 @@ pub(super) async fn create_nested(
         .enforce(
             "identity/k8s_auth/role/create",
             &user_auth,
-            serde_json::to_value(json!({"role": req.role, "instance": config}))?,
+            serde_json::to_value(json!({"role": req.role, "instance": instance}))?,
             None,
         )
         .await?;
@@ -83,7 +83,7 @@ pub(super) async fn create_nested(
     let res = state
         .provider
         .get_k8s_auth_provider()
-        .create_auth_role(&state, (req, instance_id, config.domain_id).into())
+        .create_auth_role(&state, (req, instance_id, instance.domain_id).into())
         .await?;
     Ok((StatusCode::CREATED, res).into_response())
 }
@@ -165,7 +165,7 @@ mod tests {
                 Request::builder()
                     .method("POST")
                     .header(header::CONTENT_TYPE, "application/json")
-                    .uri("/instance/cid/role")
+                    .uri("/instances/cid/roles")
                     .header("x-auth-token", "foo")
                     .body(Body::from(serde_json::to_string(&req).unwrap()))
                     .unwrap(),

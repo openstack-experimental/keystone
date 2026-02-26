@@ -22,7 +22,7 @@ use validator::Validate;
 use crate::error::BuilderError;
 
 /// K8s authentication request.
-#[derive(Builder, Clone, Debug, Default, Deserialize, Serialize, ToSchema, Validate)]
+#[derive(Builder, Clone, Debug, Deserialize, Serialize, ToSchema, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct K8sAuthRequest {

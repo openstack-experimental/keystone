@@ -11,6 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+use tracing::error;
 
 use crate::api::error::KeystoneApiError;
 use crate::k8s_auth::K8sAuthProviderError;
@@ -19,27 +20,31 @@ use crate::k8s_auth::K8sAuthProviderError;
 /// the expected
 impl From<K8sAuthProviderError> for KeystoneApiError {
     fn from(source: K8sAuthProviderError) -> Self {
+        error!(
+            "Error happened during request k8s_auth processing: {:#?}",
+            source
+        );
         match source {
-            K8sAuthProviderError::AudienceMismatch => Self::Forbidden,
-            K8sAuthProviderError::CaCertificateUnknown => Self::Forbidden,
-            K8sAuthProviderError::AuthInstanceNotActive(..) => Self::Forbidden,
+            K8sAuthProviderError::AudienceMismatch => Self::forbidden(source),
+            K8sAuthProviderError::CaCertificateUnknown => Self::forbidden(source),
+            K8sAuthProviderError::AuthInstanceNotActive(..) => Self::forbidden(source),
             K8sAuthProviderError::AuthInstanceNotFound(x) => Self::NotFound {
                 resource: "k8s auth configuration".into(),
                 identifier: x,
             },
             K8sAuthProviderError::Conflict(x) => Self::Conflict(x),
-            K8sAuthProviderError::FailedBoundServiceAccountName(..) => Self::Forbidden,
-            K8sAuthProviderError::FailedBoundServiceAccountNamespace(..) => Self::Forbidden,
-            K8sAuthProviderError::Jwt { .. } => Self::Forbidden,
-            K8sAuthProviderError::ExpiredToken => Self::Forbidden,
-            K8sAuthProviderError::InsecureAlgorithm => Self::Forbidden,
-            K8sAuthProviderError::InvalidToken => Self::Forbidden,
+            K8sAuthProviderError::FailedBoundServiceAccountName(..) => Self::forbidden(source),
+            K8sAuthProviderError::FailedBoundServiceAccountNamespace(..) => Self::forbidden(source),
+            K8sAuthProviderError::Jwt { .. } => Self::forbidden(source),
+            K8sAuthProviderError::ExpiredToken => Self::forbidden(source),
+            K8sAuthProviderError::InsecureAlgorithm => Self::forbidden(source),
+            K8sAuthProviderError::InvalidToken => Self::forbidden(source),
             K8sAuthProviderError::RoleNotFound(x) => Self::NotFound {
                 resource: "k8s auth role".into(),
                 identifier: x,
             },
-            K8sAuthProviderError::RoleNotActive(..) => Self::Forbidden,
-            K8sAuthProviderError::RoleInstanceOwnershipMismatch(..) => Self::Forbidden,
+            K8sAuthProviderError::RoleNotActive(..) => Self::forbidden(source),
+            K8sAuthProviderError::RoleInstanceOwnershipMismatch(..) => Self::forbidden(source),
             K8sAuthProviderError::TokenRestrictionNotFound(x) => Self::NotFound {
                 resource: "token restriction".into(),
                 identifier: x,

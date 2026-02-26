@@ -252,7 +252,6 @@ impl K8sAuthProvider {
             domain_id: Some(instance.domain_id.clone()),
             name: Some(req.role_name.clone()),
             auth_instance_id: Some(req.auth_instance_id.clone()),
-            ..Default::default()
         };
         let role = self
             .list_auth_roles(state, &role_list_params)
@@ -273,6 +272,7 @@ impl K8sAuthProvider {
         let token_review_response = self
             .query_k8s_token_review(&req.jwt, &instance, &role)
             .await?;
+        debug!("The token review response is {:?}", token_review_response);
         self.check_k8s_token_review_response(token_review_response, &role)?;
 
         // Find the token restriction.

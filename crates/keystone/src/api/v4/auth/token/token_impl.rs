@@ -11,6 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+use validator::Validate;
 
 use crate::api::common;
 use crate::api::error::KeystoneApiError;
@@ -198,7 +199,9 @@ impl ProviderToken {
                     .build()?,
             );
         }
-        Ok(response.build()?)
+        let token = response.build()?;
+        token.validate()?;
+        Ok(token)
     }
 }
 
@@ -482,6 +485,8 @@ mod tests {
             trust: Some(Trust {
                 id: "trust_id".into(),
                 impersonation: false,
+                trustor_user_id: "trustor".into(),
+                trustee_user_id: "trustee".into(),
                 roles: Some(vec![ProviderRole {
                     id: "rid".into(),
                     name: "role_name".into(),

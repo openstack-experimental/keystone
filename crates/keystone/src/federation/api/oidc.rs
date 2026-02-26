@@ -326,7 +326,7 @@ pub async fn callback(
         .get_token_provider()
         .expand_token_information(&state, &token)
         .await
-        .map_err(|_| KeystoneApiError::Forbidden)?;
+        .map_err(KeystoneApiError::forbidden)?;
 
     let mut api_token = KeystoneTokenResponse {
         token: token.build_api_token_v4(&state).await?,

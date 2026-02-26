@@ -18,11 +18,13 @@ use tracing::error;
 use uuid::Uuid;
 
 mod create;
+mod delete;
 mod get;
 mod list;
 mod tree;
 
 pub use create::create;
+pub use delete::delete;
 pub use get::get_project;
 pub use get::get_project_by_name;
 pub use list::list;

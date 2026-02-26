@@ -4,4 +4,4 @@ doc
 .gitignore
 .github/
 tools/
-target/
+**/target/

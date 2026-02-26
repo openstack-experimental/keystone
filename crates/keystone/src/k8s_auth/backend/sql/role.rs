@@ -36,14 +36,12 @@ impl From<kubernetes_auth_role::Model> for K8sAuthRole {
             bound_audience: value.bound_audience,
             bound_service_account_names: value
                 .bound_service_account_names
-                .split(',')
-                .map(String::from)
-                .collect(),
+                .map(|x| x.split(",").map(String::from).collect())
+                .unwrap_or_default(),
             bound_service_account_namespaces: value
                 .bound_service_account_namespaces
-                .split(',')
-                .map(String::from)
-                .collect(),
+                .map(|x| x.split(",").map(String::from).collect())
+                .unwrap_or_default(),
             domain_id: value.domain_id,
             enabled: value.enabled,
             id: value.id,
@@ -64,8 +62,19 @@ impl From<K8sAuthRoleCreate> for kubernetes_auth_role::ActiveModel {
         Self {
             auth_instance_id: Set(value.auth_instance_id),
             bound_audience: value.bound_audience.map(Set).unwrap_or(NotSet).into(),
-            bound_service_account_names: Set(value.bound_service_account_names.join(",")),
-            bound_service_account_namespaces: Set(value.bound_service_account_namespaces.join(",")),
+            // vec![] -> None
+            bound_service_account_names: Some(value.bound_service_account_names.join(","))
+                .filter(|x| !x.is_empty())
+                .map(Set)
+                .unwrap_or(NotSet)
+                .into(),
+            bound_service_account_namespaces: Some(
+                value.bound_service_account_namespaces.join(","),
+            )
+            .filter(|x| !x.is_empty())
+            .map(Set)
+            .unwrap_or(NotSet)
+            .into(),
             domain_id: Set(value.domain_id),
             enabled: Set(value.enabled),
             id: value
@@ -89,11 +98,15 @@ impl kubernetes_auth_role::Model {
         if let Some(val) = &update.bound_audience {
             new.bound_audience = Set(Some(val.into()));
         }
-        if let Some(val) = update.bound_service_account_names {
-            new.bound_service_account_names = Set(val.join(","));
+        if let Some(val) = update.bound_service_account_names
+            && !val.is_empty()
+        {
+            new.bound_service_account_names = Set(Some(val.join(",")));
         }
-        if let Some(val) = update.bound_service_account_namespaces {
-            new.bound_service_account_namespaces = Set(val.join(","));
+        if let Some(val) = update.bound_service_account_namespaces
+            && !val.is_empty()
+        {
+            new.bound_service_account_namespaces = Set(Some(val.join(",")));
         }
         if let Some(val) = update.enabled {
             new.enabled = Set(val);
@@ -120,8 +133,8 @@ pub(crate) mod tests {
         kubernetes_auth_role::Model {
             auth_instance_id: "cid".into(),
             bound_audience: Some("aud".into()),
-            bound_service_account_names: "a,b".into(),
-            bound_service_account_namespaces: "na,nb".into(),
+            bound_service_account_names: Some("a,b".into()),
+            bound_service_account_namespaces: Some("na,nb".into()),
             domain_id: "did".into(),
             enabled: true,
             id: id.into(),
@@ -147,8 +160,32 @@ pub(crate) mod tests {
             K8sAuthRole::from(kubernetes_auth_role::Model {
                 auth_instance_id: "cid".into(),
                 bound_audience: Some("aud".into()),
-                bound_service_account_names: "a,b".into(),
-                bound_service_account_namespaces: "na,nb".into(),
+                bound_service_account_names: Some("a,b".into()),
+                bound_service_account_namespaces: Some("na,nb".into()),
+                domain_id: "did".into(),
+                enabled: true,
+                id: "id".into(),
+                name: "name".into(),
+                token_restriction_id: "trid".into(),
+            })
+        );
+        assert_eq!(
+            K8sAuthRole {
+                auth_instance_id: "cid".into(),
+                bound_audience: Some("aud".into()),
+                bound_service_account_names: vec![],
+                bound_service_account_namespaces: vec![],
+                domain_id: "did".into(),
+                enabled: true,
+                id: "id".into(),
+                name: "name".into(),
+                token_restriction_id: "trid".into(),
+            },
+            K8sAuthRole::from(kubernetes_auth_role::Model {
+                auth_instance_id: "cid".into(),
+                bound_audience: Some("aud".into()),
+                bound_service_account_names: None,
+                bound_service_account_namespaces: None,
                 domain_id: "did".into(),
                 enabled: true,
                 id: "id".into(),
@@ -164,8 +201,8 @@ pub(crate) mod tests {
             kubernetes_auth_role::ActiveModel {
                 auth_instance_id: Set("cid".into()),
                 bound_audience: Set(Some("aud".into())),
-                bound_service_account_names: Set("a,b".into()),
-                bound_service_account_namespaces: Set("na,nb".into()),
+                bound_service_account_names: Set(Some("a,b".into())),
+                bound_service_account_namespaces: Set(Some("na,nb".into())),
                 domain_id: Set("did".into()),
                 enabled: Set(true),
                 id: Set("id".into()),
@@ -177,6 +214,30 @@ pub(crate) mod tests {
                 bound_audience: Some("aud".into()),
                 bound_service_account_names: vec!["a".into(), "b".into()],
                 bound_service_account_namespaces: vec!["na".into(), "nb".into()],
+                domain_id: "did".into(),
+                enabled: true,
+                id: Some("id".into()),
+                name: "name".into(),
+                token_restriction_id: "trid".into(),
+            },)
+        );
+        assert_eq!(
+            kubernetes_auth_role::ActiveModel {
+                auth_instance_id: Set("cid".into()),
+                bound_audience: Set(Some("aud".into())),
+                bound_service_account_names: NotSet,
+                bound_service_account_namespaces: NotSet,
+                domain_id: Set("did".into()),
+                enabled: Set(true),
+                id: Set("id".into()),
+                name: Set("name".into()),
+                token_restriction_id: Set("trid".into()),
+            },
+            kubernetes_auth_role::ActiveModel::from(K8sAuthRoleCreate {
+                auth_instance_id: "cid".into(),
+                bound_audience: Some("aud".into()),
+                bound_service_account_names: vec![],
+                bound_service_account_namespaces: vec![],
                 domain_id: "did".into(),
                 enabled: true,
                 id: Some("id".into()),
@@ -207,8 +268,8 @@ pub(crate) mod tests {
         let sot = kubernetes_auth_role::Model {
             auth_instance_id: "cid".into(),
             bound_audience: Some("aud".into()),
-            bound_service_account_names: "a,b".into(),
-            bound_service_account_namespaces: "na,nb".into(),
+            bound_service_account_names: Some("a,b".into()),
+            bound_service_account_namespaces: Some("na,nb".into()),
             domain_id: "did".into(),
             enabled: true,
             id: "id".into(),
@@ -224,8 +285,14 @@ pub(crate) mod tests {
             token_restriction_id: Some("new_trid".into()),
         });
         assert_eq!(Set(Some("new_aud".into())), update.bound_audience);
-        assert_eq!(Set("c".into()), update.bound_service_account_names);
-        assert_eq!(Set("nc".into()), update.bound_service_account_namespaces);
+        assert_eq!(
+            Set(Some("c".to_string())),
+            update.bound_service_account_names
+        );
+        assert_eq!(
+            Set(Some("nc".to_string())),
+            update.bound_service_account_namespaces
+        );
         assert_eq!(Unchanged("did".into()), update.domain_id);
         assert_eq!(Unchanged("id".into()), update.id);
         assert_eq!(Set(true), update.enabled);

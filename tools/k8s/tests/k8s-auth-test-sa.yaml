@@ -3,6 +3,8 @@ kind: ServiceAccount
 metadata:
   name: keystone-k8s-auth-test-sa
   namespace: default
+imagePullSecrets:
+  - name: ghcr-pull-secret
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole

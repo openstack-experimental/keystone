@@ -32,7 +32,7 @@ use crate::policy::Policy;
 /// List available K8s auth roles belonging to the auth instance.
 #[utoipa::path(
     get,
-    path = "/instance/{instance_id}/role/",
+    path = "/instances/{instance_id}/roles",
     operation_id = "/k8s_auth/instance/role:list",
     params(
         K8sAuthRoleListParametersNested,
@@ -103,7 +103,7 @@ pub(super) async fn list_nested(
 /// List available K8s auth roles.
 #[utoipa::path(
     get,
-    path = "/role/",
+    path = "/roles",
     operation_id = "/k8s_auth/role:list",
     params(
         K8sAuthRoleListParameters
@@ -139,14 +139,24 @@ pub(super) async fn list(
         )
         .await?;
 
-    let mut params = provider_types::K8sAuthRoleListParameters::default();
-    params.auth_instance_id = query.auth_instance_id;
-    params.name = query.name;
-    if !res.can_see_other_domain_resources.is_some_and(|x| x) {
-        params.domain_id = user_auth.user().as_ref().map(|val| val.domain_id.clone())
-    } else {
-        params.domain_id = query.domain_id;
-    }
+    let params = provider_types::K8sAuthRoleListParameters {
+        auth_instance_id: query.auth_instance_id,
+        name: query.name,
+        domain_id: if !res.can_see_other_domain_resources.is_some_and(|x| x) {
+            user_auth.user().as_ref().map(|val| val.domain_id.clone())
+        } else {
+            query.domain_id
+        },
+    };
+    //let mut params = provider_types::K8sAuthRoleListParameters::default();
+    //params.auth_instance_id = query.auth_instance_id;
+    //params.name = query.name;
+    //if !res.can_see_other_domain_resources.is_some_and(|x| x) {
+    //    params.domain_id = user_auth.user().as_ref().map(|val|
+    // val.domain_id.clone())
+    //} else {
+    //    params.domain_id = query.domain_id;
+    //}
 
     let roles: Vec<K8sAuthRole> = state
         .provider
@@ -214,7 +224,7 @@ mod tests {
             .as_service()
             .oneshot(
                 Request::builder()
-                    .uri("/instance/cid/role")
+                    .uri("/instances/cid/roles")
                     .header("x-auth-token", "foo")
                     .body(Body::empty())
                     .unwrap(),
@@ -245,7 +255,7 @@ mod tests {
             .as_service()
             .oneshot(
                 Request::builder()
-                    .uri("/role/")
+                    .uri("/roles")
                     .header("x-auth-token", "foo")
                     .body(Body::empty())
                     .unwrap(),
@@ -283,7 +293,6 @@ mod tests {
                     auth_instance_id: Some("cid".into()),
                     domain_id: Some("udid".into()),
                     name: Some("name".into()),
-                    ..Default::default()
                 } == *qp
             })
             .returning(|_, _| {
@@ -333,7 +342,7 @@ mod tests {
             .as_service()
             .oneshot(
                 Request::builder()
-                    .uri("/instance/cid/role/?name=name")
+                    .uri("/instances/cid/roles?name=name")
                     .header("x-auth-token", "foo")
                     .body(Body::empty())
                     .unwrap(),
@@ -351,7 +360,7 @@ mod tests {
             .as_service()
             .oneshot(
                 Request::builder()
-                    .uri("/role/?name=name")
+                    .uri("/roles?name=name")
                     .header("x-auth-token", "foo")
                     .body(Body::empty())
                     .unwrap(),

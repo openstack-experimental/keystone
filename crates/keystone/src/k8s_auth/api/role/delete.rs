@@ -30,7 +30,7 @@ use crate::policy::Policy;
 /// Delete k8s auth role of an instance.
 #[utoipa::path(
     delete,
-    path = "/instance/{instance_id}/role/{id}",
+    path = "/instances/{instance_id}/roles/{id}",
     operation_id = "/k8s_auth/instance/role:delete",
     params(K8sAuthRolePathParams),
     responses(
@@ -84,7 +84,7 @@ pub(super) async fn remove_nested(
 /// Delete k8s auth role.
 #[utoipa::path(
     delete,
-    path = "/role/{id}",
+    path = "/roles/{id}",
     operation_id = "/k8s_auth/role:delete",
     params(
       ("id" = String, Path, description = "The ID of the k8s auth role")
@@ -193,7 +193,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .method("DELETE")
-                    .uri("/instance/cid/role/foo")
+                    .uri("/instances/cid/roles/foo")
                     .header("x-auth-token", "foo")
                     .body(Body::empty())
                     .unwrap(),
@@ -213,7 +213,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .method("DELETE")
-                    .uri("/instance/cid/role/bar")
+                    .uri("/instances/cid/roles/bar")
                     .header("x-auth-token", "foo")
                     .body(Body::empty())
                     .unwrap(),
@@ -228,7 +228,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .method("DELETE")
-                    .uri("/role/foo")
+                    .uri("/roles/foo")
                     .header("x-auth-token", "foo")
                     .body(Body::empty())
                     .unwrap(),
@@ -248,7 +248,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .method("DELETE")
-                    .uri("/role/bar")
+                    .uri("/roles/bar")
                     .header("x-auth-token", "foo")
                     .body(Body::empty())
                     .unwrap(),

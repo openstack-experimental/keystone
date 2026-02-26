@@ -75,21 +75,6 @@ spec:
           ports:
             - containerPort: 8181
               name: http
-          livenessProbe:
-            failureThreshold: 3
-            httpGet:
-              path: /
-              port: 8181
-              scheme: HTTP
-          readinessProbe:
-            failureThreshold: 3
-            httpGet:
-              path: /
-              port: 8181
-              scheme: HTTP
-            periodSeconds: 10
-            successThreshold: 1
-            timeoutSeconds: 1
 
       volumes:
         - name: config

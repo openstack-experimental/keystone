@@ -108,6 +108,16 @@ impl ResourceApi for ResourceProvider {
         self.backend_driver.create_project(state, new_project).await
     }
 
+    /// Delete a project by the ID.
+    #[tracing::instrument(level = "info", skip(self, state))]
+    async fn delete_project<'a>(
+        &self,
+        state: &ServiceState,
+        id: &'a str,
+    ) -> Result<(), ResourceProviderError> {
+        self.backend_driver.delete_project(state, id).await
+    }
+
     /// Get single domain.
     #[tracing::instrument(level = "info", skip(self, state))]
     async fn get_domain<'a>(

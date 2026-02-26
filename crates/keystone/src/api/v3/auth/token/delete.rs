@@ -89,7 +89,7 @@ pub(super) async fn delete(
         .get_revoke_provider()
         .revoke_token(&state, &token)
         .await
-        .map_err(|_| KeystoneApiError::Forbidden)?;
+        .map_err(KeystoneApiError::forbidden)?;
 
     Ok((StatusCode::NO_CONTENT).into_response())
 }

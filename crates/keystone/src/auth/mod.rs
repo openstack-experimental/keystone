@@ -35,9 +35,13 @@ use crate::trust::types::Trust;
 
 #[derive(Error, Debug)]
 pub enum AuthenticationError {
-    /// Token renewal is forbidden.
-    #[error("Token renewal (getting token from token) is prohibited.")]
-    TokenRenewalForbidden,
+    /// Domain is disabled.
+    #[error("The domain is disabled.")]
+    DomainDisabled(String),
+
+    /// Project is disabled.
+    #[error("The project is disabled.")]
+    ProjectDisabled(String),
 
     /// Structures builder error.
     #[error(transparent)]
@@ -46,6 +50,10 @@ pub enum AuthenticationError {
         #[from]
         source: BuilderError,
     },
+
+    /// Token renewal is forbidden.
+    #[error("Token renewal (getting token from token) is prohibited.")]
+    TokenRenewalForbidden,
 
     /// Unauthorized.
     #[error("The request you have made requires authentication.")]
@@ -179,12 +187,12 @@ impl AuthzInfo {
         match self {
             AuthzInfo::Domain(domain) => {
                 if !domain.enabled {
-                    return Err(AuthenticationError::Unauthorized);
+                    return Err(AuthenticationError::DomainDisabled(domain.id.clone()));
                 }
             }
             AuthzInfo::Project(project) => {
                 if !project.enabled {
-                    return Err(AuthenticationError::Unauthorized);
+                    return Err(AuthenticationError::ProjectDisabled(project.id.clone()));
                 }
             }
             AuthzInfo::System => {}
@@ -282,7 +290,7 @@ mod tests {
             enabled: false,
             ..Default::default()
         });
-        if let Err(AuthenticationError::Unauthorized) = authz.validate() {
+        if let Err(AuthenticationError::ProjectDisabled(..)) = authz.validate() {
         } else {
             panic!("should fail when project is not enabled");
         }
@@ -309,7 +317,7 @@ mod tests {
             enabled: false,
             ..Default::default()
         });
-        if let Err(AuthenticationError::Unauthorized) = authz.validate() {
+        if let Err(AuthenticationError::DomainDisabled(..)) = authz.validate() {
         } else {
             panic!("should fail when domain is not enabled");
         }

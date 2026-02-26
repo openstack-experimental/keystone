@@ -41,6 +41,13 @@ mock! {
             project: ProjectCreate,
         ) -> Result<Project, ResourceProviderError>;
 
+        /// Delete a project by the ID.
+        async fn delete_project<'a>(
+            &self,
+            state: &ServiceState,
+            id: &'a str,
+        ) -> Result<(), ResourceProviderError>;
+
         async fn get_domain<'a>(
             &self,
             state: &ServiceState,

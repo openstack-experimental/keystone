@@ -44,6 +44,10 @@ pub enum ResourceProviderError {
         source: crate::error::BuilderError,
     },
 
+    /// Project not found.
+    #[error("project {0} not found")]
+    ProjectNotFound(String),
+
     /// Unsupported driver.
     #[error("unsupported driver {0}")]
     UnsupportedDriver(String),

@@ -27,7 +27,7 @@ use crate::Link;
 use crate::error::BuilderError;
 
 /// K8s authentication instance.
-#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct K8sAuthInstance {
@@ -71,7 +71,7 @@ pub struct K8sAuthInstanceResponse {
 }
 
 /// New K8s authentication instance.
-#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct K8sAuthInstanceCreate {
@@ -148,7 +148,7 @@ pub struct K8sAuthInstanceUpdateRequest {
 }
 
 /// List of K8s auth instances.
-#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct K8sAuthInstanceList {
     /// Collection of k8s auth instance objects.
     #[validate(nested)]

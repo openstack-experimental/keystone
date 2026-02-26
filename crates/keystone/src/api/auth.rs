@@ -33,6 +33,7 @@ where
 {
     type Rejection = KeystoneApiError;
 
+    #[tracing::instrument(skip(state), err)]
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
         let auth_header = parts
             .headers
@@ -43,7 +44,7 @@ where
             auth_header
         } else {
             debug!("No supported information has been provided.");
-            return Err(KeystoneApiError::Unauthorized(None))?;
+            return Err(KeystoneApiError::UnauthorizedNoContext)?;
         };
 
         let state = Arc::from_ref(state);
@@ -54,7 +55,7 @@ where
             .validate_token(&state, auth_header, Some(false), None)
             .await
             .inspect_err(|e| error!("{:#?}", e))
-            .map_err(|_| KeystoneApiError::Unauthorized(None))?;
+            .map_err(|_| KeystoneApiError::UnauthorizedNoContext)?;
 
         Ok(Self(token))
     }

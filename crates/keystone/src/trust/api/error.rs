@@ -19,10 +19,10 @@ impl From<TrustProviderError> for KeystoneApiError {
     fn from(source: TrustProviderError) -> Self {
         match source {
             TrustProviderError::Conflict(x) => Self::Conflict(x),
-            TrustProviderError::ExpirationImpossible => Self::Forbidden,
-            TrustProviderError::RedelegatedRolesNotAvailable => Self::Forbidden,
-            TrustProviderError::RedelegationDeepnessExceed { .. } => Self::Forbidden,
-            TrustProviderError::RemainingUsesExceed => Self::Forbidden,
+            TrustProviderError::ExpirationImpossible => Self::forbidden(source),
+            TrustProviderError::RedelegatedRolesNotAvailable => Self::forbidden(source),
+            TrustProviderError::RedelegationDeepnessExceed { .. } => Self::forbidden(source),
+            TrustProviderError::RemainingUsesExceed => Self::forbidden(source),
             other => Self::InternalError(other.to_string()),
         }
     }

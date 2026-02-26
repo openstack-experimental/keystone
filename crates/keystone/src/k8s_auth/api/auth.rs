@@ -46,7 +46,7 @@ pub(super) fn openapi_router() -> OpenApiRouter<ServiceState> {
 /// k8s auth role.
 #[utoipa::path(
     post,
-    path = "/k8s_auth/instance/{instance_id}/auth",
+    path = "/instances/{instance_id}/auth",
     operation_id = "/k8s_auth/auth:post",
     request_body = K8sAuthRequest,
     responses(
@@ -109,11 +109,13 @@ pub async fn post(
         .get_token_provider()
         .expand_token_information(&state, &token)
         .await
-        .map_err(|_| KeystoneApiError::Forbidden)?;
+        .map_err(KeystoneApiError::forbidden)?;
 
     let mut api_token = TokenResponse {
         token: token.build_api_token_v4(&state).await?,
     };
+    api_token.validate()?;
+
     let catalog: Catalog = Catalog(
         state
             .provider

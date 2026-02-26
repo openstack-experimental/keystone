@@ -26,6 +26,7 @@ build:
       context: .
       docker:
         dockerfile: tools/Dockerfile.functest
+
   local:
     concurrency: 0
 
@@ -62,7 +63,7 @@ deploy:
       after:
         - host:
             # This command will block Skaffold until the bootstrap job hits 'Completed'
-            command: ["kubectl", "wait", "--for=condition=complete", "job/keystone-bootstrap", "--timeout=60s"]
+            command: ["kubectl", "wait", "--for=condition=complete", "job/keystone-bootstrap", "--timeout=120s"]
   helm:
     releases:
       - name: cloudnative-pg
@@ -71,22 +72,25 @@ deploy:
         createNamespace: true
         namespace: cnpg
 verify:
-  #- name: api-test
-  #  container:
-  #    image: keystone-tests
-  #    name: api-test
-  #    env:
-  #      - name: KEYSTONE_URL
-  #        value: http://keystone-rs.default.svc.cluster.local:8080
-  #  executionMode:
-  #    kubernetesCluster: {}
+  - name: "api-test"
+    container:
+      image: "keystone-tests"
+      name: "api-test"
+      command: ["/tests/test-api"]
+      env:
+        - name: "KEYSTONE_URL"
+          value: "http://keystone-rs.default.svc.cluster.local:8080"
+    executionMode:
+      kubernetesCluster: {}
 
   - name: "k8s-auth-test"
     container:
       image: "keystone-tests"
-      name: "api-test"
+      name: "k8s-auth-test"
       command: ["/tests/test-k8s-auth", "--nocapture"]
+      env:
+        - name: "KEYSTONE_URL"
+          value: "http://keystone-rs.default.svc.cluster.local:8080"
     executionMode:
-      kubernetesCluster: {}
-        #jobManifestPath: tools/k8s/tests/k8s_auth_job.yaml
-
+      kubernetesCluster:
+        overrides: '{ "spec": { "template": { "spec": { "serviceAccountName": "keystone-k8s-auth-test-sa" } } } }'
