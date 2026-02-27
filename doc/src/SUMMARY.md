@@ -40,6 +40,7 @@
   - [Okta](federation/okta.md)
   - [Dex](federation/dex.md)
 - [Passkeys](passkey.md)
+- [Kubernetes TokenReview Auth](k8s_auth.md)
 
 ---
 

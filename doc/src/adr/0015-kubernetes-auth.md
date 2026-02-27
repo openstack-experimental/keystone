@@ -33,20 +33,21 @@ mapping of Kubernetes identities to OpenStack identities.
 
 Two new tables will be introduced to the Keystone schema.
 
-#### Table: `kubernetes_auth`
+#### Table: `kubernetes_auth_instance`
 
 This table stores the configuration for connecting to and validating tokens from
 external Kubernetes clusters.
 
-| Column               | Type        | Description                                                           |
-| -------------------- | ----------- | --------------------------------------------------------------------- |
-| `id`                 | String(64)  | Primary Key (UUID).                                                   |
-| `domain_id`          | String(64)  | Domain ID (UUID).                                                     |
-| `enabled`            | Boolean     | Enabled flag.                                                         |
-| `name`               | String(255) | Unique name for this K8s backend configuration.                       |
-| `host`               | String(255) | The URL of the Kubernetes API server (e.g., `https://10.0.0.1:6443`). |
-| `token_reviewer_jwt` | Text        | A long-lived JWT used by Keystone to access the K8s TokenReview API.  |
-| `ca_cert`            | Text        | PEM encoded CA cert for the K8s API (optional for self-signed).       |
+| Column                 | Type        | Description                                                              |
+| ---------------------- | ----------- | ------------------------------------------------------------------------ |
+| `id`                   | String(64)  | Primary Key (UUID).                                                      |
+| `domain_id`            | String(64)  | Domain ID (UUID).                                                        |
+| `enabled`              | Boolean     | Enabled flag.                                                            |
+| `name`                 | String(255) | Unique name for this K8s backend configuration.                          |
+| `host`                 | String(255) | The URL of the Kubernetes API server (e.g., `https://10.0.0.1:6443`).    |
+| `token_reviewer_jwt`   | Text        | A long-lived JWT used by Keystone to access the K8s TokenReview API.     |
+| `ca_cert`              | Text        | PEM encoded CA cert for the K8s API (optional for self-signed).          |
+| `disable_local_ca_jwt` | Boolean     | Enable/disable use of the local CA and/or token as own TokenReview auth. |
 
 #### Table: `kubernetes_auth_role`
 
@@ -56,7 +57,7 @@ Keystone-specific token restriction (User/Project/Roles).
 | Column                             | Type        | Description                                           |
 | ---------------------------------- | ----------- | ----------------------------------------------------- |
 | `id`                               | String(64)  | Primary Key (UUID).                                   |
-| `kubernetes_id`                    | String(64)  | Foreign Key to `kubernetes_auth.id`.                  |
+| `auth_instance_id`                 | String(64)  | Foreign Key to `kubernetes_auth_instance.id`.         |
 | `enabled`                          | Boolean     | Enabled flag.                                         |
 | `token_restriction_id`             | String(64)  | Foreign Key to `token_restriction.id`.                |
 | `bound_service_account_names`      | Text        | List of allowed SAs (comma-separated or JSON).        |
@@ -75,22 +76,23 @@ instead only specify them in the token restriction mapping.
 
 #### Administrative API (CRUD for Configuration)
 
-Admin-only endpoints to manage the trust relationship.
+Endpoints to manage the trust relationship.
 
 - **POST** `/v4/k8s_auth/`: Register a new Kubernetes cluster.
-- **GET/PATCH/DELETE** `/v4/k8s_auth/{cluster_id}`: Manage cluster config.
-- **POST** `/v4/k8s_auth/{cluster_id}/roles/role`: Create a mapping between a
-  K8s SA/Namespace and a Keystone Project.
-- **GET/PATCH/DELETE** `/v4/k8s_auth/{cluster_id}/roles/{role_name}`: Manage
-  role mappings.
-- **POST** `/v4/k8s_auth/{cluster_id}/auth`: Exchange K8s SA token for Keystone
-  token.
+- **GET/PATCH/DELETE** `/v4/k8s_auth/instances/{cluster_id}`: Manage cluster
+  config.
+- **POST** `/v4/k8s_auth/instances/{cluster_id}/roles`: Create a mapping between
+  a K8s SA/Namespace and a Keystone Project.
+- **GET/PATCH/DELETE** `/v4/k8s_auth/instances/{cluster_id}/roles/{role_name}`:
+  Manage role mappings.
+- **POST** `/v4/k8s_auth/instances/{cluster_id}/auth`: Exchange K8s SA token for
+  Keystone token.
 
 #### Authentication API (The "Login" Flow)
 
 The new authentication endpoint is exposed under
-`/v4/k8s_auth/{cluster_id}/auth` and expects a json payload with a **POST**
-method.
+`/v4/k8s_auth/instances/{cluster_id}/auth` and expects a json payload with a
+**POST** method.
 
 **Request Payload:**
 
@@ -106,7 +108,7 @@ method.
 ### 3. Authentication Workflow
 
 1. **Lookup:** Keystone receives the request, identifies the `role`. It fetches
-   the associated `kubernetes_auth` config.
+   the associated `kubernetes_auth_instance` config.
 2. **Verification:** Keystone calls the Kubernetes API (`host`) at the
    `/apis/authentication.k8s.io/v1/tokenreviews` endpoint using the
    `token_reviewer_jwt` or the user specified `jwt` when `token_reviewer_jwt` is
