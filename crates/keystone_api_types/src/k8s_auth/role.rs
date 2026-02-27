@@ -27,7 +27,7 @@ use crate::Link;
 use crate::error::BuilderError;
 
 /// K8s authentication role.
-#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct K8sAuthRole {
@@ -76,7 +76,7 @@ pub struct K8sAuthRoleResponse {
 }
 
 /// New K8s authentication role.
-#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct K8sAuthRoleCreate {
@@ -111,9 +111,7 @@ pub struct K8sAuthRoleCreate {
 }
 
 /// K8s auth role create request.
-#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
-#[builder(build_fn(error = "BuilderError"))]
-#[builder(setter(strip_option, into))]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct K8sAuthRoleCreateRequest {
     /// K8s auth role object.
     #[validate(nested)]
@@ -154,9 +152,7 @@ pub struct K8sAuthRoleUpdate {
 }
 
 /// K8s auth role update request.
-#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
-#[builder(build_fn(error = "BuilderError"))]
-#[builder(setter(strip_option, into))]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct K8sAuthRoleUpdateRequest {
     /// K8s auth role object.
     #[validate(nested)]
@@ -164,7 +160,7 @@ pub struct K8sAuthRoleUpdateRequest {
 }
 
 /// List of K8s auth roles.
-#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct K8sAuthRoleList {
     /// Collection of k8s auth role objects.
     #[validate(nested)]
@@ -181,11 +177,8 @@ impl IntoResponse for K8sAuthRoleList {
     }
 }
 
-/// K8s Auth role list parameters (nested).
-#[derive(
-    Builder, Clone, Debug, Deserialize, IntoParams, PartialEq, Serialize, ToSchema, Validate,
-)]
-#[builder(build_fn(error = "BuilderError"))]
+/// Path parameters for the nested implementation of the K8s Auth role list.
+#[derive(Clone, Debug, Deserialize, IntoParams, PartialEq, ToSchema, Validate)]
 pub struct K8sAuthRolePathParams {
     /// The ID of the K8s auth instance.
     #[validate(length(max = 64))]
@@ -198,16 +191,7 @@ pub struct K8sAuthRolePathParams {
 
 /// K8s Auth role list parameters (nested).
 #[derive(
-    Builder,
-    Clone,
-    Debug,
-    Default,
-    Deserialize,
-    IntoParams,
-    PartialEq,
-    Serialize,
-    ToSchema,
-    Validate,
+    Builder, Clone, Debug, Deserialize, IntoParams, PartialEq, Serialize, ToSchema, Validate,
 )]
 #[builder(build_fn(error = "BuilderError"))]
 pub struct K8sAuthRoleListParametersNested {

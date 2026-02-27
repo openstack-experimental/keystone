@@ -38,6 +38,13 @@ pub trait ResourceBackend: Send + Sync {
         project: ProjectCreate,
     ) -> Result<Project, ResourceProviderError>;
 
+    /// Delete project by the ID
+    async fn delete_project<'a>(
+        &self,
+        state: &ServiceState,
+        id: &'a str,
+    ) -> Result<(), ResourceProviderError>;
+
     /// Get single domain by ID
     async fn get_domain<'a>(
         &self,

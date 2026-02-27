@@ -34,7 +34,7 @@ use crate::policy::Policy;
 /// Update K8s auth role of an instance.
 #[utoipa::path(
     put,
-    path = "/instance/{instance_id}/role/{id}",
+    path = "/instances/{instance_id}/roles/{id}",
     operation_id = "/k8s_auth/instance/role:update",
     params(K8sAuthRolePathParams),
     responses(
@@ -84,7 +84,7 @@ pub(super) async fn update_nested(
 /// Update K8s auth role.
 #[utoipa::path(
     put,
-    path = "/role/{id}",
+    path = "/roles/{id}",
     operation_id = "/k8s_auth/role:update",
     params(
       ("id" = String, Path, description = "The ID of the k8s auth role.")
@@ -211,7 +211,7 @@ mod tests {
                 Request::builder()
                     .method("PUT")
                     .header(header::CONTENT_TYPE, "application/json")
-                    .uri("/instance/cid/role/1")
+                    .uri("/instances/cid/roles/1")
                     .header("x-auth-token", "foo")
                     .body(Body::from(serde_json::to_string(&req).unwrap()))
                     .unwrap(),
@@ -231,7 +231,7 @@ mod tests {
                 Request::builder()
                     .method("PUT")
                     .header(header::CONTENT_TYPE, "application/json")
-                    .uri("/role/1")
+                    .uri("/roles/1")
                     .header("x-auth-token", "foo")
                     .body(Body::from(serde_json::to_string(&req).unwrap()))
                     .unwrap(),

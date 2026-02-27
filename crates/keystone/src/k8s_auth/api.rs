@@ -46,7 +46,7 @@ pub struct ApiDoc;
 
 pub fn openapi_router() -> OpenApiRouter<ServiceState> {
     OpenApiRouter::new()
-        .nest("/instance", instance::openapi_router())
+        .nest("/instances", instance::openapi_router())
         .merge(role::openapi_router())
         .merge(auth::openapi_router())
 }

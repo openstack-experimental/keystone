@@ -34,7 +34,7 @@ use crate::policy::Policy;
 /// Show the k8s auth role by the ID.
 #[utoipa::path(
     get,
-    path = "/instance/{instance_id}/role/{id}",
+    path = "/instances/{instance_id}/roles/{id}",
     operation_id = "/k8s_auth/instance/role:show",
     params(K8sAuthRolePathParams),
     responses(
@@ -85,7 +85,7 @@ pub(super) async fn show_nested(
 /// Show the k8s auth role by the ID.
 #[utoipa::path(
     get,
-    path = "/role/{id}",
+    path = "/roles/{id}",
     operation_id = "/k8s_auth/role:show",
     params(
         ("id" = String, Path, description = "The ID of the k8s auth role.")
@@ -185,7 +185,7 @@ mod tests {
             .as_service()
             .oneshot(
                 Request::builder()
-                    .uri("/instance/cid/role/foo")
+                    .uri("/instances/cid/roles/foo")
                     .header("x-auth-token", "foo")
                     .body(Body::empty())
                     .unwrap(),
@@ -199,7 +199,7 @@ mod tests {
             .as_service()
             .oneshot(
                 Request::builder()
-                    .uri("/instance/cid/role/bar")
+                    .uri("/instances/cid/roles/bar")
                     .header("x-auth-token", "foo")
                     .body(Body::empty())
                     .unwrap(),
@@ -231,7 +231,7 @@ mod tests {
             .as_service()
             .oneshot(
                 Request::builder()
-                    .uri("/role/foo")
+                    .uri("/roles/foo")
                     .header("x-auth-token", "foo")
                     .body(Body::empty())
                     .unwrap(),
@@ -245,7 +245,7 @@ mod tests {
             .as_service()
             .oneshot(
                 Request::builder()
-                    .uri("/role/bar")
+                    .uri("/roles/bar")
                     .header("x-auth-token", "foo")
                     .body(Body::empty())
                     .unwrap(),

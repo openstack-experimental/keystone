@@ -49,6 +49,7 @@ pub(super) async fn get_project_info_builder(
 /// expose any hints that user, project, domain, etc might exist before we have
 /// authenticated them by taking different amount of time in case of certain
 /// validations.
+#[tracing::instrument(skip(state), err)]
 pub(super) async fn authenticate_request(
     state: &ServiceState,
     req: &AuthRequest,
@@ -94,7 +95,7 @@ pub(super) async fn authenticate_request(
         }
     }
     authenticated_info
-        .ok_or(KeystoneApiError::Unauthorized(None))
+        .ok_or(KeystoneApiError::UnauthorizedNoContext)
         .and_then(|authn| {
             authn.validate()?;
             Ok(authn)
@@ -112,6 +113,7 @@ pub(super) async fn authenticate_request(
 ///
 /// * `Ok(AuthzInfo)` - The AuthZ information
 /// * `Err(KeystoneApiError)` - The error
+#[tracing::instrument(skip(state), err)]
 pub(super) async fn get_authz_info(
     state: &ServiceState,
     req: &AuthRequest,
@@ -121,14 +123,14 @@ pub(super) async fn get_authz_info(
             if let Some(project) = find_project_from_scope(state, scope).await? {
                 AuthzInfo::Project(project)
             } else {
-                return Err(KeystoneApiError::Unauthorized(None));
+                return Err(KeystoneApiError::UnauthorizedNoContext);
             }
         }
         Some(Scope::Domain(scope)) => {
             if let Ok(domain) = get_domain(state, scope.id.as_ref(), scope.name.as_ref()).await {
                 AuthzInfo::Domain(domain)
             } else {
-                return Err(KeystoneApiError::Unauthorized(None));
+                return Err(KeystoneApiError::UnauthorizedNoContext);
             }
         }
         Some(Scope::System(_scope)) => AuthzInfo::System,
@@ -345,7 +347,7 @@ mod tests {
             },
         )
         .await;
-        if let KeystoneApiError::Unauthorized(..) = rsp.unwrap_err() {
+        if let KeystoneApiError::UnauthorizedNoContext = rsp.unwrap_err() {
         } else {
             panic!("Should receive Unauthorized");
         }

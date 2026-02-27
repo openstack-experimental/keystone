@@ -23,10 +23,10 @@ pub struct Model {
     pub bound_audience: Option<String>,
 
     #[sea_orm(column_type = "Text")]
-    pub bound_service_account_names: String,
+    pub bound_service_account_names: Option<String>,
 
     #[sea_orm(column_type = "Text")]
-    pub bound_service_account_namespaces: String,
+    pub bound_service_account_namespaces: Option<String>,
 
     pub domain_id: String,
 

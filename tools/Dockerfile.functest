@@ -6,23 +6,33 @@ RUN apt update &&\
     update-ca-certificates
 
 WORKDIR /app
-COPY . .
+
+# Skaffold uses COPY section to identify image change
+COPY Cargo.toml .
+COPY Cargo.lock .
+COPY crates ./crates
+COPY tests ./tests
+
+# RUN touch tests/api/k8s_auth.rs
+
 # Compile the specific functional test file
 RUN cargo test --test api --no-run && \
-    cp $(find target/debug/deps -name "api-*" -type f -executable) /usr/local/bin/test-api
+    cp $(find target/debug/deps -name "api-*" -type f -executable) /app/test-api
+RUN cargo test --test k8s_auth --no-run && \
+    cp $(find target/debug/deps -name "k8s_auth-*" -type f -executable) /app/test-k8s-auth
+
 
 # Stage 2: Package
 FROM debian:trixie-slim AS runtime
 
-LABEL maintainer="Artem Goncharov"
+LABEL org.opencontainers.image.authors="Artem Goncharov"
+LABEL description="Keystone-rs tests"
 
 RUN apt update &&\
     apt install -y ca-certificates openssl libssl-dev libssl3 pkg-config &&\
     update-ca-certificates
 
 WORKDIR /tests
-# You'll need to find the binary path (usually target/debug/deps/my_functional_tests-HASH)
-# In CI, it's often easier to rename it or use a script to find it
-COPY --from=builder /usr/local/bin/test-api /tests/api
+COPY --from=builder /app/test-* /tests/
 
 ENTRYPOINT ["/tests/api"]

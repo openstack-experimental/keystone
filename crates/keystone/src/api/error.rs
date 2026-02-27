@@ -57,7 +57,11 @@ pub enum KeystoneApiError {
     DomainIdOrName,
 
     #[error("You are not authorized to perform the requested action.")]
-    Forbidden,
+    Forbidden {
+        /// The source of the error.
+        #[source]
+        source: Box<dyn std::error::Error + Send + Sync>,
+    },
 
     #[error("invalid header header")]
     InvalidHeader,
@@ -86,6 +90,7 @@ pub enum KeystoneApiError {
         #[from]
         source: PolicyError,
     },
+
     #[error("project id or name must be present")]
     ProjectIdOrName,
 
@@ -106,8 +111,16 @@ pub enum KeystoneApiError {
     #[error("missing x-subject-token header")]
     SubjectTokenMissing,
 
-    #[error("{}", .0.clone().unwrap_or("The request you have made requires authentication.".to_string()))]
-    Unauthorized(Option<String>),
+    #[error("The request you have made requires authentication.")]
+    UnauthorizedNoContext,
+
+    #[error("{}", .context.clone().unwrap_or("The request you have made requires authentication.".to_string()))]
+    Unauthorized {
+        context: Option<String>,
+        /// The source of the error.
+        #[source]
+        source: Box<dyn std::error::Error + Send + Sync>,
+    },
 
     /// Request validation error.
     #[error("request validation failed: {source}")]
@@ -118,6 +131,28 @@ pub enum KeystoneApiError {
     },
 }
 
+impl KeystoneApiError {
+    pub fn forbidden<E>(error: E) -> Self
+    where
+        E: std::error::Error + Send + Sync + 'static,
+    {
+        Self::Forbidden {
+            source: Box::new(error),
+        }
+    }
+
+    pub fn unauthorized<E, C>(error: E, context: Option<C>) -> Self
+    where
+        E: std::error::Error + Send + Sync + 'static,
+        C: Into<String>,
+    {
+        Self::Unauthorized {
+            context: context.map(Into::into),
+            source: Box::new(error),
+        }
+    }
+}
+
 impl IntoResponse for KeystoneApiError {
     fn into_response(self) -> Response {
         error!("Error happened during request processing: {:#?}", self);
@@ -126,8 +161,9 @@ impl IntoResponse for KeystoneApiError {
             KeystoneApiError::Conflict(_) => StatusCode::CONFLICT,
             KeystoneApiError::NotFound { .. } => StatusCode::NOT_FOUND,
             KeystoneApiError::BadRequest(..) => StatusCode::BAD_REQUEST,
-            KeystoneApiError::Unauthorized(..) => StatusCode::UNAUTHORIZED,
-            KeystoneApiError::Forbidden => StatusCode::FORBIDDEN,
+            KeystoneApiError::Unauthorized { .. } => StatusCode::UNAUTHORIZED,
+            KeystoneApiError::UnauthorizedNoContext => StatusCode::UNAUTHORIZED,
+            KeystoneApiError::Forbidden { .. } => StatusCode::FORBIDDEN,
             KeystoneApiError::Policy { .. } => StatusCode::FORBIDDEN,
             KeystoneApiError::SelectedAuthenticationForbidden
             | KeystoneApiError::AuthenticationRescopeForbidden => StatusCode::BAD_REQUEST,
@@ -148,27 +184,48 @@ impl IntoResponse for KeystoneApiError {
 impl From<AuthenticationError> for KeystoneApiError {
     fn from(value: AuthenticationError) -> Self {
         match value {
+            AuthenticationError::DomainDisabled(..) => {
+                KeystoneApiError::unauthorized(value, None::<String>)
+            }
+            AuthenticationError::ProjectDisabled(..) => {
+                KeystoneApiError::unauthorized(value, None::<String>)
+            }
             AuthenticationError::StructBuilder { source } => {
                 KeystoneApiError::InternalError(source.to_string())
             }
-            AuthenticationError::UserDisabled(user_id) => KeystoneApiError::Unauthorized(Some(
-                format!("The account is disabled for the user: {user_id}"),
-            )),
-            AuthenticationError::UserLocked(user_id) => KeystoneApiError::Unauthorized(Some(
-                format!("The account is locked for the user: {user_id}"),
-            )),
-            AuthenticationError::UserPasswordExpired(user_id) => {
-                KeystoneApiError::Unauthorized(Some(format!(
-                    "The password is expired and need to be changed for user: {user_id}"
-                )))
+            AuthenticationError::UserDisabled(ref user_id) => {
+                let uid = user_id.clone();
+                KeystoneApiError::unauthorized(
+                    value,
+                    Some(format!("The account is disabled for the user: {uid}")),
+                )
             }
-            AuthenticationError::UserNameOrPasswordWrong => {
-                KeystoneApiError::Unauthorized(Some("Invalid username or password".to_string()))
+            AuthenticationError::UserLocked(ref user_id) => {
+                let uid = user_id.clone();
+                KeystoneApiError::unauthorized(
+                    value,
+                    Some(format!("The account is locked for the user: {uid}")),
+                )
             }
+            AuthenticationError::UserPasswordExpired(ref user_id) => {
+                let uid = user_id.clone();
+                KeystoneApiError::unauthorized(
+                    value,
+                    Some(format!(
+                        "The password is expired and need to be changed for user: {uid}"
+                    )),
+                )
+            }
+            AuthenticationError::UserNameOrPasswordWrong => KeystoneApiError::unauthorized(
+                value,
+                Some("Invalid username or password".to_string()),
+            ),
             AuthenticationError::TokenRenewalForbidden => {
                 KeystoneApiError::SelectedAuthenticationForbidden
             }
-            AuthenticationError::Unauthorized => KeystoneApiError::Unauthorized(None),
+            AuthenticationError::Unauthorized => {
+                KeystoneApiError::unauthorized(value, None::<String>)
+            }
         }
     }
 }

@@ -134,6 +134,7 @@ pub async fn find_project_from_scope(
 /// # Returns
 /// * `Ok(AuthzInfo)`: The AuthZ information
 /// * `Err(KeystoneApiError)`: An error if the scope is not valid
+#[tracing::instrument(skip(state), err)]
 pub async fn get_authz_info(
     state: &ServiceState,
     scope: Option<&ProviderScope>,
@@ -143,14 +144,14 @@ pub async fn get_authz_info(
             if let Some(project) = find_project_from_scope(state, &scope.into()).await? {
                 AuthzInfo::Project(project)
             } else {
-                return Err(KeystoneApiError::Unauthorized(None));
+                return Err(KeystoneApiError::UnauthorizedNoContext);
             }
         }
         Some(ProviderScope::Domain(scope)) => {
             if let Ok(domain) = get_domain(state, scope.id.as_ref(), scope.name.as_ref()).await {
                 AuthzInfo::Domain(domain)
             } else {
-                return Err(KeystoneApiError::Unauthorized(None));
+                return Err(KeystoneApiError::UnauthorizedNoContext);
             }
         }
         Some(ProviderScope::System(_scope)) => todo!(),

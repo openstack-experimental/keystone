@@ -18,6 +18,7 @@ use utoipa_axum::{router::OpenApiRouter, routes};
 use crate::keystone::ServiceState;
 
 mod create;
+mod delete;
 pub mod types;
 
 /// OpenApi specification for the project API.
@@ -43,5 +44,7 @@ A project's name must be unique within a domain and no more than 64 characters. 
 pub struct ApiDoc;
 
 pub(crate) fn openapi_router() -> OpenApiRouter<ServiceState> {
-    OpenApiRouter::new().routes(routes!(create::create))
+    OpenApiRouter::new()
+        .routes(routes!(create::create))
+        .routes(routes!(delete::remove))
 }

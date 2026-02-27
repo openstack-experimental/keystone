@@ -20,7 +20,7 @@ serde.workspace = true
 serde_json.workspace = true
 serde_urlencoded.workspace = true
 tracing.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["fs"] }
 tracing-test = { workspace = true, features = ["no-env-filter"] }
 webauthn-authenticator-rs = { workspace = true, features = ["softtoken"] }
 url = { workspace = true }
@@ -29,4 +29,9 @@ uuid = { workspace = true, features = ["v4"] }
 [[test]]
 name = "api"
 path = "src/api.rs"
+test = false
+
+[[test]]
+name = "k8s_auth"
+path = "src/k8s_auth.rs"
 test = false

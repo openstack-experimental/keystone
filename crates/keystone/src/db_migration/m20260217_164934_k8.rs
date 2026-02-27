@@ -66,8 +66,8 @@ impl MigrationTrait for Migration {
                     .col(string_len(KubernetesAuthRole::AuthInstanceId, 64))
                     .col(string_len(KubernetesAuthRole::Name, 255))
                     .col(boolean(KubernetesAuthRole::Enabled))
-                    .col(text(KubernetesAuthRole::BoundServiceAccountNames))
-                    .col(text(KubernetesAuthRole::BoundServiceAccountNamespaces))
+                    .col(text_null(KubernetesAuthRole::BoundServiceAccountNames))
+                    .col(text_null(KubernetesAuthRole::BoundServiceAccountNamespaces))
                     .col(string_len_null(KubernetesAuthRole::BoundAudience, 128))
                     .col(string_len(KubernetesAuthRole::TokenRestrictionId, 64))
                     .foreign_key(

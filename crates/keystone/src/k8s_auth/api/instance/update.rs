@@ -150,7 +150,6 @@ mod tests {
                 enabled: Some(true),
                 host: Some("http://host:post".into()),
                 name: Some("name".into()),
-                ..Default::default()
             },
         };
 
