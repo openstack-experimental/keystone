@@ -3123,7 +3123,7 @@ dependencies = [
 
 [[package]]
 name = "openstack_keystone"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "async-trait",
  "axum",
@@ -3192,7 +3192,7 @@ dependencies = [
 
 [[package]]
 name = "openstack_keystone_api_types"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "axum",
  "base64 0.22.1",
