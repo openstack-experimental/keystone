@@ -12,19 +12,20 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use std::sync::Arc;
+
 use eyre::Result;
 use tracing_test::traced_test;
 
 use openstack_keystone_api_types::v3::role::Role;
+use openstack_sdk_core::{AsyncOpenStack, config::CloudConfig};
 
-use crate::common::*;
 use crate::role::*;
 
 #[tokio::test]
 #[traced_test]
 async fn test_list() -> Result<()> {
-    let mut test_client = TestClient::default()?;
-    test_client.auth_admin().await?;
+    let test_client = Arc::new(AsyncOpenStack::new(&CloudConfig::from_env()?).await?);
     let _roles: Vec<Role> = list_roles(&test_client).await?;
     Ok(())
 }

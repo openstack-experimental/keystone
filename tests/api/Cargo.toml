@@ -13,7 +13,10 @@ dist = false
 base64.workspace = true
 bytes.workspace = true
 eyre.workspace = true
+derive_builder.workspace = true
+http.workspace = true
 openstack_keystone_api_types = { version = "0.1", path = "../../crates/keystone_api_types" }
+openstack_sdk_core = { version = "0.22" }
 reqwest = { workspace = true, features = ["json", "http2", "multipart", "gzip", "deflate"] }
 secrecy = { workspace = true, features = ["serde"] }
 serde.workspace = true
@@ -25,6 +28,7 @@ tracing-test = { workspace = true, features = ["no-env-filter"] }
 webauthn-authenticator-rs = { workspace = true, features = ["softtoken"] }
 url = { workspace = true }
 uuid = { workspace = true, features = ["v4"] }
+async-trait.workspace = true
 
 [[test]]
 name = "api"

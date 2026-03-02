@@ -15,6 +15,7 @@
 mod assignment;
 mod auth;
 mod common;
+mod guard;
 mod identity;
 mod resource;
 mod role;

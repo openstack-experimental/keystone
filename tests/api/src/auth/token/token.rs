@@ -12,38 +12,56 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use std::sync::Arc;
+
 use eyre::Result;
 
 use openstack_keystone_api_types::scope::*;
+use openstack_sdk_core::{AsyncOpenStack, config::CloudConfig};
 
 use crate::auth::project::list_auth_projects;
-use crate::common::*;
 
 #[tokio::test]
 async fn test_rescope_project_scope() -> Result<()> {
-    let mut admin_client = TestClient::default()?;
-    admin_client.auth_admin().await?;
+    let mut test_client = AsyncOpenStack::new(&CloudConfig::from_env()?).await?;
 
-    let projects = list_auth_projects(&admin_client).await?;
+    let projects = list_auth_projects(&Arc::new(test_client.clone())).await?;
 
     for project in projects {
         // auth with project_id
-        admin_client
-            .rescope(Some(Scope::Project(ScopeProject {
-                id: Some(project.id.clone()),
-                ..Default::default()
-            })))
+        test_client
+            .authorize(
+                Some(
+                    openstack_sdk_core::auth::authtoken::AuthTokenScope::Project(
+                        openstack_sdk_core::types::identity::v3::Project {
+                            id: Some(project.id.clone()),
+                            name: None,
+                            domain: None,
+                        },
+                    ),
+                ),
+                false,
+                false,
+            )
             .await?;
         // auth with project name and domain_id
-        admin_client
-            .rescope(Some(Scope::Project(ScopeProject {
-                id: None,
-                name: Some(project.name.clone()),
-                domain: Some(Domain {
-                    id: Some(project.domain_id.clone()),
-                    name: None,
-                }),
-            })))
+        test_client
+            .authorize(
+                Some(
+                    openstack_sdk_core::auth::authtoken::AuthTokenScope::Project(
+                        openstack_sdk_core::types::identity::v3::Project {
+                            id: None,
+                            name: Some(project.name.clone()),
+                            domain: Some(openstack_sdk_core::types::identity::v3::Domain {
+                                id: Some(project.domain_id.clone()),
+                                name: None,
+                            }),
+                        },
+                    ),
+                ),
+                false,
+                false,
+            )
             .await?;
     }
 

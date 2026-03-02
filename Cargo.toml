@@ -47,6 +47,7 @@ fernet = { version = "0.2", default-features = false }
 futures = { version = "0.3" }
 futures-util = { version = "0.3" }
 http-body-util = "0.1"
+http = { version = "1.4" }
 hyper = { version = "1.8" }
 hyper-util = { version = "0.1" }
 itertools = { version = "0.14" }

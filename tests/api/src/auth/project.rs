@@ -12,29 +12,48 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use std::sync::Arc;
+
 use eyre::Result;
 
-use openstack_keystone_api_types::v3::project::{ProjectShort, ProjectShortList};
+use openstack_keystone_api_types::v3::project::ProjectShort;
+use openstack_sdk_core::api::rest_endpoint_prelude::*;
+use openstack_sdk_core::{AsyncOpenStack, api::QueryAsync, config::CloudConfig};
 
-use crate::common::*;
+#[derive(Clone, Debug)]
+struct AuthProjectsRequest {}
+
+impl RestEndpoint for AuthProjectsRequest {
+    fn method(&self) -> http::Method {
+        http::Method::GET
+    }
+
+    fn endpoint(&self) -> Cow<'static, str> {
+        "auth/projects".to_string().into()
+    }
+
+    fn service_type(&self) -> ServiceType {
+        ServiceType::Identity
+    }
+
+    fn response_key(&self) -> Option<Cow<'static, str>> {
+        Some("projects".into())
+    }
+
+    fn api_version(&self) -> Option<ApiVersion> {
+        Some(ApiVersion::new(3, 0))
+    }
+}
 
 /// List projects available to the user
-pub async fn list_auth_projects(tc: &TestClient) -> Result<Vec<ProjectShort>> {
-    Ok(tc
-        .client
-        .get(tc.base_url.join("v3/auth/projects")?)
-        .send()
-        .await?
-        .json::<ProjectShortList>()
-        .await?
-        .projects)
+pub async fn list_auth_projects(client: &Arc<AsyncOpenStack>) -> Result<Vec<ProjectShort>> {
+    Ok(AuthProjectsRequest {}.query_async(client.as_ref()).await?)
 }
 
 #[tokio::test]
 async fn test_list_user_projects() -> Result<()> {
-    let mut admin_client = TestClient::default()?;
-    admin_client.auth_admin().await?;
-    let projects = list_auth_projects(&admin_client).await?;
+    let test_client = Arc::new(AsyncOpenStack::new(&CloudConfig::from_env()?).await?);
+    let projects = list_auth_projects(&test_client).await?;
     assert!(!projects.is_empty());
     Ok(())
 }

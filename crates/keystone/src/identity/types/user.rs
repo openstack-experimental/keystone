@@ -46,6 +46,7 @@ pub struct UserResponse {
 
     /// Additional user properties.
     #[builder(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub extra: Option<Value>,
 
     /// List of federated objects associated with a user. Each object in the

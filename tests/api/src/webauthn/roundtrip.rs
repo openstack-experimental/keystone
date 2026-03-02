@@ -11,6 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+use std::sync::Arc;
 
 use eyre::Result;
 use tracing_test::traced_test;
@@ -20,22 +21,24 @@ use uuid::Uuid;
 use webauthn_authenticator_rs::WebauthnAuthenticator;
 use webauthn_authenticator_rs::softtoken::SoftToken;
 
-use openstack_keystone_api_types::v3::user::UserCreate;
+use openstack_keystone_api_types::v3::user::UserCreateBuilder;
+use openstack_sdk_core::AsyncOpenStack;
+use openstack_sdk_core::config::CloudConfig;
 
 use super::*;
+use crate::guard::*;
 use crate::identity::user::*;
 
 #[tokio::test]
 #[traced_test]
 async fn test_register_auth() -> Result<()> {
-    let mut test_client = TestClient::default()?;
-    test_client.auth_admin().await?;
+    let test_client = Arc::new(AsyncOpenStack::new(&CloudConfig::from_env()?).await?);
 
-    let user_create = UserCreate {
-        name: Uuid::new_v4().to_string(),
-        domain_id: "default".into(),
-        ..Default::default()
-    };
+    let user_create = UserCreateBuilder::default()
+        .name(Uuid::new_v4().simple().to_string())
+        .domain_id("default")
+        .enabled(true)
+        .build()?;
     let user = create_user(&test_client, user_create).await?;
 
     let authenticator_backend = SoftToken::new(true)?.0;
@@ -51,9 +54,9 @@ async fn test_register_auth() -> Result<()> {
     )
     .await?;
 
-    let _new_auth = test_client
-        .auth_passkey(&user.id, origin.clone(), &mut authenticator)
-        .await?;
+    let _new_auth =
+        auth_passkey(&test_client, &user.id, origin.clone(), &mut authenticator).await?;
 
+    user.delete().await?;
     Ok(())
 }
