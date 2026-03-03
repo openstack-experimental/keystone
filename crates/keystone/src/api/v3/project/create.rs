@@ -121,11 +121,11 @@ mod tests {
             .with_state(state.clone());
 
         let req = ProjectCreateRequest {
-            project: ProjectCreate {
-                name: "name".into(),
-                domain_id: "did".into(),
-                ..Default::default()
-            },
+            project: ProjectCreateBuilder::default()
+                .name("name")
+                .domain_id("did")
+                .build()
+                .unwrap(),
         };
 
         let response = api
@@ -173,11 +173,11 @@ mod tests {
             .with_state(state.clone());
 
         let req = ProjectCreateRequest {
-            project: ProjectCreate {
-                name: "name".into(),
-                domain_id: "did".into(),
-                ..Default::default()
-            },
+            project: ProjectCreateBuilder::default()
+                .name("name")
+                .domain_id("did")
+                .build()
+                .unwrap(),
         };
 
         let response = api

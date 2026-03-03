@@ -80,6 +80,18 @@ verify:
       env:
         - name: "KEYSTONE_URL"
           value: "http://keystone-rs.default.svc.cluster.local:8080"
+        - name: "OS_AUTH_URL"
+          value: "http://keystone-rs.default.svc.cluster.local:8080"
+        - name: "OS_USERNAME"
+          value: "admin"
+        - name: "OS_PASSWORD"
+          value: "password"
+        - name: "OS_USER_DOMAIN_ID"
+          value: "default"
+        - name: "OS_PROJECT_NAME"
+          value: "admin"
+        - name: "OS_PROJECT_DOMAIN_ID"
+          value: "default"
     executionMode:
       kubernetesCluster: {}
 
@@ -91,6 +103,18 @@ verify:
       env:
         - name: "KEYSTONE_URL"
           value: "http://keystone-rs.default.svc.cluster.local:8080"
+        - name: "OS_AUTH_URL"
+          value: "http://keystone-rs.default.svc.cluster.local:8080"
+        - name: "OS_USERNAME"
+          value: "admin"
+        - name: "OS_PASSWORD"
+          value: "password"
+        - name: "OS_USER_DOMAIN_ID"
+          value: "default"
+        - name: "OS_PROJECT_NAME"
+          value: "admin"
+        - name: "OS_PROJECT_DOMAIN_ID"
+          value: "default"
     executionMode:
       kubernetesCluster:
         overrides: '{ "spec": { "template": { "spec": { "serviceAccountName": "keystone-k8s-auth-test-sa" } } } }'

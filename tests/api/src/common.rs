@@ -44,19 +44,6 @@ impl TestClient {
         })
     }
 
-    pub fn with_base_url<U: AsRef<str>>(base_url: Option<U>) -> Result<Self> {
-        if let Some(base_url) = base_url {
-            Ok(Self {
-                client: Client::new(),
-                base_url: base_url.as_ref().parse()?,
-                auth: None,
-                token: None,
-            })
-        } else {
-            Self::default()
-        }
-    }
-
     pub async fn auth(&mut self, identity: Identity, scope: Option<Scope>) -> Result<&mut Self> {
         let new = self;
         let auth_request = AuthRequest {

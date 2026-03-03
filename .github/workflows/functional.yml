@@ -75,6 +75,13 @@ jobs:
     runs-on: ubuntu-latest
     needs:
       - build
+    env:
+      OS_AUTH_URL: http://localhost:8080
+      OS_USERNAME: admin
+      OS_PASSWORD: password
+      OS_USER_DOMAIN_ID: default
+      OS_PROJECT_NAME: admin
+      OS_PROJECT_DOMAIN_ID: default
     services:
       postgres:
         image: postgres:17

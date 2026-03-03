@@ -192,7 +192,7 @@ mod tests {
     use super::openapi_router;
     use crate::api::v3::group::types::{Group as ApiGroup, GroupList};
     use crate::api::v3::user::types::{
-        User as ApiUser, UserCreate as ApiUserCreate, UserCreateRequest, UserList,
+        UserBuilder as ApiUser, UserCreateBuilder as ApiUserCreate, UserCreateRequest, UserList,
         UserResponse as ApiUserResponse,
     };
     use crate::identity::{
@@ -244,14 +244,15 @@ mod tests {
         let body = response.into_body().collect().await.unwrap().to_bytes();
         let res: UserList = serde_json::from_slice(&body).unwrap();
         assert_eq!(
-            vec![ApiUser {
-                id: "1".into(),
-                name: "2".into(),
-                domain_id: "user_domain_id".into(),
-                enabled: true,
-                extra: Some(json!({})),
-                ..Default::default()
-            }],
+            vec![
+                ApiUser::default()
+                    .id("1")
+                    .name("2")
+                    .domain_id("user_domain_id")
+                    .enabled(true)
+                    .build()
+                    .unwrap()
+            ],
             res.users
         );
     }
@@ -334,11 +335,11 @@ mod tests {
             .with_state(state.clone());
 
         let user = UserCreateRequest {
-            user: ApiUserCreate {
-                domain_id: "domain".into(),
-                name: "name".into(),
-                ..Default::default()
-            },
+            user: ApiUserCreate::default()
+                .domain_id("domain")
+                .name("name")
+                .build()
+                .unwrap(),
         };
 
         let response = api
@@ -422,14 +423,13 @@ mod tests {
         let body = response.into_body().collect().await.unwrap().to_bytes();
         let res: ApiUserResponse = serde_json::from_slice(&body).unwrap();
         assert_eq!(
-            ApiUser {
-                id: "bar".into(),
-                domain_id: "user_domain_id".into(),
-                enabled: true,
-                extra: Some(json!({})),
-                name: "name".into(),
-                ..Default::default()
-            },
+            ApiUser::default()
+                .id("bar")
+                .domain_id("user_domain_id")
+                .enabled(true)
+                .name("name")
+                .build()
+                .unwrap(),
             res.user,
         );
     }

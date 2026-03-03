@@ -15,31 +15,33 @@
 use std::borrow::Cow;
 use std::sync::Arc;
 
+use derive_builder::Builder;
 use eyre::Result;
 
-use openstack_keystone_api_types::v3::project::*;
+use openstack_keystone_api_types::v4::token_restriction::*;
 use openstack_sdk_core::api::rest_endpoint_prelude::*;
 use openstack_sdk_core::{AsyncOpenStack, api::QueryAsync};
 
 use crate::guard::*;
 
-#[derive(Clone, Debug)]
-struct ProjectCreateRequest {
-    project: ProjectCreate,
+#[derive(Builder, Clone, Debug)]
+#[builder(setter(strip_option, into))]
+struct TokenRestrictionCreateRequest {
+    restriction: TokenRestrictionCreate,
 }
 
-impl RestEndpoint for ProjectCreateRequest {
+impl RestEndpoint for TokenRestrictionCreateRequest {
     fn method(&self) -> http::Method {
         http::Method::POST
     }
 
     fn endpoint(&self) -> Cow<'static, str> {
-        "projects".to_string().into()
+        "tokens/restrictions".to_string().into()
     }
 
     fn body(&self) -> Result<Option<(&'static str, Vec<u8>)>, BodyError> {
         let mut params = JsonBodyParams::default();
-        params.push("project", serde_json::to_value(&self.project)?);
+        params.push("restriction", serde_json::to_value(&self.restriction)?);
         params.into_body()
     }
 
@@ -48,56 +50,58 @@ impl RestEndpoint for ProjectCreateRequest {
     }
 
     fn response_key(&self) -> Option<Cow<'static, str>> {
-        Some("project".into())
+        Some("restriction".into())
     }
 
-    /// Returns required API version
     fn api_version(&self) -> Option<ApiVersion> {
-        Some(ApiVersion::new(3, 0))
+        Some(ApiVersion::new(4, 0))
     }
 }
 
 /// Create project
-pub async fn create_project(
+pub async fn create_token_restriction(
     tc: &Arc<AsyncOpenStack>,
-    project: ProjectCreate,
-) -> Result<AsyncResourceGuard<Project>> {
-    let obj: Project = ProjectCreateRequest { project }
+    obj: TokenRestrictionCreate,
+) -> Result<AsyncResourceGuard<TokenRestriction>> {
+    let obj: TokenRestriction = TokenRestrictionCreateRequestBuilder::default()
+        .restriction(obj)
+        .build()?
         .query_async(tc.as_ref())
         .await?;
     Ok(AsyncResourceGuard::new(obj, tc.clone()))
 }
 
-struct ProjectDeleteRequest {
+struct TokenRestrictionDeleteRequest {
     id: String,
 }
 
-impl RestEndpoint for ProjectDeleteRequest {
+impl RestEndpoint for TokenRestrictionDeleteRequest {
     fn method(&self) -> http::Method {
         http::Method::DELETE
     }
 
     fn endpoint(&self) -> Cow<'static, str> {
-        format!("projects/{id}", id = self.id).into()
+        format!("tokens/restrictions/{id}", id = self.id).into()
     }
 
     fn service_type(&self) -> ServiceType {
         ServiceType::Identity
     }
 
-    /// Returns required API version
     fn api_version(&self) -> Option<ApiVersion> {
-        Some(ApiVersion::new(3, 0))
+        Some(ApiVersion::new(4, 0))
     }
 }
 
 #[async_trait::async_trait]
-impl DeletableResource for Project {
+impl DeletableResource for TokenRestriction {
     async fn delete(&self, state: &Arc<AsyncOpenStack>) -> Result<()> {
-        Ok(openstack_sdk_core::api::ignore(ProjectDeleteRequest {
-            id: self.id.clone(),
-        })
-        .query_async(state.as_ref())
-        .await?)
+        Ok(
+            openstack_sdk_core::api::ignore(TokenRestrictionDeleteRequest {
+                id: self.id.clone(),
+            })
+            .query_async(state.as_ref())
+            .await?,
+        )
     }
 }

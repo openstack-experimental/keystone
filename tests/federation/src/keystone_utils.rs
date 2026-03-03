@@ -112,7 +112,8 @@ pub async fn ensure_user<T: AsRef<str>, U: AsRef<str>, D: AsRef<str>>(
         .json(&json!({
             "user": {
                 "name": user_name.as_ref(),
-                "domain_id": domain_id.as_ref()
+                "domain_id": domain_id.as_ref(),
+                "enabled": true,
              }
         }))
         .send()

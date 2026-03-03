@@ -11,34 +11,36 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+
 use std::borrow::Cow;
 use std::sync::Arc;
 
 use eyre::Result;
 
-use openstack_keystone_api_types::v3::user::*;
+use openstack_keystone_api_types::k8s_auth::instance::*;
 use openstack_sdk_core::api::rest_endpoint_prelude::*;
 use openstack_sdk_core::{AsyncOpenStack, api::QueryAsync};
 
 use crate::guard::*;
 
 #[derive(Clone, Debug)]
-struct UserCreateRequest {
-    user: UserCreate,
+struct K8sAuthInstanceCreateRequest {
+    /// K8s auth instance object.
+    instance: K8sAuthInstanceCreate,
 }
 
-impl RestEndpoint for UserCreateRequest {
+impl RestEndpoint for K8sAuthInstanceCreateRequest {
     fn method(&self) -> http::Method {
         http::Method::POST
     }
 
     fn endpoint(&self) -> Cow<'static, str> {
-        "users".to_string().into()
+        "k8s_auth/instances".to_string().into()
     }
 
     fn body(&self) -> Result<Option<(&'static str, Vec<u8>)>, BodyError> {
         let mut params = JsonBodyParams::default();
-        params.push("user", serde_json::to_value(&self.user)?);
+        params.push("instance", serde_json::to_value(&self.instance)?);
         params.into_body()
     }
 
@@ -47,37 +49,39 @@ impl RestEndpoint for UserCreateRequest {
     }
 
     fn response_key(&self) -> Option<Cow<'static, str>> {
-        Some("user".into())
+        Some("instance".into())
     }
 
+    /// Returns required API version
     fn api_version(&self) -> Option<ApiVersion> {
-        Some(ApiVersion::new(3, 0))
+        Some(ApiVersion::new(4, 0))
     }
 }
 
-/// Create user
-pub async fn create_user(
+/// Create auth instance
+pub async fn create_auth_instance(
     tc: &Arc<AsyncOpenStack>,
-    user: UserCreate,
-) -> Result<AsyncResourceGuard<User>> {
-    let obj: User = UserCreateRequest { user }.query_async(tc.as_ref()).await?;
+    instance: K8sAuthInstanceCreate,
+) -> Result<AsyncResourceGuard<K8sAuthInstance>> {
+    let obj: K8sAuthInstance = K8sAuthInstanceCreateRequest { instance }
+        .query_async(tc.as_ref())
+        .await?;
     Ok(AsyncResourceGuard::new(obj, tc.clone()))
 }
 
-//impl RestEndpoint for UserListParameters {
+//impl RestEndpoint for K8sAuthInstanceListParameters {
 //    fn method(&self) -> http::Method {
 //        http::Method::GET
 //    }
 //
 //    fn endpoint(&self) -> Cow<'static, str> {
-//        "users".to_string().into()
+//        "k8s_auth/instances".to_string().into()
 //    }
 //
 //    fn parameters(&self) -> QueryParams<'_> {
 //        let mut params = QueryParams::default();
 //        params.push_opt("domain_id", self.domain_id.as_ref());
 //        params.push_opt("name", self.name.as_ref());
-//        params.push_opt("unique_id", self.unique_id.as_ref());
 //
 //        params
 //    }
@@ -87,44 +91,46 @@ pub async fn create_user(
 //    }
 //
 //    fn response_key(&self) -> Option<Cow<'static, str>> {
-//        Some("users".into())
+//        Some("instances".into())
 //    }
 //
 //    /// Returns required API version
 //    fn api_version(&self) -> Option<ApiVersion> {
-//        Some(ApiVersion::new(3, 0))
+//        Some(ApiVersion::new(4, 0))
 //    }
 //}
 
-struct UserDeleteRequest {
-    id: String,
+struct K8sAuthInstanceDeleteRequest<'a> {
+    id: Cow<'a, str>,
 }
 
-impl RestEndpoint for UserDeleteRequest {
+impl RestEndpoint for K8sAuthInstanceDeleteRequest<'_> {
     fn method(&self) -> http::Method {
         http::Method::DELETE
     }
 
     fn endpoint(&self) -> Cow<'static, str> {
-        format!("users/{id}", id = self.id).into()
+        format!("k8s_auth/instances/{id}", id = self.id).into()
     }
 
     fn service_type(&self) -> ServiceType {
         ServiceType::Identity
     }
 
+    /// Returns required API version
     fn api_version(&self) -> Option<ApiVersion> {
-        Some(ApiVersion::new(3, 0))
+        Some(ApiVersion::new(4, 0))
     }
 }
-
 #[async_trait::async_trait]
-impl DeletableResource for User {
+impl DeletableResource for K8sAuthInstance {
     async fn delete(&self, state: &Arc<AsyncOpenStack>) -> Result<()> {
-        Ok(openstack_sdk_core::api::ignore(UserDeleteRequest {
-            id: self.id.clone(),
-        })
-        .query_async(state.as_ref())
-        .await?)
+        Ok(
+            openstack_sdk_core::api::ignore(K8sAuthInstanceDeleteRequest {
+                id: self.id.clone().into(),
+            })
+            .query_async(state.as_ref())
+            .await?,
+        )
     }
 }

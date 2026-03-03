@@ -89,7 +89,7 @@ impl From<UserCreateRequest> for identity_types::UserCreate {
         Self {
             default_project_id: user.default_project_id,
             domain_id: user.domain_id,
-            enabled: user.enabled,
+            enabled: Some(user.enabled),
             extra: user.extra,
             id: None,
             federated: None,

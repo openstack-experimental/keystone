@@ -14,14 +14,16 @@
 
 use eyre::Result;
 use std::collections::HashMap;
+use std::sync::Arc;
 use tracing_test::traced_test;
 use uuid::Uuid;
 
-use openstack_keystone_api_types::v3::project::ProjectCreate;
-use openstack_keystone_api_types::v3::user::UserCreate;
+use openstack_keystone_api_types::v3::project::ProjectCreateBuilder;
+use openstack_keystone_api_types::v3::user::UserCreateBuilder;
+use openstack_sdk_core::{AsyncOpenStack, config::CloudConfig};
 
 use super::*;
-use crate::common::*;
+use crate::guard::*;
 use crate::identity::user::*;
 use crate::resource::project::*;
 use crate::role::list_roles;
@@ -29,36 +31,45 @@ use crate::role::list_roles;
 #[tokio::test]
 #[traced_test]
 async fn test_grant_project_role_to_user() -> Result<()> {
-    let mut test_client = TestClient::default()?;
-    test_client.auth_admin().await?;
+    let test_client = Arc::new(AsyncOpenStack::new(&CloudConfig::from_env()?).await?);
 
     let _auth_token = test_client
-        .auth
-        .as_ref()
-        .expect("token info must be present in the client")
-        .token
-        .clone();
-    let user_create = UserCreate {
-        name: Uuid::new_v4().to_string(),
-        domain_id: "default".into(),
-        ..Default::default()
-    };
-    let project_create = ProjectCreate {
-        name: Uuid::new_v4().to_string(),
-        domain_id: "default".into(),
-        enabled: true,
-        is_domain: false,
-        ..Default::default()
-    };
+        .get_auth_info()
+        .expect("must be authenticated")
+        .token;
+
+    let user = create_user(
+        &test_client,
+        UserCreateBuilder::default()
+            .name(Uuid::new_v4().simple().to_string())
+            .domain_id("default")
+            .enabled(true)
+            .build()?,
+    )
+    .await?;
+
+    let project = create_project(
+        &test_client,
+        ProjectCreateBuilder::default()
+            .domain_id("default")
+            .parent_id("default")
+            .name(Uuid::new_v4().simple().to_string())
+            .is_domain(false)
+            .enabled(true)
+            .build()?,
+    )
+    .await?;
+
     let roles: HashMap<String, String> = list_roles(&test_client)
         .await?
         .into_iter()
         .map(|r| (r.name, r.id))
         .collect();
     let member_role = roles.get("member").expect("member role must exist");
-    let user = create_user(&test_client, user_create).await?;
-    let project = create_project(&test_client, project_create).await?;
     add_project_grant(&test_client, &project.id, &user.id, &member_role).await?;
     assert!(check_grant(&test_client, &project.id, &user.id, &member_role).await?);
+
+    user.delete().await?;
+    project.delete().await?;
     Ok(())
 }

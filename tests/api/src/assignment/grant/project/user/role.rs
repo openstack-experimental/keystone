@@ -11,34 +11,98 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+use std::borrow::Cow;
+use std::sync::Arc;
+
+use derive_builder::Builder;
+use eyre::Result;
+
+use openstack_sdk_core::api::rest_endpoint_prelude::*;
+use openstack_sdk_core::{AsyncOpenStack, api::QueryAsync};
 
 mod check;
 mod grant;
 
-use eyre::Result;
-use reqwest::StatusCode;
+#[derive(Builder, Clone, Debug)]
+#[builder(setter(strip_option, into))]
+pub struct ProjectUserRoleGrantCheck<'a> {
+    project_id: Cow<'a, str>,
+    user_id: Cow<'a, str>,
+    role_id: Cow<'a, str>,
+}
 
-use crate::common::*;
+impl RestEndpoint for ProjectUserRoleGrantCheck<'_> {
+    fn method(&self) -> http::Method {
+        http::Method::HEAD
+    }
+
+    fn endpoint(&self) -> Cow<'static, str> {
+        format!(
+            "projects/{}/users/{}/roles/{}",
+            self.project_id, self.user_id, self.role_id
+        )
+        .into()
+    }
+
+    fn service_type(&self) -> ServiceType {
+        ServiceType::Identity
+    }
+
+    fn api_version(&self) -> Option<ApiVersion> {
+        Some(ApiVersion::new(3, 0))
+    }
+}
+
+#[derive(Builder, Clone, Debug)]
+#[builder(setter(strip_option, into))]
+pub struct ProjectUserRoleGrantSet<'a> {
+    project_id: Cow<'a, str>,
+    user_id: Cow<'a, str>,
+    role_id: Cow<'a, str>,
+}
+
+impl RestEndpoint for ProjectUserRoleGrantSet<'_> {
+    fn method(&self) -> http::Method {
+        http::Method::PUT
+    }
+
+    fn endpoint(&self) -> Cow<'static, str> {
+        format!(
+            "projects/{}/users/{}/roles/{}",
+            self.project_id, self.user_id, self.role_id
+        )
+        .into()
+    }
+
+    fn service_type(&self) -> ServiceType {
+        ServiceType::Identity
+    }
+
+    fn api_version(&self) -> Option<ApiVersion> {
+        Some(ApiVersion::new(3, 0))
+    }
+}
 
 pub async fn check_grant<
     P: AsRef<str> + std::fmt::Display,
     U: AsRef<str> + std::fmt::Display,
     R: AsRef<str> + std::fmt::Display,
 >(
-    tc: &TestClient,
+    client: &Arc<AsyncOpenStack>,
     project_id: P,
     user_id: U,
     role_id: R,
 ) -> Result<bool> {
-    let rsp = tc
-        .client
-        .head(tc.base_url.join(&format!(
-            "v3/projects/{}/users/{}/roles/{}",
-            project_id, user_id, role_id
-        ))?)
-        .send()
-        .await?;
-    Ok(rsp.status() == StatusCode::NO_CONTENT)
+    Ok(openstack_sdk_core::api::ignore(
+        ProjectUserRoleGrantCheckBuilder::default()
+            .project_id(project_id.as_ref())
+            .user_id(user_id.as_ref())
+            .role_id(role_id.as_ref())
+            .build()?,
+    )
+    .query_async(client.as_ref())
+    .await
+    .is_ok())
 }
 
 pub async fn add_project_grant<
@@ -46,19 +110,19 @@ pub async fn add_project_grant<
     U: AsRef<str> + std::fmt::Display,
     R: AsRef<str> + std::fmt::Display,
 >(
-    tc: &TestClient,
+    client: &Arc<AsyncOpenStack>,
     project_id: P,
     user_id: U,
     role_id: R,
 ) -> Result<()> {
-    let rsp = tc
-        .client
-        .put(tc.base_url.join(&format!(
-            "v3/projects/{}/users/{}/roles/{}",
-            project_id, user_id, role_id
-        ))?)
-        .send()
-        .await?;
-    assert_eq!(rsp.status(), StatusCode::NO_CONTENT);
+    openstack_sdk_core::api::ignore(
+        ProjectUserRoleGrantSetBuilder::default()
+            .project_id(project_id.as_ref())
+            .user_id(user_id.as_ref())
+            .role_id(role_id.as_ref())
+            .build()?,
+    )
+    .query_async(client.as_ref())
+    .await?;
     Ok(())
 }

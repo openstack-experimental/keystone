@@ -12,26 +12,26 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use eyre::Result;
 use std::collections::HashSet;
+use std::sync::Arc;
+
+use eyre::Result;
 use tracing_test::traced_test;
 
+use openstack_sdk_core::{AsyncOpenStack, config::CloudConfig};
+
 use super::*;
-use crate::common::*;
 use crate::role::list_roles;
 
 #[tokio::test]
 #[traced_test]
 async fn test_check_auth_roles() -> Result<()> {
-    let mut test_client = TestClient::default()?;
-    test_client.auth_admin().await?;
+    let test_client = Arc::new(AsyncOpenStack::new(&CloudConfig::from_env()?).await?);
 
     let auth_token = test_client
-        .auth
-        .as_ref()
-        .expect("token info must be present in the client")
-        .token
-        .clone();
+        .get_auth_info()
+        .expect("must be authenticated")
+        .token;
     let all_role_ids: HashSet<String> = list_roles(&test_client)
         .await?
         .into_iter()
@@ -47,7 +47,13 @@ async fn test_check_auth_roles() -> Result<()> {
     for role_id in user_role_ids.union(&all_role_ids) {
         let res = check_grant(
             &test_client,
-            &auth_token.project.as_ref().expect("project must exist").id,
+            &auth_token
+                .project
+                .as_ref()
+                .expect("must be project scope")
+                .id
+                .as_ref()
+                .expect("project must specify id"),
             &auth_token.user.id,
             &role_id,
         )

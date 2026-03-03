@@ -27,7 +27,7 @@ use validator::Validate;
 use crate::error::BuilderError;
 
 /// Short Project representation.
-#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct ProjectShort {
@@ -49,11 +49,12 @@ pub struct ProjectShort {
 }
 
 /// Full project representation.
-#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct Project {
     /// The description of the project.
+    #[builder(default)]
     #[serde(skip_serializing_if = "Option::is_none")]
     #[validate(length(min = 1, max = 255))]
     pub description: Option<String>,
@@ -67,6 +68,7 @@ pub struct Project {
     pub enabled: bool,
 
     /// Additional project properties.
+    #[builder(default)]
     #[serde(flatten, default, skip_serializing_if = "Option::is_none")]
     pub extra: Option<Value>,
 
@@ -92,11 +94,12 @@ pub struct Project {
 }
 
 /// New project data.
-#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
-#[builder(build_fn(error = "BuilderError"))]
+#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[builder(build_fn(error = "BuilderError", validate = "Self::validate"))]
 #[builder(setter(strip_option, into))]
 pub struct ProjectCreate {
     /// The description of the project.
+    #[builder(default)]
     #[validate(length(min = 1, max = 255))]
     pub description: Option<String>,
 
@@ -105,10 +108,12 @@ pub struct ProjectCreate {
     pub domain_id: String,
 
     /// If set to true, project is enabled. If set to false, project is
-    /// disabled.
+    /// disabled. The defaults is `true`.
+    #[builder(default = "crate::default_true()")]
     pub enabled: bool,
 
     /// Additional project properties.
+    #[builder(default)]
     #[serde(flatten)]
     pub extra: Option<Value>,
 
@@ -118,6 +123,7 @@ pub struct ProjectCreate {
     /// projects. If set to false, this project behaves as a regular project
     /// that contains only resources. Default is false. You cannot update this
     /// parameter after you create the project.
+    #[builder(default)]
     pub is_domain: bool,
 
     /// The name of the project, which must be unique within the owning domain.
@@ -138,12 +144,26 @@ pub struct ProjectCreate {
     ///
     /// `parent_id` is immutable, and can’t be updated after the project is
     /// created - hence a project cannot be moved within the hierarchy.
+    #[builder(default)]
     #[validate(length(min = 1, max = 64))]
     pub parent_id: Option<String>,
 }
 
+impl ProjectCreateBuilder {
+    fn validate(&self) -> Result<(), String> {
+        if self.parent_id.is_some() {
+            if self.is_domain.is_some_and(|x| x) {
+                return Err(
+                    "project cannot specify `parent_id` when `is_domain` is true".to_string(),
+                );
+            }
+        }
+        Ok(())
+    }
+}
+
 /// Complete response with the project data.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct ProjectResponse {
     /// Project object.
     #[validate(nested)]
@@ -151,7 +171,7 @@ pub struct ProjectResponse {
 }
 
 /// New project creation request.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct ProjectCreateRequest {
     /// Project object.
     #[validate(nested)]
@@ -159,7 +179,7 @@ pub struct ProjectCreateRequest {
 }
 
 /// List of projects.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct ProjectShortList {
     /// Collection of project objects.
     #[validate(nested)]
@@ -169,5 +189,35 @@ pub struct ProjectShortList {
 impl IntoResponse for ProjectShortList {
     fn into_response(self) -> Response {
         (StatusCode::OK, Json(self)).into_response()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_project_create() {
+        let sot = ProjectCreateBuilder::default()
+            .name("name")
+            .domain_id("did")
+            .build()
+            .unwrap();
+        assert!(sot.enabled, "enabled defaults to true");
+        assert!(!sot.is_domain, "is_domain defaults to false");
+        assert!(sot.parent_id.is_none());
+        if let Err(BuilderError::Validation(..)) = ProjectCreateBuilder::default()
+            .name("name")
+            .domain_id("did")
+            .enabled(true)
+            .is_domain(true)
+            .parent_id("foo")
+            .build()
+        {
+        } else {
+            panic!(
+                "an error should be raised not allowing to set parent_id with the is_domain=true"
+            );
+        }
     }
 }
