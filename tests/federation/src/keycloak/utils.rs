@@ -28,17 +28,18 @@ pub async fn get_keycloak_admin(client: &Client) -> Result<KeycloakAdmin, Report
     Ok(KeycloakAdmin::new(&url, admin_token, client.clone()))
 }
 
-pub async fn create_keycloak_client<S1: AsRef<str>, S2: AsRef<str>>(
+pub async fn create_keycloak_client<S1: AsRef<str>, S2: AsRef<str>, S3: AsRef<str>>(
     admin: &KeycloakAdmin,
     client_id: S1,
     client_secret: S2,
+    redirect_url: S3,
 ) -> Result<(), Report> {
     let realm = "master";
     let keystone_client_req = ClientRepresentation {
         client_id: Some(client_id.as_ref().into()),
         name: Some(client_id.as_ref().into()),
         secret: Some(client_secret.as_ref().into()),
-        redirect_uris: vec!["http://localhost:8050/*".into()].into(),
+        redirect_uris: vec![redirect_url.as_ref().into()].into(),
         protocol_mappers: vec![
             ProtocolMapperRepresentation {
                 name: Some("domain_id".into()),
@@ -186,9 +187,9 @@ pub struct AuthResponse {
     pub id_token: String,
 }
 
-pub async fn generate_user_jwt(
-    client_id: &'static str,
-    client_secret: &'static str,
+pub async fn generate_user_jwt<CI: AsRef<str>, CS: AsRef<str>>(
+    client_id: CI,
+    client_secret: CS,
     user: &'static str,
     password: &'static str,
 ) -> Result<String, Report> {
@@ -201,8 +202,8 @@ pub async fn generate_user_jwt(
             url, realm
         ))
         .form(&[
-            ("client_id", client_id),
-            ("client_secret", client_secret),
+            ("client_id", client_id.as_ref()),
+            ("client_secret", client_secret.as_ref()),
             ("username", user),
             ("password", password),
             ("scope", "openid"),

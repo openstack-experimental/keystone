@@ -50,8 +50,11 @@ manifests:
   kustomize:
     paths:
       - tools/k8s/keystone/overlays/dev
+      - tools/k8s/tests/keycloak
+      - tools/k8s/tests/dex
   rawYaml:
     - tools/k8s/tests/k8s-auth-test-sa.yaml
+    - tools/k8s/tests/selenium.yaml
 deploy:
   statusCheck: true
   statusCheckDeadlineSeconds: 300
@@ -118,3 +121,37 @@ verify:
     executionMode:
       kubernetesCluster:
         overrides: '{ "spec": { "template": { "spec": { "serviceAccountName": "keystone-k8s-auth-test-sa" } } } }'
+
+  - name: "keycloak"
+    container:
+      image: "keystone-tests"
+      name: "keycloak"
+      command: ["/tests/test-keycloak", "--nocapture"]
+      env:
+        - name: "BROWSERDRIVER_URL"
+          value: "http://selenium-service:4444"
+        - name: "KEYSTONE_URL"
+          value: "http://keystone-rs:8080"
+        - name: "KEYCLOAK_URL"
+          value: "http://keycloak:8080"
+        - name: "KEYCLOAK_PASSWORD"
+          value: "admin"
+    executionMode:
+      kubernetesCluster: {}
+
+  # - name: "dex"
+  #   container:
+  #     image: "keystone-tests"
+  #     name: "dex-test"
+  #     command: ["/tests/test-dex", "--nocapture"]
+  #     #env:
+  #     #  - name: "BROWSERDRIVER_URL"
+  #     #    value: "http://selenium-service:4444"
+  #     #  - name: "KEYSTONE_URL"
+  #     #    value: "http://keystone-rs:8080"
+  #     #  - name: "DEX_URL"
+  #     #    value: "http://dex:5556"
+  #   executionMode:
+  #     kubernetesCluster:
+  #       #jobManifestPath: "tools/k8s/tests/dex/job.yaml"
+  #       overrides: '{ "spec": { "template": { "spec": { "containers": [{"name": "dex", "image": "ghcr.io/dexidp/dex:latest"}, {"name": "test", "image": "keystone-tests"}] } } } }'

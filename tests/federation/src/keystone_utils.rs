@@ -220,14 +220,16 @@ pub async fn auth_jwt(
         .await?)
 }
 
-pub async fn initialize_oidc_auth<IDP, MAPPING>(
+pub async fn initialize_oidc_auth<IDP, MAPPING, R>(
     config: &TestConfig,
     idp_id: IDP,
     mapping_name: MAPPING,
+    redirect_uri: R,
 ) -> Result<IdentityProviderAuthResponse, Report>
 where
     IDP: AsRef<str> + std::fmt::Display,
     MAPPING: AsRef<str> + std::fmt::Display,
+    R: AsRef<str>,
 {
     Ok(config
         .client
@@ -236,7 +238,7 @@ where
             &config.keystone_url, idp_id
         ))
         .json(&json!({
-            "redirect_uri": "http://localhost:8050/oidc/callback",
+            "redirect_uri": redirect_uri.as_ref(),
             "mapping_id": mapping_name.as_ref(),
         }))
         .send()

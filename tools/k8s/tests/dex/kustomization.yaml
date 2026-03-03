@@ -1,0 +1,11 @@
+configMapGenerator:
+  - name: dex
+    files:
+      - config.yaml
+images:
+  - name: dex
+    newName: ghcr.io/dexidp/dex
+    newTag: latest
+resources:
+  - deployment.yaml
+  - service.yaml

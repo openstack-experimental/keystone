@@ -92,9 +92,14 @@ async fn test_login_oidc() {
     let token = auth(config).await;
     let (idp, mapping) = setup_idp(&token, client_id, client_secret).await.unwrap();
 
-    let auth_req = initialize_oidc_auth(config, &idp.id, &mapping.id)
-        .await
-        .unwrap();
+    let auth_req = initialize_oidc_auth(
+        config,
+        &idp.id,
+        &mapping.id,
+        "http://localhost:8050/oidc/callback",
+    )
+    .await
+    .unwrap();
 
     // Prepare the callback server
     let cancel_token = CancellationToken::new();

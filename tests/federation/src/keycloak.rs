@@ -15,6 +15,7 @@
 #![allow(clippy::unwrap_used)]
 
 use eyre::Report;
+use local_ip_address::local_ip;
 use std::env;
 use std::sync::{Arc, Mutex};
 use thirtyfour::prelude::*;
@@ -22,6 +23,7 @@ use tokio::signal;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info};
 use tracing_test::traced_test;
+use uuid::Uuid;
 
 use openstack_keystone_api_types::federation::{identity_provider::*, mapping::*};
 
@@ -46,7 +48,7 @@ pub async fn setup_keycloak_idp<T: AsRef<str>, K: AsRef<str>, S: AsRef<str>>(
         token.as_ref(),
         IdentityProviderCreateRequest {
             identity_provider: IdentityProviderCreate {
-                name: "keycloak".into(),
+                name: Uuid::new_v4().simple().to_string(),
                 enabled: true,
                 oidc_discovery_url: Some(format!("{}/realms/master", keycloak_url)),
                 oidc_client_id: Some(client_id.as_ref().into()),
@@ -62,13 +64,16 @@ pub async fn setup_keycloak_idp<T: AsRef<str>, K: AsRef<str>, S: AsRef<str>>(
         token.as_ref(),
         MappingCreateRequest {
             mapping: MappingCreate {
-                id: Some("kc".into()),
-                name: "keycloak".into(),
+                name: Uuid::new_v4().simple().to_string(),
                 enabled: true,
                 idp_id: idp.id.clone(),
-                allowed_redirect_uris: Some(vec![
-                    "http://localhost:8080/v4/identity_providers/kc/callback".into(),
-                ]),
+                //allowed_redirect_uris: Some(vec![
+                //    format!(
+                //        "http://localhost:8080/v4/identity_providers/{}/callback",
+                //        idp.id
+                //    )
+                //    .into(),
+                //]),
                 user_id_claim: "sub".into(),
                 user_name_claim: "preferred_username".into(),
                 domain_id_claim: Some("domain_id".into()),
@@ -95,7 +100,7 @@ pub async fn setup_kecloak_idp_jwt<T: AsRef<str>, K: AsRef<str>, S: AsRef<str>>(
         token.as_ref(),
         IdentityProviderCreateRequest {
             identity_provider: IdentityProviderCreate {
-                name: "keycloak_jwt".into(),
+                name: Uuid::new_v4().simple().to_string(), //"keycloak_jwt".into(),
                 enabled: true,
                 oidc_discovery_url: Some(format!("{}/realms/master", keycloak_url)),
                 jwks_url: Some(format!(
@@ -114,8 +119,7 @@ pub async fn setup_kecloak_idp_jwt<T: AsRef<str>, K: AsRef<str>, S: AsRef<str>>(
         token.as_ref(),
         MappingCreateRequest {
             mapping: MappingCreate {
-                id: Some("kc_jwt".into()),
-                name: "keycloak_jwt".into(),
+                name: Uuid::new_v4().simple().to_string(),
                 enabled: true,
                 r#type: Some(MappingType::Jwt),
                 idp_id: idp.id.clone(),
@@ -137,14 +141,20 @@ async fn test_login_oidc_keycloak() {
     let config = get_config();
     let user_name = "test";
     let user_password = "pass";
-    let client_id = "keystone_test";
+    let client_id = uuid::Uuid::new_v4().simple().to_string();
     let client_secret = "keystone_test_secret";
+    let local_ip_address = local_ip().expect("cannot fetch local address");
 
     let keycloak = get_keycloak_admin(&config.client).await.unwrap();
 
-    create_keycloak_client(&keycloak, client_id, client_secret)
-        .await
-        .unwrap();
+    create_keycloak_client(
+        &keycloak,
+        &client_id,
+        client_secret,
+        &format!("http://{}:8050/*", local_ip_address),
+    )
+    .await
+    .unwrap();
     let user = create_keycloak_user(&keycloak, user_name, user_password)
         .await
         .unwrap();
@@ -152,13 +162,18 @@ async fn test_login_oidc_keycloak() {
     put_user_to_group(&keycloak, user, group).await.unwrap();
 
     let token = auth(config).await;
-    let (idp, mapping) = setup_keycloak_idp(&token, client_id, client_secret)
+    let (idp, mapping) = setup_keycloak_idp(&token, &client_id, client_secret)
         .await
         .unwrap();
 
-    let auth_req = initialize_oidc_auth(config, &idp.id, &mapping.id)
-        .await
-        .unwrap();
+    let auth_req = initialize_oidc_auth(
+        config,
+        &idp.id,
+        &mapping.id,
+        &format!("http://{}:8050/oidc/callback", local_ip_address),
+    )
+    .await
+    .unwrap();
 
     // Prepare the callback server
     let cancel_token = CancellationToken::new();
@@ -173,7 +188,7 @@ async fn test_login_oidc_keycloak() {
         }
     });
 
-    let socket_addr = std::net::SocketAddr::from(([127, 0, 0, 1], 8050));
+    let socket_addr = std::net::SocketAddr::from(([0, 0, 0, 0], 8050));
     let callback_handle = tokio::spawn({
         let cancel_token = cancel_token.clone();
         let state = state.clone();
@@ -184,10 +199,7 @@ async fn test_login_oidc_keycloak() {
     let mut caps = DesiredCapabilities::firefox();
     caps.set_headless().unwrap();
     let driver = WebDriver::new(
-        format!(
-            "http://localhost:{}",
-            env::var("BROWSERDRIVER_PORT").unwrap_or("4444".to_string())
-        ),
+        env::var("BROWSERDRIVER_URL").unwrap_or("http://localhost:4444".to_string()),
         caps,
     )
     .await
@@ -228,24 +240,30 @@ async fn test_login_jwt_keycloak() {
     let config = get_config();
     let user_name = "test";
     let user_password = "pass";
-    let client_id = "keystone_test";
+    let client_id = uuid::Uuid::new_v4().simple().to_string();
     let client_secret = "keystone_test_secret";
+    let local_ip_address = local_ip().expect("cannot fetch local address");
 
     let keycloak = get_keycloak_admin(&config.client).await.unwrap();
 
-    create_keycloak_client(&keycloak, client_id, client_secret)
-        .await
-        .unwrap();
+    create_keycloak_client(
+        &keycloak,
+        &client_id,
+        client_secret,
+        &format!("http://{}:8050/*", local_ip_address),
+    )
+    .await
+    .unwrap();
     create_keycloak_user(&keycloak, user_name, user_password)
         .await
         .unwrap();
-    let jwt = generate_user_jwt(client_id, client_secret, user_name, user_password)
+    let jwt = generate_user_jwt(&client_id, client_secret, user_name, user_password)
         .await
         .unwrap();
 
     let token = auth(config).await;
     ensure_user(&token, "jwt_user", "default").await.unwrap();
-    let (idp, mapping) = setup_kecloak_idp_jwt(&token, client_id, client_secret)
+    let (idp, mapping) = setup_kecloak_idp_jwt(&token, &client_id, client_secret)
         .await
         .unwrap();
 

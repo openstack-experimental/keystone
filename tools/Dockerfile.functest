@@ -47,6 +47,10 @@ RUN cargo test --test api --no-run && \
     cp $(find target/debug/deps -name "api-*" -type f -executable) /app/test-api
 RUN cargo test --test k8s_auth --no-run && \
     cp $(find target/debug/deps -name "k8s_auth-*" -type f -executable) /app/test-k8s-auth
+RUN cargo test --test keycloak --no-run && \
+    cp $(find target/debug/deps -name "keycloak-*" -type f -executable) /app/test-keycloak
+RUN cargo test --test dex --no-run && \
+    cp $(find target/debug/deps -name "dex-*" -type f -executable) /app/test-dex
 
 
 # Stage 2: Package

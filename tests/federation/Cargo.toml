@@ -16,6 +16,7 @@ hyper = { workspace = true, features = ["http1", "server"] }
 hyper-util = { workspace = true, features = ["tokio", "http1"] }
 eyre.workspace = true
 keycloak = { version = "26.5" }
+local-ip-address = { version = "0.6" }
 openstack_keystone_api_types = { version = "0.1", path = "../../crates/keystone_api_types" }
 reqwest = { workspace = true, features = ["json", "http2", "multipart", "gzip", "deflate"] }
 serde.workspace = true
@@ -26,6 +27,7 @@ tracing.workspace = true
 tokio = { workspace = true, features = ["signal"] }
 tokio-util.workspace = true
 tracing-test = { workspace = true, features = ["no-env-filter"] }
+uuid = { workspace = true, features = ["v4" ]}
 
 [[test]]
 name = "keycloak"
