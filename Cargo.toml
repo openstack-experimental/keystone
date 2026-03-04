@@ -56,7 +56,7 @@ mockall_double = { version = "0.3" }
 nix = { version = "0.31", default-features = false }
 # opa-wasm = { version = "^0.1", optional = true }
 openidconnect = { version = "4.0" }
-openraft = { version = "0.10.0-alpha" }
+openraft = { version = "0.10.0-alpha.14" }
 prost = { version = "0.14" }
 rand = { version = "0.10" }
 regex = { version = "1.12" }
@@ -72,9 +72,9 @@ serde = { version = "1.0" }
 serde_bytes = { version = "0.11" }
 serde_json = { version = "1.0" }
 serde_urlencoded = { version = "0.7" }
-tempfile = { version = "3.24" }
+tempfile = { version = "3.26" }
 thiserror = { version = "2.0" }
-tokio = { version = "1.49" }
+tokio = { version = "1.50" }
 tokio-util = { version = "0.7" }
 tonic = { version = "0.14" }
 tonic-prost-build = { version = "0.14" }
