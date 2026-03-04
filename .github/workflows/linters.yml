@@ -59,7 +59,7 @@ jobs:
           components: rustfmt, clippy
 
       - name: Install cargo-binstall
-        uses: taiki-e/install-action@3522286d40783523f9c7880e33f785905b4c20d0 # v2.66.1
+        uses: taiki-e/install-action@205eb1d74c6feda89abb1f3a09360601953286c0 # v2.68.18
         with:
           tool: cargo-binstall
 
