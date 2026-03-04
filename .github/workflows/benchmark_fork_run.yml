@@ -38,13 +38,13 @@ jobs:
           cargo bench --features bench_internals > benchmark_results.log
 
       - name: Upload Benchmark Results
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
           name: benchmark_results.log
           path: ./benchmark_results.log
 
       - name: Upload GitHub Pull Request Event
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
           name: event.json
           path: ${{ github.event_path }}
