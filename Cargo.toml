@@ -32,7 +32,7 @@ async-trait = { version = "0.1" }
 axum = { version = "0.8", default-features = false }
 base64 = { version = "0.22" }
 base64urlsafedata = "0.5"
-bcrypt = { version = "0.18" }
+bcrypt = { version = "0.19" }
 byteorder = { version = "1.5" }
 bytes = { version = "1.11" }
 chrono = { version = "0.4", default-features = false }
