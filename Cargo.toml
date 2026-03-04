@@ -56,7 +56,7 @@ mockall_double = { version = "0.3" }
 nix = { version = "0.31", default-features = false }
 # opa-wasm = { version = "^0.1", optional = true }
 openidconnect = { version = "4.0" }
-openraft = { version = "0.10" }
+openraft = { version = "0.10.0-alpha" }
 prost = { version = "0.14" }
 rand = { version = "0.10" }
 regex = { version = "1.12" }
@@ -117,5 +117,5 @@ print_stdout = "deny"
 unwrap_used = "deny"
 doc_paragraphs_missing_punctuation = "warn"
 
-[patch.crates-io]
-openraft = { git = "https://github.com/databendlabs/openraft", tag = "v0.10.0-alpha.13" }
+#[patch.crates-io]
+#openraft = { git = "https://github.com/databendlabs/openraft", tag = "v0.10.0-alpha.13" }

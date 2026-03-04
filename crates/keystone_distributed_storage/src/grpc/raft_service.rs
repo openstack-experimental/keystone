@@ -221,7 +221,10 @@ impl RaftService for RaftServiceImpl {
 
         // Convert StreamAppendResult to pb::AppendEntriesResponse
         #[allow(clippy::result_large_err)]
-        let output_stream = output.map(|result| Ok(result.into()));
+        let output_stream = output.map(|result| match result {
+            Ok(stream_result) => Ok(stream_result.into()),
+            Err(fatal) => Err(Status::internal(format!("Fatal Raft error: {}", fatal))),
+        });
 
         Ok(Response::new(Box::pin(output_stream)))
     }

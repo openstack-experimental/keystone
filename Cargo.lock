@@ -909,7 +909,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b30fa8254caad766fc03cb0ccae691e14bf3bd72bfff27f72802ce729551b3d6"
 dependencies = [
  "async-trait",
- "convert_case",
+ "convert_case 0.6.0",
  "json5",
  "pathdiff",
  "ron",
@@ -986,6 +986,15 @@ name = "convert_case"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ec182b0ca2f35d8fc196cf3404988fd8b8c739a4d270ff118a398feb0cbec1ca"
+dependencies = [
+ "unicode-segmentation",
+]
+
+[[package]]
+name = "convert_case"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "633458d4ef8c78b72454de2d54fd6ab2e60f9e02be22f3c6104cdc8a4e0fceb9"
 dependencies = [
  "unicode-segmentation",
 ]
@@ -1371,32 +1380,11 @@ dependencies = [
 
 [[package]]
 name = "derive_more"
-version = "1.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4a9b99b9cbbe49445b21764dc0625032a89b145a2642e67603e1c936f5458d05"
-dependencies = [
- "derive_more-impl 1.0.0",
-]
-
-[[package]]
-name = "derive_more"
 version = "2.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d751e9e49156b02b44f9c1815bcb94b984cdcc4396ecc32521c739452808b134"
 dependencies = [
- "derive_more-impl 2.1.1",
-]
-
-[[package]]
-name = "derive_more-impl"
-version = "1.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cb7330aeadfbe296029522e6c40f315320aba36fc43a5b3632f3795348f3bd22"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.116",
- "unicode-xid",
+ "derive_more-impl",
 ]
 
 [[package]]
@@ -1405,6 +1393,7 @@ version = "2.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "799a97264921d8623a957f6c3b9011f3b5492f557bbb7a5a19b7fa6d06ba8dcb"
 dependencies = [
+ "convert_case 0.10.0",
  "proc-macro2",
  "quote",
  "rustc_version",
@@ -3149,31 +3138,33 @@ dependencies = [
 
 [[package]]
 name = "openraft"
-version = "0.10.0"
-source = "git+https://github.com/databendlabs/openraft?tag=v0.10.0-alpha.13#8d3592cc2e44e12dbdeeb74ae367d042e98af606"
+version = "0.10.0-alpha.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "705649ae9138cc7cec45a8b2f6f0d992415c3b0660436588066600f9d6c09017"
 dependencies = [
  "anyerror",
  "byte-unit",
  "chrono",
  "clap",
- "derive_more 1.0.0",
- "futures",
+ "derive_more",
+ "futures-util",
  "maplit",
  "openraft-macros",
  "openraft-rt",
  "openraft-rt-tokio",
+ "peel-off",
  "rand 0.9.2",
  "serde",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
  "tracing",
- "tracing-futures",
  "validit",
 ]
 
 [[package]]
 name = "openraft-macros"
-version = "0.10.0"
-source = "git+https://github.com/databendlabs/openraft?tag=v0.10.0-alpha.13#8d3592cc2e44e12dbdeeb74ae367d042e98af606"
+version = "0.10.0-alpha.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "12c9b777b2be154f674a6c6eef833a267ff088dfb32aea0d12d2f6f90fb98aeb"
 dependencies = [
  "chrono",
  "proc-macro2",
@@ -3184,20 +3175,23 @@ dependencies = [
 
 [[package]]
 name = "openraft-rt"
-version = "0.10.0"
-source = "git+https://github.com/databendlabs/openraft?tag=v0.10.0-alpha.13#8d3592cc2e44e12dbdeeb74ae367d042e98af606"
+version = "0.10.0-alpha.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d8a15bfa52fdaea5a104bfa8cc10a8642cdb778e0e6e154e87d681a52ce5271d"
 dependencies = [
- "futures",
+ "futures-channel",
+ "futures-util",
  "openraft-macros",
  "rand 0.9.2",
 ]
 
 [[package]]
 name = "openraft-rt-tokio"
-version = "0.10.0"
-source = "git+https://github.com/databendlabs/openraft?tag=v0.10.0-alpha.13#8d3592cc2e44e12dbdeeb74ae367d042e98af606"
+version = "0.10.0-alpha.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a02a9f475bf0a88e6cc4e84b6462af82396c7552ef372a69f2079d0c67895d08"
 dependencies = [
- "futures",
+ "futures-util",
  "openraft-rt",
  "rand 0.9.2",
  "tokio",
@@ -3549,6 +3543,12 @@ name = "pathdiff"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "df94ce210e5bc13cb6651479fa48d14f601d9858cfe0467f43ae157023b938d3"
+
+[[package]]
+name = "peel-off"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f3420ea4424090cbd75a688996f696a807c68d6744b4863591b86435dc3078e9"
 
 [[package]]
 name = "pem"
@@ -4712,7 +4712,7 @@ dependencies = [
  "async-trait",
  "bigdecimal",
  "chrono",
- "derive_more 2.1.1",
+ "derive_more",
  "futures-util",
  "log",
  "ouroboros",
@@ -6144,16 +6144,6 @@ checksum = "8b1581020d7a273442f5b45074a6a57d5757ad0a47dac0e9f0bd57b81936f3db"
 dependencies = [
  "tracing",
  "tracing-subscriber",
-]
-
-[[package]]
-name = "tracing-futures"
-version = "0.2.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "97d095ae15e245a057c8e8451bab9b3ee1e1f68e9ba2b4fbc18d0ac5237835f2"
-dependencies = [
- "pin-project",
- "tracing",
 ]
 
 [[package]]
