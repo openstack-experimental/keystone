@@ -22,7 +22,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 use validator::Validate;
 
-use crate::v3::role_assignment::Role;
+use crate::v3::role::RoleRef;
 
 /// Token restriction data.
 #[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
@@ -57,7 +57,7 @@ pub struct TokenRestriction {
     /// Bound token roles.
     #[builder(default)]
     #[validate(nested)]
-    pub roles: Vec<Role>,
+    pub roles: Vec<RoleRef>,
 }
 
 /// New token restriction data.
@@ -88,7 +88,7 @@ pub struct TokenRestrictionCreate {
     /// Bound token roles.
     #[builder(default)]
     #[validate(nested)]
-    pub roles: Vec<Role>,
+    pub roles: Vec<RoleRef>,
 }
 
 /// New token restriction data.
@@ -114,7 +114,7 @@ pub struct TokenRestrictionUpdate {
     /// Bound token roles.
     #[builder(default)]
     #[validate(nested)]
-    pub roles: Option<Vec<Role>>,
+    pub roles: Option<Vec<RoleRef>>,
 }
 
 /// Token restriction data.

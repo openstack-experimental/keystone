@@ -16,7 +16,8 @@ use chrono::DateTime;
 use serde_json::Value;
 use tracing::error;
 
-use crate::db::entity::trust as db_trust;
+use crate::db::entity::{trust as db_trust, trust_role as db_trust_role};
+use crate::role::types::RoleRef;
 use crate::trust::{
     TrustProviderError,
     types::{Trust, TrustBuilder},
@@ -89,10 +90,20 @@ impl TryFrom<&db_trust::Model> for Trust {
     }
 }
 
+impl From<db_trust_role::Model> for RoleRef {
+    fn from(value: db_trust_role::Model) -> Self {
+        Self {
+            id: value.role_id,
+            name: None,
+            domain_id: None,
+        }
+    }
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
 
-    use crate::db::entity::trust;
+    use crate::db::entity::{trust, trust_role};
 
     pub fn get_trust_mock<S: Into<String>, U1: Into<String>, U2: Into<String>>(
         id: S,
@@ -112,6 +123,16 @@ pub(crate) mod tests {
             expires_at_int: None,
             redelegated_trust_id: None,
             redelegation_count: None,
+        }
+    }
+
+    pub fn get_trust_role_mock<T: Into<String>, R: Into<String>>(
+        trust_id: T,
+        role_id: R,
+    ) -> trust_role::Model {
+        trust_role::Model {
+            trust_id: trust_id.into(),
+            role_id: role_id.into(),
         }
     }
 

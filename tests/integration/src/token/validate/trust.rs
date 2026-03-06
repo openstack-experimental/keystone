@@ -257,8 +257,10 @@ async fn test_fewer_roles() -> Result<(), Report> {
     Ok(())
 }
 
+/// Only global roles (without domain_id) can be delegated and consumed through trust.
+/// Python keystone filters role in the token model.
 #[tokio::test]
-#[traced_test]
+//#[traced_test]
 async fn test_exclude_local_roles() -> Result<(), Report> {
     let (state, _tmp) = get_state().await?;
     create_role(&state, "role_a").await?;

@@ -27,7 +27,7 @@ use crate::catalog::*;
 use crate::error::BuilderError;
 use crate::scope::*;
 use crate::trust::TokenTrustRepr;
-use crate::v3::role::Role;
+use crate::v3::role::RoleRef;
 
 /// Authorization token.
 #[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
@@ -104,7 +104,7 @@ pub struct Token {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[builder(default)]
     #[validate(nested)]
-    pub roles: Option<Vec<Role>>,
+    pub roles: Option<Vec<RoleRef>>,
 
     /// A catalog object.
     #[serde(skip_serializing_if = "Option::is_none")]

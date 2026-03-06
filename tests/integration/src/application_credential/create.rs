@@ -147,10 +147,10 @@ async fn test_create_nonexisting_role() -> Result<(), Report> {
             ApplicationCredentialCreate {
                 name: Uuid::new_v4().to_string(),
                 project_id: "project_a".into(),
-                roles: vec![Role {
+                roles: vec![RoleRef {
                     id: "missing".into(),
-                    name: "missing".into(),
-                    ..Default::default()
+                    name: None,
+                    domain_id: None,
                 }],
                 user_id: "user_a".into(),
                 ..Default::default()
@@ -159,7 +159,7 @@ async fn test_create_nonexisting_role() -> Result<(), Report> {
         .await
     {
     } else {
-        panic!("appcred for the missing role s should not be created");
+        panic!("appcred for the missing role should not be created");
     }
 
     Ok(())
@@ -177,10 +177,10 @@ async fn test_create_role() -> Result<(), Report> {
             ApplicationCredentialCreate {
                 name: Uuid::new_v4().to_string(),
                 project_id: "project_a".into(),
-                roles: vec![Role {
+                roles: vec![RoleRef {
                     id: "role_a".into(),
-                    name: "role_a".into(),
-                    ..Default::default()
+                    name: None,
+                    domain_id: None,
                 }],
                 user_id: "user_a".into(),
                 ..Default::default()

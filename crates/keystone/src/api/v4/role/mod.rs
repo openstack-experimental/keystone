@@ -129,7 +129,8 @@ mod tests {
                 // for some reason when deserializing missing value appears still as an empty
                 // object
                 extra: Some(json!({})),
-                ..Default::default()
+                domain_id: None,
+                description: None
             }],
             res.roles
         );
@@ -142,7 +143,7 @@ mod tests {
             .expect_list_roles()
             .withf(|_, qp: &RoleListParameters| {
                 RoleListParameters {
-                    domain_id: Some("domain".into()),
+                    domain_id: Some(Some("domain".into())),
                     name: Some("name".into()),
                 } == *qp
             })
@@ -247,7 +248,9 @@ mod tests {
             ApiRole {
                 id: "bar".into(),
                 extra: Some(json!({})),
-                ..Default::default()
+                name: String::new(),
+                domain_id: None,
+                description: None
             },
             res.role,
         );

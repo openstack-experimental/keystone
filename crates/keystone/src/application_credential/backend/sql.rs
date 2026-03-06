@@ -12,6 +12,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //! # Application Credential SQL driver
+
 use async_trait::async_trait;
 
 use super::super::types::*;

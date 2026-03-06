@@ -50,7 +50,7 @@ use crate::{
         error::AssignmentProviderError,
         types::{RoleAssignmentListParameters, RoleAssignmentListParametersBuilder},
     },
-    role::{RoleApi, types::Role},
+    role::{RoleApi, types::RoleRef},
     trust::{TrustApi, types::Trust},
 };
 use backend::{TokenBackend, fernet::FernetTokenProvider};
@@ -582,10 +582,10 @@ impl TokenProvider {
                         )
                         .await?
                         .into_iter()
-                        .map(|x| Role {
+                        .map(|x| RoleRef {
                             id: x.role_id.clone(),
-                            name: x.role_name.clone().unwrap_or_default(),
-                            ..Default::default()
+                            name: x.role_name.clone(),
+                            domain_id: None,
                         })
                         .collect(),
                 );
@@ -610,10 +610,10 @@ impl TokenProvider {
                         )
                         .await?
                         .into_iter()
-                        .map(|x| Role {
+                        .map(|x| RoleRef {
                             id: x.role_id.clone(),
-                            name: x.role_name.clone().unwrap_or_default(),
-                            ..Default::default()
+                            name: x.role_name.clone(),
+                            domain_id: None,
                         })
                         .collect(),
                 );
@@ -638,10 +638,10 @@ impl TokenProvider {
                         )
                         .await?
                         .into_iter()
-                        .map(|x| Role {
+                        .map(|x| RoleRef {
                             id: x.role_id.clone(),
-                            name: x.role_name.clone().unwrap_or_default(),
-                            ..Default::default()
+                            name: x.role_name.clone(),
+                            domain_id: None,
                         })
                         .collect(),
                 );
@@ -666,10 +666,10 @@ impl TokenProvider {
                         )
                         .await?
                         .into_iter()
-                        .map(|x| Role {
+                        .map(|x| RoleRef {
                             id: x.role_id.clone(),
-                            name: x.role_name.clone().unwrap_or_default(),
-                            ..Default::default()
+                            name: x.role_name.clone(),
+                            domain_id: None,
                         })
                         .collect(),
                 );
@@ -704,10 +704,10 @@ impl TokenProvider {
                         )
                         .await?
                         .into_iter()
-                        .map(|x| Role {
+                        .map(|x| RoleRef {
                             id: x.role_id.clone(),
-                            name: x.role_name.clone().unwrap_or_default(),
-                            ..Default::default()
+                            name: x.role_name.clone(),
+                            domain_id: None,
                         })
                         .collect(),
                 );
@@ -1008,7 +1008,6 @@ mod tests {
     use crate::provider::Provider;
     use crate::resource::{MockResourceProvider, types::*};
     use crate::revoke::MockRevokeProvider;
-    use crate::role::types::Role;
     use crate::trust::types::*;
 
     pub(super) fn setup_config() -> Config {
@@ -1109,10 +1108,10 @@ mod tests {
         if let Token::ProjectScope(data) = ptoken {
             assert_eq!(
                 data.roles.unwrap(),
-                vec![Role {
+                vec![RoleRef {
                     id: "rid".into(),
-                    name: "role_name".into(),
-                    ..Default::default()
+                    name: Some("role_name".into()),
+                    domain_id: None
                 }]
             );
         } else {
@@ -1132,10 +1131,10 @@ mod tests {
         if let Token::DomainScope(data) = dtoken {
             assert_eq!(
                 data.roles.unwrap(),
-                vec![Role {
+                vec![RoleRef {
                     id: "rid".into(),
-                    name: "role_name".into(),
-                    ..Default::default()
+                    name: Some("role_name".into()),
+                    domain_id: None
                 }]
             );
         } else {
@@ -1298,15 +1297,15 @@ mod tests {
                     name: "foo".into(),
                     project_id: "project_id".into(),
                     roles: vec![
-                        Role {
+                        RoleRef {
                             id: "role_1".into(),
-                            name: "role_name_1".into(),
-                            ..Default::default()
+                            name: Some("role_name_1".into()),
+                            domain_id: None,
                         },
-                        Role {
+                        RoleRef {
                             id: "role_2".into(),
-                            name: "role_name_2".into(),
-                            ..Default::default()
+                            name: Some("role_name_2".into()),
+                            domain_id: None,
                         },
                     ],
                     unrestricted: false,
@@ -1325,15 +1324,15 @@ mod tests {
                     name: "foo".into(),
                     project_id: "project_id".into(),
                     roles: vec![
-                        Role {
+                        RoleRef {
                             id: "-role_1".into(),
-                            name: "-role_name_1".into(),
-                            ..Default::default()
+                            name: Some("-role_name_1".into()),
+                            domain_id: None,
                         },
-                        Role {
+                        RoleRef {
                             id: "-role_2".into(),
-                            name: "-role_name_2".into(),
-                            ..Default::default()
+                            name: Some("-role_name_2".into()),
+                            domain_id: None,
                         },
                     ],
                     unrestricted: false,
@@ -1374,10 +1373,10 @@ mod tests {
         if let Token::ApplicationCredential(..) = &token {
             assert_eq!(
                 token.roles().unwrap(),
-                &vec![Role {
+                &vec![RoleRef {
                     id: "role_1".into(),
-                    name: "role_name_1".into(),
-                    ..Default::default()
+                    name: Some("role_name_1".into()),
+                    domain_id: None,
                 }],
                 "only still active role assignment is returned"
             );

@@ -47,10 +47,10 @@ async fn test_valid() -> Result<(), Report> {
                 access_rules: None,
                 name: Uuid::new_v4().to_string(),
                 project_id: "project_a".into(),
-                roles: vec![Role {
+                roles: vec![RoleRef {
                     id: "role_a".into(),
-                    name: "role_a".into(),
-                    ..Default::default()
+                    name: None,
+                    domain_id: None,
                 }],
                 user_id: user.id.clone(),
                 ..Default::default()
@@ -129,10 +129,10 @@ async fn test_expired() -> Result<(), Report> {
                 expires_at: Some(Utc::now()),
                 name: Uuid::new_v4().to_string(),
                 project_id: "project_a".into(),
-                roles: vec![Role {
+                roles: vec![RoleRef {
                     id: "role_a".into(),
-                    name: "role_a".into(),
-                    ..Default::default()
+                    name: None,
+                    domain_id: None,
                 }],
                 user_id: user.id.clone(),
                 ..Default::default()
@@ -194,15 +194,15 @@ async fn test_valid_fewer_roles() -> Result<(), Report> {
                 name: Uuid::new_v4().to_string(),
                 project_id: "project_a".into(),
                 roles: vec![
-                    Role {
+                    RoleRef {
                         id: "role_a".into(),
-                        name: "role_a".into(),
-                        ..Default::default()
+                        name: None,
+                        domain_id: None,
                     },
-                    Role {
+                    RoleRef {
                         id: "role_b".into(),
-                        name: "role_b".into(),
-                        ..Default::default()
+                        name: None,
+                        domain_id: None,
                     },
                 ],
                 user_id: user.id.clone(),
@@ -280,10 +280,10 @@ async fn test_valid_all_roles_revoked() -> Result<(), Report> {
                 access_rules: None,
                 name: Uuid::new_v4().to_string(),
                 project_id: "project_a".into(),
-                roles: vec![Role {
+                roles: vec![RoleRef {
                     id: "role_b".into(),
-                    name: "role_b".into(),
-                    ..Default::default()
+                    name: None,
+                    domain_id: None,
                 }],
                 user_id: user.id.clone(),
                 ..Default::default()

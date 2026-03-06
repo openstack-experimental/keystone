@@ -80,14 +80,14 @@ impl
         ),
     ) -> Self {
         let mut restriction: TokenRestriction = value.0.into();
-        let roles: Vec<crate::role::types::Role> = value
+        let roles: Vec<crate::role::types::RoleRef> = value
             .1
             .into_iter()
             .filter_map(|(_a, r)| r)
-            .map(|role| crate::role::types::Role {
+            .map(|role| crate::role::types::RoleRef {
                 id: role.id.clone(),
-                name: role.name.clone(),
-                ..Default::default()
+                name: Some(role.name.clone()),
+                domain_id: None,
             })
             .collect();
         restriction.role_ids = roles.iter().map(|role| role.id.clone()).collect();

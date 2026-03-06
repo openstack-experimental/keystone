@@ -241,7 +241,12 @@ impl From<&Token> for Credentials {
             user_id: token.user_id().clone(),
             roles: token
                 .roles()
-                .map(|x| x.iter().map(|role| role.name.clone()).collect::<Vec<_>>())
+                .map(|x| {
+                    x.iter()
+                        .map(|role| role.name.clone())
+                        .flatten()
+                        .collect::<Vec<_>>()
+                })
                 .unwrap_or_default(),
             project_id: token.project().map(|val| val.id.clone()),
             domain_id: token.domain().map(|val| val.id.clone()),

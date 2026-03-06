@@ -16,7 +16,7 @@ use std::sync::Arc;
 
 use eyre::Result;
 
-use openstack_keystone_api_types::scope::*;
+//use openstack_keystone_api_types::scope::*;
 use openstack_sdk_core::{AsyncOpenStack, config::CloudConfig};
 
 use crate::auth::project::list_auth_projects;

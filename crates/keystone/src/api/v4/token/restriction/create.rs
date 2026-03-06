@@ -86,7 +86,7 @@ mod tests {
         super::{openapi_router, tests::get_mocked_state},
         *,
     };
-    use crate::role::types::Role as ProviderRole;
+    use crate::role::types::RoleRef as ProviderRoleRef;
     use crate::token::{MockTokenProvider, types as provider_types};
 
     #[tokio::test]
@@ -114,10 +114,10 @@ mod tests {
                     domain_id: "did".into(),
                     project_id: Some("pid".into()),
                     role_ids: vec!["r1".into(), "r2".into()],
-                    roles: Some(vec![ProviderRole {
+                    roles: Some(vec![ProviderRoleRef {
                         id: "r1".into(),
-                        name: "r1n".into(),
-                        ..Default::default()
+                        name: Some("r1n".into()),
+                        domain_id: None,
                     }]),
                 })
             });
@@ -136,10 +136,10 @@ mod tests {
                 allow_renew: true,
                 allow_rescope: true,
                 roles: vec![
-                    ProviderRole {
+                    ProviderRoleRef {
                         id: "r1".into(),
-                        name: "r1n".into(),
-                        ..Default::default()
+                        name: Some("r1n".into()),
+                        domain_id: None,
                     }
                     .into(),
                 ],

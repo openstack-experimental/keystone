@@ -17,13 +17,14 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
+use derive_builder::Builder;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use utoipa::{IntoParams, ToSchema};
 use validator::Validate;
 
 /// The role data.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct Role {
     /// Role ID.
     #[validate(length(min = 1, max = 64))]
@@ -43,7 +44,24 @@ pub struct Role {
     pub extra: Option<Value>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+/// The role reference data.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+pub struct RoleRef {
+    /// Role domain ID.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[validate(length(min = 1, max = 64))]
+    pub domain_id: Option<String>,
+
+    /// Role ID.
+    #[validate(length(min = 1, max = 64))]
+    pub id: String,
+
+    /// Role name.
+    #[validate(length(min = 1, max = 255))]
+    pub name: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct RoleResponse {
     /// Role object.
     #[validate(nested)]
@@ -57,7 +75,7 @@ impl IntoResponse for RoleResponse {
 }
 
 /// Roles.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct RoleList {
     /// Collection of role objects.
     #[validate(nested)]
@@ -81,14 +99,16 @@ pub struct RoleListParameters {
 }
 
 /// Role create request body.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
 pub struct RoleCreate {
     /// The role description.
+    #[builder(default)]
     #[serde(skip_serializing_if = "Option::is_none")]
     #[validate(length(min = 1, max = 255))]
     pub description: Option<String>,
 
     /// The domain ID of the role.
+    #[builder(default)]
     #[serde(skip_serializing_if = "Option::is_none")]
     #[validate(length(min = 1, max = 64))]
     pub domain_id: Option<String>,
@@ -98,6 +118,7 @@ pub struct RoleCreate {
     pub name: String,
 
     /// Extra attributes for the role.
+    #[builder(default)]
     #[serde(flatten, skip_serializing_if = "Option::is_none")]
     pub extra: Option<Value>,
 }

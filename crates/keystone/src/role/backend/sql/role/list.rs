@@ -18,6 +18,7 @@ use sea_orm::query::*;
 
 use crate::db::entity::{prelude::Role as DbRole, role as db_role};
 use crate::error::DbContextExt;
+use crate::role::backend::sql::role::NULL_DOMAIN_ID;
 use crate::role::{
     RoleProviderError,
     types::{Role, RoleListParameters},
@@ -30,7 +31,9 @@ pub async fn list(
     let mut select = DbRole::find();
 
     if let Some(domain_id) = &params.domain_id {
-        select = select.filter(db_role::Column::DomainId.eq(domain_id));
+        select = select.filter(
+            db_role::Column::DomainId.eq(domain_id.as_ref().map_or(NULL_DOMAIN_ID, |x| &x)),
+        );
     }
     if let Some(name) = &params.name {
         select = select.filter(db_role::Column::Name.eq(name));
@@ -75,7 +78,7 @@ pub(super) mod tests {
                 &db,
                 &RoleListParameters {
                     name: Some("foo".into()),
-                    domain_id: Some("foo_domain".into())
+                    domain_id: Some(Some("foo_domain".into()))
                 }
             )
             .await
@@ -87,6 +90,16 @@ pub(super) mod tests {
                 ..Default::default()
             }]
         );
+
+        list(
+            &db,
+            &RoleListParameters {
+                domain_id: Some(None),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
 
         // Checking transaction log
         assert_eq!(
@@ -101,6 +114,11 @@ pub(super) mod tests {
                     DatabaseBackend::Postgres,
                     r#"SELECT "role"."id", "role"."name", "role"."extra", "role"."domain_id", "role"."description" FROM "role" WHERE "role"."domain_id" = $1 AND "role"."name" = $2"#,
                     ["foo_domain".into(), "foo".into()]
+                ),
+                Transaction::from_sql_and_values(
+                    DatabaseBackend::Postgres,
+                    r#"SELECT "role"."id", "role"."name", "role"."extra", "role"."domain_id", "role"."description" FROM "role" WHERE "role"."domain_id" = $1"#,
+                    [NULL_DOMAIN_ID.into()]
                 ),
             ]
         );

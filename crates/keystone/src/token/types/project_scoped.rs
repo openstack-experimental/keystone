@@ -20,7 +20,7 @@ use validator::Validate;
 use crate::error::BuilderError;
 use crate::identity::types::UserResponse;
 use crate::resource::types::Project;
-use crate::role::types::Role;
+use crate::role::types::RoleRef;
 use crate::token::types::Token;
 use crate::token::types::common;
 
@@ -49,7 +49,7 @@ pub struct ProjectScopePayload {
     #[builder(default)]
     pub user: Option<UserResponse>,
     #[builder(default)]
-    pub roles: Option<Vec<Role>>,
+    pub roles: Option<Vec<RoleRef>>,
     #[builder(default)]
     pub project: Option<Project>,
 }

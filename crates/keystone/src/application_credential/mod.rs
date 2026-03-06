@@ -111,19 +111,29 @@
 //!     }
 //! ]
 //! ```
+use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose};
 use rand::{RngExt, rng};
 use secrecy::SecretString;
-use std::sync::Arc;
 use uuid::Uuid;
 use validator::Validate;
+
+pub mod backend;
+pub mod error;
+#[cfg(test)]
+mod mock;
+pub mod types;
 
 use crate::config::Config;
 use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManager;
-
+use crate::role::{
+    RoleApi,
+    types::{Role, RoleListParameters},
+};
 use backend::{ApplicationCredentialBackend, SqlBackend};
 use types::*;
 
@@ -131,12 +141,6 @@ pub use error::ApplicationCredentialProviderError;
 #[cfg(test)]
 pub use mock::MockApplicationCredentialProvider;
 pub use types::ApplicationCredentialApi;
-
-pub mod backend;
-pub mod error;
-#[cfg(test)]
-mod mock;
-pub mod types;
 
 /// Application Credential Provider.
 pub struct ApplicationCredentialProvider {
@@ -202,9 +206,29 @@ impl ApplicationCredentialApi for ApplicationCredentialProvider {
         state: &ServiceState,
         id: &'a str,
     ) -> Result<Option<ApplicationCredential>, ApplicationCredentialProviderError> {
-        self.backend_driver
+        if let Some(mut app_cred) = self
+            .backend_driver
             .get_application_credential(state, id)
-            .await
+            .await?
+        {
+            let roles: BTreeMap<String, Role> = state
+                .provider
+                .get_role_provider()
+                .list_roles(state, &RoleListParameters::default())
+                .await?
+                .into_iter()
+                .map(|x| (x.id.clone(), x))
+                .collect();
+            for cred_role in app_cred.roles.iter_mut() {
+                if let Some(ref role) = roles.get(&cred_role.id) {
+                    cred_role.name = Some(role.name.clone());
+                    cred_role.domain_id = role.domain_id.clone();
+                }
+            }
+            Ok(Some(app_cred))
+        } else {
+            Ok(None)
+        }
     }
 
     /// List application credentials.
@@ -216,9 +240,28 @@ impl ApplicationCredentialApi for ApplicationCredentialProvider {
     ) -> Result<impl IntoIterator<Item = ApplicationCredential>, ApplicationCredentialProviderError>
     {
         params.validate()?;
-        self.backend_driver
+        let mut creds = self
+            .backend_driver
             .list_application_credentials(state, params)
-            .await
+            .await?;
+
+        let roles: BTreeMap<String, Role> = state
+            .provider
+            .get_role_provider()
+            .list_roles(state, &RoleListParameters::default())
+            .await?
+            .into_iter()
+            .map(|x| (x.id.clone(), x))
+            .collect();
+        for cred in creds.iter_mut() {
+            for cred_role in cred.roles.iter_mut() {
+                if let Some(ref role) = roles.get(&cred_role.id) {
+                    cred_role.name = Some(role.name.clone());
+                    cred_role.domain_id = role.domain_id.clone();
+                }
+            }
+        }
+        Ok(creds)
     }
 }
 

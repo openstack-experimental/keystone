@@ -43,7 +43,7 @@ pub trait RoleApi: Send + Sync {
     async fn expand_implied_roles(
         &self,
         state: &ServiceState,
-        roles: &mut Vec<Role>,
+        roles: &mut Vec<RoleRef>,
     ) -> Result<(), RoleProviderError>;
 
     /// List role imply rules.

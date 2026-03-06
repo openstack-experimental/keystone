@@ -97,7 +97,7 @@ mod tests {
     use tower_http::trace::TraceLayer;
 
     use super::super::{openapi_router, tests::get_mocked_state};
-    use crate::role::types::Role as ProviderRole;
+    use crate::role::types::RoleRef as ProviderRoleRef;
     use crate::token::{MockTokenProvider, TokenProviderError, types as provider_types};
 
     #[tokio::test]
@@ -120,13 +120,15 @@ mod tests {
                     project_id: Some("pid".into()),
                     role_ids: vec!["r1".into(), "r2".into()],
                     roles: Some(vec![
-                        ProviderRole {
+                        ProviderRoleRef {
                             id: "r1".into(),
-                            ..Default::default()
+                            name: None,
+                            domain_id: None,
                         },
-                        ProviderRole {
+                        ProviderRoleRef {
                             id: "r2".into(),
-                            ..Default::default()
+                            name: None,
+                            domain_id: None,
                         },
                     ]),
                 }))

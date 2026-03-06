@@ -128,7 +128,9 @@ mod tests {
             ApiRole {
                 id: "bar".into(),
                 extra: Some(json!({})),
-                ..Default::default()
+                name: String::new(),
+                domain_id: None,
+                description: None
             },
             res.role,
         );

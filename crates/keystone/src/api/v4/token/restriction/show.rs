@@ -93,8 +93,8 @@ mod tests {
         super::{openapi_router, tests::get_mocked_state},
         *,
     };
-    use crate::api::v3::role_assignment::types::Role;
-    use crate::role::types::Role as ProviderRole;
+    use crate::api::v3::role::types::RoleRef;
+    use crate::role::types::RoleRef as ProviderRoleRef;
     use crate::token::{MockTokenProvider, types as provider_types};
 
     #[tokio::test]
@@ -117,15 +117,15 @@ mod tests {
                     project_id: Some("pid".into()),
                     role_ids: vec!["r1".into(), "r2".into()],
                     roles: Some(vec![
-                        ProviderRole {
+                        ProviderRoleRef {
                             id: "r1".into(),
-                            name: "r1n".into(),
-                            ..Default::default()
+                            name: Some("r1n".into()),
+                            domain_id: None,
                         },
-                        ProviderRole {
+                        ProviderRoleRef {
                             id: "r2".into(),
-                            name: "r2n".into(),
-                            ..Default::default()
+                            name: Some("r2n".into()),
+                            domain_id: None,
                         },
                     ]),
                 }))
@@ -176,13 +176,15 @@ mod tests {
                 user_id: Some("uid".into()),
                 project_id: Some("pid".into()),
                 roles: vec![
-                    Role {
+                    RoleRef {
                         id: "r1".into(),
-                        name: Some("r1n".into())
+                        name: "r1n".into(),
+                        domain_id: None
                     },
-                    Role {
+                    RoleRef {
                         id: "r2".into(),
-                        name: Some("r2n".into())
+                        name: "r2n".into(),
+                        domain_id: None
                     }
                 ]
             },
@@ -206,15 +208,15 @@ mod tests {
                     project_id: Some("pid".into()),
                     role_ids: vec!["r1".into(), "r2".into()],
                     roles: Some(vec![
-                        ProviderRole {
+                        ProviderRoleRef {
                             id: "r1".into(),
-                            name: "r1n".into(),
-                            ..Default::default()
+                            name: Some("r1n".into()),
+                            domain_id: None,
                         },
-                        ProviderRole {
+                        ProviderRoleRef {
                             id: "r2".into(),
-                            name: "r2n".into(),
-                            ..Default::default()
+                            name: Some("r2n".into()),
+                            domain_id: None,
                         },
                     ]),
                 }))

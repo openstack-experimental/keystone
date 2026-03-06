@@ -195,7 +195,7 @@ mod tests {
     use super::super::tests::*;
     use super::*;
     use crate::config::PasswordHashingAlgo;
-    use crate::role::types::Role;
+    use crate::role::types::RoleRef;
 
     #[tokio::test]
     async fn test_create() {
@@ -229,13 +229,15 @@ mod tests {
             name: "app_cred_name".into(),
             project_id: "project_id".into(),
             roles: vec![
-                Role {
+                RoleRef {
                     id: "role_a".into(),
-                    ..Default::default()
+                    name: None,
+                    domain_id: None,
                 },
-                Role {
+                RoleRef {
                     id: "role_b".into(),
-                    ..Default::default()
+                    name: None,
+                    domain_id: None,
                 },
             ],
             secret: Some("secret".into()),

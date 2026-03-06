@@ -26,7 +26,7 @@ pub use list::list;
 use crate::db::entity::role as db_role;
 use crate::role::{
     RoleProviderError,
-    types::{Role, RoleBuilder},
+    types::{Role, RoleBuilder, RoleRef},
 };
 
 static NULL_DOMAIN_ID: &str = "<<null>>";
@@ -53,6 +53,20 @@ impl TryFrom<db_role::Model> for Role {
         }
 
         Ok(builder.build()?)
+    }
+}
+
+impl From<db_role::Model> for RoleRef {
+    fn from(value: db_role::Model) -> Self {
+        Self {
+            id: value.id,
+            name: Some(value.name),
+            domain_id: if value.domain_id != NULL_DOMAIN_ID {
+                Some(value.domain_id)
+            } else {
+                None
+            },
+        }
     }
 }
 

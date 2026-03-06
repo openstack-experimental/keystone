@@ -17,11 +17,11 @@ use sea_orm::entity::*;
 use sea_orm::query::*;
 
 use crate::db::entity::{
-    prelude::{Role as DbRole, Trust as DbTrust, TrustRole as DbTrustRole},
+    prelude::{Trust as DbTrust, TrustRole as DbTrustRole},
     trust_role as db_trust_role,
 };
 use crate::error::DbContextExt;
-use crate::role::types::Role;
+use crate::role::types::RoleRef;
 use crate::trust::{TrustProviderError, types::Trust};
 
 /// Get trust credential by the ID.
@@ -34,15 +34,14 @@ pub async fn get<I: AsRef<str>>(
         .await
         .context("fetching trust by id")?
     {
-        // TODO: roles must be fetched with the provider api
-        let roles = entry
-            .find_related(DbRole)
+        let roles: Vec<RoleRef> = entry
+            .find_related(DbTrustRole)
             .all(db)
             .await
             .context("fetching trust roles")?
             .into_iter()
-            .map(TryInto::<Role>::try_into)
-            .collect::<Result<Vec<Role>, _>>()?;
+            .map(Into::into)
+            .collect();
 
         let mut res: Trust = entry.try_into()?;
         if !roles.is_empty() {
@@ -73,12 +72,13 @@ pub async fn get_delegation_chain<I: Into<String>>(
 
         if let Some(db_trust) = trust_handle.context("fetching trust by id")? {
             let mut trust: Trust = db_trust.try_into()?;
-            let roles: Vec<Role> = roles_handle
+            let roles: Vec<RoleRef> = roles_handle
                 .context("fetching trust roles")?
                 .into_iter()
-                .map(|trust_role| Role {
+                .map(|trust_role| RoleRef {
                     id: trust_role.role_id,
-                    ..Default::default()
+                    name: None,
+                    domain_id: None,
                 })
                 .collect();
             if !roles.is_empty() {
@@ -97,13 +97,12 @@ mod tests {
 
     use super::super::tests::*;
     use super::*;
-    use crate::role::backend::sql::role::tests::get_role_mock;
 
     #[tokio::test]
     async fn test_get() {
         let db = MockDatabase::new(DatabaseBackend::Postgres)
             .append_query_results([vec![get_trust_mock("trust_id", "trustor", "trustee")]])
-            .append_query_results([vec![get_role_mock("role_id", "foo")]])
+            .append_query_results([vec![get_trust_role_mock("trust_id", "role_id")]])
             .into_connection();
 
         assert_eq!(
@@ -114,11 +113,10 @@ mod tests {
                 trustee_user_id: "trustee".into(),
                 project_id: Some("pid".into()),
                 impersonation: false,
-                roles: Some(vec![Role {
+                roles: Some(vec![RoleRef {
                     id: "role_id".into(),
-                    domain_id: Some("foo_domain".into()),
-                    name: "foo".to_owned(),
-                    ..Default::default()
+                    domain_id: None,
+                    name: None
                 }]),
                 ..Default::default()
             }
@@ -135,7 +133,7 @@ mod tests {
                 ),
                 Transaction::from_sql_and_values(
                     DatabaseBackend::Postgres,
-                    r#"SELECT "role"."id", "role"."name", "role"."extra", "role"."domain_id", "role"."description" FROM "role" INNER JOIN "trust_role" ON "trust_role"."role_id" = "role"."id" INNER JOIN "trust" ON "trust"."id" = "trust_role"."trust_id" WHERE "trust"."id" = $1"#,
+                    r#"SELECT "trust_role"."trust_id", "trust_role"."role_id" FROM "trust_role" INNER JOIN "trust" ON "trust"."id" = "trust_role"."trust_id" WHERE "trust"."id" = $1"#,
                     ["trust_id".into()]
                 ),
             ]

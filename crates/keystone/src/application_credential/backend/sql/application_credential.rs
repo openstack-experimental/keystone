@@ -19,7 +19,9 @@ use crate::application_credential::ApplicationCredentialProviderError;
 use crate::application_credential::types::*;
 use crate::db::entity::{
     access_rule as db_access_rule, application_credential as db_application_credential,
+    application_credential_role as db_application_credential_role,
 };
+use crate::role::types::RoleRef;
 
 mod create;
 mod get;
@@ -114,19 +116,29 @@ impl TryFrom<db_access_rule::Model> for AccessRule {
     }
 }
 
+impl From<db_application_credential_role::Model> for RoleRef {
+    fn from(value: db_application_credential_role::Model) -> Self {
+        Self {
+            id: value.role_id,
+            name: None,
+            domain_id: None,
+        }
+    }
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
-    use crate::db::entity::{access_rule, application_credential};
+    use crate::db::entity::{access_rule, application_credential, application_credential_role};
     use chrono::{DateTime, Utc};
     use sea_orm::TryIntoModel;
 
-    pub fn get_application_credential_mock<S: AsRef<str>>(
+    pub fn get_application_credential_mock<S: Into<String>>(
         id: S,
         internal_id: Option<i32>,
     ) -> application_credential::Model {
         application_credential::Model {
             internal_id: internal_id.unwrap_or_default(),
-            id: id.as_ref().into(),
+            id: id.into(),
             name: "fake appcred".into(),
             secret_hash: "hash".into(),
             description: Some("description".into()),
@@ -147,6 +159,16 @@ pub(crate) mod tests {
         res.system = sea_orm::Unchanged(None);
         res.secret_hash = sea_orm::Unchanged("hash".into());
         res.try_into_model().unwrap()
+    }
+
+    pub fn get_application_credential_role_mock<R: Into<String>>(
+        cred_id: i32,
+        role_id: R,
+    ) -> application_credential_role::Model {
+        application_credential_role::Model {
+            application_credential_id: cred_id,
+            role_id: role_id.into(),
+        }
     }
 
     pub fn get_access_rule_mock<S: AsRef<str>>(

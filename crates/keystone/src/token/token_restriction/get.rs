@@ -70,7 +70,7 @@ mod tests {
     #![allow(clippy::derivable_impls)]
 
     use crate::db::entity::{role, token_restriction_role_association};
-    use crate::role::types::Role;
+    use crate::role::types::RoleRef;
     use sea_orm::{DatabaseBackend, MockDatabase, Transaction};
 
     use super::super::tests::get_restriction_mock;
@@ -179,15 +179,15 @@ mod tests {
                 allow_renew: true,
                 role_ids: vec!["rid1".into(), "rid2".into()],
                 roles: Some(vec![
-                    Role {
+                    RoleRef {
                         id: "rid1".into(),
-                        name: "rid1_name".into(),
-                        ..Default::default()
+                        name: Some("rid1_name".into()),
+                        domain_id: None,
                     },
-                    Role {
+                    RoleRef {
                         id: "rid2".into(),
-                        name: "rid2_name".into(),
-                        ..Default::default()
+                        name: Some("rid2_name".into()),
+                        domain_id: None,
                     },
                 ]),
             })

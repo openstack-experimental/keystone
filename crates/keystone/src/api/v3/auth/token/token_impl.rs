@@ -15,7 +15,6 @@
 use crate::api::common;
 use crate::api::error::KeystoneApiError;
 use crate::api::v3::auth::token::types::{System, Token, TokenBuilder, UserBuilder};
-use crate::api::v3::role::types::Role;
 use crate::identity::IdentityApi;
 use crate::keystone::ServiceState;
 use crate::resource::{
@@ -71,7 +70,7 @@ impl ProviderToken {
                     .clone()
                     .into_iter()
                     .map(Into::into)
-                    .collect::<Vec<Role>>(),
+                    .collect::<Vec<_>>(),
             );
         }
 
@@ -207,8 +206,8 @@ mod tests {
     use sea_orm::DatabaseConnection;
     use std::sync::Arc;
 
-    use crate::api::v3::role::types::Role;
-    use crate::role::types::Role as ProviderRole;
+    use crate::api::v3::role::types::RoleRef;
+    use crate::role::types::RoleRef as ProviderRoleRef;
 
     use crate::config::Config;
     use crate::identity::{MockIdentityProvider, types::UserResponseBuilder};
@@ -397,10 +396,10 @@ mod tests {
         let token = ProviderToken::ProjectScope(ProjectScopePayload {
             user_id: "bar".into(),
             project_id: "project_id".into(),
-            roles: Some(vec![ProviderRole {
+            roles: Some(vec![ProviderRoleRef {
                 id: "rid".into(),
-                name: "role_name".into(),
-                ..Default::default()
+                name: Some("role_name".into()),
+                domain_id: None,
             }]),
             ..Default::default()
         });
@@ -415,10 +414,10 @@ mod tests {
         assert!(api_token.domain.is_none());
         assert_eq!(
             api_token.roles,
-            Some(vec![Role {
+            Some(vec![RoleRef {
                 id: "rid".into(),
                 name: "role_name".into(),
-                ..Default::default()
+                domain_id: None
             }])
         );
     }
@@ -482,10 +481,10 @@ mod tests {
             trust: Some(Trust {
                 id: "trust_id".into(),
                 impersonation: false,
-                roles: Some(vec![ProviderRole {
+                roles: Some(vec![ProviderRoleRef {
                     id: "rid".into(),
-                    name: "role_name".into(),
-                    ..Default::default()
+                    name: Some("role_name".into()),
+                    domain_id: None,
                 }]),
                 ..Default::default()
             }),
@@ -502,10 +501,10 @@ mod tests {
         assert!(api_token.domain.is_none());
         assert_eq!(
             api_token.roles,
-            Some(vec![Role {
+            Some(vec![RoleRef {
                 id: "rid".into(),
                 name: "role_name".into(),
-                ..Default::default()
+                domain_id: None,
             }])
         );
     }

@@ -111,7 +111,7 @@ impl RoleApi for RoleProvider {
     async fn expand_implied_roles(
         &self,
         state: &ServiceState,
-        roles: &mut Vec<Role>,
+        roles: &mut Vec<RoleRef>,
     ) -> Result<(), RoleProviderError> {
         // In most of the cases a logic for expanding the roles may be implemented by
         // the provider itself, but some backend drivers may have more efficient

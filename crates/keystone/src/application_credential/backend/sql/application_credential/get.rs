@@ -24,11 +24,11 @@ use crate::db::entity::{
     application_credential as db_application_credential,
     prelude::{
         AccessRule as DbAccessRule, ApplicationCredential as DbApplicationCredential,
-        Role as DbRole,
+        ApplicationCredentialRole as DbApplicationCredentialRole,
     },
 };
 use crate::error::DbContextExt;
-use crate::role::types::Role;
+use crate::role::types::RoleRef;
 
 /// Get application credential by the ID.
 pub async fn get<I: AsRef<str>>(
@@ -46,15 +46,15 @@ pub async fn get<I: AsRef<str>>(
         let mut builder: ApplicationCredentialBuilder = entry.try_into()?;
         // Query roles and rules in parallel
         let (roles_handle, rules_handle) = tokio::join!(
-            entry.find_related(DbRole).all(db),
+            entry.find_related(DbApplicationCredentialRole).all(db),
             entry.find_related(DbAccessRule).all(db)
         );
 
-        let roles = roles_handle
+        let roles: Vec<RoleRef> = roles_handle
             .context("fetching application credential roles")?
             .into_iter()
-            .map(TryInto::<Role>::try_into)
-            .collect::<Result<Vec<Role>, _>>()?;
+            .map(Into::into)
+            .collect();
         let rules = rules_handle
             .context("fetching application credential rules")?
             .into_iter()
@@ -74,7 +74,6 @@ mod tests {
 
     use super::super::tests::*;
     use super::*;
-    use crate::role::backend::sql::role::tests::get_role_mock;
 
     #[tokio::test]
     async fn test_get() {
@@ -83,7 +82,7 @@ mod tests {
                 "app_cred_id",
                 Some(12345),
             )]])
-            .append_query_results([vec![get_role_mock("role_id", "foo")]])
+            .append_query_results([vec![get_application_credential_role_mock(12345, "role_id")]])
             .append_query_results([vec![get_access_rule_mock("app_cred_rule_id", None)]])
             .into_connection();
 
@@ -97,11 +96,10 @@ mod tests {
                 project_id: "project_id".into(),
                 expires_at: Some(DateTime::<Utc>::MIN_UTC.to_utc()),
                 unrestricted: true,
-                roles: vec![Role {
+                roles: vec![RoleRef {
                     id: "role_id".into(),
-                    domain_id: Some("foo_domain".into()),
-                    name: "foo".to_owned(),
-                    ..Default::default()
+                    domain_id: None,
+                    name: None,
                 }],
                 access_rules: Some(vec![AccessRule {
                     id: "app_cred_rule_id".into(),
@@ -123,7 +121,7 @@ mod tests {
                 ),
                 Transaction::from_sql_and_values(
                     DatabaseBackend::Postgres,
-                    r#"SELECT "role"."id", "role"."name", "role"."extra", "role"."domain_id", "role"."description" FROM "role" INNER JOIN "application_credential_role" ON "application_credential_role"."role_id" = "role"."id" INNER JOIN "application_credential" ON "application_credential"."internal_id" = "application_credential_role"."application_credential_id" WHERE "application_credential"."internal_id" = $1"#,
+                    r#"SELECT "application_credential_role"."application_credential_id", "application_credential_role"."role_id" FROM "application_credential_role" INNER JOIN "application_credential" ON "application_credential"."internal_id" = "application_credential_role"."application_credential_id" WHERE "application_credential"."internal_id" = $1"#,
                     [12345.into()]
                 ),
                 Transaction::from_sql_and_values(

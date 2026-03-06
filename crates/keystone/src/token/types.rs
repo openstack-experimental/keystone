@@ -20,7 +20,7 @@ use validator::Validate;
 use crate::identity::{IdentityApi, types::UserResponse};
 use crate::keystone::ServiceState;
 use crate::resource::{ResourceApi, types::*};
-use crate::role::types::Role;
+use crate::role::types::RoleRef;
 use crate::token::error::TokenProviderError;
 use crate::trust::TrustApi;
 
@@ -225,7 +225,7 @@ impl Token {
         }
     }
 
-    pub const fn roles(&self) -> Option<&Vec<Role>> {
+    pub const fn roles(&self) -> Option<&Vec<RoleRef>> {
         match self {
             Self::ApplicationCredential(x) => match &x.application_credential {
                 Some(ac) => Some(&ac.roles),

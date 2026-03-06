@@ -29,11 +29,10 @@ use crate::db::entity::{
     prelude::{
         AccessRule as DbAccessRule, ApplicationCredential as DbApplicationCredential,
         ApplicationCredentialAccessRule as DbApplicationCredentialRule,
-        ApplicationCredentialRole as DbApplicationCredentialRole, Role as DbRole,
+        ApplicationCredentialRole as DbApplicationCredentialRole,
     },
 };
 use crate::error::DbContextExt;
-use crate::role::types::Role;
 
 /// Prepare the paginated query for listing application credentials.
 fn get_list_query(
@@ -68,18 +67,14 @@ pub async fn list(
         .context("listing application credentials")?;
 
     let (roles_handle, rules_handle) = tokio::join!(
-        db_entities.load_many_to_many(DbRole, DbApplicationCredentialRole, db),
+        db_entities.load_many(DbApplicationCredentialRole, db),
         db_entities.load_many_to_many(DbAccessRule, DbApplicationCredentialRule, db)
     );
     let roles = roles_handle
         .context("fetching roles for application credential list")?
         .into_iter()
-        .map(|apr| {
-            apr.into_iter()
-                .map(TryInto::<Role>::try_into)
-                .collect::<Result<Vec<_>, _>>()
-        })
-        .collect::<Result<Vec<Vec<_>>, _>>()?;
+        .map(|apr| apr.into_iter().map(Into::into).collect::<Vec<_>>())
+        .collect::<Vec<Vec<_>>>();
     let rules = rules_handle
         .context("fetching access rules for application credential list")?
         .into_iter()
@@ -114,7 +109,6 @@ mod tests {
         application_credential_access_rule as db_application_credential_access_rule,
         application_credential_role as db_application_credential_role,
     };
-    use crate::role::backend::sql::role::tests::get_role_mock;
 
     #[tokio::test]
     async fn test_list() {
@@ -139,10 +133,6 @@ mod tests {
                 },
             ]])
             .append_query_results([vec![
-                get_role_mock("role_id1", "foo"),
-                get_role_mock("role_id2", "foo"),
-            ]])
-            .append_query_results([vec![
                 db_application_credential_access_rule::Model {
                     application_credential_id: 1,
                     access_rule_id: 1,
@@ -157,17 +147,18 @@ mod tests {
                 get_access_rule_mock("app_cred_rule2", Some(2)),
             ]])
             .into_connection();
-        assert!(
-            list(
-                &db,
-                &ApplicationCredentialListParameters {
-                    user_id: "user_id".into(),
-                    ..Default::default()
-                },
-            )
-            .await
-            .is_ok()
-        );
+        //assert!(
+        list(
+            &db,
+            &ApplicationCredentialListParameters {
+                user_id: "user_id".into(),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        //.is_ok()
+        //);
 
         for (l,r) in db.into_transaction_log().iter().zip([
             Transaction::from_sql_and_values(
@@ -178,11 +169,6 @@ mod tests {
             Transaction::from_sql_and_values(
                 DatabaseBackend::Postgres,
                 r#"SELECT "application_credential_role"."application_credential_id", "application_credential_role"."role_id" FROM "application_credential_role" WHERE "application_credential_role"."application_credential_id" IN ($1, $2)"#,
-                []
-            ),
-            Transaction::from_sql_and_values(
-                DatabaseBackend::Postgres,
-                r#"SELECT "role"."id", "role"."name", "role"."extra", "role"."domain_id", "role"."description" FROM "role" WHERE "role"."id" IN ($1, $2, $3)"#,
                 []
             ),
             Transaction::from_sql_and_values(

@@ -51,11 +51,12 @@
 //! Trusts can also be chained, meaning, a trust can be created by using a trust
 //! scoped token.
 
-use async_trait::async_trait;
-use chrono::{DateTime, Utc};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::hash::RandomState;
 use std::sync::Arc;
+
+use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use tracing::debug;
 
 pub mod api;
@@ -65,9 +66,10 @@ pub mod error;
 mod mock;
 pub mod types;
 
-use crate::config::Config;
 use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManager;
+use crate::role::types::Role;
+use crate::{config::Config, role::RoleApi};
 use backend::{SqlBackend, TrustBackend};
 
 pub use error::TrustProviderError;
@@ -112,7 +114,36 @@ impl TrustApi for TrustProvider {
         state: &ServiceState,
         id: &'a str,
     ) -> Result<Option<Trust>, TrustProviderError> {
-        self.backend_driver.get_trust(state, id).await
+        if let Some(mut trust) = self.backend_driver.get_trust(state, id).await? {
+            let all_roles: HashMap<String, Role> = HashMap::from_iter(
+                state
+                    .provider
+                    .get_role_provider()
+                    .list_roles(
+                        state,
+                        &crate::role::types::RoleListParameters {
+                            domain_id: Some(None),
+                            ..Default::default()
+                        },
+                    )
+                    .await?
+                    .iter()
+                    .map(|role| (role.id.clone(), role.to_owned())),
+            );
+            if let Some(ref mut roles) = trust.roles {
+                for role in roles.iter_mut() {
+                    if let Some(erole) = all_roles.get(&role.id) {
+                        role.domain_id = erole.domain_id.clone();
+                        role.name = Some(erole.name.clone());
+                    }
+                }
+                // Drop all roles for which name is not set (it is a signal that the processing
+                // above has not found the role matching the parameters.
+                roles.retain_mut(|role| role.name.is_some());
+            }
+            return Ok(Some(trust));
+        }
+        Ok(None)
     }
 
     /// Resolve trust delegation chain by the trust ID.
@@ -134,7 +165,38 @@ impl TrustApi for TrustProvider {
         state: &ServiceState,
         params: &TrustListParameters,
     ) -> Result<Vec<Trust>, TrustProviderError> {
-        self.backend_driver.list_trusts(state, params).await
+        let mut trusts = self.backend_driver.list_trusts(state, params).await?;
+
+        let all_roles: HashMap<String, Role> = HashMap::from_iter(
+            state
+                .provider
+                .get_role_provider()
+                .list_roles(
+                    state,
+                    &crate::role::types::RoleListParameters {
+                        domain_id: Some(None),
+                        ..Default::default()
+                    },
+                )
+                .await?
+                .iter()
+                .map(|role| (role.id.clone(), role.to_owned())),
+        );
+        for trust in trusts.iter_mut() {
+            if let Some(ref mut roles) = trust.roles {
+                for role in roles.iter_mut() {
+                    if let Some(erole) = all_roles.get(&role.id) {
+                        role.domain_id = erole.domain_id.clone();
+                        role.name = Some(erole.name.clone());
+                    }
+                }
+                // Drop all roles for which name is not set (it is a signal that the processing
+                // above has not found the role matching the parameters.
+                roles.retain_mut(|role| role.name.is_some());
+            }
+        }
+
+        Ok(trusts)
     }
 
     /// Validate trust delegation chain.
@@ -241,15 +303,15 @@ mod tests {
     use crate::config::Config;
     use crate::keystone::Service;
     use crate::policy::MockPolicyFactory;
-    use crate::provider::Provider;
-    use crate::role::types::Role;
+    use crate::provider::{Provider, ProviderBuilder};
+    use crate::role::{MockRoleProvider, types::*};
 
-    fn get_state_mock() -> Arc<Service> {
+    fn get_state_mock(provider_builder: ProviderBuilder) -> Arc<Service> {
         Arc::new(
             Service::new(
                 Config::default(),
                 DatabaseConnection::Disconnected,
-                Provider::mocked_builder().build().unwrap(),
+                provider_builder.build().unwrap(),
                 MockPolicyFactory::default(),
             )
             .unwrap(),
@@ -258,7 +320,18 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_trust() {
-        let state = get_state_mock();
+        let mut role_mock = MockRoleProvider::default();
+        role_mock
+            .expect_list_roles()
+            .withf(|_, qp: &RoleListParameters| {
+                RoleListParameters {
+                    domain_id: Some(None),
+                    ..Default::default()
+                } == *qp
+            })
+            .returning(|_, _| Ok(Vec::new()));
+        let provider_builder = Provider::mocked_builder().role(role_mock);
+        let state = get_state_mock(provider_builder);
 
         let mut backend = MockTrustBackend::new();
         backend
@@ -285,7 +358,18 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_trust_delegation_chain() {
-        let state = get_state_mock();
+        let mut role_mock = MockRoleProvider::default();
+        role_mock
+            .expect_list_roles()
+            .withf(|_, qp: &RoleListParameters| {
+                RoleListParameters {
+                    domain_id: Some(None),
+                    ..Default::default()
+                } == *qp
+            })
+            .returning(|_, _| Ok(Vec::new()));
+        let provider_builder = Provider::mocked_builder().role(role_mock);
+        let state = get_state_mock(provider_builder);
 
         let mut backend = MockTrustBackend::new();
         backend
@@ -319,7 +403,18 @@ mod tests {
 
     #[tokio::test]
     async fn test_validate_trust_delegation_chain_not_redelegated() {
-        let state = get_state_mock();
+        let mut role_mock = MockRoleProvider::default();
+        role_mock
+            .expect_list_roles()
+            .withf(|_, qp: &RoleListParameters| {
+                RoleListParameters {
+                    domain_id: Some(None),
+                    ..Default::default()
+                } == *qp
+            })
+            .returning(|_, _| Ok(Vec::new()));
+        let provider_builder = Provider::mocked_builder().role(role_mock);
+        let state = get_state_mock(provider_builder);
 
         let mut backend = MockTrustBackend::new();
         backend
@@ -348,7 +443,18 @@ mod tests {
 
     #[tokio::test]
     async fn test_validate_trust_delegation_chain() {
-        let state = get_state_mock();
+        let mut role_mock = MockRoleProvider::default();
+        role_mock
+            .expect_list_roles()
+            .withf(|_, qp: &RoleListParameters| {
+                RoleListParameters {
+                    domain_id: Some(None),
+                    ..Default::default()
+                } == *qp
+            })
+            .returning(|_, _| Ok(Vec::new()));
+        let provider_builder = Provider::mocked_builder().role(role_mock);
+        let state = get_state_mock(provider_builder);
         let mut backend = MockTrustBackend::new();
         backend
             .expect_get_trust()
@@ -393,7 +499,18 @@ mod tests {
 
     #[tokio::test]
     async fn test_validate_trust_delegation_chain_expiration() {
-        let state = get_state_mock();
+        let mut role_mock = MockRoleProvider::default();
+        role_mock
+            .expect_list_roles()
+            .withf(|_, qp: &RoleListParameters| {
+                RoleListParameters {
+                    domain_id: Some(None),
+                    ..Default::default()
+                } == *qp
+            })
+            .returning(|_, _| Ok(Vec::new()));
+        let provider_builder = Provider::mocked_builder().role(role_mock);
+        let state = get_state_mock(provider_builder);
         let mut backend = MockTrustBackend::new();
         backend
             .expect_get_trust()
@@ -448,7 +565,18 @@ mod tests {
 
     #[tokio::test]
     async fn test_validate_trust_delegation_chain_no_new_roles() {
-        let state = get_state_mock();
+        let mut role_mock = MockRoleProvider::default();
+        role_mock
+            .expect_list_roles()
+            .withf(|_, qp: &RoleListParameters| {
+                RoleListParameters {
+                    domain_id: Some(None),
+                    ..Default::default()
+                } == *qp
+            })
+            .returning(|_, _| Ok(Vec::new()));
+        let provider_builder = Provider::mocked_builder().role(role_mock);
+        let state = get_state_mock(provider_builder);
         let mut backend = MockTrustBackend::new();
         backend
             .expect_get_trust()
@@ -469,22 +597,25 @@ mod tests {
                         id: "redelegated_trust".into(),
                         redelegated_trust_id: Some("trust_id".into()),
                         roles: Some(vec![
-                            Role {
+                            RoleRef {
                                 id: "rid1".into(),
-                                ..Default::default()
+                                name: None,
+                                domain_id: None,
                             },
-                            Role {
+                            RoleRef {
                                 id: "rid2".into(),
-                                ..Default::default()
+                                name: None,
+                                domain_id: None,
                             },
                         ]),
                         ..Default::default()
                     },
                     Trust {
                         id: "trust_id".into(),
-                        roles: Some(vec![Role {
+                        roles: Some(vec![RoleRef {
                             id: "rid1".into(),
-                            ..Default::default()
+                            name: None,
+                            domain_id: None,
                         }]),
                         ..Default::default()
                     },
@@ -511,7 +642,18 @@ mod tests {
 
     #[tokio::test]
     async fn test_validate_trust_delegation_chain_impersonation() {
-        let state = get_state_mock();
+        let mut role_mock = MockRoleProvider::default();
+        role_mock
+            .expect_list_roles()
+            .withf(|_, qp: &RoleListParameters| {
+                RoleListParameters {
+                    domain_id: Some(None),
+                    ..Default::default()
+                } == *qp
+            })
+            .returning(|_, _| Ok(Vec::new()));
+        let provider_builder = Provider::mocked_builder().role(role_mock);
+        let state = get_state_mock(provider_builder);
         let mut backend = MockTrustBackend::new();
         backend
             .expect_get_trust()
@@ -571,7 +713,18 @@ mod tests {
 
     #[tokio::test]
     async fn test_validate_trust_delegation_chain_deepness() {
-        let state = get_state_mock();
+        let mut role_mock = MockRoleProvider::default();
+        role_mock
+            .expect_list_roles()
+            .withf(|_, qp: &RoleListParameters| {
+                RoleListParameters {
+                    domain_id: Some(None),
+                    ..Default::default()
+                } == *qp
+            })
+            .returning(|_, _| Ok(Vec::new()));
+        let provider_builder = Provider::mocked_builder().role(role_mock);
+        let state = get_state_mock(provider_builder);
         let mut backend = MockTrustBackend::new();
         backend
             .expect_get_trust()
@@ -682,7 +835,18 @@ mod tests {
 
     #[tokio::test]
     async fn test_list_trusts() {
-        let state = get_state_mock();
+        let mut role_mock = MockRoleProvider::default();
+        role_mock
+            .expect_list_roles()
+            .withf(|_, qp: &RoleListParameters| {
+                RoleListParameters {
+                    domain_id: Some(None),
+                    ..Default::default()
+                } == *qp
+            })
+            .returning(|_, _| Ok(Vec::new()));
+        let provider_builder = Provider::mocked_builder().role(role_mock);
+        let state = get_state_mock(provider_builder);
 
         let mut backend = MockTrustBackend::new();
         backend

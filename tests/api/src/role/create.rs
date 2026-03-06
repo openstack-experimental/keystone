@@ -28,10 +28,7 @@ async fn test_create() -> Result<()> {
     let name = uuid::Uuid::new_v4().to_string();
     let _role: Role = create_role(
         &test_client,
-        RoleCreate {
-            name,
-            ..Default::default()
-        },
+        RoleCreateBuilder::default().name(name).build()?,
     )
     .await?;
     Ok(())

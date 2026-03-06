@@ -18,11 +18,11 @@ use sea_orm::query::*;
 use sea_orm::{Cursor, SelectModel};
 
 use crate::db::entity::{
-    prelude::{Role as DbRole, Trust as DbTrust, TrustRole as DbTrustRole},
+    prelude::{Trust as DbTrust, TrustRole as DbTrustRole},
     trust as db_trust,
 };
 use crate::error::DbContextExt;
-use crate::role::types::Role;
+use crate::role::types::RoleRef;
 use crate::trust::{
     TrustProviderError,
     types::{Trust, TrustListParameters},
@@ -58,17 +58,13 @@ pub async fn list(
         .await
         .context("listing trusts")?;
 
-    let roles: Vec<Vec<Role>> = db_trusts
-        .load_many_to_many(DbRole, DbTrustRole, db)
+    let roles: Vec<Vec<RoleRef>> = db_trusts
+        .load_many(DbTrustRole, db)
         .await
         .context("fetching trust roles")?
         .into_iter()
-        .map(|tr| {
-            tr.into_iter()
-                .map(TryInto::<Role>::try_into)
-                .collect::<Result<Vec<_>, _>>()
-        })
-        .collect::<Result<Vec<Vec<_>>, _>>()?;
+        .map(|tr| tr.into_iter().map(Into::into).collect())
+        .collect();
 
     db_trusts
         .into_iter()
@@ -135,6 +131,11 @@ mod tests {
                 trustee_user_id: "trustee".into(),
                 project_id: Some("pid".into()),
                 impersonation: false,
+                roles: Some(vec![RoleRef {
+                    id: "rid".into(),
+                    name: None,
+                    domain_id: None
+                }]),
                 ..Default::default()
             }]
         );
@@ -152,11 +153,6 @@ mod tests {
                     DatabaseBackend::Postgres,
                     r#"SELECT "trust_role"."trust_id", "trust_role"."role_id" FROM "trust_role" WHERE "trust_role"."trust_id" IN ($1)"#,
                     ["1".into()]
-                ),
-                Transaction::from_sql_and_values(
-                    DatabaseBackend::Postgres,
-                    r#"SELECT "role"."id", "role"."name", "role"."extra", "role"."domain_id", "role"."description" FROM "role" WHERE "role"."id" IN ($1)"#,
-                    ["rid".into()]
                 ),
             ]
         );

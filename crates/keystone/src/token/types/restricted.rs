@@ -21,7 +21,7 @@ use validator::Validate;
 use crate::error::BuilderError;
 use crate::identity::types::UserResponse;
 use crate::resource::types::Project;
-use crate::role::types::Role;
+use crate::role::types::RoleRef;
 use crate::token::types::Token;
 use crate::token::types::common;
 
@@ -60,7 +60,7 @@ pub struct RestrictedPayload {
     #[builder(default)]
     pub user: Option<UserResponse>,
     #[builder(default)]
-    pub roles: Option<Vec<Role>>,
+    pub roles: Option<Vec<RoleRef>>,
     #[builder(default)]
     pub project: Option<Project>,
 }
@@ -115,7 +115,7 @@ pub struct TokenRestriction {
     pub role_ids: Vec<String>,
     /// Optional list of full Role information.
     #[builder(default)]
-    pub roles: Option<Vec<Role>>,
+    pub roles: Option<Vec<RoleRef>>,
     /// User id.
     #[builder(default)]
     pub user_id: Option<String>,

@@ -21,7 +21,7 @@ use validator::Validate;
 
 use super::{AccessRule, AccessRuleCreate};
 use crate::error::BuilderError;
-use crate::role::types::Role;
+use crate::role::types::RoleRef;
 
 /// The application credential object.
 #[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
@@ -59,7 +59,7 @@ pub struct ApplicationCredential {
     /// associated with its project. A token using this application
     /// credential will have these same roles.
     #[validate(nested)]
-    pub roles: Vec<Role>,
+    pub roles: Vec<RoleRef>,
 
     /// A flag indicating whether the application credential may be used for
     /// creation or destruction of other application credentials or trusts.
@@ -107,7 +107,7 @@ pub struct ApplicationCredentialCreateResponse {
     /// credential will have these same roles.
     #[builder(default)]
     #[validate(nested)]
-    pub roles: Vec<Role>,
+    pub roles: Vec<RoleRef>,
 
     /// The secret that the application credential was be created with. This is
     /// only ever shown once in the response to a create request. It is not
@@ -161,7 +161,7 @@ pub struct ApplicationCredentialCreate {
     /// associated with its project. A token using this application
     /// credential will have these same roles.
     #[validate(nested)]
-    pub roles: Vec<Role>,
+    pub roles: Vec<RoleRef>,
 
     /// The secret that the application credential will be created with. If not
     /// provided, one will be generated.

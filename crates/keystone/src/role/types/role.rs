@@ -42,15 +42,46 @@ pub struct Role {
     pub extra: Option<Value>,
 }
 
+/// Short role representation (reference).
+#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[builder(build_fn(error = "BuilderError"))]
+#[builder(setter(strip_option, into))]
+pub struct RoleRef {
+    /// The role domain_id.
+    #[builder(default)]
+    #[validate(length(min = 1, max = 64))]
+    pub domain_id: Option<String>,
+
+    /// The role ID.
+    #[validate(length(min = 1, max = 64))]
+    pub id: String,
+
+    /// The role name.
+    #[validate(length(min = 1, max = 255))]
+    pub name: Option<String>,
+}
+
+impl From<Role> for RoleRef {
+    fn from(value: Role) -> Self {
+        Self {
+            id: value.id,
+            name: Some(value.name),
+            domain_id: value.domain_id,
+        }
+    }
+}
+
 /// Query parameters for listing roles.
 #[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct RoleListParameters {
     /// Filter roles by the domain.
+    ///
+    /// `Some(None)` can be used to list only global roles.
     #[builder(default)]
     #[validate(length(min = 1, max = 64))]
-    pub domain_id: Option<String>,
+    pub domain_id: Option<Option<String>>,
     /// Filter roles by the name attribute.
     #[builder(default)]
     #[validate(length(min = 1, max = 255))]

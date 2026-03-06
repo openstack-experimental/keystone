@@ -20,7 +20,7 @@ use serde_json::Value;
 use validator::Validate;
 
 use crate::error::BuilderError;
-use crate::role::types::Role;
+use crate::role::types::RoleRef;
 
 /// A trust object.
 #[derive(Builder, Clone, Debug, Default, Deserialize, Serialize, PartialEq, Validate)]
@@ -108,7 +108,7 @@ pub struct Trust {
     /// available as a separate read-only collection. Each role can be specified
     /// by either id or name.
     #[builder(default)]
-    pub roles: Option<Vec<Role>>,
+    pub roles: Option<Vec<RoleRef>>,
 
     /// Represents the user who created the trust, and who's authorization is
     /// being delegated.

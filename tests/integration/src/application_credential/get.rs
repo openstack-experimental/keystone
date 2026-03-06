@@ -20,7 +20,7 @@ use uuid::Uuid;
 
 use openstack_keystone::application_credential::ApplicationCredentialApi;
 use openstack_keystone::application_credential::types::*;
-use openstack_keystone::role::types::Role;
+use openstack_keystone::role::types::RoleRef;
 
 use super::get_state;
 
@@ -45,15 +45,15 @@ async fn test_get() -> Result<(), Report> {
                 name: Uuid::new_v4().to_string(),
                 project_id: "project_a".into(),
                 roles: vec![
-                    Role {
+                    RoleRef {
                         id: "role_a".into(),
-                        name: "role_a".into(),
-                        ..Default::default()
+                        name: None,
+                        domain_id: None,
                     },
-                    Role {
+                    RoleRef {
                         id: "role_b".into(),
-                        name: "role_b".into(),
-                        ..Default::default()
+                        name: None,
+                        domain_id: None,
                     },
                 ],
                 user_id: "user_a".into(),

@@ -195,7 +195,7 @@ impl TryFrom<&Token> for RevocationEventCreate {
 mod tests {
     use super::*;
     use crate::identity::types::UserResponseBuilder;
-    use crate::role::types::Role;
+    use crate::role::types::RoleRef;
     use crate::token::{ProjectScopePayload, TrustPayload};
     use crate::trust::types::Trust;
 
@@ -219,13 +219,15 @@ mod tests {
                 .unwrap()
                 .with_timezone(&Utc),
             roles: Some(vec![
-                Role {
+                RoleRef {
                     id: "role_id1".to_string(),
-                    ..Default::default()
+                    name: None,
+                    domain_id: None,
                 },
-                Role {
+                RoleRef {
                     id: "role_id2".to_string(),
-                    ..Default::default()
+                    name: None,
+                    domain_id: None,
                 },
             ]),
             ..Default::default()
@@ -264,13 +266,15 @@ mod tests {
                 .unwrap()
                 .with_timezone(&Utc),
             roles: Some(vec![
-                Role {
+                RoleRef {
                     id: "role_id1".to_string(),
-                    ..Default::default()
+                    name: None,
+                    domain_id: None,
                 },
-                Role {
+                RoleRef {
                     id: "role_id2".to_string(),
-                    ..Default::default()
+                    name: None,
+                    domain_id: None,
                 },
             ]),
             ..Default::default()
@@ -323,13 +327,15 @@ mod tests {
                 trustee_user_id: "trustee".into(),
                 trustor_user_id: "trustor".into(),
                 roles: Some(vec![
-                    Role {
+                    RoleRef {
                         id: "role_id1".to_string(),
-                        ..Default::default()
+                        name: None,
+                        domain_id: None,
                     },
-                    Role {
+                    RoleRef {
                         id: "role_id2".to_string(),
-                        ..Default::default()
+                        name: None,
+                        domain_id: None,
                     },
                 ]),
                 ..Default::default()

@@ -106,15 +106,15 @@ where
                     .unwrap_or(Uuid::new_v4().to_string()),
                 project_id: "project_a".into(),
                 roles: vec![
-                    role_types::Role {
+                    role_types::RoleRef {
                         id: "role_a".into(),
-                        name: "role_a".into(),
-                        ..Default::default()
+                        name: Some("role_a".into()),
+                        domain_id: None,
                     },
-                    role_types::Role {
+                    role_types::RoleRef {
                         id: "role_b".into(),
-                        name: "role_b".into(),
-                        ..Default::default()
+                        name: Some("role_b".into()),
+                        domain_id: None,
                     },
                 ],
                 user_id: "user_a".into(),

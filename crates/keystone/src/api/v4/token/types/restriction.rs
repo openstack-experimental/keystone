@@ -20,7 +20,6 @@ use axum::{
 
 pub use openstack_keystone_api_types::v4::token_restriction::*;
 
-use crate::api::v3::role_assignment::types::Role;
 use crate::token::types::{
     self as types, TokenRestriction as ProviderTokenRestriction,
     TokenRestrictionCreate as ProviderTokenRestrictionCreate,
@@ -88,14 +87,15 @@ impl From<TokenRestrictionUpdateRequest> for ProviderTokenRestrictionUpdate {
     }
 }
 
-impl From<crate::role::types::Role> for Role {
-    fn from(value: crate::role::types::Role) -> Self {
-        Self {
-            id: value.id,
-            name: value.name.into(),
-        }
-    }
-}
+//impl From<crate::role::types::RoleRef> for RoleRef {
+//    fn from(value: crate::role::types::RoleRef) -> Self {
+//        Self {
+//            id: value.id,
+//            name: value.name.unwrap_or_default(),
+//            domain_id: value.domain_id,
+//        }
+//    }
+//}
 
 impl IntoResponse for ProviderTokenRestriction {
     fn into_response(self) -> Response {

@@ -42,7 +42,7 @@ mock! {
         async fn expand_implied_roles(
             &self,
             state: &ServiceState,
-            roles: &mut Vec<Role>,
+            roles: &mut Vec<RoleRef>,
         ) -> Result<(), RoleProviderError>;
 
         async fn list_imply_rules(

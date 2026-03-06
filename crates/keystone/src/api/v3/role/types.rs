@@ -34,6 +34,16 @@ impl From<types::Role> for Role {
     }
 }
 
+impl From<types::RoleRef> for RoleRef {
+    fn from(value: types::RoleRef) -> Self {
+        Self {
+            id: value.id,
+            domain_id: value.domain_id,
+            name: value.name.unwrap_or_default(),
+        }
+    }
+}
+
 impl IntoResponse for types::Role {
     fn into_response(self) -> Response {
         (
@@ -49,7 +59,7 @@ impl IntoResponse for types::Role {
 impl From<RoleListParameters> for types::RoleListParameters {
     fn from(value: RoleListParameters) -> Self {
         Self {
-            domain_id: value.domain_id,
+            domain_id: Some(value.domain_id),
             name: value.name,
         }
     }

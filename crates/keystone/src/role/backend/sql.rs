@@ -55,12 +55,12 @@ impl RoleBackend for SqlBackend {
     async fn expand_implied_roles(
         &self,
         state: &ServiceState,
-        roles: &mut Vec<Role>,
+        roles: &mut Vec<RoleRef>,
     ) -> Result<(), RoleProviderError> {
         let rules = implied_role::list_rules(&state.db, true).await?;
         let mut role_ids: HashSet<String> =
             HashSet::from_iter(roles.iter().map(|role| role.id.clone()));
-        let mut implied_roles: Vec<Role> = Vec::new();
+        let mut implied_roles: Vec<RoleRef> = Vec::new();
         // iterate over all implied role ids for every role in the initial list
         for implied_role_id in roles
             .iter_mut()
@@ -73,7 +73,8 @@ impl RoleBackend for SqlBackend {
                 implied_roles.push(
                     self.get_role(state, implied_role_id)
                         .await?
-                        .ok_or(RoleProviderError::RoleNotFound(implied_role_id.clone()))?,
+                        .ok_or(RoleProviderError::RoleNotFound(implied_role_id.clone()))?
+                        .into(),
                 );
                 role_ids.insert(implied_role_id.clone());
             }
