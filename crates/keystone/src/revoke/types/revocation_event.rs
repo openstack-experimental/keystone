@@ -133,7 +133,7 @@ impl TryFrom<&Token> for RevocationEventListParameters {
             project_id: value.project_id().cloned(),
             revoked_at: None,
             role_ids: value
-                .roles()
+                .original_roles()
                 .map(|roles| roles.iter().map(|role| role.id.clone()).collect()),
             trust_id: if let Token::Trust(data) = value {
                 Some(data.trust_id.clone())

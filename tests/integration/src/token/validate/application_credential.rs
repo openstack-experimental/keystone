@@ -91,7 +91,7 @@ async fn test_valid() -> Result<(), Report> {
                 assert_eq!(
                     HashSet::from_iter(
                         unpacked_token
-                            .roles()
+                            .effective_roles()
                             .expect("roles present in the token")
                             .iter()
                             .map(|role| role.id.clone())
@@ -244,7 +244,7 @@ async fn test_valid_fewer_roles() -> Result<(), Report> {
                 assert_eq!(
                     HashSet::from_iter(
                         unpacked_token
-                            .roles()
+                            .effective_roles()
                             .expect("roles present in the token")
                             .iter()
                             .map(|role| role.id.clone())

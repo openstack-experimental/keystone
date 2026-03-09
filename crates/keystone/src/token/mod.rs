@@ -558,11 +558,19 @@ impl TokenProvider {
                         .into_iter()
                         .map(|x| x.role_id.clone())
                         .collect();
-                    // Filter out roles referred in the AC that the user does not have anymore.
-                    ac.roles.retain(|role| user_role_ids.contains(&role.id));
-                    if ac.roles.is_empty() {
+
+                    // Gather all effective roles that the user have remaining should some of the
+                    // AppCred assigned roles be revoked in the meanwhile.
+                    let mut final_roles: Vec<RoleRef> = Vec::new();
+                    for role in ac.roles.iter() {
+                        if user_role_ids.contains(&role.id) {
+                            final_roles.push(role.clone());
+                        }
+                    }
+                    if final_roles.is_empty() {
                         return Err(TokenProviderError::ActorHasNoRolesOnTarget);
                     }
+                    data.roles = Some(final_roles);
                 };
             }
             Token::DomainScope(data) => {
@@ -1372,7 +1380,7 @@ mod tests {
 
         if let Token::ApplicationCredential(..) = &token {
             assert_eq!(
-                token.roles().unwrap(),
+                token.effective_roles().unwrap(),
                 &vec![RoleRef {
                     id: "role_1".into(),
                     name: Some("role_name_1".into()),

@@ -240,7 +240,7 @@ impl From<&Token> for Credentials {
         Self {
             user_id: token.user_id().clone(),
             roles: token
-                .roles()
+                .effective_roles()
                 .map(|x| {
                     x.iter()
                         .map(|role| role.name.clone())

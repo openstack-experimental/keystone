@@ -21,6 +21,7 @@ use crate::application_credential::types::ApplicationCredential;
 use crate::error::BuilderError;
 use crate::identity::types::UserResponse;
 use crate::resource::types::Project;
+use crate::role::types::RoleRef;
 use crate::token::types::Token;
 use crate::token::types::common;
 
@@ -55,6 +56,9 @@ pub struct ApplicationCredentialPayload {
     pub application_credential: Option<ApplicationCredential>,
     #[builder(default)]
     pub project: Option<Project>,
+    /// Effective roles of the token.
+    #[builder(default)]
+    pub roles: Option<Vec<RoleRef>>,
 }
 
 impl ApplicationCredentialPayloadBuilder {

@@ -225,12 +225,47 @@ impl Token {
         }
     }
 
-    pub const fn roles(&self) -> Option<&Vec<RoleRef>> {
+    /// Original roles that were granted to the authn/authz.
+    ///
+    /// For application credentials original roles represent the roles tied to
+    /// the application credential, while the effective roles represent the
+    /// subset of the original roles that the user still have on the target
+    /// scope. Some logic may need to differentiate between the roles
+    /// originally tied to the authz from the effective roles in the moment of
+    /// the new authentication.
+    pub const fn original_roles(&self) -> Option<&Vec<RoleRef>> {
         match self {
             Self::ApplicationCredential(x) => match &x.application_credential {
                 Some(ac) => Some(&ac.roles),
                 None => None,
             },
+            Self::DomainScope(x) => x.roles.as_ref(),
+            Self::FederationProjectScope(x) => x.roles.as_ref(),
+            Self::FederationDomainScope(x) => x.roles.as_ref(),
+            Self::ProjectScope(x) => x.roles.as_ref(),
+            Self::Restricted(x) => x.roles.as_ref(),
+            Self::SystemScope(x) => x.roles.as_ref(),
+            Self::Trust(x) => match &x.trust {
+                Some(trust) => trust.roles.as_ref(),
+                None => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// Effective roles of the token.
+    ///
+    /// Application credentials, trusts and other concepts may bind roles for
+    /// the use. When some of this roles has been revoked from the user
+    /// afterwards the user should not be able to obtain them anymore. Some
+    /// concepts are being disabled completely in such case, some are supposed
+    /// to have a reduced scope (e.g., application credentials).
+    ///
+    /// Effective roles represent the roles that the user can currently get on
+    /// the target scope.
+    pub const fn effective_roles(&self) -> Option<&Vec<RoleRef>> {
+        match self {
+            Self::ApplicationCredential(x) => x.roles.as_ref(),
             Self::DomainScope(x) => x.roles.as_ref(),
             Self::FederationProjectScope(x) => x.roles.as_ref(),
             Self::FederationDomainScope(x) => x.roles.as_ref(),

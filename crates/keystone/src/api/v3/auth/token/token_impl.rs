@@ -64,7 +64,7 @@ impl ProviderToken {
         user_response.domain(user_domain.clone());
         response.user(user_response.build()?);
 
-        if let Some(roles) = self.roles() {
+        if let Some(roles) = self.effective_roles() {
             response.roles(
                 roles
                     .clone()

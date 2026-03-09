@@ -134,7 +134,7 @@ async fn test_valid() -> Result<(), Report> {
                 assert_eq!(
                     HashSet::from_iter(
                         unpacked_token
-                            .roles()
+                            .effective_roles()
                             .expect("roles present in the token")
                             .iter()
                             .map(|role| role.id.clone())
@@ -195,7 +195,7 @@ async fn test_valid_redelegated() -> Result<(), Report> {
                 assert_eq!(
                     HashSet::from_iter(
                         unpacked_token
-                            .roles()
+                            .effective_roles()
                             .expect("roles present in the token")
                             .iter()
                             .map(|role| role.id.clone())
@@ -257,8 +257,8 @@ async fn test_fewer_roles() -> Result<(), Report> {
     Ok(())
 }
 
-/// Only global roles (without domain_id) can be delegated and consumed through trust.
-/// Python keystone filters role in the token model.
+/// Only global roles (without domain_id) can be delegated and consumed through
+/// trust. Python keystone filters role in the token model.
 #[tokio::test]
 //#[traced_test]
 async fn test_exclude_local_roles() -> Result<(), Report> {
@@ -326,7 +326,7 @@ async fn test_exclude_local_roles() -> Result<(), Report> {
                 assert_eq!(
                     HashSet::from_iter(
                         unpacked_token
-                            .roles()
+                            .effective_roles()
                             .expect("roles present in the token")
                             .iter()
                             .map(|role| role.id.clone())
