@@ -215,7 +215,7 @@ pub async fn get_isolated_database() -> Result<DatabaseConnection> {
         .to_owned();
     let db = Database::connect(opts).await.wrap_err_with(|| {
         format!(
-            "Failed to connect to database at {}",
+            "Failed to connect to dedicated database at {}",
             isolated_db_url.clone()
         )
     })?;

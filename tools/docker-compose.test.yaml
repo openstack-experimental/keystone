@@ -1,17 +1,19 @@
 services:
   postgres:
-    image: postgres:16-alpine
+    image: docker.io/postgres:16-alpine
+    container_name: tools_postgres
     environment:
       POSTGRES_PASSWORD: password
     tmpfs: /var/lib/postgresql/data
     ports:
-      - "5432:5432"
+      - "15432:5432"
 
   mysql:
-    image: mysql:8.0
+    image: docker.io/mysql:8.0
+    container_name: tools_mysql
     environment:
-      MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
       MYSQL_DATABASE: test_db
+      MYSQL_ROOT_PASSWORD: password
     tmpfs: /var/lib/mysql
     ports:
-      - "3306:3306"
+      - "13306:3306"
