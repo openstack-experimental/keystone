@@ -11,19 +11,24 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-use serde_json::Value;
+use sea_orm::entity::*;
+use serde_json::{Value, json};
 use tracing::error;
+use uuid::Uuid;
 
+mod create;
 mod get;
 mod list;
 
+pub use create::create;
 pub use get::{get_domain_by_id, get_domain_by_name, get_domain_enabled};
 pub use list::list;
 
+use crate::common::NULL_DOMAIN_ID;
 use crate::db::entity::project as db_project;
 use crate::resource::{
     ResourceProviderError,
-    types::{Domain, DomainBuilder},
+    types::{Domain, DomainBuilder, DomainCreate},
 };
 
 impl TryFrom<db_project::Model> for Domain {
@@ -48,6 +53,26 @@ impl TryFrom<db_project::Model> for Domain {
         }
 
         Ok(domain_builder.build()?)
+    }
+}
+
+impl TryFrom<DomainCreate> for db_project::ActiveModel {
+    type Error = ResourceProviderError;
+
+    fn try_from(value: DomainCreate) -> Result<Self, Self::Error> {
+        Ok(Self {
+            description: value.description.map(Set).unwrap_or(NotSet).into(),
+            domain_id: Set(NULL_DOMAIN_ID.into()),
+            enabled: Set(Some(value.enabled)),
+            extra: Set(Some(serde_json::to_string(
+                // For keystone it is important to have at least "{}"
+                &value.extra.as_ref().or(Some(&json!({}))),
+            )?)),
+            id: Set(value.id.unwrap_or(Uuid::new_v4().simple().to_string())),
+            is_domain: Set(true),
+            name: Set(value.name),
+            parent_id: NotSet,
+        })
     }
 }
 

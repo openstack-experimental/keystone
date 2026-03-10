@@ -70,6 +70,7 @@ pub struct Project {
 #[builder(setter(strip_option, into))]
 pub struct ProjectCreate {
     /// The description of the project.
+    #[builder(default)]
     #[validate(length(min = 1, max = 255))]
     pub description: Option<String>,
 
@@ -82,10 +83,12 @@ pub struct ProjectCreate {
     pub enabled: bool,
 
     /// Additional project properties.
+    #[builder(default)]
     #[serde(flatten)]
     pub extra: Option<Value>,
 
     /// The ID for the project.
+    #[builder(default)]
     #[validate(length(min = 1, max = 64))]
     pub id: Option<String>,
 
@@ -95,6 +98,7 @@ pub struct ProjectCreate {
     /// projects. If set to false, this project behaves as a regular project
     /// that contains only resources. Default is false. You cannot update this
     /// parameter after you create the project.
+    #[builder(default)]
     pub is_domain: bool,
 
     /// The name of the project, which must be unique within the owning domain.
@@ -115,6 +119,7 @@ pub struct ProjectCreate {
     ///
     /// `parent_id` is immutable, and can’t be updated after the project is
     /// created - hence a project cannot be moved within the hierarchy.
+    #[builder(default)]
     #[validate(length(min = 1, max = 64))]
     pub parent_id: Option<String>,
 }

@@ -20,6 +20,7 @@ use validator::Validate;
 
 use crate::error::BuilderError;
 
+/// Domain data.
 #[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
@@ -35,6 +36,33 @@ pub struct Domain {
     /// The domain ID.
     #[validate(length(min = 1, max = 64))]
     pub id: String,
+
+    /// The domain name.
+    #[validate(length(min = 1, max = 255))]
+    pub name: String,
+
+    /// Additional domain properties.
+    #[builder(default)]
+    pub extra: Option<Value>,
+}
+
+/// New domain data.
+#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
+#[builder(build_fn(error = "BuilderError"))]
+#[builder(setter(strip_option, into))]
+pub struct DomainCreate {
+    /// The resource description.
+    #[builder(default)]
+    #[validate(length(min = 1, max = 255))]
+    pub description: Option<String>,
+
+    /// If set to true, domain is enabled. If set to false, domain is disabled.
+    pub enabled: bool,
+
+    /// The domain ID.
+    #[builder(default)]
+    #[validate(length(min = 1, max = 64))]
+    pub id: Option<String>,
 
     /// The domain name.
     #[validate(length(min = 1, max = 255))]

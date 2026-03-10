@@ -14,3 +14,5 @@
 //! # Common functionality
 pub mod password_hashing;
 pub mod types;
+
+pub static NULL_DOMAIN_ID: &str = "<<null>>";

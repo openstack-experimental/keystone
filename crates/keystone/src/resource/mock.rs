@@ -35,6 +35,12 @@ mock! {
             domain_id: &'a str,
         ) -> Result<bool, ResourceProviderError>;
 
+        async fn create_domain(
+            &self,
+            state: &ServiceState,
+            domain: DomainCreate,
+        ) -> Result<Domain, ResourceProviderError>;
+
         async fn create_project(
             &self,
             state: &ServiceState,

@@ -92,6 +92,22 @@ impl ResourceApi for ResourceProvider {
             .await
     }
 
+    /// Create new domain.
+    #[tracing::instrument(level = "info", skip(self, state))]
+    async fn create_domain(
+        &self,
+        state: &ServiceState,
+        domain: DomainCreate,
+    ) -> Result<Domain, ResourceProviderError> {
+        let mut new_domain = domain;
+
+        if new_domain.id.is_none() {
+            new_domain.id = Some(Uuid::new_v4().simple().to_string());
+        }
+        new_domain.validate()?;
+        self.backend_driver.create_domain(state, new_domain).await
+    }
+
     /// Create new project.
     #[tracing::instrument(level = "info", skip(self, state))]
     async fn create_project(

@@ -29,6 +29,13 @@ pub trait ResourceApi: Send + Sync {
         domain_id: &'a str,
     ) -> Result<bool, ResourceProviderError>;
 
+    /// Create a new domain.
+    async fn create_domain(
+        &self,
+        state: &ServiceState,
+        domain: DomainCreate,
+    ) -> Result<Domain, ResourceProviderError>;
+
     /// Create a new project.
     async fn create_project(
         &self,

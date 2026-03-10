@@ -37,6 +37,16 @@ impl ResourceBackend for SqlBackend {
         Ok(domain::get_domain_enabled(&state.db, domain_id).await?)
     }
 
+    /// Create new domain.
+    #[tracing::instrument(level = "debug", skip(self, state))]
+    async fn create_domain(
+        &self,
+        state: &ServiceState,
+        domain: DomainCreate,
+    ) -> Result<Domain, ResourceProviderError> {
+        Ok(domain::create(&state.db, domain).await?)
+    }
+
     /// Create new project.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn create_project(

@@ -31,6 +31,13 @@ pub trait ResourceBackend: Send + Sync {
         domain_id: &'a str,
     ) -> Result<bool, ResourceProviderError>;
 
+    /// Create new domain.
+    async fn create_domain(
+        &self,
+        state: &ServiceState,
+        domain: DomainCreate,
+    ) -> Result<Domain, ResourceProviderError>;
+
     /// Create new project.
     async fn create_project(
         &self,
