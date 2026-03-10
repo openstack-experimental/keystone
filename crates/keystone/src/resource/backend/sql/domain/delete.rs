@@ -11,7 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-//! Delete project
+//! Delete domain
 
 use sea_orm::DatabaseConnection;
 use sea_orm::entity::*;
@@ -20,7 +20,7 @@ use crate::db::entity::prelude::Project;
 use crate::error::DbContextExt;
 use crate::resource::ResourceProviderError;
 
-/// Delete existing project.
+/// Delete existing domain
 pub async fn delete<S: AsRef<str>>(
     db: &DatabaseConnection,
     id: S,
@@ -28,7 +28,7 @@ pub async fn delete<S: AsRef<str>>(
     Project::delete_by_id(id.as_ref())
         .exec(db)
         .await
-        .context("deleting project")?;
+        .context("deleting domain")?;
     Ok(())
 }
 

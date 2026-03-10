@@ -57,6 +57,16 @@ impl ResourceBackend for SqlBackend {
         Ok(project::create(&state.db, project).await?)
     }
 
+    /// Delete domain by the ID
+    #[tracing::instrument(level = "debug", skip(self, state))]
+    async fn delete_domain<'a>(
+        &self,
+        state: &ServiceState,
+        id: &'a str,
+    ) -> Result<(), ResourceProviderError> {
+        Ok(domain::delete(&state.db, id).await?)
+    }
+
     /// Delete project by the ID
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn delete_project<'a>(
