@@ -220,7 +220,7 @@ impl ApplicationCredentialApi for ApplicationCredentialProvider {
                 .map(|x| (x.id.clone(), x))
                 .collect();
             for cred_role in app_cred.roles.iter_mut() {
-                if let Some(ref role) = roles.get(&cred_role.id) {
+                if let Some(role) = roles.get(&cred_role.id) {
                     cred_role.name = Some(role.name.clone());
                     cred_role.domain_id = role.domain_id.clone();
                 }
@@ -255,7 +255,7 @@ impl ApplicationCredentialApi for ApplicationCredentialProvider {
             .collect();
         for cred in creds.iter_mut() {
             for cred_role in cred.roles.iter_mut() {
-                if let Some(ref role) = roles.get(&cred_role.id) {
+                if let Some(role) = roles.get(&cred_role.id) {
                     cred_role.name = Some(role.name.clone());
                     cred_role.domain_id = role.domain_id.clone();
                 }

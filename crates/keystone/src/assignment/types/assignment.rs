@@ -44,6 +44,7 @@ pub struct Assignment {
     pub r#type: AssignmentType,
 
     /// Inherited flag.
+    #[builder(default)]
     pub inherited: bool,
 
     /// Assignment through the role inference rules.

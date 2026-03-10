@@ -11,5 +11,27 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+use eyre::Result;
+use std::sync::Arc;
+
+use openstack_keystone::assignment::{AssignmentApi, types::AssignmentCreate};
+use openstack_keystone::keystone::Service;
 
 mod grant;
+
+pub async fn grant_role_to_user_on_project<U: Into<String>, P: Into<String>, R: Into<String>>(
+    state: &Arc<Service>,
+    user: U,
+    project: P,
+    role: R,
+) -> Result<()> {
+    state
+        .provider
+        .get_assignment_provider()
+        .create_grant(
+            state,
+            AssignmentCreate::user_project(user, project, role, false),
+        )
+        .await?;
+    Ok(())
+}

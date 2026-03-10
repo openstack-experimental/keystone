@@ -25,36 +25,71 @@ use crate::token::types::Token;
 #[derive(Builder, Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
 #[builder(setter(strip_option, into))]
 pub struct RevocationEvent {
-    pub domain_id: Option<String>,
-    pub project_id: Option<String>,
-    pub user_id: Option<String>,
-    pub role_id: Option<String>,
-    pub trust_id: Option<String>,
-    pub consumer_id: Option<String>,
     pub access_token_id: Option<String>,
-    pub issued_before: DateTime<Utc>,
-    pub expires_at: Option<DateTime<Utc>>,
-    pub revoked_at: DateTime<Utc>,
+
+    /// Audit_id to match against.
     pub audit_id: Option<String>,
+
     pub audit_chain_id: Option<String>,
+
+    pub consumer_id: Option<String>,
+
+    pub domain_id: Option<String>,
+
+    pub expires_at: Option<DateTime<Utc>>,
+
+    pub issued_before: DateTime<Utc>,
+
+    pub project_id: Option<String>,
+
+    pub revoked_at: DateTime<Utc>,
+
+    pub role_id: Option<String>,
+
+    pub trust_id: Option<String>,
+
+    pub user_id: Option<String>,
 }
 
 /// Revocation event creation data.
 #[derive(Builder, Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
 #[builder(setter(strip_option, into))]
 pub struct RevocationEventCreate {
-    pub domain_id: Option<String>,
-    pub project_id: Option<String>,
-    pub user_id: Option<String>,
-    pub role_id: Option<String>,
-    pub trust_id: Option<String>,
-    pub consumer_id: Option<String>,
+    #[builder(default)]
     pub access_token_id: Option<String>,
-    pub issued_before: DateTime<Utc>,
-    pub expires_at: Option<DateTime<Utc>>,
-    pub revoked_at: DateTime<Utc>,
+
+    /// Audit_id to match against.
+    #[builder(default)]
     pub audit_id: Option<String>,
+
+    #[builder(default)]
     pub audit_chain_id: Option<String>,
+
+    #[builder(default)]
+    pub consumer_id: Option<String>,
+
+    #[builder(default)]
+    pub domain_id: Option<String>,
+
+    #[builder(default)]
+    pub expires_at: Option<DateTime<Utc>>,
+
+    #[builder(default)]
+    pub issued_before: DateTime<Utc>,
+
+    #[builder(default)]
+    pub project_id: Option<String>,
+
+    pub revoked_at: DateTime<Utc>,
+
+    #[builder(default)]
+    pub role_id: Option<String>,
+
+    #[builder(default)]
+    pub trust_id: Option<String>,
+
+    #[builder(default)]
+    pub user_id: Option<String>,
 }
 
 /// Revocation list parameters.
@@ -69,31 +104,39 @@ pub struct RevocationEventListParameters {
     /// Audit_id to match against.
     #[builder(default)]
     pub audit_id: Option<String>,
+
     //pub consumer_id: Option<String>,
     /// List revocation events with an empty `domain_id` or matching any of the
     /// given values.
     #[builder(default)]
     pub domain_ids: Option<Vec<String>>,
+
     /// Expires_at parameter to match against.
     #[builder(default)]
     pub expires_at: Option<DateTime<Utc>>,
+
     /// List revocation events with the `issued_before` value greater or equal
     /// the value (revocating tokens issued before the certain time).
     #[builder(default)]
     pub issued_before: Option<DateTime<Utc>>,
+
     /// Project_id to match against.
     #[builder(default)]
     pub project_id: Option<String>,
+
     #[builder(default)]
     /// Revocation timestamp to match against. Currently not respected.
     pub revoked_at: Option<DateTime<Utc>>,
+
     /// List revocation events with an empty `role_id` or matching any of the
     /// given values.
     #[builder(default)]
     pub role_ids: Option<Vec<String>>,
+
     /// Trust ID to match against.
     #[builder(default)]
     pub trust_id: Option<String>,
+
     /// User_id to match against.
     #[builder(default)]
     pub user_ids: Option<Vec<String>>,

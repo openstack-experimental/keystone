@@ -20,6 +20,8 @@ mod assignment;
 mod common;
 mod identity;
 mod k8s_auth;
+mod resource;
+mod revoke;
 mod role;
 mod token;
 

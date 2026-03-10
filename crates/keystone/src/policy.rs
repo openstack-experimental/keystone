@@ -243,8 +243,7 @@ impl From<&Token> for Credentials {
                 .effective_roles()
                 .map(|x| {
                     x.iter()
-                        .map(|role| role.name.clone())
-                        .flatten()
+                        .filter_map(|role| role.name.clone())
                         .collect::<Vec<_>>()
                 })
                 .unwrap_or_default(),

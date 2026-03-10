@@ -15,6 +15,7 @@
 
 use chrono::Utc;
 use eyre::Report;
+use openstack_keystone::revoke::RevokeApi;
 use std::collections::HashSet;
 use tracing_test::traced_test;
 use uuid::Uuid;
@@ -323,5 +324,76 @@ async fn test_valid_all_roles_revoked() -> Result<(), Report> {
             "should have returned error since the application credential is not having any active role assignment"
         );
     }
+    Ok(())
+}
+
+#[tokio::test]
+#[traced_test]
+async fn test_token_revoked() -> Result<(), Report> {
+    let (state, _tmp) = get_state().await?;
+
+    let user = create_user(&state, Some("user_a")).await?;
+    create_role(&state, "role_b").await?;
+    grant_role_to_user_on_project(&state, &user.id, "project_a", "role_b").await?;
+
+    let cred: ApplicationCredentialCreateResponse = state
+        .provider
+        .get_application_credential_provider()
+        .create_application_credential(
+            &state,
+            ApplicationCredentialCreate {
+                access_rules: None,
+                name: Uuid::new_v4().to_string(),
+                project_id: "project_a".into(),
+                roles: vec![RoleRef {
+                    id: "role_b".into(),
+                    name: None,
+                    domain_id: None,
+                }],
+                user_id: user.id.clone(),
+                ..Default::default()
+            },
+        )
+        .await?;
+
+    let token = state.provider.get_token_provider().issue_token(
+        AuthenticatedInfoBuilder::default()
+            .application_credential(cred.clone())
+            .user_id(user.id.clone())
+            .user(user)
+            .methods(vec!["application_credential".into()])
+            .build()?,
+        AuthzInfo::Project(
+            ProjectBuilder::default()
+                .id(cred.project_id.clone())
+                .name("project_a")
+                .domain_id("domain_a")
+                .enabled(true)
+                .build()?,
+        ),
+        None,
+    )?;
+
+    let encoded_token = state.provider.get_token_provider().encode_token(&token)?;
+
+    let token = state
+        .provider
+        .get_token_provider()
+        .validate_token(&state, &encoded_token, None, None)
+        .await?;
+
+    state
+        .provider
+        .get_revoke_provider()
+        .revoke_token(&state, &token)
+        .await?;
+
+    assert!(
+        state
+            .provider
+            .get_revoke_provider()
+            .is_token_revoked(&state, &token)
+            .await?
+    );
     Ok(())
 }

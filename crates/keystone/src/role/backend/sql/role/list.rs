@@ -31,9 +31,8 @@ pub async fn list(
     let mut select = DbRole::find();
 
     if let Some(domain_id) = &params.domain_id {
-        select = select.filter(
-            db_role::Column::DomainId.eq(domain_id.as_ref().map_or(NULL_DOMAIN_ID, |x| &x)),
-        );
+        select = select
+            .filter(db_role::Column::DomainId.eq(domain_id.as_ref().map_or(NULL_DOMAIN_ID, |x| x)));
     }
     if let Some(name) = &params.name {
         select = select.filter(db_role::Column::Name.eq(name));

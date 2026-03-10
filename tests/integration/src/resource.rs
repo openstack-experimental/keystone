@@ -17,47 +17,37 @@ use std::sync::Arc;
 
 use eyre::Result;
 
-use openstack_keystone::config::Config;
 use openstack_keystone::keystone::Service;
 use openstack_keystone::keystone::ServiceState;
-use openstack_keystone::plugin_manager::PluginManager;
-use openstack_keystone::policy::PolicyFactory;
-use openstack_keystone::provider::Provider;
-use openstack_keystone::role::{RoleApi, types::*};
+use openstack_keystone::resource::{ResourceApi, types::*};
 
 use crate::common::*;
 use crate::impl_deleter;
 
-use crate::common::get_isolated_database;
+impl_deleter!(Service, Project, get_resource_provider, delete_project);
+impl_deleter!(Service, Domain, get_resource_provider, delete_domain);
 
-mod create;
-mod list;
-
-async fn get_state() -> Result<Arc<Service>> {
-    let db = get_isolated_database().await?;
-
-    let cfg: Config = Config::default();
-
-    let plugin_manager = PluginManager::default();
-    let provider = Provider::new(cfg.clone(), plugin_manager)?;
-    Ok(Arc::new(Service::new(
-        cfg,
-        db,
-        provider,
-        PolicyFactory::default(),
-    )?))
-}
-
-impl_deleter!(Service, Role, get_role_provider, delete_role);
-
-pub async fn create_role(
+pub async fn create_project(
     state: &ServiceState,
-    data: RoleCreate,
-) -> Result<AsyncResourceGuard<Role, ServiceState>> {
+    data: ProjectCreate,
+) -> Result<AsyncResourceGuard<Project, ServiceState>> {
     let res = state
         .provider
-        .get_role_provider()
-        .create_role(state, data)
+        .get_resource_provider()
+        .create_project(state, data)
+        .await
+        .unwrap();
+    Ok(AsyncResourceGuard::new(res, state.clone()))
+}
+
+pub async fn create_domain(
+    state: &ServiceState,
+    data: DomainCreate,
+) -> Result<AsyncResourceGuard<Domain, ServiceState>> {
+    let res = state
+        .provider
+        .get_resource_provider()
+        .create_domain(state, data)
         .await
         .unwrap();
     Ok(AsyncResourceGuard::new(res, state.clone()))

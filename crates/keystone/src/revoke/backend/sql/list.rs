@@ -75,11 +75,11 @@ fn build_query_filters(
     );
 
     if let Some(val) = params.expires_at {
-        select = select.filter(db_revocation_event::Column::ExpiresAt.eq(val));
+        select = select.filter(db_revocation_event::Column::ExpiresAt.eq(val.naive_utc()));
     }
 
     if let Some(val) = params.issued_before {
-        select = select.filter(db_revocation_event::Column::IssuedBefore.gte(val));
+        select = select.filter(db_revocation_event::Column::IssuedBefore.gte(val.naive_utc()));
     }
 
     select = select.filter(
@@ -201,8 +201,8 @@ mod tests {
                     "audit_id".into(),
                     "domain_id1".into(),
                     "domain_id2".into(),
-                    time2.into(),
-                    time1.into(),
+                    time2.naive_utc().into(),
+                    time1.naive_utc().into(),
                     "project_id".into(),
                     "rid1".into(),
                     "rid2".into(),
@@ -257,8 +257,8 @@ mod tests {
                 [
                     "audit_id".into(),
                     "domain_id1".into(),
-                    time2.into(),
-                    time1.into(),
+                    time2.naive_utc().into(),
+                    time1.naive_utc().into(),
                     "project_id".into(),
                     "rid1".into(),
                 ]
@@ -287,8 +287,8 @@ mod tests {
         assert_eq!(
             format!(
                 "SELECT `revocation_event`.`id`, `revocation_event`.`domain_id`, `revocation_event`.`project_id`, `revocation_event`.`user_id`, `revocation_event`.`role_id`, `revocation_event`.`trust_id`, `revocation_event`.`consumer_id`, `revocation_event`.`access_token_id`, `revocation_event`.`issued_before`, `revocation_event`.`expires_at`, `revocation_event`.`revoked_at`, `revocation_event`.`audit_id`, `revocation_event`.`audit_chain_id` FROM `revocation_event` WHERE (`revocation_event`.`audit_id` IS NULL OR `revocation_event`.`audit_id` = 'audit_id') AND (`revocation_event`.`domain_id` IS NULL OR `revocation_event`.`domain_id` IN ('domain_id1')) AND `revocation_event`.`trust_id` IS NULL AND `revocation_event`.`expires_at` = '{}' AND `revocation_event`.`issued_before` >= '{}' AND (`revocation_event`.`project_id` IS NULL OR `revocation_event`.`project_id` = 'project_id') AND (`revocation_event`.`role_id` IS NULL OR `revocation_event`.`role_id` IN ('rid1')) AND `revocation_event`.`user_id` IS NULL",
-                time2.format("%F %X%.6f %:z"),
-                time1.format("%F %X%.6f %:z"),
+                time2.format("%F %X%.6f"),
+                time1.format("%F %X%.6f"),
             ),
             query
         );
@@ -315,8 +315,8 @@ mod tests {
         assert_eq!(
             format!(
                 "SELECT \"revocation_event\".\"id\", \"revocation_event\".\"domain_id\", \"revocation_event\".\"project_id\", \"revocation_event\".\"user_id\", \"revocation_event\".\"role_id\", \"revocation_event\".\"trust_id\", \"revocation_event\".\"consumer_id\", \"revocation_event\".\"access_token_id\", \"revocation_event\".\"issued_before\", \"revocation_event\".\"expires_at\", \"revocation_event\".\"revoked_at\", \"revocation_event\".\"audit_id\", \"revocation_event\".\"audit_chain_id\" FROM \"revocation_event\" WHERE (\"revocation_event\".\"audit_id\" IS NULL OR \"revocation_event\".\"audit_id\" = 'audit_id') AND (\"revocation_event\".\"domain_id\" IS NULL OR \"revocation_event\".\"domain_id\" IN ('domain_id1')) AND \"revocation_event\".\"trust_id\" IS NULL AND \"revocation_event\".\"expires_at\" = '{}' AND \"revocation_event\".\"issued_before\" >= '{}' AND (\"revocation_event\".\"project_id\" IS NULL OR \"revocation_event\".\"project_id\" = 'project_id') AND (\"revocation_event\".\"role_id\" IS NULL OR \"revocation_event\".\"role_id\" IN ('rid1')) AND \"revocation_event\".\"user_id\" IS NULL",
-                time2.format("%F %X%.6f %:z"),
-                time1.format("%F %X%.6f %:z"),
+                time2.format("%F %X%.6f"),
+                time1.format("%F %X%.6f"),
             ),
             query
         );
@@ -343,8 +343,8 @@ mod tests {
         assert_eq!(
             format!(
                 "SELECT `revocation_event`.`id`, `revocation_event`.`domain_id`, `revocation_event`.`project_id`, `revocation_event`.`user_id`, `revocation_event`.`role_id`, `revocation_event`.`trust_id`, `revocation_event`.`consumer_id`, `revocation_event`.`access_token_id`, `revocation_event`.`issued_before`, `revocation_event`.`expires_at`, `revocation_event`.`revoked_at`, `revocation_event`.`audit_id`, `revocation_event`.`audit_chain_id` FROM `revocation_event` WHERE (`revocation_event`.`audit_id` IS NULL OR `revocation_event`.`audit_id` = 'audit_id') AND (`revocation_event`.`domain_id` IS NULL OR `revocation_event`.`domain_id` IN ('domain_id1', 'domain_id2')) AND `revocation_event`.`trust_id` IS NULL AND `revocation_event`.`expires_at` = '{}' AND `revocation_event`.`issued_before` >= '{}' AND (`revocation_event`.`project_id` IS NULL OR `revocation_event`.`project_id` = 'project_id') AND (`revocation_event`.`role_id` IS NULL OR `revocation_event`.`role_id` IN ('rid1')) AND `revocation_event`.`user_id` IS NULL",
-                time2.format("%F %X%.6f %:z"),
-                time1.format("%F %X%.6f %:z"),
+                time2.format("%F %X%.6f"),
+                time1.format("%F %X%.6f"),
             ),
             query
         );
@@ -524,7 +524,7 @@ mod tests {
             query.contains(
                 format!(
                     "AND \"revocation_event\".\"expires_at\" = '{}'",
-                    time1.format("%F %X%.6f %:z")
+                    time1.format("%F %X%.6f")
                 )
                 .as_str()
             ),
@@ -549,7 +549,7 @@ mod tests {
             query.contains(
                 format!(
                     "AND \"revocation_event\".\"issued_before\" >= '{}'",
-                    time1.format("%F %X%.6f %:z")
+                    time1.format("%F %X%.6f")
                 )
                 .as_str()
             ),

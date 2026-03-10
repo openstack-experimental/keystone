@@ -151,12 +151,8 @@ pub struct ProjectCreate {
 
 impl ProjectCreateBuilder {
     fn validate(&self) -> Result<(), String> {
-        if self.parent_id.is_some() {
-            if self.is_domain.is_some_and(|x| x) {
-                return Err(
-                    "project cannot specify `parent_id` when `is_domain` is true".to_string(),
-                );
-            }
+        if self.parent_id.is_some() && self.is_domain.is_some_and(|x| x) {
+            return Err("project cannot specify `parent_id` when `is_domain` is true".to_string());
         }
         Ok(())
     }

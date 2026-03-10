@@ -12,6 +12,33 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use std::pin::Pin;
+use std::sync::Arc;
+
+use eyre::Result;
+
+use openstack_keystone::identity::{IdentityApi, types::*};
+use openstack_keystone::keystone::Service;
+use openstack_keystone::keystone::ServiceState;
+
+use crate::common::*;
+use crate::impl_deleter;
+
 mod service_account;
 mod user;
 mod user_group;
+
+impl_deleter!(Service, UserResponse, get_identity_provider, delete_user);
+
+pub async fn create_user(
+    state: &ServiceState,
+    data: UserCreate,
+) -> Result<AsyncResourceGuard<UserResponse, ServiceState>> {
+    let res = state
+        .provider
+        .get_identity_provider()
+        .create_user(state, data)
+        .await
+        .unwrap();
+    Ok(AsyncResourceGuard::new(res, state.clone()))
+}

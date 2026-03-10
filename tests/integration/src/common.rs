@@ -23,12 +23,17 @@ use sea_orm::{
     ConnectOptions, ConnectionTrait, Database, DatabaseConnection, DbConn, EntityTrait, entity::*,
     schema::Schema, sea_query::*,
 };
+use tempfile::TempDir;
 use uuid::Uuid;
 
+use openstack_keystone::config::Config;
 use openstack_keystone::db::entity::prelude::*;
 use openstack_keystone::db::entity::{local_user, project, user};
 use openstack_keystone::identity::{IdentityApi, types::*};
 use openstack_keystone::keystone::Service;
+use openstack_keystone::plugin_manager::PluginManager;
+use openstack_keystone::policy::PolicyFactory;
+use openstack_keystone::provider::Provider;
 use openstack_keystone::role::{RoleApi, types::RoleCreate};
 
 /// Create table with the related types and indexes (when known)
@@ -222,6 +227,29 @@ pub async fn get_isolated_database() -> Result<DatabaseConnection> {
     setup_schema(&db).await?;
 
     Ok(db)
+}
+
+pub async fn get_state() -> Result<(Arc<Service>, TempDir)> {
+    let db = get_isolated_database().await?;
+    bootstrap(&db).await?;
+
+    let tmp_fernet_repo = TempDir::new()?;
+
+    let mut cfg: Config = Config::default();
+    cfg.auth.methods = vec!["password".into()];
+    cfg.fernet_tokens.key_repository = tmp_fernet_repo.path().to_path_buf();
+    let fernet_utils = openstack_keystone::token::backend::fernet::utils::FernetUtils {
+        key_repository: cfg.fernet_tokens.key_repository.clone(),
+        max_active_keys: cfg.fernet_tokens.max_active_keys,
+    };
+    fernet_utils.initialize_key_repository()?;
+
+    let plugin_manager = PluginManager::default();
+    let provider = Provider::new(cfg.clone(), plugin_manager)?;
+
+    let state = Arc::new(Service::new(cfg, db, provider, PolicyFactory::default())?);
+
+    Ok((state, tmp_fernet_repo))
 }
 
 /// Trait to allow State to delete various resource types T
