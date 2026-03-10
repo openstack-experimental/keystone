@@ -32,6 +32,13 @@ pub trait RoleApi: Send + Sync {
         params: RoleCreate,
     ) -> Result<Role, RoleProviderError>;
 
+    /// Delete a role by the ID.
+    async fn delete_role<'a>(
+        &self,
+        state: &ServiceState,
+        id: &'a str,
+    ) -> Result<(), RoleProviderError>;
+
     /// Get a single role.
     async fn get_role<'a>(
         &self,

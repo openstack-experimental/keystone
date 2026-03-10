@@ -33,6 +33,12 @@ mock! {
             params: RoleCreate,
         ) -> Result<Role, RoleProviderError>;
 
+        async fn delete_role<'a>(
+            &self,
+            state: &ServiceState,
+            id: &'a str,
+        ) -> Result<(), RoleProviderError>;
+
         async fn get_role<'a>(
             &self,
             state: &ServiceState,

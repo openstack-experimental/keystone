@@ -14,8 +14,6 @@
 
 use sea_orm::DatabaseConnection;
 use sea_orm::entity::*;
-use serde_json::json;
-use uuid::Uuid;
 
 use crate::db::entity::role as db_role;
 use crate::error::DbContextExt;
@@ -25,30 +23,12 @@ use crate::role::{
 };
 
 /// Create a new role.
-pub async fn create(
-    db: &DatabaseConnection,
-    role: RoleCreate, // ← Using RoleCreate instead of Role
-) -> Result<Role, RoleProviderError> {
-    db_role::ActiveModel {
-        id: Set(role
-            // Use provided ID or generate a new UUID as fallback
-            .id
-            .clone()
-            .unwrap_or_else(|| Uuid::new_v4().simple().to_string())),
-        name: Set(role.name.clone()),
-        domain_id: Set(role
-            .domain_id
-            .clone()
-            .unwrap_or_else(|| super::NULL_DOMAIN_ID.to_string())),
-        description: Set(role.description.clone()),
-        extra: Set(Some(serde_json::to_string(
-            &role.extra.as_ref().or(Some(&json!({}))),
-        )?)),
-    }
-    .insert(db)
-    .await
-    .context("creating role")?
-    .try_into()
+pub async fn create(db: &DatabaseConnection, role: RoleCreate) -> Result<Role, RoleProviderError> {
+    TryInto::<db_role::ActiveModel>::try_into(role)?
+        .insert(db)
+        .await
+        .context("creating role")?
+        .try_into()
 }
 
 #[cfg(test)]

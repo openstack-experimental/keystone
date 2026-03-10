@@ -94,6 +94,16 @@ impl RoleApi for RoleProvider {
         self.backend_driver.create_role(state, new_params).await
     }
 
+    /// Delete a role by the ID.
+    #[tracing::instrument(level = "info", skip(self, state))]
+    async fn delete_role<'a>(
+        &self,
+        state: &ServiceState,
+        id: &'a str,
+    ) -> Result<(), RoleProviderError> {
+        self.backend_driver.delete_role(state, id).await
+    }
+
     /// Get single role.
     #[tracing::instrument(level = "info", skip(self, state))]
     async fn get_role<'a>(
@@ -132,7 +142,7 @@ impl RoleApi for RoleProvider {
         self.backend_driver.list_imply_rules(state, resolve).await
     }
 
-    /// List roles
+    /// List roles.
     #[tracing::instrument(level = "info", skip(self, state))]
     async fn list_roles(
         &self,

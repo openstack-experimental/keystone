@@ -38,6 +38,15 @@ impl RoleBackend for SqlBackend {
         Ok(role::create(&state.db, params).await?)
     }
 
+    /// Delete a role by the ID.
+    async fn delete_role<'a>(
+        &self,
+        state: &ServiceState,
+        id: &'a str,
+    ) -> Result<(), RoleProviderError> {
+        Ok(role::delete(&state.db, id).await?)
+    }
+
     /// Get single role by ID.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn get_role<'a>(

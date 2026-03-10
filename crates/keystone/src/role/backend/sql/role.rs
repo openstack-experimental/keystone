@@ -12,21 +12,25 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use serde_json::Value;
+use sea_orm::entity::*;
+use serde_json::{Value, json};
 use tracing::error;
+use uuid::Uuid;
 
 mod create;
+mod delete;
 mod get;
 mod list;
 
 pub use create::create;
+pub use delete::delete;
 pub use get::get;
 pub use list::list;
 
 use crate::db::entity::role as db_role;
 use crate::role::{
     RoleProviderError,
-    types::{Role, RoleBuilder, RoleRef},
+    types::{Role, RoleBuilder, RoleCreate, RoleRef},
 };
 
 static NULL_DOMAIN_ID: &str = "<<null>>";
@@ -67,6 +71,25 @@ impl From<db_role::Model> for RoleRef {
                 None
             },
         }
+    }
+}
+
+impl TryFrom<RoleCreate> for db_role::ActiveModel {
+    type Error = RoleProviderError;
+    fn try_from(value: RoleCreate) -> Result<Self, Self::Error> {
+        Ok(Self {
+            id: Set(value
+                .id
+                .unwrap_or_else(|| Uuid::new_v4().simple().to_string())),
+            name: Set(value.name.clone()),
+            domain_id: Set(value
+                .domain_id
+                .unwrap_or_else(|| NULL_DOMAIN_ID.to_string())),
+            description: Set(value.description.clone()),
+            extra: Set(Some(serde_json::to_string(
+                &value.extra.as_ref().or(Some(&json!({}))),
+            )?)),
+        })
     }
 }
 

@@ -31,6 +31,13 @@ pub trait RoleBackend: Send + Sync {
         params: RoleCreate,
     ) -> Result<Role, RoleProviderError>;
 
+    /// Delete a role by the ID.
+    async fn delete_role<'a>(
+        &self,
+        state: &ServiceState,
+        id: &'a str,
+    ) -> Result<(), RoleProviderError>;
+
     /// Get single role by ID
     async fn get_role<'a>(
         &self,
