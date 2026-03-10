@@ -71,7 +71,7 @@ mod tests {
                     "{}".into(),
                     "description".into(),
                     true.into(),
-                    crate::common::NULL_DOMAIN_ID.into(),
+                    super::super::NULL_DOMAIN_ID.into(),
                     true.into()
                 ]
             ),]

@@ -17,19 +17,22 @@ use tracing::error;
 use uuid::Uuid;
 
 mod create;
+mod delete;
 mod get;
 mod list;
 
 pub use create::create;
+pub use delete::delete;
 pub use get::{get_domain_by_id, get_domain_by_name, get_domain_enabled};
 pub use list::list;
 
-use crate::common::NULL_DOMAIN_ID;
 use crate::db::entity::project as db_project;
 use crate::resource::{
     ResourceProviderError,
     types::{Domain, DomainBuilder, DomainCreate},
 };
+
+pub static NULL_DOMAIN_ID: &str = "<<keystone.domain.root>>";
 
 impl TryFrom<db_project::Model> for Domain {
     type Error = ResourceProviderError;
