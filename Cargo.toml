@@ -90,7 +90,7 @@ url-macro = { version = "0.2" }
 utoipa = { version = "5.4" }
 utoipa-axum = { version = "0.2" }
 utoipa-swagger-ui = { version = "9.0", default-features = false }
-uuid = { version = "1.21" }
+uuid = { version = "1.22" }
 validator = { version = "0.20" }
 webauthn-authenticator-rs = { version = "0.5" }
 webauthn-rs = { version = "0.5" }
