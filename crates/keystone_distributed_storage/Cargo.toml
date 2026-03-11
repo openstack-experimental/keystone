@@ -17,7 +17,7 @@ workspace = true
 async-trait.workspace = true
 openraft = { workspace = true, features = ["serde", "type-alias"] }
 byteorder.workspace = true
-fjall = { version = "3.0" }
+fjall = { version = "3.1" }
 futures.workspace = true
 prost.workspace = true
 rand.workspace = true
