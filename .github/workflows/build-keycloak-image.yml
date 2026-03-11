@@ -30,7 +30,7 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Log in to Docker Hub (or GHCR)
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: openstack-experimental
