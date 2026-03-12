@@ -15,24 +15,16 @@
 //!
 //! Policy enforcement in Keystone is delegated to the Open Policy Agent. It can
 //! be invoked either with the HTTP request or as a WASM module.
+use std::sync::Arc;
+use std::time::SystemTime;
+
 #[cfg(test)]
 use mockall::mock;
-//#[cfg(feature = "wasm")]
-//use opa_wasm::{
-//    Runtime,
-//    wasmtime::{Config, Engine, Module, OptLevel, Store},
-//};
 use reqwest::{Client, Url};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-//#[cfg(feature = "wasm")]
-//use std::path::Path;
-use std::sync::Arc;
-use std::time::SystemTime;
 use thiserror::Error;
-//#[cfg(feature = "wasm")]
-//use tokio::io::{AsyncRead, AsyncReadExt};
 use tracing::{Level, debug, trace};
 
 use crate::token::Token;
@@ -69,9 +61,6 @@ pub enum PolicyError {
     /// Url parsing error.
     #[error(transparent)]
     UrlParse(#[from] url::ParseError),
-    //    #[cfg(feature = "wasm")]
-    //    #[error(transparent)]
-    //    Wasm(#[from] opa_wasm::wasmtime::Error),
 }
 
 /// Policy factory.
@@ -81,31 +70,9 @@ pub struct PolicyFactory {
     http_client: Option<Arc<Client>>,
     /// OPA url address.
     base_url: Option<Url>,
-    // #[cfg(feature = "wasm")]
-    // /// WASM engine.
-    // engine: Option<Engine>,
-    // #[cfg(feature = "wasm")]
-    // /// WASM module.
-    // module: Option<Module>,
 }
 
 impl PolicyFactory {
-    // #[cfg(feature = "wasm")]
-    // #[tracing::instrument(name = "policy.from_defaults", err)]
-    // pub async fn from_defaults() -> Result<Self, PolicyError> {
-    //     let path =
-    // std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("policy.wasm");
-    //     let file = tokio::fs::File::open(path).await?;
-    //     PolicyFactory::load(file).await
-    // }
-
-    // #[cfg(feature = "wasm")]
-    // #[tracing::instrument(name = "policy.from_wasm", err)]
-    // pub async fn from_wasm(path: &Path) -> Result<Self, PolicyError> {
-    //     let file = tokio::fs::File::open(path).await?;
-    //     PolicyFactory::load(file).await
-    // }
-
     #[allow(clippy::needless_update)]
     #[tracing::instrument(name = "policy.http", err)]
     pub async fn http(url: Url) -> Result<Self, PolicyError> {
@@ -121,62 +88,9 @@ impl PolicyFactory {
         })
     }
 
-    // #[cfg(feature = "wasm")]
-    // #[tracing::instrument(name = "policy.load", skip(source), err)]
-    // pub async fn load(
-    //     mut source: impl AsyncRead + std::marker::Unpin,
-    // ) -> Result<Self, PolicyError> {
-    //     let mut config = Config::default();
-    //     config.async_support(true);
-    //     config.cranelift_opt_level(OptLevel::SpeedAndSize);
-
-    //     let engine = Engine::new(&config)?;
-
-    //     // Read and compile the module
-    //     let mut buf = Vec::new();
-    //     source.read_to_end(&mut buf).await?;
-    //     // Compilation is CPU-bound, so spawn that in a blocking task
-    //     let (engine, module) = tokio::task::spawn_blocking(move || {
-    //         let module = Module::new(&engine, buf).map_err(PolicyError::from)?;
-    //         Ok((engine, module))
-    //     })
-    //     .await?
-    //     .map_err(PolicyError::Compilation)?;
-
-    //     let factory = Self {
-    //         http_client: None,
-    //         base_url: None,
-    //         engine: Some(engine),
-    //         module: Some(module),
-    //     };
-
-    //     // Try to instantiate
-    //     factory.instantiate().await?;
-
-    //     Ok(factory)
-    // }
-
     #[allow(clippy::needless_update)]
     #[tracing::instrument(name = "policy.instantiate", level = Level::TRACE, skip_all, err)]
     pub async fn instantiate(&self) -> Result<Policy, PolicyError> {
-        // #[cfg(feature = "wasm")]
-        // {
-        //     if let (Some(engine), Some(module)) = (&self.engine, &self.module) {
-        //         let mut store = Store::new(engine, ());
-        //         let runtime = Runtime::new(&mut store, module).await?;
-
-        //         let instance = runtime.without_data(&mut store).await?;
-        //         return Ok(Policy {
-        //             http_client: self.http_client.clone(),
-        //             base_url: self.base_url.clone(),
-        //             #[cfg(feature = "wasm")]
-        //             store: Some(store),
-        //             #[cfg(feature = "wasm")]
-        //             instance: Some(instance),
-        //         });
-        //     }
-        // }
-
         Ok(Policy {
             http_client: self.http_client.clone(),
             base_url: self.base_url.clone(),
@@ -189,7 +103,7 @@ impl PolicyFactory {
 mock! {
     pub Policy {
         pub async fn enforce(
-            &mut self,
+            &self,
             policy_name: &str,
             credentials: &Token,
             target: Value,
@@ -209,10 +123,6 @@ mock! {
 pub struct Policy {
     http_client: Option<Arc<Client>>,
     base_url: Option<Url>,
-    // #[cfg(feature = "wasm")]
-    // store: Option<Store<()>>,
-    // #[cfg(feature = "wasm")]
-    // instance: Option<opa_wasm::Policy<opa_wasm::DefaultContext>>,
 }
 
 #[derive(Debug, Error)]
@@ -268,7 +178,7 @@ impl Policy {
         level = Level::DEBUG
     )]
     pub async fn enforce<P: AsRef<str>>(
-        &mut self,
+        &self,
         policy_name: P,
         credentials: impl Into<Credentials>,
         target: Value,
@@ -284,18 +194,6 @@ impl Policy {
         let span = tracing::Span::current();
 
         let wasm_res: Option<PolicyEvaluationResult> = None;
-
-        // #[cfg(feature = "wasm")]
-        // {
-        //     opa_res = if let (Some(store), Some(instance)) = (&mut self.store,
-        // &self.instance) {         tracing::Span::current().record("input",
-        // serde_json::to_string(&input)?);         let [res]: [OpaResponse; 1]
-        // = instance             .evaluate(store, policy_name.as_ref(), &input)
-        //             .await?;
-
-        //         Some(res.result)
-        //     };
-        // }
 
         let res = if let Some(opa_res) = wasm_res {
             opa_res

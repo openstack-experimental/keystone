@@ -48,7 +48,7 @@ use crate::resource::{ResourceApi, types::ProjectListParameters};
 )]
 pub(super) async fn list(
     Auth(user_auth): Auth,
-    mut policy: Policy,
+    policy: Policy,
     State(state): State<ServiceState>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
     policy

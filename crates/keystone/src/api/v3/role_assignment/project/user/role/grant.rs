@@ -61,7 +61,7 @@ use crate::{
 )]
 pub(super) async fn grant(
     Auth(user_auth): Auth,
-    mut policy: Policy,
+    policy: Policy,
     Path((project_id, user_id, role_id)): Path<(String, String, String)>,
     State(state): State<ServiceState>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {

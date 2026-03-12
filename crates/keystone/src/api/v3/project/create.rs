@@ -45,7 +45,7 @@ use crate::resource::ResourceApi;
 #[tracing::instrument(name = "api::v3::project_create", level = "debug", skip(state, policy))]
 pub(super) async fn create(
     Auth(user_auth): Auth,
-    mut policy: Policy,
+    policy: Policy,
     State(state): State<ServiceState>,
     Json(payload): Json<ProjectCreateRequest>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {

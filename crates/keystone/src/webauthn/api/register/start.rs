@@ -60,7 +60,7 @@ use crate::webauthn::{
 pub(super) async fn start(
     Auth(user_auth): Auth,
     Path(user_id): Path<String>,
-    mut policy: Policy,
+    policy: Policy,
     State(state): State<CombinedExtensionState>,
     Json(req): Json<UserPasskeyRegistrationStartRequest>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {

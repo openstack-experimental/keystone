@@ -66,7 +66,7 @@ use crate::{
 
 pub(super) async fn revoke(
     Auth(user_auth): Auth,
-    mut policy: Policy,
+    policy: Policy,
     Path((project_id, user_id, role_id)): Path<(String, String, String)>,
     State(state): State<ServiceState>,
     request: Request,

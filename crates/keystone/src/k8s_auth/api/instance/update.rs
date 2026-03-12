@@ -53,7 +53,7 @@ use crate::policy::Policy;
 )]
 pub(super) async fn update(
     Auth(user_auth): Auth,
-    mut policy: Policy,
+    policy: Policy,
     Path(instance_id): Path<String>,
     State(state): State<ServiceState>,
     Json(req): Json<K8sAuthInstanceUpdateRequest>,

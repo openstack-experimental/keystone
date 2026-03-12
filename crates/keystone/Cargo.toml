@@ -97,5 +97,4 @@ webauthn-rs-proto.workspace = true
 
 [features]
 default = []
-# wasm = ["dep:opa-wasm"]
 bench_internals = []

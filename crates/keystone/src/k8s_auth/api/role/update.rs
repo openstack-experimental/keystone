@@ -52,7 +52,7 @@ use crate::policy::Policy;
 )]
 pub(super) async fn update_nested(
     Auth(user_auth): Auth,
-    mut policy: Policy,
+    policy: Policy,
     Path(path_params): Path<K8sAuthRolePathParams>,
     State(state): State<ServiceState>,
     Json(req): Json<K8sAuthRoleUpdateRequest>,
@@ -104,7 +104,7 @@ pub(super) async fn update_nested(
 )]
 pub(super) async fn update(
     Auth(user_auth): Auth,
-    mut policy: Policy,
+    policy: Policy,
     Path(id): Path<String>,
     State(state): State<ServiceState>,
     Json(req): Json<K8sAuthRoleUpdateRequest>,

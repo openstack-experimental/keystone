@@ -59,7 +59,7 @@ use crate::policy::Policy;
 )]
 pub(super) async fn list(
     Auth(user_auth): Auth,
-    mut policy: Policy,
+    policy: Policy,
     OriginalUri(original_url): OriginalUri,
     Query(query): Query<IdentityProviderListParameters>,
     State(state): State<ServiceState>,

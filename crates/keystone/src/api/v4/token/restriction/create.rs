@@ -50,7 +50,7 @@ use crate::token::TokenApi;
 #[debug_handler]
 pub(super) async fn create(
     Auth(user_auth): Auth,
-    mut policy: Policy,
+    policy: Policy,
     State(state): State<ServiceState>,
     Json(req): Json<TokenRestrictionCreateRequest>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {

@@ -57,7 +57,7 @@ use crate::token::TokenApi;
 )]
 pub(super) async fn update(
     Auth(user_auth): Auth,
-    mut policy: Policy,
+    policy: Policy,
     Path(id): Path<String>,
     State(state): State<ServiceState>,
     Json(req): Json<TokenRestrictionUpdateRequest>,
