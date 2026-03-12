@@ -33,6 +33,7 @@ use crate::k8s_auth::backend::K8sAuthBackend;
 use crate::resource::backend::ResourceBackend;
 use crate::revoke::backend::RevokeBackend;
 use crate::role::backend::RoleBackend;
+use crate::token::backend::TokenRestrictionBackend;
 use crate::trust::backend::TrustBackend;
 
 /// Plugin manager allowing to pass custom backend plugins implementing required
@@ -59,6 +60,8 @@ pub struct PluginManager {
     revoke_backends: HashMap<String, Arc<dyn RevokeBackend>>,
     /// Role backend plugins.
     role_backends: HashMap<String, Arc<dyn RoleBackend>>,
+    /// Token restriction backend plugins.
+    token_restriction_backends: HashMap<String, Arc<dyn TokenRestrictionBackend>>,
     /// Trust backend plugins.
     trust_backends: HashMap<String, Arc<dyn TrustBackend>>,
 }
@@ -150,6 +153,25 @@ impl PluginManager {
     #[allow(clippy::borrowed_box)]
     pub fn get_role_backend<S: AsRef<str>>(&self, name: S) -> Option<&Arc<dyn RoleBackend>> {
         self.role_backends.get(name.as_ref())
+    }
+
+    /// Get registered token restriction backend.
+    #[allow(clippy::borrowed_box)]
+    pub fn get_token_restriction_backend<S: AsRef<str>>(
+        &self,
+        name: S,
+    ) -> Option<&Arc<dyn TokenRestrictionBackend>> {
+        self.token_restriction_backends.get(name.as_ref())
+    }
+
+    /// Register token restriction backend.
+    pub fn register_token_restriction_backend<S: AsRef<str>>(
+        &mut self,
+        name: S,
+        plugin: Arc<dyn TokenRestrictionBackend>,
+    ) {
+        self.token_restriction_backends
+            .insert(name.as_ref().to_string(), plugin);
     }
 
     /// Get registered trust backend.

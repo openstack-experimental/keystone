@@ -14,7 +14,9 @@
 //! Token provider backends.
 
 use crate::config::Config;
-use crate::token::{TokenProviderError, types::Token};
+use crate::token::{TokenProviderError, types::*};
+
+use crate::keystone::ServiceState;
 
 pub mod fernet;
 pub use fernet::*;
@@ -30,4 +32,46 @@ pub trait TokenBackend: Send + Sync {
 
     /// Extract the token from string.
     fn encode(&self, token: &Token) -> Result<String, TokenProviderError>;
+}
+
+/// Token restrictions backend interface.
+#[cfg_attr(test, mockall::automock)]
+#[async_trait::async_trait]
+pub trait TokenRestrictionBackend: Send + Sync {
+    /// Get the token restriction by the ID.
+    async fn get_token_restriction<'a>(
+        &self,
+        state: &ServiceState,
+        id: &'a str,
+        expand_roles: bool,
+    ) -> Result<Option<TokenRestriction>, TokenProviderError>;
+
+    /// Create new token restriction.
+    async fn create_token_restriction<'a>(
+        &self,
+        state: &ServiceState,
+        restriction: TokenRestrictionCreate,
+    ) -> Result<TokenRestriction, TokenProviderError>;
+
+    /// List token restrictions.
+    async fn list_token_restrictions<'a>(
+        &self,
+        state: &ServiceState,
+        params: &TokenRestrictionListParameters,
+    ) -> Result<Vec<TokenRestriction>, TokenProviderError>;
+
+    /// Update token restriction by the ID.
+    async fn update_token_restriction<'a>(
+        &self,
+        state: &ServiceState,
+        id: &'a str,
+        restriction: TokenRestrictionUpdate,
+    ) -> Result<TokenRestriction, TokenProviderError>;
+
+    /// Delete token restriction by the ID.
+    async fn delete_token_restriction<'a>(
+        &self,
+        state: &ServiceState,
+        id: &'a str,
+    ) -> Result<(), TokenProviderError>;
 }

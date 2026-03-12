@@ -229,6 +229,10 @@ pub enum TokenProviderError {
     #[error("unsupported authentication methods {0} in token payload")]
     UnsupportedAuthMethods(String),
 
+    /// Unsupported driver.
+    #[error("unsupported driver {0}")]
+    UnsupportedDriver(String),
+
     /// The user is disabled.
     #[error("user disabled")]
     UserDisabled(String),

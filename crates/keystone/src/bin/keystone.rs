@@ -195,7 +195,12 @@ async fn main() -> Result<(), Report> {
         .await
         .wrap_err("Database connection failed")?;
 
-    let plugin_manager = PluginManager::default();
+    let mut plugin_manager = PluginManager::default();
+
+    plugin_manager.register_token_restriction_backend(
+        "sql",
+        Arc::new(openstack_keystone::token::token_restriction::SqlBackend::default()),
+    );
 
     let provider = Provider::new(cfg.clone(), plugin_manager)?;
 

@@ -107,7 +107,7 @@ impl Provider {
         let resource_provider = ResourceProvider::new(&cfg, &plugin_manager)?;
         let revoke_provider = RevokeProvider::new(&cfg, &plugin_manager)?;
         let role_provider = RoleProvider::new(&cfg, &plugin_manager)?;
-        let token_provider = TokenProvider::new(&cfg)?;
+        let token_provider = TokenProvider::new(&cfg, &plugin_manager)?;
         let trust_provider = TrustProvider::new(&cfg, &plugin_manager)?;
 
         Ok(Self {

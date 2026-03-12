@@ -12,9 +12,14 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use async_trait::async_trait;
+
 use crate::db::entity::{role, token_restriction, token_restriction_role_association};
 
-use crate::token::types::TokenRestriction;
+use crate::keystone::ServiceState;
+use crate::token::TokenProviderError;
+use crate::token::backend::TokenRestrictionBackend;
+use crate::token::types::*;
 
 mod create;
 mod delete;
@@ -22,11 +27,64 @@ mod get;
 mod list;
 mod update;
 
-pub use create::create;
-pub use delete::delete;
-pub use get::get;
-pub use list::list;
-pub use update::update;
+//use create::create;
+//use delete::delete;
+//use get::get;
+//use list::list;
+//use update::update;
+
+#[derive(Default)]
+pub struct SqlBackend {}
+
+#[async_trait]
+impl TokenRestrictionBackend for SqlBackend {
+    /// Get the token restriction by the ID.
+    async fn get_token_restriction<'a>(
+        &self,
+        state: &ServiceState,
+        id: &'a str,
+        expand_roles: bool,
+    ) -> Result<Option<TokenRestriction>, TokenProviderError> {
+        get::get(&state.db, id, expand_roles).await
+    }
+
+    /// Create new token restriction.
+    async fn create_token_restriction<'a>(
+        &self,
+        state: &ServiceState,
+        restriction: TokenRestrictionCreate,
+    ) -> Result<TokenRestriction, TokenProviderError> {
+        create::create(&state.db, restriction).await
+    }
+
+    /// List token restrictions.
+    async fn list_token_restrictions<'a>(
+        &self,
+        state: &ServiceState,
+        params: &TokenRestrictionListParameters,
+    ) -> Result<Vec<TokenRestriction>, TokenProviderError> {
+        list::list(&state.db, params).await
+    }
+
+    /// Update token restriction by the ID.
+    async fn update_token_restriction<'a>(
+        &self,
+        state: &ServiceState,
+        id: &'a str,
+        restriction: TokenRestrictionUpdate,
+    ) -> Result<TokenRestriction, TokenProviderError> {
+        update::update(&state.db, id, restriction).await
+    }
+
+    /// Delete token restriction by the ID.
+    async fn delete_token_restriction<'a>(
+        &self,
+        state: &ServiceState,
+        id: &'a str,
+    ) -> Result<(), TokenProviderError> {
+        delete::delete(&state.db, id).await
+    }
+}
 
 impl From<token_restriction::Model> for TokenRestriction {
     fn from(value: token_restriction::Model) -> Self {

@@ -38,6 +38,7 @@ mod revoke;
 mod role;
 mod security_compliance;
 mod token;
+mod token_restriction;
 mod trust;
 mod webauthn;
 
@@ -60,6 +61,7 @@ use role::RoleProvider;
 use security_compliance::SecurityComplianceProvider;
 use token::TokenProvider;
 pub use token::TokenProviderDriver;
+use token_restriction::TokenRestrictionProvider;
 use trust::TrustProvider;
 use webauthn::WebauthnSection;
 
@@ -136,6 +138,10 @@ pub struct Config {
     /// Token provider configuration.
     #[serde(default)]
     pub token: TokenProvider,
+
+    /// Token restriction provider configuration.
+    #[serde(default)]
+    pub token_restriction: TokenRestrictionProvider,
 
     /// Trust provider configuration.
     #[serde(default)]

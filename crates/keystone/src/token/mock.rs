@@ -20,6 +20,7 @@ use super::error::TokenProviderError;
 use crate::auth::{AuthenticatedInfo, AuthzInfo};
 use crate::config::Config;
 use crate::keystone::ServiceState;
+use crate::plugin_manager::PluginManager;
 
 use super::{
     Token, TokenApi, TokenRestriction, TokenRestrictionCreate, TokenRestrictionListParameters,
@@ -28,7 +29,7 @@ use super::{
 
 mock! {
     pub TokenProvider {
-        pub fn new(cfg: &Config) -> Result<Self, TokenProviderError>;
+        pub fn new(cfg: &Config, plugin_manager: &PluginManager) -> Result<Self, TokenProviderError>;
     }
 
     #[async_trait]
