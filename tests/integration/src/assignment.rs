@@ -14,7 +14,7 @@
 use eyre::Result;
 use std::sync::Arc;
 
-use openstack_keystone::assignment::{AssignmentApi, types::AssignmentCreate};
+use openstack_keystone::assignment::{AssignmentApi, types::*};
 use openstack_keystone::keystone::Service;
 
 mod grant;
@@ -34,4 +34,41 @@ pub async fn grant_role_to_user_on_project<U: Into<String>, P: Into<String>, R: 
         )
         .await?;
     Ok(())
+}
+
+pub async fn check_grant(state: &Arc<Service>, assignment: &Assignment) -> Result<bool> {
+    let mut params = RoleAssignmentListParametersBuilder::default();
+    params.role_id(assignment.role_id.clone());
+    match assignment.r#type {
+        AssignmentType::GroupDomain => {
+            params.domain_id(assignment.target_id.clone());
+            params.group_id(assignment.actor_id.clone());
+        }
+        AssignmentType::GroupProject => {
+            params.project_id(assignment.target_id.clone());
+            params.group_id(assignment.actor_id.clone());
+        }
+        AssignmentType::GroupSystem => {
+            params.system_id(assignment.target_id.clone());
+            params.group_id(assignment.actor_id.clone());
+        }
+        AssignmentType::UserDomain => {
+            params.domain_id(assignment.target_id.clone());
+            params.user_id(assignment.actor_id.clone());
+        }
+        AssignmentType::UserProject => {
+            params.project_id(assignment.target_id.clone());
+            params.user_id(assignment.actor_id.clone());
+        }
+        AssignmentType::UserSystem => {
+            params.system_id(assignment.target_id.clone());
+            params.user_id(assignment.actor_id.clone());
+        }
+    }
+    let assignments = state
+        .provider
+        .get_assignment_provider()
+        .list_role_assignments(state, &params.build()?)
+        .await?;
+    Ok(assignments.len() > 0)
 }

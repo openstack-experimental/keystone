@@ -71,6 +71,16 @@ impl From<Role> for RoleRef {
     }
 }
 
+impl From<&Role> for RoleRef {
+    fn from(value: &Role) -> Self {
+        Self {
+            id: value.id.clone(),
+            name: Some(value.name.clone()),
+            domain_id: value.domain_id.clone(),
+        }
+    }
+}
+
 /// Query parameters for listing roles.
 #[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
