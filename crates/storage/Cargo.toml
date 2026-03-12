@@ -1,5 +1,5 @@
 [package]
-name = "openstack_keystone_distributed_storage"
+name = "openstack-keystone-distributed-storage"
 description = "Keystone distributed storage based on the `openraft` and `fjall` database."
 version = "0.1.0"
 edition.workspace = true

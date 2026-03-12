@@ -16,8 +16,8 @@ RUN USER=root cargo new keystone
 # We want dependencies cached, so copy those first.
 COPY Cargo.toml Cargo.lock /usr/src/keystone/
 COPY crates/keystone/Cargo.toml /usr/src/keystone/crates/keystone/
-COPY crates/keystone_api_types/Cargo.toml /usr/src/keystone/crates/keystone_api_types/
-COPY crates/keystone_distributed_storage/Cargo.toml /usr/src/keystone/crates/keystone_distributed_storage/
+COPY crates/api-types/Cargo.toml /usr/src/keystone/crates/api-types/
+COPY crates/storage/Cargo.toml /usr/src/keystone/crates/storage/
 COPY tests/federation/Cargo.toml /usr/src/keystone/tests/federation/
 COPY tests/integration/Cargo.toml /usr/src/keystone/tests/integration/
 COPY tests/api/Cargo.toml /usr/src/keystone/tests/api/
@@ -27,22 +27,22 @@ RUN mkdir -p keystone/crates/keystone/src/bin && touch keystone/crates/keystone/
   cp keystone/src/main.rs keystone/crates/keystone/src/bin/keystone_db.rs &&\
   mkdir keystone/tests/loadtest/src &&\
   cp keystone/src/main.rs keystone/tests/loadtest/src/main.rs &&\
-  mkdir keystone/crates/keystone_api_types/src &&\
-  touch keystone/crates/keystone_api_types/src/lib.rs &&\
-  mkdir keystone/crates/keystone_distributed_storage/src &&\
-  touch keystone/crates/keystone_distributed_storage/src/lib.rs
+  mkdir keystone/crates/api-types/src &&\
+  touch keystone/crates/api-types/src/lib.rs &&\
+  mkdir keystone/crates/storage/src &&\
+  touch keystone/crates/storage/src/lib.rs
 
 # Set the working directory
 WORKDIR /usr/src/keystone
 
 ## This is a dummy build to get the dependencies cached.
 #RUN cargo build --target x86_64-unknown-linux-musl --release
-RUN cargo build -p openstack_keystone --release
+RUN cargo build -p openstack-keystone --release
 
 # Now copy in the rest of the sources
 COPY crates/keystone/ /usr/src/keystone/crates/keystone
-COPY crates/keystone_api_types/ /usr/src/keystone/crates/keystone_api_types
-COPY crates/keystone_distributed_storage/ /usr/src/keystone/crates/keystone_distributed_storage
+COPY crates/api-types/ /usr/src/keystone/crates/api-types
+COPY crates/storage/ /usr/src/keystone/crates/storage
 
 ## Touch main.rs to prevent cached release build
 RUN touch crates/keystone/src/lib.rs && touch crates/keystone/src/bin/keystone.rs

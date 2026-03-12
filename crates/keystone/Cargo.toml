@@ -1,5 +1,5 @@
 [package]
-name = "openstack_keystone"
+name = "openstack-keystone"
 description = "OpenStack Keystone service"
 version = "0.1.1"
 rust-version.workspace = true
@@ -41,8 +41,8 @@ eyre.workspace = true
 fernet = { workspace = true, features = ["rustcrypto"] }
 futures-util.workspace = true
 itertools.workspace = true
-openstack_keystone_api_types = { version = "0.1", path = "../keystone_api_types/"}
-openstack_keystone_distributed_storage = { version = "0.1", path = "../keystone_distributed_storage/"}
+openstack-keystone-api-types = { version = "0.1", path = "../api-types/"}
+openstack-keystone-distributed-storage = { version = "0.1", path = "../storage/"}
 mockall_double.workspace = true
 nix = { workspace = true, features = ["fs", "user"] }
 openidconnect.workspace = true

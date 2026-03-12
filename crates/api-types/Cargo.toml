@@ -1,5 +1,5 @@
 [package]
-name = "openstack_keystone_api_types"
+name = "openstack-keystone-api-types"
 description = "OpenStack Keystone API types"
 version = "0.1.0"
 rust-version.workspace = true

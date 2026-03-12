@@ -3295,7 +3295,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "openstack_keystone"
+name = "openstack-keystone"
 version = "0.1.1"
 dependencies = [
  "async-trait",
@@ -3325,8 +3325,8 @@ dependencies = [
  "mockall_double",
  "nix",
  "openidconnect",
- "openstack_keystone_api_types",
- "openstack_keystone_distributed_storage",
+ "openstack-keystone-api-types",
+ "openstack-keystone-distributed-storage",
  "rand 0.10.0",
  "regex",
  "reqwest 0.13.2",
@@ -3364,7 +3364,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "openstack_keystone_api_types"
+name = "openstack-keystone-api-types"
 version = "0.1.0"
 dependencies = [
  "axum",
@@ -3382,7 +3382,76 @@ dependencies = [
 ]
 
 [[package]]
-name = "openstack_keystone_distributed_storage"
+name = "openstack-keystone-core"
+version = "0.1.1"
+dependencies = [
+ "async-trait",
+ "axum",
+ "base64 0.22.1",
+ "base64urlsafedata",
+ "bcrypt",
+ "byteorder",
+ "bytes",
+ "chrono",
+ "clap",
+ "color-eyre",
+ "config",
+ "criterion",
+ "derive_builder",
+ "dyn-clone",
+ "eyre",
+ "fernet",
+ "futures-util",
+ "http-body-util",
+ "httpmock",
+ "hyper",
+ "hyper-util",
+ "itertools 0.14.0",
+ "jsonwebtoken",
+ "mockall",
+ "mockall_double",
+ "nix",
+ "openidconnect",
+ "openstack-keystone-api-types",
+ "openstack-keystone-distributed-storage",
+ "rand 0.10.0",
+ "regex",
+ "reqwest 0.13.2",
+ "rmp",
+ "rstest",
+ "schemars 1.2.1",
+ "scopeguard",
+ "sea-orm",
+ "sea-orm-migration",
+ "secrecy",
+ "serde",
+ "serde_bytes",
+ "serde_json",
+ "serde_urlencoded",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-util",
+ "tower",
+ "tower-http",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
+ "tracing-test",
+ "url",
+ "url-macro",
+ "utoipa",
+ "utoipa-axum",
+ "utoipa-swagger-ui",
+ "uuid",
+ "validator",
+ "webauthn-authenticator-rs",
+ "webauthn-rs",
+ "webauthn-rs-proto",
+]
+
+[[package]]
+name = "openstack-keystone-distributed-storage"
 version = "0.1.0"
 dependencies = [
  "async-trait",
@@ -5705,7 +5774,7 @@ dependencies = [
  "derive_builder",
  "eyre",
  "http",
- "openstack_keystone_api_types",
+ "openstack-keystone-api-types",
  "openstack_sdk_core",
  "reqwest 0.13.2",
  "secrecy",
@@ -5731,7 +5800,7 @@ dependencies = [
  "hyper-util",
  "keycloak",
  "local-ip-address",
- "openstack_keystone_api_types",
+ "openstack-keystone-api-types",
  "reqwest 0.13.2",
  "serde",
  "serde_json",
@@ -5751,7 +5820,7 @@ dependencies = [
  "chrono",
  "eyre",
  "itertools 0.14.0",
- "openstack_keystone",
+ "openstack-keystone",
  "sea-orm",
  "secrecy",
  "serde",
