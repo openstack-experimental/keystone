@@ -60,7 +60,7 @@ pub(super) async fn finish(
     Auth(user_auth): Auth,
     Path(user_id): Path<String>,
     State(state): State<CombinedExtensionState>,
-    mut policy: Policy,
+    policy: Policy,
     Json(req): Json<UserPasskeyRegistrationFinishRequest>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
     req.validate()?;

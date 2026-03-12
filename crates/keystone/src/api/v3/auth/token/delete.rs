@@ -51,7 +51,7 @@ use crate::token::TokenApi;
 )]
 pub(super) async fn delete(
     Auth(user_auth): Auth,
-    mut policy: Policy,
+    policy: Policy,
     headers: HeaderMap,
     State(state): State<ServiceState>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {

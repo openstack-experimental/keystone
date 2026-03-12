@@ -64,7 +64,7 @@ use crate::token::TokenApi;
 )]
 pub(super) async fn show(
     Auth(user_auth): Auth,
-    mut policy: Policy,
+    policy: Policy,
     Query(query): Query<ValidateTokenParameters>,
     headers: HeaderMap,
     State(state): State<ServiceState>,

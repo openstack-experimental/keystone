@@ -53,7 +53,7 @@ use crate::policy::Policy;
 )]
 pub(super) async fn list_nested(
     Auth(user_auth): Auth,
-    mut policy: Policy,
+    policy: Policy,
     OriginalUri(original_url): OriginalUri,
     Path(instance_id): Path<String>,
     Query(query): Query<K8sAuthRoleListParametersNested>,
@@ -123,7 +123,7 @@ pub(super) async fn list_nested(
 )]
 pub(super) async fn list(
     Auth(user_auth): Auth,
-    mut policy: Policy,
+    policy: Policy,
     OriginalUri(original_url): OriginalUri,
     Query(query): Query<K8sAuthRoleListParameters>,
     State(state): State<ServiceState>,

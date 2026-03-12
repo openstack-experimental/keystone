@@ -53,7 +53,7 @@ use crate::token::TokenApi;
 )]
 pub(super) async fn remove(
     Auth(user_auth): Auth,
-    mut policy: Policy,
+    policy: Policy,
     Path(id): Path<String>,
     State(state): State<ServiceState>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {

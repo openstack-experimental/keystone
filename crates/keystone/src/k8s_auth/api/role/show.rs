@@ -53,7 +53,7 @@ use crate::policy::Policy;
 )]
 pub(super) async fn show_nested(
     Auth(user_auth): Auth,
-    mut policy: Policy,
+    policy: Policy,
     Path(path_params): Path<K8sAuthRolePathParams>,
     State(state): State<ServiceState>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
@@ -105,7 +105,7 @@ pub(super) async fn show_nested(
 )]
 pub(super) async fn show(
     Auth(user_auth): Auth,
-    mut policy: Policy,
+    policy: Policy,
     Path(id): Path<String>,
     State(state): State<ServiceState>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {

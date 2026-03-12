@@ -55,7 +55,7 @@ use crate::token::{
 )]
 pub(super) async fn list(
     Auth(user_auth): Auth,
-    mut policy: Policy,
+    policy: Policy,
     Query(query): Query<TokenRestrictionListParameters>,
     State(state): State<ServiceState>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
