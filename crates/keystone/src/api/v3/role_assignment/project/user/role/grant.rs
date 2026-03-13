@@ -202,10 +202,10 @@ mod tests {
                 }))
             });
         let provider_builder = Provider::mocked_builder()
-            .assignment(assignment_mock)
-            .identity(identity_mock)
-            .resource(resource_mock)
-            .role(role_mock);
+            .mock_assignment(assignment_mock)
+            .mock_identity(identity_mock)
+            .mock_resource(resource_mock)
+            .mock_role(role_mock);
         let state = get_mocked_state(provider_builder, true, None, None);
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -269,9 +269,9 @@ mod tests {
                 }))
             });
         let provider_builder = Provider::mocked_builder()
-            .identity(identity_mock)
-            .resource(resource_mock)
-            .role(role_mock);
+            .mock_identity(identity_mock)
+            .mock_resource(resource_mock)
+            .mock_role(role_mock);
         let state = get_mocked_state(provider_builder, false, None, None);
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -325,9 +325,9 @@ mod tests {
                 }))
             });
         let provider_builder = Provider::mocked_builder()
-            .identity(identity_mock)
-            .resource(resource_mock)
-            .role(role_mock);
+            .mock_identity(identity_mock)
+            .mock_resource(resource_mock)
+            .mock_role(role_mock);
         let state = get_mocked_state(provider_builder, true, None, None);
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -384,9 +384,9 @@ mod tests {
             .withf(|_, pid: &'_ str| pid == "project_id")
             .returning(|_, _| Ok(None));
         let provider_builder = Provider::mocked_builder()
-            .identity(identity_mock)
-            .resource(resource_mock)
-            .role(role_mock);
+            .mock_identity(identity_mock)
+            .mock_resource(resource_mock)
+            .mock_role(role_mock);
         let state = get_mocked_state(provider_builder, true, None, None);
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -444,9 +444,9 @@ mod tests {
                 }))
             });
         let provider_builder = Provider::mocked_builder()
-            .identity(identity_mock)
-            .resource(resource_mock)
-            .role(role_mock);
+            .mock_identity(identity_mock)
+            .mock_resource(resource_mock)
+            .mock_role(role_mock);
         let state = get_mocked_state(provider_builder, true, None, None);
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())

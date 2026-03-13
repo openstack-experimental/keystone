@@ -16,16 +16,3 @@
 use openstack_keystone_api_types::k8s_auth::auth;
 
 pub use auth::K8sAuthRequest;
-use secrecy::{ExposeSecret, SecretString};
-
-use crate::k8s_auth::types;
-
-impl From<(K8sAuthRequest, String)> for types::K8sAuthRequest {
-    fn from(value: (K8sAuthRequest, String)) -> Self {
-        Self {
-            auth_instance_id: value.1,
-            jwt: SecretString::from(value.0.jwt.expose_secret()),
-            role_name: value.0.role_name,
-        }
-    }
-}

@@ -19,7 +19,7 @@ use webauthn_rs::prelude::{PasskeyAuthentication, PasskeyRegistration};
 
 use crate::db::entity::{prelude::WebauthnState as DbPasskeyState, webauthn_state};
 use crate::error::DbContextExt;
-use crate::webauthn::error::WebauthnError;
+use crate::webauthn::WebauthnError;
 
 pub async fn get_register<U: AsRef<str>>(
     db: &DatabaseConnection,

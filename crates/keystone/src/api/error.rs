@@ -12,347 +12,349 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //! # Keystone API error.
-use axum::{
-    Json,
-    extract::rejection::JsonRejection,
-    http::StatusCode,
-    response::{IntoResponse, Response},
-};
-use serde_json::json;
-use thiserror::Error;
-use tracing::error;
+//use axum::{
+//    Json,
+//    extract::rejection::JsonRejection,
+//    http::StatusCode,
+//    response::{IntoResponse, Response},
+//};
+//use serde_json::json;
+//use thiserror::Error;
+//use tracing::error;
+//
+//use crate::assignment::error::AssignmentProviderError;
+//use crate::auth::AuthenticationError;
+//use crate::catalog::error::CatalogProviderError;
+//use crate::error::BuilderError;
+//use crate::identity::error::IdentityProviderError;
+//use crate::policy::PolicyError;
+//use crate::resource::error::ResourceProviderError;
+//use crate::revoke::error::RevokeProviderError;
+//use crate::role::error::RoleProviderError;
+//use crate::token::error::TokenProviderError;
 
-use crate::assignment::error::AssignmentProviderError;
-use crate::auth::AuthenticationError;
-use crate::catalog::error::CatalogProviderError;
-use crate::error::BuilderError;
-use crate::identity::error::IdentityProviderError;
-use crate::policy::PolicyError;
-use crate::resource::error::ResourceProviderError;
-use crate::revoke::error::RevokeProviderError;
-use crate::role::error::RoleProviderError;
-use crate::token::error::TokenProviderError;
+pub use openstack_keystone_core::api::KeystoneApiError;
 
-/// Keystone API operation errors.
-#[derive(Debug, Error)]
-pub enum KeystoneApiError {
-    /// Selected authentication is forbidden.
-    #[error("changing current authentication scope is forbidden")]
-    AuthenticationRescopeForbidden,
+///// Keystone API operation errors.
+//#[derive(Debug, Error)]
+//pub enum KeystoneApiError {
+//    /// Selected authentication is forbidden.
+//    #[error("changing current authentication scope is forbidden")]
+//    AuthenticationRescopeForbidden,
+//
+//    #[error("Attempted to authenticate with an unsupported method.")]
+//    AuthMethodNotSupported,
+//
+//    #[error("{0}.")]
+//    BadRequest(String),
+//
+//    /// Base64 decoding error.
+//    #[error(transparent)]
+//    Base64Decode(#[from] base64::DecodeError),
+//
+//    #[error("conflict, resource already existing")]
+//    Conflict(String),
+//
+//    #[error("domain id or name must be present")]
+//    DomainIdOrName,
+//
+//    #[error("You are not authorized to perform the requested action.")]
+//    Forbidden {
+//        /// The source of the error.
+//        #[source]
+//        source: Box<dyn std::error::Error + Send + Sync>,
+//    },
+//
+//    #[error("invalid header header")]
+//    InvalidHeader,
+//
+//    #[error("invalid token")]
+//    InvalidToken,
+//
+//    #[error(transparent)]
+//    JsonExtractorRejection(#[from] JsonRejection),
+//
+//    #[error("internal server error: {0}")]
+//    InternalError(String),
+//
+//    #[error("could not find {resource}: {identifier}")]
+//    NotFound {
+//        resource: String,
+//        identifier: String,
+//    },
+//
+//    /// Others.
+//    #[error(transparent)]
+//    Other(#[from] eyre::Report),
+//
+//    #[error(transparent)]
+//    Policy {
+//        #[from]
+//        source: PolicyError,
+//    },
+//
+//    #[error("project id or name must be present")]
+//    ProjectIdOrName,
+//
+//    #[error("project domain must be present")]
+//    ProjectDomain,
+//
+//    /// Selected authentication is forbidden.
+//    #[error("selected authentication is forbidden")]
+//    SelectedAuthenticationForbidden,
+//
+//    /// (de)serialization error.
+//    #[error(transparent)]
+//    Serde {
+//        #[from]
+//        source: serde_json::Error,
+//    },
+//
+//    #[error("missing x-subject-token header")]
+//    SubjectTokenMissing,
+//
+//    #[error("The request you have made requires authentication.")]
+//    UnauthorizedNoContext,
+//
+//    #[error("{}", .context.clone().unwrap_or("The request you have made requires authentication.".to_string()))]
+//    Unauthorized {
+//        context: Option<String>,
+//        /// The source of the error.
+//        #[source]
+//        source: Box<dyn std::error::Error + Send + Sync>,
+//    },
+//
+//    /// Request validation error.
+//    #[error("request validation failed: {source}")]
+//    Validator {
+//        /// The source of the error.
+//        #[from]
+//        source: validator::ValidationErrors,
+//    },
+//}
+//
+//impl KeystoneApiError {
+//    pub fn forbidden<E>(error: E) -> Self
+//    where
+//        E: std::error::Error + Send + Sync + 'static,
+//    {
+//        Self::Forbidden {
+//            source: Box::new(error),
+//        }
+//    }
+//
+//    pub fn unauthorized<E, C>(error: E, context: Option<C>) -> Self
+//    where
+//        E: std::error::Error + Send + Sync + 'static,
+//        C: Into<String>,
+//    {
+//        Self::Unauthorized {
+//            context: context.map(Into::into),
+//            source: Box::new(error),
+//        }
+//    }
+//}
+//
+//impl IntoResponse for KeystoneApiError {
+//    fn into_response(self) -> Response {
+//        error!("Error happened during request processing: {:#?}", self);
+//
+//        let status_code = match self {
+//            KeystoneApiError::Conflict(_) => StatusCode::CONFLICT,
+//            KeystoneApiError::NotFound { .. } => StatusCode::NOT_FOUND,
+//            KeystoneApiError::BadRequest(..) => StatusCode::BAD_REQUEST,
+//            KeystoneApiError::Unauthorized { .. } => StatusCode::UNAUTHORIZED,
+//            KeystoneApiError::UnauthorizedNoContext => StatusCode::UNAUTHORIZED,
+//            KeystoneApiError::Forbidden { .. } => StatusCode::FORBIDDEN,
+//            KeystoneApiError::Policy { .. } => StatusCode::FORBIDDEN,
+//            KeystoneApiError::SelectedAuthenticationForbidden
+//            | KeystoneApiError::AuthenticationRescopeForbidden => StatusCode::BAD_REQUEST,
+//            KeystoneApiError::InternalError(_) | KeystoneApiError::Other(..) => {
+//                StatusCode::INTERNAL_SERVER_ERROR
+//            }
+//            _ => StatusCode::BAD_REQUEST,
+//        };
+//
+//        (
+//            status_code,
+//            Json(json!({"error": {"code": status_code.as_u16(), "message": self.to_string()}})),
+//        )
+//            .into_response()
+//    }
+//}
 
-    #[error("Attempted to authenticate with an unsupported method.")]
-    AuthMethodNotSupported,
-
-    #[error("{0}.")]
-    BadRequest(String),
-
-    /// Base64 decoding error.
-    #[error(transparent)]
-    Base64Decode(#[from] base64::DecodeError),
-
-    #[error("conflict, resource already existing")]
-    Conflict(String),
-
-    #[error("domain id or name must be present")]
-    DomainIdOrName,
-
-    #[error("You are not authorized to perform the requested action.")]
-    Forbidden {
-        /// The source of the error.
-        #[source]
-        source: Box<dyn std::error::Error + Send + Sync>,
-    },
-
-    #[error("invalid header header")]
-    InvalidHeader,
-
-    #[error("invalid token")]
-    InvalidToken,
-
-    #[error(transparent)]
-    JsonExtractorRejection(#[from] JsonRejection),
-
-    #[error("internal server error: {0}")]
-    InternalError(String),
-
-    #[error("could not find {resource}: {identifier}")]
-    NotFound {
-        resource: String,
-        identifier: String,
-    },
-
-    /// Others.
-    #[error(transparent)]
-    Other(#[from] eyre::Report),
-
-    #[error(transparent)]
-    Policy {
-        #[from]
-        source: PolicyError,
-    },
-
-    #[error("project id or name must be present")]
-    ProjectIdOrName,
-
-    #[error("project domain must be present")]
-    ProjectDomain,
-
-    /// Selected authentication is forbidden.
-    #[error("selected authentication is forbidden")]
-    SelectedAuthenticationForbidden,
-
-    /// (de)serialization error.
-    #[error(transparent)]
-    Serde {
-        #[from]
-        source: serde_json::Error,
-    },
-
-    #[error("missing x-subject-token header")]
-    SubjectTokenMissing,
-
-    #[error("The request you have made requires authentication.")]
-    UnauthorizedNoContext,
-
-    #[error("{}", .context.clone().unwrap_or("The request you have made requires authentication.".to_string()))]
-    Unauthorized {
-        context: Option<String>,
-        /// The source of the error.
-        #[source]
-        source: Box<dyn std::error::Error + Send + Sync>,
-    },
-
-    /// Request validation error.
-    #[error("request validation failed: {source}")]
-    Validator {
-        /// The source of the error.
-        #[from]
-        source: validator::ValidationErrors,
-    },
-}
-
-impl KeystoneApiError {
-    pub fn forbidden<E>(error: E) -> Self
-    where
-        E: std::error::Error + Send + Sync + 'static,
-    {
-        Self::Forbidden {
-            source: Box::new(error),
-        }
-    }
-
-    pub fn unauthorized<E, C>(error: E, context: Option<C>) -> Self
-    where
-        E: std::error::Error + Send + Sync + 'static,
-        C: Into<String>,
-    {
-        Self::Unauthorized {
-            context: context.map(Into::into),
-            source: Box::new(error),
-        }
-    }
-}
-
-impl IntoResponse for KeystoneApiError {
-    fn into_response(self) -> Response {
-        error!("Error happened during request processing: {:#?}", self);
-
-        let status_code = match self {
-            KeystoneApiError::Conflict(_) => StatusCode::CONFLICT,
-            KeystoneApiError::NotFound { .. } => StatusCode::NOT_FOUND,
-            KeystoneApiError::BadRequest(..) => StatusCode::BAD_REQUEST,
-            KeystoneApiError::Unauthorized { .. } => StatusCode::UNAUTHORIZED,
-            KeystoneApiError::UnauthorizedNoContext => StatusCode::UNAUTHORIZED,
-            KeystoneApiError::Forbidden { .. } => StatusCode::FORBIDDEN,
-            KeystoneApiError::Policy { .. } => StatusCode::FORBIDDEN,
-            KeystoneApiError::SelectedAuthenticationForbidden
-            | KeystoneApiError::AuthenticationRescopeForbidden => StatusCode::BAD_REQUEST,
-            KeystoneApiError::InternalError(_) | KeystoneApiError::Other(..) => {
-                StatusCode::INTERNAL_SERVER_ERROR
-            }
-            _ => StatusCode::BAD_REQUEST,
-        };
-
-        (
-            status_code,
-            Json(json!({"error": {"code": status_code.as_u16(), "message": self.to_string()}})),
-        )
-            .into_response()
-    }
-}
-
-impl From<AuthenticationError> for KeystoneApiError {
-    fn from(value: AuthenticationError) -> Self {
-        match value {
-            AuthenticationError::DomainDisabled(..) => {
-                KeystoneApiError::unauthorized(value, None::<String>)
-            }
-            AuthenticationError::ProjectDisabled(..) => {
-                KeystoneApiError::unauthorized(value, None::<String>)
-            }
-            AuthenticationError::StructBuilder { source } => {
-                KeystoneApiError::InternalError(source.to_string())
-            }
-            AuthenticationError::UserDisabled(ref user_id) => {
-                let uid = user_id.clone();
-                KeystoneApiError::unauthorized(
-                    value,
-                    Some(format!("The account is disabled for the user: {uid}")),
-                )
-            }
-            AuthenticationError::UserLocked(ref user_id) => {
-                let uid = user_id.clone();
-                KeystoneApiError::unauthorized(
-                    value,
-                    Some(format!("The account is locked for the user: {uid}")),
-                )
-            }
-            AuthenticationError::UserPasswordExpired(ref user_id) => {
-                let uid = user_id.clone();
-                KeystoneApiError::unauthorized(
-                    value,
-                    Some(format!(
-                        "The password is expired and need to be changed for user: {uid}"
-                    )),
-                )
-            }
-            AuthenticationError::UserNameOrPasswordWrong => KeystoneApiError::unauthorized(
-                value,
-                Some("Invalid username or password".to_string()),
-            ),
-            AuthenticationError::TokenRenewalForbidden => {
-                KeystoneApiError::SelectedAuthenticationForbidden
-            }
-            AuthenticationError::Unauthorized => {
-                KeystoneApiError::unauthorized(value, None::<String>)
-            }
-        }
-    }
-}
-
-impl From<AssignmentProviderError> for KeystoneApiError {
-    fn from(source: AssignmentProviderError) -> Self {
-        match source {
-            AssignmentProviderError::AssignmentNotFound(x) => Self::NotFound {
-                resource: "assignment".into(),
-                identifier: x,
-            },
-            AssignmentProviderError::RoleNotFound(x) => Self::NotFound {
-                resource: "role".into(),
-                identifier: x,
-            },
-            ref err @ AssignmentProviderError::Conflict(..) => Self::Conflict(err.to_string()),
-            ref err @ AssignmentProviderError::Validation { .. } => {
-                Self::BadRequest(err.to_string())
-            }
-            other => Self::InternalError(other.to_string()),
-        }
-    }
-}
-
-impl From<BuilderError> for KeystoneApiError {
-    fn from(value: crate::error::BuilderError) -> Self {
-        Self::InternalError(value.to_string())
-    }
-}
-
-impl From<openstack_keystone_api_types::error::BuilderError> for KeystoneApiError {
-    fn from(value: openstack_keystone_api_types::error::BuilderError) -> Self {
-        Self::InternalError(value.to_string())
-    }
-}
-
-impl From<RoleProviderError> for KeystoneApiError {
-    fn from(source: RoleProviderError) -> Self {
-        match source {
-            RoleProviderError::RoleNotFound(x) => Self::NotFound {
-                resource: "role".into(),
-                identifier: x,
-            },
-            ref err @ RoleProviderError::Conflict(..) => Self::Conflict(err.to_string()),
-            ref err @ RoleProviderError::Validation { .. } => Self::BadRequest(err.to_string()),
-            other => Self::InternalError(other.to_string()),
-        }
-    }
-}
-
-impl From<serde_urlencoded::ser::Error> for KeystoneApiError {
-    fn from(value: serde_urlencoded::ser::Error) -> Self {
-        Self::InternalError(value.to_string())
-    }
-}
-
-impl From<url::ParseError> for KeystoneApiError {
-    fn from(value: url::ParseError) -> Self {
-        Self::InternalError(value.to_string())
-    }
-}
-
-impl From<CatalogProviderError> for KeystoneApiError {
-    fn from(value: CatalogProviderError) -> Self {
-        match value {
-            ref err @ CatalogProviderError::Conflict(..) => Self::Conflict(err.to_string()),
-            other => Self::InternalError(other.to_string()),
-        }
-    }
-}
-
-impl From<IdentityProviderError> for KeystoneApiError {
-    fn from(value: IdentityProviderError) -> Self {
-        match value {
-            IdentityProviderError::Authentication { source } => source.into(),
-            IdentityProviderError::UserNotFound(x) => Self::NotFound {
-                resource: "user".into(),
-                identifier: x,
-            },
-            IdentityProviderError::GroupNotFound(x) => Self::NotFound {
-                resource: "group".into(),
-                identifier: x,
-            },
-            other => Self::InternalError(other.to_string()),
-        }
-    }
-}
-
-impl From<ResourceProviderError> for KeystoneApiError {
-    fn from(value: ResourceProviderError) -> Self {
-        match value {
-            ref err @ ResourceProviderError::Conflict(..) => Self::BadRequest(err.to_string()),
-            ResourceProviderError::DomainNotFound(x) => Self::NotFound {
-                resource: "domain".into(),
-                identifier: x,
-            },
-            other => Self::InternalError(other.to_string()),
-        }
-    }
-}
-
-impl From<RevokeProviderError> for KeystoneApiError {
-    fn from(value: RevokeProviderError) -> Self {
-        match value {
-            ref err @ RevokeProviderError::Conflict(..) => Self::BadRequest(err.to_string()),
-            other => Self::InternalError(other.to_string()),
-        }
-    }
-}
-
-impl From<TokenProviderError> for KeystoneApiError {
-    fn from(value: TokenProviderError) -> Self {
-        match value {
-            TokenProviderError::Authentication(source) => source.into(),
-            TokenProviderError::DomainDisabled(x) => Self::NotFound {
-                resource: "domain".into(),
-                identifier: x,
-            },
-            TokenProviderError::TokenRestrictionNotFound(x) => Self::NotFound {
-                resource: "token restriction".into(),
-                identifier: x,
-            },
-            TokenProviderError::ProjectDisabled(x) => Self::NotFound {
-                resource: "project".into(),
-                identifier: x,
-            },
-            other => Self::InternalError(other.to_string()),
-        }
-    }
-}
+//impl From<AuthenticationError> for KeystoneApiError {
+//    fn from(value: AuthenticationError) -> Self {
+//        match value {
+//            AuthenticationError::DomainDisabled(..) => {
+//                KeystoneApiError::unauthorized(value, None::<String>)
+//            }
+//            AuthenticationError::ProjectDisabled(..) => {
+//                KeystoneApiError::unauthorized(value, None::<String>)
+//            }
+//            AuthenticationError::StructBuilder { source } => {
+//                KeystoneApiError::InternalError(source.to_string())
+//            }
+//            AuthenticationError::UserDisabled(ref user_id) => {
+//                let uid = user_id.clone();
+//                KeystoneApiError::unauthorized(
+//                    value,
+//                    Some(format!("The account is disabled for the user: {uid}")),
+//                )
+//            }
+//            AuthenticationError::UserLocked(ref user_id) => {
+//                let uid = user_id.clone();
+//                KeystoneApiError::unauthorized(
+//                    value,
+//                    Some(format!("The account is locked for the user: {uid}")),
+//                )
+//            }
+//            AuthenticationError::UserPasswordExpired(ref user_id) => {
+//                let uid = user_id.clone();
+//                KeystoneApiError::unauthorized(
+//                    value,
+//                    Some(format!(
+//                        "The password is expired and need to be changed for user: {uid}"
+//                    )),
+//                )
+//            }
+//            AuthenticationError::UserNameOrPasswordWrong => KeystoneApiError::unauthorized(
+//                value,
+//                Some("Invalid username or password".to_string()),
+//            ),
+//            AuthenticationError::TokenRenewalForbidden => {
+//                KeystoneApiError::SelectedAuthenticationForbidden
+//            }
+//            AuthenticationError::Unauthorized => {
+//                KeystoneApiError::unauthorized(value, None::<String>)
+//            }
+//        }
+//    }
+//}
+//
+//impl From<AssignmentProviderError> for KeystoneApiError {
+//    fn from(source: AssignmentProviderError) -> Self {
+//        match source {
+//            AssignmentProviderError::AssignmentNotFound(x) => Self::NotFound {
+//                resource: "assignment".into(),
+//                identifier: x,
+//            },
+//            AssignmentProviderError::RoleNotFound(x) => Self::NotFound {
+//                resource: "role".into(),
+//                identifier: x,
+//            },
+//            ref err @ AssignmentProviderError::Conflict(..) => Self::Conflict(err.to_string()),
+//            ref err @ AssignmentProviderError::Validation { .. } => {
+//                Self::BadRequest(err.to_string())
+//            }
+//            other => Self::InternalError(other.to_string()),
+//        }
+//    }
+//}
+//
+//impl From<BuilderError> for KeystoneApiError {
+//    fn from(value: crate::error::BuilderError) -> Self {
+//        Self::InternalError(value.to_string())
+//    }
+//}
+//
+//impl From<openstack_keystone_api_types::error::BuilderError> for KeystoneApiError {
+//    fn from(value: openstack_keystone_api_types::error::BuilderError) -> Self {
+//        Self::InternalError(value.to_string())
+//    }
+//}
+//
+//impl From<RoleProviderError> for KeystoneApiError {
+//    fn from(source: RoleProviderError) -> Self {
+//        match source {
+//            RoleProviderError::RoleNotFound(x) => Self::NotFound {
+//                resource: "role".into(),
+//                identifier: x,
+//            },
+//            ref err @ RoleProviderError::Conflict(..) => Self::Conflict(err.to_string()),
+//            ref err @ RoleProviderError::Validation { .. } => Self::BadRequest(err.to_string()),
+//            other => Self::InternalError(other.to_string()),
+//        }
+//    }
+//}
+//
+//impl From<serde_urlencoded::ser::Error> for KeystoneApiError {
+//    fn from(value: serde_urlencoded::ser::Error) -> Self {
+//        Self::InternalError(value.to_string())
+//    }
+//}
+//
+//impl From<url::ParseError> for KeystoneApiError {
+//    fn from(value: url::ParseError) -> Self {
+//        Self::InternalError(value.to_string())
+//    }
+//}
+//
+//impl From<CatalogProviderError> for KeystoneApiError {
+//    fn from(value: CatalogProviderError) -> Self {
+//        match value {
+//            ref err @ CatalogProviderError::Conflict(..) => Self::Conflict(err.to_string()),
+//            other => Self::InternalError(other.to_string()),
+//        }
+//    }
+//}
+//
+//impl From<IdentityProviderError> for KeystoneApiError {
+//    fn from(value: IdentityProviderError) -> Self {
+//        match value {
+//            IdentityProviderError::Authentication { source } => source.into(),
+//            IdentityProviderError::UserNotFound(x) => Self::NotFound {
+//                resource: "user".into(),
+//                identifier: x,
+//            },
+//            IdentityProviderError::GroupNotFound(x) => Self::NotFound {
+//                resource: "group".into(),
+//                identifier: x,
+//            },
+//            other => Self::InternalError(other.to_string()),
+//        }
+//    }
+//}
+//
+//impl From<ResourceProviderError> for KeystoneApiError {
+//    fn from(value: ResourceProviderError) -> Self {
+//        match value {
+//            ref err @ ResourceProviderError::Conflict(..) => Self::BadRequest(err.to_string()),
+//            ResourceProviderError::DomainNotFound(x) => Self::NotFound {
+//                resource: "domain".into(),
+//                identifier: x,
+//            },
+//            other => Self::InternalError(other.to_string()),
+//        }
+//    }
+//}
+//
+//impl From<RevokeProviderError> for KeystoneApiError {
+//    fn from(value: RevokeProviderError) -> Self {
+//        match value {
+//            ref err @ RevokeProviderError::Conflict(..) => Self::BadRequest(err.to_string()),
+//            other => Self::InternalError(other.to_string()),
+//        }
+//    }
+//}
+//
+//impl From<TokenProviderError> for KeystoneApiError {
+//    fn from(value: TokenProviderError) -> Self {
+//        match value {
+//            TokenProviderError::Authentication(source) => source.into(),
+//            TokenProviderError::DomainDisabled(x) => Self::NotFound {
+//                resource: "domain".into(),
+//                identifier: x,
+//            },
+//            TokenProviderError::TokenRestrictionNotFound(x) => Self::NotFound {
+//                resource: "token restriction".into(),
+//                identifier: x,
+//            },
+//            TokenProviderError::ProjectDisabled(x) => Self::NotFound {
+//                resource: "project".into(),
+//                identifier: x,
+//            },
+//            other => Self::InternalError(other.to_string()),
+//        }
+//    }
+//}

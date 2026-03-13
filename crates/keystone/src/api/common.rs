@@ -255,7 +255,7 @@ mod tests {
             });
 
         let state = get_mocked_state(
-            Provider::mocked_builder().resource(resource_mock),
+            Provider::mocked_builder().mock_resource(resource_mock),
             true,
             None,
             Some(false),

@@ -18,7 +18,7 @@ use crate::api::v3::auth::token as v3_token;
 use crate::keystone::ServiceState;
 
 mod common;
-mod token_impl;
+pub mod token_impl;
 pub mod types;
 
 pub(super) fn openapi_router() -> OpenApiRouter<ServiceState> {

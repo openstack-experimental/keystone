@@ -13,7 +13,8 @@ dist = false
 chrono.workspace = true
 eyre.workspace = true
 itertools.workspace = true
-openstack-keystone = { path = "../../crates/keystone" }
+openstack-keystone-core = { version = "0.1", path = "../../crates/core", features = ["mock"] }
+openstack-keystone = { version = "0.1", path = "../../crates/keystone" }
 sea-orm = { workspace = true, features = ["sqlx-sqlite"] }
 secrecy = { workspace = true, features = ["serde"] }
 serde.workspace = true

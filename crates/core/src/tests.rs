@@ -1,0 +1,41 @@
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+// SPDX-License-Identifier: Apache-2.0
+//! # Test related functionality
+use sea_orm::DatabaseConnection;
+use std::sync::Arc;
+
+use crate::config::Config;
+use crate::keystone::{Service, ServiceState};
+use crate::policy::MockPolicy;
+use crate::provider::{Provider, ProviderBuilder};
+
+pub(crate) mod token;
+
+pub fn get_mocked_state(
+    config: Option<Config>,
+    provider_builder: Option<ProviderBuilder>,
+) -> ServiceState {
+    Arc::new(
+        Service::new(
+            config.unwrap_or_default(),
+            DatabaseConnection::Disconnected,
+            provider_builder
+                .unwrap_or(Provider::mocked_builder())
+                .build()
+                .unwrap(),
+            Arc::new(MockPolicy::default()),
+        )
+        .unwrap(),
+    )
+}

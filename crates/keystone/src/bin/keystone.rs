@@ -51,7 +51,7 @@ use openstack_keystone::config::Config;
 use openstack_keystone::federation::FederationApi;
 use openstack_keystone::keystone::{Service, ServiceState};
 use openstack_keystone::plugin_manager::PluginManager;
-use openstack_keystone::policy::PolicyEnforcer;
+use openstack_keystone::policy::HttpPolicyEnforcer;
 use openstack_keystone::provider::Provider;
 use openstack_keystone::webauthn;
 use openstack_keystone_distributed_storage::app::get_app_server;
@@ -195,18 +195,12 @@ async fn main() -> Result<(), Report> {
         .await
         .wrap_err("Database connection failed")?;
 
-    let mut plugin_manager = PluginManager::default();
+    let plugin_manager = PluginManager::default();
+    let provider = Provider::new(cfg.clone(), &plugin_manager)?;
 
-    plugin_manager.register_token_restriction_backend(
-        "sql",
-        Arc::new(openstack_keystone::token::token_restriction::SqlBackend::default()),
-    );
+    let policy = HttpPolicyEnforcer::new(cfg.api_policy.opa_base_url.clone()).await?;
 
-    let provider = Provider::new(cfg.clone(), plugin_manager)?;
-
-    let policy = PolicyEnforcer::http(cfg.api_policy.opa_base_url.clone()).await?;
-
-    let shared_state = Arc::new(Service::new(cfg.clone(), conn, provider, policy)?);
+    let shared_state = Arc::new(Service::new(cfg.clone(), conn, provider, Arc::new(policy))?);
 
     spawn(cleanup(cloned_token, shared_state.clone()));
 

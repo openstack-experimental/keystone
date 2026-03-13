@@ -15,7 +15,7 @@
 
 use crate::assignment::{AssignmentProviderError, types::*};
 use crate::db::entity::{
-    assignment as db_assignment, role as db_role, sea_orm_active_enums::Type as DbAssignmentType,
+    assignment as db_assignment, sea_orm_active_enums::Type as DbAssignmentType,
     system_assignment as db_system_assignment,
 };
 
@@ -65,40 +65,6 @@ impl From<&db_assignment::Model> for Assignment {
     }
 }
 
-impl From<(&db_assignment::Model, Option<&String>)> for Assignment {
-    fn from(value: (&db_assignment::Model, Option<&String>)) -> Self {
-        let mut assignment = Assignment::from(value.0.clone());
-        if let Some(val) = value.1 {
-            assignment.role_name = Some(val.clone());
-        }
-        assignment
-    }
-}
-
-impl From<(db_assignment::Model, Option<db_role::Model>)> for Assignment {
-    fn from(value: (db_assignment::Model, Option<db_role::Model>)) -> Self {
-        let mut assignment = Assignment::from(value.0);
-        if let Some(val) = value.1 {
-            assignment.role_name = Some(val.name);
-        }
-        assignment
-    }
-}
-
-impl TryFrom<(db_system_assignment::Model, Option<db_role::Model>)> for Assignment {
-    type Error = AssignmentProviderError;
-
-    fn try_from(
-        value: (db_system_assignment::Model, Option<db_role::Model>),
-    ) -> Result<Self, Self::Error> {
-        let mut assignment = Assignment::try_from(value.0)?;
-        if let Some(val) = value.1 {
-            assignment.role_name = Some(val.name);
-        }
-        Ok(assignment)
-    }
-}
-
 impl From<DbAssignmentType> for AssignmentType {
     fn from(value: DbAssignmentType) -> Self {
         match value {
@@ -124,21 +90,6 @@ impl TryFrom<&AssignmentType> for DbAssignmentType {
             AssignmentType::GroupSystem => {
                 Err(Self::Error::InvalidAssignmentType("GroupSystem".into()))
             }
-        }
-    }
-}
-
-impl TryFrom<&str> for AssignmentType {
-    type Error = AssignmentProviderError;
-    fn try_from(value: &str) -> Result<Self, Self::Error> {
-        match value {
-            "GroupDomain" => Ok(Self::GroupDomain),
-            "GroupProject" => Ok(Self::GroupProject),
-            "GroupSystem" => Ok(Self::GroupSystem),
-            "UserDomain" => Ok(Self::UserDomain),
-            "UserProject" => Ok(Self::UserProject),
-            "UserSystem" => Ok(Self::UserSystem),
-            _ => Err(AssignmentProviderError::InvalidAssignmentType(value.into())),
         }
     }
 }

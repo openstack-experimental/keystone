@@ -166,8 +166,8 @@ mod tests {
             .returning(|_, _| Ok(()));
 
         let provider = Provider::mocked_builder()
-            .token(token_mock)
-            .revoke(revoke_mock);
+            .mock_token(token_mock)
+            .mock_revoke(revoke_mock);
 
         let state = get_mocked_state(provider, true, None, Some(true));
 
@@ -201,7 +201,7 @@ mod tests {
             .withf(|_, token: &'_ str, _, _| token == "baz")
             .returning(move |_, _, _, _| Err(TokenProviderError::Expired));
 
-        let provider = Provider::mocked_builder().token(token_mock);
+        let provider = Provider::mocked_builder().mock_token(token_mock);
 
         let state = get_mocked_state(provider, true, None, Some(true));
 
@@ -235,7 +235,7 @@ mod tests {
             .withf(|_, token: &'_ str, _, _| token == "baz")
             .returning(move |_, _, _, _| Err(TokenProviderError::TokenRevoked));
 
-        let provider = Provider::mocked_builder().token(token_mock);
+        let provider = Provider::mocked_builder().mock_token(token_mock);
         let state = get_mocked_state(provider, true, None, Some(true));
 
         let mut api = openapi_router()

@@ -12,29 +12,5 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use async_trait::async_trait;
-
-use crate::identity_mapping::{IdentityMappingProviderError, types::*};
-use crate::keystone::ServiceState;
-
 pub mod sql;
-
-#[cfg_attr(test, mockall::automock)]
-#[async_trait]
-pub trait IdentityMappingBackend: Send + Sync {
-    /// Get the `IdMapping` by the local data.
-    async fn get_by_local_id<'a>(
-        &self,
-        state: &ServiceState,
-        local_id: &'a str,
-        domain_id: &'a str,
-        entity_type: IdMappingEntityType,
-    ) -> Result<Option<IdMapping>, IdentityMappingProviderError>;
-
-    /// Get the IdMapping by the public_id.
-    async fn get_by_public_id<'a>(
-        &self,
-        state: &ServiceState,
-        public_id: &'a str,
-    ) -> Result<Option<IdMapping>, IdentityMappingProviderError>;
-}
+pub use openstack_keystone_core::identity_mapping::backend::IdentityMappingBackend;

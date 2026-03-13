@@ -57,8 +57,15 @@ impl FromIterator<user_option::Model> for UserOptions {
     }
 }
 
-impl UserOptions {
-    pub(super) fn to_model_iter<U: Into<String>>(
+pub trait UserOptionIntoModelIterator {
+    fn to_model_iter<U: Into<String>>(
+        &self,
+        user_id: U,
+    ) -> Result<impl IntoIterator<Item = user_option::Model>, IdentityProviderError>;
+}
+
+impl UserOptionIntoModelIterator for UserOptions {
+    fn to_model_iter<U: Into<String>>(
         &self,
         user_id: U,
     ) -> Result<impl IntoIterator<Item = user_option::Model>, IdentityProviderError> {
@@ -126,6 +133,7 @@ impl UserOptions {
 
 #[cfg(test)]
 pub(crate) mod tests {
+    use super::*;
     use crate::db::entity::user_option;
     use crate::identity::types::UserOptions;
 

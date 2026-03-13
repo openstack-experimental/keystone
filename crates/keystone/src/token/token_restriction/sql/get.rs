@@ -23,6 +23,9 @@ use crate::db::entity::prelude::{
 use crate::db::entity::token_restriction_role_association;
 use crate::error::DbContextExt;
 use crate::token::error::TokenProviderError;
+use crate::token::token_restriction::sql::{
+    FromModelWithRoleAssociation, FromModelWithRoleAssociationAndRoles,
+};
 use crate::token::types::TokenRestriction;
 
 /// Get existing token restriction by the ID.
@@ -47,7 +50,7 @@ pub async fn get<S: AsRef<str>>(
                 .all(db)
                 .await
                 .context("reading token restriction roles")?;
-            Some((entry, roles).into())
+            Some(TokenRestriction::from_model_with_ra_and_roles(entry, roles))
         } else {
             let roles = DbTokenRestrictionRoleAssociation::find()
                 .filter(
@@ -57,7 +60,7 @@ pub async fn get<S: AsRef<str>>(
                 .all(db)
                 .await
                 .context("reading token restriction roles")?;
-            Some((entry, roles).into())
+            Some(TokenRestriction::from_model_with_ra((entry, roles)))
         }
     } else {
         None

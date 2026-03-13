@@ -28,38 +28,22 @@ harness = false
 async-trait.workspace = true
 axum = { workspace = true, features = ["http1", "http2", "macros", "matched-path", "original-uri", "query", "tokio", "tracing"] }
 base64.workspace = true
-bcrypt = { workspace = true, features = ["alloc"] }
-byteorder.workspace = true
-bytes.workspace = true
 chrono.workspace = true
 clap = { workspace = true, features = ["derive"] }
 color-eyre.workspace = true
-config = { workspace = true, features = ["async", "ini"] }
 derive_builder.workspace = true
-dyn-clone.workspace = true
 eyre.workspace = true
-fernet = { workspace = true, features = ["rustcrypto"] }
-futures-util.workspace = true
-itertools.workspace = true
 openstack-keystone-api-types = { version = "0.1", path = "../api-types/"}
+openstack-keystone-core = { version = "0.1", path = "../core" }
 openstack-keystone-distributed-storage = { version = "0.1", path = "../storage/"}
-mockall_double.workspace = true
-nix = { workspace = true, features = ["fs", "user"] }
 openidconnect.workspace = true
-rand.workspace = true
-regex.workspace = true
 reqwest = { workspace = true, features = ["json", "http2", "gzip", "deflate"] }
-rmp.workspace = true
-schemars.workspace = true
-scopeguard.workspace = true
 sea-orm = { workspace = true, features = ["debug-print", "sqlx-mysql", "sqlx-postgres", "runtime-tokio", "runtime-tokio-native-tls"] }
 sea-orm-migration = { workspace = true, features = ["sqlx-mysql", "sqlx-postgres", "runtime-tokio"] }
 secrecy = { workspace = true, features = ["serde"] }
 serde.workspace = true
-serde_bytes.workspace = true
 serde_json.workspace = true
 serde_urlencoded.workspace = true
-tempfile.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["fs", "macros", "signal", "rt-multi-thread"] }
 tokio-util.workspace = true
@@ -69,14 +53,12 @@ tracing.workspace = true
 tracing-appender.workspace = true
 tracing-subscriber.workspace = true
 url = { workspace = true, features = ["serde"] }
-url-macro.workspace = true
 utoipa = { workspace = true, features = ["axum_extras", "yaml"] }
 utoipa-axum.workspace = true
 utoipa-swagger-ui = { workspace = true, features = ["axum", "vendored"] }
 uuid = { workspace = true, features = ["v4"] }
 validator = { workspace = true, features = ["derive"] }
 webauthn-rs = { workspace = true, features = ["danger-allow-state-serialisation"] }
-jsonwebtoken = { version = "10.3", features = ["rust_crypto"] }
 
 [dev-dependencies]
 base64urlsafedata.workspace = true
@@ -85,10 +67,10 @@ http-body-util.workspace = true
 httpmock = { version = "0.8", features = ["http2"] }
 hyper = { workspace = true, features = ["http1"] }
 hyper-util = { workspace = true, features = ["tokio", "http1"] }
+openstack-keystone-core = { version = "0.1", path = "../core", features = ["mock"] }
 mockall.workspace = true
 rstest.workspace = true
 sea-orm = { workspace = true, features = ["mock", "sqlx-sqlite" ]}
-tempfile.workspace = true
 tracing-test = { workspace = true, features = ["no-env-filter"] }
 url.workspace = true
 webauthn-authenticator-rs = { workspace = true, features = ["softtoken"] }

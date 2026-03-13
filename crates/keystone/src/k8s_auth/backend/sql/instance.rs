@@ -186,7 +186,7 @@ pub(crate) mod tests {
             id: "id".into(),
             name: Some("name".into()),
         };
-        let update = sot.into_active_model_update(crate::k8s_auth::K8sAuthInstanceUpdate {
+        let update = sot.into_active_model_update(K8sAuthInstanceUpdate {
             ca_cert: Some("new_ca".into()),
             disable_local_ca_jwt: Some(true),
             enabled: Some(true),

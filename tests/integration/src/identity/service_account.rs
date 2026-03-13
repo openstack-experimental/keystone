@@ -20,8 +20,8 @@ use openstack_keystone::config::Config;
 use openstack_keystone::db::entity::project;
 use openstack_keystone::keystone::Service;
 use openstack_keystone::plugin_manager::PluginManager;
-use openstack_keystone::policy::PolicyEnforcer;
 use openstack_keystone::provider::Provider;
+use openstack_keystone_core::policy::MockPolicy;
 
 use crate::common::{bootstrap, get_isolated_database};
 
@@ -54,11 +54,11 @@ async fn get_state() -> Result<Arc<Service>, Report> {
     let cfg: Config = Config::default();
 
     let plugin_manager = PluginManager::default();
-    let provider = Provider::new(cfg.clone(), plugin_manager)?;
+    let provider = Provider::new(cfg.clone(), &plugin_manager)?;
     Ok(Arc::new(Service::new(
         cfg,
         db,
         provider,
-        PolicyEnforcer::default(),
+        Arc::new(MockPolicy::default()),
     )?))
 }

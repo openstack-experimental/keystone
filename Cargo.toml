@@ -1,6 +1,7 @@
 [workspace]
 members = [
   "crates/api-types",
+  "crates/core",
   "crates/keystone",
   "crates/storage",
   "tests/api",
@@ -36,7 +37,7 @@ bcrypt = { version = "0.19" }
 byteorder = { version = "1.5" }
 bytes = { version = "1.11" }
 chrono = { version = "0.4", default-features = false }
-clap = { version = "4.5" }
+clap = { version = "4.6" }
 color-eyre = { version = "0.6" }
 config = { version = "0.15" }
 criterion = { version = "0.8" }
@@ -71,7 +72,7 @@ serde = { version = "1.0" }
 serde_bytes = { version = "0.11" }
 serde_json = { version = "1.0" }
 serde_urlencoded = { version = "0.7" }
-tempfile = { version = "3.26" }
+tempfile = { version = "3.27" }
 thiserror = { version = "2.0" }
 tokio = { version = "1.50" }
 tokio-util = { version = "0.7" }

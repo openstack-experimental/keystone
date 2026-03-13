@@ -181,7 +181,7 @@ mod tests {
             })
             .returning(move |_, _| Ok(auth_clone.clone()));
 
-        let provider = Provider::mocked_builder().identity(identity_mock);
+        let provider = Provider::mocked_builder().mock_identity(identity_mock);
 
         let state = get_mocked_state(provider, true, None, None);
 
@@ -242,8 +242,8 @@ mod tests {
             });
 
         let provider = Provider::mocked_builder()
-            .identity(identity_mock)
-            .token(token_mock);
+            .mock_identity(identity_mock)
+            .mock_token(token_mock);
 
         let state = get_mocked_state(provider, true, None, Some(true));
 

@@ -30,6 +30,7 @@ use axum::{
 use serde_json::{json, to_value};
 use tracing::error;
 
+use super::token_impl::build_api_token_v3;
 use crate::api::v3::auth::token::types::{TokenResponse, ValidateTokenParameters};
 use crate::api::{Catalog, CatalogService, auth::Auth, error::KeystoneApiError};
 use crate::catalog::CatalogApi;
@@ -96,7 +97,7 @@ pub(super) async fn show(
         .await?;
 
     //// Expand the token since we didn't expand it before.
-    let mut response_token = token.build_api_token_v3(&state).await?;
+    let mut response_token = build_api_token_v3(&token, &state).await?;
 
     if !query.nocatalog.is_some_and(|x| x) {
         let catalog: Catalog = Catalog(
@@ -190,10 +191,10 @@ mod tests {
             .returning(|_, _| Ok(Vec::new()));
 
         let provider = Provider::mocked_builder()
-            .identity(identity_mock)
-            .resource(resource_mock)
-            .token(token_mock)
-            .catalog(catalog_mock);
+            .mock_identity(identity_mock)
+            .mock_resource(resource_mock)
+            .mock_token(token_mock)
+            .mock_catalog(catalog_mock);
 
         let state = get_mocked_state(provider, true, None, Some(true));
 
@@ -294,10 +295,10 @@ mod tests {
             .returning(|_, _| Ok(Vec::new()));
 
         let provider = Provider::mocked_builder()
-            .identity(identity_mock)
-            .resource(resource_mock)
-            .token(token_mock)
-            .catalog(catalog_mock);
+            .mock_identity(identity_mock)
+            .mock_resource(resource_mock)
+            .mock_token(token_mock)
+            .mock_catalog(catalog_mock);
 
         let state = get_mocked_state(provider, true, None, Some(true));
 
@@ -338,7 +339,7 @@ mod tests {
             .withf(|_, token: &'_ str, _, _| token == "baz")
             .returning(|_, _, _, _| Err(TokenProviderError::Expired));
 
-        let provider = Provider::mocked_builder().token(token_mock);
+        let provider = Provider::mocked_builder().mock_token(token_mock);
         let state = get_mocked_state(provider, true, None, Some(true));
 
         let mut api = openapi_router()
@@ -378,7 +379,7 @@ mod tests {
             .withf(|_, token: &'_ str, _, _| token == "baz")
             .returning(|_, _, _, _| Err(TokenProviderError::TokenRevoked));
 
-        let provider = Provider::mocked_builder().token(token_mock);
+        let provider = Provider::mocked_builder().mock_token(token_mock);
 
         let state = get_mocked_state(provider, true, None, Some(true));
 

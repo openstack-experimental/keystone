@@ -218,7 +218,7 @@ mod tests {
             });
 
         let state = get_mocked_state(
-            Provider::mocked_builder().identity(identity_mock),
+            Provider::mocked_builder().mock_identity(identity_mock),
             true,
             None,
             None,
@@ -273,7 +273,7 @@ mod tests {
             .returning(|_, _| Ok(Vec::new()));
 
         let state = get_mocked_state(
-            Provider::mocked_builder().identity(identity_mock),
+            Provider::mocked_builder().mock_identity(identity_mock),
             true,
             None,
             None,
@@ -335,7 +335,7 @@ mod tests {
             });
 
         let state = get_mocked_state(
-            Provider::mocked_builder().identity(identity_mock),
+            Provider::mocked_builder().mock_identity(identity_mock),
             true,
             None,
             None,
@@ -399,7 +399,7 @@ mod tests {
             });
 
         let state = get_mocked_state(
-            Provider::mocked_builder().identity(identity_mock),
+            Provider::mocked_builder().mock_identity(identity_mock),
             true,
             None,
             None,
@@ -465,7 +465,7 @@ mod tests {
             .returning(|_, _| Ok(()));
 
         let state = get_mocked_state(
-            Provider::mocked_builder().identity(identity_mock),
+            Provider::mocked_builder().mock_identity(identity_mock),
             true,
             None,
             None,
@@ -521,7 +521,7 @@ mod tests {
             });
 
         let state = get_mocked_state(
-            Provider::mocked_builder().identity(identity_mock),
+            Provider::mocked_builder().mock_identity(identity_mock),
             true,
             None,
             None,

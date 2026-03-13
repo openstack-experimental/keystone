@@ -21,6 +21,7 @@ use axum::{
 };
 use validator::Validate;
 
+use super::token_impl::build_api_token_v3;
 use crate::api::v3::auth::token::common::{authenticate_request, get_authz_info};
 use crate::api::v3::auth::token::types::{AuthRequest, CreateTokenParameters, TokenResponse};
 use crate::api::{Catalog, CatalogService, error::KeystoneApiError};
@@ -75,7 +76,7 @@ pub(super) async fn create(
         .await?;
 
     let mut api_token = TokenResponse {
-        token: token.build_api_token_v3(&state).await?,
+        token: build_api_token_v3(&token, &state).await?,
     };
     if !query.nocatalog.is_some_and(|x| x) {
         let catalog: Catalog = Catalog(
@@ -130,7 +131,7 @@ mod tests {
         types::{UserPasswordAuthRequest, UserResponseBuilder},
     };
     use crate::keystone::Service;
-    use crate::policy::MockPolicyEnforcer;
+    use crate::policy::MockPolicy;
     use crate::provider::Provider;
     use crate::resource::{
         MockResourceProvider,
@@ -258,11 +259,11 @@ mod tests {
 
         let provider = Provider::mocked_builder()
             .config(config.clone())
-            .assignment(assignment_mock)
-            .catalog(catalog_mock)
-            .identity(identity_mock)
-            .resource(resource_mock)
-            .token(token_mock)
+            .mock_assignment(assignment_mock)
+            .mock_catalog(catalog_mock)
+            .mock_identity(identity_mock)
+            .mock_resource(resource_mock)
+            .mock_token(token_mock)
             .build()
             .unwrap();
 
@@ -271,7 +272,7 @@ mod tests {
                 config,
                 DatabaseConnection::Disconnected,
                 provider,
-                MockPolicyEnforcer::new(),
+                Arc::new(MockPolicy::default()),
             )
             .unwrap(),
         );
@@ -367,8 +368,8 @@ mod tests {
 
         let provider = Provider::mocked_builder()
             .config(config.clone())
-            .identity(identity_mock)
-            .resource(resource_mock)
+            .mock_identity(identity_mock)
+            .mock_resource(resource_mock)
             .build()
             .unwrap();
 
@@ -377,7 +378,7 @@ mod tests {
                 config,
                 DatabaseConnection::Disconnected,
                 provider,
-                MockPolicyEnforcer::new(),
+                Arc::new(MockPolicy::default()),
             )
             .unwrap(),
         );
