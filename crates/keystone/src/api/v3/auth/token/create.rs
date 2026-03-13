@@ -130,7 +130,7 @@ mod tests {
         types::{UserPasswordAuthRequest, UserResponseBuilder},
     };
     use crate::keystone::Service;
-    use crate::policy::MockPolicyFactory;
+    use crate::policy::MockPolicyEnforcer;
     use crate::provider::Provider;
     use crate::resource::{
         MockResourceProvider,
@@ -271,7 +271,7 @@ mod tests {
                 config,
                 DatabaseConnection::Disconnected,
                 provider,
-                MockPolicyFactory::new(),
+                MockPolicyEnforcer::new(),
             )
             .unwrap(),
         );
@@ -377,7 +377,7 @@ mod tests {
                 config,
                 DatabaseConnection::Disconnected,
                 provider,
-                MockPolicyFactory::new(),
+                MockPolicyEnforcer::new(),
             )
             .unwrap(),
         );

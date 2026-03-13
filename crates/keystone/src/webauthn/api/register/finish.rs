@@ -20,15 +20,12 @@ use axum::{
 };
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::Utc;
-use mockall_double::double;
 use tracing::debug;
 use validator::Validate;
 
 use crate::api::KeystoneApiError;
 use crate::api::auth::Auth;
 use crate::identity::IdentityApi;
-#[double]
-use crate::policy::Policy;
 use crate::webauthn::{
     WebauthnApi,
     api::types::{CombinedExtensionState, register::*},
@@ -53,14 +50,13 @@ use crate::webauthn::{
 #[tracing::instrument(
     name = "api::user_webauthn_credential_register_finish",
     level = "debug",
-    skip(state, policy, req),
+    skip(state, req),
     err(Debug)
 )]
 pub(super) async fn finish(
     Auth(user_auth): Auth,
     Path(user_id): Path<String>,
     State(state): State<CombinedExtensionState>,
-    policy: Policy,
     Json(req): Json<UserPasskeyRegistrationFinishRequest>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
     req.validate()?;
@@ -77,7 +73,9 @@ pub(super) async fn finish(
             })
         })??;
 
-    policy
+    state
+        .core
+        .policy_enforcer
         .enforce(
             "identity/user/passkey/register/finish",
             &user_auth,

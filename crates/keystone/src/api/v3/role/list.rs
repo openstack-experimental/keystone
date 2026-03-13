@@ -66,17 +66,16 @@ mod tests {
     use tower_http::trace::TraceLayer;
 
     use super::super::openapi_router;
-    use super::super::tests::get_mocked_state;
+    use crate::api::tests::get_mocked_state;
     use crate::api::v3::role::types::{
         Role as ApiRole, //GroupCreate as ApiGroupCreate, GroupCreateRequest,
         RoleList,
     };
+    use crate::provider::Provider;
     use crate::role::{
         MockRoleProvider,
         types::{Role, RoleListParameters},
     };
-
-    use crate::tests::api::get_mocked_state_unauthed;
 
     #[tokio::test]
     async fn test_list() {
@@ -92,7 +91,7 @@ mod tests {
                 }])
             });
 
-        let state = get_mocked_state(role_mock);
+        let state = get_mocked_state(Provider::mocked_builder().role(role_mock), true, None, None);
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -141,7 +140,7 @@ mod tests {
             })
             .returning(|_, _| Ok(Vec::new()));
 
-        let state = get_mocked_state(role_mock);
+        let state = get_mocked_state(Provider::mocked_builder().role(role_mock), true, None, None);
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -167,7 +166,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_list_unauth() {
-        let state = get_mocked_state_unauthed();
+        let state = get_mocked_state(Provider::mocked_builder(), false, None, None);
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())

@@ -14,7 +14,6 @@
 //! Get available project scopes.
 
 use axum::{extract::State, response::IntoResponse};
-use mockall_double::double;
 use serde_json::Value;
 use std::collections::HashSet;
 
@@ -25,8 +24,6 @@ use crate::assignment::{
     types::{AssignmentType, RoleAssignmentListParameters},
 };
 use crate::keystone::ServiceState;
-#[double]
-use crate::policy::Policy;
 use crate::resource::{ResourceApi, types::ProjectListParameters};
 
 /// Get available project scopes.
@@ -44,14 +41,14 @@ use crate::resource::{ResourceApi, types::ProjectListParameters};
 #[tracing::instrument(
     name = "api::v3::auth::project::list",
     level = "debug",
-    skip(state, user_auth, policy)
+    skip(state, user_auth)
 )]
 pub(super) async fn list(
     Auth(user_auth): Auth,
-    policy: Policy,
     State(state): State<ServiceState>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
-    policy
+    state
+        .policy_enforcer
         .enforce("identity/auth/project/list", &user_auth, Value::Null, None)
         .await?;
 
@@ -105,77 +102,21 @@ mod tests {
         http::{Request, StatusCode},
     };
     use http_body_util::BodyExt; // for `collect`
-    use sea_orm::DatabaseConnection;
     use std::collections::HashSet;
-    use std::sync::Arc;
     use tower::ServiceExt; // for `call`, `oneshot`, and `ready`
     use tower_http::trace::TraceLayer;
 
+    use crate::api::tests::get_mocked_state;
     use crate::api::v3::project::types::ProjectShort;
     use crate::assignment::{MockAssignmentProvider, types::*};
-    use crate::config::Config;
-    use crate::keystone::{Service, ServiceState};
-    use crate::policy::{MockPolicy, MockPolicyFactory, PolicyError, PolicyEvaluationResult};
-    use crate::provider::{Provider, ProviderBuilder};
+    use crate::provider::Provider;
     use crate::resource::{
         MockResourceProvider,
         types::{Project as ProviderProject, ProjectListParameters},
     };
-    use crate::token::{MockTokenProvider, Token, UnscopedPayload};
 
     use super::super::openapi_router;
     use super::*;
-
-    pub(super) fn get_mocked_state(
-        provider_builder: ProviderBuilder,
-        policy_allowed: bool,
-    ) -> ServiceState {
-        let mut token_mock = MockTokenProvider::default();
-        token_mock.expect_validate_token().returning(|_, _, _, _| {
-            Ok(Token::Unscoped(UnscopedPayload {
-                user_id: "bar".into(),
-                ..Default::default()
-            }))
-        });
-        token_mock
-            .expect_expand_token_information()
-            .returning(|_, _| {
-                Ok(Token::Unscoped(UnscopedPayload {
-                    user_id: "bar".into(),
-                    ..Default::default()
-                }))
-            });
-
-        let provider = provider_builder.token(token_mock).build().unwrap();
-
-        let mut policy_factory_mock = MockPolicyFactory::default();
-        if policy_allowed {
-            policy_factory_mock.expect_instantiate().returning(move || {
-                let mut policy_mock = MockPolicy::default();
-                policy_mock
-                    .expect_enforce()
-                    .returning(|_, _, _, _| Ok(PolicyEvaluationResult::allowed()));
-                Ok(policy_mock)
-            });
-        } else {
-            policy_factory_mock.expect_instantiate().returning(|| {
-                let mut policy_mock = MockPolicy::default();
-                policy_mock.expect_enforce().returning(|_, _, _, _| {
-                    Err(PolicyError::Forbidden(PolicyEvaluationResult::forbidden()))
-                });
-                Ok(policy_mock)
-            });
-        }
-        Arc::new(
-            Service::new(
-                Config::default(),
-                DatabaseConnection::Disconnected,
-                provider,
-                policy_factory_mock,
-            )
-            .unwrap(),
-        )
-    }
 
     #[tokio::test]
     async fn test_list() {
@@ -255,7 +196,7 @@ mod tests {
         let provider_builder = Provider::mocked_builder()
             .assignment(assignment_mock)
             .resource(resource_mock);
-        let state = get_mocked_state(provider_builder, true);
+        let state = get_mocked_state(provider_builder, true, None, None);
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())

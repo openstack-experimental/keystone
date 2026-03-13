@@ -100,7 +100,7 @@ mod tests {
     use super::*;
     use crate::config::Config;
     use crate::keystone::Service;
-    use crate::policy::MockPolicyFactory;
+    use crate::policy::MockPolicyEnforcer;
     use crate::provider::Provider;
 
     fn get_state_mock() -> Arc<Service> {
@@ -109,7 +109,7 @@ mod tests {
                 Config::default(),
                 DatabaseConnection::Disconnected,
                 Provider::mocked_builder().build().unwrap(),
-                MockPolicyFactory::default(),
+                MockPolicyEnforcer::default(),
             )
             .unwrap(),
         )

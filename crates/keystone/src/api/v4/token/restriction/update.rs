@@ -18,15 +18,12 @@ use axum::{
     extract::{Path, State},
     response::IntoResponse,
 };
-use mockall_double::double;
 use validator::Validate;
 
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
 use crate::api::v4::token::types::*;
 use crate::keystone::ServiceState;
-#[double]
-use crate::policy::Policy;
 use crate::token::TokenApi;
 
 /// Update existing token restriction by the ID.
@@ -52,12 +49,11 @@ use crate::token::TokenApi;
 #[tracing::instrument(
     name = "api::token_restriction::update",
     level = "debug",
-    skip(state, user_auth, policy),
+    skip(state, user_auth),
     err(Debug)
 )]
 pub(super) async fn update(
     Auth(user_auth): Auth,
-    policy: Policy,
     Path(id): Path<String>,
     State(state): State<ServiceState>,
     Json(req): Json<TokenRestrictionUpdateRequest>,
@@ -70,7 +66,8 @@ pub(super) async fn update(
         .get_token_restriction(&state, &id, false)
         .await?;
 
-    policy
+    state
+        .policy_enforcer
         .enforce(
             "identity/token_restriction/update",
             &user_auth,
@@ -94,22 +91,22 @@ mod tests {
         http::{Request, StatusCode, header},
     };
     use http_body_util::BodyExt; // for `collect`
-
     use tower::ServiceExt; // for `call`, `oneshot`, and `ready`
     use tower_http::trace::TraceLayer;
     use tracing_test::traced_test;
 
     use super::{
-        super::{openapi_router, tests::get_mocked_state},
+        super::{openapi_router, tests::get_token_provider_mock_with_mocks},
         *,
     };
-
-    use crate::token::{MockTokenProvider, types as provider_types};
+    use crate::api::tests::get_mocked_state;
+    use crate::provider::Provider;
+    use crate::token::types as provider_types;
 
     #[tokio::test]
     #[traced_test]
     async fn test_update() {
-        let mut token_mock = MockTokenProvider::default();
+        let mut token_mock = get_token_provider_mock_with_mocks();
         token_mock
             .expect_get_token_restriction()
             .withf(|_, id: &'_ str, expand: &bool| id == "1" && !expand)
@@ -149,7 +146,12 @@ mod tests {
                 })
             });
 
-        let state = get_mocked_state(token_mock, true, None);
+        let state = get_mocked_state(
+            Provider::mocked_builder().token(token_mock),
+            true,
+            None,
+            Some(true),
+        );
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())

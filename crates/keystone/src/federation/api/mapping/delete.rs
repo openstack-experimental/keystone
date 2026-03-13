@@ -18,14 +18,11 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
-use mockall_double::double;
 
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
 use crate::federation::FederationApi;
 use crate::keystone::ServiceState;
-#[double]
-use crate::policy::Policy;
 
 /// Delete attribute mapping.
 #[utoipa::path(
@@ -45,12 +42,11 @@ use crate::policy::Policy;
 #[tracing::instrument(
     name = "api::mapping_delete",
     level = "debug",
-    skip(state, user_auth, policy),
+    skip(state, user_auth),
     err(Debug)
 )]
 pub(super) async fn remove(
     Auth(user_auth): Auth,
-    policy: Policy,
     Path(id): Path<String>,
     State(state): State<ServiceState>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
@@ -60,7 +56,8 @@ pub(super) async fn remove(
         .get_mapping(&state, &id)
         .await?;
 
-    policy
+    state
+        .policy_enforcer
         .enforce(
             "identity/mapping_delete",
             &user_auth,
@@ -90,13 +87,14 @@ mod tests {
         http::{Request, StatusCode},
     };
     use http_body_util::BodyExt; // for `collect`
-
     use tower::ServiceExt; // for `call`, `oneshot`, and `ready`
     use tower_http::trace::TraceLayer;
     use tracing_test::traced_test;
 
-    use super::super::{openapi_router, tests::get_mocked_state};
+    use super::super::openapi_router;
+    use crate::api::tests::get_mocked_state;
     use crate::federation::{MockFederationProvider, types as provider_types};
+    use crate::provider::Provider;
 
     #[tokio::test]
     #[traced_test]
@@ -122,7 +120,12 @@ mod tests {
             .withf(|_, id: &'_ str| id == "bar")
             .returning(|_, _| Ok(()));
 
-        let state = get_mocked_state(federation_mock, true);
+        let state = get_mocked_state(
+            Provider::mocked_builder().federation(federation_mock),
+            true,
+            None,
+            None,
+        );
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())

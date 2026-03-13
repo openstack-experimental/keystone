@@ -13,16 +13,12 @@
 // SPDX-License-Identifier: Apache-2.0
 //! # Webauthn API types
 use axum::{extract::FromRequestParts, http::request::Parts};
-use mockall_double::double;
 use std::sync::Arc;
 use webauthn_rs::Webauthn;
 
 use crate::api::KeystoneApiError;
 use crate::api::auth::Auth;
 use crate::keystone::ServiceState;
-#[double]
-use crate::policy::Policy;
-
 use crate::webauthn::{WebauthnError, driver::SqlDriver};
 
 pub mod auth;
@@ -44,17 +40,6 @@ pub struct CombinedExtensionState {
     pub core: ServiceState,
     /// Extension state.
     pub extension: Arc<ExtensionState>,
-}
-
-impl FromRequestParts<CombinedExtensionState> for Policy {
-    type Rejection = KeystoneApiError;
-
-    async fn from_request_parts(
-        parts: &mut axum::http::request::Parts,
-        state: &CombinedExtensionState,
-    ) -> Result<Self, Self::Rejection> {
-        Policy::from_request_parts(parts, &state.core).await
-    }
 }
 
 impl FromRequestParts<CombinedExtensionState> for Auth {

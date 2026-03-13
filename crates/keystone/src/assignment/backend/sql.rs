@@ -146,7 +146,7 @@ impl From<crate::error::DatabaseError> for AssignmentProviderError {
 
 #[cfg(test)]
 mod tests {
-    use sea_orm::{DatabaseBackend, MockDatabase};
+    use sea_orm::{DatabaseBackend, DatabaseConnection, MockDatabase};
     use std::collections::{BTreeMap, BTreeSet};
     use std::sync::Arc;
 
@@ -154,9 +154,21 @@ mod tests {
     use super::*;
     use crate::config::Config;
     use crate::keystone::Service;
-    use crate::policy::MockPolicyFactory;
+    use crate::policy::MockPolicyEnforcer;
     use crate::provider::Provider;
     use crate::role::{MockRoleProvider, types::Role};
+
+    fn get_mock_state(db: DatabaseConnection, provider: Provider) -> Arc<Service> {
+        Arc::new(
+            Service::new(
+                Config::default(),
+                db,
+                provider,
+                MockPolicyEnforcer::default(),
+            )
+            .unwrap(),
+        )
+    }
 
     #[tokio::test]
     async fn test_list_include_names() {
@@ -178,15 +190,7 @@ mod tests {
             });
         let provider = Provider::mocked_builder().role(role_mock).build().unwrap();
 
-        let state = Arc::new(
-            Service::new(
-                Config::default(),
-                db,
-                provider,
-                MockPolicyFactory::default(),
-            )
-            .unwrap(),
-        );
+        let state = get_mock_state(db, provider);
 
         let sot = SqlBackend {};
         let res = sot
@@ -261,15 +265,7 @@ mod tests {
             });
         let provider = Provider::mocked_builder().role(role_mock).build().unwrap();
 
-        let state = Arc::new(
-            Service::new(
-                Config::default(),
-                db,
-                provider,
-                MockPolicyFactory::default(),
-            )
-            .unwrap(),
-        );
+        let state = get_mock_state(db, provider);
 
         let sot = SqlBackend {};
         let res = sot
@@ -341,15 +337,7 @@ mod tests {
             });
         let provider = Provider::mocked_builder().role(role_mock).build().unwrap();
 
-        let state = Arc::new(
-            Service::new(
-                Config::default(),
-                db,
-                provider,
-                MockPolicyFactory::default(),
-            )
-            .unwrap(),
-        );
+        let state = get_mock_state(db, provider);
 
         let sot = SqlBackend {};
         let params = RoleAssignmentListForMultipleActorTargetParameters {

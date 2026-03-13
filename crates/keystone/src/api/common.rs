@@ -223,14 +223,10 @@ pub trait ResourceIdentifier {
 #[cfg(test)]
 mod tests {
     use rstest::rstest;
-    use sea_orm::DatabaseConnection;
-    use std::sync::Arc;
 
     use super::*;
-
+    use crate::api::tests::get_mocked_state;
     use crate::config::Config;
-    use crate::keystone::Service;
-    use crate::policy::MockPolicyFactory;
     use crate::provider::Provider;
     use crate::resource::{MockResourceProvider, types::Domain};
 
@@ -257,19 +253,12 @@ mod tests {
                     ..Default::default()
                 }))
             });
-        let provider = Provider::mocked_builder()
-            .resource(resource_mock)
-            .build()
-            .unwrap();
 
-        let state = Arc::new(
-            Service::new(
-                Config::default(),
-                DatabaseConnection::Disconnected,
-                provider,
-                MockPolicyFactory::new(),
-            )
-            .unwrap(),
+        let state = get_mocked_state(
+            Provider::mocked_builder().resource(resource_mock),
+            true,
+            None,
+            Some(false),
         );
 
         assert_eq!(

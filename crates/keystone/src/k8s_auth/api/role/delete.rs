@@ -18,14 +18,11 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
-use mockall_double::double;
 
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
 use crate::k8s_auth::{K8sAuthApi, api::types::K8sAuthRolePathParams};
 use crate::keystone::ServiceState;
-#[double]
-use crate::policy::Policy;
 
 /// Delete k8s auth role of an instance.
 #[utoipa::path(
@@ -43,12 +40,11 @@ use crate::policy::Policy;
 #[tracing::instrument(
     name = "api::v4::k8s_auth::role::delete",
     level = "debug",
-    skip(state, user_auth, policy),
+    skip(state, user_auth),
     err(Debug)
 )]
 pub(super) async fn remove_nested(
     Auth(user_auth): Auth,
-    policy: Policy,
     Path(path_params): Path<K8sAuthRolePathParams>,
     State(state): State<ServiceState>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
@@ -58,7 +54,8 @@ pub(super) async fn remove_nested(
         .get_auth_role(&state, &path_params.id)
         .await?;
 
-    policy
+    state
+        .policy_enforcer
         .enforce(
             "identity/k8s_auth/role/delete",
             &user_auth,
@@ -99,12 +96,11 @@ pub(super) async fn remove_nested(
 #[tracing::instrument(
     name = "api::v4::k8s_auth::role::delete",
     level = "debug",
-    skip(state, user_auth, policy),
+    skip(state, user_auth),
     err(Debug)
 )]
 pub(super) async fn remove(
     Auth(user_auth): Auth,
-    policy: Policy,
     Path(id): Path<String>,
     State(state): State<ServiceState>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
@@ -114,7 +110,8 @@ pub(super) async fn remove(
         .get_auth_role(&state, &id)
         .await?;
 
-    policy
+    state
+        .policy_enforcer
         .enforce(
             "identity/k8s_auth/role/delete",
             &user_auth,
@@ -181,7 +178,7 @@ mod tests {
             .returning(|_, _| Ok(()));
 
         provider = provider.k8s_auth(mock);
-        let state = get_mocked_state(provider, true, None);
+        let state = get_mocked_state(provider, true, None, None);
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())

@@ -17,15 +17,12 @@ use axum::{
     extract::{OriginalUri, Query, State},
     response::IntoResponse,
 };
-use mockall_double::double;
 use serde_json::to_value;
 use validator::Validate;
 
 use crate::api::{KeystoneApiError, auth::Auth};
 use crate::k8s_auth::{K8sAuthApi, api::types::*, types as provider_types};
 use crate::keystone::ServiceState;
-#[double]
-use crate::policy::Policy;
 
 /// List K8s auth instances
 #[utoipa::path(
@@ -43,18 +40,18 @@ use crate::policy::Policy;
 #[tracing::instrument(
     name = "api::v4::k8s_auth::instance::list",
     level = "debug",
-    skip(state, user_auth, policy),
+    skip(state, user_auth),
     err(Debug)
 )]
 pub(super) async fn list(
     Auth(user_auth): Auth,
-    policy: Policy,
     OriginalUri(original_url): OriginalUri,
     Query(query): Query<K8sAuthInstanceListParameters>,
     State(state): State<ServiceState>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
     query.validate()?;
-    let res = policy
+    let res = state
+        .policy_enforcer
         .enforce(
             "identity/k8s_auth/instance/list",
             &user_auth,
@@ -134,7 +131,7 @@ mod tests {
                 }])
             });
         provider = provider.k8s_auth(mock);
-        let state = get_mocked_state(provider, true, None);
+        let state = get_mocked_state(provider, true, None, None);
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -195,7 +192,7 @@ mod tests {
             });
 
         provider = provider.k8s_auth(mock);
-        let state = get_mocked_state(provider, true, None);
+        let state = get_mocked_state(provider, true, None, None);
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -223,7 +220,7 @@ mod tests {
     #[traced_test]
     async fn test_list_forbidden() {
         let provider = Provider::mocked_builder();
-        let state = get_mocked_state(provider, false, None);
+        let state = get_mocked_state(provider, false, None, None);
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -269,7 +266,7 @@ mod tests {
             });
 
         provider = provider.k8s_auth(mock);
-        let state = get_mocked_state(provider, true, None);
+        let state = get_mocked_state(provider, true, None, None);
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -320,7 +317,7 @@ mod tests {
             });
 
         provider = provider.k8s_auth(mock);
-        let state = get_mocked_state(provider, true, Some(true));
+        let state = get_mocked_state(provider, true, Some(true), None);
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())

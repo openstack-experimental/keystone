@@ -142,29 +142,21 @@ pub(super) async fn get_authz_info(
 
 #[cfg(test)]
 mod tests {
-    use sea_orm::DatabaseConnection;
-    use std::sync::Arc;
 
+    use super::super::types::*;
+    use super::*;
     use crate::api::KeystoneApiError;
-
+    use crate::api::tests::get_mocked_state;
     use crate::auth::AuthenticatedInfo;
-    use crate::config::Config;
     use crate::identity::{
         MockIdentityProvider,
         types::{UserPasswordAuthRequest, UserResponseBuilder},
     };
-    use crate::keystone::Service;
-    use crate::policy::MockPolicyFactory;
     use crate::provider::Provider;
-
     use crate::token::MockTokenProvider;
-
-    use super::super::types::*;
-    use super::*;
 
     #[tokio::test]
     async fn test_authenticate_request_password() {
-        let config = Config::default();
         let auth_info = AuthenticatedInfo::builder()
             .user_id("uid")
             .user(
@@ -189,21 +181,9 @@ mod tests {
             })
             .returning(move |_, _| Ok(auth_clone.clone()));
 
-        let provider = Provider::mocked_builder()
-            .config(config.clone())
-            .identity(identity_mock)
-            .build()
-            .unwrap();
+        let provider = Provider::mocked_builder().identity(identity_mock);
 
-        let state = Arc::new(
-            Service::new(
-                config,
-                DatabaseConnection::Disconnected,
-                provider,
-                MockPolicyFactory::new(),
-            )
-            .unwrap(),
-        );
+        let state = get_mocked_state(provider, true, None, None);
 
         assert_eq!(
             auth_info,
@@ -234,8 +214,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_authenticate_request_token() {
-        let config = Config::default();
-
         let mut token_mock = MockTokenProvider::default();
         token_mock
             .expect_authenticate_by_token()
@@ -264,21 +242,10 @@ mod tests {
             });
 
         let provider = Provider::mocked_builder()
-            .config(config.clone())
             .identity(identity_mock)
-            .token(token_mock)
-            .build()
-            .unwrap();
+            .token(token_mock);
 
-        let state = Arc::new(
-            Service::new(
-                config,
-                DatabaseConnection::Disconnected,
-                provider,
-                MockPolicyFactory::new(),
-            )
-            .unwrap(),
-        );
+        let state = get_mocked_state(provider, true, None, Some(true));
 
         assert_eq!(
             AuthenticatedInfo::builder()
@@ -316,22 +283,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_authenticate_request_unsupported() {
-        let config = Config::default();
-
-        let provider = Provider::mocked_builder()
-            .config(config.clone())
-            .build()
-            .unwrap();
-
-        let state = Arc::new(
-            Service::new(
-                config,
-                DatabaseConnection::Disconnected,
-                provider,
-                MockPolicyFactory::new(),
-            )
-            .unwrap(),
-        );
+        let state = get_mocked_state(Provider::mocked_builder(), true, None, Some(true));
 
         let rsp = authenticate_request(
             &state,

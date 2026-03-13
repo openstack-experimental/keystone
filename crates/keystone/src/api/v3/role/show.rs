@@ -66,8 +66,9 @@ mod tests {
     use tower_http::trace::TraceLayer;
 
     use super::super::openapi_router;
-    use super::super::tests::get_mocked_state;
+    use crate::api::tests::get_mocked_state;
     use crate::api::v3::role::types::{Role as ApiRole, RoleResponse};
+    use crate::provider::Provider;
     use crate::role::{MockRoleProvider, types::Role};
 
     #[tokio::test]
@@ -88,7 +89,7 @@ mod tests {
                 }))
             });
 
-        let state = get_mocked_state(role_mock);
+        let state = get_mocked_state(Provider::mocked_builder().role(role_mock), true, None, None);
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())

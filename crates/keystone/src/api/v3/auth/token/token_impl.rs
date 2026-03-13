@@ -203,21 +203,16 @@ impl ProviderToken {
 
 #[cfg(test)]
 mod tests {
-    use sea_orm::DatabaseConnection;
-    use std::sync::Arc;
 
+    use crate::api::tests::get_mocked_state;
     use crate::api::v3::role::types::RoleRef;
-    use crate::role::types::RoleRef as ProviderRoleRef;
-
-    use crate::config::Config;
     use crate::identity::{MockIdentityProvider, types::UserResponseBuilder};
-    use crate::keystone::Service;
-    use crate::policy::MockPolicyFactory;
     use crate::provider::Provider;
     use crate::resource::{
         MockResourceProvider,
         types::{Domain, Project},
     };
+    use crate::role::types::RoleRef as ProviderRoleRef;
     use crate::token::{
         DomainScopePayload, ProjectScopePayload, Token as ProviderToken, TrustPayload,
         UnscopedPayload,
@@ -254,19 +249,9 @@ mod tests {
             });
         let provider = Provider::mocked_builder()
             .identity(identity_mock)
-            .resource(resource_mock)
-            .build()
-            .unwrap();
+            .resource(resource_mock);
 
-        let state = Arc::new(
-            Service::new(
-                Config::default(),
-                DatabaseConnection::Disconnected,
-                provider,
-                MockPolicyFactory::new(),
-            )
-            .unwrap(),
-        );
+        let state = get_mocked_state(provider, true, None, Some(true));
 
         let api_token = ProviderToken::Unscoped(UnscopedPayload {
             user_id: "bar".into(),
@@ -310,19 +295,9 @@ mod tests {
             });
         let provider = Provider::mocked_builder()
             .identity(identity_mock)
-            .resource(resource_mock)
-            .build()
-            .unwrap();
+            .resource(resource_mock);
 
-        let state = Arc::new(
-            Service::new(
-                Config::default(),
-                DatabaseConnection::Disconnected,
-                provider,
-                MockPolicyFactory::new(),
-            )
-            .unwrap(),
-        );
+        let state = get_mocked_state(provider, true, None, None);
 
         let api_token = ProviderToken::DomainScope(DomainScopePayload {
             user_id: "bar".into(),
@@ -380,19 +355,10 @@ mod tests {
             });
         let provider = Provider::mocked_builder()
             .identity(identity_mock)
-            .resource(resource_mock)
-            .build()
-            .unwrap();
+            .resource(resource_mock);
 
-        let state = Arc::new(
-            Service::new(
-                Config::default(),
-                DatabaseConnection::Disconnected,
-                provider,
-                MockPolicyFactory::new(),
-            )
-            .unwrap(),
-        );
+        let state = get_mocked_state(provider, true, None, None);
+
         let token = ProviderToken::ProjectScope(ProjectScopePayload {
             user_id: "bar".into(),
             project_id: "project_id".into(),
@@ -460,19 +426,10 @@ mod tests {
             });
         let provider = Provider::mocked_builder()
             .identity(identity_mock)
-            .resource(resource_mock)
-            .build()
-            .unwrap();
+            .resource(resource_mock);
 
-        let state = Arc::new(
-            Service::new(
-                Config::default(),
-                DatabaseConnection::Disconnected,
-                provider,
-                MockPolicyFactory::new(),
-            )
-            .unwrap(),
-        );
+        let state = get_mocked_state(provider, true, None, None);
+
         let token = ProviderToken::Trust(TrustPayload {
             user_id: "bar".into(),
             methods: vec!["trust".into()],

@@ -315,18 +315,16 @@ mod tests {
     use eyre::Result;
     use httpmock::{Mock, MockServer};
     use jsonwebtoken::{EncodingKey, Header, encode};
-    use sea_orm::DatabaseConnection;
     use tempfile::NamedTempFile;
     use tokio::sync::RwLock;
 
     use super::super::backend::MockK8sAuthBackend;
-    use super::super::tests::get_state_mock;
     use super::*;
-    use crate::config::Config;
+    use crate::api::tests::get_mocked_state;
     use crate::identity::{MockIdentityProvider, types::*};
     use crate::keystone::Service;
-    use crate::policy::MockPolicyFactory;
     use crate::provider::Provider;
+    use crate::tests::get_state_mock;
     use crate::token::MockTokenProvider;
     use crate::token::types::TokenRestriction;
 
@@ -384,16 +382,9 @@ FPrC1HpT3dzIAiEAtEB0so+KoJb/2Opn1RycVzxke1CQrWgjS8ySnnFK5ok=
     ) -> Result<(K8sAuthProvider, Arc<Service>, SecretString, MockServer)> {
         let provider_mock = Provider::mocked_builder()
             .token(token_mock)
-            .identity(identity_mock)
-            .build()
-            .unwrap();
+            .identity(identity_mock);
         let mock_srv = MockServer::start_async().await;
-        let state = Arc::new(Service::new(
-            Config::default(),
-            DatabaseConnection::Disconnected,
-            provider_mock,
-            MockPolicyFactory::default(),
-        )?);
+        let state = get_mocked_state(provider_mock, true, None, Some(true));
         let host = format!("http://{}:{}", mock_srv.host(), mock_srv.port());
 
         let mut backend = MockK8sAuthBackend::default();

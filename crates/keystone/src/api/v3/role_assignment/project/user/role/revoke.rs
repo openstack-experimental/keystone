@@ -19,14 +19,11 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
-use mockall_double::double;
 use serde_json::json;
 use tracing::info;
 
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
-#[double]
-use crate::policy::Policy;
 use crate::{
     api::auth::Auth,
     assignment::{AssignmentApi, types::AssignmentBuilder, types::AssignmentType},
@@ -60,13 +57,12 @@ use crate::{
 #[tracing::instrument(
     name = "api::v3::project_user_role_revoke",
     level = "debug",
-    skip(state, user_auth, policy),
+    skip(state, user_auth),
     err(Debug)
 )]
 
 pub(super) async fn revoke(
     Auth(user_auth): Auth,
-    policy: Policy,
     Path((project_id, user_id, role_id)): Path<(String, String, String)>,
     State(state): State<ServiceState>,
     request: Request,
@@ -110,7 +106,8 @@ pub(super) async fn revoke(
         }
     })?;
 
-    policy
+    state
+        .policy_enforcer
         .enforce(
             "identity/project/user/role/revoke",
             &user_auth,
@@ -207,7 +204,7 @@ mod tests {
             .identity(identity_mock)
             .resource(resource_mock)
             .role(role_mock);
-        let state = get_mocked_state(provider_builder, true, None);
+        let state = get_mocked_state(provider_builder, true, None, None);
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
             .with_state(state);
@@ -274,7 +271,7 @@ mod tests {
             .identity(identity_mock)
             .resource(resource_mock)
             .role(role_mock);
-        let state = get_mocked_state(provider_builder, false, None); // Policy NOT allowed
+        let state = get_mocked_state(provider_builder, false, None, None); // Policy NOT allowed
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
             .with_state(state);
@@ -332,7 +329,7 @@ mod tests {
             .identity(identity_mock)
             .resource(resource_mock)
             .role(role_mock);
-        let state = get_mocked_state(provider_builder, true, None);
+        let state = get_mocked_state(provider_builder, true, None, None);
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
             .with_state(state);
@@ -394,7 +391,7 @@ mod tests {
             .identity(identity_mock)
             .resource(resource_mock)
             .role(role_mock);
-        let state = get_mocked_state(provider_builder, true, None);
+        let state = get_mocked_state(provider_builder, true, None, None);
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
             .with_state(state);
@@ -456,7 +453,7 @@ mod tests {
             .identity(identity_mock)
             .resource(resource_mock)
             .role(role_mock);
-        let state = get_mocked_state(provider_builder, true, None);
+        let state = get_mocked_state(provider_builder, true, None, None);
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
             .with_state(state);

@@ -98,7 +98,7 @@ mod tests {
             .returning(|_, _| Ok(()));
 
         provider = provider.resource(mock);
-        let state = get_mocked_state(provider, true, None);
+        let state = get_mocked_state(provider, true, None, None);
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())

@@ -18,14 +18,11 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
-use mockall_double::double;
 
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
 use crate::k8s_auth::K8sAuthApi;
 use crate::keystone::ServiceState;
-#[double]
-use crate::policy::Policy;
 
 /// Delete K8s auth instance.
 ///
@@ -47,12 +44,11 @@ use crate::policy::Policy;
 #[tracing::instrument(
     name = "api::v4::k8s_auth::instance::delete",
     level = "debug",
-    skip(state, user_auth, policy),
+    skip(state, user_auth),
     err(Debug)
 )]
 pub(super) async fn remove(
     Auth(user_auth): Auth,
-    policy: Policy,
     Path(id): Path<String>,
     State(state): State<ServiceState>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
@@ -62,7 +58,8 @@ pub(super) async fn remove(
         .get_auth_instance(&state, &id)
         .await?;
 
-    policy
+    state
+        .policy_enforcer
         .enforce(
             "identity/k8s_auth/instance/delete",
             &user_auth,
@@ -131,7 +128,7 @@ mod tests {
             .returning(|_, _| Ok(()));
 
         provider = provider.k8s_auth(mock);
-        let state = get_mocked_state(provider, true, None);
+        let state = get_mocked_state(provider, true, None, None);
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())

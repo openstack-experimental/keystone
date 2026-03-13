@@ -25,7 +25,7 @@ use openstack_keystone::identity::IdentityApi;
 use openstack_keystone::identity::types::*;
 use openstack_keystone::keystone::{Service, ServiceState};
 use openstack_keystone::plugin_manager::PluginManager;
-use openstack_keystone::policy::PolicyFactory;
+use openstack_keystone::policy::PolicyEnforcer;
 use openstack_keystone::provider::Provider;
 
 use crate::common::{bootstrap, get_isolated_database};
@@ -74,7 +74,7 @@ async fn get_state() -> Result<Arc<Service>, Report> {
         cfg,
         db,
         provider,
-        PolicyFactory::default(),
+        PolicyEnforcer::default(),
     )?))
 }
 

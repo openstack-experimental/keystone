@@ -56,25 +56,23 @@ pub(super) fn openapi_router() -> OpenApiRouter<ServiceState> {
 #[cfg(test)]
 mod tests {
 
-    use sea_orm::DatabaseConnection;
-    use std::sync::Arc;
-
-    use crate::config::Config;
-
     use crate::identity::types::*;
-    use crate::keystone::{Service, ServiceState};
-    use crate::policy::{MockPolicy, MockPolicyFactory, PolicyError, PolicyEvaluationResult};
-    use crate::provider::Provider;
     use crate::token::{MockTokenProvider, Token, UnscopedPayload};
 
-    pub(crate) fn get_mocked_state(
-        mut token_mock: MockTokenProvider,
-        policy_allowed: bool,
-        policy_allowed_see_other_domains: Option<bool>,
-    ) -> ServiceState {
+    pub(crate) fn get_token_provider_mock_with_mocks() -> MockTokenProvider {
+        let mut token_mock = MockTokenProvider::default();
         token_mock.expect_validate_token().returning(|_, _, _, _| {
             Ok(Token::Unscoped(UnscopedPayload {
                 user_id: "bar".into(),
+                user: Some(
+                    UserResponseBuilder::default()
+                        .id("bar")
+                        .domain_id("udid")
+                        .enabled(true)
+                        .name("name")
+                        .build()
+                        .unwrap(),
+                ),
                 ..Default::default()
             }))
         });
@@ -83,54 +81,9 @@ mod tests {
             .returning(|_, _| {
                 Ok(Token::Unscoped(UnscopedPayload {
                     user_id: "bar".into(),
-                    user: Some(
-                        UserResponseBuilder::default()
-                            .id("bar")
-                            .domain_id("udid")
-                            .build()
-                            .unwrap(),
-                    ),
                     ..Default::default()
                 }))
             });
-
-        let provider = Provider::mocked_builder()
-            .token(token_mock)
-            .build()
-            .unwrap();
-
-        let mut policy_factory_mock = MockPolicyFactory::default();
-        if policy_allowed {
-            policy_factory_mock.expect_instantiate().returning(move || {
-                let mut policy_mock = MockPolicy::default();
-                if policy_allowed_see_other_domains.is_some_and(|x| x) {
-                    policy_mock
-                        .expect_enforce()
-                        .returning(|_, _, _, _| Ok(PolicyEvaluationResult::allowed_admin()));
-                } else {
-                    policy_mock
-                        .expect_enforce()
-                        .returning(|_, _, _, _| Ok(PolicyEvaluationResult::allowed()));
-                }
-                Ok(policy_mock)
-            });
-        } else {
-            policy_factory_mock.expect_instantiate().returning(|| {
-                let mut policy_mock = MockPolicy::default();
-                policy_mock.expect_enforce().returning(|_, _, _, _| {
-                    Err(PolicyError::Forbidden(PolicyEvaluationResult::forbidden()))
-                });
-                Ok(policy_mock)
-            });
-        }
-        Arc::new(
-            Service::new(
-                Config::default(),
-                DatabaseConnection::Disconnected,
-                provider,
-                policy_factory_mock,
-            )
-            .unwrap(),
-        )
+        token_mock
     }
 }

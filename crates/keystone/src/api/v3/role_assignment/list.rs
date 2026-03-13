@@ -71,7 +71,7 @@ mod tests {
     use tower_http::trace::TraceLayer;
 
     use super::super::openapi_router;
-    use super::super::tests::get_mocked_state;
+    use crate::api::tests::get_mocked_state;
     use crate::api::v3::role_assignment::types::{
         Assignment as ApiAssignment, AssignmentList as ApiAssignmentList, Project, Role, Scope,
         User,
@@ -80,6 +80,7 @@ mod tests {
         MockAssignmentProvider,
         types::{Assignment, AssignmentType, RoleAssignmentListParameters},
     };
+    use crate::provider::Provider;
 
     #[tokio::test]
     async fn test_list() {
@@ -99,7 +100,12 @@ mod tests {
                 }])
             });
 
-        let state = get_mocked_state(assignment_mock);
+        let state = get_mocked_state(
+            Provider::mocked_builder().assignment(assignment_mock),
+            true,
+            None,
+            None,
+        );
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -205,7 +211,12 @@ mod tests {
                 }])
             });
 
-        let state = get_mocked_state(assignment_mock);
+        let state = get_mocked_state(
+            Provider::mocked_builder().assignment(assignment_mock),
+            true,
+            None,
+            None,
+        );
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())

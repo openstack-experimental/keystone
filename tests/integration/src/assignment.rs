@@ -70,5 +70,5 @@ pub async fn check_grant(state: &Arc<Service>, assignment: &Assignment) -> Resul
         .get_assignment_provider()
         .list_role_assignments(state, &params.build()?)
         .await?;
-    Ok(assignments.len() > 0)
+    Ok(!assignments.is_empty())
 }

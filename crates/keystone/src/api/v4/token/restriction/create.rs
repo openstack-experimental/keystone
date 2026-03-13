@@ -14,15 +14,12 @@
 //! Token restriction: create.
 
 use axum::{Json, debug_handler, extract::State, http::StatusCode, response::IntoResponse};
-use mockall_double::double;
 use validator::Validate;
 
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
 use crate::api::v4::token::types::*;
 use crate::keystone::ServiceState;
-#[double]
-use crate::policy::Policy;
 use crate::token::TokenApi;
 
 /// Create the token restriction.
@@ -44,18 +41,18 @@ use crate::token::TokenApi;
 #[tracing::instrument(
     name = "api::token_restriction::create",
     level = "debug",
-    skip(state, user_auth, policy),
+    skip(state, user_auth),
     err(Debug)
 )]
 #[debug_handler]
 pub(super) async fn create(
     Auth(user_auth): Auth,
-    policy: Policy,
     State(state): State<ServiceState>,
     Json(req): Json<TokenRestrictionCreateRequest>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
     req.validate()?;
-    policy
+    state
+        .policy_enforcer
         .enforce(
             "identity/token_restriction/create",
             &user_auth,
@@ -83,15 +80,17 @@ mod tests {
     use tower_http::trace::TraceLayer;
 
     use super::{
-        super::{openapi_router, tests::get_mocked_state},
+        super::{openapi_router, tests::get_token_provider_mock_with_mocks},
         *,
     };
+    use crate::api::tests::get_mocked_state;
+    use crate::provider::Provider;
     use crate::role::types::RoleRef as ProviderRoleRef;
-    use crate::token::{MockTokenProvider, types as provider_types};
+    use crate::token::types as provider_types;
 
     #[tokio::test]
     async fn test_create() {
-        let mut token_mock = MockTokenProvider::default();
+        let mut token_mock = get_token_provider_mock_with_mocks();
         token_mock
             .expect_create_token_restriction()
             .withf(|_, req: &provider_types::TokenRestrictionCreate| {
@@ -122,7 +121,12 @@ mod tests {
                 })
             });
 
-        let state = get_mocked_state(token_mock, true, None);
+        let state = get_mocked_state(
+            Provider::mocked_builder().token(token_mock),
+            true,
+            None,
+            Some(true),
+        );
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -165,9 +169,5 @@ mod tests {
         let body = response.into_body().collect().await.unwrap().to_bytes();
         let res: TokenRestrictionResponse = serde_json::from_slice(&body).unwrap();
         assert_eq!(res.restriction.domain_id, req.restriction.domain_id);
-        //assert_eq!(
-        //    res.identity_provider.domain_id,
-        //    req.identity_provider.domain_id
-        //);
     }
 }

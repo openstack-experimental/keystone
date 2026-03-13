@@ -24,7 +24,7 @@ use openstack_keystone::db::entity::prelude::*;
 use openstack_keystone::db::entity::project;
 use openstack_keystone::keystone::Service;
 use openstack_keystone::plugin_manager::PluginManager;
-use openstack_keystone::policy::PolicyFactory;
+use openstack_keystone::policy::PolicyEnforcer;
 use openstack_keystone::provider::Provider;
 use openstack_keystone::role::types as role_types;
 
@@ -73,7 +73,7 @@ async fn get_state() -> Result<Arc<Service>, Report> {
 
     let plugin_manager = PluginManager::default();
     let provider = Provider::new(cfg.clone(), plugin_manager)?;
-    let state = Arc::new(Service::new(cfg, db, provider, PolicyFactory::default())?);
+    let state = Arc::new(Service::new(cfg, db, provider, PolicyEnforcer::default())?);
 
     create_role(&state, "role_a").await?;
     create_role(&state, "role_b").await?;

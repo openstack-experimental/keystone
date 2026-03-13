@@ -36,6 +36,10 @@ pub enum PolicyError {
     #[error("module compilation task crashed")]
     Compilation(#[from] eyre::Report),
 
+    /// Dummy policy enforcer cannot be used.
+    #[error("dummy (empty) policy enforcer")]
+    Dummy,
+
     /// Forbidden error.
     #[error("{}", .0.violations.as_ref().map(
         |v| v.iter().cloned().map(|x| x.msg)
@@ -65,14 +69,14 @@ pub enum PolicyError {
 
 /// Policy factory.
 #[derive(Default)]
-pub struct PolicyFactory {
+pub struct PolicyEnforcer {
     /// Requests client.
     http_client: Option<Arc<Client>>,
     /// OPA url address.
     base_url: Option<Url>,
 }
 
-impl PolicyFactory {
+impl PolicyEnforcer {
     #[allow(clippy::needless_update)]
     #[tracing::instrument(name = "policy.http", err)]
     pub async fn http(url: Url) -> Result<Self, PolicyError> {
@@ -84,24 +88,69 @@ impl PolicyFactory {
         Ok(Self {
             http_client: Some(Arc::new(client)),
             base_url: Some(url.join("/v1/data/")?),
-            ..Default::default()
         })
     }
 
-    #[allow(clippy::needless_update)]
-    #[tracing::instrument(name = "policy.instantiate", level = Level::TRACE, skip_all, err)]
-    pub async fn instantiate(&self) -> Result<Policy, PolicyError> {
-        Ok(Policy {
-            http_client: self.http_client.clone(),
-            base_url: self.base_url.clone(),
-            ..Default::default()
-        })
+    #[tracing::instrument(
+        name = "policy.enforce",
+        skip_all,
+        fields(
+            entrypoint = policy_name.as_ref(),
+            input,
+            result,
+            duration_ms
+        ),
+        err,
+        level = Level::DEBUG
+    )]
+    pub async fn enforce<P: AsRef<str>>(
+        &self,
+        policy_name: P,
+        credentials: impl Into<Credentials>,
+        target: Value,
+        update: Option<Value>,
+    ) -> Result<PolicyEvaluationResult, PolicyError> {
+        let start = SystemTime::now();
+        let creds: Credentials = credentials.into();
+        let input = json!({
+            "credentials": creds,
+            "target": target,
+            "update": update,
+        });
+        let span = tracing::Span::current();
+
+        trace!("checking policy decision with OPA using http");
+        let url = self
+            .base_url
+            .as_ref()
+            .ok_or(PolicyError::Dummy)?
+            .join(policy_name.as_ref())?;
+        let res: PolicyEvaluationResult = self
+            .http_client
+            .as_ref()
+            .ok_or(PolicyError::Dummy)?
+            .post(url)
+            .json(&json!({"input": input}))
+            .send()
+            .await?
+            .json::<OpaResponse>()
+            .await?
+            .result;
+
+        let elapsed = SystemTime::now().duration_since(start).unwrap_or_default();
+        span.record("result", serde_json::to_string(&res)?);
+        span.record("duration_ms", elapsed.as_millis());
+        debug!("authorized={}", res.allow());
+        if !res.allow() {
+            return Err(PolicyError::Forbidden(res));
+        }
+        Ok(res)
     }
 }
 
 #[cfg(test)]
 mock! {
-    pub Policy {
+    pub PolicyEnforcer {
         pub async fn enforce(
             &self,
             policy_name: &str,
@@ -110,19 +159,6 @@ mock! {
             current: Option<Value>
         ) -> Result<PolicyEvaluationResult, PolicyError>;
     }
-}
-
-#[cfg(test)]
-mock! {
-    pub PolicyFactory {
-        pub async fn instantiate(&self) -> Result<MockPolicy, PolicyError>;
-    }
-}
-
-#[derive(Default)]
-pub struct Policy {
-    http_client: Option<Arc<Client>>,
-    base_url: Option<Url>,
 }
 
 #[derive(Debug, Error)]
@@ -161,70 +197,6 @@ impl From<&Token> for Credentials {
             domain_id: token.domain().map(|val| val.id.clone()),
             system: None,
         }
-    }
-}
-
-impl Policy {
-    #[tracing::instrument(
-        name = "policy.evaluate",
-        skip_all,
-        fields(
-            entrypoint = policy_name.as_ref(),
-            input,
-            result,
-            duration_ms
-        ),
-        err,
-        level = Level::DEBUG
-    )]
-    pub async fn enforce<P: AsRef<str>>(
-        &self,
-        policy_name: P,
-        credentials: impl Into<Credentials>,
-        target: Value,
-        update: Option<Value>,
-    ) -> Result<PolicyEvaluationResult, PolicyError> {
-        let start = SystemTime::now();
-        let creds: Credentials = credentials.into();
-        let input = json!({
-            "credentials": creds,
-            "target": target,
-            "update": update,
-        });
-        let span = tracing::Span::current();
-
-        let wasm_res: Option<PolicyEvaluationResult> = None;
-
-        let res = if let Some(opa_res) = wasm_res {
-            opa_res
-        } else if let (Some(client), Some(base_url)) = (&self.http_client, &self.base_url) {
-            trace!("checking policy decision with OPA using http");
-            let url = base_url.join(policy_name.as_ref())?;
-            let res: OpaResponse = client
-                .post(url)
-                .json(&json!({"input": input}))
-                .send()
-                .await?
-                .json()
-                .await?;
-
-            res.result
-        } else {
-            debug!("not enforcing policy due to the absence of initialized WASM data");
-            PolicyEvaluationResult {
-                allow: true,
-                can_see_other_domain_resources: None,
-                violations: None,
-            }
-        };
-        let elapsed = SystemTime::now().duration_since(start).unwrap_or_default();
-        span.record("result", serde_json::to_string(&res)?);
-        span.record("duration_ms", elapsed.as_millis());
-        debug!("authorized={}", res.allow());
-        if !res.allow() {
-            return Err(PolicyError::Forbidden(res));
-        }
-        Ok(res)
     }
 }
 

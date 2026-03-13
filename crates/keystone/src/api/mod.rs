@@ -129,7 +129,7 @@ pub(crate) mod tests {
     use crate::config::Config;
     use crate::identity::types::UserResponseBuilder;
     use crate::keystone::{Service, ServiceState};
-    use crate::policy::{MockPolicy, MockPolicyFactory, PolicyError, PolicyEvaluationResult};
+    use crate::policy::{MockPolicyEnforcer, PolicyError, PolicyEvaluationResult};
     use crate::provider::ProviderBuilder;
     use crate::token::{MockTokenProvider, Token, UnscopedPayload};
 
@@ -137,64 +137,62 @@ pub(crate) mod tests {
         provider_builder: ProviderBuilder,
         policy_allowed: bool,
         policy_allowed_see_other_domains: Option<bool>,
+        skip_default_token_provider: Option<bool>,
     ) -> ServiceState {
-        let mut token_mock = MockTokenProvider::default();
-        token_mock.expect_validate_token().returning(|_, _, _, _| {
-            Ok(Token::Unscoped(UnscopedPayload {
-                user_id: "bar".into(),
-                user: Some(
-                    UserResponseBuilder::default()
-                        .id("bar")
-                        .domain_id("udid")
-                        .enabled(true)
-                        .name("name")
-                        .build()
-                        .unwrap(),
-                ),
-                ..Default::default()
-            }))
-        });
-        token_mock
-            .expect_expand_token_information()
-            .returning(|_, _| {
+        let provider = if !skip_default_token_provider.is_some_and(|x| x) {
+            let mut token_mock = MockTokenProvider::default();
+            token_mock.expect_validate_token().returning(|_, _, _, _| {
                 Ok(Token::Unscoped(UnscopedPayload {
                     user_id: "bar".into(),
+                    user: Some(
+                        UserResponseBuilder::default()
+                            .id("bar")
+                            .domain_id("udid")
+                            .enabled(true)
+                            .name("name")
+                            .build()
+                            .unwrap(),
+                    ),
                     ..Default::default()
                 }))
             });
-
-        let provider = provider_builder.token(token_mock).build().unwrap();
-
-        let mut policy_factory_mock = MockPolicyFactory::default();
-        if policy_allowed {
-            policy_factory_mock.expect_instantiate().returning(move || {
-                let mut policy_mock = MockPolicy::default();
-                if policy_allowed_see_other_domains.is_some_and(|x| x) {
-                    policy_mock
-                        .expect_enforce()
-                        .returning(|_, _, _, _| Ok(PolicyEvaluationResult::allowed_admin()));
-                } else {
-                    policy_mock
-                        .expect_enforce()
-                        .returning(|_, _, _, _| Ok(PolicyEvaluationResult::allowed()));
-                }
-                Ok(policy_mock)
-            });
-        } else {
-            policy_factory_mock.expect_instantiate().returning(|| {
-                let mut policy_mock = MockPolicy::default();
-                policy_mock.expect_enforce().returning(|_, _, _, _| {
-                    Err(PolicyError::Forbidden(PolicyEvaluationResult::forbidden()))
+            token_mock
+                .expect_expand_token_information()
+                .returning(|_, _| {
+                    Ok(Token::Unscoped(UnscopedPayload {
+                        user_id: "bar".into(),
+                        ..Default::default()
+                    }))
                 });
-                Ok(policy_mock)
-            });
+            provider_builder.token(token_mock)
+        } else {
+            provider_builder
         }
+        .build()
+        .unwrap();
+
+        let mut policy_enforcer_mock = MockPolicyEnforcer::default();
+
+        policy_enforcer_mock
+            .expect_enforce()
+            .returning(move |_, _, _, _| {
+                if policy_allowed {
+                    if policy_allowed_see_other_domains.is_some_and(|x| x) {
+                        Ok(PolicyEvaluationResult::allowed_admin())
+                    } else {
+                        Ok(PolicyEvaluationResult::allowed())
+                    }
+                } else {
+                    Err(PolicyError::Forbidden(PolicyEvaluationResult::forbidden()))
+                }
+            });
+
         Arc::new(
             Service::new(
                 Config::default(),
                 DatabaseConnection::Disconnected,
                 provider,
-                policy_factory_mock,
+                policy_enforcer_mock,
             )
             .unwrap(),
         )

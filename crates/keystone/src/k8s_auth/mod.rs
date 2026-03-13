@@ -201,27 +201,11 @@ impl K8sAuthApi for K8sAuthProvider {
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use sea_orm::DatabaseConnection;
     use std::sync::Arc;
 
     use super::backend::MockK8sAuthBackend;
     use super::*;
-    use crate::config::Config;
-    use crate::keystone::Service;
-    use crate::policy::MockPolicyFactory;
-    use crate::provider::Provider;
-
-    pub fn get_state_mock() -> Arc<Service> {
-        Arc::new(
-            Service::new(
-                Config::default(),
-                DatabaseConnection::Disconnected,
-                Provider::mocked_builder().build().unwrap(),
-                MockPolicyFactory::default(),
-            )
-            .unwrap(),
-        )
-    }
+    use crate::tests::get_state_mock;
 
     #[tokio::test]
     async fn test_create_auth_instance() {

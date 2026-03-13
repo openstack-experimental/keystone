@@ -17,7 +17,6 @@ use axum::{
     extract::{OriginalUri, Query, State},
     response::IntoResponse,
 };
-use mockall_double::double;
 use serde_json::to_value;
 use std::collections::HashSet;
 use validator::Validate;
@@ -28,8 +27,6 @@ use crate::federation::{
     types::IdentityProviderListParameters as ProviderIdentityProviderListParameters,
 };
 use crate::keystone::ServiceState;
-#[double]
-use crate::policy::Policy;
 
 /// List identity providers.
 ///
@@ -54,18 +51,18 @@ use crate::policy::Policy;
 #[tracing::instrument(
     name = "api::identity_provider_list",
     level = "debug",
-    skip(state, user_auth, policy),
+    skip(state, user_auth),
     err(Debug)
 )]
 pub(super) async fn list(
     Auth(user_auth): Auth,
-    policy: Policy,
     OriginalUri(original_url): OriginalUri,
     Query(query): Query<IdentityProviderListParameters>,
     State(state): State<ServiceState>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
     query.validate()?;
-    let res = policy
+    let res = state
+        .policy_enforcer
         .enforce(
             "identity/identity_provider_list",
             &user_auth,
@@ -127,11 +124,10 @@ mod tests {
     use tower_http::trace::TraceLayer;
     use tracing_test::traced_test;
 
-    use super::{
-        super::{openapi_router, tests::get_mocked_state},
-        *,
-    };
+    use super::{super::openapi_router, *};
+    use crate::api::tests::get_mocked_state;
     use crate::federation::{MockFederationProvider, types as provider_types};
+    use crate::provider::Provider;
 
     #[tokio::test]
     #[traced_test]
@@ -150,7 +146,12 @@ mod tests {
                     ..Default::default()
                 }])
             });
-        let state = get_mocked_state(federation_mock, true, None);
+        let state = get_mocked_state(
+            Provider::mocked_builder().federation(federation_mock),
+            true,
+            None,
+            None,
+        );
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -215,7 +216,12 @@ mod tests {
                 }])
             });
 
-        let state = get_mocked_state(federation_mock, true, None);
+        let state = get_mocked_state(
+            Provider::mocked_builder().federation(federation_mock),
+            true,
+            None,
+            None,
+        );
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -243,7 +249,12 @@ mod tests {
     #[traced_test]
     async fn test_list_forbidden() {
         let federation_mock = MockFederationProvider::default();
-        let state = get_mocked_state(federation_mock, false, None);
+        let state = get_mocked_state(
+            Provider::mocked_builder().federation(federation_mock),
+            false,
+            None,
+            None,
+        );
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -287,7 +298,12 @@ mod tests {
                 }])
             });
 
-        let state = get_mocked_state(federation_mock, true, Some(false));
+        let state = get_mocked_state(
+            Provider::mocked_builder().federation(federation_mock),
+            true,
+            Some(false),
+            None,
+        );
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -336,7 +352,12 @@ mod tests {
                 }])
             });
 
-        let state = get_mocked_state(federation_mock, true, Some(true));
+        let state = get_mocked_state(
+            Provider::mocked_builder().federation(federation_mock),
+            true,
+            Some(true),
+            None,
+        );
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -382,7 +403,12 @@ mod tests {
                 }])
             });
 
-        let state = get_mocked_state(federation_mock, true, Some(false));
+        let state = get_mocked_state(
+            Provider::mocked_builder().federation(federation_mock),
+            true,
+            Some(false),
+            None,
+        );
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())

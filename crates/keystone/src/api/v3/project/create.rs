@@ -17,15 +17,12 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
-use mockall_double::double;
 use validator::Validate;
 
 use super::types::{ProjectCreateRequest, ProjectResponse};
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
-#[double]
-use crate::policy::Policy;
 use crate::resource::ResourceApi;
 
 /// Create project.
@@ -42,17 +39,17 @@ use crate::resource::ResourceApi;
     ),
     tag="projects"
 )]
-#[tracing::instrument(name = "api::v3::project_create", level = "debug", skip(state, policy))]
+#[tracing::instrument(name = "api::v3::project_create", level = "debug", skip(state))]
 pub(super) async fn create(
     Auth(user_auth): Auth,
-    policy: Policy,
     State(state): State<ServiceState>,
     Json(payload): Json<ProjectCreateRequest>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
     // Validate the request
     payload.validate()?;
 
-    policy
+    state
+        .policy_enforcer
         .enforce(
             "identity/project/user/role/check",
             &user_auth,
@@ -114,7 +111,7 @@ mod tests {
         });
 
         let provider_builder = Provider::mocked_builder().resource(resource_mock);
-        let state = get_mocked_state(provider_builder, true, None);
+        let state = get_mocked_state(provider_builder, true, None, None);
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -165,8 +162,7 @@ mod tests {
     #[traced_test]
     #[tokio::test]
     async fn test_not_allowed() {
-        let provider_builder = Provider::mocked_builder();
-        let state = get_mocked_state(provider_builder, false, None);
+        let state = get_mocked_state(Provider::mocked_builder(), false, None, None);
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())

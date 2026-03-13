@@ -27,20 +27,20 @@ pub(crate) fn openapi_router() -> OpenApiRouter<ServiceState> {
     OpenApiRouter::new().routes(routes!(show::show, create::create, delete::delete))
 }
 
-#[cfg(test)]
-mod tests {
-
-    use crate::policy::{MockPolicy, MockPolicyFactory, PolicyEvaluationResult};
-
-    pub(super) fn get_policy_factory_mock() -> MockPolicyFactory {
-        let mut policy_factory_mock = MockPolicyFactory::default();
-        policy_factory_mock.expect_instantiate().returning(|| {
-            let mut policy_mock = MockPolicy::default();
-            policy_mock
-                .expect_enforce()
-                .returning(|_, _, _, _| Ok(PolicyEvaluationResult::allowed()));
-            Ok(policy_mock)
-        });
-        policy_factory_mock
-    }
-}
+// #[cfg(test)]
+// mod tests {
+//
+//     use crate::policy::{MockPolicy, MockPolicyFactory, PolicyEvaluationResult};
+//
+//     pub(super) fn get_policy_factory_mock() -> MockPolicyFactory {
+//         let mut policy_factory_mock = MockPolicyFactory::default();
+//         policy_factory_mock.expect_instantiate().returning(|| {
+//             let mut policy_mock = MockPolicy::default();
+//             policy_mock
+//                 .expect_enforce()
+//                 .returning(|_, _, _, _| Ok(PolicyEvaluationResult::allowed()));
+//             Ok(policy_mock)
+//         });
+//         policy_factory_mock
+//     }
+// }

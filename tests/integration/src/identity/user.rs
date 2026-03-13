@@ -20,7 +20,7 @@ use openstack_keystone::config::Config;
 use openstack_keystone::db::entity::project;
 use openstack_keystone::keystone::Service;
 use openstack_keystone::plugin_manager::PluginManager;
-use openstack_keystone::policy::PolicyFactory;
+use openstack_keystone::policy::PolicyEnforcer;
 use openstack_keystone::provider::Provider;
 
 use crate::common::{bootstrap, get_isolated_database};
@@ -61,6 +61,6 @@ async fn get_state() -> Result<Arc<Service>, Report> {
         cfg,
         db,
         provider,
-        PolicyFactory::default(),
+        PolicyEnforcer::default(),
     )?))
 }

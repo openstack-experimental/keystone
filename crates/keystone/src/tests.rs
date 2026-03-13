@@ -17,7 +17,7 @@ use std::sync::Arc;
 
 use crate::config::Config;
 use crate::keystone::Service;
-use crate::policy::MockPolicyFactory;
+use crate::policy::MockPolicyEnforcer;
 use crate::provider::Provider;
 
 pub(crate) mod api;
@@ -29,7 +29,7 @@ pub fn get_state_mock() -> Arc<Service> {
             Config::default(),
             DatabaseConnection::Disconnected,
             Provider::mocked_builder().build().unwrap(),
-            MockPolicyFactory::default(),
+            MockPolicyEnforcer::default(),
         )
         .unwrap(),
     )

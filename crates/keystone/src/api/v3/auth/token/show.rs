@@ -27,7 +27,6 @@ use axum::{
     http::HeaderMap,
     response::IntoResponse,
 };
-use mockall_double::double;
 use serde_json::{json, to_value};
 use tracing::error;
 
@@ -35,8 +34,6 @@ use crate::api::v3::auth::token::types::{TokenResponse, ValidateTokenParameters}
 use crate::api::{Catalog, CatalogService, auth::Auth, error::KeystoneApiError};
 use crate::catalog::CatalogApi;
 use crate::keystone::ServiceState;
-#[double]
-use crate::policy::Policy;
 use crate::token::TokenApi;
 
 /// Validate and show information for token.
@@ -60,11 +57,10 @@ use crate::token::TokenApi;
 #[tracing::instrument(
     name = "api::v3::token::get",
     level = "debug",
-    skip(state, headers, user_auth, policy)
+    skip(state, headers, user_auth)
 )]
 pub(super) async fn show(
     Auth(user_auth): Auth,
-    policy: Policy,
     Query(query): Query<ValidateTokenParameters>,
     headers: HeaderMap,
     State(state): State<ServiceState>,
@@ -89,7 +85,8 @@ pub(super) async fn show(
             identifier: String::new(),
         })?;
 
-    policy
+    state
+        .policy_enforcer
         .enforce(
             "identity/auth/token/show",
             &user_auth,
@@ -133,24 +130,19 @@ mod tests {
         http::{Request, StatusCode},
     };
     use http_body_util::BodyExt; // for `collect`
-    use sea_orm::DatabaseConnection;
-    use std::sync::Arc;
     use tower::ServiceExt; // for `call`, `oneshot`, and `ready`
     use tower_http::trace::TraceLayer;
 
+    use super::super::openapi_router;
+    use crate::api::tests::get_mocked_state;
     use crate::api::v3::auth::token::types::*;
     use crate::catalog::MockCatalogProvider;
-    use crate::config::Config;
     use crate::identity::{MockIdentityProvider, types::UserResponseBuilder};
-    use crate::keystone::Service;
     use crate::provider::Provider;
     use crate::resource::{MockResourceProvider, types::Domain};
-    use crate::tests::api::get_mocked_state_unauthed;
     use crate::token::{
         MockTokenProvider, Token as ProviderToken, TokenProviderError, UnscopedPayload,
     };
-
-    use super::super::{openapi_router, tests::get_policy_factory_mock};
 
     #[tokio::test]
     async fn test_get() {
@@ -201,19 +193,9 @@ mod tests {
             .identity(identity_mock)
             .resource(resource_mock)
             .token(token_mock)
-            .catalog(catalog_mock)
-            .build()
-            .unwrap();
+            .catalog(catalog_mock);
 
-        let state = Arc::new(
-            Service::new(
-                Config::default(),
-                DatabaseConnection::Disconnected,
-                provider,
-                get_policy_factory_mock(),
-            )
-            .unwrap(),
-        );
+        let state = get_mocked_state(provider, true, None, Some(true));
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -315,19 +297,9 @@ mod tests {
             .identity(identity_mock)
             .resource(resource_mock)
             .token(token_mock)
-            .catalog(catalog_mock)
-            .build()
-            .unwrap();
+            .catalog(catalog_mock);
 
-        let state = Arc::new(
-            Service::new(
-                Config::default(),
-                DatabaseConnection::Disconnected,
-                provider,
-                get_policy_factory_mock(),
-            )
-            .unwrap(),
-        );
+        let state = get_mocked_state(provider, true, None, Some(true));
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -366,20 +338,8 @@ mod tests {
             .withf(|_, token: &'_ str, _, _| token == "baz")
             .returning(|_, _, _, _| Err(TokenProviderError::Expired));
 
-        let provider = Provider::mocked_builder()
-            .token(token_mock)
-            .build()
-            .unwrap();
-
-        let state = Arc::new(
-            Service::new(
-                Config::default(),
-                DatabaseConnection::Disconnected,
-                provider,
-                get_policy_factory_mock(),
-            )
-            .unwrap(),
-        );
+        let provider = Provider::mocked_builder().token(token_mock);
+        let state = get_mocked_state(provider, true, None, Some(true));
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -418,20 +378,9 @@ mod tests {
             .withf(|_, token: &'_ str, _, _| token == "baz")
             .returning(|_, _, _, _| Err(TokenProviderError::TokenRevoked));
 
-        let provider = Provider::mocked_builder()
-            .token(token_mock)
-            .build()
-            .unwrap();
+        let provider = Provider::mocked_builder().token(token_mock);
 
-        let state = Arc::new(
-            Service::new(
-                Config::default(),
-                DatabaseConnection::Disconnected,
-                provider,
-                get_policy_factory_mock(),
-            )
-            .unwrap(),
-        );
+        let state = get_mocked_state(provider, true, None, Some(true));
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -455,7 +404,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_unauth() {
-        let state = get_mocked_state_unauthed();
+        let state = get_mocked_state(Provider::mocked_builder(), false, None, None);
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())

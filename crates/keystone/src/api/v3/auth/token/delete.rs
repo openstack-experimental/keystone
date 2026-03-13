@@ -18,14 +18,11 @@ use axum::{
     http::{HeaderMap, StatusCode},
     response::IntoResponse,
 };
-use mockall_double::double;
 use serde_json::{json, to_value};
 use tracing::error;
 
 use crate::api::{auth::Auth, error::KeystoneApiError};
 use crate::keystone::ServiceState;
-#[double]
-use crate::policy::Policy;
 use crate::revoke::RevokeApi;
 use crate::token::TokenApi;
 
@@ -47,11 +44,10 @@ use crate::token::TokenApi;
 #[tracing::instrument(
     name = "api::v3::token::delete",
     level = "debug",
-    skip(state, headers, user_auth, policy)
+    skip(state, headers, user_auth)
 )]
 pub(super) async fn delete(
     Auth(user_auth): Auth,
-    policy: Policy,
     headers: HeaderMap,
     State(state): State<ServiceState>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
@@ -75,7 +71,8 @@ pub(super) async fn delete(
             identifier: String::new(),
         })?;
 
-    policy
+    state
+        .policy_enforcer
         .enforce(
             "identity/auth/token/revoke",
             &user_auth,
@@ -100,20 +97,16 @@ mod tests {
         body::Body,
         http::{Request, StatusCode},
     };
-    use sea_orm::DatabaseConnection;
-    use std::sync::Arc;
     use tower::ServiceExt; // for `call`, `oneshot`, and `ready`
     use tower_http::trace::TraceLayer;
 
-    use crate::config::Config;
-    use crate::keystone::Service;
+    use super::super::openapi_router;
+    use crate::api::tests::get_mocked_state;
     use crate::provider::Provider;
     use crate::revoke::MockRevokeProvider;
     use crate::token::{
         MockTokenProvider, Token as ProviderToken, TokenProviderError, UnscopedPayload,
     };
-
-    use super::super::{openapi_router, tests::get_policy_factory_mock};
 
     fn get_prepopulated_token_mock() -> MockTokenProvider {
         let decoded_auth_token = ProviderToken::Unscoped(UnscopedPayload {
@@ -174,19 +167,9 @@ mod tests {
 
         let provider = Provider::mocked_builder()
             .token(token_mock)
-            .revoke(revoke_mock)
-            .build()
-            .unwrap();
+            .revoke(revoke_mock);
 
-        let state = Arc::new(
-            Service::new(
-                Config::default(),
-                DatabaseConnection::Disconnected,
-                provider,
-                get_policy_factory_mock(),
-            )
-            .unwrap(),
-        );
+        let state = get_mocked_state(provider, true, None, Some(true));
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -218,20 +201,9 @@ mod tests {
             .withf(|_, token: &'_ str, _, _| token == "baz")
             .returning(move |_, _, _, _| Err(TokenProviderError::Expired));
 
-        let provider = Provider::mocked_builder()
-            .token(token_mock)
-            .build()
-            .unwrap();
+        let provider = Provider::mocked_builder().token(token_mock);
 
-        let state = Arc::new(
-            Service::new(
-                Config::default(),
-                DatabaseConnection::Disconnected,
-                provider,
-                get_policy_factory_mock(),
-            )
-            .unwrap(),
-        );
+        let state = get_mocked_state(provider, true, None, Some(true));
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -263,20 +235,8 @@ mod tests {
             .withf(|_, token: &'_ str, _, _| token == "baz")
             .returning(move |_, _, _, _| Err(TokenProviderError::TokenRevoked));
 
-        let provider = Provider::mocked_builder()
-            .token(token_mock)
-            .build()
-            .unwrap();
-
-        let state = Arc::new(
-            Service::new(
-                Config::default(),
-                DatabaseConnection::Disconnected,
-                provider,
-                get_policy_factory_mock(),
-            )
-            .unwrap(),
-        );
+        let provider = Provider::mocked_builder().token(token_mock);
+        let state = get_mocked_state(provider, true, None, Some(true));
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())

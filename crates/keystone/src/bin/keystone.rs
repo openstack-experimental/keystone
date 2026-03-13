@@ -51,7 +51,7 @@ use openstack_keystone::config::Config;
 use openstack_keystone::federation::FederationApi;
 use openstack_keystone::keystone::{Service, ServiceState};
 use openstack_keystone::plugin_manager::PluginManager;
-use openstack_keystone::policy::PolicyFactory;
+use openstack_keystone::policy::PolicyEnforcer;
 use openstack_keystone::provider::Provider;
 use openstack_keystone::webauthn;
 use openstack_keystone_distributed_storage::app::get_app_server;
@@ -204,7 +204,7 @@ async fn main() -> Result<(), Report> {
 
     let provider = Provider::new(cfg.clone(), plugin_manager)?;
 
-    let policy = PolicyFactory::http(cfg.api_policy.opa_base_url.clone()).await?;
+    let policy = PolicyEnforcer::http(cfg.api_policy.opa_base_url.clone()).await?;
 
     let shared_state = Arc::new(Service::new(cfg.clone(), conn, provider, policy)?);
 

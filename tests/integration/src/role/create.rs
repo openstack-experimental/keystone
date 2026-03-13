@@ -18,11 +18,11 @@ use uuid::Uuid;
 
 use openstack_keystone::role::{RoleApi, types::*};
 
-use super::get_state;
+use crate::common::get_state;
 
 #[tokio::test]
 async fn test_create() -> Result<()> {
-    let state = get_state().await?;
+    let (state, _tmp) = get_state().await?;
     let name = Uuid::new_v4().to_string();
 
     let role = state

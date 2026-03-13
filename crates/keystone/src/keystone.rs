@@ -12,38 +12,31 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //! # Keystone state
-use axum::extract::{FromRef, FromRequestParts};
 use mockall_double::double;
 use sea_orm::DatabaseConnection;
 use std::sync::Arc;
 use tracing::info;
 
-use crate::api::error::KeystoneApiError;
 use crate::config::Config;
 use crate::error::KeystoneError;
 #[double]
-use crate::policy::Policy;
-#[double]
-use crate::policy::PolicyFactory;
+use crate::policy::PolicyEnforcer;
 use crate::provider::Provider;
 
 // Placing ServiceState behind Arc is necessary to address DatabaseConnection
 // not implementing Clone.
 //#[derive(Clone)]
-#[derive(FromRef)]
 pub struct Service {
     /// Config file.
     pub config: Config,
 
     /// Database connection.
-    #[from_ref(skip)]
     pub db: DatabaseConnection,
 
     /// Policy factory.
-    pub policy_factory: Arc<PolicyFactory>,
+    pub policy_enforcer: Arc<PolicyEnforcer>,
 
     /// Service/resource Provider.
-    #[from_ref(skip)]
     pub provider: Provider,
 
     /// Shutdown flag.
@@ -57,13 +50,13 @@ impl Service {
         cfg: Config,
         db: DatabaseConnection,
         provider: Provider,
-        policy_factory: PolicyFactory,
+        policy_factory: PolicyEnforcer,
     ) -> Result<Self, KeystoneError> {
         Ok(Self {
             config: cfg.clone(),
             provider,
             db,
-            policy_factory: Arc::new(policy_factory),
+            policy_enforcer: Arc::new(policy_factory),
             shutdown: false,
         })
     }
@@ -71,17 +64,5 @@ impl Service {
     pub async fn terminate(&self) -> Result<(), KeystoneError> {
         info!("Terminating Keystone");
         Ok(())
-    }
-}
-
-impl FromRequestParts<ServiceState> for Policy {
-    type Rejection = KeystoneApiError;
-
-    async fn from_request_parts(
-        _parts: &mut axum::http::request::Parts,
-        state: &ServiceState,
-    ) -> Result<Self, Self::Rejection> {
-        let policy = state.policy_factory.instantiate().await?;
-        Ok(policy)
     }
 }

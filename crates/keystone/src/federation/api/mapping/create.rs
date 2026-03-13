@@ -14,15 +14,12 @@
 
 //! Federation attribute mapping: create.
 use axum::{Json, debug_handler, extract::State, http::StatusCode, response::IntoResponse};
-use mockall_double::double;
 use validator::Validate;
 
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
 use crate::federation::{FederationApi, api::types::*};
 use crate::keystone::ServiceState;
-#[double]
-use crate::policy::Policy;
 
 /// Create attribute mapping.
 #[utoipa::path(
@@ -35,20 +32,16 @@ use crate::policy::Policy;
     security(("x-auth" = [])),
     tag="mappings"
 )]
-#[tracing::instrument(
-    name = "api::mapping_create",
-    level = "debug",
-    skip(state, user_auth, policy)
-)]
+#[tracing::instrument(name = "api::mapping_create", level = "debug", skip(state, user_auth))]
 #[debug_handler]
 pub(super) async fn create(
     Auth(user_auth): Auth,
-    policy: Policy,
     State(state): State<ServiceState>,
     Json(req): Json<MappingCreateRequest>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
     req.validate()?;
-    policy
+    state
+        .policy_enforcer
         .enforce(
             "identity/mapping_create",
             &user_auth,
@@ -77,12 +70,10 @@ mod tests {
     use tower_http::trace::TraceLayer;
     use tracing_test::traced_test;
 
-    use super::{
-        super::{openapi_router, tests::get_mocked_state},
-        *,
-    };
-
+    use super::{super::openapi_router, *};
+    use crate::api::tests::get_mocked_state;
     use crate::federation::{MockFederationProvider, types as provider_types};
+    use crate::provider::Provider;
 
     #[tokio::test]
     #[traced_test]
@@ -100,7 +91,12 @@ mod tests {
                 })
             });
 
-        let state = get_mocked_state(federation_mock, true);
+        let state = get_mocked_state(
+            Provider::mocked_builder().federation(federation_mock),
+            true,
+            None,
+            None,
+        );
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())

@@ -19,7 +19,6 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
-use mockall_double::double;
 use serde_json::json;
 use validator::Validate;
 
@@ -27,8 +26,6 @@ use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
 use crate::k8s_auth::{K8sAuthApi, api::types::*};
 use crate::keystone::ServiceState;
-#[double]
-use crate::policy::Policy;
 
 /// Create K8s auth role.
 #[utoipa::path(
@@ -47,12 +44,11 @@ use crate::policy::Policy;
 #[tracing::instrument(
     name = "api::v4::k8s_auth::role::create",
     level = "debug",
-    skip(state, user_auth, policy)
+    skip(state, user_auth)
 )]
 #[debug_handler]
 pub(super) async fn create_nested(
     Auth(user_auth): Auth,
-    policy: Policy,
     Path(instance_id): Path<String>,
     State(state): State<ServiceState>,
     Json(req): Json<K8sAuthRoleCreateRequest>,
@@ -71,7 +67,8 @@ pub(super) async fn create_nested(
             })
         })??;
 
-    policy
+    state
+        .policy_enforcer
         .enforce(
             "identity/k8s_auth/role/create",
             &user_auth,
@@ -140,7 +137,7 @@ mod tests {
             });
 
         provider = provider.k8s_auth(mock);
-        let state = get_mocked_state(provider, true, None);
+        let state = get_mocked_state(provider, true, None, None);
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())

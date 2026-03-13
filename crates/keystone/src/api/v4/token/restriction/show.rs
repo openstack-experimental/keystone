@@ -17,14 +17,11 @@ use axum::{
     extract::{Path, State},
     response::IntoResponse,
 };
-use mockall_double::double;
 
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
 use crate::api::v4::token::types::*;
 use crate::keystone::ServiceState;
-#[double]
-use crate::policy::Policy;
 use crate::token::TokenApi;
 
 /// Get single token restriction.
@@ -47,12 +44,11 @@ use crate::token::TokenApi;
 #[tracing::instrument(
     name = "api::token_restriction::get",
     level = "debug",
-    skip(state, user_auth, policy),
+    skip(state, user_auth),
     err(Debug)
 )]
 pub(super) async fn show(
     Auth(user_auth): Auth,
-    policy: Policy,
     Path(id): Path<String>,
     State(state): State<ServiceState>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
@@ -68,7 +64,8 @@ pub(super) async fn show(
             })
         })??;
 
-    policy
+    state
+        .policy_enforcer
         .enforce(
             "identity/token_restriction/show",
             &user_auth,
@@ -90,16 +87,18 @@ mod tests {
     use tower_http::trace::TraceLayer;
 
     use super::{
-        super::{openapi_router, tests::get_mocked_state},
+        super::{openapi_router, tests::get_token_provider_mock_with_mocks},
         *,
     };
+    use crate::api::tests::get_mocked_state;
     use crate::api::v3::role::types::RoleRef;
+    use crate::provider::Provider;
     use crate::role::types::RoleRef as ProviderRoleRef;
-    use crate::token::{MockTokenProvider, types as provider_types};
+    use crate::token::types as provider_types;
 
     #[tokio::test]
     async fn test_get() {
-        let mut token_mock = MockTokenProvider::default();
+        let mut token_mock = get_token_provider_mock_with_mocks();
         token_mock
             .expect_get_token_restriction()
             .withf(|_, id: &'_ str, expand: &bool| id == "foo" && *expand)
@@ -131,7 +130,12 @@ mod tests {
                 }))
             });
 
-        let state = get_mocked_state(token_mock, true, None);
+        let state = get_mocked_state(
+            Provider::mocked_builder().token(token_mock),
+            true,
+            None,
+            Some(true),
+        );
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -194,7 +198,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_forbidden() {
-        let mut token_mock = MockTokenProvider::default();
+        let mut token_mock = get_token_provider_mock_with_mocks();
         token_mock
             .expect_get_token_restriction()
             .withf(|_, id: &'_ str, expand: &bool| id == "bar" && *expand)
@@ -221,7 +225,12 @@ mod tests {
                     ]),
                 }))
             });
-        let state = get_mocked_state(token_mock, false, None);
+        let state = get_mocked_state(
+            Provider::mocked_builder().token(token_mock),
+            false,
+            None,
+            Some(true),
+        );
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())

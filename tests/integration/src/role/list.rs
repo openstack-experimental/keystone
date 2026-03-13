@@ -19,8 +19,8 @@ use std::collections::BTreeSet;
 use openstack_keystone::keystone::ServiceState;
 use openstack_keystone::role::{RoleApi, types::*};
 
-use super::get_state;
 use crate::common::create_role;
+use crate::common::get_state;
 
 async fn list_roles(state: &ServiceState, params: &RoleListParameters) -> Result<BTreeSet<String>> {
     Ok(state
@@ -42,7 +42,7 @@ async fn init_data(state: &ServiceState) -> Result<()> {
 
 #[tokio::test]
 async fn test_list() -> Result<()> {
-    let state = get_state().await?;
+    let (state, _tmp) = get_state().await?;
     init_data(&state).await?;
 
     assert_eq!(

@@ -302,7 +302,7 @@ mod tests {
     use super::*;
     use crate::config::Config;
     use crate::keystone::Service;
-    use crate::policy::MockPolicyFactory;
+    use crate::policy::MockPolicyEnforcer;
     use crate::provider::{Provider, ProviderBuilder};
     use crate::role::{MockRoleProvider, types::*};
 
@@ -312,7 +312,7 @@ mod tests {
                 Config::default(),
                 DatabaseConnection::Disconnected,
                 provider_builder.build().unwrap(),
-                MockPolicyFactory::default(),
+                MockPolicyEnforcer::default(),
             )
             .unwrap(),
         )

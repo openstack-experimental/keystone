@@ -1131,7 +1131,7 @@ mod tests {
                 Config::default(),
                 DatabaseConnection::Disconnected,
                 provider,
-                crate::policy::MockPolicyFactory::new(),
+                crate::policy::MockPolicyEnforcer::new(),
             )
             .unwrap(),
         );
@@ -1271,7 +1271,7 @@ mod tests {
                 config,
                 DatabaseConnection::Disconnected,
                 provider,
-                crate::policy::MockPolicyFactory::new(),
+                crate::policy::MockPolicyEnforcer::new(),
             )
             .unwrap(),
         );
@@ -1395,7 +1395,7 @@ mod tests {
                 Config::default(),
                 DatabaseConnection::Disconnected,
                 provider,
-                crate::policy::MockPolicyFactory::new(),
+                crate::policy::MockPolicyEnforcer::new(),
             )
             .unwrap(),
         );

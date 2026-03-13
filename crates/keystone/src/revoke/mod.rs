@@ -126,27 +126,11 @@ impl RevokeApi for RevokeProvider {
 
 #[cfg(test)]
 mod tests {
-    use sea_orm::DatabaseConnection;
     use std::sync::Arc;
 
     use super::backend::MockRevokeBackend;
     use super::*;
-    use crate::config::Config;
-    use crate::keystone::Service;
-    use crate::policy::MockPolicyFactory;
-    use crate::provider::Provider;
-
-    fn get_state_mock() -> Arc<Service> {
-        Arc::new(
-            Service::new(
-                Config::default(),
-                DatabaseConnection::Disconnected,
-                Provider::mocked_builder().build().unwrap(),
-                MockPolicyFactory::default(),
-            )
-            .unwrap(),
-        )
-    }
+    use crate::tests::get_state_mock;
 
     #[tokio::test]
     async fn test_create_revocation_event() {

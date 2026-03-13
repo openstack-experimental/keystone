@@ -17,7 +17,6 @@ use axum::{
     extract::{Path, State},
     response::IntoResponse,
 };
-use mockall_double::double;
 use tracing::debug;
 use uuid::Uuid;
 use validator::Validate;
@@ -25,8 +24,6 @@ use validator::Validate;
 use crate::api::KeystoneApiError;
 use crate::api::auth::Auth;
 use crate::identity::IdentityApi;
-#[double]
-use crate::policy::Policy;
 use crate::webauthn::{
     WebauthnApi,
     api::types::{CombinedExtensionState, register::*},
@@ -54,13 +51,12 @@ use crate::webauthn::{
 #[tracing::instrument(
     name = "api::user_webauthn_credential_register_start",
     level = "debug",
-    skip(state, policy),
+    skip(state),
     err(Debug)
 )]
 pub(super) async fn start(
     Auth(user_auth): Auth,
     Path(user_id): Path<String>,
-    policy: Policy,
     State(state): State<CombinedExtensionState>,
     Json(req): Json<UserPasskeyRegistrationStartRequest>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
@@ -78,7 +74,9 @@ pub(super) async fn start(
             })
         })??;
 
-    policy
+    state
+        .core
+        .policy_enforcer
         .enforce(
             "identity/user/passkey/register/start",
             &user_auth,

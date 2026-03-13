@@ -18,15 +18,12 @@ use axum::{
     extract::{Path, State},
     response::IntoResponse,
 };
-use mockall_double::double;
 use validator::Validate;
 
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
 use crate::federation::{FederationApi, api::types::*};
 use crate::keystone::ServiceState;
-#[double]
-use crate::policy::Policy;
 
 /// Update single identity provider.
 ///
@@ -48,12 +45,11 @@ use crate::policy::Policy;
 #[tracing::instrument(
     name = "api::identity_provider_update",
     level = "debug",
-    skip(state, user_auth, policy),
+    skip(state, user_auth),
     err(Debug)
 )]
 pub(super) async fn update(
     Auth(user_auth): Auth,
-    policy: Policy,
     Path(idp_id): Path<String>,
     State(state): State<ServiceState>,
     Json(req): Json<IdentityProviderUpdateRequest>,
@@ -66,7 +62,8 @@ pub(super) async fn update(
         .get_identity_provider(&state, &idp_id)
         .await?;
 
-    policy
+    state
+        .policy_enforcer
         .enforce(
             "identity/identity_provider_update",
             &user_auth,
@@ -95,12 +92,10 @@ mod tests {
     use tower_http::trace::TraceLayer;
     use tracing_test::traced_test;
 
-    use super::{
-        super::{openapi_router, tests::get_mocked_state},
-        *,
-    };
-
+    use super::{super::openapi_router, *};
+    use crate::api::tests::get_mocked_state;
     use crate::federation::{MockFederationProvider, types as provider_types};
+    use crate::provider::Provider;
 
     #[tokio::test]
     #[traced_test]
@@ -133,7 +128,12 @@ mod tests {
                 })
             });
 
-        let state = get_mocked_state(federation_mock, true, None);
+        let state = get_mocked_state(
+            Provider::mocked_builder().federation(federation_mock),
+            true,
+            None,
+            None,
+        );
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
