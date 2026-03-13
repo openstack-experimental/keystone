@@ -16,6 +16,8 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use std::collections::HashSet;
 
+use openstack_keystone_core::identity::backend::IdentityBackend;
+
 mod authenticate;
 mod federated_user;
 mod group;
@@ -30,7 +32,6 @@ mod user_option;
 use super::super::types::*;
 use crate::auth::AuthenticatedInfo;
 use crate::identity::IdentityProviderError;
-use crate::identity::backend::IdentityBackend;
 use crate::keystone::ServiceState;
 
 #[derive(Default)]

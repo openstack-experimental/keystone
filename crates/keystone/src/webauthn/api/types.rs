@@ -63,16 +63,16 @@ impl From<WebauthnError> for KeystoneApiError {
     }
 }
 
-impl From<openstack_keystone_api_types::webauthn::error::WebauthnError> for KeystoneApiError {
-    fn from(value: openstack_keystone_api_types::webauthn::error::WebauthnError) -> Self {
-        match value {
-            other => Self::InternalError(other.to_string()),
-        }
-    }
-}
+//impl From<openstack_keystone_api_types::webauthn::error::WebauthnError> for KeystoneApiError {
+//    fn from(value: openstack_keystone_api_types::webauthn::error::WebauthnError) -> Self {
+//        match value {
+//            other => Self::InternalError(other.to_string()),
+//        }
+//    }
+//}
 
-impl From<uuid::Error> for KeystoneApiError {
-    fn from(value: uuid::Error) -> Self {
-        Self::InternalError(value.to_string())
-    }
-}
+//impl From<uuid::Error> for KeystoneApiError {
+//    fn from(value: uuid::Error) -> Self {
+//        Self::InternalError(value.to_string())
+//    }
+//}

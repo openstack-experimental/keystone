@@ -24,6 +24,11 @@ use crate::db::entity::{
     user as db_user,
 };
 use crate::error::DbContextExt;
+use crate::identity::backend::sql::federated_user::MergeFederatedUserData;
+use crate::identity::backend::sql::local_user::MergeLocalUserData;
+use crate::identity::backend::sql::nonlocal_user::MergeNonlocalUserData;
+use crate::identity::backend::sql::password::MergePasswordData;
+use crate::identity::backend::sql::user::MergeUserData;
 use crate::identity::{
     IdentityProviderError,
     types::{UserOptions, UserResponse, UserResponseBuilder},

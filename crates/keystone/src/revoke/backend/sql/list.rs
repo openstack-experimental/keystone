@@ -21,12 +21,12 @@ use crate::db::entity::{
     prelude::RevocationEvent as DbRevocationEvent, revocation_event as db_revocation_event,
 };
 use crate::error::DbContextExt;
-use crate::revoke::backend::error::RevokeDatabaseError;
+use crate::revoke::RevokeProviderError;
 use crate::revoke::types::{RevocationEvent, RevocationEventListParameters};
 
 fn build_query_filters(
     params: &RevocationEventListParameters,
-) -> Result<Select<DbRevocationEvent>, RevokeDatabaseError> {
+) -> Result<Select<DbRevocationEvent>, RevokeProviderError> {
     tracing::info!("Query parameters: {:?}", params);
     let mut select = DbRevocationEvent::find();
 
@@ -125,7 +125,7 @@ fn build_query_filters(
 pub async fn count(
     db: &DatabaseConnection,
     params: &RevocationEventListParameters,
-) -> Result<u64, RevokeDatabaseError> {
+) -> Result<u64, RevokeProviderError> {
     Ok(build_query_filters(params)?
         .count(db)
         .await
@@ -139,19 +139,20 @@ pub async fn count(
 pub async fn list(
     db: &DatabaseConnection,
     params: &RevocationEventListParameters,
-) -> Result<Vec<RevocationEvent>, RevokeDatabaseError> {
+) -> Result<Vec<RevocationEvent>, RevokeProviderError> {
     let db_entities: Vec<db_revocation_event::Model> =
         build_query_filters(params)?
             .all(db)
             .await
             .context("listing revocation events for the token")?;
 
-    let results: Result<Vec<RevocationEvent>, _> = db_entities
+    let results: Vec<RevocationEvent> = db_entities
         .into_iter()
-        .map(TryInto::<RevocationEvent>::try_into)
+        //.map(TryInto::<RevocationEvent>::try_into)
+        .map(Into::into)
         .collect();
 
-    results
+    Ok(results)
 }
 
 #[cfg(test)]

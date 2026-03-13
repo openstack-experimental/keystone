@@ -17,9 +17,9 @@ pub use openstack_keystone_api_types::catalog::*;
 pub use openstack_keystone_api_types::scope::*;
 pub use openstack_keystone_api_types::version::*;
 
-use crate::catalog::types::Endpoint as ProviderEndpoint;
-use crate::common::types as provider_types;
-use crate::resource::types as resource_provider_types;
+//use crate::catalog::types::Endpoint as ProviderEndpoint;
+//use crate::common::types as provider_types;
+//use crate::resource::types as resource_provider_types;
 
 //impl From<(Service, Vec<ProviderEndpoint>)> for CatalogService {
 //    fn from(value: (Service, Vec<ProviderEndpoint>)) -> Self {
@@ -32,17 +32,17 @@ use crate::resource::types as resource_provider_types;
 //    }
 //}
 
-impl From<ProviderEndpoint> for Endpoint {
-    fn from(value: ProviderEndpoint) -> Self {
-        Self {
-            id: value.id.clone(),
-            interface: value.interface.clone(),
-            url: value.url.clone(),
-            region: value.region_id.clone(),
-            region_id: value.region_id.clone(),
-        }
-    }
-}
+//impl From<ProviderEndpoint> for Endpoint {
+//    fn from(value: ProviderEndpoint) -> Self {
+//        Self {
+//            id: value.id.clone(),
+//            interface: value.interface.clone(),
+//            url: value.url.clone(),
+//            region: value.region_id.clone(),
+//            region_id: value.region_id.clone(),
+//        }
+//    }
+//}
 
 //impl From<Vec<(Service, Vec<ProviderEndpoint>)>> for Catalog {
 //    fn from(value: Vec<(Service, Vec<ProviderEndpoint>)>) -> Self {
@@ -55,80 +55,80 @@ impl From<ProviderEndpoint> for Endpoint {
 //    }
 //}
 
-impl From<resource_provider_types::Domain> for Domain {
-    fn from(value: resource_provider_types::Domain) -> Self {
-        Self {
-            id: Some(value.id),
-            name: Some(value.name),
-        }
-    }
-}
-
-impl From<&resource_provider_types::Domain> for Domain {
-    fn from(value: &resource_provider_types::Domain) -> Self {
-        Self {
-            id: Some(value.id.clone()),
-            name: Some(value.name.clone()),
-        }
-    }
-}
-
-impl From<Domain> for provider_types::Domain {
-    fn from(value: Domain) -> Self {
-        Self {
-            id: value.id,
-            name: value.name,
-        }
-    }
-}
-
-impl From<provider_types::Domain> for Domain {
-    fn from(value: provider_types::Domain) -> Self {
-        Self {
-            id: value.id,
-            name: value.name,
-        }
-    }
-}
-
-impl From<ScopeProject> for provider_types::Project {
-    fn from(value: ScopeProject) -> Self {
-        Self {
-            id: value.id,
-            name: value.name,
-            domain: value.domain.map(Into::into),
-        }
-    }
-}
-
-impl From<provider_types::Project> for ScopeProject {
-    fn from(value: provider_types::Project) -> Self {
-        Self {
-            id: value.id,
-            name: value.name,
-            domain: value.domain.map(Into::into),
-        }
-    }
-}
-
-impl From<&provider_types::Project> for ScopeProject {
-    fn from(value: &provider_types::Project) -> Self {
-        Self::from(value.clone())
-    }
-}
-
-impl From<System> for provider_types::System {
-    fn from(value: System) -> Self {
-        Self { all: value.all }
-    }
-}
-
-impl From<Scope> for provider_types::Scope {
-    fn from(value: Scope) -> Self {
-        match value {
-            Scope::Project(scope) => Self::Project(scope.into()),
-            Scope::Domain(scope) => Self::Domain(scope.into()),
-            Scope::System(scope) => Self::System(scope.into()),
-        }
-    }
-}
+//impl From<resource_provider_types::Domain> for Domain {
+//    fn from(value: resource_provider_types::Domain) -> Self {
+//        Self {
+//            id: Some(value.id),
+//            name: Some(value.name),
+//        }
+//    }
+//}
+//
+//impl From<&resource_provider_types::Domain> for Domain {
+//    fn from(value: &resource_provider_types::Domain) -> Self {
+//        Self {
+//            id: Some(value.id.clone()),
+//            name: Some(value.name.clone()),
+//        }
+//    }
+//}
+//
+//impl From<Domain> for provider_types::Domain {
+//    fn from(value: Domain) -> Self {
+//        Self {
+//            id: value.id,
+//            name: value.name,
+//        }
+//    }
+//}
+//
+//impl From<provider_types::Domain> for Domain {
+//    fn from(value: provider_types::Domain) -> Self {
+//        Self {
+//            id: value.id,
+//            name: value.name,
+//        }
+//    }
+//}
+//
+//impl From<ScopeProject> for provider_types::Project {
+//    fn from(value: ScopeProject) -> Self {
+//        Self {
+//            id: value.id,
+//            name: value.name,
+//            domain: value.domain.map(Into::into),
+//        }
+//    }
+//}
+//
+//impl From<provider_types::Project> for ScopeProject {
+//    fn from(value: provider_types::Project) -> Self {
+//        Self {
+//            id: value.id,
+//            name: value.name,
+//            domain: value.domain.map(Into::into),
+//        }
+//    }
+//}
+//
+//impl From<&provider_types::Project> for ScopeProject {
+//    fn from(value: &provider_types::Project) -> Self {
+//        Self::from(value.clone())
+//    }
+//}
+//
+//impl From<System> for provider_types::System {
+//    fn from(value: System) -> Self {
+//        Self { all: value.all }
+//    }
+//}
+//
+//impl From<Scope> for provider_types::Scope {
+//    fn from(value: Scope) -> Self {
+//        match value {
+//            Scope::Project(scope) => Self::Project(scope.into()),
+//            Scope::Domain(scope) => Self::Domain(scope.into()),
+//            Scope::System(scope) => Self::System(scope.into()),
+//        }
+//    }
+//}

@@ -30,9 +30,26 @@ pub async fn create<C>(
 where
     C: ConnectionTrait,
 {
-    Ok(user
-        .to_local_user_active_model(conf, main_record)?
-        .insert(db)
-        .await
-        .context("inserting new user record")?)
+    Ok(local_user::ActiveModel {
+        id: NotSet,
+        user_id: Set(main_record.id.clone()),
+        domain_id: Set(main_record.domain_id.clone()),
+        name: Set(user.name.clone()),
+        failed_auth_count: if main_record.enabled.is_some_and(|x| x)
+            && conf
+                .security_compliance
+                .disable_user_account_days_inactive
+                .is_some()
+        {
+            Set(Some(0))
+        } else {
+            NotSet
+        },
+        failed_auth_at: NotSet,
+    }
+    //user
+    //.to_local_user_active_model(conf, main_record)?
+    .insert(db)
+    .await
+    .context("inserting new user record")?)
 }

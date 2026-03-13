@@ -1,0 +1,279 @@
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+// SPDX-License-Identifier: Apache-2.0
+//! # Error
+//!
+//! Diverse errors that can occur during the Keystone processing (not the API).
+use thiserror::Error;
+
+use crate::application_credential::error::ApplicationCredentialProviderError;
+use crate::assignment::error::AssignmentProviderError;
+use crate::catalog::error::CatalogProviderError;
+use crate::federation::error::FederationProviderError;
+use crate::identity::error::IdentityProviderError;
+use crate::identity_mapping::error::IdentityMappingProviderError;
+use crate::k8s_auth::error::K8sAuthProviderError;
+use crate::policy::PolicyError;
+use crate::resource::error::ResourceProviderError;
+use crate::revoke::error::RevokeProviderError;
+use crate::role::error::RoleProviderError;
+use crate::token::TokenProviderError;
+use crate::trust::TrustProviderError;
+//use crate::webauthn::WebauthnError;
+
+/// Keystone error.
+#[derive(Debug, Error)]
+pub enum KeystoneError {
+    /// Application credential provider.
+    #[error(transparent)]
+    ApplicationCredential {
+        /// The source of the error.
+        #[from]
+        source: ApplicationCredentialProviderError,
+    },
+
+    /// Assignment provider.
+    #[error(transparent)]
+    AssignmentProvider {
+        /// The source of the error.
+        #[from]
+        source: AssignmentProviderError,
+    },
+
+    /// Catalog provider.
+    #[error(transparent)]
+    CatalogProvider {
+        /// The source of the error.
+        #[from]
+        source: CatalogProviderError,
+    },
+
+    /// Federation provider.
+    #[error(transparent)]
+    FederationProvider {
+        /// The source of the error.
+        #[from]
+        source: FederationProviderError,
+    },
+
+    /// Identity provider.
+    #[error(transparent)]
+    IdentityProvider {
+        /// The source of the error.
+        #[from]
+        source: IdentityProviderError,
+    },
+
+    /// Identity mapping provider.
+    #[error(transparent)]
+    IdentityMapping {
+        /// The source of the error.
+        #[from]
+        source: IdentityMappingProviderError,
+    },
+
+    /// IO error.
+    #[error(transparent)]
+    IO {
+        /// The source of the error.
+        #[from]
+        source: std::io::Error,
+    },
+
+    /// Json serialization error.
+    #[error("json serde error: {}", source)]
+    Json {
+        /// The source of the error.
+        #[from]
+        source: serde_json::Error,
+    },
+
+    /// K8s auth provider.
+    #[error(transparent)]
+    K8sAuthProvider {
+        /// The source of the error.
+        #[from]
+        source: K8sAuthProviderError,
+    },
+
+    /// Policy engine.
+    #[error(transparent)]
+    Policy {
+        /// The source of the error.
+        #[from]
+        source: PolicyError,
+    },
+
+    /// Policy engine is not available.
+    #[error("policy enforcement is requested, but not available with the enabled features")]
+    PolicyEnforcementNotAvailable,
+
+    /// Resource provider.
+    #[error(transparent)]
+    ResourceProvider {
+        /// The source of the error.
+        #[from]
+        source: ResourceProviderError,
+    },
+
+    /// Revoke provider error.
+    #[error(transparent)]
+    RevokeProvider {
+        /// The source of the error.
+        #[from]
+        source: RevokeProviderError,
+    },
+
+    /// Role provider.
+    #[error(transparent)]
+    RoleProvider {
+        /// The source of the error.
+        #[from]
+        source: RoleProviderError,
+    },
+
+    /// Token provider.
+    #[error(transparent)]
+    TokenProvider {
+        /// The source of the error.
+        #[from]
+        source: TokenProviderError,
+    },
+
+    /// Trust provider.
+    #[error(transparent)]
+    TrustProvider {
+        /// The source of the error.
+        #[from]
+        source: TrustProviderError,
+    },
+
+    /// Url parsing error.
+    #[error(transparent)]
+    UrlParse {
+        #[from]
+        source: url::ParseError,
+    },
+
+    #[error("provider error: {}", source)]
+    Provider {
+        #[source]
+        source: Box<dyn std::error::Error + Send + Sync + 'static>,
+    },
+    //    /// WebauthN error.
+    //    #[error(transparent)]
+    //    Webauthn {
+    //        /// The source of the error.
+    //        #[from]
+    //        source: WebauthnError,
+    //    },
+}
+
+/// Builder error.
+///
+/// A wrapper error that is used instead of the error generated by the
+/// `derive_builder`.
+#[derive(Debug, Error)]
+#[non_exhaustive]
+pub enum BuilderError {
+    /// Uninitialized field.
+    #[error("{0}")]
+    UninitializedField(String),
+    /// Custom validation error.
+    #[error("{0}")]
+    Validation(String),
+}
+
+impl From<String> for BuilderError {
+    fn from(s: String) -> Self {
+        Self::Validation(s)
+    }
+}
+
+impl From<openstack_keystone_api_types::error::BuilderError> for BuilderError {
+    fn from(value: openstack_keystone_api_types::error::BuilderError) -> Self {
+        match value {
+            openstack_keystone_api_types::error::BuilderError::UninitializedField(e) => {
+                Self::UninitializedField(e)
+            }
+            openstack_keystone_api_types::error::BuilderError::Validation(e) => Self::Validation(e),
+        }
+    }
+}
+
+impl From<derive_builder::UninitializedFieldError> for BuilderError {
+    fn from(ufe: derive_builder::UninitializedFieldError) -> Self {
+        Self::UninitializedField(ufe.to_string())
+    }
+}
+
+/// Context aware database error.
+#[derive(Debug, Error)]
+pub enum DatabaseError {
+    /// Conflict.
+    #[error("{message} while {context}")]
+    Conflict {
+        /// The error message.
+        message: String,
+        /// The error context.
+        context: String,
+    },
+
+    /// Database error.
+    #[error("Database error {source} while {context}")]
+    Database {
+        /// The source of the error.
+        source: sea_orm::DbErr,
+        /// The error context.
+        context: String,
+    },
+
+    /// SqlError.
+    #[error("{message} while {context}")]
+    Sql {
+        /// The error message.
+        message: String,
+        /// The error context.
+        context: String,
+    },
+}
+
+/// The trait wrapping the SQL error with the context information.
+pub trait DbContextExt<T> {
+    fn context(self, msg: impl Into<String>) -> Result<T, DatabaseError>;
+}
+
+impl<T> DbContextExt<T> for Result<T, sea_orm::DbErr> {
+    fn context(self, context: impl Into<String>) -> Result<T, DatabaseError> {
+        self.map_err(|err| match err.sql_err() {
+            Some(sea_orm::SqlErr::UniqueConstraintViolation(descr)) => DatabaseError::Conflict {
+                message: descr.to_string(),
+                context: context.into(),
+            },
+            Some(sea_orm::SqlErr::ForeignKeyConstraintViolation(descr)) => {
+                DatabaseError::Conflict {
+                    message: descr.to_string(),
+                    context: context.into(),
+                }
+            }
+            Some(other) => DatabaseError::Sql {
+                message: other.to_string(),
+                context: context.into(),
+            },
+            None => DatabaseError::Database {
+                source: err,
+                context: context.into(),
+            },
+        })
+    }
+}

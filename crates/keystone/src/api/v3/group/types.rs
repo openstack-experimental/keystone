@@ -12,58 +12,58 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use axum::{
-    Json,
-    http::StatusCode,
-    response::{IntoResponse, Response},
-};
+//use axum::{
+//    Json,
+//    http::StatusCode,
+//    response::{IntoResponse, Response},
+//};
 
 pub use openstack_keystone_api_types::v3::group::*;
 
-use crate::identity::types;
-
-impl From<types::Group> for Group {
-    fn from(value: types::Group) -> Self {
-        Self {
-            id: value.id,
-            domain_id: value.domain_id,
-            name: value.name,
-            description: value.description,
-            extra: value.extra,
-        }
-    }
-}
-
-impl From<GroupCreateRequest> for types::GroupCreate {
-    fn from(value: GroupCreateRequest) -> Self {
-        let group = value.group;
-        Self {
-            id: None,
-            name: group.name,
-            domain_id: group.domain_id,
-            extra: group.extra,
-            description: group.description,
-        }
-    }
-}
-
-impl IntoResponse for types::Group {
-    fn into_response(self) -> Response {
-        (
-            StatusCode::OK,
-            Json(GroupResponse {
-                group: Group::from(self),
-            }),
-        )
-            .into_response()
-    }
-}
-
-impl From<GroupListParameters> for types::GroupListParameters {
-    fn from(value: GroupListParameters) -> Self {
-        Self {
-            domain_id: value.domain_id,
-            name: value.name,
-        }
-    }
-}
+// use crate::identity::types;
+//
+// impl From<types::Group> for Group {
+//     fn from(value: types::Group) -> Self {
+//         Self {
+//             id: value.id,
+//             domain_id: value.domain_id,
+//             name: value.name,
+//             description: value.description,
+//             extra: value.extra,
+//         }
+//     }
+// }
+//
+// impl From<GroupCreateRequest> for types::GroupCreate {
+//     fn from(value: GroupCreateRequest) -> Self {
+//         let group = value.group;
+//         Self {
+//             id: None,
+//             name: group.name,
+//             domain_id: group.domain_id,
+//             extra: group.extra,
+//             description: group.description,
+//         }
+//     }
+// }
+//
+// impl IntoResponse for types::Group {
+//     fn into_response(self) -> Response {
+//         (
+//             StatusCode::OK,
+//             Json(GroupResponse {
+//                 group: Group::from(self),
+//             }),
+//         )
+//             .into_response()
+//     }
+// }
+//
+// impl From<GroupListParameters> for types::GroupListParameters {
+//     fn from(value: GroupListParameters) -> Self {
+//         Self {
+//             domain_id: value.domain_id,
+//             name: value.name,
+//         }
+//     }
+// }

@@ -27,7 +27,7 @@ use crate::api::KeystoneApiError;
 use crate::api::auth::Auth;
 use crate::identity::IdentityApi;
 use crate::webauthn::{
-    WebauthnApi,
+    WebauthnApi, WebauthnError,
     api::types::{CombinedExtensionState, register::*},
     types::{CredentialType, WebauthnCredential},
 };
@@ -94,7 +94,7 @@ pub(super) async fn finish(
         let passkey = match state
             .extension
             .webauthn
-            .finish_passkey_registration(&req.try_into()?, &s)
+            .finish_passkey_registration(&req.try_into().map_err(WebauthnError::from)?, &s)
         {
             Ok(sk) => {
                 let cred = WebauthnCredential {

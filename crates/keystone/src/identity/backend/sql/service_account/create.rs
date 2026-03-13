@@ -16,14 +16,44 @@ use chrono::{DateTime, Utc};
 use sea_orm::DatabaseConnection;
 use sea_orm::TransactionTrait;
 use sea_orm::entity::*;
+use uuid::Uuid;
 
 use crate::config::Config;
+use crate::db::entity::user as db_user;
 use crate::error::DbContextExt;
 use crate::identity::{
     IdentityProviderError,
     backend::sql::{nonlocal_user, user_option},
     types::*,
 };
+use openstack_keystone_core::identity::types::get_user_last_active_at;
+
+impl db_user::ActiveModel {
+    fn from_sa_create(
+        user: &ServiceAccountCreate,
+        conf: &Config,
+        created_at: Option<DateTime<Utc>>,
+    ) -> Result<Self, IdentityProviderError> {
+        let created_at = created_at.unwrap_or_else(Utc::now).naive_utc();
+
+        Ok(db_user::ActiveModel {
+            id: Set(user
+                .id
+                .clone()
+                .unwrap_or(Uuid::new_v4().simple().to_string())),
+            enabled: Set(Some(user.enabled.unwrap_or(true))),
+            extra: Set(Some("{}".to_string())),
+            default_project_id: NotSet,
+            // Set last_active to now if compliance disabling is on
+            last_active_at: get_user_last_active_at(conf, user.enabled, created_at)
+                .map(Set)
+                .unwrap_or(NotSet)
+                .into(),
+            created_at: Set(Some(created_at)),
+            domain_id: Set(user.domain_id.clone()),
+        })
+    }
+}
 
 /// Create a service account.
 ///
@@ -43,8 +73,7 @@ pub async fn create(
         .await
         .context("starting transaction for persisting service account")?;
 
-    let main_entry = sa
-        .to_user_active_model(conf, created_at)?
+    let main_entry = db_user::ActiveModel::from_sa_create(&sa, conf, created_at)?
         .insert(&txn)
         .await
         .context("inserting main user for the service account entry")?;
@@ -79,6 +108,25 @@ mod tests {
 
     use super::*;
     use crate::db::entity::{nonlocal_user, user};
+
+    #[test]
+    fn test_active_record_from_sa_create() {
+        let now = Utc::now();
+        let req = ServiceAccountCreate {
+            domain_id: "did".into(),
+            enabled: Some(true),
+            id: Some("said".into()),
+            name: "sa_name".into(),
+        };
+        let cfg = Config::default();
+        let sot = db_user::ActiveModel::from_sa_create(&req, &cfg, Some(now)).unwrap();
+        assert_eq!(sot.default_project_id, NotSet);
+        assert_eq!(sot.domain_id, Set("did".into()));
+        assert_eq!(sot.enabled, Set(Some(true)));
+        assert_eq!(sot.extra, Set(Some("{}".into())));
+        assert_eq!(sot.id, Set("said".into()));
+        assert_eq!(sot.last_active_at, NotSet);
+    }
 
     #[tokio::test]
     async fn test_create() {

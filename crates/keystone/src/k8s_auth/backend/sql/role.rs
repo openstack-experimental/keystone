@@ -276,7 +276,7 @@ pub(crate) mod tests {
             name: "name".into(),
             token_restriction_id: "trid".into(),
         };
-        let update = sot.into_active_model_update(crate::k8s_auth::K8sAuthRoleUpdate {
+        let update = sot.into_active_model_update(K8sAuthRoleUpdate {
             bound_audience: Some("new_aud".into()),
             bound_service_account_names: Some(vec!["c".into()]),
             bound_service_account_namespaces: Some(vec!["nc".into()]),

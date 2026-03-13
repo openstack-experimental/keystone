@@ -15,56 +15,56 @@
 
 pub use openstack_keystone_api_types::v3::project::*;
 
-use crate::resource::types as provider_types;
-
-impl From<provider_types::Project> for ProjectShort {
-    fn from(value: provider_types::Project) -> Self {
-        Self {
-            domain_id: value.domain_id,
-            enabled: value.enabled,
-            id: value.id,
-            name: value.name,
-        }
-    }
-}
-
-impl From<&provider_types::Project> for ProjectShort {
-    fn from(value: &provider_types::Project) -> Self {
-        Self {
-            domain_id: value.domain_id.clone(),
-            enabled: value.enabled,
-            id: value.id.clone(),
-            name: value.name.clone(),
-        }
-    }
-}
-
-impl From<provider_types::Project> for Project {
-    fn from(value: provider_types::Project) -> Self {
-        Self {
-            description: value.description,
-            domain_id: value.domain_id,
-            enabled: value.enabled,
-            extra: value.extra,
-            id: value.id,
-            is_domain: value.is_domain,
-            name: value.name,
-            parent_id: value.parent_id,
-        }
-    }
-}
-
-impl From<ProjectCreate> for provider_types::ProjectCreate {
-    fn from(value: ProjectCreate) -> Self {
-        Self {
-            description: value.description,
-            domain_id: value.domain_id,
-            enabled: value.enabled,
-            extra: value.extra,
-            id: None,
-            is_domain: value.is_domain,
-            name: value.name,
-            parent_id: value.parent_id,
-        }
-    }
-}
+//use crate::resource::types as provider_types;
+//
+//impl From<provider_types::Project> for ProjectShort {
+//    fn from(value: provider_types::Project) -> Self {
+//        Self {
+//            domain_id: value.domain_id,
+//            enabled: value.enabled,
+//            id: value.id,
+//            name: value.name,
+//        }
+//    }
+//}
+//
+//impl From<&provider_types::Project> for ProjectShort {
+//    fn from(value: &provider_types::Project) -> Self {
+//        Self {
+//            domain_id: value.domain_id.clone(),
+//            enabled: value.enabled,
+//            id: value.id.clone(),
+//            name: value.name.clone(),
+//        }
+//    }
+//}
+//
+//impl From<provider_types::Project> for Project {
+//    fn from(value: provider_types::Project) -> Self {
+//        Self {
+//            description: value.description,
+//            domain_id: value.domain_id,
+//            enabled: value.enabled,
+//            extra: value.extra,
+//            id: value.id,
+//            is_domain: value.is_domain,
+//            name: value.name,
+//            parent_id: value.parent_id,
+//        }
+//    }
+//}
+//
+//impl From<ProjectCreate> for provider_types::ProjectCreate {
+//    fn from(value: ProjectCreate) -> Self {
+//        Self {
+//            description: value.description,
+//            domain_id: value.domain_id,
+//            enabled: value.enabled,
+//            extra: value.extra,
+//            id: None,
+//            is_domain: value.is_domain,
+//            name: value.name,
+//            parent_id: value.parent_id,
+//        }
+//    }
+//}

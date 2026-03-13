@@ -1,0 +1,67 @@
+[package]
+name = "openstack-keystone-core"
+description = "OpenStack Keystone service"
+version = "0.1.1"
+rust-version.workspace = true
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+#[package.metadata.clippy]
+#warn = ["clippy::unused_results"]
+
+[dependencies]
+async-trait.workspace = true
+axum = { workspace = true }
+base64.workspace = true
+bcrypt = { workspace = true, features = ["alloc"] }
+byteorder.workspace = true
+bytes.workspace = true
+chrono.workspace = true
+config = { workspace = true, features = ["async", "ini"] }
+derive_builder.workspace = true
+eyre.workspace = true
+fernet = { workspace = true, features = ["rustcrypto"] }
+futures-util.workspace = true
+itertools.workspace = true
+jsonwebtoken = { version = "10.3", features = ["rust_crypto"] }
+openstack-keystone-api-types = { version = "0.1", path = "../api-types/"}
+mockall = { workspace = true, optional = true }
+nix = { workspace = true, features = ["fs", "user"] }
+rand.workspace = true
+regex.workspace = true
+reqwest = { workspace = true, features = ["json", "http2", "gzip", "deflate"] }
+rmp.workspace = true
+schemars.workspace = true
+scopeguard.workspace = true
+sea-orm.workspace = true
+secrecy = { workspace = true, features = ["serde"] }
+serde.workspace = true
+serde_json.workspace = true
+serde_urlencoded.workspace = true
+tempfile.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true , features = ["fs"]}
+tracing.workspace = true
+url = { workspace = true, features = ["serde"] }
+url-macro.workspace = true
+uuid = { workspace = true, features = ["v4"] }
+validator = { workspace = true, features = ["derive"] }
+webauthn-rs = { workspace = true, features = ["danger-allow-state-serialisation"] }
+cfg-if = "1.0.4"
+
+[dev-dependencies]
+base64urlsafedata.workspace = true
+httpmock = { version = "0.8", features = ["http2"] }
+mockall.workspace = true
+rstest.workspace = true
+sea-orm = { workspace = true, features = ["mock" ]}
+tempfile.workspace = true
+tracing-test = { workspace = true, features = ["no-env-filter"] }
+url.workspace = true
+
+[features]
+default = []
+bench_internals = []
+mock = ["dep:mockall"]

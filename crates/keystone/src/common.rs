@@ -12,5 +12,4 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //! # Common functionality
-pub mod password_hashing;
-pub mod types;
+pub use openstack_keystone_core::common::*;
