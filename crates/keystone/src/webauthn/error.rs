@@ -15,6 +15,7 @@
 use thiserror::Error;
 
 use crate::error::DatabaseError;
+use crate::error::KeystoneError;
 
 /// WebAuthN extension error.
 #[derive(Error, Debug)]
@@ -86,4 +87,12 @@ pub enum WebauthnError {
         #[from]
         source: webauthn_rs::prelude::WebauthnError,
     },
+}
+
+impl From<WebauthnError> for KeystoneError {
+    fn from(value: WebauthnError) -> Self {
+        Self::Provider {
+            source: Box::new(value),
+        }
+    }
 }

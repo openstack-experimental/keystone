@@ -11,25 +11,4 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-use crate::trust::types::Trust;
-
 pub use openstack_keystone_api_types::trust::*;
-
-impl From<&Trust> for TokenTrustRepr {
-    fn from(value: &Trust) -> Self {
-        Self {
-            expires_at: value.expires_at,
-            id: value.id.clone(),
-            impersonation: value.impersonation,
-            remaining_uses: value.remaining_uses,
-            redelegated_trust_id: value.redelegated_trust_id.clone(),
-            redelegation_count: value.redelegation_count,
-            trustor_user: TokenTrustUser {
-                id: value.trustor_user_id.clone(),
-            },
-            trustee_user: TokenTrustUser {
-                id: value.trustee_user_id.clone(),
-            },
-        }
-    }
-}

@@ -69,7 +69,7 @@ pub async fn finish(
         match state
             .extension
             .webauthn
-            .finish_passkey_authentication(&req.try_into()?, &s)
+            .finish_passkey_authentication(&req.try_into().map_err(WebauthnError::from)?, &s)
         {
             Ok(auth_result) => {
                 // As per https://www.w3.org/TR/webauthn-3/#sctn-verifying-assertion 21:
@@ -159,7 +159,8 @@ pub async fn finish(
     )?;
 
     let api_token = TokenResponse {
-        token: token.build_api_token_v4(&state.core).await?,
+        token: crate::api::v4::auth::token::token_impl::build_api_token_v4(&token, &state.core)
+            .await?,
     };
     Ok((
         StatusCode::OK,

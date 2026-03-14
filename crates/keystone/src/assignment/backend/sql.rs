@@ -154,7 +154,7 @@ mod tests {
     use super::*;
     use crate::config::Config;
     use crate::keystone::Service;
-    use crate::policy::MockPolicyEnforcer;
+    use crate::policy::MockPolicy;
     use crate::provider::Provider;
     use crate::role::{MockRoleProvider, types::Role};
 
@@ -164,7 +164,7 @@ mod tests {
                 Config::default(),
                 db,
                 provider,
-                MockPolicyEnforcer::default(),
+                Arc::new(MockPolicy::default()),
             )
             .unwrap(),
         )

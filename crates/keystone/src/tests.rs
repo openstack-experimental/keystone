@@ -12,25 +12,26 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //! # Test related functionality
-use sea_orm::DatabaseConnection;
-use std::sync::Arc;
+//pub use openstack_keystone_core::tests::*;
+//use sea_orm::DatabaseConnection;
+//use std::sync::Arc;
 
-use crate::config::Config;
-use crate::keystone::Service;
-use crate::policy::MockPolicyEnforcer;
-use crate::provider::Provider;
-
-pub(crate) mod api;
-pub(crate) mod token;
-
-pub fn get_state_mock() -> Arc<Service> {
-    Arc::new(
-        Service::new(
-            Config::default(),
-            DatabaseConnection::Disconnected,
-            Provider::mocked_builder().build().unwrap(),
-            MockPolicyEnforcer::default(),
-        )
-        .unwrap(),
-    )
-}
+//use crate::config::Config;
+//use crate::keystone::Service;
+//use crate::policy::MockPolicyEnforcer;
+//use crate::provider::Provider;
+//
+//pub(crate) mod api;
+//pub(crate) mod token;
+//
+//pub fn get_state_mock() -> Arc<Service> {
+//    Arc::new(
+//        Service::new(
+//            Config::default(),
+//            DatabaseConnection::Disconnected,
+//            Provider::mocked_builder().build().unwrap(),
+//            MockPolicyEnforcer::default(),
+//        )
+//        .unwrap(),
+//    )
+//}

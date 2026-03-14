@@ -34,8 +34,14 @@ pub(super) fn is_password_expired(
     Ok(false)
 }
 
-impl UserResponseBuilder {
-    pub fn merge_passwords_data<I>(&mut self, passwords: I) -> &mut Self
+pub trait MergePasswordData {
+    fn merge_passwords_data<I>(&mut self, passwords: I) -> &mut Self
+    where
+        I: IntoIterator<Item = db_password::Model>;
+}
+
+impl MergePasswordData for UserResponseBuilder {
+    fn merge_passwords_data<I>(&mut self, passwords: I) -> &mut Self
     where
         I: IntoIterator<Item = db_password::Model>,
     {

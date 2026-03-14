@@ -17,8 +17,9 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use super::super::types::*;
 use crate::keystone::ServiceState;
-use crate::role::backend::RoleCreate;
-use crate::role::{RoleProviderError, backend::RoleBackend};
+use crate::role::RoleProviderError;
+use crate::role::types::RoleCreate;
+use openstack_keystone_core::role::backend::RoleBackend;
 
 pub(crate) mod implied_role;
 pub(crate) mod role;

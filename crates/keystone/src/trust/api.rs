@@ -13,5 +13,4 @@
 // SPDX-License-Identifier: Apache-2.0
 //! # Trust API
 
-pub mod error;
 pub mod types;

@@ -30,6 +30,7 @@ use axum::{
 use serde_json::{json, to_value};
 use tracing::error;
 
+use super::token_impl::build_api_token_v3;
 use crate::api::v3::auth::token::types::{TokenResponse, ValidateTokenParameters};
 use crate::api::{Catalog, CatalogService, auth::Auth, error::KeystoneApiError};
 use crate::catalog::CatalogApi;
@@ -96,7 +97,7 @@ pub(super) async fn show(
         .await?;
 
     //// Expand the token since we didn't expand it before.
-    let mut response_token = token.build_api_token_v3(&state).await?;
+    let mut response_token = build_api_token_v3(&token, &state).await?;
 
     if !query.nocatalog.is_some_and(|x| x) {
         let catalog: Catalog = Catalog(

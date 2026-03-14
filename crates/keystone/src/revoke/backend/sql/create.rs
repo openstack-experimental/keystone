@@ -13,13 +13,14 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Create a token revocation record.
 
+use openstack_keystone_core::revoke::RevokeProviderError;
 use sea_orm::DatabaseConnection;
 use sea_orm::entity::*;
 
 use super::{RevocationEvent, RevocationEventCreate};
 use crate::db::entity::revocation_event as db_revocation_event;
 use crate::error::DbContextExt;
-use crate::revoke::backend::error::RevokeDatabaseError;
+//use crate::revoke::backend::error::RevokeDatabaseError;
 
 /// Create token revocation record.
 ///
@@ -27,8 +28,8 @@ use crate::revoke::backend::error::RevokeDatabaseError;
 pub async fn create(
     db: &DatabaseConnection,
     revocation: RevocationEventCreate,
-) -> Result<RevocationEvent, RevokeDatabaseError> {
-    db_revocation_event::ActiveModel {
+) -> Result<RevocationEvent, RevokeProviderError> {
+    Ok(db_revocation_event::ActiveModel {
         id: NotSet,
         access_token_id: revocation
             .access_token_id
@@ -84,7 +85,7 @@ pub async fn create(
     .insert(db)
     .await
     .context("creating token revocation event")?
-    .try_into()
+    .into())
 }
 
 #[cfg(test)]

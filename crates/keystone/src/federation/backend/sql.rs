@@ -14,8 +14,10 @@
 
 use async_trait::async_trait;
 
+use openstack_keystone_core::federation::backend::FederationBackend;
+
 use super::super::types::*;
-use crate::federation::{FederationProviderError, backend::FederationBackend};
+use crate::federation::FederationProviderError;
 use crate::keystone::ServiceState;
 
 mod auth_state;

@@ -27,12 +27,6 @@ mod get;
 mod list;
 mod update;
 
-//use create::create;
-//use delete::delete;
-//use get::get;
-//use list::list;
-//use update::update;
-
 #[derive(Default)]
 pub struct SqlBackend {}
 
@@ -101,13 +95,26 @@ impl From<token_restriction::Model> for TokenRestriction {
     }
 }
 
-impl
-    From<(
-        token_restriction::Model,
-        Vec<token_restriction_role_association::Model>,
-    )> for TokenRestriction
-{
-    fn from(
+pub trait FromModelWithRoleAssociation {
+    fn from_model_with_ra(
+        value: (
+            token_restriction::Model,
+            Vec<token_restriction_role_association::Model>,
+        ),
+    ) -> Self;
+    //fn from_model_with_ra_and_role(
+    //    value: (
+    //        token_restriction::Model,
+    //        Vec<(
+    //            token_restriction_role_association::Model,
+    //            Option<role::Model>,
+    //        )>,
+    //    ),
+    //) -> Self;
+}
+
+impl FromModelWithRoleAssociation for TokenRestriction {
+    fn from_model_with_ra(
         value: (
             token_restriction::Model,
             Vec<token_restriction_role_association::Model>,
@@ -119,27 +126,26 @@ impl
     }
 }
 
-impl
-    From<(
-        token_restriction::Model,
-        Vec<(
+pub trait FromModelWithRoleAssociationAndRoles {
+    fn from_model_with_ra_and_roles(
+        tr_model: token_restriction::Model,
+        roles: Vec<(
             token_restriction_role_association::Model,
             Option<role::Model>,
         )>,
-    )> for TokenRestriction
-{
-    fn from(
-        value: (
-            token_restriction::Model,
-            Vec<(
-                token_restriction_role_association::Model,
-                Option<role::Model>,
-            )>,
-        ),
+    ) -> Self;
+}
+
+impl FromModelWithRoleAssociationAndRoles for TokenRestriction {
+    fn from_model_with_ra_and_roles(
+        tr_model: token_restriction::Model,
+        roles: Vec<(
+            token_restriction_role_association::Model,
+            Option<role::Model>,
+        )>,
     ) -> Self {
-        let mut restriction: TokenRestriction = value.0.into();
-        let roles: Vec<crate::role::types::RoleRef> = value
-            .1
+        let mut restriction: TokenRestriction = tr_model.into();
+        let roles: Vec<crate::role::types::RoleRef> = roles
             .into_iter()
             .filter_map(|(_a, r)| r)
             .map(|role| crate::role::types::RoleRef {
@@ -151,6 +157,18 @@ impl
         restriction.role_ids = roles.iter().map(|role| role.id.clone()).collect();
         restriction.roles = Some(roles);
         restriction
+    }
+}
+
+impl From<crate::error::DatabaseError> for TokenProviderError {
+    fn from(source: crate::error::DatabaseError) -> Self {
+        match source {
+            cfl @ crate::error::DatabaseError::Conflict { .. } => Self::Conflict {
+                message: cfl.to_string(),
+                context: String::new(),
+            },
+            other => Self::Driver(other.to_string()),
+        }
     }
 }
 

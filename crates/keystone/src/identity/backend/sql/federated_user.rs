@@ -21,8 +21,14 @@ mod find;
 pub use create::create;
 pub use find::find_by_idp_and_unique_id;
 
-impl UserResponseBuilder {
-    pub fn merge_federated_user_data<I>(&mut self, data: I) -> &mut Self
+pub trait MergeFederatedUserData {
+    fn merge_federated_user_data<I>(&mut self, data: I) -> &mut Self
+    where
+        I: IntoIterator<Item = db_federated_user::Model>;
+}
+
+impl MergeFederatedUserData for UserResponseBuilder {
+    fn merge_federated_user_data<I>(&mut self, data: I) -> &mut Self
     where
         I: IntoIterator<Item = db_federated_user::Model>,
     {

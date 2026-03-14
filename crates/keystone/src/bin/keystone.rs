@@ -51,8 +51,8 @@ use openstack_keystone::config::Config;
 use openstack_keystone::federation::FederationApi;
 use openstack_keystone::keystone::{Service, ServiceState};
 use openstack_keystone::plugin_manager::PluginManager;
-use openstack_keystone::policy::PolicyEnforcer;
-use openstack_keystone::provider::Provider;
+use openstack_keystone::policy::HttpPolicyEnforcer;
+use openstack_keystone::provider::{Provider, register_default_backend_plugins};
 use openstack_keystone::webauthn;
 use openstack_keystone_distributed_storage::app::get_app_server;
 
@@ -197,16 +197,13 @@ async fn main() -> Result<(), Report> {
 
     let mut plugin_manager = PluginManager::default();
 
-    plugin_manager.register_token_restriction_backend(
-        "sql",
-        Arc::new(openstack_keystone::token::token_restriction::SqlBackend::default()),
-    );
+    register_default_backend_plugins(&mut plugin_manager);
 
     let provider = Provider::new(cfg.clone(), plugin_manager)?;
 
-    let policy = PolicyEnforcer::http(cfg.api_policy.opa_base_url.clone()).await?;
+    let policy = HttpPolicyEnforcer::new(cfg.api_policy.opa_base_url.clone()).await?;
 
-    let shared_state = Arc::new(Service::new(cfg.clone(), conn, provider, policy)?);
+    let shared_state = Arc::new(Service::new(cfg.clone(), conn, provider, Arc::new(policy))?);
 
     spawn(cleanup(cloned_token, shared_state.clone()));
 

@@ -18,6 +18,7 @@ use sea_orm::entity::*;
 use crate::db::entity::prelude::UserOption as DbUserOption;
 use crate::db::entity::user_option as db_user_option;
 use crate::error::DbContextExt;
+use crate::identity::backend::sql::user_option::UserOptionIntoModelIterator;
 use crate::identity::{IdentityProviderError, types::UserOptions};
 
 /// Persist user options.

@@ -19,7 +19,7 @@ use super::RevokeBackend;
 use crate::db::entity::revocation_event as db_revocation_event;
 use crate::keystone::ServiceState;
 use crate::revoke::RevokeProviderError;
-use crate::revoke::backend::error::RevokeDatabaseError;
+//use crate::revoke::backend::error::RevokeDatabaseError;
 use crate::revoke::types::*;
 use crate::token::types::Token;
 
@@ -30,10 +30,28 @@ mod list;
 #[derive(Default)]
 pub struct SqlBackend {}
 
-impl TryFrom<db_revocation_event::Model> for RevocationEvent {
-    type Error = RevokeDatabaseError;
-    fn try_from(value: db_revocation_event::Model) -> Result<Self, Self::Error> {
-        Ok(Self {
+//impl TryFrom<db_revocation_event::Model> for RevocationEvent {
+//    type Error = RevokeDatabaseError;
+//    fn try_from(value: db_revocation_event::Model) -> Result<Self, Self::Error> {
+//        Ok(Self {
+//            domain_id: value.domain_id,
+//            project_id: value.project_id,
+//            user_id: value.user_id,
+//            role_id: value.role_id,
+//            trust_id: value.trust_id,
+//            consumer_id: value.consumer_id,
+//            access_token_id: value.access_token_id,
+//            issued_before: value.issued_before.and_utc(),
+//            expires_at: value.expires_at.map(|expires_at| expires_at.and_utc()),
+//            revoked_at: value.revoked_at.and_utc(),
+//            audit_id: value.audit_id,
+//            audit_chain_id: value.audit_chain_id,
+//        })
+//    }
+//}
+impl From<db_revocation_event::Model> for RevocationEvent {
+    fn from(value: db_revocation_event::Model) -> Self {
+        Self {
             domain_id: value.domain_id,
             project_id: value.project_id,
             user_id: value.user_id,
@@ -46,7 +64,7 @@ impl TryFrom<db_revocation_event::Model> for RevocationEvent {
             revoked_at: value.revoked_at.and_utc(),
             audit_id: value.audit_id,
             audit_chain_id: value.audit_chain_id,
-        })
+        }
     }
 }
 
@@ -90,6 +108,15 @@ impl RevokeBackend for SqlBackend {
         Ok(create::create(&state.db, token.try_into()?)
             .await
             .map(|_| ())?)
+    }
+}
+
+impl From<crate::error::DatabaseError> for RevokeProviderError {
+    fn from(source: crate::error::DatabaseError) -> Self {
+        match source {
+            cfl @ crate::error::DatabaseError::Conflict { .. } => Self::Conflict(cfl.to_string()),
+            other => Self::Driver(other.to_string()),
+        }
     }
 }
 

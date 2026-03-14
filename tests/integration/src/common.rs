@@ -32,9 +32,9 @@ use openstack_keystone::db::entity::{local_user, project, user};
 use openstack_keystone::identity::{IdentityApi, types::*};
 use openstack_keystone::keystone::Service;
 use openstack_keystone::plugin_manager::PluginManager;
-use openstack_keystone::policy::PolicyEnforcer;
 use openstack_keystone::provider::Provider;
 use openstack_keystone::role::{RoleApi, types::RoleCreate};
+use openstack_keystone_core::policy::MockPolicy;
 
 /// Create table with the related types and indexes (when known)
 async fn create_table<C, E>(conn: &C, schema: &Schema, entity: E) -> Result<()>
@@ -247,7 +247,12 @@ pub async fn get_state() -> Result<(Arc<Service>, TempDir)> {
     let plugin_manager = PluginManager::default();
     let provider = Provider::new(cfg.clone(), plugin_manager)?;
 
-    let state = Arc::new(Service::new(cfg, db, provider, PolicyEnforcer::default())?);
+    let state = Arc::new(Service::new(
+        cfg,
+        db,
+        provider,
+        Arc::new(MockPolicy::default()),
+    )?);
 
     Ok((state, tmp_fernet_repo))
 }
