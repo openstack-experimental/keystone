@@ -91,7 +91,12 @@ mod tests {
                 }])
             });
 
-        let state = get_mocked_state(Provider::mocked_builder().role(role_mock), true, None, None);
+        let state = get_mocked_state(
+            Provider::mocked_builder().mock_role(role_mock),
+            true,
+            None,
+            None,
+        );
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -140,7 +145,12 @@ mod tests {
             })
             .returning(|_, _| Ok(Vec::new()));
 
-        let state = get_mocked_state(Provider::mocked_builder().role(role_mock), true, None, None);
+        let state = get_mocked_state(
+            Provider::mocked_builder().mock_role(role_mock),
+            true,
+            None,
+            None,
+        );
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())

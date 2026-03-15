@@ -21,8 +21,12 @@ mod get;
 pub use create::create;
 pub use get::*;
 
-impl UserResponseBuilder {
-    pub fn merge_nonlocal_user_data(&mut self, data: &db_nonlocal_user::Model) -> &mut Self {
+pub trait MergeNonlocalUserData {
+    fn merge_nonlocal_user_data(&mut self, data: &db_nonlocal_user::Model) -> &mut Self;
+}
+
+impl MergeNonlocalUserData for UserResponseBuilder {
+    fn merge_nonlocal_user_data(&mut self, data: &db_nonlocal_user::Model) -> &mut Self {
         self.name(data.name.clone());
         self
     }

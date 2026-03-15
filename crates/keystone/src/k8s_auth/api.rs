@@ -22,8 +22,6 @@ use utoipa_axum::router::OpenApiRouter;
 use crate::keystone::ServiceState;
 
 pub mod auth;
-//mod common;
-pub mod error;
 pub mod instance;
 pub mod role;
 pub mod types;

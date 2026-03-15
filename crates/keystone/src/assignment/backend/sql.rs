@@ -154,7 +154,7 @@ mod tests {
     use super::*;
     use crate::config::Config;
     use crate::keystone::Service;
-    use crate::policy::MockPolicyEnforcer;
+    use crate::policy::MockPolicy;
     use crate::provider::Provider;
     use crate::role::{MockRoleProvider, types::Role};
 
@@ -164,7 +164,7 @@ mod tests {
                 Config::default(),
                 db,
                 provider,
-                MockPolicyEnforcer::default(),
+                Arc::new(MockPolicy::default()),
             )
             .unwrap(),
         )
@@ -188,7 +188,10 @@ mod tests {
                     ..Default::default()
                 }])
             });
-        let provider = Provider::mocked_builder().role(role_mock).build().unwrap();
+        let provider = Provider::mocked_builder()
+            .mock_role(role_mock)
+            .build()
+            .unwrap();
 
         let state = get_mock_state(db, provider);
 
@@ -263,7 +266,10 @@ mod tests {
                     },
                 ])
             });
-        let provider = Provider::mocked_builder().role(role_mock).build().unwrap();
+        let provider = Provider::mocked_builder()
+            .mock_role(role_mock)
+            .build()
+            .unwrap();
 
         let state = get_mock_state(db, provider);
 
@@ -335,7 +341,10 @@ mod tests {
                     },
                 ])
             });
-        let provider = Provider::mocked_builder().role(role_mock).build().unwrap();
+        let provider = Provider::mocked_builder()
+            .mock_role(role_mock)
+            .build()
+            .unwrap();
 
         let state = get_mock_state(db, provider);
 

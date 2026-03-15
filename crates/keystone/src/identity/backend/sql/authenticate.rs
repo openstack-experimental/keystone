@@ -23,6 +23,9 @@ use crate::auth::{AuthenticatedInfo, AuthenticationError};
 use crate::common::password_hashing;
 use crate::config::Config;
 use crate::db::entity::{local_user as db_local_user, password as db_password};
+use crate::identity::backend::sql::local_user::MergeLocalUserData;
+use crate::identity::backend::sql::password::MergePasswordData;
+use crate::identity::backend::sql::user::MergeUserData;
 use crate::identity::{
     IdentityProviderError,
     backend::sql::password,

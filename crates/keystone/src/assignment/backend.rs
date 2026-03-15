@@ -14,54 +14,5 @@
 
 pub mod sql;
 
-use async_trait::async_trait;
-
-use crate::assignment::AssignmentProviderError;
-use crate::keystone::ServiceState;
-
-use crate::assignment::types::assignment::*;
+pub use openstack_keystone_core::assignment::backend::AssignmentBackend;
 pub use sql::SqlBackend;
-
-#[cfg_attr(test, mockall::automock)]
-#[async_trait]
-pub trait AssignmentBackend: Send + Sync {
-    /// Check assignment grant.
-    async fn check_grant(
-        &self,
-        state: &ServiceState,
-        params: &Assignment,
-    ) -> Result<bool, AssignmentProviderError>;
-
-    /// Create assignment grant.
-    async fn create_grant(
-        &self,
-        state: &ServiceState,
-        params: AssignmentCreate,
-    ) -> Result<Assignment, AssignmentProviderError>;
-
-    /// List Role assignments
-    async fn list_assignments(
-        &self,
-        state: &ServiceState,
-        params: &RoleAssignmentListParameters,
-    ) -> Result<Vec<Assignment>, AssignmentProviderError>;
-
-    /// List all role assignments for multiple actors on multiple targets
-    ///
-    /// It is a naive interpretation of the effective role assignments where we
-    /// check all roles assigned to the user (including groups) on a
-    /// concrete target (including all higher targets the role can be
-    /// inherited from)
-    async fn list_assignments_for_multiple_actors_and_targets(
-        &self,
-        state: &ServiceState,
-        params: &RoleAssignmentListForMultipleActorTargetParameters,
-    ) -> Result<Vec<Assignment>, AssignmentProviderError>;
-
-    /// Revoke assignment grant.
-    async fn revoke_grant(
-        &self,
-        state: &ServiceState,
-        params: &Assignment,
-    ) -> Result<(), AssignmentProviderError>;
-}

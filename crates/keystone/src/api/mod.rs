@@ -129,7 +129,7 @@ pub(crate) mod tests {
     use crate::config::Config;
     use crate::identity::types::UserResponseBuilder;
     use crate::keystone::{Service, ServiceState};
-    use crate::policy::{MockPolicyEnforcer, PolicyError, PolicyEvaluationResult};
+    use crate::policy::{MockPolicy, PolicyError, PolicyEvaluationResult};
     use crate::provider::ProviderBuilder;
     use crate::token::{MockTokenProvider, Token, UnscopedPayload};
 
@@ -164,14 +164,14 @@ pub(crate) mod tests {
                         ..Default::default()
                     }))
                 });
-            provider_builder.token(token_mock)
+            provider_builder.mock_token(token_mock)
         } else {
             provider_builder
         }
         .build()
         .unwrap();
 
-        let mut policy_enforcer_mock = MockPolicyEnforcer::default();
+        let mut policy_enforcer_mock = MockPolicy::default();
 
         policy_enforcer_mock
             .expect_enforce()
@@ -192,7 +192,7 @@ pub(crate) mod tests {
                 Config::default(),
                 DatabaseConnection::Disconnected,
                 provider,
-                policy_enforcer_mock,
+                Arc::new(policy_enforcer_mock),
             )
             .unwrap(),
         )

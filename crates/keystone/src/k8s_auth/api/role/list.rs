@@ -210,7 +210,7 @@ mod tests {
                 }])
             });
 
-        provider = provider.k8s_auth(mock);
+        provider = provider.mock_k8s_auth(mock);
         let state = get_mocked_state(provider, true, None, None);
 
         // Nested style
@@ -327,7 +327,7 @@ mod tests {
                 }])
             });
 
-        provider = provider.k8s_auth(mock);
+        provider = provider.mock_k8s_auth(mock);
         let state = get_mocked_state(provider, true, None, None);
 
         let mut api = openapi_router()

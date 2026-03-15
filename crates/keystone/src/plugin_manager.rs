@@ -23,22 +23,37 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::application_credential::backend::ApplicationCredentialBackend;
-use crate::assignment::backend::AssignmentBackend;
-use crate::catalog::backend::CatalogBackend;
-use crate::federation::backend::FederationBackend;
-use crate::identity::backend::IdentityBackend;
-use crate::identity_mapping::backend::IdentityMappingBackend;
-use crate::k8s_auth::backend::K8sAuthBackend;
-use crate::resource::backend::ResourceBackend;
-use crate::revoke::backend::RevokeBackend;
-use crate::role::backend::RoleBackend;
-use crate::token::backend::TokenRestrictionBackend;
-use crate::trust::backend::TrustBackend;
+use openstack_keystone_core::application_credential::{
+    ApplicationCredentialProviderError, backend::ApplicationCredentialBackend,
+};
+use openstack_keystone_core::assignment::backend::AssignmentBackend;
+use openstack_keystone_core::assignment::error::AssignmentProviderError;
+use openstack_keystone_core::catalog::backend::CatalogBackend;
+use openstack_keystone_core::catalog::error::CatalogProviderError;
+use openstack_keystone_core::federation::backend::FederationBackend;
+use openstack_keystone_core::federation::error::FederationProviderError;
+use openstack_keystone_core::identity::backend::IdentityBackend;
+use openstack_keystone_core::identity::error::IdentityProviderError;
+use openstack_keystone_core::identity_mapping::IdentityMappingProviderError;
+use openstack_keystone_core::identity_mapping::backend::IdentityMappingBackend;
+use openstack_keystone_core::k8s_auth::K8sAuthProviderError;
+use openstack_keystone_core::k8s_auth::backend::K8sAuthBackend;
+use openstack_keystone_core::resource::backend::ResourceBackend;
+use openstack_keystone_core::resource::error::ResourceProviderError;
+use openstack_keystone_core::revoke::RevokeProviderError;
+use openstack_keystone_core::revoke::backend::RevokeBackend;
+use openstack_keystone_core::role::RoleProviderError;
+use openstack_keystone_core::role::backend::RoleBackend;
+use openstack_keystone_core::token::TokenProviderError;
+use openstack_keystone_core::token::backend::TokenRestrictionBackend;
+use openstack_keystone_core::trust::TrustProviderError;
+use openstack_keystone_core::trust::backend::TrustBackend;
+
+pub use openstack_keystone_core::plugin_manager::*;
 
 /// Plugin manager allowing to pass custom backend plugins implementing required
 /// trait during the service start.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct PluginManager {
     /// Application credentials backend plugin.
     application_credential_backends: HashMap<String, Arc<dyn ApplicationCredentialBackend>>,
@@ -66,9 +81,197 @@ pub struct PluginManager {
     trust_backends: HashMap<String, Arc<dyn TrustBackend>>,
 }
 
-impl PluginManager {
+impl PluginManagerApi for PluginManager {
+    /// Get registered application credential backend.
+    #[allow(clippy::borrowed_box)]
+    fn get_application_credential_backend<S: AsRef<str>>(
+        &self,
+        name: S,
+    ) -> Result<&Arc<dyn ApplicationCredentialBackend>, ApplicationCredentialProviderError> {
+        self.application_credential_backends
+            .get(name.as_ref())
+            .ok_or(ApplicationCredentialProviderError::UnsupportedDriver(
+                name.as_ref().to_string(),
+            ))
+    }
+
+    /// Get registered assignment backend.
+    #[allow(clippy::borrowed_box)]
+    fn get_assignment_backend<S: AsRef<str>>(
+        &self,
+        name: S,
+    ) -> Result<&Arc<dyn AssignmentBackend>, AssignmentProviderError> {
+        self.assignment_backends.get(name.as_ref()).ok_or(
+            AssignmentProviderError::UnsupportedDriver(name.as_ref().to_string()),
+        )
+    }
+
+    /// Get registered catalog backend.
+    #[allow(clippy::borrowed_box)]
+    fn get_catalog_backend<S: AsRef<str>>(
+        &self,
+        name: S,
+    ) -> Result<&Arc<dyn CatalogBackend>, CatalogProviderError> {
+        self.catalog_backends
+            .get(name.as_ref())
+            .ok_or(CatalogProviderError::UnsupportedDriver(
+                name.as_ref().to_string(),
+            ))
+    }
+
+    /// Get registered federation backend.
+    #[allow(clippy::borrowed_box)]
+    fn get_federation_backend<S: AsRef<str>>(
+        &self,
+        name: S,
+    ) -> Result<&Arc<dyn FederationBackend>, FederationProviderError> {
+        self.federation_backends.get(name.as_ref()).ok_or(
+            FederationProviderError::UnsupportedDriver(name.as_ref().to_string()),
+        )
+    }
+
+    /// Get registered identity backend.
+    #[allow(clippy::borrowed_box)]
+    fn get_identity_backend<S: AsRef<str>>(
+        &self,
+        name: S,
+    ) -> Result<&Arc<dyn IdentityBackend>, IdentityProviderError> {
+        self.identity_backends
+            .get(name.as_ref())
+            .ok_or(IdentityProviderError::UnsupportedDriver(
+                name.as_ref().to_string(),
+            ))
+    }
+
+    /// Get registered identity mapping backend.
+    #[allow(clippy::borrowed_box)]
+    fn get_identity_mapping_backend<S: AsRef<str>>(
+        &self,
+        name: S,
+    ) -> Result<&Arc<dyn IdentityMappingBackend>, IdentityMappingProviderError> {
+        self.identity_mapping_backends.get(name.as_ref()).ok_or(
+            IdentityMappingProviderError::UnsupportedDriver(name.as_ref().to_string()),
+        )
+    }
+
+    /// Get registered k8s auth backend.
+    #[allow(clippy::borrowed_box)]
+    fn get_k8s_auth_backend<S: AsRef<str>>(
+        &self,
+        name: S,
+    ) -> Result<&Arc<dyn K8sAuthBackend>, K8sAuthProviderError> {
+        self.k8s_auth_backends
+            .get(name.as_ref())
+            .ok_or(K8sAuthProviderError::UnsupportedDriver(
+                name.as_ref().to_string(),
+            ))
+    }
+
+    /// Get registered resource backend.
+    #[allow(clippy::borrowed_box)]
+    fn get_resource_backend<S: AsRef<str>>(
+        &self,
+        name: S,
+    ) -> Result<&Arc<dyn ResourceBackend>, ResourceProviderError> {
+        self.resource_backends
+            .get(name.as_ref())
+            .ok_or(ResourceProviderError::UnsupportedDriver(
+                name.as_ref().to_string(),
+            ))
+    }
+
+    /// Get registered revoke backend.
+    #[allow(clippy::borrowed_box)]
+    fn get_revoke_backend<S: AsRef<str>>(
+        &self,
+        name: S,
+    ) -> Result<&Arc<dyn RevokeBackend>, RevokeProviderError> {
+        self.revoke_backends
+            .get(name.as_ref())
+            .ok_or(RevokeProviderError::UnsupportedDriver(
+                name.as_ref().to_string(),
+            ))
+    }
+
+    /// Get role resource backend.
+    #[allow(clippy::borrowed_box)]
+    fn get_role_backend<S: AsRef<str>>(
+        &self,
+        name: S,
+    ) -> Result<&Arc<dyn RoleBackend>, RoleProviderError> {
+        self.role_backends
+            .get(name.as_ref())
+            .ok_or(RoleProviderError::UnsupportedDriver(
+                name.as_ref().to_string(),
+            ))
+    }
+
+    /// Get registered token restriction backend.
+    #[allow(clippy::borrowed_box)]
+    fn get_token_restriction_backend<S: AsRef<str>>(
+        &self,
+        name: S,
+    ) -> Result<&Arc<dyn TokenRestrictionBackend>, TokenProviderError> {
+        self.token_restriction_backends.get(name.as_ref()).ok_or(
+            TokenProviderError::UnsupportedTRDriver(name.as_ref().to_string()),
+        )
+    }
+
+    /// Get registered trust backend.
+    #[allow(clippy::borrowed_box)]
+    fn get_trust_backend<S: AsRef<str>>(
+        &self,
+        name: S,
+    ) -> Result<&Arc<dyn TrustBackend>, TrustProviderError> {
+        self.trust_backends
+            .get(name.as_ref())
+            .ok_or(TrustProviderError::UnsupportedDriver(
+                name.as_ref().to_string(),
+            ))
+    }
+
+    /// Register application credential backend.
+    fn register_application_credential_backend<S: AsRef<str>>(
+        &mut self,
+        name: S,
+        plugin: Arc<dyn ApplicationCredentialBackend>,
+    ) {
+        self.application_credential_backends
+            .insert(name.as_ref().to_string(), plugin);
+    }
+
+    /// Register assignment backend.
+    fn register_assignment_backend<S: AsRef<str>>(
+        &mut self,
+        name: S,
+        plugin: Arc<dyn AssignmentBackend>,
+    ) {
+        self.assignment_backends
+            .insert(name.as_ref().to_string(), plugin);
+    }
+
+    /// Register catalog backend.
+    fn register_catalog_backend<S: AsRef<str>>(
+        &mut self,
+        name: S,
+        plugin: Arc<dyn CatalogBackend>,
+    ) {
+        self.catalog_backends
+            .insert(name.as_ref().to_string(), plugin);
+    }
+
+    /// Register federation backend.
+    fn register_federation_backend<S: AsRef<str>>(
+        &mut self,
+        name: S,
+        plugin: Arc<dyn FederationBackend>,
+    ) {
+        self.federation_backends
+            .insert(name.as_ref().to_string(), plugin);
+    }
+
     /// Register identity backend.
-    pub fn register_identity_backend<S: AsRef<str>>(
+    fn register_identity_backend<S: AsRef<str>>(
         &mut self,
         name: S,
         plugin: Arc<dyn IdentityBackend>,
@@ -77,95 +280,49 @@ impl PluginManager {
             .insert(name.as_ref().to_string(), plugin);
     }
 
-    /// Get registered application credential backend.
-    #[allow(clippy::borrowed_box)]
-    pub fn get_application_credential_backend<S: AsRef<str>>(
-        &self,
+    /// Register identity mapping backend.
+    fn register_identity_mapping_backend<S: AsRef<str>>(
+        &mut self,
         name: S,
-    ) -> Option<&Arc<dyn ApplicationCredentialBackend>> {
-        self.application_credential_backends.get(name.as_ref())
+        plugin: Arc<dyn IdentityMappingBackend>,
+    ) {
+        self.identity_mapping_backends
+            .insert(name.as_ref().to_string(), plugin);
     }
 
-    /// Get registered assignment backend.
-    #[allow(clippy::borrowed_box)]
-    pub fn get_assignment_backend<S: AsRef<str>>(
-        &self,
+    /// Register k8s_auth backend.
+    fn register_k8s_auth_backend<S: AsRef<str>>(
+        &mut self,
         name: S,
-    ) -> Option<&Arc<dyn AssignmentBackend>> {
-        self.assignment_backends.get(name.as_ref())
+        plugin: Arc<dyn K8sAuthBackend>,
+    ) {
+        self.k8s_auth_backends
+            .insert(name.as_ref().to_string(), plugin);
     }
 
-    /// Get registered catalog backend.
-    #[allow(clippy::borrowed_box)]
-    pub fn get_catalog_backend<S: AsRef<str>>(&self, name: S) -> Option<&Arc<dyn CatalogBackend>> {
-        self.catalog_backends.get(name.as_ref())
-    }
-
-    /// Get registered federation backend.
-    #[allow(clippy::borrowed_box)]
-    pub fn get_federation_backend<S: AsRef<str>>(
-        &self,
+    /// Register resource backend.
+    fn register_resource_backend<S: AsRef<str>>(
+        &mut self,
         name: S,
-    ) -> Option<&Arc<dyn FederationBackend>> {
-        self.federation_backends.get(name.as_ref())
+        plugin: Arc<dyn ResourceBackend>,
+    ) {
+        self.resource_backends
+            .insert(name.as_ref().to_string(), plugin);
     }
 
-    /// Get registered identity backend.
-    #[allow(clippy::borrowed_box)]
-    pub fn get_identity_backend<S: AsRef<str>>(
-        &self,
-        name: S,
-    ) -> Option<&Arc<dyn IdentityBackend>> {
-        self.identity_backends.get(name.as_ref())
+    /// Register revoke backend.
+    fn register_revoke_backend<S: AsRef<str>>(&mut self, name: S, plugin: Arc<dyn RevokeBackend>) {
+        self.revoke_backends
+            .insert(name.as_ref().to_string(), plugin);
     }
 
-    /// Get registered identity mapping backend.
-    #[allow(clippy::borrowed_box)]
-    pub fn get_identity_mapping_backend<S: AsRef<str>>(
-        &self,
-        name: S,
-    ) -> Option<&Arc<dyn IdentityMappingBackend>> {
-        self.identity_mapping_backends.get(name.as_ref())
-    }
-
-    /// Get registered k8s auth backend.
-    #[allow(clippy::borrowed_box)]
-    pub fn get_k8s_auth_backend<S: AsRef<str>>(&self, name: S) -> Option<&Arc<dyn K8sAuthBackend>> {
-        self.k8s_auth_backends.get(name.as_ref())
-    }
-
-    /// Get registered resource backend.
-    #[allow(clippy::borrowed_box)]
-    pub fn get_resource_backend<S: AsRef<str>>(
-        &self,
-        name: S,
-    ) -> Option<&Arc<dyn ResourceBackend>> {
-        self.resource_backends.get(name.as_ref())
-    }
-
-    /// Get registered revoke backend.
-    #[allow(clippy::borrowed_box)]
-    pub fn get_revoke_backend<S: AsRef<str>>(&self, name: S) -> Option<&Arc<dyn RevokeBackend>> {
-        self.revoke_backends.get(name.as_ref())
-    }
-
-    /// Get role resource backend.
-    #[allow(clippy::borrowed_box)]
-    pub fn get_role_backend<S: AsRef<str>>(&self, name: S) -> Option<&Arc<dyn RoleBackend>> {
-        self.role_backends.get(name.as_ref())
-    }
-
-    /// Get registered token restriction backend.
-    #[allow(clippy::borrowed_box)]
-    pub fn get_token_restriction_backend<S: AsRef<str>>(
-        &self,
-        name: S,
-    ) -> Option<&Arc<dyn TokenRestrictionBackend>> {
-        self.token_restriction_backends.get(name.as_ref())
+    /// Register role backend.
+    fn register_role_backend<S: AsRef<str>>(&mut self, name: S, plugin: Arc<dyn RoleBackend>) {
+        self.role_backends.insert(name.as_ref().to_string(), plugin);
     }
 
     /// Register token restriction backend.
-    pub fn register_token_restriction_backend<S: AsRef<str>>(
+    fn register_token_restriction_backend<S: AsRef<str>>(
         &mut self,
         name: S,
         plugin: Arc<dyn TokenRestrictionBackend>,
@@ -174,9 +331,77 @@ impl PluginManager {
             .insert(name.as_ref().to_string(), plugin);
     }
 
-    /// Get registered trust backend.
-    #[allow(clippy::borrowed_box)]
-    pub fn get_trust_backend<S: AsRef<str>>(&self, name: S) -> Option<&Arc<dyn TrustBackend>> {
-        self.trust_backends.get(name.as_ref())
+    /// Register trust backend.
+    fn register_trust_backend<S: AsRef<str>>(&mut self, name: S, plugin: Arc<dyn TrustBackend>) {
+        self.trust_backends
+            .insert(name.as_ref().to_string(), plugin);
+    }
+}
+
+impl Default for PluginManager {
+    fn default() -> Self {
+        let mut slf = Self {
+            application_credential_backends: HashMap::new(),
+            assignment_backends: HashMap::new(),
+            catalog_backends: HashMap::new(),
+            federation_backends: HashMap::new(),
+            identity_backends: HashMap::new(),
+            identity_mapping_backends: HashMap::new(),
+            k8s_auth_backends: HashMap::new(),
+            resource_backends: HashMap::new(),
+            revoke_backends: HashMap::new(),
+            role_backends: HashMap::new(),
+            token_restriction_backends: HashMap::new(),
+            trust_backends: HashMap::new(),
+        };
+        slf.register_application_credential_backend(
+            "sql",
+            Arc::new(crate::application_credential::backend::SqlBackend::default()),
+        );
+        slf.register_assignment_backend(
+            "sql",
+            Arc::new(crate::assignment::backend::SqlBackend::default()),
+        );
+        slf.register_catalog_backend(
+            "sql",
+            Arc::new(crate::catalog::backend::sql::SqlBackend::default()),
+        );
+        slf.register_federation_backend(
+            "sql",
+            Arc::new(crate::federation::backend::SqlBackend::default()),
+        );
+        slf.register_identity_backend(
+            "sql",
+            Arc::new(crate::identity::backend::sql::SqlBackend::default()),
+        );
+        slf.register_identity_mapping_backend(
+            "sql",
+            Arc::new(crate::identity_mapping::backend::sql::SqlBackend::default()),
+        );
+        slf.register_k8s_auth_backend(
+            "sql",
+            Arc::new(crate::k8s_auth::backend::sql::SqlBackend::default()),
+        );
+        slf.register_resource_backend(
+            "sql",
+            Arc::new(crate::resource::backend::sql::SqlBackend::default()),
+        );
+        slf.register_revoke_backend(
+            "sql",
+            Arc::new(crate::revoke::backend::sql::SqlBackend::default()),
+        );
+        slf.register_role_backend(
+            "sql",
+            Arc::new(crate::role::backend::sql::SqlBackend::default()),
+        );
+        slf.register_token_restriction_backend(
+            "sql",
+            Arc::new(crate::token::token_restriction::SqlBackend::default()),
+        );
+        slf.register_trust_backend(
+            "sql",
+            Arc::new(crate::trust::backend::sql::SqlBackend::default()),
+        );
+        slf
     }
 }

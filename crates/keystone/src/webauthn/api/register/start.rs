@@ -25,7 +25,7 @@ use crate::api::KeystoneApiError;
 use crate::api::auth::Auth;
 use crate::identity::IdentityApi;
 use crate::webauthn::{
-    WebauthnApi,
+    WebauthnApi, WebauthnError,
     api::types::{CombinedExtensionState, register::*},
 };
 
@@ -104,7 +104,7 @@ pub(super) async fn start(
                 .provider
                 .save_user_webauthn_credential_registration_state(&state.core, &user_id, reg_state)
                 .await?;
-            Json(UserPasskeyRegistrationStartResponse::try_from(ccr)?)
+            Json(UserPasskeyRegistrationStartResponse::try_from(ccr).map_err(WebauthnError::from)?)
         }
         Err(e) => {
             debug!("challenge_register -> {:?}", e);

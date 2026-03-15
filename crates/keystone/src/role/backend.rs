@@ -12,57 +12,5 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use async_trait::async_trait;
-use std::collections::{BTreeMap, BTreeSet};
-
-use crate::keystone::ServiceState;
-use crate::role::{RoleProviderError, types::role::*};
-
 pub mod sql;
 pub use sql::SqlBackend;
-
-#[cfg_attr(test, mockall::automock)]
-#[async_trait]
-pub trait RoleBackend: Send + Sync {
-    /// Create Role.
-    async fn create_role(
-        &self,
-        state: &ServiceState,
-        params: RoleCreate,
-    ) -> Result<Role, RoleProviderError>;
-
-    /// Delete a role by the ID.
-    async fn delete_role<'a>(
-        &self,
-        state: &ServiceState,
-        id: &'a str,
-    ) -> Result<(), RoleProviderError>;
-
-    /// Get single role by ID
-    async fn get_role<'a>(
-        &self,
-        state: &ServiceState,
-        id: &'a str,
-    ) -> Result<Option<Role>, RoleProviderError>;
-
-    /// Expand implied roles.
-    async fn expand_implied_roles(
-        &self,
-        state: &ServiceState,
-        roles: &mut Vec<RoleRef>,
-    ) -> Result<(), RoleProviderError>;
-
-    /// List role imply rules.
-    async fn list_imply_rules(
-        &self,
-        state: &ServiceState,
-        resolve: bool,
-    ) -> Result<BTreeMap<String, BTreeSet<String>>, RoleProviderError>;
-
-    /// List Roles.
-    async fn list_roles(
-        &self,
-        state: &ServiceState,
-        params: &RoleListParameters,
-    ) -> Result<Vec<Role>, RoleProviderError>;
-}

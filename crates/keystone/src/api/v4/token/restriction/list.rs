@@ -130,7 +130,7 @@ mod tests {
                 }])
             });
         let state = get_mocked_state(
-            Provider::mocked_builder().token(token_mock),
+            Provider::mocked_builder().mock_token(token_mock),
             true,
             None,
             Some(true),
@@ -217,7 +217,7 @@ mod tests {
                 }])
             });
         let state = get_mocked_state(
-            Provider::mocked_builder().token(token_mock),
+            Provider::mocked_builder().mock_token(token_mock),
             true,
             None,
             Some(true),

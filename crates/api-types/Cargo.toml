@@ -24,5 +24,3 @@ thiserror.workspace = true
 utoipa = { workspace = true, features = ["chrono"] }
 validator = { workspace = true, features = ["derive"] }
 webauthn-rs-proto.workspace = true
-
-[dev-dependencies]

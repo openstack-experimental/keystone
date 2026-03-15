@@ -15,8 +15,9 @@ RUN USER=root cargo new keystone
 
 # We want dependencies cached, so copy those first.
 COPY Cargo.toml Cargo.lock /usr/src/keystone/
-COPY crates/keystone/Cargo.toml /usr/src/keystone/crates/keystone/
 COPY crates/api-types/Cargo.toml /usr/src/keystone/crates/api-types/
+COPY crates/core/Cargo.toml /usr/src/keystone/crates/core/
+COPY crates/keystone/Cargo.toml /usr/src/keystone/crates/keystone/
 COPY crates/storage/Cargo.toml /usr/src/keystone/crates/storage/
 COPY tests/federation/Cargo.toml /usr/src/keystone/tests/federation/
 COPY tests/integration/Cargo.toml /usr/src/keystone/tests/integration/
@@ -25,12 +26,11 @@ COPY tests/loadtest/Cargo.toml /usr/src/keystone/tests/loadtest/
 RUN mkdir -p keystone/crates/keystone/src/bin && touch keystone/crates/keystone/src/lib.rs &&\
   cp keystone/src/main.rs keystone/crates/keystone/src/bin/keystone.rs &&\
   cp keystone/src/main.rs keystone/crates/keystone/src/bin/keystone_db.rs &&\
-  mkdir keystone/tests/loadtest/src &&\
+  mkdir -p keystone/tests/loadtest/src &&\
   cp keystone/src/main.rs keystone/tests/loadtest/src/main.rs &&\
-  mkdir keystone/crates/api-types/src &&\
-  touch keystone/crates/api-types/src/lib.rs &&\
-  mkdir keystone/crates/storage/src &&\
-  touch keystone/crates/storage/src/lib.rs
+  mkdir -p keystone/crates/api-types/src && touch keystone/crates/api-types/src/lib.rs &&\
+  mkdir -p keystone/crates/core/src && touch keystone/crates/core/src/lib.rs &&\
+  mkdir -p keystone/crates/storage/src && touch keystone/crates/storage/src/lib.rs
 
 # Set the working directory
 WORKDIR /usr/src/keystone
@@ -41,6 +41,7 @@ RUN cargo build -p openstack-keystone --release
 
 # Now copy in the rest of the sources
 COPY crates/keystone/ /usr/src/keystone/crates/keystone
+COPY crates/core/ /usr/src/keystone/crates/core
 COPY crates/api-types/ /usr/src/keystone/crates/api-types
 COPY crates/storage/ /usr/src/keystone/crates/storage
 

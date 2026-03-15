@@ -101,7 +101,7 @@ mod tests {
             });
 
         let state = get_mocked_state(
-            Provider::mocked_builder().assignment(assignment_mock),
+            Provider::mocked_builder().mock_assignment(assignment_mock),
             true,
             None,
             None,
@@ -212,7 +212,7 @@ mod tests {
             });
 
         let state = get_mocked_state(
-            Provider::mocked_builder().assignment(assignment_mock),
+            Provider::mocked_builder().mock_assignment(assignment_mock),
             true,
             None,
             None,

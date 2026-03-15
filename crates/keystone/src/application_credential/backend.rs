@@ -14,36 +14,5 @@
 //! # Application credential provider backend
 pub mod sql;
 
-use async_trait::async_trait;
-
-use crate::application_credential::ApplicationCredentialProviderError;
-use crate::application_credential::types::*;
-use crate::keystone::ServiceState;
-
+pub use openstack_keystone_core::application_credential::backend::ApplicationCredentialBackend;
 pub use sql::SqlBackend;
-
-/// Application Credential backend driver interface.
-#[cfg_attr(test, mockall::automock)]
-#[async_trait]
-pub trait ApplicationCredentialBackend: Send + Sync {
-    /// Create a new application credential.
-    async fn create_application_credential(
-        &self,
-        state: &ServiceState,
-        rec: ApplicationCredentialCreate,
-    ) -> Result<ApplicationCredentialCreateResponse, ApplicationCredentialProviderError>;
-
-    /// Get a single application credential by ID.
-    async fn get_application_credential<'a>(
-        &self,
-        state: &ServiceState,
-        id: &'a str,
-    ) -> Result<Option<ApplicationCredential>, ApplicationCredentialProviderError>;
-
-    /// List application credentials.
-    async fn list_application_credentials(
-        &self,
-        state: &ServiceState,
-        params: &ApplicationCredentialListParameters,
-    ) -> Result<Vec<ApplicationCredential>, ApplicationCredentialProviderError>;
-}

@@ -14,8 +14,13 @@
 
 use chrono::{DateTime, Utc};
 use sea_orm::DatabaseConnection;
+//use sea_orm::Iden;
 use sea_orm::entity::*;
 use sea_orm::{ConnectionTrait, TransactionTrait};
+use serde_json::json;
+use uuid::Uuid;
+
+use openstack_keystone_core::identity::types::get_user_last_active_at;
 
 use crate::common::password_hashing;
 use crate::config::Config;
@@ -23,6 +28,10 @@ use crate::db::entity::{
     federated_user as db_federated_user, password as db_password, user as db_user,
 };
 use crate::error::DbContextExt;
+use crate::identity::backend::sql::federated_user::MergeFederatedUserData;
+use crate::identity::backend::sql::local_user::MergeLocalUserData;
+use crate::identity::backend::sql::password::MergePasswordData;
+use crate::identity::backend::sql::user::MergeUserData;
 use crate::identity::{
     IdentityProviderError,
     types::{UserCreate, UserOptions, UserResponse, UserResponseBuilder},
@@ -32,6 +41,41 @@ use super::super::federated_user;
 use super::super::local_user;
 use super::super::password;
 use super::super::user_option;
+
+impl db_user::ActiveModel {
+    fn from_user_create(
+        user: &UserCreate,
+        config: &Config,
+        created_at: Option<DateTime<Utc>>,
+    ) -> Result<Self, IdentityProviderError> {
+        let created_at = created_at.unwrap_or_else(Utc::now).naive_utc();
+
+        Ok(Self {
+            id: Set(user
+                .id
+                .clone()
+                .unwrap_or(Uuid::new_v4().simple().to_string())),
+            enabled: Set(Some(user.enabled.unwrap_or(true))),
+            extra: Set(Some(serde_json::to_string(
+                // For keystone it is important to have at least "{}"
+                &user.extra.as_ref().or(Some(&json!({}))),
+            )?)),
+            default_project_id: user
+                .default_project_id
+                .clone()
+                .map(Set)
+                .unwrap_or(NotSet)
+                .into(),
+            // Set last_active to now if compliance disabling is on
+            last_active_at: get_user_last_active_at(config, user.enabled, created_at)
+                .map(Set)
+                .unwrap_or(NotSet)
+                .into(),
+            created_at: Set(Some(created_at)),
+            domain_id: Set(user.domain_id.clone()),
+        })
+    }
+}
 
 #[tracing::instrument(skip_all)]
 pub async fn create_main<C>(
@@ -43,11 +87,14 @@ pub async fn create_main<C>(
 where
     C: ConnectionTrait,
 {
-    Ok(user
-        .to_user_active_model(conf, created_at)?
-        .insert(db)
-        .await
-        .context("inserting user entry")?)
+    Ok(
+        db_user::ActiveModel::from_user_create(user, conf, created_at)?
+            // user
+            // .to_user_active_model(conf, created_at)?
+            .insert(db)
+            .await
+            .context("inserting user entry")?,
+    )
 }
 
 #[tracing::instrument(skip(conf, db))]
@@ -159,6 +206,43 @@ mod tests {
         UserCreateBuilder,
         user::{FederationBuilder, FederationProtocol},
     };
+
+    #[test]
+    fn test_active_record_from_user_create() {
+        let now = Utc::now();
+        let req = UserCreateBuilder::default()
+            .default_project_id("dpid")
+            .domain_id("did")
+            .id("1")
+            .name("foo")
+            .enabled(true)
+            .build()
+            .unwrap();
+        let cfg = Config::default();
+        let sot = db_user::ActiveModel::from_user_create(&req, &cfg, Some(now)).unwrap(); //at)req.to_user_active_model(&cfg, Some(now)).unwrap();
+        assert_eq!(sot.default_project_id, Set(Some("dpid".into())));
+        assert_eq!(sot.domain_id, Set("did".into()));
+        assert_eq!(sot.enabled, Set(Some(true)));
+        assert_eq!(sot.extra, Set(Some("{}".into())));
+        assert_eq!(sot.id, Set("1".into()));
+        assert_eq!(sot.last_active_at, NotSet);
+    }
+
+    #[test]
+    fn test_active_record_from_user_create_track_user_activity() {
+        let now = Utc::now();
+        let req = UserCreateBuilder::default()
+            .domain_id("did")
+            .id("1")
+            .name("foo")
+            .enabled(true)
+            .build()
+            .unwrap();
+        let mut cfg = Config::default();
+        cfg.security_compliance.disable_user_account_days_inactive = Some(1);
+        let sot = db_user::ActiveModel::from_user_create(&req, &cfg, Some(now)).unwrap(); //at)req.to_user_active_model(&cfg, Some(now)).unwrap();
+        assert_eq!(sot.last_active_at, Set(Some(now.naive_utc().date())));
+    }
 
     #[tokio::test]
     async fn test_create_main() {

@@ -142,7 +142,7 @@ mod tests {
             .returning(|_, _| Ok(()));
 
         let state = get_mocked_state(
-            Provider::mocked_builder().federation(federation_mock),
+            Provider::mocked_builder().mock_federation(federation_mock),
             true,
             None,
             None,

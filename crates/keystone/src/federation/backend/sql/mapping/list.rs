@@ -78,7 +78,7 @@ mod tests {
 
     use super::super::tests::get_mapping_mock;
     use super::*;
-    use crate::federation::mapping::MappingType;
+    use crate::federation::types::mapping::MappingType;
 
     #[tokio::test]
     async fn test_query_all() {

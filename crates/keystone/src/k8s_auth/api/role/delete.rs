@@ -177,7 +177,7 @@ mod tests {
             .withf(|_, id: &'_ str| id == "bar")
             .returning(|_, _| Ok(()));
 
-        provider = provider.k8s_auth(mock);
+        provider = provider.mock_k8s_auth(mock);
         let state = get_mocked_state(provider, true, None, None);
 
         let mut api = openapi_router()
