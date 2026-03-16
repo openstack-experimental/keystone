@@ -66,14 +66,14 @@ impl TokenService {
         plugin_manager: &P,
     ) -> Result<Self, TokenProviderError> {
         let backend_driver = plugin_manager
-            .get_token_backend(&config.token.provider.to_string())?
+            .get_token_backend(config.token.provider.to_string())?
             .clone();
         let tr_backend_driver = plugin_manager
             .get_token_restriction_backend(&config.token_restriction.driver)?
             .clone();
         Ok(Self {
             config: config.clone(),
-            backend_driver: backend_driver,
+            backend_driver,
             tr_backend_driver,
         })
     }
@@ -1045,7 +1045,7 @@ mod tests {
     fn get_provider(config: &Config, token_mock: Option<MockTokenBackend>) -> TokenService {
         TokenService {
             config: config.clone(),
-            backend_driver: Arc::new(token_mock.unwrap_or(MockTokenBackend::default())),
+            backend_driver: Arc::new(token_mock.unwrap_or_default()),
             tr_backend_driver: Arc::new(MockTokenRestrictionBackend::default()),
         }
     }

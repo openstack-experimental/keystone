@@ -1,0 +1,43 @@
+[package]
+name = "openstack-keystone-token-fernet"
+description = "OpenStack Keystone Fernet token driver"
+version = "0.1.1"
+rust-version.workspace = true
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[[bench]]
+name = "fernet_token"
+harness = false
+
+[dependencies]
+base64.workspace = true
+byteorder.workspace = true
+bytes.workspace = true
+chrono.workspace = true
+fernet = { workspace = true, features = ["rustcrypto"] }
+itertools.workspace = true
+openstack-keystone-core = { version = "0.1", path = "../core/"}
+nix = { workspace = true, features = ["fs", "user"] }
+rmp.workspace = true
+scopeguard.workspace = true
+secrecy = { workspace = true }
+tokio = { workspace = true, features = ["fs"] }
+tempfile.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+uuid = { workspace = true, features = ["v4"] }
+validator = { workspace = true, features = ["derive"] }
+
+[dev-dependencies]
+base64urlsafedata.workspace = true
+config.workspace = true
+criterion = { workspace = true, features = ["async_tokio"] }
+tempfile.workspace = true
+tokio = { workspace = true, features = ["macros"]}
+
+[features]
+default = []
+bench_internals = []

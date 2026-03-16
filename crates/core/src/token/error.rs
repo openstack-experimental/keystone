@@ -13,14 +13,13 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Token provider errors.
 
-use std::num::TryFromIntError;
-
 use thiserror::Error;
 
 use crate::error::BuilderError;
 
 /// Token provider error.
 #[derive(Error, Debug)]
+#[non_exhaustive]
 pub enum TokenProviderError {
     /// Actor has no roles on the target scope.
     #[error("actor has no roles on scope")]
@@ -54,32 +53,24 @@ pub enum TokenProviderError {
         source: crate::assignment::error::AssignmentProviderError,
     },
 
-    /// AuditID must be urlsafe base64 encoded value.
-    #[error("audit_id must be urlsafe base64 encoded value")]
-    AuditIdWrongFormat,
-
     /// Authentication error.
     #[error(transparent)]
     Authentication(#[from] crate::auth::AuthenticationError),
-
-    /// Base64 Decode error.
-    #[error("b64 decryption error")]
-    Base64Decode(#[from] base64::DecodeError),
 
     /// Conflict.
     #[error("{message}")]
     Conflict { message: String, context: String },
 
-    ///// Database error.
-    //#[error(transparent)]
-    //Database(#[from] DatabaseError),
     /// The domain is disabled.
     #[error("domain is disabled")]
     DomainDisabled(String),
 
     /// Driver error.
-    #[error("backend driver error: {0}")]
-    Driver(String),
+    #[error("backend driver error: {source}")]
+    Driver {
+        #[source]
+        source: Box<dyn std::error::Error + Send + Sync + 'static>,
+    },
 
     /// Expired token.
     #[error("token expired")]
@@ -93,63 +84,9 @@ pub enum TokenProviderError {
     #[error("federated payload must contain idp_id and protocol_id")]
     FederatedPayloadMissingData,
 
-    /// Fernet Decryption.
-    #[error("fernet decryption error")]
-    FernetDecryption(#[from] fernet::DecryptionError),
-
-    /// Missing fernet keys.
-    #[error("no usable fernet keys has been found")]
-    FernetKeysMissing,
-
-    /// Fernet key read error.
-    #[error("fernet key read error: {}", source)]
-    FernetKeyRead {
-        /// The source of the error.
-        source: std::io::Error,
-        /// Key file name.
-        path: std::path::PathBuf,
-    },
-
     /// Identity provider error.
     #[error(transparent)]
     IdentityProvider(#[from] crate::identity::error::IdentityProviderError),
-
-    /// Invalid token data.
-    #[error("invalid token error")]
-    InvalidToken,
-
-    /// Unsupported token version.
-    #[error("token version {0} is not supported")]
-    InvalidTokenType(u8),
-
-    /// Unsupported token uuid.
-    #[error("token uuid is not supported")]
-    InvalidTokenUuid,
-
-    /// Unsupported token uuid coding.
-    #[error("token uuid coding {0:?} is not supported")]
-    InvalidTokenUuidMarker(rmp::Marker),
-
-    /// IO error.
-    #[error("io error: {}", source)]
-    Io {
-        /// The source of the error.
-        #[from]
-        source: std::io::Error,
-    },
-
-    /// Nix errno.
-    #[error("unix error {source} while {context}")]
-    NixErrno {
-        /// Context.
-        context: String,
-        /// The source of the error.
-        source: nix::errno::Errno,
-    },
-
-    /// tempfile persisting error.
-    #[error(transparent)]
-    Persist(#[from] tempfile::PersistError),
 
     /// The project is disabled.
     #[error("project disabled")]
@@ -166,14 +103,6 @@ pub enum TokenProviderError {
     /// Revoke Provider error.
     #[error(transparent)]
     RevokeProvider(#[from] crate::revoke::error::RevokeProviderError),
-
-    /// MSGPack Encryption.
-    #[error("rmp value encoding error")]
-    RmpEncode(String),
-
-    /// MSGPack Decryption.
-    #[error("rmp value error")]
-    RmpValueRead(#[from] rmp::decode::ValueReadError),
 
     /// Role provider error.
     #[error(transparent)]
@@ -195,15 +124,6 @@ pub enum TokenProviderError {
     #[error("subject information missing")]
     SubjectMissing,
 
-    /// Fernet payload timestamp overflow error.
-    #[error("fernet payload timestamp overflow ({value}): {}", source)]
-    TokenTimestampOverflow {
-        /// Token timestamp.
-        value: u64,
-        /// The source of the error.
-        source: std::num::TryFromIntError,
-    },
-
     /// Token restriction not found error.
     #[error("token restriction {0} not found")]
     TokenRestrictionNotFound(String),
@@ -219,14 +139,6 @@ pub enum TokenProviderError {
     /// The user domain of the trustee is disabled.
     #[error("trustee domain disabled")]
     TrustorDomainDisabled,
-
-    /// Integer conversion error.
-    #[error("int parse")]
-    TryFromIntError(#[from] TryFromIntError),
-
-    /// Unsupported authentication methods in token payload.
-    #[error("unsupported authentication methods {0} in token payload")]
-    UnsupportedAuthMethods(String),
 
     /// Unsupported token restriction driver.
     #[error("driver `{0}` is not supported for the token provider")]

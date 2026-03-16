@@ -114,7 +114,7 @@ impl Token {
     ///
     /// An internal method (available only within the module) to set the
     /// `issued_at` into the token payload.
-    pub(super) fn set_issued_at(&mut self, issued_at: DateTime<Utc>) -> &mut Self {
+    pub fn set_issued_at(&mut self, issued_at: DateTime<Utc>) -> &mut Self {
         match self {
             Self::ApplicationCredential(x) => x.issued_at = issued_at,
             Self::DomainScope(x) => x.issued_at = issued_at,

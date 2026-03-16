@@ -29,7 +29,7 @@ if [ "$DB_TYPE" == "postgres" ]; then
     # Postgres check
     until $CMD exec "$TARGET" pg_isready -U postgres > /dev/null 2>&1; do
         printf "."
-        sleep 1
+        sleep 3
     done
     echo "DATABASE_URL=postgres://postgres:password@127.0.0.1:15432/postgres" >> "$NEXTEST_ENV"
 else

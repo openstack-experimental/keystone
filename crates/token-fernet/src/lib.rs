@@ -11,6 +11,12 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+//! # Fernet token driver for the `openstack_keystone` crate
+
+use std::collections::BTreeMap;
+use std::collections::HashSet;
+use std::fmt;
+use std::io::{Cursor, Write};
 
 use base64::Engine;
 use byteorder::ReadBytesExt;
@@ -23,29 +29,23 @@ use rmp::{
     decode::{ValueReadError, read_marker, read_u8},
     encode::{write_array_len, write_pfix},
 };
-use std::collections::BTreeMap;
-use std::collections::HashSet;
-use std::fmt;
-use std::io::{Cursor, Write};
 use tracing::trace;
 use validator::Validate;
 
-use crate::config::Config;
-use crate::token::backend::TokenBackend;
-use crate::token::{
-    TokenProviderError,
-    types::{
-        application_credential::ApplicationCredentialPayload, domain_scoped::DomainScopePayload,
-        federation_domain_scoped::FederationDomainScopePayload,
-        federation_project_scoped::FederationProjectScopePayload,
-        federation_unscoped::FederationUnscopedPayload, project_scoped::ProjectScopePayload,
-        restricted::RestrictedPayload, trust::TrustPayload, unscoped::UnscopedPayload, *,
-    },
+use openstack_keystone_core::config::Config;
+use openstack_keystone_core::token::types::{
+    application_credential::ApplicationCredentialPayload, domain_scoped::DomainScopePayload,
+    federation_domain_scoped::FederationDomainScopePayload,
+    federation_project_scoped::FederationProjectScopePayload,
+    federation_unscoped::FederationUnscopedPayload, project_scoped::ProjectScopePayload,
+    restricted::RestrictedPayload, trust::TrustPayload, unscoped::UnscopedPayload, *,
 };
+use openstack_keystone_core::token::{TokenProviderError, backend::TokenBackend};
 use utils::FernetUtils;
 
 mod application_credential;
 mod domain_scoped;
+mod error;
 mod federation_domain_scoped;
 mod federation_project_scoped;
 mod federation_unscoped;
@@ -55,6 +55,8 @@ mod system_scoped;
 mod trust;
 mod unscoped;
 pub mod utils;
+
+pub use error::FernetDriverError;
 
 /// Fernet token provider.
 #[derive(Clone, Default)]
@@ -76,7 +78,7 @@ pub trait MsgPackToken {
         &self,
         _wd: &mut W,
         _fernet_provider: &FernetTokenProvider,
-    ) -> Result<(), TokenProviderError> {
+    ) -> Result<(), FernetDriverError> {
         Ok(())
     }
 
@@ -84,7 +86,7 @@ pub trait MsgPackToken {
     fn disassemble(
         rd: &mut &[u8],
         fernet_provider: &FernetTokenProvider,
-    ) -> Result<Self::Token, TokenProviderError>;
+    ) -> Result<Self::Token, FernetDriverError>;
 }
 
 impl fmt::Debug for FernetTokenProvider {
@@ -94,11 +96,11 @@ impl fmt::Debug for FernetTokenProvider {
 }
 
 /// Read the payload version.
-fn read_payload_token_type(rd: &mut &[u8]) -> Result<u8, TokenProviderError> {
+fn read_payload_token_type(rd: &mut &[u8]) -> Result<u8, FernetDriverError> {
     match read_marker(rd).map_err(ValueReadError::from)? {
         Marker::FixPos(dt) => Ok(dt),
         Marker::U8 => Ok(read_u8(rd)?),
-        _ => Err(TokenProviderError::InvalidToken),
+        _ => Err(FernetDriverError::InvalidToken),
     }
 }
 
@@ -165,7 +167,7 @@ impl FernetTokenProvider {
 
     /// Encode the list of auth_methods into a single integer
     #[tracing::instrument(level = "trace", skip(self, methods))]
-    pub(crate) fn encode_auth_methods<I>(&self, methods: I) -> Result<u8, TokenProviderError>
+    pub(crate) fn encode_auth_methods<I>(&self, methods: I) -> Result<u8, FernetDriverError>
     where
         I: IntoIterator<Item = String>,
     {
@@ -178,7 +180,7 @@ impl FernetTokenProvider {
         // TODO: Improve unit tests to ensure unsupported auth method immediately raises
         // error.
         if res == 0 {
-            return Err(TokenProviderError::UnsupportedAuthMethods(
+            return Err(FernetDriverError::UnsupportedAuthMethods(
                 me.iter().join(","),
             ));
         }
@@ -187,7 +189,7 @@ impl FernetTokenProvider {
 
     /// Decode the integer into the list of auth_methods
     #[tracing::instrument(level = "trace", skip(self))]
-    pub(crate) fn decode_auth_methods(&self, value: u8) -> Result<Vec<String>, TokenProviderError> {
+    pub(crate) fn decode_auth_methods(&self, value: u8) -> Result<Vec<String>, FernetDriverError> {
         if let Some(res) = self.auth_methods_code_cache.get(&value) {
             Ok(res.iter().cloned().collect())
         } else {
@@ -215,11 +217,7 @@ impl FernetTokenProvider {
     }
 
     /// Parse binary blob as MessagePack after encrypting it with Fernet.
-    fn decode(
-        &self,
-        rd: &mut &[u8],
-        timestamp: DateTime<Utc>,
-    ) -> Result<Token, TokenProviderError> {
+    fn decode(&self, rd: &mut &[u8], timestamp: DateTime<Utc>) -> Result<Token, FernetDriverError> {
         if let Marker::FixArray(_) = read_marker(rd).map_err(ValueReadError::from)? {
             let mut token: Token = match read_payload_token_type(rd)? {
                 0 => Ok(UnscopedPayload::disassemble(rd, self)?.into()),
@@ -232,88 +230,79 @@ impl FernetTokenProvider {
                 8 => Ok(SystemScopePayload::disassemble(rd, self)?.into()),
                 9 => Ok(ApplicationCredentialPayload::disassemble(rd, self)?.into()),
                 11 => Ok(RestrictedPayload::disassemble(rd, self)?.into()),
-                other => Err(TokenProviderError::InvalidTokenType(other)),
+                other => Err(FernetDriverError::InvalidTokenType(other)),
             }?;
             token.set_issued_at(timestamp);
             Ok(token.to_owned())
         } else {
-            Err(TokenProviderError::InvalidToken)
+            Err(FernetDriverError::InvalidToken)
         }
     }
 
     /// Encode Token as binary blob as MessagePack.
-    fn encode(&self, token: &Token) -> Result<Bytes, TokenProviderError> {
+    fn encode(&self, token: &Token) -> Result<Bytes, FernetDriverError> {
         token.validate()?;
         let mut buf = vec![];
         match token {
             Token::ApplicationCredential(data) => {
                 write_array_len(&mut buf, 7)
-                    .map_err(|x| TokenProviderError::RmpEncode(x.to_string()))?;
-                write_pfix(&mut buf, 9)
-                    .map_err(|x| TokenProviderError::RmpEncode(x.to_string()))?;
+                    .map_err(|x| FernetDriverError::RmpEncode(x.to_string()))?;
+                write_pfix(&mut buf, 9).map_err(|x| FernetDriverError::RmpEncode(x.to_string()))?;
                 data.assemble(&mut buf, self)?;
             }
             Token::DomainScope(data) => {
                 write_array_len(&mut buf, 6)
-                    .map_err(|x| TokenProviderError::RmpEncode(x.to_string()))?;
-                write_pfix(&mut buf, 1)
-                    .map_err(|x| TokenProviderError::RmpEncode(x.to_string()))?;
+                    .map_err(|x| FernetDriverError::RmpEncode(x.to_string()))?;
+                write_pfix(&mut buf, 1).map_err(|x| FernetDriverError::RmpEncode(x.to_string()))?;
                 data.assemble(&mut buf, self)?;
             }
             Token::Trust(data) => {
                 write_array_len(&mut buf, 7)
-                    .map_err(|x| TokenProviderError::RmpEncode(x.to_string()))?;
-                write_pfix(&mut buf, 3)
-                    .map_err(|x| TokenProviderError::RmpEncode(x.to_string()))?;
+                    .map_err(|x| FernetDriverError::RmpEncode(x.to_string()))?;
+                write_pfix(&mut buf, 3).map_err(|x| FernetDriverError::RmpEncode(x.to_string()))?;
                 data.assemble(&mut buf, self)?;
             }
             Token::FederationUnscoped(data) => {
                 write_array_len(&mut buf, 8)
-                    .map_err(|x| TokenProviderError::RmpEncode(x.to_string()))?;
-                write_pfix(&mut buf, 4)
-                    .map_err(|x| TokenProviderError::RmpEncode(x.to_string()))?;
+                    .map_err(|x| FernetDriverError::RmpEncode(x.to_string()))?;
+                write_pfix(&mut buf, 4).map_err(|x| FernetDriverError::RmpEncode(x.to_string()))?;
                 data.assemble(&mut buf, self)?;
             }
             Token::FederationProjectScope(data) => {
                 write_array_len(&mut buf, 9)
-                    .map_err(|x| TokenProviderError::RmpEncode(x.to_string()))?;
-                write_pfix(&mut buf, 5)
-                    .map_err(|x| TokenProviderError::RmpEncode(x.to_string()))?;
+                    .map_err(|x| FernetDriverError::RmpEncode(x.to_string()))?;
+                write_pfix(&mut buf, 5).map_err(|x| FernetDriverError::RmpEncode(x.to_string()))?;
                 data.assemble(&mut buf, self)?;
             }
             Token::FederationDomainScope(data) => {
                 write_array_len(&mut buf, 9)
-                    .map_err(|x| TokenProviderError::RmpEncode(x.to_string()))?;
-                write_pfix(&mut buf, 6)
-                    .map_err(|x| TokenProviderError::RmpEncode(x.to_string()))?;
+                    .map_err(|x| FernetDriverError::RmpEncode(x.to_string()))?;
+                write_pfix(&mut buf, 6).map_err(|x| FernetDriverError::RmpEncode(x.to_string()))?;
                 data.assemble(&mut buf, self)?;
             }
             Token::ProjectScope(data) => {
                 write_array_len(&mut buf, 6)
-                    .map_err(|x| TokenProviderError::RmpEncode(x.to_string()))?;
-                write_pfix(&mut buf, 2)
-                    .map_err(|x| TokenProviderError::RmpEncode(x.to_string()))?;
+                    .map_err(|x| FernetDriverError::RmpEncode(x.to_string()))?;
+                write_pfix(&mut buf, 2).map_err(|x| FernetDriverError::RmpEncode(x.to_string()))?;
                 data.assemble(&mut buf, self)?;
             }
             Token::Restricted(data) => {
                 write_array_len(&mut buf, 9)
-                    .map_err(|x| TokenProviderError::RmpEncode(x.to_string()))?;
+                    .map_err(|x| FernetDriverError::RmpEncode(x.to_string()))?;
                 write_pfix(&mut buf, 11)
-                    .map_err(|x| TokenProviderError::RmpEncode(x.to_string()))?;
+                    .map_err(|x| FernetDriverError::RmpEncode(x.to_string()))?;
                 data.assemble(&mut buf, self)?;
             }
             Token::SystemScope(data) => {
                 write_array_len(&mut buf, 6)
-                    .map_err(|x| TokenProviderError::RmpEncode(x.to_string()))?;
-                write_pfix(&mut buf, 8)
-                    .map_err(|x| TokenProviderError::RmpEncode(x.to_string()))?;
+                    .map_err(|x| FernetDriverError::RmpEncode(x.to_string()))?;
+                write_pfix(&mut buf, 8).map_err(|x| FernetDriverError::RmpEncode(x.to_string()))?;
                 data.assemble(&mut buf, self)?;
             }
             Token::Unscoped(data) => {
                 write_array_len(&mut buf, 5)
-                    .map_err(|x| TokenProviderError::RmpEncode(x.to_string()))?;
-                write_pfix(&mut buf, 0)
-                    .map_err(|x| TokenProviderError::RmpEncode(x.to_string()))?;
+                    .map_err(|x| FernetDriverError::RmpEncode(x.to_string()))?;
+                write_pfix(&mut buf, 0).map_err(|x| FernetDriverError::RmpEncode(x.to_string()))?;
                 data.assemble(&mut buf, self)?;
             }
         }
@@ -322,7 +311,7 @@ impl FernetTokenProvider {
 
     /// Get MultiFernet initialized with repository keys.
     #[tracing::instrument(level = "trace", skip(self))]
-    pub fn get_fernet(&self) -> Result<MultiFernet, TokenProviderError> {
+    pub fn get_fernet(&self) -> Result<MultiFernet, FernetDriverError> {
         Ok(MultiFernet::new(
             self.utils.load_keys()?.into_iter().collect::<Vec<_>>(),
         ))
@@ -330,7 +319,7 @@ impl FernetTokenProvider {
 
     /// Load fernet keys from FS.
     #[tracing::instrument(level = "trace", skip(self))]
-    pub fn load_keys(&mut self) -> Result<(), TokenProviderError> {
+    pub fn load_keys(&mut self) -> Result<(), FernetDriverError> {
         self.fernet = Some(self.get_fernet()?);
         Ok(())
     }
@@ -339,7 +328,7 @@ impl FernetTokenProvider {
     ///
     /// 1. Decrypt as Fernet.
     /// 2. Unpack MessagePack payload.
-    pub fn decrypt(&self, credential: &str) -> Result<Token, TokenProviderError> {
+    pub fn decrypt(&self, credential: &str) -> Result<Token, FernetDriverError> {
         // TODO: Implement fernet keys change watching. Keystone loads them from FS on
         // every request and in the best case it costs 15µs.
         let fernet = match &self.fernet {
@@ -352,7 +341,7 @@ impl FernetTokenProvider {
     }
 
     /// Encrypt the token.
-    pub fn encrypt(&self, token: &Token) -> Result<String, TokenProviderError> {
+    pub fn encrypt(&self, token: &Token) -> Result<String, FernetDriverError> {
         let payload = self.encode(token)?;
         let res = match &self.fernet {
             Some(fernet) => fernet.encrypt(&payload),
@@ -372,13 +361,13 @@ impl TokenBackend for FernetTokenProvider {
     /// Decrypt the token.
     #[tracing::instrument(level = "trace", skip(self, credential))]
     fn decode(&self, credential: &str) -> Result<Token, TokenProviderError> {
-        self.decrypt(credential)
+        Ok(self.decrypt(credential)?)
     }
 
     /// Encrypt the token.
     #[tracing::instrument(level = "trace", skip(self, token))]
     fn encode(&self, token: &Token) -> Result<String, TokenProviderError> {
-        self.encrypt(token)
+        Ok(self.encrypt(token)?)
     }
 }
 
@@ -390,7 +379,7 @@ fn b64_decode_url(input: &str) -> std::result::Result<Vec<u8>, base64::DecodeErr
 /// Get the fernet payload creation timestamp.
 ///
 /// Extract the payload creation timestamp in the UTC.
-fn get_fernet_timestamp(payload: &str) -> Result<DateTime<Utc>, TokenProviderError> {
+fn get_fernet_timestamp(payload: &str) -> Result<DateTime<Utc>, FernetDriverError> {
     let data = match b64_decode_url(payload) {
         Ok(data) => data,
         Err(_) => return Err(fernet::DecryptionError)?,
@@ -405,36 +394,41 @@ fn get_fernet_timestamp(payload: &str) -> Result<DateTime<Utc>, TokenProviderErr
 
     input
         .read_u64::<byteorder::BigEndian>()
-        .map_err(|_| TokenProviderError::FernetDecryption(fernet::DecryptionError))
+        .map_err(|_| FernetDriverError::FernetDecryption(fernet::DecryptionError))
         .and_then(|val| {
-            TryInto::try_into(val).map_err(|err| TokenProviderError::TokenTimestampOverflow {
+            TryInto::try_into(val).map_err(|err| FernetDriverError::TokenTimestampOverflow {
                 value: val,
                 source: err,
             })
         })
         .and_then(|val| {
             DateTime::from_timestamp_secs(val)
-                .ok_or_else(|| TokenProviderError::FernetDecryption(fernet::DecryptionError))
+                .ok_or_else(|| FernetDriverError::FernetDecryption(fernet::DecryptionError))
         })
 }
 
+#[cfg(feature = "bench_internals")]
 /// Conditionally expose the function when the 'bench_internals' feature is
 /// enabled
-#[cfg(feature = "bench_internals")]
-pub fn bench_get_fernet_timestamp(payload: &str) -> Result<DateTime<Utc>, TokenProviderError> {
+pub fn bench_get_fernet_timestamp(payload: &str) -> Result<DateTime<Utc>, FernetDriverError> {
     get_fernet_timestamp(payload)
 }
 
 #[cfg(test)]
-pub(super) mod tests {
-    use super::*;
-    use chrono::{Local, SubsecRound};
+pub mod tests {
     use std::fs::File;
     use std::io::Write;
+
+    use chrono::{Local, SubsecRound};
+    //use config;
     use tempfile::tempdir;
     use uuid::Uuid;
 
-    pub(super) fn setup_config() -> Config {
+    use openstack_keystone_core::config::Config;
+
+    use super::*;
+
+    pub(crate) fn setup_config() -> Config {
         let keys_dir = tempdir().unwrap();
         // write fernet key used to generate tokens in python
         let file_path = keys_dir.path().join("0");
@@ -720,7 +714,7 @@ pub(super) mod tests {
             ..Default::default()
         });
 
-        let config = crate::tests::token::setup_config();
+        let config = setup_config();
         let mut provider = FernetTokenProvider::new(config);
         provider.load_keys().unwrap();
 

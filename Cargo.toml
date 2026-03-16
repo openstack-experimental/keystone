@@ -3,6 +3,7 @@ members = [
   "crates/api-types",
   "crates/core",
   "crates/keystone",
+  "crates/token-fernet",
   "crates/storage",
   "tests/api",
   "tests/integration",
