@@ -13,7 +13,6 @@
 // SPDX-License-Identifier: Apache-2.0
 use base64::{Engine as _, engine::general_purpose::URL_SAFE};
 use serde::{Deserialize, Serialize};
-use utoipa::ToSchema;
 use validator::Validate;
 
 use super::user::User;
@@ -29,31 +28,32 @@ use crate::webauthn::{
 };
 
 /// The requested options for the authentication.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct PublicKeyCredentialCreationOptions {
     /// The requested attestation level from the device.
-    #[schema(nullable = false)]
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub attestation: Option<AttestationConveyancePreference>,
     /// The list of attestation formats that the RP will accept.
-    #[schema(nullable = false)]
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub attestation_formats: Option<Vec<AttestationFormat>>,
     /// Criteria defining which authenticators may be used in this operation.
-    #[schema(nullable = false)]
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
     #[serde(skip_serializing_if = "Option::is_none")]
     #[validate(nested)]
     pub authenticator_selection: Option<AuthenticatorSelectionCriteria>,
     /// The challenge that should be signed by the authenticator.
-    #[schema(value_type = String, format = Binary, content_encoding = "base64")]
+    #[cfg_attr(feature = "openapi", schema(value_type = String, format = Binary, content_encoding = "base64"))]
     pub challenge: String,
     /// Credential ID's that are excluded from being able to be registered.
-    #[schema(nullable = false)]
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
     #[serde(skip_serializing_if = "Option::is_none")]
     #[validate(nested)]
     pub exclude_credentials: Option<Vec<PublicKeyCredentialDescriptor>>,
     /// extensions.
-    #[schema(nullable = false)]
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
     #[serde(skip_serializing_if = "Option::is_none")]
     #[validate(nested)]
     pub extensions: Option<RequestRegistrationExtensions>,
@@ -67,7 +67,7 @@ pub struct PublicKeyCredentialCreationOptions {
     #[validate(nested)]
     pub rp: RelyingParty,
     /// The timeout for the authenticator in case of no interaction.
-    #[schema(nullable = false)]
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
     #[serde(skip_serializing_if = "Option::is_none")]
     #[validate(range(min = 1))]
     pub timeout: Option<u32>,

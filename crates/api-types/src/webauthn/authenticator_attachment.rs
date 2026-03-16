@@ -12,13 +12,13 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 use serde::{Deserialize, Serialize};
-use utoipa::ToSchema;
 
 /// The authenticator attachment hint. This is NOT enforced, and is only used to
 /// help a user select a relevant authenticator type.
 ///
 /// <https://www.w3.org/TR/webauthn/#attachment>.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub enum AuthenticatorAttachment {
     /// Request a device that is part of the machine aka inseparable.
     /// <https://www.w3.org/TR/webauthn/#attachment>.

@@ -12,55 +12,41 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //! Keystone version API types
-use axum::{
-    Json,
-    http::StatusCode,
-    response::{IntoResponse, Response},
-};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use utoipa::ToSchema;
 use validator::Validate;
 
 use crate::Link;
 
 /// List of the supported API versions as [Values].
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct Versions {
     /// List of the versions.
     #[validate(nested)]
     pub versions: Values,
 }
 
-impl IntoResponse for Versions {
-    fn into_response(self) -> Response {
-        (StatusCode::OK, Json(self)).into_response()
-    }
-}
-
 /// A container with the [Version] list.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct Values {
     #[validate(nested)]
     pub values: Vec<Version>,
 }
 
 /// Single API version container.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct SingleVersion {
     /// The version.
     #[validate(nested)]
     pub version: Version,
 }
 
-impl IntoResponse for SingleVersion {
-    fn into_response(self) -> Response {
-        (StatusCode::OK, Json(self)).into_response()
-    }
-}
-
 /// Single API version.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct Version {
     /// Version id.
     #[validate(length(max = 5))]
@@ -81,7 +67,8 @@ pub struct Version {
 }
 
 /// Version status.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub enum VersionStatus {
     /// Stable.
     #[default]
@@ -92,7 +79,8 @@ pub enum VersionStatus {
     Experimental,
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct MediaType {
     pub base: String,
     pub r#type: String,

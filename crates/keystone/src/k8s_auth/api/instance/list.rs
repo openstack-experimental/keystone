@@ -14,7 +14,9 @@
 
 //! K8s auth: list auth instances.
 use axum::{
+    Json,
     extract::{OriginalUri, Query, State},
+    http::StatusCode,
     response::IntoResponse,
 };
 use serde_json::to_value;
@@ -90,10 +92,14 @@ pub(super) async fn list(
     //    &query,
     //    original_url.path(),
     //)?;
-    Ok(K8sAuthInstanceList {
-        instances,
-        links: None,
-    })
+    Ok((
+        StatusCode::OK,
+        Json(K8sAuthInstanceList {
+            instances,
+            links: None,
+        }),
+    )
+        .into_response())
 }
 
 #[cfg(test)]

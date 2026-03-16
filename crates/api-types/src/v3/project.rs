@@ -13,23 +13,18 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Project API types.
 
-use axum::{
-    Json,
-    http::StatusCode,
-    response::{IntoResponse, Response},
-};
 use derive_builder::Builder;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use utoipa::ToSchema;
 use validator::Validate;
 
 use crate::error::BuilderError;
 
 /// Short Project representation.
-#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct ProjectShort {
     /// The ID of the domain for the project.
     #[validate(length(min = 1, max = 64))]
@@ -49,9 +44,10 @@ pub struct ProjectShort {
 }
 
 /// Full project representation.
-#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct Project {
     /// The description of the project.
     #[builder(default)]
@@ -94,9 +90,10 @@ pub struct Project {
 }
 
 /// New project data.
-#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
 #[builder(build_fn(error = "BuilderError", validate = "Self::validate"))]
 #[builder(setter(strip_option, into))]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct ProjectCreate {
     /// The description of the project.
     #[builder(default)]
@@ -159,7 +156,8 @@ impl ProjectCreateBuilder {
 }
 
 /// Complete response with the project data.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct ProjectResponse {
     /// Project object.
     #[validate(nested)]
@@ -167,7 +165,8 @@ pub struct ProjectResponse {
 }
 
 /// New project creation request.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct ProjectCreateRequest {
     /// Project object.
     #[validate(nested)]
@@ -175,17 +174,12 @@ pub struct ProjectCreateRequest {
 }
 
 /// List of projects.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct ProjectShortList {
     /// Collection of project objects.
     #[validate(nested)]
     pub projects: Vec<ProjectShort>,
-}
-
-impl IntoResponse for ProjectShortList {
-    fn into_response(self) -> Response {
-        (StatusCode::OK, Json(self)).into_response()
-    }
 }
 
 #[cfg(test)]

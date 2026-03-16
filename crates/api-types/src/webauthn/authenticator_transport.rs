@@ -12,10 +12,10 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 use serde::{Deserialize, Serialize};
-use utoipa::ToSchema;
 
 /// <https://www.w3.org/TR/webauthn/#enumdef-authenticatortransport>.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub enum AuthenticatorTransport {
     /// <https://www.w3.org/TR/webauthn/#dom-authenticatortransport-ble>.
     Ble,

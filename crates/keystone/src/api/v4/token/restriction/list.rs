@@ -14,7 +14,9 @@
 //! Token Restriction: list.
 
 use axum::{
+    Json,
     extract::{Query, State},
+    http::StatusCode,
     response::IntoResponse,
 };
 use serde_json::to_value;
@@ -75,9 +77,13 @@ pub(super) async fn list(
         .into_iter()
         .map(Into::into)
         .collect();
-    Ok(TokenRestrictionList {
-        restrictions: token_restrictions,
-    })
+    Ok((
+        StatusCode::OK,
+        Json(TokenRestrictionList {
+            restrictions: token_restrictions,
+        }),
+    )
+        .into_response())
 }
 
 #[cfg(test)]

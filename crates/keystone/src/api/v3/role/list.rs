@@ -13,7 +13,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use axum::{
+    Json,
     extract::{Query, State},
+    http::StatusCode,
     response::IntoResponse,
 };
 
@@ -49,7 +51,7 @@ pub(super) async fn list(
         .into_iter()
         .map(Into::into)
         .collect();
-    Ok(RoleList { roles })
+    Ok((StatusCode::OK, Json(RoleList { roles })).into_response())
 }
 
 #[cfg(test)]

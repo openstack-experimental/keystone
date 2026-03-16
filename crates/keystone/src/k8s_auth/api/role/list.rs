@@ -14,7 +14,9 @@
 
 //! K8s auth: list auth roles.
 use axum::{
+    Json,
     extract::{OriginalUri, Path, Query, State},
+    http::StatusCode,
     response::IntoResponse,
 };
 use serde_json::to_value;
@@ -92,7 +94,7 @@ pub(super) async fn list_nested(
     //    &query,
     //    original_url.path(),
     //)?;
-    Ok(K8sAuthRoleList { roles, links: None })
+    Ok((StatusCode::OK, Json(K8sAuthRoleList { roles, links: None })).into_response())
 }
 
 /// List K8 auth roles.
@@ -170,7 +172,7 @@ pub(super) async fn list(
     //    &query,
     //    original_url.path(),
     //)?;
-    Ok(K8sAuthRoleList { roles, links: None })
+    Ok((StatusCode::OK, Json(K8sAuthRoleList { roles, links: None })).into_response())
 }
 
 #[cfg(test)]

@@ -12,20 +12,15 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //! # Catalog API types
-use axum::{
-    Json,
-    http::StatusCode,
-    response::{IntoResponse, Response},
-};
 use derive_builder::Builder;
 use serde::{Deserialize, Serialize};
-use utoipa::ToSchema;
 use validator::{Validate, ValidationErrors};
 
 use crate::error::BuilderError;
 
 /// A catalog object.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct Catalog(pub Vec<CatalogService>);
 
 impl Validate for Catalog {
@@ -34,16 +29,11 @@ impl Validate for Catalog {
     }
 }
 
-impl IntoResponse for Catalog {
-    fn into_response(self) -> Response {
-        (StatusCode::OK, Json(self)).into_response()
-    }
-}
-
 /// A catalog object.
-#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct CatalogService {
     pub r#type: Option<String>,
     #[validate(length(max = 255))]
@@ -55,9 +45,10 @@ pub struct CatalogService {
 }
 
 /// A Catalog Endpoint.
-#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct Endpoint {
     #[validate(length(max = 64))]
     pub id: String,

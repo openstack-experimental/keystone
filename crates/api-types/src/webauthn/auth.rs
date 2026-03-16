@@ -15,7 +15,6 @@
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE};
 use serde::{Deserialize, Serialize};
-use utoipa::ToSchema;
 use validator::Validate;
 
 use crate::webauthn::WebauthnError;
@@ -26,7 +25,8 @@ use crate::webauthn::{
 };
 
 /// Request for initialization of the passkey authentication.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct PasskeyAuthenticationStartRequest {
     /// The user authentication data.
     #[validate(nested)]
@@ -34,7 +34,8 @@ pub struct PasskeyAuthenticationStartRequest {
 }
 
 /// Request for initialization of the passkey authentication.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct PasskeyUserAuthenticationRequest {
     /// The ID of the user that is authenticating.
     pub user_id: String,
@@ -46,13 +47,14 @@ pub struct PasskeyUserAuthenticationRequest {
 /// handling. This is meant to be opaque, that is, you should not need to
 /// inspect or alter the content of the struct - you should serialise it and
 /// transmit it to the client only.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct PasskeyAuthenticationStartResponse {
     /// The options.
     #[validate(nested)]
     pub public_key: PublicKeyCredentialRequestOptions,
     /// The mediation requested.
-    #[schema(nullable = false)]
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mediation: Option<Mediation>,
 }
@@ -70,7 +72,8 @@ impl From<webauthn_rs_proto::auth::RequestChallengeResponse>
 
 /// Request in resident key workflows that conditional mediation should be used
 /// in the UI, or not.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub enum Mediation {
     /// Discovered credentials are presented to the user in a dialog.
     /// Conditional UI is used. See <https://github.com/w3c/webauthn/wiki/Explainer:-WebAuthn-Conditional-UI>
@@ -100,7 +103,8 @@ impl From<Mediation> for webauthn_rs_proto::auth::Mediation {
 ///
 /// You should not need to handle the inner content of this structure - you
 /// should provide this to the correctly handling function of Webauthn only.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct PasskeyAuthenticationFinishRequest {
     /// The credential Id, likely base64.
     pub id: String,
@@ -108,7 +112,7 @@ pub struct PasskeyAuthenticationFinishRequest {
     #[validate(nested)]
     pub extensions: AuthenticationExtensionsClientOutputs,
     /// The binary of the credential id.
-    #[schema(value_type = String, format = Binary, content_encoding = "base64")]
+    #[cfg_attr(feature = "openapi", schema(value_type = String, format = Binary, content_encoding = "base64"))]
     pub raw_id: String,
     /// The authenticator response.
     #[validate(nested)]

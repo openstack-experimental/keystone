@@ -13,24 +13,24 @@
 // SPDX-License-Identifier: Apache-2.0
 use base64::{Engine as _, engine::general_purpose::URL_SAFE};
 use serde::{Deserialize, Serialize};
-use utoipa::ToSchema;
 use validator::Validate;
 
 use crate::webauthn::WebauthnError;
 
 /// [AuthenticatorAssertionResponseRaw](https://w3c.github.io/webauthn/#authenticatorassertionresponse).
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct AuthenticatorAssertionResponseRaw {
     /// Raw authenticator data.
-    #[schema(value_type = String, format = Binary, content_encoding = "base64")]
+    #[cfg_attr(feature = "openapi", schema(value_type = String, format = Binary, content_encoding = "base64"))]
     pub authenticator_data: String,
     /// Signed client data.
-    #[schema(value_type = String, format = Binary, content_encoding = "base64")]
+    #[cfg_attr(feature = "openapi", schema(value_type = String, format = Binary, content_encoding = "base64"))]
     pub client_data_json: String,
     /// Signature.
-    #[schema(value_type = String, format = Binary, content_encoding = "base64")]
+    #[cfg_attr(feature = "openapi", schema(value_type = String, format = Binary, content_encoding = "base64"))]
     pub signature: String,
-    #[schema(value_type = String, format = Binary, content_encoding = "base64")]
+    #[cfg_attr(feature = "openapi", schema(value_type = String, format = Binary, content_encoding = "base64"))]
     /// Optional user handle.
     pub user_handle: Option<String>,
 }

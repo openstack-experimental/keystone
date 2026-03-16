@@ -16,8 +16,9 @@
 //! Keystone is following the API first principles. The user or other services
 //! interact with it using the API.
 use axum::{
+    Json,
     extract::State,
-    http::{HeaderMap, header},
+    http::{HeaderMap, StatusCode, header},
     response::IntoResponse,
 };
 use utoipa::{
@@ -118,7 +119,7 @@ async fn version(
             ],
         },
     };
-    Ok(res)
+    Ok((StatusCode::OK, Json(res)).into_response())
 }
 
 #[cfg(test)]

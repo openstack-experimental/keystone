@@ -12,11 +12,11 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 use serde::{Deserialize, Serialize};
-use utoipa::ToSchema;
 
 /// Valid credential protection policies.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[repr(u8)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub enum CredentialProtectionPolicy {
     /// This reflects “FIDO_2_0” semantics. In this configuration, performing
     /// some form of user verification is optional with or without

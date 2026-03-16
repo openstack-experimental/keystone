@@ -13,23 +13,18 @@
 // SPDX-License-Identifier: Apache-2.0
 //! # K8s Auth role types.
 
-use axum::{
-    Json,
-    http::StatusCode,
-    response::{IntoResponse, Response},
-};
 use derive_builder::Builder;
 use serde::{Deserialize, Serialize};
-use utoipa::{IntoParams, ToSchema};
 use validator::Validate;
 
 use crate::Link;
 use crate::error::BuilderError;
 
 /// K8s authentication role.
-#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct K8sAuthRole {
     /// ID of the K8s auth instance this role belongs to.
     #[validate(length(max = 64))]
@@ -68,7 +63,8 @@ pub struct K8sAuthRole {
 }
 
 /// K8s auth role response.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct K8sAuthRoleResponse {
     /// K8s auth role object.
     #[validate(nested)]
@@ -76,9 +72,10 @@ pub struct K8sAuthRoleResponse {
 }
 
 /// New K8s authentication role.
-#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct K8sAuthRoleCreate {
     // /// ID of the K8s auth instance this role belongs to.
     // #[validate(length(max = 64))]
@@ -111,7 +108,8 @@ pub struct K8sAuthRoleCreate {
 }
 
 /// K8s auth role create request.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct K8sAuthRoleCreateRequest {
     /// K8s auth role object.
     #[validate(nested)]
@@ -119,9 +117,10 @@ pub struct K8sAuthRoleCreateRequest {
 }
 
 /// Update K8s authentication role.
-#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct K8sAuthRoleUpdate {
     ///  Optional Audience claim to verify in the JWT.
     #[builder(default)]
@@ -152,7 +151,8 @@ pub struct K8sAuthRoleUpdate {
 }
 
 /// K8s auth role update request.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct K8sAuthRoleUpdateRequest {
     /// K8s auth role object.
     #[validate(nested)]
@@ -160,7 +160,8 @@ pub struct K8sAuthRoleUpdateRequest {
 }
 
 /// List of K8s auth roles.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct K8sAuthRoleList {
     /// Collection of k8s auth role objects.
     #[validate(nested)]
@@ -171,14 +172,10 @@ pub struct K8sAuthRoleList {
     pub links: Option<Vec<Link>>,
 }
 
-impl IntoResponse for K8sAuthRoleList {
-    fn into_response(self) -> Response {
-        (StatusCode::OK, Json(self)).into_response()
-    }
-}
-
 /// Path parameters for the nested implementation of the K8s Auth role list.
-#[derive(Clone, Debug, Deserialize, IntoParams, PartialEq, ToSchema, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Validate)]
+#[cfg_attr(feature = "openapi", derive(utoipa::IntoParams))]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct K8sAuthRolePathParams {
     /// The ID of the K8s auth instance.
     #[validate(length(max = 64))]
@@ -190,10 +187,10 @@ pub struct K8sAuthRolePathParams {
 }
 
 /// K8s Auth role list parameters (nested).
-#[derive(
-    Builder, Clone, Debug, Deserialize, IntoParams, PartialEq, Serialize, ToSchema, Validate,
-)]
+#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
+#[cfg_attr(feature = "openapi", derive(utoipa::IntoParams))]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct K8sAuthRoleListParametersNested {
     /// Name.
     #[validate(length(max = 255))]
@@ -201,19 +198,10 @@ pub struct K8sAuthRoleListParametersNested {
 }
 
 /// K8s Auth role list parameters.
-#[derive(
-    Builder,
-    Clone,
-    Debug,
-    Default,
-    Deserialize,
-    IntoParams,
-    PartialEq,
-    Serialize,
-    ToSchema,
-    Validate,
-)]
+#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
+#[cfg_attr(feature = "openapi", derive(utoipa::IntoParams))]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct K8sAuthRoleListParameters {
     /// K8s auth instance id.
     #[validate(length(max = 64))]

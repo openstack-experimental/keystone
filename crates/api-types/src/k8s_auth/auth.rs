@@ -16,19 +16,19 @@
 use derive_builder::Builder;
 use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize, Serializer};
-use utoipa::ToSchema;
 use validator::Validate;
 
 use crate::error::BuilderError;
 
 /// K8s authentication request.
-#[derive(Builder, Clone, Debug, Deserialize, Serialize, ToSchema, Validate)]
+#[derive(Builder, Clone, Debug, Deserialize, Serialize, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct K8sAuthRequest {
     //#[validate(length(max = 64))]
     //pub auth_instance_id: String,
-    #[schema(value_type = String)]
+    #[cfg_attr(feature = "openapi", schema(value_type = String))]
     #[serde(serialize_with = "serialize_secret_string")]
     pub jwt: SecretString,
 

@@ -13,7 +13,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Get available project scopes.
 
-use axum::{extract::State, response::IntoResponse};
+use axum::{Json, extract::State, http::StatusCode, response::IntoResponse};
 use serde_json::Value;
 use std::collections::HashSet;
 
@@ -73,26 +73,30 @@ pub(super) async fn list(
         .map(|assignment| assignment.target_id.clone())
         .collect();
 
-    Ok(ProjectShortList {
-        projects: if !project_ids.is_empty() {
-            state
-                .provider
-                .get_resource_provider()
-                .list_projects(
-                    &state,
-                    &ProjectListParameters {
-                        ids: Some(project_ids),
-                        ..Default::default()
-                    },
-                )
-                .await?
-                .into_iter()
-                .map(Into::into)
-                .collect()
-        } else {
-            vec![]
-        },
-    })
+    Ok((
+        StatusCode::OK,
+        Json(ProjectShortList {
+            projects: if !project_ids.is_empty() {
+                state
+                    .provider
+                    .get_resource_provider()
+                    .list_projects(
+                        &state,
+                        &ProjectListParameters {
+                            ids: Some(project_ids),
+                            ..Default::default()
+                        },
+                    )
+                    .await?
+                    .into_iter()
+                    .map(Into::into)
+                    .collect()
+            } else {
+                vec![]
+            },
+        }),
+    )
+        .into_response())
 }
 
 #[cfg(test)]

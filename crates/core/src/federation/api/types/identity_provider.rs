@@ -20,18 +20,7 @@ use axum::{
 
 use openstack_keystone_api_types::federation::identity_provider as api_identity_provider;
 
-//pub use identity_provider::IdentityProvider;
-//pub use identity_provider::IdentityProviderCreate;
-//pub use identity_provider::IdentityProviderCreateRequest;
-//pub use identity_provider::IdentityProviderList;
-//pub use identity_provider::IdentityProviderListParameters;
-//pub use identity_provider::IdentityProviderResponse;
-//pub use identity_provider::IdentityProviderUpdate;
-//pub use identity_provider::IdentityProviderUpdateRequest;
-
 use crate::federation::types;
-
-//use crate::api::common::{QueryParameterPagination, ResourceIdentifier};
 
 impl From<types::IdentityProvider> for api_identity_provider::IdentityProvider {
     fn from(value: types::IdentityProvider) -> Self {
@@ -117,20 +106,3 @@ impl From<api_identity_provider::IdentityProviderListParameters>
         }
     }
 }
-
-// impl ResourceIdentifier for IdentityProvider {
-//     fn get_id(&self) -> String {
-//         self.id.clone()
-//     }
-// }
-//
-// impl QueryParameterPagination for IdentityProviderListParameters {
-//     fn get_limit(&self) -> Option<u64> {
-//         self.limit
-//     }
-//
-//     fn set_marker(&mut self, marker: String) -> &mut Self {
-//         self.marker = Some(marker);
-//         self
-//     }
-// }

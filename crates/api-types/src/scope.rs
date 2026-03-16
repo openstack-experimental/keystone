@@ -14,7 +14,6 @@
 //! # Keystone Scope API types
 use derive_builder::Builder;
 use serde::{Deserialize, Serialize};
-use utoipa::ToSchema;
 use validator::{Validate, ValidationErrors};
 
 use crate::error::BuilderError;
@@ -28,7 +27,8 @@ use crate::error::BuilderError;
 /// specified by name, then the domain of the project must also be specified in
 /// order to uniquely identify the project by name. A domain scope may be
 /// specified by either the domain's ID or name with equivalent results.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(rename_all = "lowercase")]
 pub enum Scope {
     /// Project scope.
@@ -50,9 +50,10 @@ impl Validate for Scope {
 }
 
 /// Project scope information.
-#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(into, strip_option))]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct ScopeProject {
     /// Project ID.
     #[builder(default)]
@@ -68,9 +69,10 @@ pub struct ScopeProject {
 }
 
 /// Domain information.
-#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(into, strip_option))]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct Domain {
     /// Domain ID.
     #[builder(default)]
@@ -83,8 +85,9 @@ pub struct Domain {
 }
 
 /// Project information.
-#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct Project {
     /// Project ID.
     #[validate(length(max = 64))]
@@ -98,9 +101,10 @@ pub struct Project {
 }
 
 /// System scope.
-#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(into, strip_option))]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct System {
     /// All systems access.
     #[builder(default)]

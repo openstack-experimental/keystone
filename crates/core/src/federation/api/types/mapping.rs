@@ -21,21 +21,8 @@ use uuid::Uuid;
 
 use openstack_keystone_api_types::federation::mapping as api_mapping;
 
-use crate::api::{
-    KeystoneApiError,
-    //    common::{QueryParameterPagination, ResourceIdentifier},
-};
+use crate::api::KeystoneApiError;
 use crate::federation::types;
-
-//pub use mapping::Mapping;
-//pub use mapping::MappingCreate;
-//pub use mapping::MappingCreateRequest;
-//pub use mapping::MappingList;
-//pub use mapping::MappingListParameters;
-//pub use mapping::MappingResponse;
-//pub use mapping::MappingType;
-//pub use mapping::MappingUpdate;
-//pub use mapping::MappingUpdateRequest;
 
 impl From<types::Mapping> for api_mapping::Mapping {
     fn from(value: types::Mapping) -> Self {
@@ -151,20 +138,3 @@ impl TryFrom<api_mapping::MappingListParameters> for types::MappingListParameter
         })
     }
 }
-
-//impl ResourceIdentifier for Mapping {
-//    fn get_id(&self) -> String {
-//        self.id.clone()
-//    }
-//}
-//
-//impl QueryParameterPagination for MappingListParameters {
-//    fn get_limit(&self) -> Option<u64> {
-//        self.limit
-//    }
-//
-//    fn set_marker(&mut self, marker: String) -> &mut Self {
-//        self.marker = Some(marker);
-//        self
-//    }
-//}

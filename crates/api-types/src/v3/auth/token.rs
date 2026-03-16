@@ -12,15 +12,9 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use axum::{
-    Json,
-    http::StatusCode,
-    response::{IntoResponse, Response},
-};
 use chrono::{DateTime, Utc};
 use derive_builder::Builder;
 use serde::{Deserialize, Serialize};
-use utoipa::{IntoParams, ToSchema};
 use validator::Validate;
 
 use crate::catalog::*;
@@ -30,9 +24,10 @@ use crate::trust::TokenTrustRepr;
 use crate::v3::role::RoleRef;
 
 /// Authorization token.
-#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct Token {
     /// A list of one or two audit IDs. An audit ID is a unique, randomly
     /// generated, URL-safe string that you can use to track a token. The
@@ -112,23 +107,19 @@ pub struct Token {
     pub catalog: Option<Catalog>,
 }
 
-#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct TokenResponse {
     /// Token.
     #[validate(nested)]
     pub token: Token,
 }
 
-impl IntoResponse for TokenResponse {
-    fn into_response(self) -> Response {
-        (StatusCode::OK, Json(self)).into_response()
-    }
-}
-
 /// An authentication request.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct AuthRequest {
     /// An identity object.
     #[validate(nested)]
@@ -136,7 +127,8 @@ pub struct AuthRequest {
 }
 
 /// An authentication request.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct AuthRequestInner {
     /// An identity object.
     #[validate(nested)]
@@ -157,9 +149,10 @@ pub struct AuthRequestInner {
 }
 
 /// An identity object.
-#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(into, strip_option))]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct Identity {
     /// The authentication method. For password authentication, specify
     /// password.
@@ -177,9 +170,10 @@ pub struct Identity {
 }
 
 /// The password object, contains the authentication information.
-#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct PasswordAuth {
     /// A user object.
     #[builder(default)]
@@ -188,8 +182,9 @@ pub struct PasswordAuth {
 }
 
 /// User password information.
-#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
 #[builder(setter(into, strip_option))]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct UserPassword {
     /// User ID.
     #[builder(default)]
@@ -209,9 +204,10 @@ pub struct UserPassword {
 }
 
 /// User information.
-#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(into, strip_option))]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct User {
     /// User ID.
     #[validate(length(max = 64))]
@@ -229,23 +225,26 @@ pub struct User {
 }
 
 /// The token object, contains the authentication information.
-#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct TokenAuth {
     /// An authentication token.
     #[validate(length(max = 1024))]
     pub id: String,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Serialize, IntoParams, Validate)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize, Validate)]
+#[cfg_attr(feature = "openapi", derive(utoipa::IntoParams))]
 pub struct CreateTokenParameters {
     /// The authentication response excludes the service catalog. By default,
     /// the response includes the service catalog.
     pub nocatalog: Option<bool>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Serialize, IntoParams, Validate)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize, Validate)]
+#[cfg_attr(feature = "openapi", derive(utoipa::IntoParams))]
 pub struct ValidateTokenParameters {
     /// The authentication response excludes the service catalog. By default,
     /// the response includes the service catalog.
@@ -256,9 +255,10 @@ pub struct ValidateTokenParameters {
 }
 
 /// System information.
-#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(into, strip_option))]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct System {
     /// All.
     pub all: bool,

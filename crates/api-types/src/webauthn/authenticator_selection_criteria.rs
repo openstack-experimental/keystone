@@ -12,7 +12,6 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 use serde::{Deserialize, Serialize};
-use utoipa::ToSchema;
 use validator::Validate;
 
 use crate::webauthn::{
@@ -22,18 +21,19 @@ use crate::webauthn::{
 };
 
 /// <https://www.w3.org/TR/webauthn/#dictdef-authenticatorselectioncriteria>.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct AuthenticatorSelectionCriteria {
     /// How the authenticator should be attached to the client machine. Note
     /// this is only a hint. It is not enforced in anyway shape or form. <https://www.w3.org/TR/webauthn/#attachment>.
-    #[schema(nullable = false)]
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub authenticator_attachment: Option<AuthenticatorAttachment>,
     /// Hint to the credential to create a resident key. Note this value should
     /// be a member of ResidentKeyRequirement, but client must ignore
     /// unknown values, treating an unknown value as if the member does not
     /// exist. <https://www.w3.org/TR/webauthn-2/#dom-authenticatorselectioncriteria-residentkey>.
-    #[schema(nullable = false)]
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resident_key: Option<ResidentKeyRequirement>,
     /// Hint to the credential to create a resident key. Note this can not be

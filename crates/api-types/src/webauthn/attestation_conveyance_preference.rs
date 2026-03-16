@@ -12,10 +12,10 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 use serde::{Deserialize, Serialize};
-use utoipa::ToSchema;
 
 /// <https://www.w3.org/TR/webauthn/#enumdef-attestationconveyancepreference>.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub enum AttestationConveyancePreference {
     /// Do not request attestation.
     /// <https://www.w3.org/TR/webauthn/#dom-attestationconveyancepreference-none>.

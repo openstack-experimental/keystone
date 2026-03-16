@@ -13,23 +13,18 @@
 // SPDX-License-Identifier: Apache-2.0
 //! # K8s Auth configuration types.
 
-use axum::{
-    Json,
-    http::StatusCode,
-    response::{IntoResponse, Response},
-};
 use derive_builder::Builder;
 use serde::{Deserialize, Serialize};
-use utoipa::{IntoParams, ToSchema};
 use validator::Validate;
 
 use crate::Link;
 use crate::error::BuilderError;
 
 /// K8s authentication instance.
-#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct K8sAuthInstance {
     /// PEM encoded CA cert for use by the TLS client used to talk with the
     /// Kubernetes API. NOTE: Every line must end with a newline: \n If not set,
@@ -63,7 +58,8 @@ pub struct K8sAuthInstance {
 }
 
 /// K8s auth instance response.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct K8sAuthInstanceResponse {
     /// K8s auth instance object.
     #[validate(nested)]
@@ -71,9 +67,10 @@ pub struct K8sAuthInstanceResponse {
 }
 
 /// New K8s authentication instance.
-#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct K8sAuthInstanceCreate {
     /// PEM encoded CA cert for use by the TLS client used to talk with the
     /// Kubernetes API. NOTE: Every line must end with a newline: \n If not set,
@@ -102,7 +99,8 @@ pub struct K8sAuthInstanceCreate {
 }
 
 /// K8s auth instance create request.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct K8sAuthInstanceCreateRequest {
     /// K8s auth instance object.
     #[validate(nested)]
@@ -110,9 +108,10 @@ pub struct K8sAuthInstanceCreateRequest {
 }
 
 /// Update K8s authentication instance.
-#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct K8sAuthInstanceUpdate {
     /// PEM encoded CA cert for use by the TLS client used to talk with the
     /// Kubernetes API. NOTE: Every line must end with a newline: \n If not set,
@@ -140,7 +139,8 @@ pub struct K8sAuthInstanceUpdate {
 }
 
 /// K8s auth instance update request.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct K8sAuthInstanceUpdateRequest {
     /// K8s auth instance object.
     #[validate(nested)]
@@ -148,7 +148,8 @@ pub struct K8sAuthInstanceUpdateRequest {
 }
 
 /// List of K8s auth instances.
-#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct K8sAuthInstanceList {
     /// Collection of k8s auth instance objects.
     #[validate(nested)]
@@ -159,26 +160,10 @@ pub struct K8sAuthInstanceList {
     pub links: Option<Vec<Link>>,
 }
 
-impl IntoResponse for K8sAuthInstanceList {
-    fn into_response(self) -> Response {
-        (StatusCode::OK, Json(self)).into_response()
-    }
-}
-
 /// K8s Auth instance list parameters.
-#[derive(
-    Builder,
-    Clone,
-    Debug,
-    Default,
-    Deserialize,
-    IntoParams,
-    PartialEq,
-    Serialize,
-    ToSchema,
-    Validate,
-)]
+#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
+#[cfg_attr(feature = "openapi", derive(utoipa::IntoParams))]
 pub struct K8sAuthInstanceListParameters {
     /// Domain id.
     #[validate(length(max = 64))]

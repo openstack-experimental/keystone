@@ -12,19 +12,14 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use axum::{
-    Json,
-    http::StatusCode,
-    response::{IntoResponse, Response},
-};
 use derive_builder::Builder;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use utoipa::{IntoParams, ToSchema};
 use validator::Validate;
 
 /// The role data.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct Role {
     /// Role ID.
     #[validate(length(min = 1, max = 64))]
@@ -45,7 +40,8 @@ pub struct Role {
 }
 
 /// The role reference data.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct RoleRef {
     /// Role domain ID.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -61,34 +57,25 @@ pub struct RoleRef {
     pub name: String,
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct RoleResponse {
     /// Role object.
     #[validate(nested)]
     pub role: Role,
 }
 
-impl IntoResponse for RoleResponse {
-    fn into_response(self) -> Response {
-        (StatusCode::OK, Json(self)).into_response()
-    }
-}
-
 /// Roles.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct RoleList {
     /// Collection of role objects.
     #[validate(nested)]
     pub roles: Vec<Role>,
 }
 
-impl IntoResponse for RoleList {
-    fn into_response(self) -> Response {
-        (StatusCode::OK, Json(self)).into_response()
-    }
-}
-
-#[derive(Clone, Debug, Default, Deserialize, Serialize, IntoParams, Validate)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize, Validate)]
+#[cfg_attr(feature = "openapi", derive(utoipa::IntoParams))]
 pub struct RoleListParameters {
     /// Filter users by Domain ID.
     #[validate(length(min = 1, max = 64))]
@@ -99,7 +86,8 @@ pub struct RoleListParameters {
 }
 
 /// Role create request body.
-#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct RoleCreate {
     /// The role description.
     #[builder(default)]

@@ -15,15 +15,15 @@
 use chrono::{DateTime, Utc};
 use derive_builder::Builder;
 use serde::{Deserialize, Serialize};
-use utoipa::ToSchema;
 use validator::Validate;
 
 use crate::error::BuilderError;
 
 /// A trust object returned in the token.
-#[derive(Builder, Clone, Debug, Default, Deserialize, Serialize, PartialEq, ToSchema, Validate)]
+#[derive(Builder, Clone, Debug, Default, Deserialize, Serialize, PartialEq, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct TokenTrustRepr {
     /// Specifies the expiration time of the trust. A trust may be revoked ahead
     /// of expiration. If the value represents a time in the past, the trust is
@@ -97,9 +97,10 @@ pub struct TokenTrustRepr {
 }
 
 /// A trust object returned in the token.
-#[derive(Builder, Clone, Debug, Default, Deserialize, Serialize, PartialEq, ToSchema, Validate)]
+#[derive(Builder, Clone, Debug, Default, Deserialize, Serialize, PartialEq, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct TokenTrustUser {
     /// The ID of the user.
     #[validate(length(min = 1, max = 64))]

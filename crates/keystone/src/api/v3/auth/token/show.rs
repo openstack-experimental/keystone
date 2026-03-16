@@ -23,8 +23,9 @@
 //!  - revocation
 
 use axum::{
+    Json,
     extract::{Query, State},
-    http::HeaderMap,
+    http::{HeaderMap, StatusCode},
     response::IntoResponse,
 };
 use serde_json::{json, to_value};
@@ -119,9 +120,13 @@ pub(super) async fn show(
         response_token.catalog = Some(catalog);
     }
 
-    Ok(TokenResponse {
-        token: response_token,
-    })
+    Ok((
+        StatusCode::OK,
+        Json(TokenResponse {
+            token: response_token,
+        }),
+    )
+        .into_response())
 }
 
 #[cfg(test)]

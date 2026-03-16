@@ -10,7 +10,7 @@ repository.workspace = true
 
 [dependencies]
 async-trait.workspace = true
-axum.workspace = true
+axum = { workspace = true, features = ["json"] }
 base64.workspace = true
 bcrypt = { workspace = true, features = ["alloc"] }
 chrono.workspace = true

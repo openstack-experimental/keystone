@@ -12,7 +12,6 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 use serde::{Deserialize, Serialize};
-use utoipa::ToSchema;
 
 /// Defines the User Authenticator Verification policy. This is documented
 /// <https://w3c.github.io/webauthn/#enumdef-userverificationrequirement>, and each variant lists
@@ -48,7 +47,8 @@ use utoipa::ToSchema;
 /// preferred can cause legitimate credentials to not prompt for UV   correctly
 /// due to browser perhipheral exchange leading Webauthn RS to deny them in what
 ///   should otherwise be legitimate operations.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub enum UserVerificationPolicy {
     /// Require user verification bit to be set, and fail the registration or
     /// authentication if false. If the authenticator is not able to perform

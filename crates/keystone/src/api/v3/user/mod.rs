@@ -64,7 +64,7 @@ async fn list(
         .into_iter()
         .map(Into::into)
         .collect();
-    Ok(UserList { users })
+    Ok((StatusCode::OK, Json(UserList { users })).into_response())
 }
 
 /// Get single user
@@ -173,7 +173,7 @@ async fn groups(
         .into_iter()
         .map(Into::into)
         .collect();
-    Ok(GroupList { groups })
+    Ok((StatusCode::OK, Json(GroupList { groups })).into_response())
 }
 
 #[cfg(test)]

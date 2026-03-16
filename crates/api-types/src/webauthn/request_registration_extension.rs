@@ -12,7 +12,6 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 use serde::{Deserialize, Serialize};
-use utoipa::ToSchema;
 use validator::Validate;
 
 use crate::webauthn::cred_protect::CredProtect;
@@ -20,30 +19,31 @@ use crate::webauthn::cred_protect::CredProtect;
 /// Extension option inputs for PublicKeyCredentialCreationOptions.
 ///
 /// Implements `AuthenticatorExtensionsClientInputs` from the spec.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct RequestRegistrationExtensions {
     /// ⚠️ - This extension result is always unsigned, and only indicates if the
     /// browser requests a residentKey to be created. It has no bearing on
     /// the true rk state of the credential.
-    #[schema(nullable = false)]
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cred_props: Option<bool>,
     /// The credProtect extension options.
-    #[schema(nullable = false)]
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
     #[serde(skip_serializing_if = "Option::is_none")]
     #[validate(nested)]
     pub cred_protect: Option<CredProtect>,
     /// ⚠️ - Browsers support the creation of the secret, but not the retrieval
     /// of it. CTAP2.1 create hmac secret.
-    #[schema(nullable = false)]
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hmac_create_secret: Option<bool>,
     /// CTAP2.1 Minimum pin length.
-    #[schema(nullable = false)]
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub min_pin_length: Option<bool>,
     /// ⚠️ - Browsers do not support this! Uvm.
-    #[schema(nullable = false)]
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub uvm: Option<bool>,
 }

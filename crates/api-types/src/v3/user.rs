@@ -12,24 +12,19 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use axum::{
-    Json,
-    http::StatusCode,
-    response::{IntoResponse, Response},
-};
 use chrono::{DateTime, Utc};
 use derive_builder::Builder;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use utoipa::{IntoParams, ToSchema};
 use validator::Validate;
 
 use crate::error::BuilderError;
 
 /// User response object.
-#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct User {
     /// The ID of the default project for the user. A user's default project
     /// must not be a domain. Setting this attribute does not grant any actual
@@ -94,7 +89,8 @@ pub struct User {
 }
 
 /// Complete response with the user data.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct UserResponse {
     /// User object.
     #[validate(nested)]
@@ -102,9 +98,10 @@ pub struct UserResponse {
 }
 
 /// Create user data.
-#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct UserCreate {
     /// The ID of the default project for the user. A user's default project
     /// must not be a domain. Setting this attribute does not grant any actual
@@ -152,7 +149,8 @@ pub struct UserCreate {
 }
 
 /// Complete create user request.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct UserCreateRequest {
     /// User object.
     #[validate(nested)]
@@ -160,9 +158,10 @@ pub struct UserCreateRequest {
 }
 
 /// Update user data.
-#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct UserUpdate {
     /// The ID of the default project for the user. A user's default project
     /// must not be a domain. Setting this attribute does not grant any actual
@@ -206,7 +205,8 @@ pub struct UserUpdate {
 }
 
 /// Complete update user request.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct UserUpdateRequest {
     /// User object.
     #[validate(nested)]
@@ -214,7 +214,8 @@ pub struct UserUpdateRequest {
 }
 
 /// User options.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct UserOptions {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ignore_change_password_upon_first_use: Option<bool>,
@@ -233,7 +234,8 @@ pub struct UserOptions {
 }
 
 /// User federation data.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct Federation {
     /// Identity provider ID.
     pub idp_id: String,
@@ -243,7 +245,8 @@ pub struct Federation {
 }
 
 /// Federation protocol data.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct FederationProtocol {
     /// Federation protocol ID.
     #[validate(length(max = 64))]
@@ -255,28 +258,18 @@ pub struct FederationProtocol {
     pub unique_id: String,
 }
 
-impl IntoResponse for UserResponse {
-    fn into_response(self) -> Response {
-        (StatusCode::OK, Json(self)).into_response()
-    }
-}
-
 /// List of users.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct UserList {
     /// Collection of user objects.
     #[validate(nested)]
     pub users: Vec<User>,
 }
 
-impl IntoResponse for UserList {
-    fn into_response(self) -> Response {
-        (StatusCode::OK, Json(self)).into_response()
-    }
-}
-
 /// User list parameters.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, IntoParams, Validate)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
+#[cfg_attr(feature = "openapi", derive(utoipa::IntoParams))]
 pub struct UserListParameters {
     /// Filter users by Domain ID.
     #[validate(length(max = 64))]

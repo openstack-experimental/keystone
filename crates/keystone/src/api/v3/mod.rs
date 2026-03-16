@@ -15,8 +15,9 @@
 //! v3 API.
 
 use axum::{
+    Json,
     extract::{OriginalUri, Request, State},
-    http::{HeaderMap, header},
+    http::{HeaderMap, StatusCode, header},
     response::IntoResponse,
 };
 use utoipa::OpenApi;
@@ -94,5 +95,5 @@ async fn version(
         ..Default::default()
     };
     let res = SingleVersion { version };
-    Ok(res)
+    Ok((StatusCode::OK, Json(res)).into_response())
 }

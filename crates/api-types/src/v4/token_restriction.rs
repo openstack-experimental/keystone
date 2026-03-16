@@ -12,21 +12,16 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //! Token restriction types.
-use axum::{
-    Json,
-    http::StatusCode,
-    response::{IntoResponse, Response},
-};
 use derive_builder::Builder;
 use serde::{Deserialize, Serialize};
-use utoipa::{IntoParams, ToSchema};
 use validator::Validate;
 
 use crate::v3::role::RoleRef;
 
 /// Token restriction data.
-#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
 #[builder(setter(strip_option, into))]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct TokenRestriction {
     /// Allow token renew.
     pub allow_renew: bool,
@@ -61,8 +56,9 @@ pub struct TokenRestriction {
 }
 
 /// New token restriction data.
-#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
 #[builder(setter(strip_option, into))]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct TokenRestrictionCreate {
     /// Allow token renew.
     pub allow_renew: bool,
@@ -92,8 +88,9 @@ pub struct TokenRestrictionCreate {
 }
 
 /// New token restriction data.
-#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
 #[builder(setter(strip_option, into))]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct TokenRestrictionUpdate {
     /// Allow token renew.
     pub allow_renew: Option<bool>,
@@ -118,7 +115,8 @@ pub struct TokenRestrictionUpdate {
 }
 
 /// Token restriction data.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct TokenRestrictionResponse {
     /// Restriction object.
     #[validate(nested)]
@@ -126,7 +124,8 @@ pub struct TokenRestrictionResponse {
 }
 
 /// Token restriction creation request.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct TokenRestrictionCreateRequest {
     /// Restriction object.
     #[validate(nested)]
@@ -134,7 +133,8 @@ pub struct TokenRestrictionCreateRequest {
 }
 
 /// Token restriction update request.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct TokenRestrictionUpdateRequest {
     /// Restriction object.
     #[validate(nested)]
@@ -142,7 +142,8 @@ pub struct TokenRestrictionUpdateRequest {
 }
 
 /// Token restriction list filters.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, IntoParams, Validate)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
+#[cfg_attr(feature = "openapi", derive(utoipa::IntoParams))]
 pub struct TokenRestrictionListParameters {
     /// Domain id.
     #[validate(length(max = 64))]
@@ -156,15 +157,10 @@ pub struct TokenRestrictionListParameters {
 }
 
 /// Token restrictions.
-#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
+#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[builder(setter(strip_option, into))]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct TokenRestrictionList {
     /// Token restrictions.
     pub restrictions: Vec<TokenRestriction>,
-}
-
-impl IntoResponse for TokenRestrictionList {
-    fn into_response(self) -> Response {
-        (StatusCode::OK, Json(self)).into_response()
-    }
 }

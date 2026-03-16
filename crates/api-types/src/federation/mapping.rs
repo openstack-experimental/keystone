@@ -12,24 +12,19 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //! Federated attribute mapping types.
-use axum::{
-    Json,
-    http::StatusCode,
-    response::{IntoResponse, Response},
-};
 use derive_builder::Builder;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use utoipa::{IntoParams, ToSchema};
 use validator::Validate;
 
 use crate::Link;
 use crate::error::BuilderError;
 
 /// OIDC/JWT mapping data.
-#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct Mapping {
     /// Attribute mapping ID for federated logins.
     pub id: String,
@@ -90,8 +85,8 @@ pub struct Mapping {
 
     /// Additional claims that must be present in the token.
     #[builder(default)]
+    #[cfg_attr(feature = "openapi", schema(value_type = Object))]
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[schema(value_type = Object)]
     pub bound_claims: Option<Value>,
 
     /// List of OIDC scopes.
@@ -110,7 +105,8 @@ pub struct Mapping {
     pub token_restriction_id: Option<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct MappingResponse {
     /// Mapping object.
     #[validate(nested)]
@@ -118,9 +114,10 @@ pub struct MappingResponse {
 }
 
 /// OIDC/JWT attribute mapping create data.
-#[derive(Builder, Clone, Default, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Builder, Clone, Default, Debug, Deserialize, PartialEq, Serialize, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct MappingCreate {
     /// Attribute mapping ID for federated logins.
     #[validate(length(max = 64))]
@@ -137,8 +134,8 @@ pub struct MappingCreate {
     /// Attribute mapping can be only shared when the referred identity
     /// provider is also shared (does not set the `domain_id` attribute).
     #[builder(default)]
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[schema(nullable = false)]
     #[validate(length(max = 64))]
     pub domain_id: Option<String>,
 
@@ -149,8 +146,8 @@ pub struct MappingCreate {
 
     /// Attribute mapping type ([oidc, jwt]).
     #[builder(default)]
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[schema(nullable = false)]
     pub r#type: Option<MappingType>,
 
     /// Mapping enabled property. Inactive mappings can not be used for login.
@@ -159,8 +156,8 @@ pub struct MappingCreate {
 
     /// List of allowed redirect urls (only for `oidc` type).
     #[builder(default)]
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[schema(nullable = false)]
     pub allowed_redirect_uris: Option<Vec<String>>,
 
     /// `user_id` claim name.
@@ -173,47 +170,47 @@ pub struct MappingCreate {
 
     /// `domain_id` claim name.
     #[builder(default)]
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[schema(nullable = false)]
     #[validate(length(max = 64))]
     pub domain_id_claim: Option<String>,
 
     /// `groups` claim name.
     #[builder(default)]
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[schema(nullable = false)]
     #[validate(length(max = 64))]
     pub groups_claim: Option<String>,
 
     /// List of audiences that must be present in the token.
     #[builder(default)]
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[schema(nullable = false)]
     pub bound_audiences: Option<Vec<String>>,
 
     /// Token subject value that must be set in the token.
     #[builder(default)]
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[schema(nullable = false)]
     #[validate(length(max = 64))]
     pub bound_subject: Option<String>,
 
     /// Additional claims that must be present in the token.
     #[builder(default)]
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[schema(nullable = false, value_type = Object)]
     pub bound_claims: Option<Value>,
 
     /// List of OIDC scopes.
     #[builder(default)]
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[schema(nullable = false)]
     pub oidc_scopes: Option<Vec<String>>,
 
     /// Fixed project_id for the token.
     #[builder(default)]
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[schema(nullable = false)]
     #[validate(length(max = 64))]
     pub token_project_id: Option<String>,
 
@@ -225,9 +222,10 @@ pub struct MappingCreate {
 }
 
 /// OIDC/JWT attribute mapping update data.
-#[derive(Builder, Clone, Default, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Builder, Clone, Default, Debug, Deserialize, PartialEq, Serialize, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(into))]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct MappingUpdate {
     /// Attribute mapping name for federated logins.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -253,14 +251,14 @@ pub struct MappingUpdate {
 
     /// Attribute mapping type ([oidc, jwt]).
     #[builder(default)]
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[schema(nullable = false)]
     pub r#type: Option<MappingType>,
 
     /// Mapping enabled property. Inactive mappings can not be used for login.
     #[builder(default)]
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[schema(nullable = false)]
     pub enabled: Option<bool>,
 
     /// List of allowed redirect urls (only for `oidc` type).
@@ -305,8 +303,8 @@ pub struct MappingUpdate {
 
     /// Additional claims that must be present in the token.
     #[builder(default)]
+    #[cfg_attr(feature = "openapi", schema(nullable = false, value_type = Object))]
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[schema(nullable = false, value_type = Object)]
     pub bound_claims: Option<Value>,
 
     /// List of OIDC scopes.
@@ -328,9 +326,10 @@ pub struct MappingUpdate {
 }
 
 /// OIDC/JWT attribute mapping create request.
-#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct MappingCreateRequest {
     /// Mapping object.
     #[validate(nested)]
@@ -338,9 +337,10 @@ pub struct MappingCreateRequest {
 }
 
 /// OIDC/JWT attribute mapping update request.
-#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct MappingUpdateRequest {
     /// Mapping object.
     #[validate(nested)]
@@ -348,7 +348,8 @@ pub struct MappingUpdateRequest {
 }
 
 /// Attribute mapping type.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(rename_all = "lowercase")]
 pub enum MappingType {
     #[default]
@@ -359,7 +360,8 @@ pub enum MappingType {
 }
 
 /// List of OIDC/JWT attribute mappings.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct MappingList {
     /// Collection of identity provider objects.
     pub mappings: Vec<Mapping>,
@@ -369,27 +371,22 @@ pub struct MappingList {
     pub links: Option<Vec<Link>>,
 }
 
-impl IntoResponse for MappingList {
-    fn into_response(self) -> Response {
-        (StatusCode::OK, Json(self)).into_response()
-    }
-}
-
 /// Query parameters for listing OIDC/JWT attribute mappings.
-#[derive(Clone, Debug, Default, Deserialize, Serialize, IntoParams, Validate)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize, Validate)]
+#[cfg_attr(feature = "openapi", derive(utoipa::IntoParams))]
 pub struct MappingListParameters {
     /// Filters the response by a domain ID.
-    #[param(nullable = false)]
+    #[cfg_attr(feature = "openapi", param(nullable = false))]
     #[validate(length(max = 64))]
     pub domain_id: Option<String>,
 
     /// Filters the response by a idp ID.
-    #[param(nullable = false)]
+    #[cfg_attr(feature = "openapi", param(nullable = false))]
     #[validate(length(max = 64))]
     pub idp_id: Option<String>,
 
     /// Filters the response by IDP name.
-    #[param(nullable = false)]
+    #[cfg_attr(feature = "openapi", param(nullable = false))]
     #[validate(length(max = 255))]
     pub name: Option<String>,
 
@@ -402,6 +399,6 @@ pub struct MappingListParameters {
     pub marker: Option<String>,
 
     /// Filters the response by a mapping type.
-    #[param(nullable = false)]
+    #[cfg_attr(feature = "openapi", param(nullable = false))]
     pub r#type: Option<MappingType>,
 }

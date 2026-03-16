@@ -60,7 +60,7 @@ async fn list(
         .into_iter()
         .map(Into::into)
         .collect();
-    Ok(GroupList { groups })
+    Ok((StatusCode::OK, Json(GroupList { groups })).into_response())
 }
 
 /// Get single group

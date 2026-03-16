@@ -13,23 +13,23 @@
 // SPDX-License-Identifier: Apache-2.0
 use base64::{Engine as _, engine::general_purpose::URL_SAFE};
 use serde::{Deserialize, Serialize};
-use utoipa::ToSchema;
 use validator::Validate;
 
 use crate::webauthn::WebauthnError;
 use crate::webauthn::authenticator_transport::AuthenticatorTransport;
 
 /// <https://www.w3.org/TR/webauthn/#dictdef-publickeycredentialdescriptor>.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct PublicKeyCredentialDescriptor {
     /// The type of credential.
     pub type_: String,
     /// The credential id.
-    #[schema(value_type = String, format = Binary, content_encoding = "base64")]
+    #[cfg_attr(feature = "openapi", schema(value_type = String, format = Binary, content_encoding = "base64"))]
     pub id: String,
     /// The allowed transports for this credential. Note this is a hint, and is
     /// NOT enforced.
-    #[schema(nullable = false)]
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub transports: Option<Vec<AuthenticatorTransport>>,
 }

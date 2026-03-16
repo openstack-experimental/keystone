@@ -29,7 +29,7 @@ color-eyre.workspace = true
 config.workspace = true
 derive_builder.workspace = true
 eyre.workspace = true
-openstack-keystone-api-types = { version = "0.1", path = "../api-types/"}
+openstack-keystone-api-types = { version = "0.1", features = ["openapi"], path = "../api-types/"}
 openstack-keystone-core = { version = "0.1", path = "../core" }
 openstack-keystone-distributed-storage = { version = "0.1", path = "../storage/"}
 openstack-keystone-token-fernet = { version = "0.1", path = "../token-fernet/" }

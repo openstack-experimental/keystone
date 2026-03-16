@@ -13,19 +13,19 @@
 // SPDX-License-Identifier: Apache-2.0
 use base64::{Engine as _, engine::general_purpose::URL_SAFE};
 use serde::{Deserialize, Serialize};
-use utoipa::ToSchema;
 use validator::Validate;
 
 use crate::webauthn::WebauthnError;
 
 /// User Entity.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
-#[schema(as = PasskeyUser)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "openapi", schema(as = PasskeyUser))]
 pub struct User {
     /// The user's id in base64 form. This MUST be a unique id, and must NOT
     /// contain personally identifying information, as this value can NEVER
     /// be changed. If in doubt, use a UUID.
-    #[schema(value_type = String, format = Binary, content_encoding = "base64")]
+    #[cfg_attr(feature = "openapi", schema(value_type = String, format = Binary, content_encoding = "base64"))]
     pub id: String,
     /// A detailed name for the account, such as an email address. This value
     /// can change, so must not be used as a primary key.

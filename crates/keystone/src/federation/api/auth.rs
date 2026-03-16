@@ -15,6 +15,7 @@
 use axum::{
     Json, debug_handler,
     extract::{Path, State},
+    http::StatusCode,
     response::IntoResponse,
 };
 use chrono::{Local, TimeDelta};
@@ -214,8 +215,11 @@ pub async fn post(
         csrf_token.secret(),
         nonce.secret()
     );
-    Ok(IdentityProviderAuthResponse {
-        auth_url: auth_url.to_string(),
-    }
-    .into_response())
+    Ok((
+        StatusCode::OK,
+        Json(IdentityProviderAuthResponse {
+            auth_url: auth_url.to_string(),
+        }),
+    )
+        .into_response())
 }

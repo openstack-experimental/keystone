@@ -13,20 +13,20 @@
 // SPDX-License-Identifier: Apache-2.0
 use base64::{Engine as _, engine::general_purpose::URL_SAFE};
 use serde::{Deserialize, Serialize};
-use utoipa::ToSchema;
 use validator::Validate;
 
 use crate::webauthn::WebauthnError;
 
 /// The response to a hmac get secret request.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct HmacGetSecretOutput {
     /// Output of HMAC(Salt 1 || Client Secret).
-    #[schema(value_type = String, format = Binary, content_encoding = "base64")]
+    #[cfg_attr(feature = "openapi", schema(value_type = String, format = Binary, content_encoding = "base64"))]
     pub output1: String,
     /// Output of HMAC(Salt 2 || Client Secret).
+    #[cfg_attr(feature = "openapi", schema(nullable = false, value_type = String, format = Binary, content_encoding = "base64"))]
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[schema(nullable = false, value_type = String, format = Binary, content_encoding = "base64")]
     #[validate(required)]
     pub output2: Option<String>,
 }

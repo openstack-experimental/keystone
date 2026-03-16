@@ -12,24 +12,19 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //! Federated identity provider types.
-use axum::{
-    Json,
-    http::StatusCode,
-    response::{IntoResponse, Response},
-};
 use derive_builder::Builder;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use utoipa::{IntoParams, ToSchema};
 use validator::Validate;
 
 use crate::Link;
 use crate::error::BuilderError;
 
 /// Identity provider data.
-#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct IdentityProvider {
     /// The ID of the federated identity provider.
     pub id: String,
@@ -96,12 +91,13 @@ pub struct IdentityProvider {
     /// Additional provider configuration.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[builder(default)]
-    #[schema(value_type = Object)]
+    #[cfg_attr(feature = "openapi", schema(value_type = Object))]
     pub provider_config: Option<Value>,
 }
 
 /// Identity provider response.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct IdentityProviderResponse {
     /// Identity provider object.
     #[validate(nested)]
@@ -109,9 +105,10 @@ pub struct IdentityProviderResponse {
 }
 
 /// Identity provider data.
-#[derive(Builder, Clone, Default, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Builder, Clone, Default, Debug, Deserialize, PartialEq, Serialize, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct IdentityProviderCreate {
     // TODO: add ID
     /// Identity provider name.
@@ -123,7 +120,7 @@ pub struct IdentityProviderCreate {
     /// as well.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[builder(default)]
-    #[schema(nullable = false)]
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
     #[validate(length(max = 64))]
     pub domain_id: Option<String>,
 
@@ -135,14 +132,14 @@ pub struct IdentityProviderCreate {
     /// OIDC discovery endpoint for the identity provider.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[builder(default)]
-    #[schema(nullable = false)]
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
     #[validate(url, length(max = 255))]
     pub oidc_discovery_url: Option<String>,
 
     /// The oidc `client_id` to use for the private client.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[builder(default)]
-    #[schema(nullable = false)]
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
     #[validate(length(max = 255))]
     pub oidc_client_id: Option<String>,
 
@@ -150,21 +147,21 @@ pub struct IdentityProviderCreate {
     /// returned back.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[builder(default)]
-    #[schema(nullable = false)]
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
     #[validate(length(max = 255))]
     pub oidc_client_secret: Option<String>,
 
     /// The oidc response mode.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[builder(default)]
-    #[schema(nullable = false)]
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
     #[validate(length(max = 64))]
     pub oidc_response_mode: Option<String>,
 
     /// List of supported response types.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[builder(default)]
-    #[schema(nullable = false)]
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
     pub oidc_response_types: Option<Vec<String>>,
 
     /// Optional URL to fetch JsonWebKeySet. Must be specified for JWT
@@ -172,20 +169,20 @@ pub struct IdentityProviderCreate {
     /// not standard compliant.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[builder(default)]
-    #[schema(nullable = false)]
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
     #[validate(url)]
     pub jwks_url: Option<String>,
 
     /// List of the jwt validation public keys.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[builder(default)]
-    #[schema(nullable = false)]
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
     pub jwt_validation_pubkeys: Option<Vec<String>>,
 
     /// The bound issuer that is verified when using the identity provider.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[builder(default)]
-    #[schema(nullable = false)]
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
     #[validate(length(max = 255))]
     pub bound_issuer: Option<String>,
 
@@ -194,22 +191,23 @@ pub struct IdentityProviderCreate {
     /// exist.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[builder(default)]
-    #[schema(nullable = false)]
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
     #[validate(length(max = 255))]
     pub default_mapping_name: Option<String>,
 
     /// Additional special provider specific configuration.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[builder(default)]
-    #[schema(value_type = Object)]
-    #[schema(nullable = false)]
+    #[cfg_attr(feature = "openapi", schema(value_type = Object, nullable = false))]
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
     pub provider_config: Option<Value>,
 }
 
 /// New identity provider data.
-#[derive(Builder, Clone, Default, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Builder, Clone, Default, Debug, Deserialize, PartialEq, Serialize, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct IdentityProviderUpdate {
     /// The new name of the federated identity provider.
     #[validate(length(max = 255))]
@@ -270,14 +268,15 @@ pub struct IdentityProviderUpdate {
 
     /// New additional provider configuration.
     #[builder(default)]
-    #[schema(value_type = Object)]
+    #[cfg_attr(feature = "openapi", schema(value_type = Object))]
     pub provider_config: Option<Option<Value>>,
 }
 
 /// Identity provider create request.
-#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct IdentityProviderCreateRequest {
     /// Identity provider object.
     #[validate(nested)]
@@ -285,9 +284,10 @@ pub struct IdentityProviderCreateRequest {
 }
 
 /// Identity provider update request.
-#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct IdentityProviderUpdateRequest {
     /// Identity provider object.
     #[validate(nested)]
@@ -295,7 +295,8 @@ pub struct IdentityProviderUpdateRequest {
 }
 
 /// List of Identity Providers.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct IdentityProviderList {
     /// Collection of identity provider objects.
     #[validate(nested)]
@@ -306,22 +307,17 @@ pub struct IdentityProviderList {
     pub links: Option<Vec<Link>>,
 }
 
-impl IntoResponse for IdentityProviderList {
-    fn into_response(self) -> Response {
-        (StatusCode::OK, Json(self)).into_response()
-    }
-}
-
 /// Query parameters for listing federated identity providers.
-#[derive(Clone, Debug, Default, Deserialize, Serialize, IntoParams, Validate)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize, Validate)]
+#[cfg_attr(feature = "openapi", derive(utoipa::IntoParams))]
 pub struct IdentityProviderListParameters {
     /// Filters the response by IDP name.
-    #[param(nullable = false)]
+    #[cfg_attr(feature = "openapi", param(nullable = false))]
     #[validate(length(max = 255))]
     pub name: Option<String>,
 
     /// Filters the response by a domain ID.
-    #[param(nullable = false)]
+    #[cfg_attr(feature = "openapi", param(nullable = false))]
     #[validate(length(max = 64))]
     pub domain_id: Option<String>,
 

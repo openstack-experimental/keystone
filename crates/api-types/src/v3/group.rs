@@ -12,17 +12,12 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use axum::{
-    Json,
-    http::StatusCode,
-    response::{IntoResponse, Response},
-};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use utoipa::{IntoParams, ToSchema};
 use validator::Validate;
 
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct Group {
     /// Group ID.
     #[validate(length(max = 64))]
@@ -40,14 +35,16 @@ pub struct Group {
     pub extra: Option<Value>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct GroupResponse {
     /// group object.
     #[validate(nested)]
     pub group: Group,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct GroupCreate {
     /// Group domain ID.
     #[validate(length(max = 64))]
@@ -62,34 +59,25 @@ pub struct GroupCreate {
     pub extra: Option<Value>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct GroupCreateRequest {
     /// Group object.
     #[validate(nested)]
     pub group: GroupCreate,
 }
 
-impl IntoResponse for GroupResponse {
-    fn into_response(self) -> Response {
-        (StatusCode::OK, Json(self)).into_response()
-    }
-}
-
 /// Groups.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct GroupList {
     /// Collection of group objects.
     #[validate(nested)]
     pub groups: Vec<Group>,
 }
 
-impl IntoResponse for GroupList {
-    fn into_response(self) -> Response {
-        (StatusCode::OK, Json(self)).into_response()
-    }
-}
-
-#[derive(Clone, Debug, Default, Deserialize, Serialize, IntoParams, Validate)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize, Validate)]
+#[cfg_attr(feature = "openapi", derive(utoipa::IntoParams))]
 pub struct GroupListParameters {
     /// Filter users by Domain ID.
     #[validate(length(max = 64))]

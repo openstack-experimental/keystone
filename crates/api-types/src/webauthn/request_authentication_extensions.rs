@@ -12,7 +12,6 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 use serde::{Deserialize, Serialize};
-use utoipa::ToSchema;
 use validator::Validate;
 
 use crate::webauthn::WebauthnError;
@@ -21,20 +20,21 @@ use crate::webauthn::hmac_get_secret_input::HmacGetSecretInput;
 /// Extension option inputs for PublicKeyCredentialRequestOptions.
 ///
 /// Implements AuthenticatorExtensionsClientInputs from the spec.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct RequestAuthenticationExtensions {
     /// The appid extension options.
-    #[schema(nullable = false)]
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub appid: Option<String>,
     /// ⚠️ - Browsers do not support this!
     /// <https://bugs.chromium.org/p/chromium/issues/detail?id=1023225> Hmac get secret.
-    #[schema(nullable = false)]
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
     #[serde(skip_serializing_if = "Option::is_none")]
     #[validate(nested)]
     pub hmac_get_secret: Option<HmacGetSecretInput>,
     /// ⚠️ - Browsers do not support this! Uvm.
-    #[schema(nullable = false)]
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub uvm: Option<bool>,
 }

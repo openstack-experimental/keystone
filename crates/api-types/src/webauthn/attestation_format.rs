@@ -12,12 +12,12 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 use serde::{Deserialize, Serialize};
-use utoipa::ToSchema;
 
 /// The type of attestation on the credential.
 ///
 /// <https://www.iana.org/assignments/webauthn/webauthn.xhtml>.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub enum AttestationFormat {
     /// Packed attestation.
     Packed,

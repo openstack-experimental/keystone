@@ -19,7 +19,6 @@
 
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
-use utoipa::ToSchema;
 use validator::Validate;
 
 pub mod catalog;
@@ -34,7 +33,8 @@ pub mod version;
 pub mod webauthn;
 
 /// Link object.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, ToSchema, Validate)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct Link {
     /// Link rel attribute.
     #[validate(length(max = 10))]

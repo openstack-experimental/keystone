@@ -14,7 +14,9 @@
 
 //! Identity providers: list IDP.
 use axum::{
+    Json,
     extract::{OriginalUri, Query, State},
+    http::StatusCode,
     response::IntoResponse,
 };
 use serde_json::to_value;
@@ -104,10 +106,14 @@ pub(super) async fn list(
         &query,
         original_url.path(),
     )?;
-    Ok(IdentityProviderList {
-        identity_providers,
-        links,
-    })
+    Ok((
+        StatusCode::OK,
+        Json(IdentityProviderList {
+            identity_providers,
+            links,
+        }),
+    )
+        .into_response())
 }
 
 #[cfg(test)]

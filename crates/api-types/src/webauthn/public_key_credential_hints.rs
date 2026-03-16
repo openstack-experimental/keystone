@@ -12,12 +12,12 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 use serde::{Deserialize, Serialize};
-use utoipa::ToSchema;
 
 /// A hint as to the class of device that is expected to fulfill this operation.
 ///
 /// <https://www.w3.org/TR/webauthn-3/#enumdef-publickeycredentialhints>.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub enum PublicKeyCredentialHints {
     /// The credential is a platform authenticator.
     ClientDevice,
