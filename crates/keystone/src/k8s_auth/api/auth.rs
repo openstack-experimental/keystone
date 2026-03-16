@@ -112,7 +112,7 @@ pub async fn post(
         .map_err(KeystoneApiError::forbidden)?;
 
     let mut api_token = TokenResponse {
-        token: crate::api::v4::auth::token::token_impl::build_api_token_v4(&token, &state).await?,
+        token: token.build_api_token_v4(&state).await?,
     };
     api_token.validate()?;
 

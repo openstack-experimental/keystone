@@ -5,6 +5,7 @@ members = [
   "crates/keystone",
   "crates/token-fernet",
   "crates/storage",
+  "crates/webauthn",
   "tests/api",
   "tests/integration",
   "tests/federation",

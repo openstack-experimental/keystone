@@ -329,7 +329,7 @@ pub async fn callback(
         .map_err(KeystoneApiError::forbidden)?;
 
     let mut api_token = KeystoneTokenResponse {
-        token: crate::api::v4::auth::token::token_impl::build_api_token_v4(&token, &state).await?,
+        token: token.build_api_token_v4(&state).await?,
     };
     let catalog: Catalog = Catalog(
         state

@@ -1,0 +1,46 @@
+[package]
+name = "openstack-keystone-webauthn"
+description = "OpenStack Keystone WebAuthN service"
+version = "0.1.0"
+rust-version.workspace = true
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+axum = { workspace = true, features = ["macros"] }
+base64.workspace = true
+chrono.workspace = true
+derive_builder.workspace = true
+eyre.workspace = true
+openstack-keystone-api-types = { version = "0.1", path = "../api-types/"}
+openstack-keystone-core = { version = "0.1", path = "../core" }
+sea-orm = { workspace = true }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["macros", "signal"] }
+tokio-util.workspace = true
+tracing.workspace = true
+utoipa.workspace = true
+utoipa-axum.workspace = true
+uuid = { workspace = true, features = ["v4"] }
+validator.workspace = true
+webauthn-rs = { workspace = true, features = ["danger-allow-state-serialisation"] }
+
+[dev-dependencies]
+base64urlsafedata.workspace = true
+mockall.workspace = true
+openstack-keystone-core = { version = "0.1", path = "../core", features = ["mock"] }
+sea-orm = { workspace = true, features = ["mock", "sqlx-sqlite" ]}
+tracing-test = { workspace = true, features = ["no-env-filter"] }
+url.workspace = true
+webauthn-authenticator-rs = { workspace = true, features = ["softtoken"] }
+webauthn-rs = { workspace = true, features = ["danger-credential-internals"] }
+webauthn-rs-proto.workspace = true
+
+[features]
+default = []
+bench_internals = []

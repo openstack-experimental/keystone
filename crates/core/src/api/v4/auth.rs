@@ -18,6 +18,11 @@ use crate::error::BuilderError;
 use crate::identity::types as identity_types;
 use crate::token::Token as BackendToken;
 
+pub mod token {
+    pub mod common;
+    pub mod token_impl;
+}
+
 impl TryFrom<UserPassword> for identity_types::UserPasswordAuthRequest {
     type Error = BuilderError;
 

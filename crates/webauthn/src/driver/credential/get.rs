@@ -1,0 +1,64 @@
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+// SPDX-License-Identifier: Apache-2.0
+
+use sea_orm::DatabaseConnection;
+use sea_orm::entity::*;
+use sea_orm::query::*;
+
+use openstack_keystone_core::error::DbContextExt;
+
+use crate::driver::model::{prelude::WebauthnCredential as DbCred, webauthn_credential};
+use crate::{WebauthnCredential, WebauthnError};
+
+pub async fn find<U: AsRef<str>, C: AsRef<str>>(
+    db: &DatabaseConnection,
+    user_id: U,
+    credential_id: C,
+) -> Result<Option<WebauthnCredential>, WebauthnError> {
+    DbCred::find()
+        .filter(webauthn_credential::Column::UserId.eq(user_id.as_ref()))
+        .filter(webauthn_credential::Column::CredentialId.eq(credential_id.as_ref()))
+        .one(db)
+        .await
+        .context("searching webauthn credential")?
+        .map(TryInto::try_into)
+        .transpose()
+}
+
+#[cfg(test)]
+mod tests {
+    use sea_orm::{DatabaseBackend, MockDatabase, Transaction};
+
+    use super::super::tests::get_mock;
+    use super::*;
+
+    #[tokio::test]
+    async fn test_find() {
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([vec![get_mock("uid")]])
+            .into_connection();
+
+        find(&db, "uid", "cred_id").await.unwrap();
+
+        // Checking transaction log
+        assert_eq!(
+            db.into_transaction_log(),
+            [Transaction::from_sql_and_values(
+                DatabaseBackend::Postgres,
+                r#"SELECT "webauthn_credential"."id", "webauthn_credential"."user_id", "webauthn_credential"."credential_id", "webauthn_credential"."description", "webauthn_credential"."passkey", "webauthn_credential"."counter", "webauthn_credential"."type", "webauthn_credential"."aaguid", "webauthn_credential"."created_at", "webauthn_credential"."last_used_at", "webauthn_credential"."last_updated_at" FROM "webauthn_credential" WHERE "webauthn_credential"."user_id" = $1 AND "webauthn_credential"."credential_id" = $2 LIMIT $3"#,
+                ["uid".into(), "cred_id".into(), 1u64.into()]
+            ),]
+        );
+    }
+}
