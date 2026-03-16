@@ -15,27 +15,24 @@
 use rmp::{decode::read_pfix, encode::write_pfix};
 use std::io::Write;
 
-use crate::token::{
-    backend::fernet::{FernetTokenProvider, MsgPackToken, utils},
-    error::TokenProviderError,
-    types::ProjectScopePayload,
-};
+use openstack_keystone_core::token::types::UnscopedPayload;
 
-impl MsgPackToken for ProjectScopePayload {
+use crate::{FernetDriverError, FernetTokenProvider, MsgPackToken, utils};
+
+impl MsgPackToken for UnscopedPayload {
     type Token = Self;
 
     fn assemble<W: Write>(
         &self,
         wd: &mut W,
         fernet_provider: &FernetTokenProvider,
-    ) -> Result<(), TokenProviderError> {
+    ) -> Result<(), FernetDriverError> {
         utils::write_uuid(wd, &self.user_id)?;
         write_pfix(
             wd,
             fernet_provider.encode_auth_methods(self.methods.clone())?,
         )
-        .map_err(|x| TokenProviderError::RmpEncode(x.to_string()))?;
-        utils::write_uuid(wd, &self.project_id)?;
+        .map_err(|x| FernetDriverError::RmpEncode(x.to_string()))?;
         utils::write_time(wd, self.expires_at)?;
         utils::write_audit_ids(wd, self.audit_ids.clone())?;
 
@@ -45,22 +42,20 @@ impl MsgPackToken for ProjectScopePayload {
     fn disassemble(
         rd: &mut &[u8],
         fernet_provider: &FernetTokenProvider,
-    ) -> Result<Self::Token, TokenProviderError> {
-        // Order of reading is important
+    ) -> Result<Self::Token, FernetDriverError> {
+        // Order of writing is important
         let user_id = utils::read_uuid(rd)?;
         let methods: Vec<String> = fernet_provider
             .decode_auth_methods(read_pfix(rd)?)?
             .into_iter()
             .collect();
-        let project_id = utils::read_uuid(rd)?;
         let expires_at = utils::read_time(rd)?;
         let audit_ids: Vec<String> = utils::read_audit_ids(rd)?.into_iter().collect();
-        Ok(Self {
+        Ok(Self::Token {
             user_id,
             methods,
             expires_at,
             audit_ids,
-            project_id,
             ..Default::default()
         })
     }
@@ -72,14 +67,13 @@ mod tests {
     use uuid::Uuid;
 
     use super::*;
-    use crate::token::tests::setup_config;
+    use crate::tests::setup_config;
 
     #[test]
     fn test_roundtrip() {
-        let token = ProjectScopePayload {
+        let token = UnscopedPayload {
             user_id: Uuid::new_v4().simple().to_string(),
             methods: vec!["password".into()],
-            project_id: Uuid::new_v4().simple().to_string(),
             audit_ids: vec!["Zm9vCg".into()],
             expires_at: Local::now().trunc_subsecs(0).into(),
             ..Default::default()
@@ -90,8 +84,7 @@ mod tests {
         let mut buf = vec![];
         token.assemble(&mut buf, &provider).unwrap();
         let encoded_buf = buf.clone();
-        let decoded =
-            ProjectScopePayload::disassemble(&mut encoded_buf.as_slice(), &provider).unwrap();
+        let decoded = UnscopedPayload::disassemble(&mut encoded_buf.as_slice(), &provider).unwrap();
         assert_eq!(token, decoded);
     }
 }

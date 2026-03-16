@@ -32,6 +32,7 @@ eyre.workspace = true
 openstack-keystone-api-types = { version = "0.1", path = "../api-types/"}
 openstack-keystone-core = { version = "0.1", path = "../core" }
 openstack-keystone-distributed-storage = { version = "0.1", path = "../storage/"}
+openstack-keystone-token-fernet = { version = "0.1", path = "../token-fernet/" }
 openidconnect.workspace = true
 reqwest = { workspace = true, features = ["json", "http2", "gzip", "deflate"] }
 sea-orm = { workspace = true, features = ["debug-print", "sqlx-mysql", "sqlx-postgres", "runtime-tokio", "runtime-tokio-native-tls"] }

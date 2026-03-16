@@ -167,7 +167,9 @@ impl From<crate::error::DatabaseError> for TokenProviderError {
                 message: cfl.to_string(),
                 context: String::new(),
             },
-            other => Self::Driver(other.to_string()),
+            other => Self::Driver {
+                source: Box::new(other),
+            },
         }
     }
 }

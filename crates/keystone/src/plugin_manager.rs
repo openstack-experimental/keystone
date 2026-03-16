@@ -433,7 +433,7 @@ impl PluginManager {
         slf.register_sql_drivers();
         slf.register_token_backend(
             "fernet",
-            Arc::new(crate::token::backend::FernetTokenProvider::new(
+            Arc::new(openstack_keystone_token_fernet::FernetTokenProvider::new(
                 config.clone(),
             )),
         );

@@ -25,7 +25,6 @@ use rmp::{
 use secrecy::{ExposeSecret, SecretString};
 use std::collections::BTreeMap;
 use std::fs;
-//use std::io;
 use std::io::{self, Read, Write};
 use std::path::PathBuf;
 use tempfile::NamedTempFile;
@@ -33,7 +32,7 @@ use tokio::fs as fs_async;
 use tracing::{error, info, trace, warn};
 use uuid::Uuid;
 
-use crate::token::error::TokenProviderError;
+use crate::error::FernetDriverError;
 
 /// Fernet utils.
 #[derive(Clone, Debug, Default)]
@@ -46,7 +45,7 @@ impl FernetUtils {
     /// Validate fernet key key_repository.
     ///
     /// Perform validation of the fernet keys repository.
-    fn validate_key_repository(&self) -> Result<bool, TokenProviderError> {
+    fn validate_key_repository(&self) -> Result<bool, FernetDriverError> {
         Ok(self.key_repository.exists())
     }
 
@@ -58,7 +57,7 @@ impl FernetUtils {
         &self,
         user_id: Option<u32>,
         group_id: Option<u32>,
-    ) -> Result<(), TokenProviderError> {
+    ) -> Result<(), FernetDriverError> {
         // 1. Generate key and wrap in a secret-protecting type
         let key = SecretString::new(Fernet::generate_key().into());
         let target_path = self.key_repository.join("0.tmp");
@@ -72,11 +71,11 @@ impl FernetUtils {
         if let (Some(uid), Some(gid)) = (user_id, group_id) {
             let (old_euid, old_egid) = (geteuid(), getegid());
 
-            setegid(Gid::from_raw(gid)).map_err(|e| TokenProviderError::NixErrno {
+            setegid(Gid::from_raw(gid)).map_err(|e| FernetDriverError::NixErrno {
                 context: "setting effective process GID".into(),
                 source: e,
             })?;
-            seteuid(Uid::from_raw(uid)).map_err(|e| TokenProviderError::NixErrno {
+            seteuid(Uid::from_raw(uid)).map_err(|e| FernetDriverError::NixErrno {
                 context: "setting effective process UID".into(),
                 source: e,
             })?;
@@ -107,14 +106,14 @@ impl FernetUtils {
 
     /// Make the tmp new key a valid new key.
     /// Renames '0.tmp' to '0' atomically.
-    fn become_valid_new_key(&self) -> Result<(), TokenProviderError> {
+    fn become_valid_new_key(&self) -> Result<(), FernetDriverError> {
         let tmp_key_file = self.key_repository.join("0.tmp");
         let valid_key_file = self.key_repository.join("0");
 
         // Check if the source exists before attempting rename to provide better errors
         if !tmp_key_file.exists() {
             error!("Temporary key file not found: {:?}", tmp_key_file);
-            return Err(TokenProviderError::FernetKeysMissing);
+            return Err(FernetDriverError::FernetKeysMissing);
         }
 
         // std::fs::rename is atomic on most Unix-like systems.
@@ -130,13 +129,13 @@ impl FernetUtils {
         Ok(())
     }
 
-    pub fn initialize_key_repository(&self) -> Result<(), TokenProviderError> {
+    pub fn initialize_key_repository(&self) -> Result<(), FernetDriverError> {
         self.create_tmp_new_key(None, None)?;
         self.become_valid_new_key()?;
         Ok(())
     }
 
-    pub fn load_keys(&self) -> Result<impl IntoIterator<Item = Fernet>, TokenProviderError> {
+    pub fn load_keys(&self) -> Result<impl IntoIterator<Item = Fernet>, FernetDriverError> {
         info!("loading keys from {:?}", self.key_repository);
         let mut keys: BTreeMap<i8, Fernet> = BTreeMap::new();
         if self.validate_key_repository()? {
@@ -149,7 +148,7 @@ impl FernetUtils {
                     trace!("Loading key {:?}", entry.file_name());
                     if let Some(fernet) = Fernet::new(
                         fs::read_to_string(entry.path())
-                            .map_err(|e| TokenProviderError::FernetKeyRead {
+                            .map_err(|e| FernetDriverError::FernetKeyRead {
                                 source: e,
                                 path: entry.path(),
                             })?
@@ -166,14 +165,14 @@ impl FernetUtils {
             }
         }
         if keys.is_empty() {
-            return Err(TokenProviderError::FernetKeysMissing);
+            return Err(FernetDriverError::FernetKeysMissing);
         }
         Ok(keys.into_values().rev())
     }
 
     pub async fn load_keys_async(
         &self,
-    ) -> Result<impl IntoIterator<Item = Fernet>, TokenProviderError> {
+    ) -> Result<impl IntoIterator<Item = Fernet>, FernetDriverError> {
         let mut keys: BTreeMap<i8, Fernet> = BTreeMap::new();
         if self.validate_key_repository()? {
             let mut entries = fs_async::read_dir(&self.key_repository).await?;
@@ -185,7 +184,7 @@ impl FernetUtils {
                     trace!("Loading key {:?}", entry.file_name());
                     if let Some(fernet) = Fernet::new(
                         fs::read_to_string(entry.path())
-                            .map_err(|e| TokenProviderError::FernetKeyRead {
+                            .map_err(|e| FernetDriverError::FernetKeyRead {
                                 source: e,
                                 path: entry.path(),
                             })?
@@ -202,7 +201,7 @@ impl FernetUtils {
             }
         }
         if keys.is_empty() {
-            return Err(TokenProviderError::FernetKeysMissing);
+            return Err(FernetDriverError::FernetKeysMissing);
         }
         Ok(keys.into_values().rev())
     }
@@ -224,19 +223,19 @@ pub fn read_str_data<R: Read>(len: u32, rd: &mut R) -> Result<String, io::Error>
 }
 
 /// Write string.
-pub fn write_str<W: RmpWrite>(wd: &mut W, data: &str) -> Result<(), TokenProviderError> {
-    encode::write_str(wd, data).map_err(|x| TokenProviderError::RmpEncode(x.to_string()))?;
+pub fn write_str<W: RmpWrite>(wd: &mut W, data: &str) -> Result<(), FernetDriverError> {
+    encode::write_str(wd, data).map_err(|x| FernetDriverError::RmpEncode(x.to_string()))?;
     Ok(())
 }
 
 /// Read bytes as string.
-pub fn read_str<R: Read>(rd: &mut R) -> Result<String, TokenProviderError> {
+pub fn read_str<R: Read>(rd: &mut R) -> Result<String, FernetDriverError> {
     match read_marker(rd).map_err(ValueReadError::from)? {
         Marker::Bin8 => {
             Ok(String::from_utf8_lossy(&read_bin_data(read_pfix(rd)?.into(), rd)?).to_string())
         }
         Marker::FixStr(len) => Ok(read_str_data(len.into(), rd)?),
-        other => Err(TokenProviderError::InvalidTokenUuidMarker(other)),
+        other => Err(FernetDriverError::InvalidTokenUuidMarker(other)),
     }
 }
 
@@ -244,7 +243,7 @@ pub fn read_str<R: Read>(rd: &mut R) -> Result<String, TokenProviderError> {
 /// It is represented as an Array[bool, bytes] where first bool indicates
 /// whether following bytes are UUID or just bytes that should be treated as a
 /// string (for cases where ID is not a valid UUID).
-pub fn read_uuid(rd: &mut &[u8]) -> Result<String, TokenProviderError> {
+pub fn read_uuid(rd: &mut &[u8]) -> Result<String, FernetDriverError> {
     match read_marker(rd).map_err(ValueReadError::from)? {
         Marker::FixArray(_) => {
             match read_marker(rd).map_err(ValueReadError::from)? {
@@ -272,12 +271,12 @@ pub fn read_uuid(rd: &mut &[u8]) -> Result<String, TokenProviderError> {
                             return Ok(read_str_data(len.into(), rd)?);
                         }
                         other => {
-                            return Err(TokenProviderError::InvalidTokenUuidMarker(other));
+                            return Err(FernetDriverError::InvalidTokenUuidMarker(other));
                         }
                     }
                 }
                 other => {
-                    return Err(TokenProviderError::InvalidTokenUuidMarker(other));
+                    return Err(FernetDriverError::InvalidTokenUuidMarker(other));
                 }
             }
         }
@@ -285,51 +284,50 @@ pub fn read_uuid(rd: &mut &[u8]) -> Result<String, TokenProviderError> {
             return Ok(read_str_data(len.into(), rd)?);
         }
         other => {
-            return Err(TokenProviderError::InvalidTokenUuidMarker(other));
+            return Err(FernetDriverError::InvalidTokenUuidMarker(other));
         }
     }
-    Err(TokenProviderError::InvalidTokenUuid)
+    Err(FernetDriverError::InvalidTokenUuid)
 }
 
 /// Write the UUID to the payload.
 /// It is represented as an Array[bool, bytes] where first bool indicates
 /// whether following bytes are UUID or just bytes that should be treated as a
 /// string (for cases where ID is not a valid UUID).
-pub fn write_uuid<W: RmpWrite>(wd: &mut W, uid: &str) -> Result<(), TokenProviderError> {
+pub fn write_uuid<W: RmpWrite>(wd: &mut W, uid: &str) -> Result<(), FernetDriverError> {
     match Uuid::parse_str(uid) {
         Ok(uuid) => {
-            write_array_len(wd, 2).map_err(|x| TokenProviderError::RmpEncode(x.to_string()))?;
-            write_bool(wd, true).map_err(|x| TokenProviderError::RmpEncode(x.to_string()))?;
+            write_array_len(wd, 2).map_err(|x| FernetDriverError::RmpEncode(x.to_string()))?;
+            write_bool(wd, true).map_err(|x| FernetDriverError::RmpEncode(x.to_string()))?;
             write_bin(wd, uuid.as_bytes())
-                .map_err(|x| TokenProviderError::RmpEncode(x.to_string()))?;
+                .map_err(|x| FernetDriverError::RmpEncode(x.to_string()))?;
         }
         _ => {
-            write_array_len(wd, 2).map_err(|x| TokenProviderError::RmpEncode(x.to_string()))?;
-            write_bool(wd, false).map_err(|x| TokenProviderError::RmpEncode(x.to_string()))?;
+            write_array_len(wd, 2).map_err(|x| FernetDriverError::RmpEncode(x.to_string()))?;
+            write_bool(wd, false).map_err(|x| FernetDriverError::RmpEncode(x.to_string()))?;
             write_bin(wd, uid.as_bytes())
-                .map_err(|x| TokenProviderError::RmpEncode(x.to_string()))?;
+                .map_err(|x| FernetDriverError::RmpEncode(x.to_string()))?;
         }
     }
     Ok(())
 }
 
 /// Read the time represented as a f64 of the UTC seconds.
-pub fn read_time(rd: &mut &[u8]) -> Result<DateTime<Utc>, TokenProviderError> {
-    DateTime::from_timestamp(read_f64(rd)?.round() as i64, 0)
-        .ok_or(TokenProviderError::InvalidToken)
+pub fn read_time(rd: &mut &[u8]) -> Result<DateTime<Utc>, FernetDriverError> {
+    DateTime::from_timestamp(read_f64(rd)?.round() as i64, 0).ok_or(FernetDriverError::InvalidToken)
 }
 
 /// Write the time represented as a f64 of the UTC seconds.
-pub fn write_time<W: RmpWrite>(wd: &mut W, time: DateTime<Utc>) -> Result<(), TokenProviderError> {
+pub fn write_time<W: RmpWrite>(wd: &mut W, time: DateTime<Utc>) -> Result<(), FernetDriverError> {
     write_f64(wd, time.timestamp() as f64)
-        .map_err(|x| TokenProviderError::RmpEncode(x.to_string()))?;
+        .map_err(|x| FernetDriverError::RmpEncode(x.to_string()))?;
     Ok(())
 }
 
 /// Decode array of audit ids from the payload.
 pub fn read_audit_ids(
     rd: &mut &[u8],
-) -> Result<impl IntoIterator<Item = String> + use<>, TokenProviderError> {
+) -> Result<impl IntoIterator<Item = String> + use<>, FernetDriverError> {
     if let Marker::FixArray(len) = read_marker(rd).map_err(ValueReadError::from)? {
         let mut result: Vec<String> = Vec::new();
         for _ in 0..len {
@@ -338,30 +336,30 @@ pub fn read_audit_ids(
                 let audit_id: String = URL_SAFE_NO_PAD.encode(dt);
                 result.push(audit_id);
             } else {
-                return Err(TokenProviderError::InvalidToken);
+                return Err(FernetDriverError::InvalidToken);
             }
         }
         return Ok(result.into_iter());
     }
-    Err(TokenProviderError::InvalidToken)
+    Err(FernetDriverError::InvalidToken)
 }
 
 /// Encode array of audit ids into the payload.
 pub fn write_audit_ids<W: RmpWrite, I: IntoIterator<Item = String>>(
     wd: &mut W,
     data: I,
-) -> Result<(), TokenProviderError> {
+) -> Result<(), FernetDriverError> {
     let vals = Vec::from_iter(data);
     write_array_len(wd, vals.len() as u32)
-        .map_err(|x| TokenProviderError::RmpEncode(x.to_string()))?;
+        .map_err(|x| FernetDriverError::RmpEncode(x.to_string()))?;
     for val in vals.iter() {
         write_bin(
             wd,
             &URL_SAFE_NO_PAD
                 .decode(val)
-                .map_err(|_| TokenProviderError::AuditIdWrongFormat)?,
+                .map_err(|_| FernetDriverError::AuditIdWrongFormat)?,
         )
-        .map_err(|x| TokenProviderError::RmpEncode(x.to_string()))?;
+        .map_err(|x| FernetDriverError::RmpEncode(x.to_string()))?;
     }
     Ok(())
 }
@@ -369,7 +367,7 @@ pub fn write_audit_ids<W: RmpWrite, I: IntoIterator<Item = String>>(
 /// Decode array of strings ids from the payload.
 pub fn read_list_of_uuids(
     rd: &mut &[u8],
-) -> Result<impl IntoIterator<Item = String> + use<>, TokenProviderError> {
+) -> Result<impl IntoIterator<Item = String> + use<>, FernetDriverError> {
     if let Marker::FixArray(len) = read_marker(rd).map_err(ValueReadError::from)? {
         let mut result: Vec<String> = Vec::new();
         for _ in 0..len {
@@ -377,17 +375,17 @@ pub fn read_list_of_uuids(
         }
         return Ok(result.into_iter());
     }
-    Err(TokenProviderError::InvalidToken)
+    Err(FernetDriverError::InvalidToken)
 }
 
 /// Encode array of bytes into the payload.
 pub fn write_list_of_uuids<W: RmpWrite, I: IntoIterator<Item = V>, V: AsRef<str>>(
     wd: &mut W,
     data: I,
-) -> Result<(), TokenProviderError> {
+) -> Result<(), FernetDriverError> {
     let vals = Vec::from_iter(data);
     write_array_len(wd, vals.len() as u32)
-        .map_err(|x| TokenProviderError::RmpEncode(x.to_string()))?;
+        .map_err(|x| FernetDriverError::RmpEncode(x.to_string()))?;
     for val in vals.iter() {
         write_uuid(wd, val.as_ref())?;
     }
@@ -395,13 +393,13 @@ pub fn write_list_of_uuids<W: RmpWrite, I: IntoIterator<Item = V>, V: AsRef<str>
 }
 
 /// Read boolean.
-pub fn read_bool<R: Read>(rd: &mut R) -> Result<bool, TokenProviderError> {
+pub fn read_bool<R: Read>(rd: &mut R) -> Result<bool, FernetDriverError> {
     Ok(decode::read_bool(rd)?)
 }
 
 /// Write boolean.
-pub fn write_bool<W: RmpWrite>(wd: &mut W, data: bool) -> Result<(), TokenProviderError> {
-    encode::write_bool(wd, data).map_err(|x| TokenProviderError::RmpEncode(x.to_string()))?;
+pub fn write_bool<W: RmpWrite>(wd: &mut W, data: bool) -> Result<(), FernetDriverError> {
+    encode::write_bool(wd, data).map_err(|x| FernetDriverError::RmpEncode(x.to_string()))?;
     Ok(())
 }
 
@@ -450,7 +448,7 @@ mod tests {
         };
         let res = utils.load_keys();
 
-        if let Err(TokenProviderError::FernetKeysMissing) = res {
+        if let Err(FernetDriverError::FernetKeysMissing) = res {
         } else {
             panic!("Should have raised an exception");
         }

@@ -18,9 +18,6 @@ use crate::token::{TokenProviderError, types::*};
 
 use crate::keystone::ServiceState;
 
-pub mod fernet;
-pub use fernet::*;
-
 /// Token Provider backend interface.
 #[cfg_attr(test, mockall::automock)]
 pub trait TokenBackend: Send + Sync {

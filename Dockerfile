@@ -19,6 +19,7 @@ COPY crates/api-types/Cargo.toml /usr/src/keystone/crates/api-types/
 COPY crates/core/Cargo.toml /usr/src/keystone/crates/core/
 COPY crates/keystone/Cargo.toml /usr/src/keystone/crates/keystone/
 COPY crates/storage/Cargo.toml /usr/src/keystone/crates/storage/
+COPY crates/token-fernet/Cargo.toml /usr/src/keystone/crates/token-fernet/
 COPY tests/federation/Cargo.toml /usr/src/keystone/tests/federation/
 COPY tests/integration/Cargo.toml /usr/src/keystone/tests/integration/
 COPY tests/api/Cargo.toml /usr/src/keystone/tests/api/
@@ -30,8 +31,9 @@ RUN mkdir -p keystone/crates/keystone/src/bin && touch keystone/crates/keystone/
   cp keystone/src/main.rs keystone/tests/loadtest/src/main.rs &&\
   mkdir -p keystone/crates/api-types/src && touch keystone/crates/api-types/src/lib.rs &&\
   mkdir -p keystone/crates/core/src && touch keystone/crates/core/src/lib.rs &&\
-  mkdir -p keystone/crates/core/benches && touch keystone/crates/core/benches/fernet_token.rs &&\
-  mkdir -p keystone/crates/storage/src && touch keystone/crates/storage/src/lib.rs
+  mkdir -p keystone/crates/storage/src && touch keystone/crates/storage/src/lib.rs &&\
+  mkdir -p keystone/crates/token-fernet/src && touch keystone/crates/token-fernet/src/lib.rs &&\
+  mkdir -p keystone/crates/token-fernet/benches && touch keystone/crates/token-fernet/benches/fernet_token.rs
 
 # Set the working directory
 WORKDIR /usr/src/keystone
@@ -45,6 +47,7 @@ COPY crates/keystone/ /usr/src/keystone/crates/keystone
 COPY crates/core/ /usr/src/keystone/crates/core
 COPY crates/api-types/ /usr/src/keystone/crates/api-types
 COPY crates/storage/ /usr/src/keystone/crates/storage
+COPY crates/token-fernet/ /usr/src/keystone/crates/token-fernet
 
 ## Touch main.rs to prevent cached release build
 RUN touch crates/keystone/src/lib.rs && touch crates/keystone/src/bin/keystone.rs
