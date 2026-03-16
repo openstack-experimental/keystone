@@ -1,0 +1,98 @@
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+// SPDX-License-Identifier: Apache-2.0
+//! # WebAuthN Error
+use thiserror::Error;
+
+use openstack_keystone_core::error::KeystoneError;
+
+/// WebAuthN extension error.
+#[derive(Error, Debug)]
+#[non_exhaustive]
+pub enum WebauthnError {
+    /// API types error.
+    #[error("api types error: {}", source)]
+    ApiTypes {
+        /// The source of the error.
+        #[from]
+        source: openstack_keystone_api_types::webauthn::error::WebauthnError,
+    },
+
+    /// Supported authentication error.
+    #[error(transparent)]
+    AuthenticationInfo {
+        /// The source of the error.
+        #[from]
+        source: openstack_keystone_core::auth::AuthenticationError,
+    },
+
+    /// Base64 decode error.
+    #[error("base64 decoding error")]
+    Base64Decode(#[from] base64::DecodeError),
+
+    /// Conflict.
+    #[error("conflict: {0}")]
+    Conflict(String),
+
+    /// Counter violation.
+    #[error("the credential counter verification failure")]
+    CounterVerification,
+
+    /// Credential not found.
+    #[error("credential with credential_id: `{0}` is not found")]
+    CredentialNotFound(String),
+
+    /// Database error.
+    #[error(transparent)]
+    Database {
+        /// The source of the error.
+        #[from]
+        source: openstack_keystone_core::error::DatabaseError,
+    },
+
+    /// Driver error.
+    #[error("backend driver error: {0}")]
+    Driver(String),
+
+    /// Relying party configuration is missing.
+    #[error("webauthn relying party configuration is missing")]
+    RelyingPartyConfigurationUnset,
+
+    /// (de)serialization error.
+    #[error(transparent)]
+    Serde {
+        /// The source of the error.
+        #[from]
+        source: serde_json::Error,
+    },
+
+    /// Int conversion error.
+    #[error(transparent)]
+    TryFromIntError(#[from] std::num::TryFromIntError),
+
+    /// WebauthN error.
+    #[error("webauthn error: {}", source)]
+    Webauthn {
+        /// The source of the error.
+        #[from]
+        source: webauthn_rs::prelude::WebauthnError,
+    },
+}
+
+impl From<WebauthnError> for KeystoneError {
+    fn from(value: WebauthnError) -> Self {
+        Self::Provider {
+            source: Box::new(value),
+        }
+    }
+}

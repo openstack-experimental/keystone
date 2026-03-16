@@ -3305,6 +3305,7 @@ dependencies = [
  "openstack-keystone-core",
  "openstack-keystone-distributed-storage",
  "openstack-keystone-token-fernet",
+ "openstack-keystone-webauthn",
  "reqwest 0.13.2",
  "rstest",
  "sea-orm",
@@ -3328,9 +3329,6 @@ dependencies = [
  "utoipa-swagger-ui",
  "uuid",
  "validator",
- "webauthn-authenticator-rs",
- "webauthn-rs",
- "webauthn-rs-proto",
 ]
 
 [[package]]
@@ -3370,6 +3368,7 @@ dependencies = [
  "rand 0.10.0",
  "regex",
  "reqwest 0.13.2",
+ "rstest",
  "schemars 1.2.1",
  "sea-orm",
  "secrecy",
@@ -3435,6 +3434,38 @@ dependencies = [
  "tracing",
  "uuid",
  "validator",
+]
+
+[[package]]
+name = "openstack-keystone-webauthn"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "axum",
+ "base64 0.22.1",
+ "base64urlsafedata",
+ "chrono",
+ "derive_builder",
+ "eyre",
+ "mockall",
+ "openstack-keystone-api-types",
+ "openstack-keystone-core",
+ "sea-orm",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "tracing-test",
+ "url",
+ "utoipa",
+ "utoipa-axum",
+ "uuid",
+ "validator",
+ "webauthn-authenticator-rs",
+ "webauthn-rs",
+ "webauthn-rs-proto",
 ]
 
 [[package]]

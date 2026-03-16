@@ -41,6 +41,7 @@ validator = { workspace = true, features = ["derive"] }
 [dev-dependencies]
 httpmock = { version = "0.8", features = ["http2"] }
 mockall.workspace = true
+rstest.workspace = true
 tracing-test = { workspace = true, features = ["no-env-filter"] }
 url.workspace = true
 

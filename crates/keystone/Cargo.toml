@@ -33,6 +33,7 @@ openstack-keystone-api-types = { version = "0.1", path = "../api-types/"}
 openstack-keystone-core = { version = "0.1", path = "../core" }
 openstack-keystone-distributed-storage = { version = "0.1", path = "../storage/"}
 openstack-keystone-token-fernet = { version = "0.1", path = "../token-fernet/" }
+openstack-keystone-webauthn = { version = "0.1", path = "../webauthn/"}
 openidconnect.workspace = true
 reqwest = { workspace = true, features = ["json", "http2", "gzip", "deflate"] }
 sea-orm = { workspace = true, features = ["debug-print", "sqlx-mysql", "sqlx-postgres", "runtime-tokio", "runtime-tokio-native-tls"] }
@@ -55,7 +56,6 @@ utoipa-axum.workspace = true
 utoipa-swagger-ui = { workspace = true, features = ["axum", "vendored"] }
 uuid = { workspace = true, features = ["v4"] }
 validator = { workspace = true, features = ["derive"] }
-webauthn-rs = { workspace = true, features = ["danger-allow-state-serialisation"] }
 
 [dev-dependencies]
 base64urlsafedata.workspace = true
@@ -69,9 +69,6 @@ rstest.workspace = true
 sea-orm = { workspace = true, features = ["mock", "sqlx-sqlite" ]}
 tracing-test = { workspace = true, features = ["no-env-filter"] }
 url.workspace = true
-webauthn-authenticator-rs = { workspace = true, features = ["softtoken"] }
-webauthn-rs = { workspace = true, features = ["danger-credential-internals"] }
-webauthn-rs-proto.workspace = true
 
 [features]
 default = []
