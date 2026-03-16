@@ -30,6 +30,7 @@ RUN mkdir -p keystone/crates/keystone/src/bin && touch keystone/crates/keystone/
   cp keystone/src/main.rs keystone/tests/loadtest/src/main.rs &&\
   mkdir -p keystone/crates/api-types/src && touch keystone/crates/api-types/src/lib.rs &&\
   mkdir -p keystone/crates/core/src && touch keystone/crates/core/src/lib.rs &&\
+  mkdir -p keystone/crates/core/benches && touch keystone/crates/core/benches/fernet_token.rs &&\
   mkdir -p keystone/crates/storage/src && touch keystone/crates/storage/src/lib.rs
 
 # Set the working directory

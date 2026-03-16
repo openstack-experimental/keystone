@@ -6,9 +6,9 @@ use std::hint::black_box;
 use std::io::Write;
 use tempfile::tempdir;
 
-use openstack_keystone::config::Config;
-use openstack_keystone::token::backend::fernet::FernetTokenProvider;
-use openstack_keystone::token::backend::fernet::bench_get_fernet_timestamp;
+use openstack_keystone_core::config::Config;
+use openstack_keystone_core::token::backend::fernet::FernetTokenProvider;
+use openstack_keystone_core::token::backend::fernet::bench_get_fernet_timestamp;
 //use openstack_keystone::token::types::TokenBackend;
 
 fn decode(backend: &FernetTokenProvider, token: &str) {

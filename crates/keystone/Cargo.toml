@@ -19,11 +19,6 @@ path="src/bin/keystone.rs"
 name="keystone-db"
 path="src/bin/keystone_db.rs"
 
-[[bench]]
-name = "fernet_token"
-path = "../../benches/fernet_token.rs"
-harness = false
-
 [dependencies]
 async-trait.workspace = true
 axum = { workspace = true, features = ["http1", "http2", "macros", "matched-path", "original-uri", "query", "tokio", "tracing"] }
@@ -31,6 +26,7 @@ base64.workspace = true
 chrono.workspace = true
 clap = { workspace = true, features = ["derive"] }
 color-eyre.workspace = true
+config.workspace = true
 derive_builder.workspace = true
 eyre.workspace = true
 openstack-keystone-api-types = { version = "0.1", path = "../api-types/"}
@@ -62,7 +58,6 @@ webauthn-rs = { workspace = true, features = ["danger-allow-state-serialisation"
 
 [dev-dependencies]
 base64urlsafedata.workspace = true
-criterion = { workspace = true, features = ["async_tokio"] }
 http-body-util.workspace = true
 httpmock = { version = "0.8", features = ["http2"] }
 hyper = { workspace = true, features = ["http1"] }
@@ -79,4 +74,3 @@ webauthn-rs-proto.workspace = true
 
 [features]
 default = []
-bench_internals = []

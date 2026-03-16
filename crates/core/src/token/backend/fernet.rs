@@ -418,8 +418,8 @@ fn get_fernet_timestamp(payload: &str) -> Result<DateTime<Utc>, TokenProviderErr
         })
 }
 
-// Conditionally expose the function when the 'bench_internals' feature is
-// enabled
+/// Conditionally expose the function when the 'bench_internals' feature is
+/// enabled
 #[cfg(feature = "bench_internals")]
 pub fn bench_get_fernet_timestamp(payload: &str) -> Result<DateTime<Utc>, TokenProviderError> {
     get_fernet_timestamp(payload)
