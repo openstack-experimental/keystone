@@ -57,7 +57,7 @@ mod unscoped;
 pub mod utils;
 
 /// Fernet token provider.
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct FernetTokenProvider {
     config: Config,
     utils: FernetUtils,

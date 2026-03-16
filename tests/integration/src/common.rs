@@ -244,7 +244,7 @@ pub async fn get_state() -> Result<(Arc<Service>, TempDir)> {
     };
     fernet_utils.initialize_key_repository()?;
 
-    let plugin_manager = PluginManager::default();
+    let plugin_manager = PluginManager::with_config(&cfg);
     let provider = Provider::new(cfg.clone(), &plugin_manager)?;
 
     let state = Arc::new(Service::new(

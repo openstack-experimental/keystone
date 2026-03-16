@@ -28,7 +28,7 @@ use tracing::{debug, trace};
 use uuid::Uuid;
 
 use crate::auth::{AuthenticatedInfo, AuthenticationError, AuthzInfo};
-use crate::config::{Config, TokenProviderDriver};
+use crate::config::Config;
 use crate::identity::IdentityApi;
 use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManagerApi;
@@ -39,7 +39,7 @@ use crate::resource::{
 use crate::revoke::RevokeApi;
 use crate::token::{
     TokenProviderError,
-    backend::{TokenBackend, TokenRestrictionBackend, fernet::FernetTokenProvider},
+    backend::{TokenBackend, TokenRestrictionBackend},
 };
 use crate::{
     application_credential::ApplicationCredentialApi,
@@ -65,15 +65,15 @@ impl TokenService {
         config: &Config,
         plugin_manager: &P,
     ) -> Result<Self, TokenProviderError> {
-        let backend_driver = match config.token.provider {
-            TokenProviderDriver::Fernet => FernetTokenProvider::new(config.clone()),
-        };
+        let backend_driver = plugin_manager
+            .get_token_backend(&config.token.provider.to_string())?
+            .clone();
         let tr_backend_driver = plugin_manager
             .get_token_restriction_backend(&config.token_restriction.driver)?
             .clone();
         Ok(Self {
             config: config.clone(),
-            backend_driver: Arc::new(backend_driver),
+            backend_driver: backend_driver,
             tr_backend_driver,
         })
     }
@@ -1025,7 +1025,7 @@ mod tests {
     use crate::resource::{MockResourceProvider, types::*};
     use crate::revoke::MockRevokeProvider;
     use crate::tests::get_mocked_state;
-    use crate::token::backend::MockTokenRestrictionBackend;
+    use crate::token::backend::{MockTokenBackend, MockTokenRestrictionBackend};
     use crate::trust::types::*;
 
     /// Generate test token to use for validation testing.
@@ -1042,17 +1042,17 @@ mod tests {
         }))
     }
 
-    fn get_provider(config: &Config) -> TokenService {
+    fn get_provider(config: &Config, token_mock: Option<MockTokenBackend>) -> TokenService {
         TokenService {
             config: config.clone(),
-            backend_driver: Arc::new(FernetTokenProvider::new(config.clone())),
+            backend_driver: Arc::new(token_mock.unwrap_or(MockTokenBackend::default())),
             tr_backend_driver: Arc::new(MockTokenRestrictionBackend::default()),
         }
     }
 
     #[tokio::test]
     async fn test_populate_role_assignments() {
-        let token_provider = get_provider(&Config::default());
+        let token_provider = get_provider(&Config::default(), None);
         let mut assignment_mock = MockAssignmentProvider::default();
         assignment_mock
             .expect_list_role_assignments()
@@ -1153,9 +1153,18 @@ mod tests {
     #[traced_test]
     async fn test_validate_token_revoked() {
         let token = generate_token(Some(TimeDelta::hours(1))).unwrap();
+        let token_clone_expect = token.clone();
+
+        let mut backend_driver_mock = MockTokenBackend::default();
+        backend_driver_mock
+            .expect_encode()
+            .returning(|_| Ok("token".to_string()));
+        backend_driver_mock
+            .expect_decode()
+            .returning(move |_| Ok(token_clone_expect.clone()));
 
         let config = setup_config();
-        let token_provider = get_provider(&config);
+        let token_provider = get_provider(&config, Some(backend_driver_mock));
         let mut revoke_mock = MockRevokeProvider::default();
         //let token_clone = token.clone();
         revoke_mock
@@ -1235,7 +1244,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_populate_role_assignments_application_credential() {
-        let token_provider = get_provider(&Config::default());
+        let token_provider = get_provider(&Config::default(), None);
         let mut assignment_mock = MockAssignmentProvider::default();
         assignment_mock
             .expect_list_role_assignments()
@@ -1400,7 +1409,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_unscoped_token() {
-        let token_provider = get_provider(&Config::default());
+        let token_provider = get_provider(&Config::default(), None);
         let now = Utc::now();
         let token = token_provider
             .create_unscoped_token(
@@ -1428,7 +1437,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_project_scope_token() {
-        let token_provider = get_provider(&Config::default());
+        let token_provider = get_provider(&Config::default(), None);
         let now = Utc::now();
         let token = token_provider
             .create_project_scope_token(
@@ -1470,7 +1479,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_domain_scope_token() {
-        let token_provider = get_provider(&Config::default());
+        let token_provider = get_provider(&Config::default(), None);
         let now = Utc::now();
         let token = token_provider
             .create_domain_scope_token(
@@ -1510,7 +1519,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_system_token() {
-        let token_provider = get_provider(&Config::default());
+        let token_provider = get_provider(&Config::default(), None);
         let now = Utc::now();
         let token = token_provider
             .create_system_scoped_token(
@@ -1542,7 +1551,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_trust_token() {
-        let token_provider = get_provider(&Config::default());
+        let token_provider = get_provider(&Config::default(), None);
         let now = Utc::now();
         let token = token_provider
             .create_trust_token(
@@ -1612,7 +1621,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_restricted_token() {
-        let token_provider = get_provider(&Config::default());
+        let token_provider = get_provider(&Config::default(), None);
         let now = Utc::now();
         let token = token_provider
             .create_restricted_token(

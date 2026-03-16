@@ -195,7 +195,7 @@ async fn main() -> Result<(), Report> {
         .await
         .wrap_err("Database connection failed")?;
 
-    let plugin_manager = PluginManager::default();
+    let plugin_manager = PluginManager::with_config(&cfg);
     let provider = Provider::new(cfg.clone(), &plugin_manager)?;
 
     let policy = HttpPolicyEnforcer::new(cfg.api_policy.opa_base_url.clone()).await?;

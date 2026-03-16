@@ -30,6 +30,7 @@ use openstack_keystone_core::assignment::backend::AssignmentBackend;
 use openstack_keystone_core::assignment::error::AssignmentProviderError;
 use openstack_keystone_core::catalog::backend::CatalogBackend;
 use openstack_keystone_core::catalog::error::CatalogProviderError;
+use openstack_keystone_core::config::Config;
 use openstack_keystone_core::federation::backend::FederationBackend;
 use openstack_keystone_core::federation::error::FederationProviderError;
 use openstack_keystone_core::identity::backend::IdentityBackend;
@@ -45,7 +46,7 @@ use openstack_keystone_core::revoke::backend::RevokeBackend;
 use openstack_keystone_core::role::RoleProviderError;
 use openstack_keystone_core::role::backend::RoleBackend;
 use openstack_keystone_core::token::TokenProviderError;
-use openstack_keystone_core::token::backend::TokenRestrictionBackend;
+use openstack_keystone_core::token::backend::{TokenBackend, TokenRestrictionBackend};
 use openstack_keystone_core::trust::TrustProviderError;
 use openstack_keystone_core::trust::backend::TrustBackend;
 
@@ -75,6 +76,8 @@ pub struct PluginManager {
     revoke_backends: HashMap<String, Arc<dyn RevokeBackend>>,
     /// Role backend plugins.
     role_backends: HashMap<String, Arc<dyn RoleBackend>>,
+    /// Token backend plugins.
+    token_backends: HashMap<String, Arc<dyn TokenBackend>>,
     /// Token restriction backend plugins.
     token_restriction_backends: HashMap<String, Arc<dyn TokenRestrictionBackend>>,
     /// Trust backend plugins.
@@ -206,6 +209,19 @@ impl PluginManagerApi for PluginManager {
             ))
     }
 
+    /// Get registered token backend.
+    #[allow(clippy::borrowed_box)]
+    fn get_token_backend<S: AsRef<str>>(
+        &self,
+        name: S,
+    ) -> Result<&Arc<dyn TokenBackend>, TokenProviderError> {
+        self.token_backends
+            .get(name.as_ref())
+            .ok_or(TokenProviderError::UnsupportedDriver(
+                name.as_ref().to_string(),
+            ))
+    }
+
     /// Get registered token restriction backend.
     #[allow(clippy::borrowed_box)]
     fn get_token_restriction_backend<S: AsRef<str>>(
@@ -322,6 +338,12 @@ impl PluginManagerApi for PluginManager {
     }
 
     /// Register token restriction backend.
+    fn register_token_backend<S: AsRef<str>>(&mut self, name: S, plugin: Arc<dyn TokenBackend>) {
+        self.token_backends
+            .insert(name.as_ref().to_string(), plugin);
+    }
+
+    /// Register token restriction backend.
     fn register_token_restriction_backend<S: AsRef<str>>(
         &mut self,
         name: S,
@@ -338,8 +360,61 @@ impl PluginManagerApi for PluginManager {
     }
 }
 
-impl Default for PluginManager {
-    fn default() -> Self {
+impl PluginManager {
+    /// Register default SQL drivers in the [PluginManager]
+    fn register_sql_drivers(&mut self) {
+        self.register_application_credential_backend(
+            "sql",
+            Arc::new(crate::application_credential::backend::SqlBackend::default()),
+        );
+        self.register_assignment_backend(
+            "sql",
+            Arc::new(crate::assignment::backend::SqlBackend::default()),
+        );
+        self.register_catalog_backend(
+            "sql",
+            Arc::new(crate::catalog::backend::sql::SqlBackend::default()),
+        );
+        self.register_federation_backend(
+            "sql",
+            Arc::new(crate::federation::backend::SqlBackend::default()),
+        );
+        self.register_identity_backend(
+            "sql",
+            Arc::new(crate::identity::backend::sql::SqlBackend::default()),
+        );
+        self.register_identity_mapping_backend(
+            "sql",
+            Arc::new(crate::identity_mapping::backend::sql::SqlBackend::default()),
+        );
+        self.register_k8s_auth_backend(
+            "sql",
+            Arc::new(crate::k8s_auth::backend::sql::SqlBackend::default()),
+        );
+        self.register_resource_backend(
+            "sql",
+            Arc::new(crate::resource::backend::sql::SqlBackend::default()),
+        );
+        self.register_revoke_backend(
+            "sql",
+            Arc::new(crate::revoke::backend::sql::SqlBackend::default()),
+        );
+        self.register_role_backend(
+            "sql",
+            Arc::new(crate::role::backend::sql::SqlBackend::default()),
+        );
+        self.register_token_restriction_backend(
+            "sql",
+            Arc::new(crate::token::token_restriction::SqlBackend::default()),
+        );
+        self.register_trust_backend(
+            "sql",
+            Arc::new(crate::trust::backend::sql::SqlBackend::default()),
+        );
+    }
+
+    /// Initialize the [PluginManager] with the initialized [Config].
+    pub fn with_config(config: &Config) -> Self {
         let mut slf = Self {
             application_credential_backends: HashMap::new(),
             assignment_backends: HashMap::new(),
@@ -351,57 +426,23 @@ impl Default for PluginManager {
             resource_backends: HashMap::new(),
             revoke_backends: HashMap::new(),
             role_backends: HashMap::new(),
+            token_backends: HashMap::new(),
             token_restriction_backends: HashMap::new(),
             trust_backends: HashMap::new(),
         };
-        slf.register_application_credential_backend(
-            "sql",
-            Arc::new(crate::application_credential::backend::SqlBackend::default()),
-        );
-        slf.register_assignment_backend(
-            "sql",
-            Arc::new(crate::assignment::backend::SqlBackend::default()),
-        );
-        slf.register_catalog_backend(
-            "sql",
-            Arc::new(crate::catalog::backend::sql::SqlBackend::default()),
-        );
-        slf.register_federation_backend(
-            "sql",
-            Arc::new(crate::federation::backend::SqlBackend::default()),
-        );
-        slf.register_identity_backend(
-            "sql",
-            Arc::new(crate::identity::backend::sql::SqlBackend::default()),
-        );
-        slf.register_identity_mapping_backend(
-            "sql",
-            Arc::new(crate::identity_mapping::backend::sql::SqlBackend::default()),
-        );
-        slf.register_k8s_auth_backend(
-            "sql",
-            Arc::new(crate::k8s_auth::backend::sql::SqlBackend::default()),
-        );
-        slf.register_resource_backend(
-            "sql",
-            Arc::new(crate::resource::backend::sql::SqlBackend::default()),
-        );
-        slf.register_revoke_backend(
-            "sql",
-            Arc::new(crate::revoke::backend::sql::SqlBackend::default()),
-        );
-        slf.register_role_backend(
-            "sql",
-            Arc::new(crate::role::backend::sql::SqlBackend::default()),
-        );
-        slf.register_token_restriction_backend(
-            "sql",
-            Arc::new(crate::token::token_restriction::SqlBackend::default()),
-        );
-        slf.register_trust_backend(
-            "sql",
-            Arc::new(crate::trust::backend::sql::SqlBackend::default()),
+        slf.register_sql_drivers();
+        slf.register_token_backend(
+            "fernet",
+            Arc::new(crate::token::backend::FernetTokenProvider::new(
+                config.clone(),
+            )),
         );
         slf
+    }
+}
+
+impl Default for PluginManager {
+    fn default() -> Self {
+        Self::with_config(&Config::default())
     }
 }

@@ -44,6 +44,7 @@ use crate::revoke::backend::RevokeBackend;
 use crate::role::RoleProviderError;
 use crate::role::backend::RoleBackend;
 use crate::token::TokenProviderError;
+use crate::token::backend::TokenBackend;
 use crate::token::backend::TokenRestrictionBackend;
 use crate::trust::TrustProviderError;
 use crate::trust::backend::TrustBackend;
@@ -109,6 +110,12 @@ pub trait PluginManagerApi {
         &self,
         name: S,
     ) -> Result<&Arc<dyn RoleBackend>, RoleProviderError>;
+
+    /// Get registered token restriction backend.
+    fn get_token_backend<S: AsRef<str>>(
+        &self,
+        name: S,
+    ) -> Result<&Arc<dyn TokenBackend>, TokenProviderError>;
 
     /// Get registered token restriction backend.
     fn get_token_restriction_backend<S: AsRef<str>>(
@@ -179,6 +186,9 @@ pub trait PluginManagerApi {
 
     /// Register role backend.
     fn register_role_backend<S: AsRef<str>>(&mut self, name: S, plugin: Arc<dyn RoleBackend>);
+
+    /// Register token backend.
+    fn register_token_backend<S: AsRef<str>>(&mut self, name: S, plugin: Arc<dyn TokenBackend>);
 
     /// Register token restriction backend.
     fn register_token_restriction_backend<S: AsRef<str>>(

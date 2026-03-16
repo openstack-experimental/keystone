@@ -14,6 +14,8 @@
 //! # Keystone configuration
 //!
 //! Parsing of the Keystone configuration file implementation.
+use std::fmt;
+
 use serde::Deserialize;
 
 /// Token provider.
@@ -54,4 +56,12 @@ pub enum TokenProviderDriver {
     #[default]
     #[serde(rename = "fernet")]
     Fernet,
+}
+
+impl fmt::Display for TokenProviderDriver {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Self::Fernet => write!(f, "fernet"),
+        }
+    }
 }
