@@ -13,26 +13,32 @@
 // SPDX-License-Identifier: Apache-2.0
 //! # K8s Auth role types.
 
-use derive_builder::Builder;
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "validate")]
 use validator::Validate;
 
 use crate::Link;
-use crate::error::BuilderError;
 
 /// K8s authentication role.
-#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
-#[builder(build_fn(error = "BuilderError"))]
-#[builder(setter(strip_option, into))]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(feature = "builder", derive(derive_builder::Builder))]
+#[cfg_attr(
+    feature = "builder",
+    builder(
+        build_fn(error = "crate::error::BuilderError"),
+        setter(strip_option, into)
+    )
+)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct K8sAuthRole {
     /// ID of the K8s auth instance this role belongs to.
-    #[validate(length(max = 64))]
+    #[cfg_attr(feature = "validate", validate(length(max = 64)))]
     pub auth_instance_id: String,
 
     ///  Optional Audience claim to verify in the JWT.
-    #[builder(default)]
-    #[validate(length(max = 64))]
+    #[cfg_attr(feature = "builder", builder(default))]
+    #[cfg_attr(feature = "validate", validate(length(max = 64)))]
     pub bound_audience: Option<String>,
 
     /// List of service account names able to access this role.
@@ -43,46 +49,54 @@ pub struct K8sAuthRole {
 
     /// Domain ID owning the K8s auth role configuration. It must always match
     /// the `domain_id` of the referred configuration.
-    #[validate(length(max = 64))]
+    #[cfg_attr(feature = "validate", validate(length(max = 64)))]
     pub domain_id: String,
 
     pub enabled: bool,
 
-    #[validate(length(max = 64))]
+    #[cfg_attr(feature = "validate", validate(length(max = 64)))]
     pub id: String,
 
     /// K8s auth role name.
-    #[builder(default)]
-    #[validate(length(max = 255))]
+    #[cfg_attr(feature = "builder", builder(default))]
+    #[cfg_attr(feature = "validate", validate(length(max = 255)))]
     pub name: String,
 
     /// A token restriction ID that is used to bind the K8s token to the
     /// Keystone Identity and Authorization mapping.
-    #[validate(length(max = 64))]
+    #[cfg_attr(feature = "validate", validate(length(max = 64)))]
     pub token_restriction_id: String,
 }
 
 /// K8s auth role response.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct K8sAuthRoleResponse {
     /// K8s auth role object.
-    #[validate(nested)]
+    #[cfg_attr(feature = "validate", validate(nested))]
     pub role: K8sAuthRole,
 }
 
 /// New K8s authentication role.
-#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
-#[builder(build_fn(error = "BuilderError"))]
-#[builder(setter(strip_option, into))]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(feature = "builder", derive(derive_builder::Builder))]
+#[cfg_attr(
+    feature = "builder",
+    builder(
+        build_fn(error = "crate::error::BuilderError"),
+        setter(strip_option, into)
+    )
+)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct K8sAuthRoleCreate {
     // /// ID of the K8s auth instance this role belongs to.
-    // #[validate(length(max = 64))]
+    // #[cfg_attr(feature = "validate", validate(length(max = 64)))]
     // pub auth_configuration_id: String,
     ///  Optional Audience claim to verify in the JWT.
-    #[builder(default)]
-    #[validate(length(max = 64))]
+    #[cfg_attr(feature = "builder", builder(default))]
+    #[cfg_attr(feature = "validate", validate(length(max = 64)))]
     pub bound_audience: Option<String>,
 
     /// List of service account names able to access this role.
@@ -93,78 +107,88 @@ pub struct K8sAuthRoleCreate {
 
     // /// Domain ID owning the K8s auth role configuration. It must always match
     // /// the `domain_id` of the referred configuration.
-    // #[validate(length(max = 64))]
+    // #[cfg_attr(feature = "validate", validate(length(max = 64)))]
     // pub domain_id: String,
     pub enabled: bool,
 
     /// K8s auth role name.
-    #[validate(length(max = 255))]
+    #[cfg_attr(feature = "validate", validate(length(max = 255)))]
     pub name: String,
 
     /// A token restriction ID that is used to bind the K8s token to the
     /// Keystone Identity and Authorization mapping.
-    #[validate(length(max = 64))]
+    #[cfg_attr(feature = "validate", validate(length(max = 64)))]
     pub token_restriction_id: String,
 }
 
 /// K8s auth role create request.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct K8sAuthRoleCreateRequest {
     /// K8s auth role object.
-    #[validate(nested)]
+    #[cfg_attr(feature = "validate", validate(nested))]
     pub role: K8sAuthRoleCreate,
 }
 
 /// Update K8s authentication role.
-#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
-#[builder(build_fn(error = "BuilderError"))]
-#[builder(setter(strip_option, into))]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(feature = "builder", derive(derive_builder::Builder))]
+#[cfg_attr(
+    feature = "builder",
+    builder(
+        build_fn(error = "crate::error::BuilderError"),
+        setter(strip_option, into)
+    )
+)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct K8sAuthRoleUpdate {
     ///  Optional Audience claim to verify in the JWT.
-    #[builder(default)]
-    #[validate(length(max = 64))]
+    #[cfg_attr(feature = "builder", builder(default))]
+    #[cfg_attr(feature = "validate", validate(length(max = 64)))]
     pub bound_audience: Option<String>,
 
     /// List of service account names able to access this role.
-    #[builder(default)]
+    #[cfg_attr(feature = "builder", builder(default))]
     pub bound_service_account_names: Option<Vec<String>>,
 
     /// List of namespaces allowed to access this role.
-    #[builder(default)]
+    #[cfg_attr(feature = "builder", builder(default))]
     pub bound_service_account_namespaces: Option<Vec<String>>,
 
-    #[builder(default)]
+    #[cfg_attr(feature = "builder", builder(default))]
     pub enabled: Option<bool>,
 
     /// K8s auth role name.
-    #[builder(default)]
-    #[validate(length(max = 255))]
+    #[cfg_attr(feature = "builder", builder(default))]
+    #[cfg_attr(feature = "validate", validate(length(max = 255)))]
     pub name: Option<String>,
 
     /// A token restriction ID that is used to bind the K8s token to the
     /// Keystone Identity and Authorization mapping.
-    #[builder(default)]
-    #[validate(length(max = 64))]
+    #[cfg_attr(feature = "builder", builder(default))]
+    #[cfg_attr(feature = "validate", validate(length(max = 64)))]
     pub token_restriction_id: Option<String>,
 }
 
 /// K8s auth role update request.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct K8sAuthRoleUpdateRequest {
     /// K8s auth role object.
-    #[validate(nested)]
+    #[cfg_attr(feature = "validate", validate(nested))]
     pub role: K8sAuthRoleUpdate,
 }
 
 /// List of K8s auth roles.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct K8sAuthRoleList {
     /// Collection of k8s auth role objects.
-    #[validate(nested)]
+    #[cfg_attr(feature = "validate", validate(nested))]
     pub roles: Vec<K8sAuthRole>,
 
     /// Pagination links.
@@ -173,48 +197,49 @@ pub struct K8sAuthRoleList {
 }
 
 /// Path parameters for the nested implementation of the K8s Auth role list.
-#[derive(Clone, Debug, Deserialize, PartialEq, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq)]
 #[cfg_attr(feature = "openapi", derive(utoipa::IntoParams))]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct K8sAuthRolePathParams {
     /// The ID of the K8s auth instance.
-    #[validate(length(max = 64))]
+    #[cfg_attr(feature = "validate", validate(length(max = 64)))]
     pub instance_id: String,
 
     /// The ID of the K8s auth role.
-    #[validate(length(max = 64))]
+    #[cfg_attr(feature = "validate", validate(length(max = 64)))]
     pub id: String,
 }
 
 /// K8s Auth role list parameters (nested).
-#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
-#[builder(build_fn(error = "BuilderError"))]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::IntoParams))]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct K8sAuthRoleListParametersNested {
     /// Name.
-    #[validate(length(max = 255))]
+    #[cfg_attr(feature = "validate", validate(length(max = 255)))]
     pub name: Option<String>,
 }
 
 /// K8s Auth role list parameters.
-#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
-#[builder(build_fn(error = "BuilderError"))]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::IntoParams))]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct K8sAuthRoleListParameters {
     /// K8s auth instance id.
-    #[validate(length(max = 64))]
+    #[cfg_attr(feature = "validate", validate(length(max = 64)))]
     pub auth_instance_id: Option<String>,
 
     /// Domain id.
     ///
     /// Bu default only user with corresponding privileges is allowed to list
     /// roles of the domain other than in the current scope.
-    #[validate(length(max = 64))]
+    #[cfg_attr(feature = "validate", validate(length(max = 64)))]
     pub domain_id: Option<String>,
 
     /// Name.
-    #[validate(length(max = 255))]
+    #[cfg_attr(feature = "validate", validate(length(max = 255)))]
     pub name: Option<String>,
 }

@@ -21,7 +21,7 @@ use axum::{
 };
 use validator::Validate;
 
-use super::token_impl::build_api_token_v3;
+//use super::token_impl::build_api_token_v3;
 use crate::api::v3::auth::token::common::{authenticate_request, get_authz_info};
 use crate::api::v3::auth::token::types::{AuthRequest, CreateTokenParameters, TokenResponse};
 use crate::api::{Catalog, CatalogService, error::KeystoneApiError};
@@ -76,7 +76,7 @@ pub(super) async fn create(
         .await?;
 
     let mut api_token = TokenResponse {
-        token: build_api_token_v3(&token, &state).await?,
+        token: token.build_api_token_v3(&state).await?,
     };
     if !query.nocatalog.is_some_and(|x| x) {
         let catalog: Catalog = Catalog(

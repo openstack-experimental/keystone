@@ -15,6 +15,7 @@
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE};
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "validate")]
 use validator::Validate;
 
 use crate::webauthn::WebauthnError;
@@ -25,17 +26,19 @@ use crate::webauthn::{
 };
 
 /// Request for initialization of the passkey authentication.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct PasskeyAuthenticationStartRequest {
     /// The user authentication data.
-    #[validate(nested)]
+    #[cfg_attr(feature = "validate", validate(nested))]
     pub passkey: PasskeyUserAuthenticationRequest,
 }
 
 /// Request for initialization of the passkey authentication.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct PasskeyUserAuthenticationRequest {
     /// The ID of the user that is authenticating.
     pub user_id: String,
@@ -47,11 +50,12 @@ pub struct PasskeyUserAuthenticationRequest {
 /// handling. This is meant to be opaque, that is, you should not need to
 /// inspect or alter the content of the struct - you should serialise it and
 /// transmit it to the client only.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct PasskeyAuthenticationStartResponse {
     /// The options.
-    #[validate(nested)]
+    #[cfg_attr(feature = "validate", validate(nested))]
     pub public_key: PublicKeyCredentialRequestOptions,
     /// The mediation requested.
     #[cfg_attr(feature = "openapi", schema(nullable = false))]
@@ -103,24 +107,25 @@ impl From<Mediation> for webauthn_rs_proto::auth::Mediation {
 ///
 /// You should not need to handle the inner content of this structure - you
 /// should provide this to the correctly handling function of Webauthn only.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct PasskeyAuthenticationFinishRequest {
     /// The credential Id, likely base64.
     pub id: String,
     /// Unsigned Client processed extensions.
-    #[validate(nested)]
+    #[cfg_attr(feature = "validate", validate(nested))]
     pub extensions: AuthenticationExtensionsClientOutputs,
     /// The binary of the credential id.
     #[cfg_attr(feature = "openapi", schema(value_type = String, format = Binary, content_encoding = "base64"))]
     pub raw_id: String,
     /// The authenticator response.
-    #[validate(nested)]
+    #[cfg_attr(feature = "validate", validate(nested))]
     pub response: AuthenticatorAssertionResponseRaw,
     /// The authenticator type.
     pub type_: String,
     /// The ID of the user.
-    #[validate(length(max = 64))]
+    #[cfg_attr(feature = "validate", validate(length(max = 64)))]
     pub user_id: String,
 }
 

@@ -12,7 +12,6 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 use serde::{Deserialize, Serialize};
-use validator::Validate;
 
 use crate::webauthn::{
     authenticator_attachment::AuthenticatorAttachment,
@@ -21,8 +20,9 @@ use crate::webauthn::{
 };
 
 /// <https://www.w3.org/TR/webauthn/#dictdef-authenticatorselectioncriteria>.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct AuthenticatorSelectionCriteria {
     /// How the authenticator should be attached to the client machine. Note
     /// this is only a hint. It is not enforced in anyway shape or form. <https://www.w3.org/TR/webauthn/#attachment>.

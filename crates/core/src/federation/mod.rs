@@ -17,6 +17,7 @@
 //! federation.
 use async_trait::async_trait;
 
+#[cfg(feature = "api")]
 pub mod api;
 pub mod backend;
 pub mod error;

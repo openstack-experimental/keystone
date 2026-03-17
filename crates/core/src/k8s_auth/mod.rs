@@ -15,6 +15,7 @@
 
 use async_trait::async_trait;
 
+#[cfg(feature = "api")]
 pub mod api;
 mod auth;
 pub mod backend;

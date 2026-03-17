@@ -13,14 +13,14 @@
 // SPDX-License-Identifier: Apache-2.0
 use base64::{Engine as _, engine::general_purpose::URL_SAFE};
 use serde::{Deserialize, Serialize};
-use validator::Validate;
 
 use crate::webauthn::WebauthnError;
 use crate::webauthn::authenticator_transport::AuthenticatorTransport;
 
 /// <https://www.w3.org/TR/webauthn/#dictdef-publickeycredentialdescriptor>.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct PublicKeyCredentialDescriptor {
     /// The type of credential.
     pub type_: String,

@@ -13,18 +13,23 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use chrono::{DateTime, Utc};
-use derive_builder::Builder;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+#[cfg(feature = "validate")]
 use validator::Validate;
 
-use crate::error::BuilderError;
-
 /// User response object.
-#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
-#[builder(build_fn(error = "BuilderError"))]
-#[builder(setter(strip_option, into))]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(
+    feature = "builder",
+    derive(derive_builder::Builder),
+    builder(
+        build_fn(error = "crate::error::BuilderError"),
+        setter(strip_option, into)
+    )
+)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct User {
     /// The ID of the default project for the user. A user's default project
     /// must not be a domain. Setting this attribute does not grant any actual
@@ -34,20 +39,20 @@ pub struct User {
     /// project, the default project is ignored at token creation. Additionally,
     /// if your default project is not valid, a token is issued without an
     /// explicit scope of authorization.
-    #[builder(default)]
+    #[cfg_attr(feature = "builder", builder(default))]
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[validate(length(max = 64))]
+    #[cfg_attr(feature = "validate", validate(length(max = 64)))]
     pub default_project_id: Option<String>,
 
     /// User domain ID.
-    #[validate(length(max = 64))]
+    #[cfg_attr(feature = "validate", validate(length(max = 64)))]
     pub domain_id: String,
 
     /// If the user is enabled, this value is true. If the user is disabled,
     /// this value is false.
     pub enabled: bool,
 
-    #[builder(default)]
+    #[cfg_attr(feature = "builder", builder(default))]
     #[serde(
         flatten,
         deserialize_with = "crate::deserialize_optional_flatten_value",
@@ -59,17 +64,17 @@ pub struct User {
     /// list contains the idp_id and protocols. protocols is a list of objects,
     /// each of which contains protocol_id and unique_id of the protocol and
     /// user respectively.
-    #[builder(default)]
+    #[cfg_attr(feature = "builder", builder(default))]
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[validate(nested)]
+    #[cfg_attr(feature = "validate", validate(nested))]
     pub federated: Option<Vec<Federation>>,
 
     /// User ID.
-    #[validate(length(max = 64))]
+    #[cfg_attr(feature = "validate", validate(length(max = 64)))]
     pub id: String,
 
     /// User name.
-    #[validate(length(max = 255))]
+    #[cfg_attr(feature = "validate", validate(length(max = 255)))]
     pub name: String,
 
     /// The resource options for the user. Available resource options are
@@ -77,31 +82,39 @@ pub struct User {
     /// ignore_lockout_failure_attempts, lock_password,
     /// multi_factor_auth_enabled, and multi_factor_auth_rules
     /// ignore_user_inactivity.
-    #[builder(default)]
+    #[cfg_attr(feature = "builder", builder(default))]
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[validate(nested)]
+    #[cfg_attr(feature = "validate", validate(nested))]
     pub options: Option<UserOptions>,
 
     /// The date and time when the password expires. The time zone is UTC.
-    #[builder(default)]
+    #[cfg_attr(feature = "builder", builder(default))]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub password_expires_at: Option<DateTime<Utc>>,
 }
 
 /// Complete response with the user data.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct UserResponse {
     /// User object.
-    #[validate(nested)]
+    #[cfg_attr(feature = "validate", validate(nested))]
     pub user: User,
 }
 
 /// Create user data.
-#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
-#[builder(build_fn(error = "BuilderError"))]
-#[builder(setter(strip_option, into))]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(
+    feature = "builder",
+    derive(derive_builder::Builder),
+    builder(
+        build_fn(error = "crate::error::BuilderError"),
+        setter(strip_option, into)
+    )
+)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct UserCreate {
     /// The ID of the default project for the user. A user's default project
     /// must not be a domain. Setting this attribute does not grant any actual
@@ -111,26 +124,26 @@ pub struct UserCreate {
     /// project, the default project is ignored at token creation. Additionally,
     /// if your default project is not valid, a token is issued without an
     /// explicit scope of authorization.
-    #[builder(default)]
-    #[validate(length(min = 1, max = 64))]
+    #[cfg_attr(feature = "builder", builder(default))]
+    #[cfg_attr(feature = "validate", validate(length(min = 1, max = 64)))]
     pub default_project_id: Option<String>,
 
     /// User domain ID.
-    #[validate(length(min = 1, max = 64))]
+    #[cfg_attr(feature = "validate", validate(length(min = 1, max = 64)))]
     pub domain_id: String,
 
     /// If the user is enabled, this value is true. If the user is disabled,
     /// this value is false.
-    #[builder(default)]
+    #[cfg_attr(feature = "builder", builder(default))]
     pub enabled: bool,
 
     /// Additional user properties.
-    #[builder(default)]
+    #[cfg_attr(feature = "builder", builder(default))]
     #[serde(flatten)]
     pub extra: Option<Value>,
 
     /// The user name. Must be unique within the owning domain.
-    #[validate(length(min = 1, max = 255))]
+    #[cfg_attr(feature = "validate", validate(length(min = 1, max = 255)))]
     pub name: String,
 
     /// The resource options for the user. Available resource options are
@@ -138,30 +151,38 @@ pub struct UserCreate {
     /// ignore_lockout_failure_attempts, lock_password,
     /// multi_factor_auth_enabled, and multi_factor_auth_rules
     /// ignore_user_inactivity.
-    #[builder(default)]
-    #[validate(nested)]
+    #[cfg_attr(feature = "builder", builder(default))]
+    #[cfg_attr(feature = "validate", validate(nested))]
     pub options: Option<UserOptions>,
 
     /// The password for the user.
-    #[builder(default)]
-    #[validate(length(min = 1, max = 72))]
+    #[cfg_attr(feature = "builder", builder(default))]
+    #[cfg_attr(feature = "validate", validate(length(min = 1, max = 72)))]
     pub password: Option<String>,
 }
 
 /// Complete create user request.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct UserCreateRequest {
     /// User object.
-    #[validate(nested)]
+    #[cfg_attr(feature = "validate", validate(nested))]
     pub user: UserCreate,
 }
 
 /// Update user data.
-#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
-#[builder(build_fn(error = "BuilderError"))]
-#[builder(setter(strip_option, into))]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(
+    feature = "builder",
+    derive(derive_builder::Builder),
+    builder(
+        build_fn(error = "crate::error::BuilderError"),
+        setter(strip_option, into)
+    )
+)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct UserUpdate {
     /// The ID of the default project for the user. A user's default project
     /// must not be a domain. Setting this attribute does not grant any actual
@@ -171,23 +192,23 @@ pub struct UserUpdate {
     /// project, the default project is ignored at token creation. Additionally,
     /// if your default project is not valid, a token is issued without an
     /// explicit scope of authorization.
-    #[builder(default)]
-    #[validate(length(max = 64))]
+    #[cfg_attr(feature = "builder", builder(default))]
+    #[cfg_attr(feature = "validate", validate(length(max = 64)))]
     pub default_project_id: Option<Option<String>>,
 
     /// If the user is enabled, this value is true. If the user is disabled,
     /// this value is false.
-    #[builder(default)]
+    #[cfg_attr(feature = "builder", builder(default))]
     pub enabled: Option<bool>,
 
     /// Additional user properties.
-    #[builder(default)]
+    #[cfg_attr(feature = "builder", builder(default))]
     #[serde(flatten)]
     pub extra: Option<Value>,
 
     /// The user name. Must be unique within the owning domain.
-    #[builder(default)]
-    #[validate(length(max = 255))]
+    #[cfg_attr(feature = "builder", builder(default))]
+    #[cfg_attr(feature = "validate", validate(length(max = 255)))]
     pub name: Option<String>,
 
     /// The resource options for the user. Available resource options are
@@ -195,27 +216,29 @@ pub struct UserUpdate {
     /// ignore_lockout_failure_attempts, lock_password,
     /// multi_factor_auth_enabled, and multi_factor_auth_rules
     /// ignore_user_inactivity.
-    #[builder(default)]
-    #[validate(nested)]
+    #[cfg_attr(feature = "builder", builder(default))]
+    #[cfg_attr(feature = "validate", validate(nested))]
     pub options: Option<UserOptions>,
 
     /// The password for the user.
-    #[builder(default)]
+    #[cfg_attr(feature = "builder", builder(default))]
     pub password: Option<String>,
 }
 
 /// Complete update user request.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct UserUpdateRequest {
     /// User object.
-    #[validate(nested)]
+    #[cfg_attr(feature = "validate", validate(nested))]
     pub user: UserCreate,
 }
 
 /// User options.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct UserOptions {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ignore_change_password_upon_first_use: Option<bool>,
@@ -234,53 +257,57 @@ pub struct UserOptions {
 }
 
 /// User federation data.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct Federation {
     /// Identity provider ID.
     pub idp_id: String,
     /// Protocols.
-    #[validate(nested)]
+    #[cfg_attr(feature = "validate", validate(nested))]
     pub protocols: Vec<FederationProtocol>,
 }
 
 /// Federation protocol data.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct FederationProtocol {
     /// Federation protocol ID.
-    #[validate(length(max = 64))]
+    #[cfg_attr(feature = "validate", validate(length(max = 64)))]
     pub protocol_id: String,
 
     // TODO: unique ID should potentially belong to the IDP and not to the protocol
     /// Unique ID of the associated user.
-    #[validate(length(max = 64))]
+    #[cfg_attr(feature = "validate", validate(length(max = 64)))]
     pub unique_id: String,
 }
 
 /// List of users.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct UserList {
     /// Collection of user objects.
-    #[validate(nested)]
+    #[cfg_attr(feature = "validate", validate(nested))]
     pub users: Vec<User>,
 }
 
 /// User list parameters.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::IntoParams))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct UserListParameters {
     /// Filter users by Domain ID.
-    #[validate(length(max = 64))]
+    #[cfg_attr(feature = "validate", validate(length(max = 64)))]
     pub domain_id: Option<String>,
 
     /// Filter users by Name.
-    #[validate(length(max = 255))]
+    #[cfg_attr(feature = "validate", validate(length(max = 255)))]
     pub name: Option<String>,
 
     /// Filter users by the federated unique ID.
-    #[validate(length(max = 64))]
+    #[cfg_attr(feature = "validate", validate(length(max = 64)))]
     pub unique_id: Option<String>,
 }
 
@@ -290,6 +317,7 @@ mod tests {
 
     use super::*;
 
+    #[cfg(feature = "builder")]
     #[test]
     fn test_user_create() {
         let sot = UserCreateBuilder::default()

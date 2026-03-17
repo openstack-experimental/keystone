@@ -13,41 +13,45 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Federated auth OIDC auth types.
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "validate")]
 use validator::Validate;
 
 use crate::scope::Scope;
 
 /// Request for initializing the federated authentication.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct IdentityProviderAuthRequest {
     /// Redirect URI to include in the auth request.
-    #[validate(url)]
+    #[cfg_attr(feature = "validate", validate(url))]
     pub redirect_uri: String,
     /// IDP mapping id.
-    #[validate(length(max = 64))]
+    #[cfg_attr(feature = "validate", validate(length(max = 64)))]
     pub mapping_id: Option<String>,
     /// IDP mapping name.
-    #[validate(length(max = 64))]
+    #[cfg_attr(feature = "validate", validate(length(max = 64)))]
     pub mapping_name: Option<String>,
     /// Authentication scope.
-    #[validate(nested)]
+    #[cfg_attr(feature = "validate", validate(nested))]
     pub scope: Option<Scope>,
 }
 
 /// Authentication initialization response.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct IdentityProviderAuthResponse {
     /// Url the client must open in the browser to continue the authentication.
-    #[validate(url)]
+    #[cfg_attr(feature = "validate", validate(url))]
     pub auth_url: String,
 }
 
 /// Authentication callback request the user is sending to complete the
 /// authentication request.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct AuthCallbackParameters {
     /// Authentication state.
     pub state: String,

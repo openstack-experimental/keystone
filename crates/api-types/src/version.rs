@@ -14,42 +14,47 @@
 //! Keystone version API types
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "validate")]
 use validator::Validate;
 
 use crate::Link;
 
 /// List of the supported API versions as [Values].
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct Versions {
     /// List of the versions.
-    #[validate(nested)]
+    #[cfg_attr(feature = "validate", validate(nested))]
     pub versions: Values,
 }
 
 /// A container with the [Version] list.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct Values {
-    #[validate(nested)]
+    #[cfg_attr(feature = "validate", validate(nested))]
     pub values: Vec<Version>,
 }
 
 /// Single API version container.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct SingleVersion {
     /// The version.
-    #[validate(nested)]
+    #[cfg_attr(feature = "validate", validate(nested))]
     pub version: Version,
 }
 
 /// Single API version.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct Version {
     /// Version id.
-    #[validate(length(max = 5))]
+    #[cfg_attr(feature = "validate", validate(length(max = 5)))]
     pub id: String,
     /// Version status.
     pub status: VersionStatus,
@@ -58,11 +63,11 @@ pub struct Version {
     pub updated: Option<DateTime<Utc>>,
     /// Links to the API version.
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[validate(nested)]
+    #[cfg_attr(feature = "validate", validate(nested))]
     pub links: Option<Vec<Link>>,
     /// Supported media types.
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[validate(nested)]
+    #[cfg_attr(feature = "validate", validate(nested))]
     pub media_types: Option<Vec<MediaType>>,
 }
 
@@ -79,8 +84,9 @@ pub enum VersionStatus {
     Experimental,
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct MediaType {
     pub base: String,
     pub r#type: String,

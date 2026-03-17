@@ -12,54 +12,67 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //! # Catalog API types
-use derive_builder::Builder;
 use serde::{Deserialize, Serialize};
-use validator::{Validate, ValidationErrors};
-
-use crate::error::BuilderError;
+#[cfg(feature = "validate")]
+use validator::Validate;
 
 /// A catalog object.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct Catalog(pub Vec<CatalogService>);
 
-impl Validate for Catalog {
-    fn validate(&self) -> Result<(), ValidationErrors> {
+#[cfg(feature = "validate")]
+impl validator::Validate for Catalog {
+    fn validate(&self) -> Result<(), validator::ValidationErrors> {
         self.0.validate()
     }
 }
 
 /// A catalog object.
-#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
-#[builder(build_fn(error = "BuilderError"))]
-#[builder(setter(strip_option, into))]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(
+    feature = "builder",
+    derive(derive_builder::Builder),
+    builder(
+        build_fn(error = "crate::error::BuilderError"),
+        setter(strip_option, into)
+    )
+)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct CatalogService {
     pub r#type: Option<String>,
-    #[validate(length(max = 255))]
+    #[cfg_attr(feature = "validate", validate(length(max = 255)))]
     pub name: Option<String>,
-    #[validate(length(max = 64))]
+    #[cfg_attr(feature = "validate", validate(length(max = 64)))]
     pub id: String,
-    #[validate(nested)]
+    #[cfg_attr(feature = "validate", validate(nested))]
     pub endpoints: Vec<Endpoint>,
 }
 
 /// A Catalog Endpoint.
-#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
-#[builder(build_fn(error = "BuilderError"))]
-#[builder(setter(strip_option, into))]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(
+    feature = "builder",
+    derive(derive_builder::Builder),
+    builder(
+        build_fn(error = "crate::error::BuilderError"),
+        setter(strip_option, into)
+    )
+)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct Endpoint {
-    #[validate(length(max = 64))]
+    #[cfg_attr(feature = "validate", validate(length(max = 64)))]
     pub id: String,
-    #[validate(url)]
+    #[cfg_attr(feature = "validate", validate(url))]
     pub url: String,
-    #[validate(length(max = 64))]
+    #[cfg_attr(feature = "validate", validate(length(max = 64)))]
     pub interface: String,
-    #[builder(default)]
-    #[validate(length(max = 64))]
+    #[cfg_attr(feature = "builder", builder(default))]
+    #[cfg_attr(feature = "validate", validate(length(max = 64)))]
     pub region: Option<String>,
-    #[builder(default)]
-    #[validate(length(max = 64))]
+    #[cfg_attr(feature = "builder", builder(default))]
+    #[cfg_attr(feature = "validate", validate(length(max = 64)))]
     pub region_id: Option<String>,
 }

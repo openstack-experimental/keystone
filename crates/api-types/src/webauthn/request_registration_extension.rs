@@ -12,6 +12,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "validate")]
 use validator::Validate;
 
 use crate::webauthn::cred_protect::CredProtect;
@@ -19,8 +20,9 @@ use crate::webauthn::cred_protect::CredProtect;
 /// Extension option inputs for PublicKeyCredentialCreationOptions.
 ///
 /// Implements `AuthenticatorExtensionsClientInputs` from the spec.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct RequestRegistrationExtensions {
     /// ⚠️ - This extension result is always unsigned, and only indicates if the
     /// browser requests a residentKey to be created. It has no bearing on
@@ -31,7 +33,7 @@ pub struct RequestRegistrationExtensions {
     /// The credProtect extension options.
     #[cfg_attr(feature = "openapi", schema(nullable = false))]
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[validate(nested)]
+    #[cfg_attr(feature = "validate", validate(nested))]
     pub cred_protect: Option<CredProtect>,
     /// ⚠️ - Browsers support the creation of the secret, but not the retrieval
     /// of it. CTAP2.1 create hmac secret.

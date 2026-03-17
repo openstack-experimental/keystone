@@ -11,7 +11,6 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-use validator::Validate;
 
 use openstack_keystone_api_types::v4::auth::token::{System, Token, TokenBuilder, UserBuilder};
 
@@ -200,7 +199,6 @@ impl ProviderToken {
             );
         }
         let token = response.build()?;
-        token.validate()?;
         Ok(token)
     }
 }

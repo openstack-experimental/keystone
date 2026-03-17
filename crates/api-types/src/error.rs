@@ -34,6 +34,7 @@ impl From<String> for BuilderError {
     }
 }
 
+#[cfg(feature = "builder")]
 impl From<derive_builder::UninitializedFieldError> for BuilderError {
     fn from(ufe: derive_builder::UninitializedFieldError) -> Self {
         Self::UninitializedField(ufe.to_string())

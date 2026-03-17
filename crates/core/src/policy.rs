@@ -19,7 +19,6 @@
 use async_trait::async_trait;
 #[cfg(any(test, feature = "mock"))]
 use mockall::mock;
-use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
@@ -131,7 +130,7 @@ impl From<&Token> for Credentials {
 }
 
 /// A single violation of a policy.
-#[derive(Clone, Deserialize, Debug, JsonSchema, Serialize)]
+#[derive(Clone, Deserialize, Debug, Serialize)]
 pub struct Violation {
     pub msg: String,
     pub field: Option<String>,

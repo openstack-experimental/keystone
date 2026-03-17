@@ -12,8 +12,6 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::api::common;
-use crate::api::types::ProjectBuilder;
 use crate::api::v3::auth::token::types::AuthRequest;
 use crate::api::{
     Scope,
@@ -23,27 +21,7 @@ use crate::api::{
 use crate::auth::{AuthenticatedInfo, AuthzInfo};
 use crate::identity::IdentityApi;
 use crate::keystone::ServiceState;
-use crate::resource::types::{Domain, Project};
 use crate::token::TokenApi;
-
-/// Get the ProjectBuilder for the given Project.
-pub(super) async fn get_project_info_builder(
-    state: &ServiceState,
-    project: &Project,
-    user_domain: &Domain,
-) -> Result<ProjectBuilder, KeystoneApiError> {
-    let mut project_response = ProjectBuilder::default();
-    project_response.id(project.id.clone());
-    project_response.name(project.name.clone());
-    if project.domain_id == user_domain.id {
-        project_response.domain(user_domain.clone().into());
-    } else {
-        let project_domain =
-            common::get_domain(state, Some(&project.domain_id), None::<&str>).await?;
-        project_response.domain(project_domain.clone().into());
-    }
-    Ok(project_response)
-}
 
 /// Authenticate the user ignoring any scope information. It is important not to
 /// expose any hints that user, project, domain, etc might exist before we have

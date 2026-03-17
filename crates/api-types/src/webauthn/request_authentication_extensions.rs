@@ -12,6 +12,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "validate")]
 use validator::Validate;
 
 use crate::webauthn::WebauthnError;
@@ -20,8 +21,9 @@ use crate::webauthn::hmac_get_secret_input::HmacGetSecretInput;
 /// Extension option inputs for PublicKeyCredentialRequestOptions.
 ///
 /// Implements AuthenticatorExtensionsClientInputs from the spec.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct RequestAuthenticationExtensions {
     /// The appid extension options.
     #[cfg_attr(feature = "openapi", schema(nullable = false))]
@@ -31,7 +33,7 @@ pub struct RequestAuthenticationExtensions {
     /// <https://bugs.chromium.org/p/chromium/issues/detail?id=1023225> Hmac get secret.
     #[cfg_attr(feature = "openapi", schema(nullable = false))]
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[validate(nested)]
+    #[cfg_attr(feature = "validate", validate(nested))]
     pub hmac_get_secret: Option<HmacGetSecretInput>,
     /// ⚠️ - Browsers do not support this! Uvm.
     #[cfg_attr(feature = "openapi", schema(nullable = false))]

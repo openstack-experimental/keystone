@@ -13,14 +13,14 @@
 // SPDX-License-Identifier: Apache-2.0
 use base64::{Engine as _, engine::general_purpose::URL_SAFE};
 use serde::{Deserialize, Serialize};
-use validator::Validate;
 
 use crate::webauthn::WebauthnError;
 
 /// User Entity.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[cfg_attr(feature = "openapi", schema(as = PasskeyUser))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct User {
     /// The user's id in base64 form. This MUST be a unique id, and must NOT
     /// contain personally identifying information, as this value can NEVER
@@ -29,11 +29,11 @@ pub struct User {
     pub id: String,
     /// A detailed name for the account, such as an email address. This value
     /// can change, so must not be used as a primary key.
-    #[validate(length(max = 255))]
+    #[cfg_attr(feature = "validate", validate(length(max = 255)))]
     pub name: String,
     /// The user's preferred name for display. This value can change, so must
     /// not be used as a primary key.
-    #[validate(length(max = 255))]
+    #[cfg_attr(feature = "validate", validate(length(max = 255)))]
     pub display_name: String,
 }
 

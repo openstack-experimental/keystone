@@ -12,11 +12,11 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 use serde::{Deserialize, Serialize};
-use validator::Validate;
 
 /// Public key cryptographic parameters.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct PubKeyCredParams {
     /// The algorithm in use defined by CASE.
     pub alg: i64,

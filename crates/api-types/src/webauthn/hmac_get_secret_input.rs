@@ -13,15 +13,15 @@
 // SPDX-License-Identifier: Apache-2.0
 use base64::{Engine as _, engine::general_purpose::URL_SAFE};
 use serde::{Deserialize, Serialize};
-use validator::Validate;
 
 use crate::webauthn::WebauthnError;
 
 /// The inputs to the hmac secret if it was created during registration.
 ///
 /// <https://fidoalliance.org/specs/fido-v2.1-ps-20210615/fido-client-to-authenticator-protocol-v2.1-ps-20210615.html#sctn-hmac-secret-extension>.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct HmacGetSecretInput {
     /// Retrieve a symmetric secrets from the authenticator with this input.
     #[cfg_attr(feature = "openapi", schema(value_type = String, format = Binary, content_encoding = "base64"))]

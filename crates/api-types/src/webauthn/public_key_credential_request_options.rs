@@ -13,6 +13,7 @@
 // SPDX-License-Identifier: Apache-2.0
 use base64::{Engine as _, engine::general_purpose::URL_SAFE};
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "validate")]
 use validator::Validate;
 
 use crate::webauthn::WebauthnError;
@@ -23,11 +24,12 @@ use crate::webauthn::{
 };
 
 /// The requested options for the authentication.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct PublicKeyCredentialRequestOptions {
     /// The set of credentials that are allowed to sign this challenge.
-    #[validate(nested)]
+    #[cfg_attr(feature = "validate", validate(nested))]
     pub allow_credentials: Vec<AllowCredentials>,
     /// The challenge that should be signed by the authenticator.
     #[cfg_attr(feature = "openapi", schema(value_type = String, format = Binary, content_encoding = "base64"))]
@@ -35,14 +37,14 @@ pub struct PublicKeyCredentialRequestOptions {
     /// extensions.
     #[cfg_attr(feature = "openapi", schema(nullable = false))]
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[validate(nested)]
+    #[cfg_attr(feature = "validate", validate(nested))]
     pub extensions: Option<RequestAuthenticationExtensions>,
     /// Hints defining which types credentials may be used in this operation.
     #[cfg_attr(feature = "openapi", schema(nullable = false))]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hints: Option<Vec<PublicKeyCredentialHints>>,
     /// The relying party ID.
-    #[validate(length(max = 64))]
+    #[cfg_attr(feature = "validate", validate(length(max = 64)))]
     pub rp_id: String,
     /// The timeout for the authenticator in case of no interaction.
     pub timeout: Option<u32>,

@@ -13,14 +13,14 @@
 // SPDX-License-Identifier: Apache-2.0
 use base64::{Engine as _, engine::general_purpose::URL_SAFE};
 use serde::{Deserialize, Serialize};
-use validator::Validate;
 
 use crate::webauthn::WebauthnError;
 use crate::webauthn::authenticator_transport::AuthenticatorTransport;
 
 /// A descriptor of a credential that can be used.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct AllowCredentials {
     /// The id of the credential.
     #[cfg_attr(feature = "openapi", schema(value_type = String, format = Binary, content_encoding = "base64"))]

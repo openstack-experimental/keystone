@@ -13,21 +13,26 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Project API types.
 
-use derive_builder::Builder;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+#[cfg(feature = "validate")]
 use validator::Validate;
 
-use crate::error::BuilderError;
-
 /// Short Project representation.
-#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
-#[builder(build_fn(error = "BuilderError"))]
-#[builder(setter(strip_option, into))]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(
+    feature = "builder",
+    derive(derive_builder::Builder),
+    builder(
+        build_fn(error = "crate::error::BuilderError"),
+        setter(strip_option, into)
+    )
+)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct ProjectShort {
     /// The ID of the domain for the project.
-    #[validate(length(min = 1, max = 64))]
+    #[cfg_attr(feature = "validate", validate(length(min = 1, max = 64)))]
     pub domain_id: String,
 
     /// If set to true, project is enabled. If set to false, project is
@@ -35,28 +40,35 @@ pub struct ProjectShort {
     pub enabled: bool,
 
     /// The ID for the project.
-    #[validate(length(min = 1, max = 64))]
+    #[cfg_attr(feature = "validate", validate(length(min = 1, max = 64)))]
     pub id: String,
 
     /// The name of the project.
-    #[validate(length(min = 1, max = 255))]
+    #[cfg_attr(feature = "validate", validate(length(min = 1, max = 255)))]
     pub name: String,
 }
 
 /// Full project representation.
-#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
-#[builder(build_fn(error = "BuilderError"))]
-#[builder(setter(strip_option, into))]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(
+    feature = "builder",
+    derive(derive_builder::Builder),
+    builder(
+        build_fn(error = "crate::error::BuilderError"),
+        setter(strip_option, into)
+    )
+)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct Project {
     /// The description of the project.
-    #[builder(default)]
+    #[cfg_attr(feature = "builder", builder(default))]
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[validate(length(min = 1, max = 255))]
+    #[cfg_attr(feature = "validate", validate(length(min = 1, max = 255)))]
     pub description: Option<String>,
 
     /// The ID of the domain for the project.
-    #[validate(length(min = 1, max = 64))]
+    #[cfg_attr(feature = "validate", validate(length(min = 1, max = 64)))]
     pub domain_id: String,
 
     /// If set to true, project is enabled. If set to false, project is
@@ -64,12 +76,12 @@ pub struct Project {
     pub enabled: bool,
 
     /// Additional project properties.
-    #[builder(default)]
+    #[cfg_attr(feature = "builder", builder(default))]
     #[serde(flatten, default, skip_serializing_if = "Option::is_none")]
     pub extra: Option<Value>,
 
     /// The ID for the project.
-    #[validate(length(min = 1, max = 64))]
+    #[cfg_attr(feature = "validate", validate(length(min = 1, max = 64)))]
     pub id: String,
 
     /// Indicates whether the project also acts as a domain. If set to true,
@@ -80,37 +92,44 @@ pub struct Project {
     pub is_domain: bool,
 
     /// The name of the project.
-    #[validate(length(min = 1, max = 255))]
+    #[cfg_attr(feature = "validate", validate(length(min = 1, max = 255)))]
     pub name: String,
 
     /// The ID of the parent for the project.
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[validate(length(min = 1, max = 64))]
+    #[cfg_attr(feature = "validate", validate(length(min = 1, max = 64)))]
     pub parent_id: Option<String>,
 }
 
 /// New project data.
-#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
-#[builder(build_fn(error = "BuilderError", validate = "Self::validate"))]
-#[builder(setter(strip_option, into))]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(
+    feature = "builder",
+    derive(derive_builder::Builder),
+    builder(
+        build_fn(error = "crate::error::BuilderError", validate = "Self::validate"),
+        setter(strip_option, into)
+    )
+)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct ProjectCreate {
     /// The description of the project.
-    #[builder(default)]
-    #[validate(length(min = 1, max = 255))]
+    #[cfg_attr(feature = "builder", builder(default))]
+    #[cfg_attr(feature = "validate", validate(length(min = 1, max = 255)))]
     pub description: Option<String>,
 
     /// The ID of the domain for the project.
-    #[validate(length(min = 1, max = 64))]
+    #[cfg_attr(feature = "validate", validate(length(min = 1, max = 64)))]
     pub domain_id: String,
 
     /// If set to true, project is enabled. If set to false, project is
     /// disabled. The defaults is `true`.
-    #[builder(default = "crate::default_true()")]
+    #[cfg_attr(feature = "builder", builder(default = "crate::default_true()"))]
     pub enabled: bool,
 
     /// Additional project properties.
-    #[builder(default)]
+    #[cfg_attr(feature = "builder", builder(default))]
     #[serde(flatten)]
     pub extra: Option<Value>,
 
@@ -120,12 +139,12 @@ pub struct ProjectCreate {
     /// projects. If set to false, this project behaves as a regular project
     /// that contains only resources. Default is false. You cannot update this
     /// parameter after you create the project.
-    #[builder(default)]
+    #[cfg_attr(feature = "builder", builder(default))]
     pub is_domain: bool,
 
     /// The name of the project, which must be unique within the owning domain.
     /// A project can have the same name as its domain.
-    #[validate(length(min = 1, max = 255))]
+    #[cfg_attr(feature = "validate", validate(length(min = 1, max = 255)))]
     pub name: String,
 
     // TODO: add options
@@ -141,11 +160,12 @@ pub struct ProjectCreate {
     ///
     /// `parent_id` is immutable, and can’t be updated after the project is
     /// created - hence a project cannot be moved within the hierarchy.
-    #[builder(default)]
-    #[validate(length(min = 1, max = 64))]
+    #[cfg_attr(feature = "builder", builder(default))]
+    #[cfg_attr(feature = "validate", validate(length(min = 1, max = 64)))]
     pub parent_id: Option<String>,
 }
 
+#[cfg(feature = "builder")]
 impl ProjectCreateBuilder {
     fn validate(&self) -> Result<(), String> {
         if self.parent_id.is_some() && self.is_domain.is_some_and(|x| x) {
@@ -156,36 +176,43 @@ impl ProjectCreateBuilder {
 }
 
 /// Complete response with the project data.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct ProjectResponse {
     /// Project object.
-    #[validate(nested)]
+    #[cfg_attr(feature = "validate", validate(nested))]
     pub project: Project,
 }
 
 /// New project creation request.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct ProjectCreateRequest {
     /// Project object.
-    #[validate(nested)]
+    #[cfg_attr(feature = "validate", validate(nested))]
     pub project: ProjectCreate,
 }
 
 /// List of projects.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct ProjectShortList {
     /// Collection of project objects.
-    #[validate(nested)]
+    #[cfg_attr(feature = "validate", validate(nested))]
     pub projects: Vec<ProjectShort>,
 }
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "builder")]
     use super::*;
+    #[cfg(feature = "builder")]
+    use crate::error::BuilderError;
 
+    #[cfg(feature = "builder")]
     #[test]
     fn test_project_create() {
         let sot = ProjectCreateBuilder::default()

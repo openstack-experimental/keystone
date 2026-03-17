@@ -10,7 +10,7 @@ repository.workspace = true
 
 [dependencies]
 async-trait.workspace = true
-axum = { workspace = true, features = ["json"] }
+axum = { workspace = true, features = ["json"], optional = true }
 base64.workspace = true
 bcrypt = { workspace = true, features = ["alloc"] }
 chrono.workspace = true
@@ -18,12 +18,11 @@ config = { workspace = true, features = ["async", "ini"] }
 derive_builder.workspace = true
 eyre.workspace = true
 jsonwebtoken = { version = "10.3", features = ["rust_crypto"] }
-openstack-keystone-api-types = { version = "0.1", path = "../api-types/"}
+openstack-keystone-api-types = { version = "0.1", path = "../api-types/" }
 mockall = { workspace = true, optional = true }
 rand.workspace = true
 regex.workspace = true
 reqwest = { workspace = true, features = ["json", "http2", "gzip", "deflate"] }
-schemars.workspace = true
 sea-orm.workspace = true
 secrecy = { workspace = true, features = ["serde"] }
 serde.workspace = true
@@ -47,5 +46,6 @@ url.workspace = true
 
 [features]
 default = []
+api = ["openstack-keystone-api-types/builder", "dep:axum"]
 bench_internals = []
 mock = ["dep:mockall"]

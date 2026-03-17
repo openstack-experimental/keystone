@@ -12,101 +12,115 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use derive_builder::Builder;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+#[cfg(feature = "validate")]
 use validator::Validate;
 
 /// The role data.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct Role {
     /// Role ID.
-    #[validate(length(min = 1, max = 64))]
+    #[cfg_attr(feature = "validate", validate(length(min = 1, max = 64)))]
     pub id: String,
     /// Role domain ID.
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[validate(length(min = 1, max = 64))]
+    #[cfg_attr(feature = "validate", validate(length(min = 1, max = 64)))]
     pub domain_id: Option<String>,
     /// Role name.
-    #[validate(length(min = 1, max = 255))]
+    #[cfg_attr(feature = "validate", validate(length(min = 1, max = 255)))]
     pub name: String,
     /// Role description.
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[validate(length(min = 1, max = 255))]
+    #[cfg_attr(feature = "validate", validate(length(min = 1, max = 255)))]
     pub description: Option<String>,
     #[serde(flatten, skip_serializing_if = "Option::is_none")]
     pub extra: Option<Value>,
 }
 
 /// The role reference data.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct RoleRef {
     /// Role domain ID.
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[validate(length(min = 1, max = 64))]
+    #[cfg_attr(feature = "validate", validate(length(min = 1, max = 64)))]
     pub domain_id: Option<String>,
 
     /// Role ID.
-    #[validate(length(min = 1, max = 64))]
+    #[cfg_attr(feature = "validate", validate(length(min = 1, max = 64)))]
     pub id: String,
 
     /// Role name.
-    #[validate(length(min = 1, max = 255))]
+    #[cfg_attr(feature = "validate", validate(length(min = 1, max = 255)))]
     pub name: String,
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct RoleResponse {
     /// Role object.
-    #[validate(nested)]
+    #[cfg_attr(feature = "validate", validate(nested))]
     pub role: Role,
 }
 
 /// Roles.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct RoleList {
     /// Collection of role objects.
-    #[validate(nested)]
+    #[cfg_attr(feature = "validate", validate(nested))]
     pub roles: Vec<Role>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Serialize, Validate)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::IntoParams))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct RoleListParameters {
     /// Filter users by Domain ID.
-    #[validate(length(min = 1, max = 64))]
+    #[cfg_attr(feature = "validate", validate(length(min = 1, max = 64)))]
     pub domain_id: Option<String>,
     /// Filter users by Name.
-    #[validate(length(min = 1, max = 255))]
+    #[cfg_attr(feature = "validate", validate(length(min = 1, max = 255)))]
     pub name: Option<String>,
 }
 
 /// Role create request body.
-#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(
+    feature = "builder",
+    derive(derive_builder::Builder),
+    builder(
+        build_fn(error = "crate::error::BuilderError"),
+        setter(strip_option, into)
+    )
+)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct RoleCreate {
     /// The role description.
-    #[builder(default)]
+    #[cfg_attr(feature = "builder", builder(default))]
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[validate(length(min = 1, max = 255))]
+    #[cfg_attr(feature = "validate", validate(length(min = 1, max = 255)))]
     pub description: Option<String>,
 
     /// The domain ID of the role.
-    #[builder(default)]
+    #[cfg_attr(feature = "builder", builder(default))]
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[validate(length(min = 1, max = 64))]
+    #[cfg_attr(feature = "validate", validate(length(min = 1, max = 64)))]
     pub domain_id: Option<String>,
 
     /// The role name.
-    #[validate(length(min = 1, max = 255))]
+    #[cfg_attr(feature = "validate", validate(length(min = 1, max = 255)))]
     pub name: String,
 
     /// Extra attributes for the role.
-    #[builder(default)]
+    #[cfg_attr(feature = "builder", builder(default))]
     #[serde(flatten, skip_serializing_if = "Option::is_none")]
     pub extra: Option<Value>,
 }

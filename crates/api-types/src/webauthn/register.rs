@@ -17,6 +17,7 @@
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE};
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "validate")]
 use validator::Validate;
 
 use crate::webauthn::error::WebauthnError;
@@ -27,39 +28,43 @@ use crate::webauthn::{
 };
 
 /// Passkey registration request.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct UserPasskeyRegistrationStartRequest {
     /// The description for the passkey (name).
-    #[validate(nested)]
+    #[cfg_attr(feature = "validate", validate(nested))]
     pub passkey: PasskeyCreate,
 }
 
 // TODO:
 // - remove description from register_start request
 /// Passkey information.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct PasskeyCreate {
     /// Passkey description.
     #[cfg_attr(feature = "openapi", schema(nullable = false, max_length = 64))]
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[validate(length(max = 255))]
+    #[cfg_attr(feature = "validate", validate(length(max = 255)))]
     pub description: Option<String>,
 }
 
 /// Passkey.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct PasskeyResponse {
     /// The description for the passkey (name).
-    #[validate(nested)]
+    #[cfg_attr(feature = "validate", validate(nested))]
     pub passkey: Passkey,
 }
 
 /// Passkey information.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct Passkey {
     /// Credential ID.
     pub credential_id: String,
@@ -73,11 +78,12 @@ pub struct Passkey {
 ///
 /// This is the WebauthN challenge that need to be signed by the
 /// passkey/security device.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct UserPasskeyRegistrationStartResponse {
     /// The options.
-    #[validate(nested)]
+    #[cfg_attr(feature = "validate", validate(nested))]
     pub public_key: PublicKeyCredentialCreationOptions,
 }
 
@@ -101,13 +107,14 @@ impl TryFrom<webauthn_rs_proto::attest::CreationChallengeResponse>
 /// You should not need to handle the inner content of this structure - you
 /// should provide this to the correctly handling function of Webauthn only.
 /// <https://w3c.github.io/webauthn/#iface-pkcredential>.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct UserPasskeyRegistrationFinishRequest {
     /// Optional credential description.
     #[cfg_attr(feature = "openapi", schema(nullable = false, max_length = 64))]
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[validate(length(max = 64))]
+    #[cfg_attr(feature = "validate", validate(length(max = 64)))]
     pub description: Option<String>,
     /// The id of the PublicKey credential, likely in base64.
     ///
@@ -159,8 +166,9 @@ impl From<webauthn_rs_proto::attest::RegisterPublicKeyCredential>
 }
 
 /// <https://w3c.github.io/webauthn/#authenticatorattestationresponse>.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct AuthenticatorAttestationResponseRaw {
     /// <https://w3c.github.io/webauthn/#dom-authenticatorattestationresponse-attestationobject>.
     #[cfg_attr(feature = "openapi", schema(value_type = String, format = Binary, content_encoding = "base64"))]
@@ -206,8 +214,9 @@ impl TryFrom<AuthenticatorAttestationResponseRaw>
 
 /// <https://w3c.github.io/webauthn/#dictdef-authenticationextensionsclientoutputs> The default
 /// option here for Options are None, so it can be derived.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct RegistrationExtensionsClientOutputs {
     /// Indicates whether the client used the provided appid extension.
     #[cfg_attr(feature = "openapi", schema(nullable = false))]
@@ -218,7 +227,7 @@ pub struct RegistrationExtensionsClientOutputs {
     /// be trusted!
     #[cfg_attr(feature = "openapi", schema(nullable = false))]
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[validate(nested)]
+    #[cfg_attr(feature = "validate", validate(nested))]
     pub cred_props: Option<CredProps>,
     /// Indicates if the client successfully applied a HMAC Secret.
     #[cfg_attr(feature = "openapi", schema(nullable = false))]
@@ -264,8 +273,9 @@ impl From<webauthn_rs_proto::extensions::RegistrationExtensionsClientOutputs>
 }
 
 /// <https://www.w3.org/TR/webauthn-3/#sctn-authenticator-credential-properties-extension>.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct CredProps {
     /// A user agent supplied hint that this credential may have created a
     /// resident key. It is returned from the user agent, not the

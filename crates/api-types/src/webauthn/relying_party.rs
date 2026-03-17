@@ -12,17 +12,17 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 use serde::{Deserialize, Serialize};
-use validator::Validate;
 
 /// Relying Party Entity.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct RelyingParty {
     /// The id of the relying party.
-    #[validate(length(max = 64))]
+    #[cfg_attr(feature = "validate", validate(length(max = 64)))]
     pub id: String,
     /// The name of the relying party.
-    #[validate(length(max = 255))]
+    #[cfg_attr(feature = "validate", validate(length(max = 255)))]
     pub name: String,
 }
 

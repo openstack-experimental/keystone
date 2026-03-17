@@ -15,7 +15,7 @@ bytes.workspace = true
 eyre.workspace = true
 derive_builder.workspace = true
 http.workspace = true
-openstack-keystone-api-types = { version = "0.1", path = "../../crates/api-types" }
+openstack-keystone-api-types = { version = "0.1", features = ["builder"], path = "../../crates/api-types" }
 openstack_sdk_core = { version = "0.22" }
 reqwest = { workspace = true, features = ["json", "http2", "multipart", "gzip", "deflate"] }
 secrecy = { workspace = true, features = ["serde"] }

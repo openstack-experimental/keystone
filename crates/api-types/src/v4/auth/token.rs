@@ -13,21 +13,27 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use chrono::{DateTime, Utc};
-use derive_builder::Builder;
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "validate")]
 use validator::Validate;
 
 use crate::catalog::*;
-use crate::error::BuilderError;
 use crate::scope::*;
 use crate::trust::TokenTrustRepr;
 use crate::v3::role::RoleRef;
 
 /// Authorization token.
-#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
-#[builder(build_fn(error = "BuilderError"))]
-#[builder(setter(strip_option, into))]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(
+    feature = "builder",
+    derive(derive_builder::Builder),
+    builder(
+        build_fn(error = "crate::error::BuilderError"),
+        setter(strip_option, into)
+    )
+)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct Token {
     /// A list of one or two audit IDs. An audit ID is a unique, randomly
     /// generated, URL-safe string that you can use to track a token. The
@@ -61,8 +67,8 @@ pub struct Token {
 
     // # Subject
     /// A user object.
-    //#[builder(default)]
-    #[validate(nested)]
+    //#[cfg_attr(feature = "builder", builder(default))]
+    #[cfg_attr(feature = "validate", validate(nested))]
     pub user: User,
 
     // # Scope
@@ -70,69 +76,78 @@ pub struct Token {
     /// token is scoped to. This is only included in tokens that are scoped
     /// to a domain.
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[builder(default)]
-    #[validate(nested)]
+    #[cfg_attr(feature = "builder", builder(default))]
+    #[cfg_attr(feature = "validate", validate(nested))]
     pub domain: Option<Domain>,
 
     /// A project object including the id, name and domain object representing
     /// the project the token is scoped to. This is only included in tokens
     /// that are scoped to a project.
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[builder(default)]
-    #[validate(nested)]
+    #[cfg_attr(feature = "builder", builder(default))]
+    #[cfg_attr(feature = "validate", validate(nested))]
     pub project: Option<Project>,
 
     /// A system object.
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[builder(default)]
-    #[validate(nested)]
+    #[cfg_attr(feature = "builder", builder(default))]
+    #[cfg_attr(feature = "validate", validate(nested))]
     pub system: Option<System>,
 
     /// A trust object.
     #[serde(skip_serializing_if = "Option::is_none", rename = "OS-TRUST:trust")]
-    #[builder(default)]
-    #[validate(nested)]
+    #[cfg_attr(feature = "builder", builder(default))]
+    #[cfg_attr(feature = "validate", validate(nested))]
     pub trust: Option<TokenTrustRepr>,
 
     // # Roles on the scope.
     /// A list of role objects.
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[builder(default)]
-    #[validate(nested)]
+    #[cfg_attr(feature = "builder", builder(default))]
+    #[cfg_attr(feature = "validate", validate(nested))]
     pub roles: Option<Vec<RoleRef>>,
 
     /// A catalog object.
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[builder(default)]
-    #[validate(nested)]
+    #[cfg_attr(feature = "builder", builder(default))]
+    #[cfg_attr(feature = "validate", validate(nested))]
     pub catalog: Option<Catalog>,
 }
 
-#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
-#[builder(build_fn(error = "BuilderError"))]
-#[builder(setter(strip_option, into))]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(
+    feature = "builder",
+    derive(derive_builder::Builder),
+    builder(
+        build_fn(error = "crate::error::BuilderError"),
+        setter(strip_option, into)
+    )
+)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct TokenResponse {
     /// Token.
-    #[validate(nested)]
+    #[cfg_attr(feature = "validate", validate(nested))]
     pub token: Token,
 }
 
 /// An authentication request.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct AuthRequest {
     /// An identity object.
-    #[validate(nested)]
+    #[cfg_attr(feature = "validate", validate(nested))]
     pub auth: AuthRequestInner,
 }
 
 /// An authentication request.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct AuthRequestInner {
     /// An identity object.
-    #[validate(nested)]
+    #[cfg_attr(feature = "validate", validate(nested))]
     pub identity: Identity,
 
     /// The authorization scope, including the system (Since v3.10), a project,
@@ -145,99 +160,124 @@ pub struct AuthRequestInner {
     /// specified in order to uniquely identify the project by name. A domain
     /// scope may be specified by either the domain's ID or name with
     /// equivalent results.
-    #[validate(nested)]
+    #[cfg_attr(feature = "validate", validate(nested))]
     pub scope: Option<Scope>,
 }
 
 /// An identity object.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct Identity {
     /// The authentication method. For password authentication, specify
     /// password.
     pub methods: Vec<String>,
 
     /// The password object, contains the authentication information.
-    #[validate(nested)]
+    #[cfg_attr(feature = "validate", validate(nested))]
     pub password: Option<PasswordAuth>,
 
     /// The token object, contains the authentication information.
-    #[validate(nested)]
+    #[cfg_attr(feature = "validate", validate(nested))]
     pub token: Option<TokenAuth>,
 }
 
 /// The password object, contains the authentication information.
-#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
-#[builder(build_fn(error = "BuilderError"))]
-#[builder(setter(strip_option, into))]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(
+    feature = "builder",
+    derive(derive_builder::Builder),
+    builder(
+        build_fn(error = "crate::error::BuilderError"),
+        setter(strip_option, into)
+    )
+)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct PasswordAuth {
     /// A user object.
-    #[builder(default)]
-    #[validate(nested)]
+    #[cfg_attr(feature = "builder", builder(default))]
+    #[cfg_attr(feature = "validate", validate(nested))]
     pub user: UserPassword,
 }
 
 /// User password information.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct UserPassword {
     /// User ID.
-    #[validate(length(max = 64))]
+    #[cfg_attr(feature = "validate", validate(length(max = 64)))]
     pub id: Option<String>,
     /// User Name.
-    #[validate(length(max = 64))]
+    #[cfg_attr(feature = "validate", validate(length(max = 64)))]
     pub name: Option<String>,
     /// User domain.
-    #[validate(nested)]
+    #[cfg_attr(feature = "validate", validate(nested))]
     pub domain: Option<Domain>,
     /// User password.
-    #[validate(length(max = 72))]
+    #[cfg_attr(feature = "validate", validate(length(max = 72)))]
     pub password: String,
 }
 
 /// User information.
-#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
-#[builder(build_fn(error = "BuilderError"))]
-#[builder(setter(into))]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(
+    feature = "builder",
+    derive(derive_builder::Builder),
+    builder(
+        build_fn(error = "crate::error::BuilderError"),
+        setter(strip_option, into)
+    )
+)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct User {
     /// User ID.
-    #[validate(length(max = 64))]
+    #[cfg_attr(feature = "validate", validate(length(max = 64)))]
     pub id: String,
     /// User Name.
-    #[builder(default)]
-    #[validate(length(max = 64))]
+    #[cfg_attr(feature = "builder", builder(default))]
+    #[cfg_attr(feature = "validate", validate(length(max = 64)))]
     pub name: Option<String>,
     /// User domain.
-    #[validate(nested)]
+    #[cfg_attr(feature = "validate", validate(nested))]
     pub domain: Domain,
     /// User password expiry date.
-    #[builder(default)]
+    #[cfg_attr(feature = "builder", builder(default))]
     pub password_expires_at: Option<DateTime<Utc>>,
 }
 
 /// The token object, contains the authentication information.
-#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
-#[builder(build_fn(error = "BuilderError"))]
-#[builder(setter(strip_option, into))]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(
+    feature = "builder",
+    derive(derive_builder::Builder),
+    builder(
+        build_fn(error = "crate::error::BuilderError"),
+        setter(strip_option, into)
+    )
+)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct TokenAuth {
     /// An authentication token.
-    #[validate(length(max = 1024))]
+    #[cfg_attr(feature = "validate", validate(length(max = 1024)))]
     pub id: String,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Serialize, Validate)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::IntoParams))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct CreateTokenParameters {
     /// The authentication response excludes the service catalog. By default,
     /// the response includes the service catalog.
     pub nocatalog: Option<bool>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Serialize, Validate)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::IntoParams))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct ValidateTokenParameters {
     /// The authentication response excludes the service catalog. By default,
     /// the response includes the service catalog.
@@ -248,10 +288,17 @@ pub struct ValidateTokenParameters {
 }
 
 /// System information.
-#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
-#[builder(build_fn(error = "BuilderError"))]
-#[builder(setter(into, strip_option))]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(
+    feature = "builder",
+    derive(derive_builder::Builder),
+    builder(
+        build_fn(error = "crate::error::BuilderError"),
+        setter(strip_option, into)
+    )
+)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct System {
     /// All.
     pub all: bool,

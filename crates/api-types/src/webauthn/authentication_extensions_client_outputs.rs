@@ -12,6 +12,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "validate")]
 use validator::Validate;
 
 use crate::webauthn::WebauthnError;
@@ -20,8 +21,9 @@ use crate::webauthn::hmac_get_secret_output::HmacGetSecretOutput;
 /// [AuthenticationExtensionsClientOutputs](https://w3c.github.io/webauthn/#dictdef-authenticationextensionsclientoutputs).
 ///
 /// The default option here for Options are None, so it can be derived.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct AuthenticationExtensionsClientOutputs {
     /// Indicates whether the client used the provided appid extension.
     #[cfg_attr(feature = "openapi", schema(nullable = false))]
@@ -30,7 +32,7 @@ pub struct AuthenticationExtensionsClientOutputs {
     /// The response to a hmac get secret request.
     #[cfg_attr(feature = "openapi", schema(nullable = false))]
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[validate(nested)]
+    #[cfg_attr(feature = "validate", validate(nested))]
     pub hmac_get_secret: Option<HmacGetSecretOutput>,
 }
 

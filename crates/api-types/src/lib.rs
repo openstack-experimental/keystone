@@ -19,7 +19,6 @@
 
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
-use validator::Validate;
 
 pub mod catalog;
 pub mod error;
@@ -33,14 +32,15 @@ pub mod version;
 pub mod webauthn;
 
 /// Link object.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct Link {
     /// Link rel attribute.
-    #[validate(length(max = 10))]
+    #[cfg_attr(feature = "validate", validate(length(max = 10)))]
     pub rel: String,
     /// link href attribute.
-    #[validate(url)]
+    #[cfg_attr(feature = "validate", validate(url))]
     pub href: String,
 }
 

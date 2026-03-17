@@ -17,8 +17,6 @@ use utoipa_axum::router::OpenApiRouter;
 use crate::api::v3::auth::token as v3_token;
 use crate::keystone::ServiceState;
 
-mod common;
-pub mod token_impl;
 pub mod types;
 
 pub(super) fn openapi_router() -> OpenApiRouter<ServiceState> {

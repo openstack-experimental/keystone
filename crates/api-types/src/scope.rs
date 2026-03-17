@@ -12,11 +12,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //! # Keystone Scope API types
-use derive_builder::Builder;
 use serde::{Deserialize, Serialize};
-use validator::{Validate, ValidationErrors};
-
-use crate::error::BuilderError;
 
 /// The authorization scope, including the system, a project, or a domain.
 ///
@@ -39,8 +35,9 @@ pub enum Scope {
     System(System),
 }
 
-impl Validate for Scope {
-    fn validate(&self) -> Result<(), ValidationErrors> {
+#[cfg(feature = "validate")]
+impl validator::Validate for Scope {
+    fn validate(&self) -> Result<(), validator::ValidationErrors> {
         match self {
             Self::Project(project) => project.validate(),
             Self::Domain(domain) => domain.validate(),
@@ -50,63 +47,92 @@ impl Validate for Scope {
 }
 
 /// Project scope information.
-#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
-#[builder(build_fn(error = "BuilderError"))]
-#[builder(setter(into, strip_option))]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(feature = "builder", derive(derive_builder::Builder))]
+#[cfg_attr(
+    feature = "builder",
+    builder(
+        build_fn(error = "crate::error::BuilderError"),
+        setter(strip_option, into)
+    )
+)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct ScopeProject {
     /// Project ID.
-    #[builder(default)]
-    #[validate(length(max = 64))]
+    #[cfg_attr(feature = "builder", builder(default))]
+    #[cfg_attr(feature = "validate", validate(length(max = 64)))]
     pub id: Option<String>,
     /// Project Name.
-    #[builder(default)]
-    #[validate(length(max = 64))]
+    #[cfg_attr(feature = "builder", builder(default))]
+    #[cfg_attr(feature = "validate", validate(length(max = 64)))]
     pub name: Option<String>,
     /// Project domain.
-    #[builder(default)]
+    #[cfg_attr(feature = "builder", builder(default))]
     pub domain: Option<Domain>,
 }
 
 /// Domain information.
-#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
-#[builder(build_fn(error = "BuilderError"))]
-#[builder(setter(into, strip_option))]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(feature = "builder", derive(derive_builder::Builder))]
+#[cfg_attr(
+    feature = "builder",
+    builder(
+        build_fn(error = "crate::error::BuilderError"),
+        setter(strip_option, into)
+    )
+)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct Domain {
     /// Domain ID.
-    #[builder(default)]
-    #[validate(length(max = 64))]
+    #[cfg_attr(feature = "builder", builder(default))]
+    #[cfg_attr(feature = "validate", validate(length(max = 64)))]
     pub id: Option<String>,
     /// Domain Name.
-    #[builder(default)]
-    #[validate(length(max = 64))]
+    #[cfg_attr(feature = "builder", builder(default))]
+    #[cfg_attr(feature = "validate", validate(length(max = 64)))]
     pub name: Option<String>,
 }
 
 /// Project information.
-#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
-#[builder(build_fn(error = "BuilderError"))]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(feature = "builder", derive(derive_builder::Builder))]
+#[cfg_attr(
+    feature = "builder",
+    builder(
+        build_fn(error = "crate::error::BuilderError"),
+        setter(strip_option, into)
+    )
+)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct Project {
     /// Project ID.
-    #[validate(length(max = 64))]
+    #[cfg_attr(feature = "validate", validate(length(max = 64)))]
     pub id: String,
     /// Project Name.
-    #[builder(default)]
-    #[validate(length(max = 64))]
+    #[cfg_attr(feature = "builder", builder(default))]
+    #[cfg_attr(feature = "validate", validate(length(max = 64)))]
     pub name: String,
     /// project domain.
     pub domain: Domain,
 }
 
 /// System scope.
-#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
-#[builder(build_fn(error = "BuilderError"))]
-#[builder(setter(into, strip_option))]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(feature = "builder", derive(derive_builder::Builder))]
+#[cfg_attr(
+    feature = "builder",
+    builder(
+        build_fn(error = "crate::error::BuilderError"),
+        setter(strip_option, into)
+    )
+)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct System {
     /// All systems access.
-    #[builder(default)]
+    #[cfg_attr(feature = "builder", builder(default))]
     pub all: Option<bool>,
 }

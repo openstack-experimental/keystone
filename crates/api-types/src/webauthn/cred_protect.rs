@@ -12,15 +12,15 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 use serde::{Deserialize, Serialize};
-use validator::Validate;
 
 use crate::webauthn::credential_protection_policy::CredentialProtectionPolicy;
 
 /// The desired options for the client's use of the credProtect extension.
 ///
 /// <https://fidoalliance.org/specs/fido-v2.1-rd-20210309/fido-client-to-authenticator-protocol-v2.1-rd-20210309.html#sctn-credProtect-extension>.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct CredProtect {
     /// The credential policy to enforce.
     pub credential_protection_policy: CredentialProtectionPolicy,

@@ -13,32 +13,38 @@
 // SPDX-License-Identifier: Apache-2.0
 //! # K8s Auth configuration types.
 
-use derive_builder::Builder;
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "validate")]
 use validator::Validate;
 
 use crate::Link;
-use crate::error::BuilderError;
 
 /// K8s authentication instance.
-#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
-#[builder(build_fn(error = "BuilderError"))]
-#[builder(setter(strip_option, into))]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(feature = "builder", derive(derive_builder::Builder))]
+#[cfg_attr(
+    feature = "builder",
+    builder(
+        build_fn(error = "crate::error::BuilderError"),
+        setter(strip_option, into)
+    )
+)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct K8sAuthInstance {
     /// PEM encoded CA cert for use by the TLS client used to talk with the
     /// Kubernetes API. NOTE: Every line must end with a newline: \n If not set,
     /// the local CA cert will be used if running in a Kubernetes pod.
-    #[builder(default)]
+    #[cfg_attr(feature = "builder", builder(default))]
     pub ca_cert: Option<String>,
 
     /// Disable defaulting to the local CA cert and service account JWT when
     /// running in a Kubernetes pod.
-    #[builder(default)]
+    #[cfg_attr(feature = "builder", builder(default))]
     pub disable_local_ca_jwt: bool,
 
     /// Domain ID owning the K8s auth configuration.
-    #[validate(length(max = 64))]
+    #[cfg_attr(feature = "validate", validate(length(max = 64)))]
     pub domain_id: String,
 
     pub enabled: bool,
@@ -48,29 +54,37 @@ pub struct K8sAuthInstance {
     pub host: String,
 
     /// K8s auth configuration ID.
-    #[validate(length(max = 64))]
+    #[cfg_attr(feature = "validate", validate(length(max = 64)))]
     pub id: String,
 
     /// K8s auth name.
-    #[builder(default)]
-    #[validate(length(max = 255))]
+    #[cfg_attr(feature = "builder", builder(default))]
+    #[cfg_attr(feature = "validate", validate(length(max = 255)))]
     pub name: Option<String>,
 }
 
 /// K8s auth instance response.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct K8sAuthInstanceResponse {
     /// K8s auth instance object.
-    #[validate(nested)]
+    #[cfg_attr(feature = "validate", validate(nested))]
     pub instance: K8sAuthInstance,
 }
 
 /// New K8s authentication instance.
-#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
-#[builder(build_fn(error = "BuilderError"))]
-#[builder(setter(strip_option, into))]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(feature = "builder", derive(derive_builder::Builder))]
+#[cfg_attr(
+    feature = "builder",
+    builder(
+        build_fn(error = "crate::error::BuilderError"),
+        setter(strip_option, into)
+    )
+)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct K8sAuthInstanceCreate {
     /// PEM encoded CA cert for use by the TLS client used to talk with the
     /// Kubernetes API. NOTE: Every line must end with a newline: \n If not set,
@@ -79,11 +93,11 @@ pub struct K8sAuthInstanceCreate {
 
     /// Disable defaulting to the local CA cert and service account JWT when
     /// running in a Kubernetes pod.
-    #[builder(default)]
+    #[cfg_attr(feature = "builder", builder(default))]
     pub disable_local_ca_jwt: Option<bool>,
 
     /// Domain ID owning the K8s auth instance.
-    #[validate(length(max = 64))]
+    #[cfg_attr(feature = "validate", validate(length(max = 64)))]
     pub domain_id: String,
 
     pub enabled: bool,
@@ -93,66 +107,76 @@ pub struct K8sAuthInstanceCreate {
     pub host: String,
 
     /// K8s auth name.
-    #[builder(default)]
-    #[validate(length(max = 255))]
+    #[cfg_attr(feature = "builder", builder(default))]
+    #[cfg_attr(feature = "validate", validate(length(max = 255)))]
     pub name: Option<String>,
 }
 
 /// K8s auth instance create request.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct K8sAuthInstanceCreateRequest {
     /// K8s auth instance object.
-    #[validate(nested)]
+    #[cfg_attr(feature = "validate", validate(nested))]
     pub instance: K8sAuthInstanceCreate,
 }
 
 /// Update K8s authentication instance.
-#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
-#[builder(build_fn(error = "BuilderError"))]
-#[builder(setter(strip_option, into))]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(feature = "builder", derive(derive_builder::Builder))]
+#[cfg_attr(
+    feature = "builder",
+    builder(
+        build_fn(error = "crate::error::BuilderError"),
+        setter(strip_option, into)
+    )
+)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct K8sAuthInstanceUpdate {
     /// PEM encoded CA cert for use by the TLS client used to talk with the
     /// Kubernetes API. NOTE: Every line must end with a newline: \n If not set,
     /// the local CA cert will be used if running in a Kubernetes pod.
-    #[builder(default)]
+    #[cfg_attr(feature = "builder", builder(default))]
     pub ca_cert: Option<String>,
 
     /// Disable defaulting to the local CA cert and service account JWT when
     /// running in a Kubernetes pod.
-    #[builder(default)]
+    #[cfg_attr(feature = "builder", builder(default))]
     pub disable_local_ca_jwt: Option<bool>,
 
-    #[builder(default)]
+    #[cfg_attr(feature = "builder", builder(default))]
     pub enabled: Option<bool>,
 
     /// Host must be a host string, a host:port pair, or a URL to the base of
     /// the Kubernetes API server.
-    #[builder(default)]
+    #[cfg_attr(feature = "builder", builder(default))]
     pub host: Option<String>,
 
     /// K8s auth name.
-    #[builder(default)]
-    #[validate(length(max = 255))]
+    #[cfg_attr(feature = "builder", builder(default))]
+    #[cfg_attr(feature = "validate", validate(length(max = 255)))]
     pub name: Option<String>,
 }
 
 /// K8s auth instance update request.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct K8sAuthInstanceUpdateRequest {
     /// K8s auth instance object.
-    #[validate(nested)]
+    #[cfg_attr(feature = "validate", validate(nested))]
     pub instance: K8sAuthInstanceUpdate,
 }
 
 /// List of K8s auth instances.
-#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct K8sAuthInstanceList {
     /// Collection of k8s auth instance objects.
-    #[validate(nested)]
+    #[cfg_attr(feature = "validate", validate(nested))]
     pub instances: Vec<K8sAuthInstance>,
 
     /// Pagination links.
@@ -161,14 +185,14 @@ pub struct K8sAuthInstanceList {
 }
 
 /// K8s Auth instance list parameters.
-#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
-#[builder(build_fn(error = "BuilderError"))]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::IntoParams))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct K8sAuthInstanceListParameters {
     /// Domain id.
-    #[validate(length(max = 64))]
+    #[cfg_attr(feature = "validate", validate(length(max = 64)))]
     pub domain_id: Option<String>,
     /// Name.
-    #[validate(length(max = 255))]
+    #[cfg_attr(feature = "validate", validate(length(max = 255)))]
     pub name: Option<String>,
 }

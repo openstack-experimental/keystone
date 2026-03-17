@@ -28,11 +28,11 @@ pub(super) async fn get_project_info_builder(
     project_response.id(project.id.clone());
     project_response.name(project.name.clone());
     if project.domain_id == user_domain.id {
-        project_response.domain(user_domain.clone().into());
+        project_response.domain(user_domain.clone());
     } else {
         let project_domain =
             common::get_domain(state, Some(&project.domain_id), None::<&str>).await?;
-        project_response.domain(project_domain.clone().into());
+        project_response.domain(project_domain.clone());
     }
     Ok(project_response)
 }

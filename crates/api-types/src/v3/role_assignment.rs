@@ -12,85 +12,96 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use derive_builder::Builder;
 use serde::{Deserialize, Serialize};
-use validator::{Validate, ValidationErrors};
-
-use crate::error::BuilderError;
+#[cfg(feature = "validate")]
+use validator::Validate;
 
 /// Assignment.
-#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
-#[builder(build_fn(error = "BuilderError"))]
-#[builder(setter(strip_option, into))]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(
+    feature = "builder",
+    derive(derive_builder::Builder),
+    builder(
+        build_fn(error = "crate::error::BuilderError"),
+        setter(strip_option, into)
+    )
+)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct Assignment {
     /// Group.
-    #[builder(default)]
+    #[cfg_attr(feature = "builder", builder(default))]
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[validate(nested)]
+    #[cfg_attr(feature = "validate", validate(nested))]
     pub group: Option<Group>,
 
     /// Role.
-    #[validate(nested)]
+    #[cfg_attr(feature = "validate", validate(nested))]
     pub role: Role,
 
     /// Target scope.
-    #[validate(nested)]
+    #[cfg_attr(feature = "validate", validate(nested))]
     pub scope: Scope,
 
     /// User.
-    #[builder(default)]
+    #[cfg_attr(feature = "builder", builder(default))]
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[validate(nested)]
+    #[cfg_attr(feature = "validate", validate(nested))]
     pub user: Option<User>,
 }
 
 /// Role.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct Role {
     /// The role ID.
-    #[validate(length(max = 64))]
+    #[cfg_attr(feature = "validate", validate(length(max = 64)))]
     pub id: String,
 
     /// The role name.
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[validate(length(max = 64))]
+    #[cfg_attr(feature = "validate", validate(length(max = 64)))]
     pub name: Option<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct User {
-    #[validate(length(max = 64))]
+    #[cfg_attr(feature = "validate", validate(length(max = 64)))]
     pub id: String,
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct Group {
-    #[validate(length(max = 64))]
+    #[cfg_attr(feature = "validate", validate(length(max = 64)))]
     pub id: String,
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct Project {
-    #[validate(length(max = 64))]
+    #[cfg_attr(feature = "validate", validate(length(max = 64)))]
     pub id: String,
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct Domain {
-    #[validate(length(max = 64))]
+    #[cfg_attr(feature = "validate", validate(length(max = 64)))]
     pub id: String,
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct System {
-    #[validate(length(max = 64))]
+    #[cfg_attr(feature = "validate", validate(length(max = 64)))]
     pub id: String,
 }
 
@@ -103,8 +114,9 @@ pub enum Scope {
     System(System),
 }
 
-impl Validate for Scope {
-    fn validate(&self) -> Result<(), ValidationErrors> {
+#[cfg(feature = "validate")]
+impl validator::Validate for Scope {
+    fn validate(&self) -> Result<(), validator::ValidationErrors> {
         match self {
             Self::Project(project) => project.validate(),
             Self::Domain(domain) => domain.validate(),
@@ -114,26 +126,28 @@ impl Validate for Scope {
 }
 
 /// Assignments.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct AssignmentList {
     /// Collection of role assignment objects.
-    #[validate(nested)]
+    #[cfg_attr(feature = "validate", validate(nested))]
     pub role_assignments: Vec<Assignment>,
 }
 
 /// List role assignments query parameters.
-#[derive(Clone, Debug, Default, Deserialize, Serialize, Validate)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::IntoParams))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct RoleAssignmentListParameters {
     /// Filters the response by a domain ID.
     #[serde(rename = "scope.domain.id")]
-    #[validate(length(max = 64))]
+    #[cfg_attr(feature = "validate", validate(length(max = 64)))]
     pub domain_id: Option<String>,
 
     /// Filters the response by a group ID.
     #[serde(rename = "group.id")]
-    #[validate(length(max = 64))]
+    #[cfg_attr(feature = "validate", validate(length(max = 64)))]
     pub group_id: Option<String>,
 
     /// Returns the effective assignments, including any assignments gained by
@@ -142,17 +156,17 @@ pub struct RoleAssignmentListParameters {
 
     /// Filters the response by a project ID.
     #[serde(rename = "scope.project.id")]
-    #[validate(length(max = 64))]
+    #[cfg_attr(feature = "validate", validate(length(max = 64)))]
     pub project_id: Option<String>,
 
     /// Filters the response by a role ID.
     #[serde(rename = "role.id")]
-    #[validate(length(max = 64))]
+    #[cfg_attr(feature = "validate", validate(length(max = 64)))]
     pub role_id: Option<String>,
 
     /// Filters the response by a user ID.
     #[serde(rename = "user.id")]
-    #[validate(length(max = 64))]
+    #[cfg_attr(feature = "validate", validate(length(max = 64)))]
     pub user_id: Option<String>,
 
     /// If set to true, then the names of any entities returned will be include
