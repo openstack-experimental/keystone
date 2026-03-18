@@ -26,9 +26,9 @@ pub use openstack_keystone_api_types::v4::token_restriction::*;
 //    TokenRestrictionUpdate as ProviderTokenRestrictionUpdate,
 //};
 //
-//impl From<TokenRestrictionListParameters> for types::TokenRestrictionListParameters {
-//    fn from(value: TokenRestrictionListParameters) -> Self {
-//        Self {
+//impl From<TokenRestrictionListParameters> for
+// types::TokenRestrictionListParameters {    fn from(value:
+// TokenRestrictionListParameters) -> Self {        Self {
 //            domain_id: value.domain_id,
 //            user_id: value.user_id,
 //            project_id: value.project_id,

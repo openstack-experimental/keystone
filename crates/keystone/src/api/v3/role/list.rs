@@ -76,7 +76,7 @@ mod tests {
     use crate::provider::Provider;
     use crate::role::{
         MockRoleProvider,
-        types::{Role, RoleListParameters},
+        types::{RoleBuilder, RoleListParameters},
     };
 
     #[tokio::test]
@@ -86,11 +86,9 @@ mod tests {
             .expect_list_roles()
             .withf(|_, _: &RoleListParameters| true)
             .returning(|_, _| {
-                Ok(vec![Role {
-                    id: "1".into(),
-                    name: "2".into(),
-                    ..Default::default()
-                }])
+                Ok(vec![
+                    RoleBuilder::default().id("1").name("2").build().unwrap(),
+                ])
             });
 
         let state = get_mocked_state(

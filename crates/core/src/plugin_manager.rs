@@ -18,8 +18,8 @@
 //! particular subsystem. This pluggable implementation is not only how Keystone
 //! implements its own data access, but how you can implement your own!
 //!
-//! The [PluginManagerApi] is responsible for picking the proper backend driver for
-//! the provider.
+//! The [PluginManagerApi] is responsible for picking the proper backend driver
+//! for the provider.
 use std::sync::Arc;
 
 use crate::application_credential::{

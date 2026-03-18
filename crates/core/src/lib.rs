@@ -72,12 +72,6 @@
 //! as the trusted, mature baseline and incrementally build the “Keystone-NG”
 //! Rust service as the complement.
 
-//use application_credential::ApplicationCredentialApi;
-
-//pub trait ServiceState {
-//    fn get_application_credential_provider(&self) -> &impl ApplicationCredentialApi;
-//}
-
 #[cfg(feature = "api")]
 pub mod api;
 pub mod application_credential;

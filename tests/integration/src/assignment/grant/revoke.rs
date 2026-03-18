@@ -126,7 +126,8 @@ async fn test_revoke_user_project_grant_auth_impact() -> Result<()> {
             .build()?,
     )
     .await?;
-    // Create two roles: one that will be granted and revoked, and another to confirm that revocation is specific
+    // Create two roles: one that will be granted and revoked, and another to
+    // confirm that revocation is specific
     let role_a = create_role(&state, RoleCreateBuilder::default().name("role_a").build()?).await?;
     let role_b = create_role(&state, RoleCreateBuilder::default().name("role_b").build()?).await?;
     // Grant first role that will be revoked
@@ -234,7 +235,9 @@ async fn test_revoke_user_project_grant_auth_impact() -> Result<()> {
     );
 
     // CHECK 3: new auth does not obtain the role
-    // token revocation is working with a seconds precision we need to wait for a new second before granting new token to prevent it being also eventually revoked
+    // token revocation is working with a seconds precision we need to wait for a
+    // new second before granting new token to prevent it being also eventually
+    // revoked
     tokio::time::sleep(std::time::Duration::from_secs(1)).await;
 
     let post_revoke_token = state.provider.get_token_provider().issue_token(

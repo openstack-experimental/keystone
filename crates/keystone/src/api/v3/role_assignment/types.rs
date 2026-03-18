@@ -68,13 +68,13 @@ pub use openstack_keystone_api_types::v3::role_assignment::*;
 //    }
 //}
 //
-//impl TryFrom<RoleAssignmentListParameters> for types::RoleAssignmentListParameters {
-//    type Error = KeystoneApiError;
+//impl TryFrom<RoleAssignmentListParameters> for
+// types::RoleAssignmentListParameters {    type Error = KeystoneApiError;
 //
-//    fn try_from(value: RoleAssignmentListParameters) -> Result<Self, Self::Error> {
-//        let mut builder = types::RoleAssignmentListParametersBuilder::default();
-//        // Filter by role
-//        if let Some(val) = &value.role_id {
+//    fn try_from(value: RoleAssignmentListParameters) -> Result<Self,
+// Self::Error> {        let mut builder =
+// types::RoleAssignmentListParametersBuilder::default();        // Filter by
+// role        if let Some(val) = &value.role_id {
 //            builder.role_id(val);
 //        }
 //

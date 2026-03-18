@@ -17,7 +17,9 @@ use std::collections::{BTreeMap, HashSet};
 
 use super::super::types::*;
 use crate::assignment::{AssignmentProviderError, backend::AssignmentBackend};
+use crate::identity::IdentityApi;
 use crate::keystone::ServiceState;
+use crate::resource::ResourceApi;
 use crate::role::{
     RoleApi,
     types::{Role, RoleListParameters},
@@ -28,52 +30,7 @@ pub(crate) mod assignment;
 #[derive(Default)]
 pub struct SqlBackend {}
 
-#[async_trait]
-impl AssignmentBackend for SqlBackend {
-    /// Check assignment grant.
-    #[tracing::instrument(level = "info", skip(self, state))]
-    async fn check_grant(
-        &self,
-        state: &ServiceState,
-        grant: &Assignment,
-    ) -> Result<bool, AssignmentProviderError> {
-        Ok(assignment::check(&state.db, grant).await?)
-    }
-
-    /// Create assignment grant.
-    #[tracing::instrument(level = "info", skip(self, state))]
-    async fn create_grant(
-        &self,
-        state: &ServiceState,
-        grant: AssignmentCreate,
-    ) -> Result<Assignment, AssignmentProviderError> {
-        Ok(assignment::create(&state.db, grant).await?)
-    }
-
-    /// List role assignments.
-    #[tracing::instrument(level = "info", skip(self, state))]
-    async fn list_assignments(
-        &self,
-        state: &ServiceState,
-        params: &RoleAssignmentListParameters,
-    ) -> Result<Vec<Assignment>, AssignmentProviderError> {
-        let mut assignments = assignment::list(&state.db, params).await?;
-        if params.include_names.is_some_and(|x| x) {
-            let roles: BTreeMap<String, Role> = state
-                .provider
-                .get_role_provider()
-                .list_roles(state, &RoleListParameters::default())
-                .await?
-                .into_iter()
-                .map(|x| (x.id.clone(), x))
-                .collect();
-            for assignment in assignments.iter_mut() {
-                assignment.role_name = roles.get(&assignment.role_id).map(|role| role.name.clone());
-            }
-        }
-        Ok(assignments)
-    }
-
+impl SqlBackend {
     /// List role assignments for multiple actors/targets.
     ///
     /// List all role assignments matching the parameters resolving the imply
@@ -123,6 +80,97 @@ impl AssignmentBackend for SqlBackend {
 
         Ok(result_map.into_iter().collect())
     }
+}
+
+#[async_trait]
+impl AssignmentBackend for SqlBackend {
+    /// Check assignment grant.
+    #[tracing::instrument(level = "info", skip(self, state))]
+    async fn check_grant(
+        &self,
+        state: &ServiceState,
+        grant: &Assignment,
+    ) -> Result<bool, AssignmentProviderError> {
+        Ok(assignment::check(&state.db, grant).await?)
+    }
+
+    /// Create assignment grant.
+    #[tracing::instrument(level = "info", skip(self, state))]
+    async fn create_grant(
+        &self,
+        state: &ServiceState,
+        grant: AssignmentCreate,
+    ) -> Result<Assignment, AssignmentProviderError> {
+        Ok(assignment::create(&state.db, grant).await?)
+    }
+
+    /// List role assignments.
+    #[tracing::instrument(level = "info", skip(self, state))]
+    async fn list_assignments(
+        &self,
+        state: &ServiceState,
+        params: &RoleAssignmentListParameters,
+    ) -> Result<Vec<Assignment>, AssignmentProviderError> {
+        let mut request = RoleAssignmentListForMultipleActorTargetParametersBuilder::default();
+        let mut actors: Vec<String> = Vec::new();
+        let mut targets: Vec<RoleAssignmentTarget> = Vec::new();
+        if let Some(role_id) = &params.role_id {
+            request.role_id(role_id);
+        }
+        if let Some(uid) = &params.user_id {
+            actors.push(uid.into());
+        }
+        if let Some(true) = &params.effective
+            && let Some(uid) = &params.user_id
+        {
+            // Effective assignments mean we need to expand user_id to list of all groups
+            // the user is member of.
+            let users = state
+                .provider
+                .get_identity_provider()
+                .list_groups_of_user(state, &uid)
+                .await?;
+            actors.extend(users.into_iter().map(|x| x.id));
+        };
+        if let Some(val) = &params.project_id {
+            targets.push(RoleAssignmentTarget {
+                id: val.clone(),
+                r#type: RoleAssignmentTargetType::Project,
+                inherited: Some(false),
+            });
+            if let Some(parents) = state
+                .provider
+                .get_resource_provider()
+                .get_project_parents(state, val)
+                .await?
+            {
+                // All assignments for parent projects having `inherited=true` must be included.
+                parents.iter().for_each(|parent_project| {
+                    targets.push(RoleAssignmentTarget {
+                        id: parent_project.id.clone(),
+                        r#type: RoleAssignmentTargetType::Project,
+                        inherited: Some(true),
+                    });
+                });
+            }
+        } else if let Some(val) = &params.domain_id {
+            targets.push(RoleAssignmentTarget {
+                id: val.clone(),
+                r#type: RoleAssignmentTargetType::Domain,
+                inherited: Some(false),
+            });
+        } else if let Some(val) = &params.system_id {
+            targets.push(RoleAssignmentTarget {
+                id: val.clone(),
+                r#type: RoleAssignmentTargetType::System,
+                inherited: Some(false),
+            })
+        }
+        request.targets(targets);
+        request.actors(actors);
+        self.list_assignments_for_multiple_actors_and_targets(state, &request.build()?)
+            .await
+    }
 
     /// Revoke assignment grant.
     #[tracing::instrument(level = "info", skip(self, state))]
@@ -156,7 +204,7 @@ mod tests {
     use crate::keystone::Service;
     use crate::policy::MockPolicy;
     use crate::provider::Provider;
-    use crate::role::{MockRoleProvider, types::Role};
+    use crate::role::{MockRoleProvider, types::RoleBuilder};
 
     fn get_mock_state(db: DatabaseConnection, provider: Provider) -> Arc<Service> {
         Arc::new(
@@ -168,68 +216,6 @@ mod tests {
             )
             .unwrap(),
         )
-    }
-
-    #[tokio::test]
-    async fn test_list_include_names() {
-        let db = MockDatabase::new(DatabaseBackend::Postgres)
-            .append_query_results([vec![get_role_assignment_mock("1")]])
-            .append_query_results([vec![get_role_system_assignment_mock("1")]])
-            .into_connection();
-
-        let mut role_mock = MockRoleProvider::default();
-        role_mock
-            .expect_list_roles()
-            .withf(|_, _: &RoleListParameters| true)
-            .returning(|_, _| {
-                Ok(vec![Role {
-                    id: "1".into(),
-                    name: "r1".into(),
-                    ..Default::default()
-                }])
-            });
-        let provider = Provider::mocked_builder()
-            .mock_role(role_mock)
-            .build()
-            .unwrap();
-
-        let state = get_mock_state(db, provider);
-
-        let sot = SqlBackend {};
-        let res = sot
-            .list_assignments(
-                &state,
-                &RoleAssignmentListParameters {
-                    include_names: Some(true),
-                    ..Default::default()
-                },
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(
-            res,
-            vec![
-                Assignment {
-                    role_id: "1".into(),
-                    role_name: Some("r1".into()),
-                    actor_id: "actor".into(),
-                    target_id: "target".into(),
-                    r#type: AssignmentType::UserProject,
-                    inherited: false,
-                    implied_via: None,
-                },
-                Assignment {
-                    role_id: "1".into(),
-                    role_name: Some("r1".into()),
-                    actor_id: "actor".into(),
-                    target_id: "system".into(),
-                    r#type: AssignmentType::UserSystem,
-                    inherited: false,
-                    implied_via: None,
-                }
-            ]
-        );
     }
 
     #[tokio::test]
@@ -249,21 +235,9 @@ mod tests {
             .withf(|_, _: &RoleListParameters| true)
             .returning(|_, _| {
                 Ok(vec![
-                    Role {
-                        id: "1".into(),
-                        name: "r1".into(),
-                        ..Default::default()
-                    },
-                    Role {
-                        id: "2".into(),
-                        name: "r2".into(),
-                        ..Default::default()
-                    },
-                    Role {
-                        id: "3".into(),
-                        name: "r3".into(),
-                        ..Default::default()
-                    },
+                    RoleBuilder::default().id("1").name("r1").build().unwrap(),
+                    RoleBuilder::default().id("2").name("r2").build().unwrap(),
+                    RoleBuilder::default().id("3").name("r3").build().unwrap(),
                 ])
             });
         let provider = Provider::mocked_builder()
@@ -329,16 +303,8 @@ mod tests {
             .withf(|_, _: &RoleListParameters| true)
             .returning(|_, _| {
                 Ok(vec![
-                    Role {
-                        id: "1".into(),
-                        name: "r1".into(),
-                        ..Default::default()
-                    },
-                    Role {
-                        id: "2".into(),
-                        name: "r2".into(),
-                        ..Default::default()
-                    },
+                    RoleBuilder::default().id("1").name("r1").build().unwrap(),
+                    RoleBuilder::default().id("2").name("r2").build().unwrap(),
                 ])
             });
         let provider = Provider::mocked_builder()

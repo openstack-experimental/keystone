@@ -27,7 +27,6 @@ mod list;
 pub use check::check;
 pub use create::create;
 pub use delete::delete;
-pub use list::list;
 pub use list::list_for_multiple_actors_and_targets;
 
 impl From<db_assignment::Model> for Assignment {

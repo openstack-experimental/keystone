@@ -20,8 +20,8 @@
 // use utoipa::{
 //     Modify, OpenApi,
 //     openapi::security::{
-//         AuthorizationCode, Flow, HttpAuthScheme, HttpBuilder, OAuth2, Scopes, SecurityScheme,
-//     },
+//         AuthorizationCode, Flow, HttpAuthScheme, HttpBuilder, OAuth2, Scopes,
+// SecurityScheme,     },
 // };
 // use utoipa_axum::router::OpenApiRouter;
 //
@@ -43,21 +43,22 @@ pub mod types;
 //     tags(
 //         (name="identity_providers", description=r#"Identity providers API.
 //
-// Identity provider resource allows to federate users from an external Identity Provider (i.e.
-// Keycloak, Azure AD, etc.).
+// Identity provider resource allows to federate users from an external Identity
+// Provider (i.e. Keycloak, Azure AD, etc.).
 //
-// Using the Identity provider requires creation of the mapping, which describes how to map attributes
-// of the remote Idp to local users.
+// Using the Identity provider requires creation of the mapping, which describes
+// how to map attributes of the remote Idp to local users.
 //
-// Identity provider with an empty domain_id are considered globals and every domain may use it with
-// appropriate mapping."#),
+// Identity provider with an empty domain_id are considered globals and every
+// domain may use it with appropriate mapping."#),
 //         (name="mappings", description=r#"Federation mappings API.
 //
-// Mappings define how the user attributes on the remote IDP are mapped to the local user.
+// Mappings define how the user attributes on the remote IDP are mapped to the
+// local user.
 //
-// Mappings with an empty domain_id are considered globals and every domain may use it. Such mappings
-// require the `domain_id_claim` attribute to be set to identify the domain_id for the respective
-// user."#),
+// Mappings with an empty domain_id are considered globals and every domain may
+// use it. Such mappings require the `domain_id_claim` attribute to be set to
+// identify the domain_id for the respective user."#),
 //     )
 // )]
 // pub struct ApiDoc;
@@ -81,8 +82,8 @@ pub mod types;
 //                     HttpBuilder::new()
 //                         .scheme(HttpAuthScheme::Bearer)
 //                         .bearer_format("JWT")
-//                         .description(Some("JWT (ID) Token issued by the federated IDP"))
-//                         .build(),
+//                         .description(Some("JWT (ID) Token issued by the
+// federated IDP"))                         .build(),
 //                 ),
 //             );
 //             // TODO: This must be dynamic

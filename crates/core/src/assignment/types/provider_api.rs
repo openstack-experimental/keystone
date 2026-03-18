@@ -30,6 +30,13 @@ pub trait AssignmentApi: Send + Sync {
     ) -> Result<Assignment, AssignmentProviderError>;
 
     /// List role assignments for given target/role/actor.
+    ///
+    /// List role assignments between the actor and the target matching
+    /// parameters.
+    ///
+    /// When listing in effective mode, since the group assignments have been
+    /// effectively expanded out into assignments for each user, the group role
+    /// assignment entities themselves are not returned in the collection.
     async fn list_role_assignments(
         &self,
         state: &ServiceState,

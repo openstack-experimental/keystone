@@ -17,7 +17,6 @@ use tracing::{Level, error, instrument};
 
 use crate::api::error::KeystoneApiError;
 use crate::federation::api::types::*;
-//use crate::federation::error::FederationProviderError;
 
 #[derive(Error, Debug)]
 pub enum OidcError {
@@ -246,20 +245,3 @@ impl From<OidcError> for KeystoneApiError {
         }
     }
 }
-
-//impl From<FederationProviderError> for KeystoneApiError {
-//    fn from(source: FederationProviderError) -> Self {
-//        match source {
-//            FederationProviderError::IdentityProviderNotFound(x) => Self::NotFound {
-//                resource: "identity provider".into(),
-//                identifier: x,
-//            },
-//            FederationProviderError::MappingNotFound(x) => Self::NotFound {
-//                resource: "mapping provider".into(),
-//                identifier: x,
-//            },
-//            FederationProviderError::Conflict(x) => Self::Conflict(x),
-//            other => Self::InternalError(other.to_string()),
-//        }
-//    }
-//}

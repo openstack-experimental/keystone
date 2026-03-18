@@ -20,7 +20,7 @@ use validator::Validate;
 use crate::error::BuilderError;
 
 /// Role representation.
-#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct Role {

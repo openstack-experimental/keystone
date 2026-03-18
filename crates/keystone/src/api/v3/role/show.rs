@@ -69,7 +69,7 @@ mod tests {
     use crate::api::tests::get_mocked_state;
     use crate::api::v3::role::types::{Role as ApiRole, RoleResponse};
     use crate::provider::Provider;
-    use crate::role::{MockRoleProvider, types::Role};
+    use crate::role::{MockRoleProvider, types::RoleBuilder};
 
     #[tokio::test]
     async fn test_get() {
@@ -83,10 +83,13 @@ mod tests {
             .expect_get_role()
             .withf(|_, id: &'_ str| id == "bar")
             .returning(|_, _| {
-                Ok(Some(Role {
-                    id: "bar".into(),
-                    ..Default::default()
-                }))
+                Ok(Some(
+                    RoleBuilder::default()
+                        .id("bar")
+                        .name("bar")
+                        .build()
+                        .unwrap(),
+                ))
             });
 
         let state = get_mocked_state(
@@ -134,7 +137,7 @@ mod tests {
             ApiRole {
                 id: "bar".into(),
                 extra: Some(json!({})),
-                name: String::new(),
+                name: "bar".into(),
                 domain_id: None,
                 description: None
             },
