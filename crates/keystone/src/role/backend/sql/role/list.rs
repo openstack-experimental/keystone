@@ -53,6 +53,7 @@ pub(super) mod tests {
 
     use super::super::tests::get_role_mock;
     use super::*;
+    use crate::role::types::RoleBuilder;
 
     #[tokio::test]
     async fn test_list() {
@@ -82,12 +83,14 @@ pub(super) mod tests {
             )
             .await
             .unwrap(),
-            vec![Role {
-                id: "1".into(),
-                domain_id: Some("foo_domain".into()),
-                name: "foo".to_owned(),
-                ..Default::default()
-            }]
+            vec![
+                RoleBuilder::default()
+                    .id("1")
+                    .domain_id("foo_domain")
+                    .name("foo")
+                    .build()
+                    .unwrap()
+            ]
         );
 
         list(

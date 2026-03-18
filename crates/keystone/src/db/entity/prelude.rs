@@ -70,6 +70,4 @@ pub use super::trust_role::Entity as TrustRole;
 pub use super::user::Entity as User;
 pub use super::user_group_membership::Entity as UserGroupMembership;
 pub use super::user_option::Entity as UserOption;
-pub use super::webauthn_credential::Entity as WebauthnCredential;
-pub use super::webauthn_state::Entity as WebauthnState;
 pub use super::whitelisted_config::Entity as WhitelistedConfig;

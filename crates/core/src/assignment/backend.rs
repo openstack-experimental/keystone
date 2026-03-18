@@ -35,23 +35,18 @@ pub trait AssignmentBackend: Send + Sync {
         params: AssignmentCreate,
     ) -> Result<Assignment, AssignmentProviderError>;
 
-    /// List Role assignments
+    /// List Role assignments.
+    ///
+    /// List role assignments between the actor and the target matching
+    /// parameters.
+    ///
+    /// When listing in effective mode, since the group assignments have been
+    /// effectively expanded out into assignments for each user, the group role
+    /// assignment entities themselves are not returned in the collection.
     async fn list_assignments(
         &self,
         state: &ServiceState,
         params: &RoleAssignmentListParameters,
-    ) -> Result<Vec<Assignment>, AssignmentProviderError>;
-
-    /// List all role assignments for multiple actors on multiple targets
-    ///
-    /// It is a naive interpretation of the effective role assignments where we
-    /// check all roles assigned to the user (including groups) on a
-    /// concrete target (including all higher targets the role can be
-    /// inherited from)
-    async fn list_assignments_for_multiple_actors_and_targets(
-        &self,
-        state: &ServiceState,
-        params: &RoleAssignmentListForMultipleActorTargetParameters,
     ) -> Result<Vec<Assignment>, AssignmentProviderError>;
 
     /// Revoke assignment grant.

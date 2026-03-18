@@ -81,7 +81,7 @@ mod tests {
     use crate::provider::Provider;
     use crate::role::{
         MockRoleProvider,
-        types::{Role, RoleCreate},
+        types::{RoleBuilder, RoleCreate},
     };
 
     #[tokio::test]
@@ -96,13 +96,13 @@ mod tests {
                     && role_create.id.is_none()
             })
             .returning(|_, _| {
-                Ok(Role {
-                    id: "new_role_id".into(),
-                    name: "new_role".into(),
-                    domain_id: Some("domain1".into()),
-                    description: Some("A new role".into()),
-                    ..Default::default()
-                })
+                Ok(RoleBuilder::default()
+                    .id("new_role_id")
+                    .name("new_role")
+                    .domain_id("domain1")
+                    .description("A new role")
+                    .build()
+                    .unwrap())
             });
 
         let state = get_mocked_state(

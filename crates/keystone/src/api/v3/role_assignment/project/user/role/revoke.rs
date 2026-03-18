@@ -180,11 +180,13 @@ mod tests {
             .expect_get_role()
             .withf(|_, rid: &'_ str| rid == "role_id")
             .returning(|_, _| {
-                Ok(Some(Role {
-                    id: "role_id".into(),
-                    name: "test_role".into(),
-                    ..Default::default()
-                }))
+                Ok(Some(
+                    RoleBuilder::default()
+                        .id("role_id")
+                        .name("new_role")
+                        .build()
+                        .unwrap(),
+                ))
             });
 
         let mut resource_mock = MockResourceProvider::default();
@@ -248,11 +250,13 @@ mod tests {
             .expect_get_role()
             .withf(|_, rid: &'_ str| rid == "role_id")
             .returning(|_, _| {
-                Ok(Some(Role {
-                    id: "role_id".into(),
-                    name: "test_role".into(),
-                    ..Default::default()
-                }))
+                Ok(Some(
+                    RoleBuilder::default()
+                        .id("role_id")
+                        .name("new_role")
+                        .build()
+                        .unwrap(),
+                ))
             });
 
         let mut resource_mock = MockResourceProvider::default();
@@ -306,11 +310,13 @@ mod tests {
             .expect_get_role()
             .withf(|_, rid: &'_ str| rid == "role_id")
             .returning(|_, _| {
-                Ok(Some(Role {
-                    id: "role_id".into(),
-                    name: "test_role".into(),
-                    ..Default::default()
-                }))
+                Ok(Some(
+                    RoleBuilder::default()
+                        .id("role_id")
+                        .name("new_role")
+                        .build()
+                        .unwrap(),
+                ))
             });
 
         let mut resource_mock = MockResourceProvider::default();
@@ -374,11 +380,13 @@ mod tests {
             .expect_get_role()
             .withf(|_, rid: &'_ str| rid == "role_id")
             .returning(|_, _| {
-                Ok(Some(Role {
-                    id: "role_id".into(),
-                    name: "test_role".into(),
-                    ..Default::default()
-                }))
+                Ok(Some(
+                    RoleBuilder::default()
+                        .id("role_id")
+                        .name("test_role")
+                        .build()
+                        .unwrap(),
+                ))
             });
 
         let mut resource_mock = MockResourceProvider::default();

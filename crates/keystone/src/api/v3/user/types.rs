@@ -17,9 +17,10 @@ pub use openstack_keystone_api_types::v3::user::*;
 //impl From<identity_types::UserOptions> for UserOptions {
 //    fn from(value: identity_types::UserOptions) -> Self {
 //        Self {
-//            ignore_change_password_upon_first_use: value.ignore_change_password_upon_first_use,
-//            ignore_password_expiry: value.ignore_password_expiry,
-//            ignore_lockout_failure_attempts: value.ignore_lockout_failure_attempts,
+//            ignore_change_password_upon_first_use:
+// value.ignore_change_password_upon_first_use,
+// ignore_password_expiry: value.ignore_password_expiry,
+// ignore_lockout_failure_attempts: value.ignore_lockout_failure_attempts,
 //            lock_password: value.lock_password,
 //            ignore_user_inactivity: value.ignore_user_inactivity,
 //            multi_factor_auth_rules: value.multi_factor_auth_rules,
@@ -31,9 +32,10 @@ pub use openstack_keystone_api_types::v3::user::*;
 //impl From<UserOptions> for identity_types::UserOptions {
 //    fn from(value: UserOptions) -> Self {
 //        Self {
-//            ignore_change_password_upon_first_use: value.ignore_change_password_upon_first_use,
-//            ignore_password_expiry: value.ignore_password_expiry,
-//            ignore_lockout_failure_attempts: value.ignore_lockout_failure_attempts,
+//            ignore_change_password_upon_first_use:
+// value.ignore_change_password_upon_first_use,
+// ignore_password_expiry: value.ignore_password_expiry,
+// ignore_lockout_failure_attempts: value.ignore_lockout_failure_attempts,
 //            lock_password: value.lock_password,
 //            ignore_user_inactivity: value.ignore_user_inactivity,
 //            multi_factor_auth_rules: value.multi_factor_auth_rules,

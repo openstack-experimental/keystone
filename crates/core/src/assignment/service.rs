@@ -12,16 +12,18 @@
 // SPDX-License-Identifier: Apache-2.0
 //! # Assignments provider
 use async_trait::async_trait;
+use std::collections::BTreeMap;
 use std::sync::Arc;
-use validator::Validate;
 
 use crate::assignment::{AssignmentProviderError, backend::AssignmentBackend, types::*};
 use crate::config::Config;
-use crate::identity::IdentityApi;
 use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManagerApi;
-use crate::resource::ResourceApi;
 use crate::revoke::{RevokeApi, types::RevocationEventCreate};
+use crate::role::{
+    RoleApi,
+    types::{Role, RoleListParameters},
+};
 
 pub struct AssignmentService {
     backend_driver: Arc<dyn AssignmentBackend>,
@@ -58,64 +60,22 @@ impl AssignmentApi for AssignmentService {
         state: &ServiceState,
         params: &RoleAssignmentListParameters,
     ) -> Result<Vec<Assignment>, AssignmentProviderError> {
-        params.validate()?;
-        let mut request = RoleAssignmentListForMultipleActorTargetParametersBuilder::default();
-        let mut actors: Vec<String> = Vec::new();
-        let mut targets: Vec<RoleAssignmentTarget> = Vec::new();
-        if let Some(role_id) = &params.role_id {
-            request.role_id(role_id);
-        }
-        if let Some(uid) = &params.user_id {
-            actors.push(uid.into());
-        }
-        if let Some(true) = &params.effective
-            && let Some(uid) = &params.user_id
-        {
-            let users = state
+        let mut assignments = self.backend_driver.list_assignments(state, params).await?;
+        if assignments.len() > 0 && params.include_names.is_some_and(|x| x) {
+            let roles: BTreeMap<String, Role> = state
                 .provider
-                .get_identity_provider()
-                .list_groups_of_user(state, uid)
-                .await?;
-            actors.extend(users.into_iter().map(|x| x.id));
-        };
-        if let Some(val) = &params.project_id {
-            targets.push(RoleAssignmentTarget {
-                id: val.clone(),
-                r#type: RoleAssignmentTargetType::Project,
-                inherited: Some(false),
-            });
-            if let Some(parents) = state
-                .provider
-                .get_resource_provider()
-                .get_project_parents(state, val)
+                .get_role_provider()
+                .list_roles(state, &RoleListParameters::default())
                 .await?
-            {
-                parents.iter().for_each(|parent_project| {
-                    targets.push(RoleAssignmentTarget {
-                        id: parent_project.id.clone(),
-                        r#type: RoleAssignmentTargetType::Project,
-                        inherited: Some(true),
-                    });
-                });
+                .into_iter()
+                .map(|x| (x.id.clone(), x))
+                .collect();
+            for assignment in assignments.iter_mut() {
+                assignment.role_name = roles.get(&assignment.role_id).map(|role| role.name.clone());
             }
-        } else if let Some(val) = &params.domain_id {
-            targets.push(RoleAssignmentTarget {
-                id: val.clone(),
-                r#type: RoleAssignmentTargetType::Domain,
-                inherited: Some(false),
-            });
-        } else if let Some(val) = &params.system_id {
-            targets.push(RoleAssignmentTarget {
-                id: val.clone(),
-                r#type: RoleAssignmentTargetType::System,
-                inherited: Some(false),
-            })
         }
-        request.targets(targets);
-        request.actors(actors);
-        self.backend_driver
-            .list_assignments_for_multiple_actors_and_targets(state, &request.build()?)
-            .await
+
+        Ok(assignments)
     }
 
     /// Revoke grant
@@ -172,5 +132,164 @@ impl AssignmentApi for AssignmentService {
             .await?;
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::assignment::backend::MockAssignmentBackend;
+    use crate::provider::Provider;
+    use crate::revoke::MockRevokeProvider;
+    use crate::role::{MockRoleProvider, types::*};
+    use crate::tests::get_mocked_state;
+
+    #[tokio::test]
+    async fn test_crate_grant() {
+        let state = get_mocked_state(None, None);
+        let mut backend = MockAssignmentBackend::default();
+        backend.expect_create_grant().returning(|_, _| {
+            Ok(AssignmentBuilder::default()
+                .actor_id("actor")
+                .role_id("rid1")
+                .target_id("target_id")
+                .r#type(AssignmentType::UserProject)
+                .build()
+                .unwrap())
+        });
+
+        let provider = AssignmentService {
+            backend_driver: Arc::new(backend),
+        };
+
+        assert!(
+            provider
+                .create_grant(
+                    &state,
+                    AssignmentCreate::user_project("actor_id", "target_id", "role_id", false)
+                )
+                .await
+                .is_ok()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_list_assignments() {
+        let state = get_mocked_state(None, None);
+        let mut backend = MockAssignmentBackend::default();
+        backend
+            .expect_list_assignments()
+            .returning(|_, _| Ok(vec![]));
+
+        let provider = AssignmentService {
+            backend_driver: Arc::new(backend),
+        };
+
+        assert!(
+            provider
+                .list_role_assignments(
+                    &state,
+                    &RoleAssignmentListParameters {
+                        role_id: Some("rid".into()),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .is_ok()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_list_assignments_include_names() {
+        let mut role_mock = MockRoleProvider::default();
+        role_mock.expect_list_roles().returning(|_, _| {
+            Ok(vec![
+                RoleBuilder::default()
+                    .id("rid1")
+                    .name("rid1_name")
+                    .build()
+                    .unwrap(),
+                RoleBuilder::default()
+                    .id("rid2")
+                    .name("rid2_name")
+                    .build()
+                    .unwrap(),
+            ])
+        });
+        let state = get_mocked_state(None, Some(Provider::mocked_builder().mock_role(role_mock)));
+        let mut backend = MockAssignmentBackend::default();
+        backend
+            .expect_list_assignments()
+            .withf(|_, params: &RoleAssignmentListParameters| {
+                params.role_id == Some("rid".into()) && params.include_names.is_some_and(|x| x)
+            })
+            .returning(|_, _| {
+                Ok(vec![
+                    AssignmentBuilder::default()
+                        .actor_id("actor")
+                        .role_id("rid1")
+                        .target_id("target_id")
+                        .r#type(AssignmentType::UserProject)
+                        .build()
+                        .unwrap(),
+                ])
+            });
+
+        let provider = AssignmentService {
+            backend_driver: Arc::new(backend),
+        };
+
+        let res = provider
+            .list_role_assignments(
+                &state,
+                &RoleAssignmentListParameters {
+                    role_id: Some("rid".into()),
+                    include_names: Some(true),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert!(
+            res.iter()
+                .find(|x| x.role_id == "rid1" && x.role_name == Some("rid1_name".into()))
+                .is_some()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_revoke_grant() {
+        let mut revoke_mock = MockRevokeProvider::default();
+        revoke_mock
+            .expect_create_revocation_event()
+            .withf(|_, params: &RevocationEventCreate| {
+                params.project_id == Some("target_id".into())
+                    && params.user_id == Some("actor".into())
+                    && params.role_id == Some("rid1".into())
+            })
+            .returning(|_, _| Ok(crate::revoke::RevocationEvent::default()));
+        let state = get_mocked_state(
+            None,
+            Some(Provider::mocked_builder().mock_revoke(revoke_mock)),
+        );
+        let mut backend = MockAssignmentBackend::default();
+        let assignment = AssignmentBuilder::default()
+            .actor_id("actor")
+            .role_id("rid1")
+            .target_id("target_id")
+            .r#type(AssignmentType::UserProject)
+            .build()
+            .unwrap();
+        let assignment_clone = assignment.clone();
+        backend
+            .expect_revoke_grant()
+            .withf(move |_, params: &Assignment| *params == assignment_clone)
+            .returning(|_, _| Ok(()));
+
+        let provider = AssignmentService {
+            backend_driver: Arc::new(backend),
+        };
+
+        assert!(provider.revoke_grant(&state, assignment).await.is_ok());
     }
 }

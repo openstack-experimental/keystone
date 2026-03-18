@@ -72,8 +72,6 @@ pub mod trust_role;
 pub mod user;
 pub mod user_group_membership;
 pub mod user_option;
-pub mod webauthn_credential;
-pub mod webauthn_state;
 pub mod whitelisted_config;
 
 impl Default for role::Model {
