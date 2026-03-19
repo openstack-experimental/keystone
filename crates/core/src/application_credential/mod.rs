@@ -120,7 +120,8 @@ mod mock;
 pub mod service;
 pub mod types;
 
-use crate::config::Config;
+use openstack_keystone_config::Config;
+
 use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManagerApi;
 use service::ApplicationCredentialService;

@@ -19,6 +19,7 @@ bytes.workspace = true
 chrono.workspace = true
 fernet = { workspace = true, features = ["rustcrypto"] }
 itertools.workspace = true
+openstack-keystone-config = { version = "0.1", path = "../config" }
 openstack-keystone-core = { version = "0.1", path = "../core/"}
 nix = { workspace = true, features = ["fs", "user"] }
 rmp.workspace = true

@@ -127,7 +127,8 @@ pub(crate) mod tests {
     use sea_orm::DatabaseConnection;
     use std::sync::Arc;
 
-    use crate::config::Config;
+    use openstack_keystone_config::Config;
+
     use crate::identity::types::UserResponseBuilder;
     use crate::keystone::{Service, ServiceState};
     use crate::policy::{MockPolicy, PolicyError, PolicyEvaluationResult};

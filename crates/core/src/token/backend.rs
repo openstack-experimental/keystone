@@ -13,7 +13,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Token provider backends.
 
-use crate::config::Config;
+use openstack_keystone_config::Config;
+
 use crate::token::{TokenProviderError, types::*};
 
 use crate::keystone::ServiceState;

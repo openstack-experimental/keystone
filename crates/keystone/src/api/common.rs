@@ -16,12 +16,12 @@ use serde::Serialize;
 use url::Url;
 
 use openstack_keystone_api_types::Link;
+use openstack_keystone_config::Config;
 
 use crate::api::KeystoneApiError;
 use crate::api::types::ScopeProject;
 use crate::auth::AuthzInfo;
 use crate::common::types::Scope as ProviderScope;
-use crate::config::Config;
 use crate::keystone::ServiceState;
 use crate::resource::{
     ResourceApi,
@@ -224,9 +224,10 @@ pub trait ResourceIdentifier {
 mod tests {
     use rstest::rstest;
 
+    use openstack_keystone_config::Config;
+
     use super::*;
     use crate::api::tests::get_mocked_state;
-    use crate::config::Config;
     use crate::provider::Provider;
     use crate::resource::{MockResourceProvider, types::Domain};
 

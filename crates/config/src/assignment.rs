@@ -11,17 +11,22 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-//! # Keystone configuration
-//!
-//! Parsing of the Keystone configuration file implementation.
 use serde::Deserialize;
 
-use crate::config::common::csv;
+use crate::common::default_sql_driver;
 
-/// Authentication configuration.
-#[derive(Debug, Default, Deserialize, Clone)]
-pub struct AuthProvider {
-    /// Authentication methods to be enabled and used for token validation.
-    #[serde(deserialize_with = "csv")]
-    pub methods: Vec<String>,
+/// Assignment Provider.
+#[derive(Debug, Deserialize, Clone)]
+pub struct AssignmentProvider {
+    /// Assignment provider driver.
+    #[serde(default = "default_sql_driver")]
+    pub driver: String,
+}
+
+impl Default for AssignmentProvider {
+    fn default() -> Self {
+        Self {
+            driver: default_sql_driver(),
+        }
+    }
 }

@@ -20,10 +20,10 @@ use sea_orm::{ConnectionTrait, TransactionTrait};
 use serde_json::json;
 use uuid::Uuid;
 
+use openstack_keystone_config::Config;
 use openstack_keystone_core::identity::types::get_user_last_active_at;
 
 use crate::common::password_hashing;
-use crate::config::Config;
 use crate::db::entity::{
     federated_user as db_federated_user, password as db_password, user as db_user,
 };
@@ -197,7 +197,6 @@ mod tests {
     use sea_orm::{DatabaseBackend, MockDatabase, MockExecResult, Transaction};
 
     use super::*;
-    use crate::config::Config;
     use crate::identity::backend::sql::{
         federated_user::tests::get_federated_user_mock, local_user::tests::get_local_user_mock,
         password::tests::get_password_mock, user::tests::get_user_mock,
@@ -206,6 +205,7 @@ mod tests {
         UserCreateBuilder,
         user::{FederationBuilder, FederationProtocol},
     };
+    use openstack_keystone_config::Config;
 
     #[test]
     fn test_active_record_from_user_create() {

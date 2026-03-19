@@ -11,13 +11,22 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+use serde::Deserialize;
 
-//use sea_orm::DatabaseConnection;
-//use std::sync::Arc;
-//
-//use crate::config::Config;
-//use crate::identity::MockIdentityProvider;
-//use crate::keystone::{Service, ServiceState};
-//use crate::policy::{MockPolicy, MockPolicyFactory, PolicyEvaluationResult};
-//use crate::provider::Provider;
-//use crate::token::{MockTokenProvider, Token, TokenProviderError, UnscopedPayload};
+use crate::common::default_sql_driver;
+
+/// Application Credential Provider.
+#[derive(Debug, Deserialize, Clone)]
+pub struct ApplicationCredentialProvider {
+    /// Application credentials provider driver.
+    #[serde(default = "default_sql_driver")]
+    pub driver: String,
+}
+
+impl Default for ApplicationCredentialProvider {
+    fn default() -> Self {
+        Self {
+            driver: default_sql_driver(),
+        }
+    }
+}

@@ -21,11 +21,11 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use tracing::debug;
 
-use crate::config::Config;
 use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManagerApi;
 use crate::role::{RoleApi, types::Role};
 use crate::trust::{TrustProviderError, backend::TrustBackend, types::*};
+use openstack_keystone_config::Config;
 
 /// Trust provider.
 pub struct TrustService {

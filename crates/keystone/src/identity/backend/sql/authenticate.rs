@@ -16,12 +16,13 @@ use chrono::Utc;
 use sea_orm::DatabaseConnection;
 use tracing::info;
 
+use openstack_keystone_config::Config;
+
 use super::local_user;
 use super::user;
 use super::user_option;
 use crate::auth::{AuthenticatedInfo, AuthenticationError};
 use crate::common::password_hashing;
-use crate::config::Config;
 use crate::db::entity::{local_user as db_local_user, password as db_password};
 use crate::identity::backend::sql::local_user::MergeLocalUserData;
 use crate::identity::backend::sql::password::MergePasswordData;
@@ -179,11 +180,9 @@ mod tests {
     use sea_orm::{DatabaseBackend, MockDatabase, Transaction};
     use tracing_test::traced_test;
 
-    use crate::identity::types::user::*;
-    use crate::{db::entity::local_user as db_local_user, identity::types::UserOptions};
-
     use super::super::local_user::tests::get_local_user_mock;
     use super::*;
+    use crate::{db::entity::local_user as db_local_user, identity::types::UserOptions};
 
     #[tokio::test]
     async fn test_should_lock_default_config() {

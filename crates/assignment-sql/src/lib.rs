@@ -191,14 +191,14 @@ mod tests {
     use std::collections::{BTreeMap, BTreeSet};
     use std::sync::Arc;
 
-    use super::assignment::tests::*;
-    use super::*;
-    use openstack_keystone_core::config::Config;
+    use openstack_keystone_config::Config;
     use openstack_keystone_core::keystone::Service;
     use openstack_keystone_core::policy::MockPolicy;
     use openstack_keystone_core::provider::Provider;
     use openstack_keystone_core::role::{MockRoleProvider, types::RoleBuilder};
-    //use openstack_keystone_core::tests::get_mocked_state;
+
+    use super::assignment::tests::*;
+    use super::*;
 
     fn get_mock_state(db: DatabaseConnection, provider: Provider) -> Arc<Service> {
         Arc::new(

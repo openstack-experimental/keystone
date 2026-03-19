@@ -15,12 +15,11 @@
 use sea_orm::DatabaseConnection;
 use std::sync::Arc;
 
-use crate::config::Config;
+use openstack_keystone_config::Config;
+
 use crate::keystone::{Service, ServiceState};
 use crate::policy::MockPolicy;
 use crate::provider::{Provider, ProviderBuilder};
-
-//pub(crate) mod token;
 
 pub fn get_mocked_state(
     config: Option<Config>,

@@ -16,36 +16,20 @@
 //! Parsing of the Keystone configuration file implementation.
 use serde::Deserialize;
 
-use crate::config::common::default_sql_driver;
+use crate::common::default_sql_driver;
 
-/// Trust provider.
+/// Token restriction provider.
 #[derive(Debug, Deserialize, Clone)]
-pub struct TrustProvider {
-    /// Allows authorization to be redelegated from one user to another,
-    /// effectively chaining trusts together. When disabled, the
-    /// `remaining_uses` attribute of a trust is constrained to be zero.
-    #[serde(default)]
-    pub allow_redelegation: bool,
-    /// Trust provider driver.
+pub struct TokenRestrictionProvider {
+    /// Token restriction driver.
     #[serde(default = "default_sql_driver")]
     pub driver: String,
-    /// Maximum number of times that authorization can be redelegated from one
-    /// user to another in a chain of trusts. This number may be reduced
-    /// further for a specific trust.
-    #[serde(default = "default_max_redelegation_count")]
-    pub max_redelegation_count: usize,
 }
 
-fn default_max_redelegation_count() -> usize {
-    3
-}
-
-impl Default for TrustProvider {
+impl Default for TokenRestrictionProvider {
     fn default() -> Self {
         Self {
-            allow_redelegation: false,
             driver: default_sql_driver(),
-            max_redelegation_count: default_max_redelegation_count(),
         }
     }
 }

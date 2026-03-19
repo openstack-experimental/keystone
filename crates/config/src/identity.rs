@@ -14,7 +14,7 @@
 use serde::Deserialize;
 use std::collections::HashMap;
 
-use crate::config::common::default_sql_driver;
+use crate::common::default_sql_driver;
 
 /// Identity provider.
 #[derive(Debug, Deserialize, Clone)]

@@ -11,4 +11,4 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-pub use openstack_keystone_core::config::*;
+pub use openstack_keystone_config::*;

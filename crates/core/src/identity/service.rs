@@ -22,8 +22,9 @@ use tokio::sync::RwLock;
 use uuid::Uuid;
 use validator::Validate;
 
+use openstack_keystone_config::Config;
+
 use crate::auth::AuthenticatedInfo;
-use crate::config::Config;
 use crate::identity::{IdentityProviderError, backend::IdentityBackend, types::*};
 use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManagerApi;

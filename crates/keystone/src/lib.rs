@@ -96,6 +96,3 @@ pub mod role;
 pub mod token;
 pub mod trust;
 pub mod webauthn;
-
-#[cfg(test)]
-mod tests;

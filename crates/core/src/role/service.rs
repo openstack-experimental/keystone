@@ -18,7 +18,8 @@ use async_trait::async_trait;
 use uuid::Uuid;
 use validator::Validate;
 
-use crate::config::Config;
+use openstack_keystone_config::Config;
+
 use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManagerApi;
 use crate::role::{RoleProviderError, backend::RoleBackend, types::*};

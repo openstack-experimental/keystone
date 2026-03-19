@@ -32,6 +32,8 @@
 //! users can access resources and perform operations.
 use async_trait::async_trait;
 
+use openstack_keystone_config::Config;
+
 pub mod backend;
 pub mod error;
 #[cfg(any(test, feature = "mock"))]
@@ -39,7 +41,6 @@ mod mock;
 pub mod service;
 pub mod types;
 
-use crate::config::Config;
 use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManagerApi;
 use service::CatalogService;

@@ -22,10 +22,11 @@ use secrecy::SecretString;
 use uuid::Uuid;
 use validator::Validate;
 
+use openstack_keystone_config::Config;
+
 use crate::application_credential::{
     ApplicationCredentialProviderError, backend::ApplicationCredentialBackend, types::*,
 };
-use crate::config::Config;
 use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManagerApi;
 use crate::role::{

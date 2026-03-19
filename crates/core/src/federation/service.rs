@@ -19,7 +19,8 @@ use async_trait::async_trait;
 use std::sync::Arc;
 use uuid::Uuid;
 
-use crate::config::Config;
+use openstack_keystone_config::Config;
+
 use crate::federation::{FederationProviderError, backend::FederationBackend, types::*};
 use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManagerApi;

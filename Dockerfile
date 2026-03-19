@@ -17,6 +17,7 @@ RUN USER=root cargo new keystone
 COPY Cargo.toml Cargo.lock /usr/src/keystone/
 COPY crates/api-types/Cargo.toml /usr/src/keystone/crates/api-types/
 COPY crates/assignment-sql/Cargo.toml /usr/src/keystone/crates/assignment-sql/
+COPY crates/config/Cargo.toml /usr/src/keystone/crates/config/
 COPY crates/core/Cargo.toml /usr/src/keystone/crates/core/
 COPY crates/keystone/Cargo.toml /usr/src/keystone/crates/keystone/
 COPY crates/storage/Cargo.toml /usr/src/keystone/crates/storage/
@@ -33,6 +34,7 @@ RUN mkdir -p keystone/crates/keystone/src/bin && touch keystone/crates/keystone/
   cp keystone/src/main.rs keystone/tests/loadtest/src/main.rs &&\
   mkdir -p keystone/crates/api-types/src && touch keystone/crates/api-types/src/lib.rs &&\
   mkdir -p keystone/crates/assignment-sql/src && touch keystone/crates/assignment-sql/src/lib.rs &&\
+  mkdir -p keystone/crates/config/src && touch keystone/crates/config/src/lib.rs &&\
   mkdir -p keystone/crates/core/src && touch keystone/crates/core/src/lib.rs &&\
   mkdir -p keystone/crates/storage/src && touch keystone/crates/storage/src/lib.rs &&\
   mkdir -p keystone/crates/token-fernet/src && touch keystone/crates/token-fernet/src/lib.rs &&\
@@ -48,6 +50,7 @@ RUN cargo build -p openstack-keystone --release
 
 # Now copy in the rest of the sources
 COPY crates/keystone/ /usr/src/keystone/crates/keystone
+COPY crates/config/ /usr/src/keystone/crates/config
 COPY crates/core/ /usr/src/keystone/crates/core
 COPY crates/api-types/ /usr/src/keystone/crates/api-types
 COPY crates/storage/ /usr/src/keystone/crates/storage

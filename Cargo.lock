@@ -3303,6 +3303,7 @@ dependencies = [
  "openidconnect",
  "openstack-keystone-api-types",
  "openstack-keystone-assignment-sql",
+ "openstack-keystone-config",
  "openstack-keystone-core",
  "openstack-keystone-distributed-storage",
  "openstack-keystone-token-fernet",
@@ -3354,10 +3355,25 @@ name = "openstack-keystone-assignment-sql"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "openstack-keystone-config",
  "openstack-keystone-core",
  "sea-orm",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "openstack-keystone-config"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "config",
+ "eyre",
+ "regex",
+ "secrecy",
+ "serde",
+ "url",
+ "url-macro",
 ]
 
 [[package]]
@@ -3376,8 +3392,8 @@ dependencies = [
  "jsonwebtoken",
  "mockall",
  "openstack-keystone-api-types",
+ "openstack-keystone-config",
  "rand 0.10.0",
- "regex",
  "reqwest 0.13.2",
  "rstest",
  "sea-orm",
@@ -3391,7 +3407,6 @@ dependencies = [
  "tracing",
  "tracing-test",
  "url",
- "url-macro",
  "uuid",
  "validator",
 ]
@@ -3434,6 +3449,7 @@ dependencies = [
  "fernet",
  "itertools 0.14.0",
  "nix",
+ "openstack-keystone-config",
  "openstack-keystone-core",
  "rmp",
  "scopeguard",

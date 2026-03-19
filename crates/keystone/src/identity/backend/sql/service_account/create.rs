@@ -18,7 +18,8 @@ use sea_orm::TransactionTrait;
 use sea_orm::entity::*;
 use uuid::Uuid;
 
-use crate::config::Config;
+use openstack_keystone_config::Config;
+
 use crate::db::entity::user as db_user;
 use crate::error::DbContextExt;
 use crate::identity::{

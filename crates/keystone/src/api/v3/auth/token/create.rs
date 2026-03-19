@@ -21,7 +21,6 @@ use axum::{
 };
 use validator::Validate;
 
-//use super::token_impl::build_api_token_v3;
 use crate::api::v3::auth::token::common::{authenticate_request, get_authz_info};
 use crate::api::v3::auth::token::types::{AuthRequest, CreateTokenParameters, TokenResponse};
 use crate::api::{Catalog, CatalogService, error::KeystoneApiError};
@@ -121,11 +120,12 @@ mod tests {
     use tower_http::trace::TraceLayer;
     use tracing_test::traced_test;
 
+    use openstack_keystone_config::Config;
+
     use crate::api::v3::auth::token::types::*;
     use crate::assignment::MockAssignmentProvider;
     use crate::auth::AuthenticatedInfo;
     use crate::catalog::MockCatalogProvider;
-    use crate::config::Config;
     use crate::identity::{
         MockIdentityProvider,
         types::{UserPasswordAuthRequest, UserResponseBuilder},

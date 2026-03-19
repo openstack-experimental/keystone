@@ -18,7 +18,7 @@ use thiserror::Error;
 use tokio::task;
 use tracing::warn;
 
-use crate::config::{Config, PasswordHashingAlgo};
+use openstack_keystone_config::{Config, PasswordHashingAlgo};
 
 /// Password hashing related errors.
 #[derive(Error, Debug)]

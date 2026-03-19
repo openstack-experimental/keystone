@@ -27,8 +27,9 @@ use std::sync::Arc;
 use tracing::{debug, trace};
 use uuid::Uuid;
 
+use openstack_keystone_config::Config;
+
 use crate::auth::{AuthenticatedInfo, AuthenticationError, AuthzInfo};
-use crate::config::Config;
 use crate::identity::IdentityApi;
 use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManagerApi;
@@ -1009,6 +1010,8 @@ mod tests {
     use tracing_test::traced_test;
     use uuid::Uuid;
 
+    use openstack_keystone_config::Config;
+
     use super::super::tests::setup_config;
     use super::*;
     use crate::application_credential::{
@@ -1019,7 +1022,6 @@ mod tests {
         types::{Assignment, AssignmentType, RoleAssignmentListParameters},
     };
     use crate::auth::AuthenticatedInfoBuilder;
-    use crate::config::Config;
     use crate::identity::{MockIdentityProvider, types::UserResponseBuilder};
     use crate::provider::Provider;
     use crate::resource::{MockResourceProvider, types::*};

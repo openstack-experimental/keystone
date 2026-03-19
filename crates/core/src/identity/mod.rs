@@ -37,6 +37,8 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use std::collections::HashSet;
 
+use openstack_keystone_config::Config;
+
 pub mod backend;
 pub mod error;
 #[cfg(any(test, feature = "mock"))]
@@ -47,7 +49,6 @@ pub use mock::MockIdentityProvider;
 pub mod service;
 
 use crate::auth::AuthenticatedInfo;
-use crate::config::Config;
 use crate::identity::types::*;
 use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManagerApi;
