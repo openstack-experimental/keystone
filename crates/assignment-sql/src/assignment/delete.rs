@@ -13,15 +13,16 @@
 // SPDX-License-Identifier: Apache-2.0
 use sea_orm::{DatabaseConnection, EntityTrait};
 
-use crate::assignment::{
+use openstack_keystone_core::assignment::{
     AssignmentProviderError,
     types::{Assignment, AssignmentType},
 };
-use crate::db::entity::{
+use openstack_keystone_core::error::DbContextExt;
+
+use crate::entity::{
     assignment as db_assignment, sea_orm_active_enums::Type as DbAssignmentType,
     system_assignment as db_system_assignment,
 };
-use crate::error::DbContextExt;
 
 /// Delete assignment grant.
 pub async fn delete(

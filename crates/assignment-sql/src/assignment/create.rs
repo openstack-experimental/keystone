@@ -15,15 +15,16 @@
 use sea_orm::DatabaseConnection;
 use sea_orm::entity::*;
 
-use crate::assignment::{
+use openstack_keystone_core::assignment::{
     AssignmentProviderError,
     types::{Assignment, AssignmentCreate, AssignmentType},
 };
-use crate::db::entity::{
+use openstack_keystone_core::error::DbContextExt;
+
+use crate::entity::{
     assignment as db_assignment, sea_orm_active_enums::Type as DbAssignmentType,
     system_assignment as db_system_assignment,
 };
-use crate::error::DbContextExt;
 
 /// Create assignment grant.
 pub async fn create(

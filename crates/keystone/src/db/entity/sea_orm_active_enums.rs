@@ -24,18 +24,6 @@ pub enum EntityType {
     #[sea_orm(string_value = "user")]
     User,
 }
-#[derive(Debug, Clone, PartialEq, Eq, EnumIter, DeriveActiveEnum)]
-#[sea_orm(rs_type = "String", db_type = "Enum", enum_name = "type")]
-pub enum Type {
-    #[sea_orm(string_value = "GroupDomain")]
-    GroupDomain,
-    #[sea_orm(string_value = "GroupProject")]
-    GroupProject,
-    #[sea_orm(string_value = "UserDomain")]
-    UserDomain,
-    #[sea_orm(string_value = "UserProject")]
-    UserProject,
-}
 
 #[derive(Debug, Clone, PartialEq, Eq, EnumIter, DeriveActiveEnum)]
 #[sea_orm(

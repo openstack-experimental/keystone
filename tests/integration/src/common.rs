@@ -127,7 +127,12 @@ pub async fn setup_schema(db: &DbConn) -> Result<()> {
 
     create_table(db, &schema, Role).await?;
     create_table(db, &schema, ImpliedRole).await?;
-    create_table(db, &schema, Assignment).await?;
+    create_table(
+        db,
+        &schema,
+        openstack_keystone_assignment_sql::entity::prelude::Assignment,
+    )
+    .await?;
     create_table(db, &schema, RevocationEvent).await?;
 
     create_table(db, &schema, AccessRule).await?;

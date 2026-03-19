@@ -11,21 +11,23 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+//! # Assignment driver to the OpenStack Keystone for the SQL database.
 
 use async_trait::async_trait;
 use std::collections::{BTreeMap, HashSet};
 
-use super::super::types::*;
-use crate::assignment::{AssignmentProviderError, backend::AssignmentBackend};
-use crate::identity::IdentityApi;
-use crate::keystone::ServiceState;
-use crate::resource::ResourceApi;
-use crate::role::{
+use openstack_keystone_core::assignment::types::*;
+use openstack_keystone_core::assignment::{AssignmentProviderError, backend::AssignmentBackend};
+use openstack_keystone_core::identity::IdentityApi;
+use openstack_keystone_core::keystone::ServiceState;
+use openstack_keystone_core::resource::ResourceApi;
+use openstack_keystone_core::role::{
     RoleApi,
     types::{Role, RoleListParameters},
 };
 
-pub(crate) mod assignment;
+mod assignment;
+pub mod entity;
 
 #[derive(Default)]
 pub struct SqlBackend {}
@@ -183,15 +185,6 @@ impl AssignmentBackend for SqlBackend {
     }
 }
 
-impl From<crate::error::DatabaseError> for AssignmentProviderError {
-    fn from(source: crate::error::DatabaseError) -> Self {
-        match source {
-            cfl @ crate::error::DatabaseError::Conflict { .. } => Self::Conflict(cfl.to_string()),
-            other => Self::Driver(other.to_string()),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use sea_orm::{DatabaseBackend, DatabaseConnection, MockDatabase};
@@ -200,11 +193,12 @@ mod tests {
 
     use super::assignment::tests::*;
     use super::*;
-    use crate::config::Config;
-    use crate::keystone::Service;
-    use crate::policy::MockPolicy;
-    use crate::provider::Provider;
-    use crate::role::{MockRoleProvider, types::RoleBuilder};
+    use openstack_keystone_core::config::Config;
+    use openstack_keystone_core::keystone::Service;
+    use openstack_keystone_core::policy::MockPolicy;
+    use openstack_keystone_core::provider::Provider;
+    use openstack_keystone_core::role::{MockRoleProvider, types::RoleBuilder};
+    //use openstack_keystone_core::tests::get_mocked_state;
 
     fn get_mock_state(db: DatabaseConnection, provider: Provider) -> Arc<Service> {
         Arc::new(

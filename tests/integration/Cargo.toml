@@ -13,6 +13,7 @@ dist = false
 chrono.workspace = true
 eyre.workspace = true
 itertools.workspace = true
+openstack-keystone-assignment-sql = { version = "0.1", path = "../../crates/assignment-sql/" }
 openstack-keystone-core = { version = "0.1", path = "../../crates/core", features = ["mock"] }
 openstack-keystone-token-fernet = { version = "0.1", path = "../../crates/token-fernet/" }
 openstack-keystone = { version = "0.1", path = "../../crates/keystone/" }
