@@ -369,7 +369,7 @@ impl PluginManager {
         );
         self.register_assignment_backend(
             "sql",
-            Arc::new(crate::assignment::backend::SqlBackend::default()),
+            Arc::new(openstack_keystone_assignment_sql::SqlBackend::default()),
         );
         self.register_catalog_backend(
             "sql",

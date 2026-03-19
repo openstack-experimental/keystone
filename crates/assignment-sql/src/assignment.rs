@@ -13,8 +13,9 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Role assignment database backend.
 
-use crate::assignment::{AssignmentProviderError, types::*};
-use crate::db::entity::{
+use openstack_keystone_core::assignment::{AssignmentProviderError, types::*};
+
+use crate::entity::{
     assignment as db_assignment, sea_orm_active_enums::Type as DbAssignmentType,
     system_assignment as db_system_assignment,
 };
@@ -95,7 +96,7 @@ impl TryFrom<&AssignmentType> for DbAssignmentType {
 
 #[cfg(test)]
 pub mod tests {
-    use crate::db::entity::{assignment, sea_orm_active_enums, system_assignment};
+    use crate::entity::{assignment, sea_orm_active_enums, system_assignment};
 
     pub fn get_role_assignment_mock<S: Into<String>>(role_id: S) -> assignment::Model {
         assignment::Model {

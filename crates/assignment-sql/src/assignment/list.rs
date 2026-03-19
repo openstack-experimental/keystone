@@ -16,18 +16,19 @@ use sea_orm::DatabaseConnection;
 use sea_orm::entity::*;
 use sea_orm::query::*;
 
-use crate::assignment::{
+use openstack_keystone_core::assignment::{
     AssignmentProviderError,
     types::{
         Assignment, RoleAssignmentListForMultipleActorTargetParameters, RoleAssignmentTargetType,
     },
 };
-use crate::db::entity::{
+use openstack_keystone_core::error::DbContextExt;
+
+use crate::entity::{
     assignment as db_assignment,
     prelude::{Assignment as DbAssignment, SystemAssignment as DbSystemAssignment},
     system_assignment as db_system_assignment,
 };
-use crate::error::DbContextExt;
 
 /// Get all role assignments by list of actors on list of targets.
 ///
@@ -175,11 +176,11 @@ async fn list_for_multiple_actors_and_targets_system(
 mod tests {
     use sea_orm::{DatabaseBackend, MockDatabase, Transaction};
 
-    use crate::db::entity::assignment;
+    use openstack_keystone_core::assignment::types::{AssignmentType, RoleAssignmentTarget};
 
     use super::super::tests::*;
     use super::*;
-    use crate::assignment::types::{AssignmentType, RoleAssignmentTarget};
+    use crate::entity::assignment;
 
     #[tokio::test]
     async fn test_list_for_multiple_actor_targets_multiple_actors_single_target() {

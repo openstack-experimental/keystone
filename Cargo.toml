@@ -1,6 +1,7 @@
 [workspace]
 members = [
   "crates/api-types",
+  "crates/assignment-sql",
   "crates/core",
   "crates/keystone",
   "crates/token-fernet",
@@ -8,7 +9,7 @@ members = [
   "crates/webauthn",
   "tests/api",
   "tests/integration",
-  "tests/federation",
+  "tests/federation", 
 ]
 exclude = [
   "tests/loadtest"

@@ -17,17 +17,18 @@ use sea_orm::DatabaseConnection;
 use sea_orm::entity::*;
 use sea_orm::query::*;
 
-use crate::assignment::{
+use openstack_keystone_core::assignment::{
     AssignmentProviderError,
     types::{Assignment, AssignmentType},
 };
-use crate::db::entity::{
+use openstack_keystone_core::error::DbContextExt;
+
+use crate::entity::{
     assignment as db_assignment,
     prelude::{Assignment as DbAssignment, SystemAssignment as DbSystemAssignment},
     sea_orm_active_enums::Type as DbAssignmentType,
     system_assignment as db_system_assignment,
 };
-use crate::error::DbContextExt;
 
 /// Check whether the grant exists.
 ///

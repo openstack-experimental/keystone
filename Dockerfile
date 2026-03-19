@@ -16,6 +16,7 @@ RUN USER=root cargo new keystone
 # We want dependencies cached, so copy those first.
 COPY Cargo.toml Cargo.lock /usr/src/keystone/
 COPY crates/api-types/Cargo.toml /usr/src/keystone/crates/api-types/
+COPY crates/assignment-sql/Cargo.toml /usr/src/keystone/crates/assignment-sql/
 COPY crates/core/Cargo.toml /usr/src/keystone/crates/core/
 COPY crates/keystone/Cargo.toml /usr/src/keystone/crates/keystone/
 COPY crates/storage/Cargo.toml /usr/src/keystone/crates/storage/
@@ -31,6 +32,7 @@ RUN mkdir -p keystone/crates/keystone/src/bin && touch keystone/crates/keystone/
   mkdir -p keystone/tests/loadtest/src &&\
   cp keystone/src/main.rs keystone/tests/loadtest/src/main.rs &&\
   mkdir -p keystone/crates/api-types/src && touch keystone/crates/api-types/src/lib.rs &&\
+  mkdir -p keystone/crates/assignment-sql/src && touch keystone/crates/assignment-sql/src/lib.rs &&\
   mkdir -p keystone/crates/core/src && touch keystone/crates/core/src/lib.rs &&\
   mkdir -p keystone/crates/storage/src && touch keystone/crates/storage/src/lib.rs &&\
   mkdir -p keystone/crates/token-fernet/src && touch keystone/crates/token-fernet/src/lib.rs &&\
@@ -51,6 +53,7 @@ COPY crates/api-types/ /usr/src/keystone/crates/api-types
 COPY crates/storage/ /usr/src/keystone/crates/storage
 COPY crates/token-fernet/ /usr/src/keystone/crates/token-fernet
 COPY crates/webauthn/ /usr/src/keystone/crates/webauthn
+COPY crates/assignment-sql/ /usr/src/keystone/crates/assignment-sql
 
 ## Touch main.rs to prevent cached release build
 RUN touch crates/keystone/src/lib.rs && touch crates/keystone/src/bin/keystone.rs

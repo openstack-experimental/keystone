@@ -3302,6 +3302,7 @@ dependencies = [
  "mockall",
  "openidconnect",
  "openstack-keystone-api-types",
+ "openstack-keystone-assignment-sql",
  "openstack-keystone-core",
  "openstack-keystone-distributed-storage",
  "openstack-keystone-token-fernet",
@@ -3346,6 +3347,17 @@ dependencies = [
  "utoipa",
  "validator",
  "webauthn-rs-proto",
+]
+
+[[package]]
+name = "openstack-keystone-assignment-sql"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "openstack-keystone-core",
+ "sea-orm",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -5789,6 +5801,7 @@ dependencies = [
  "eyre",
  "itertools 0.14.0",
  "openstack-keystone",
+ "openstack-keystone-assignment-sql",
  "openstack-keystone-core",
  "openstack-keystone-token-fernet",
  "sea-orm",
