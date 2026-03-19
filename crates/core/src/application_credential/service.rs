@@ -81,7 +81,6 @@ impl ApplicationCredentialApi for ApplicationCredentialService {
     }
 
     /// Get a single application credential by ID.
-    #[tracing::instrument(level = "info", skip(self, state))]
     async fn get_application_credential<'a>(
         &self,
         state: &ServiceState,
@@ -113,7 +112,6 @@ impl ApplicationCredentialApi for ApplicationCredentialService {
     }
 
     /// List application credentials.
-    #[tracing::instrument(level = "info", skip(self, state))]
     async fn list_application_credentials(
         &self,
         state: &ServiceState,

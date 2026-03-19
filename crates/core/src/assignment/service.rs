@@ -45,7 +45,6 @@ impl AssignmentService {
 #[async_trait]
 impl AssignmentApi for AssignmentService {
     /// Create assignment grant.
-    #[tracing::instrument(level = "info", skip(self, state))]
     async fn create_grant(
         &self,
         state: &ServiceState,
@@ -55,7 +54,6 @@ impl AssignmentApi for AssignmentService {
     }
 
     /// List role assignments
-    #[tracing::instrument(level = "info", skip(self, state))]
     async fn list_role_assignments(
         &self,
         state: &ServiceState,
@@ -80,7 +78,6 @@ impl AssignmentApi for AssignmentService {
     }
 
     /// Revoke grant
-    #[tracing::instrument(level = "info", skip(self, state))]
     async fn revoke_grant(
         &self,
         state: &ServiceState,

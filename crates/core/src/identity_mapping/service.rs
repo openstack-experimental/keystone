@@ -58,7 +58,6 @@ impl IdentityMappingApi for IdentityMappingService {
     }
 
     /// Get the IdMapping by the public_id.
-    #[tracing::instrument(level = "info", skip(self, state))]
     async fn get_by_public_id<'a>(
         &self,
         state: &ServiceState,

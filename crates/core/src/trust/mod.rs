@@ -91,6 +91,7 @@ impl TrustProvider {
 #[async_trait]
 impl TrustApi for TrustProvider {
     /// Get trust by ID.
+    #[tracing::instrument(level = "debug", skip(self, state))]
     async fn get_trust<'a>(
         &self,
         state: &ServiceState,
@@ -104,6 +105,7 @@ impl TrustApi for TrustProvider {
     }
 
     /// Resolve trust delegation chain by the trust ID.
+    #[tracing::instrument(level = "debug", skip(self, state))]
     async fn get_trust_delegation_chain<'a>(
         &self,
         state: &ServiceState,
@@ -117,6 +119,7 @@ impl TrustApi for TrustProvider {
     }
 
     /// List trusts.
+    #[tracing::instrument(level = "debug", skip(self, state))]
     async fn list_trusts(
         &self,
         state: &ServiceState,
@@ -136,6 +139,7 @@ impl TrustApi for TrustProvider {
     /// - validate redelegated trust expiration is not later than of the
     ///   original.
     /// - redelegated trust must not add new roles.
+    #[tracing::instrument(level = "debug", skip(self, state))]
     async fn validate_trust_delegation_chain(
         &self,
         state: &ServiceState,
