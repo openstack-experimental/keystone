@@ -56,11 +56,8 @@ impl K8sAuthService {
         ca_path: Option<PathBuf>,
     ) -> Result<Arc<Client>, K8sAuthProviderError> {
         // Check if we already have a pooled client
-        {
-            let read_guard = self.http_clients.read().await;
-            if let Some(client) = read_guard.get(&instance.id) {
-                return Ok(Arc::clone(client));
-            }
+        if let Some(client) = self.http_client_pool.get_client(&instance.id).await {
+            return Ok(client);
         }
 
         // Create a new one
@@ -88,9 +85,10 @@ impl K8sAuthService {
         // Build the client
         let shared_client = Arc::new(client_builder.build()?);
 
-        // 3. Store it for future use
-        let mut write_guard = self.http_clients.write().await;
-        write_guard.insert(instance.id.clone(), Arc::clone(&shared_client));
+        // Store it for future use
+        self.http_client_pool
+            .put_client(&instance.id, Arc::clone(&shared_client))
+            .await;
 
         Ok(shared_client)
     }
@@ -307,7 +305,6 @@ impl K8sAuthService {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
     use std::io::Write;
     use std::sync::Arc;
 
@@ -316,10 +313,10 @@ mod tests {
     use httpmock::{Mock, MockServer};
     use jsonwebtoken::{EncodingKey, Header, encode};
     use tempfile::NamedTempFile;
-    use tokio::sync::RwLock;
 
     use super::super::backend::MockK8sAuthBackend;
     use super::*;
+    use crate::common::HttpClientPool;
     use crate::identity::{MockIdentityProvider, types::*};
     use crate::keystone::Service;
     use crate::provider::Provider;
@@ -423,7 +420,7 @@ FPrC1HpT3dzIAiEAtEB0so+KoJb/2Opn1RycVzxke1CQrWgjS8ySnnFK5ok=
 
         let provider = K8sAuthService {
             backend_driver: Arc::new(backend),
-            http_clients: RwLock::new(HashMap::new()),
+            http_client_pool: Box::new(HttpClientPool::default()),
         };
 
         let token = SecretString::from(encode(
@@ -447,7 +444,7 @@ FPrC1HpT3dzIAiEAtEB0so+KoJb/2Opn1RycVzxke1CQrWgjS8ySnnFK5ok=
     async fn test_get_or_create_client_with_ca() -> Result<()> {
         let srv = K8sAuthService {
             backend_driver: Arc::new(MockK8sAuthBackend::default()),
-            http_clients: RwLock::new(HashMap::new()),
+            http_client_pool: Box::new(HttpClientPool::default()),
         };
         let instance = K8sAuthInstance {
             ca_cert: Some(CA_CERT.into()),
@@ -459,10 +456,13 @@ FPrC1HpT3dzIAiEAtEB0so+KoJb/2Opn1RycVzxke1CQrWgjS8ySnnFK5ok=
             name: Some("foo".into()),
         };
         srv.get_or_create_client(&instance, None).await?;
-        {
-            let read_guard = srv.http_clients.read().await;
-            assert!(read_guard.contains_key(&instance.id));
-        }
+        //  Ensure the connection is present in the pool
+        assert!(
+            srv.http_client_pool
+                .get_client(&instance.id)
+                .await
+                .is_some()
+        );
         // Repeat the get, now it should be returned from the cache
         srv.get_or_create_client(&instance, None).await?;
 
@@ -484,7 +484,7 @@ FPrC1HpT3dzIAiEAtEB0so+KoJb/2Opn1RycVzxke1CQrWgjS8ySnnFK5ok=
     async fn test_get_or_create_client_k8s_ca() -> Result<()> {
         let provider = K8sAuthService {
             backend_driver: Arc::new(MockK8sAuthBackend::default()),
-            http_clients: RwLock::new(HashMap::new()),
+            http_client_pool: Box::new(HttpClientPool::default()),
         };
         let instance = K8sAuthInstance {
             ca_cert: None,
@@ -510,7 +510,7 @@ FPrC1HpT3dzIAiEAtEB0so+KoJb/2Opn1RycVzxke1CQrWgjS8ySnnFK5ok=
     async fn test_get_or_create_client_error_no_ca() -> Result<()> {
         let provider = K8sAuthService {
             backend_driver: Arc::new(MockK8sAuthBackend::default()),
-            http_clients: RwLock::new(HashMap::new()),
+            http_client_pool: Box::new(HttpClientPool::default()),
         };
         let instance = K8sAuthInstance {
             ca_cert: None,
@@ -534,7 +534,7 @@ FPrC1HpT3dzIAiEAtEB0so+KoJb/2Opn1RycVzxke1CQrWgjS8ySnnFK5ok=
     async fn test_get_or_create_client_disable_local_ca_jwt() -> Result<()> {
         let provider = K8sAuthService {
             backend_driver: Arc::new(MockK8sAuthBackend::default()),
-            http_clients: RwLock::new(HashMap::new()),
+            http_client_pool: Box::new(HttpClientPool::default()),
         };
         let instance = K8sAuthInstance {
             ca_cert: None,
@@ -553,7 +553,7 @@ FPrC1HpT3dzIAiEAtEB0so+KoJb/2Opn1RycVzxke1CQrWgjS8ySnnFK5ok=
     async fn test_query_k8s_token_review_aud_mismatch() -> Result<()> {
         let provider = K8sAuthService {
             backend_driver: Arc::new(MockK8sAuthBackend::default()),
-            http_clients: RwLock::new(HashMap::new()),
+            http_client_pool: Box::new(HttpClientPool::default()),
         };
         let instance = K8sAuthInstance {
             ca_cert: None,
@@ -601,7 +601,7 @@ FPrC1HpT3dzIAiEAtEB0so+KoJb/2Opn1RycVzxke1CQrWgjS8ySnnFK5ok=
     async fn test_query_k8s_token_review_expired() -> Result<()> {
         let provider = K8sAuthService {
             backend_driver: Arc::new(MockK8sAuthBackend::default()),
-            http_clients: RwLock::new(HashMap::new()),
+            http_client_pool: Box::new(HttpClientPool::default()),
         };
         let instance = K8sAuthInstance {
             ca_cert: None,
@@ -649,7 +649,7 @@ FPrC1HpT3dzIAiEAtEB0so+KoJb/2Opn1RycVzxke1CQrWgjS8ySnnFK5ok=
     async fn test_query_k8s_token_review() -> Result<()> {
         let provider = K8sAuthService {
             backend_driver: Arc::new(MockK8sAuthBackend::default()),
-            http_clients: RwLock::new(HashMap::new()),
+            http_client_pool: Box::new(HttpClientPool::default()),
         };
         let mock_srv = MockServer::start_async().await;
         let instance = K8sAuthInstance {
@@ -756,7 +756,7 @@ FPrC1HpT3dzIAiEAtEB0so+KoJb/2Opn1RycVzxke1CQrWgjS8ySnnFK5ok=
     fn test_check_k8s_token_review_response() {
         let provider = K8sAuthService {
             backend_driver: Arc::new(MockK8sAuthBackend::default()),
-            http_clients: RwLock::new(HashMap::new()),
+            http_client_pool: Box::new(HttpClientPool::default()),
         };
 
         let role = K8sAuthRole {
@@ -863,7 +863,7 @@ FPrC1HpT3dzIAiEAtEB0so+KoJb/2Opn1RycVzxke1CQrWgjS8ySnnFK5ok=
             .returning(|_, _| Ok(None));
         let provider = K8sAuthService {
             backend_driver: Arc::new(backend),
-            http_clients: RwLock::new(HashMap::new()),
+            http_client_pool: Box::new(HttpClientPool::default()),
         };
 
         if let Err(K8sAuthProviderError::AuthInstanceNotFound(x)) = provider
@@ -912,7 +912,7 @@ FPrC1HpT3dzIAiEAtEB0so+KoJb/2Opn1RycVzxke1CQrWgjS8ySnnFK5ok=
 
         let provider = K8sAuthService {
             backend_driver: Arc::new(backend),
-            http_clients: RwLock::new(HashMap::new()),
+            http_client_pool: Box::new(HttpClientPool::default()),
         };
 
         if let Err(K8sAuthProviderError::RoleNotFound(x)) = provider
@@ -1007,7 +1007,7 @@ FPrC1HpT3dzIAiEAtEB0so+KoJb/2Opn1RycVzxke1CQrWgjS8ySnnFK5ok=
 
         let provider = K8sAuthService {
             backend_driver: Arc::new(backend),
-            http_clients: RwLock::new(HashMap::new()),
+            http_client_pool: Box::new(HttpClientPool::default()),
         };
 
         // verify disabled configuration is checked

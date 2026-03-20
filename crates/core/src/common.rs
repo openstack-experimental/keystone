@@ -12,5 +12,44 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //! # Common functionality
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use async_trait::async_trait;
+use reqwest::Client;
+use tokio::sync::RwLock;
+
 pub mod password_hashing;
 pub mod types;
+
+/// HTTP Client pool trait.
+#[async_trait]
+pub trait HttpClientProvider: Send + Sync {
+    /// Get established [Client] by the name.
+    async fn get_client(&self, name: &str) -> Option<Arc<Client>>;
+    /// Pub established [Client] into the connection pool.
+    async fn put_client(&self, name: &str, client: Arc<Client>);
+}
+
+/// Http client pool.
+///
+/// NOTE: Simply placing the RwLock<HashMap<String, Arc<Client>>> into the providers immediately
+/// explodes the compilation time. To deal with it is moved out into a separate structure making it
+/// at the same time reusable.
+#[derive(Default)]
+pub struct HttpClientPool {
+    pub inner: RwLock<HashMap<String, Arc<Client>>>,
+}
+
+#[async_trait]
+impl HttpClientProvider for HttpClientPool {
+    async fn get_client(&self, name: &str) -> Option<Arc<Client>> {
+        let read_guard = self.inner.read().await;
+        read_guard.get(name).cloned()
+    }
+
+    async fn put_client(&self, name: &str, client: Arc<Client>) {
+        let mut write_guard = self.inner.write().await;
+        write_guard.insert(name.to_string(), client);
+    }
+}

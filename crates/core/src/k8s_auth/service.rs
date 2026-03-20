@@ -13,18 +13,17 @@
 // SPDX-License-Identifier: Apache-2.0
 //! # Kubernetes authentication.
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use reqwest::Client;
-use tokio::sync::RwLock;
 
+use crate::auth::AuthenticatedInfo;
+use crate::common::{HttpClientPool, HttpClientProvider};
+use crate::config::Config;
 use crate::k8s_auth::{K8sAuthProviderError, backend::K8sAuthBackend, types::*};
 use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManagerApi;
 use crate::token::types::TokenRestriction;
-use crate::{auth::AuthenticatedInfo, config::Config};
 
 /// K8s Auth provider.
 pub struct K8sAuthService {
@@ -32,7 +31,7 @@ pub struct K8sAuthService {
     pub(super) backend_driver: Arc<dyn K8sAuthBackend>,
 
     /// Reqwest client.
-    pub(super) http_clients: RwLock<HashMap<String, Arc<Client>>>,
+    pub(super) http_client_pool: Box<dyn HttpClientProvider>,
 }
 
 impl K8sAuthService {
@@ -45,7 +44,7 @@ impl K8sAuthService {
             .clone();
         Ok(Self {
             backend_driver,
-            http_clients: RwLock::new(HashMap::new()),
+            http_client_pool: Box::new(HttpClientPool::default()),
         })
     }
 }
@@ -191,7 +190,7 @@ pub(crate) mod tests {
             .returning(|_, _| Ok(K8sAuthInstance::default()));
         let provider = K8sAuthService {
             backend_driver: Arc::new(backend),
-            http_clients: RwLock::new(HashMap::new()),
+            http_client_pool: Box::new(HttpClientPool::default()),
         };
 
         assert!(
@@ -222,7 +221,7 @@ pub(crate) mod tests {
             .returning(|_, _| Ok(K8sAuthRole::default()));
         let provider = K8sAuthService {
             backend_driver: Arc::new(backend),
-            http_clients: RwLock::new(HashMap::new()),
+            http_client_pool: Box::new(HttpClientPool::default()),
         };
 
         assert!(
