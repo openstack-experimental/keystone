@@ -14,7 +14,7 @@
 use chrono::{NaiveDate, TimeDelta, Utc};
 use serde::Deserialize;
 
-use crate::config::common::*;
+use crate::common::*;
 
 /// Security compliance configuration.
 #[derive(Debug, Deserialize, Clone)]

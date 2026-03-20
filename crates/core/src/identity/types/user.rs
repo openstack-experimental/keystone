@@ -18,7 +18,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use validator::Validate;
 
-use crate::config::Config;
+use openstack_keystone_config::Config;
+
 use crate::error::BuilderError;
 
 #[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]

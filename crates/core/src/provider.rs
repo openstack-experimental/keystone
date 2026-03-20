@@ -19,6 +19,8 @@
 //! easy injection of mocked providers.
 use derive_builder::Builder;
 
+use openstack_keystone_config::Config;
+
 use crate::application_credential::ApplicationCredentialApi;
 use crate::application_credential::ApplicationCredentialProvider;
 #[cfg(any(test, feature = "mock"))]
@@ -31,7 +33,6 @@ use crate::catalog::CatalogApi;
 use crate::catalog::CatalogProvider;
 #[cfg(any(test, feature = "mock"))]
 use crate::catalog::MockCatalogProvider;
-use crate::config::Config;
 use crate::error::KeystoneError;
 use crate::federation::FederationApi;
 use crate::federation::FederationProvider;

@@ -17,9 +17,10 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
+use openstack_keystone_config::Config;
+
 use crate::auth::AuthenticatedInfo;
 use crate::common::{HttpClientPool, HttpClientProvider};
-use crate::config::Config;
 use crate::k8s_auth::{K8sAuthProviderError, backend::K8sAuthBackend, types::*};
 use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManagerApi;

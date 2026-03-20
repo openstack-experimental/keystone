@@ -32,7 +32,7 @@ use rmp::{
 use tracing::trace;
 use validator::Validate;
 
-use openstack_keystone_core::config::Config;
+use openstack_keystone_config::Config;
 use openstack_keystone_core::token::types::{
     application_credential::ApplicationCredentialPayload, domain_scoped::DomainScopePayload,
     federation_domain_scoped::FederationDomainScopePayload,
@@ -424,7 +424,7 @@ pub mod tests {
     use tempfile::tempdir;
     use uuid::Uuid;
 
-    use openstack_keystone_core::config::Config;
+    use openstack_keystone_config::Config;
 
     use super::*;
 

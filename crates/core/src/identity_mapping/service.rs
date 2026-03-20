@@ -17,7 +17,8 @@
 use async_trait::async_trait;
 use std::sync::Arc;
 
-use crate::config::Config;
+use openstack_keystone_config::Config;
+
 use crate::identity_mapping::{
     IdentityMappingProviderError, backend::IdentityMappingBackend, types::*,
 };

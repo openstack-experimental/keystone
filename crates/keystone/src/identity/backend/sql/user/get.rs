@@ -16,8 +16,9 @@ use sea_orm::DatabaseConnection;
 use sea_orm::entity::*;
 use sea_orm::query::*;
 
+use openstack_keystone_config::Config;
+
 use super::super::local_user;
-use crate::config::Config;
 use crate::db::entity::{
     nonlocal_user as db_nonlocal_user,
     prelude::{FederatedUser, NonlocalUser, User as DbUser, UserOption},
@@ -132,11 +133,11 @@ mod tests {
     use sea_orm::{DatabaseBackend, IntoMockRow, MockDatabase, Transaction};
     use std::collections::BTreeMap;
 
-    use crate::config::Config;
-    use crate::db::entity::user_option as db_user_option;
+    use openstack_keystone_config::Config;
 
     use super::super::tests::*;
     use super::*;
+    use crate::db::entity::user_option as db_user_option;
 
     #[tokio::test]
     async fn test_get_main() {

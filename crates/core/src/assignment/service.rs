@@ -15,8 +15,9 @@ use async_trait::async_trait;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use openstack_keystone_config::Config;
+
 use crate::assignment::{AssignmentProviderError, backend::AssignmentBackend, types::*};
-use crate::config::Config;
 use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManagerApi;
 use crate::revoke::{RevokeApi, types::RevocationEventCreate};

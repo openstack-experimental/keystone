@@ -16,8 +16,9 @@ use sea_orm::DatabaseConnection;
 use sea_orm::entity::*;
 use sea_orm::query::*;
 
+use openstack_keystone_config::Config;
+
 use super::super::local_user;
-use crate::config::Config;
 use crate::db::entity::{
     federated_user as db_federated_user, local_user as db_local_user,
     nonlocal_user as db_nonlocal_user, password as db_password,
@@ -165,8 +166,7 @@ pub async fn list(
 mod tests {
     use sea_orm::{DatabaseBackend, MockDatabase, Transaction};
 
-    use crate::config::Config;
-    use crate::db::entity::password as db_password;
+    use openstack_keystone_config::Config;
 
     use super::super::super::federated_user::tests::*;
     use super::super::super::local_user::tests::*;
@@ -174,6 +174,7 @@ mod tests {
     use super::super::super::user_option::tests::*;
     use super::super::tests::*;
     use super::*;
+    use crate::db::entity::password as db_password;
 
     #[tokio::test]
     async fn test_list() {

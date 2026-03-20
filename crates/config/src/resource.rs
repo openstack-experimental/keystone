@@ -13,30 +13,20 @@
 // SPDX-License-Identifier: Apache-2.0
 use serde::Deserialize;
 
-use crate::config::common::default_sql_driver;
+use crate::common::default_sql_driver;
 
-/// Revoke provider configuration.
+/// Resource provider (domain, project).
 #[derive(Debug, Deserialize, Clone)]
-pub struct RevokeProvider {
-    /// Entry point for the token revocation backend driver in the
-    /// `keystone.revoke` namespace. Keystone only provides a `sql` driver.
+pub struct ResourceProvider {
+    /// Resource provider backend.
     #[serde(default = "default_sql_driver")]
     pub driver: String,
-    /// The number of seconds after a token has expired before a corresponding
-    /// revocation event may be purged from the backend.
-    #[serde(default = "default_expiration_buffer")]
-    pub expiration_buffer: usize,
 }
 
-impl Default for RevokeProvider {
+impl Default for ResourceProvider {
     fn default() -> Self {
         Self {
             driver: default_sql_driver(),
-            expiration_buffer: default_expiration_buffer(),
         }
     }
-}
-
-fn default_expiration_buffer() -> usize {
-    1800
 }

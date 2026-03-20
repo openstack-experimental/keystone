@@ -44,8 +44,9 @@ mod mock;
 pub mod service;
 pub mod types;
 
+use openstack_keystone_config::Config;
+
 use crate::assignment::service::AssignmentService;
-use crate::config::Config;
 use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManagerApi;
 use types::*;

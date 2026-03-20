@@ -18,9 +18,10 @@ use sea_orm::query::*;
 use secrecy::ExposeSecret;
 use uuid::Uuid;
 
+use openstack_keystone_config::Config;
+
 use crate::application_credential::{ApplicationCredentialProviderError, types::*};
 use crate::common::password_hashing;
-use crate::config::Config;
 use crate::db::entity::{
     access_rule as db_access_rule, application_credential as db_application_credential,
     application_credential_access_rule as db_application_credential_access_rule,
@@ -192,9 +193,10 @@ mod tests {
     use chrono::{Timelike, Utc};
     use sea_orm::{DatabaseBackend, MockDatabase, MockExecResult, Statement, Transaction};
 
+    use openstack_keystone_config::PasswordHashingAlgo;
+
     use super::super::tests::*;
     use super::*;
-    use crate::config::PasswordHashingAlgo;
     use crate::role::types::RoleRef;
 
     #[tokio::test]

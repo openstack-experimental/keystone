@@ -23,6 +23,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use openstack_keystone_config::Config;
 use openstack_keystone_core::application_credential::{
     ApplicationCredentialProviderError, backend::ApplicationCredentialBackend,
 };
@@ -30,7 +31,6 @@ use openstack_keystone_core::assignment::backend::AssignmentBackend;
 use openstack_keystone_core::assignment::error::AssignmentProviderError;
 use openstack_keystone_core::catalog::backend::CatalogBackend;
 use openstack_keystone_core::catalog::error::CatalogProviderError;
-use openstack_keystone_core::config::Config;
 use openstack_keystone_core::federation::backend::FederationBackend;
 use openstack_keystone_core::federation::error::FederationProviderError;
 use openstack_keystone_core::identity::backend::IdentityBackend;

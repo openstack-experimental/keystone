@@ -17,11 +17,11 @@ use sea_orm::DatabaseConnection;
 use super::super::nonlocal_user;
 use super::super::user;
 use super::super::user_option;
-use crate::config::Config;
 use crate::identity::{
     IdentityProviderError,
     types::{ServiceAccount, ServiceAccountBuilder},
 };
+use openstack_keystone_config::Config;
 
 #[tracing::instrument(skip_all)]
 pub async fn get<U>(
@@ -73,8 +73,9 @@ where
 mod tests {
     use sea_orm::{DatabaseBackend, MockDatabase};
 
+    use openstack_keystone_config::Config;
+
     use super::*;
-    use crate::config::Config;
     use crate::identity::backend::sql::nonlocal_user::tests::get_nonlocal_user_mock;
     use crate::identity::backend::sql::user::tests::get_user_mock;
     use crate::identity::backend::sql::user_option::tests::get_user_options_mock;

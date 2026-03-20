@@ -12,21 +12,32 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 use serde::Deserialize;
+use url::Url;
+use url_macro::url;
 
-use crate::config::common::default_sql_driver;
+use crate::common::default_true;
 
-/// Assignment Provider.
-#[derive(Debug, Deserialize, Clone)]
-pub struct AssignmentProvider {
-    /// Assignment provider driver.
-    #[serde(default = "default_sql_driver")]
-    pub driver: String,
+/// The configuration options for the API policy enforcement.
+#[derive(Clone, Debug, Deserialize)]
+pub struct PolicyProvider {
+    /// Whether the policy enforcement should be enforced or not.
+    #[serde(default = "default_true")]
+    pub enable: bool,
+
+    /// OpenPolicyAgent instance url to use for evaluating the policy.
+    #[serde(default = "default_opa_base_url")]
+    pub opa_base_url: Url,
 }
 
-impl Default for AssignmentProvider {
+impl Default for PolicyProvider {
     fn default() -> Self {
         Self {
-            driver: default_sql_driver(),
+            enable: true,
+            opa_base_url: default_opa_base_url(),
         }
     }
+}
+
+fn default_opa_base_url() -> Url {
+    url!("http://localhost:8181")
 }

@@ -14,7 +14,7 @@
 use chrono::{DateTime, TimeDelta, Utc};
 use serde::Deserialize;
 
-use crate::config::common::default_sql_driver;
+use crate::common::default_sql_driver;
 
 /// Federation provider.
 #[derive(Debug, Deserialize, Clone)]

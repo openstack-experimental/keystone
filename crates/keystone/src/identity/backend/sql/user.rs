@@ -13,13 +13,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use chrono::NaiveDate;
-//use chrono::{DateTime, NaiveDate, Utc};
-//use sea_orm::entity::*;
 use serde_json::Value;
 use tracing::error;
-//use uuid::Uuid;
 
-//use crate::config::Config;
 use crate::db::entity::user as db_user;
 use crate::identity::{
     //IdentityProviderError,

@@ -72,8 +72,9 @@ pub async fn list_user_groups<S: AsRef<str>>(
 mod tests {
     use sea_orm::{DatabaseBackend, MockDatabase, Transaction};
 
+    use openstack_keystone_config::Config;
+
     use super::*;
-    use crate::config::Config;
     use crate::identity::backend::sql::group::tests::get_group_mock;
 
     #[tokio::test]

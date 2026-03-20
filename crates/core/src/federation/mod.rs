@@ -17,6 +17,8 @@
 //! federation.
 use async_trait::async_trait;
 
+use openstack_keystone_config::Config;
+
 #[cfg(feature = "api")]
 pub mod api;
 pub mod backend;
@@ -26,7 +28,6 @@ pub mod mock;
 pub mod service;
 pub mod types;
 
-use crate::config::Config;
 use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManagerApi;
 use service::FederationService;

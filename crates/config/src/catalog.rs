@@ -13,17 +13,17 @@
 // SPDX-License-Identifier: Apache-2.0
 use serde::Deserialize;
 
-use crate::config::common::default_sql_driver;
+use crate::common::default_sql_driver;
 
-/// K8s auth provider.
+/// Catalog provider.
 #[derive(Debug, Deserialize, Clone)]
-pub struct K8sAuthProvider {
-    /// K8s auth provider backend.
+pub struct CatalogProvider {
+    /// Catalog provider driver.
     #[serde(default = "default_sql_driver")]
     pub driver: String,
 }
 
-impl Default for K8sAuthProvider {
+impl Default for CatalogProvider {
     fn default() -> Self {
         Self {
             driver: default_sql_driver(),

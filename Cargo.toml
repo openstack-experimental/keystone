@@ -9,7 +9,7 @@ members = [
   "crates/webauthn",
   "tests/api",
   "tests/integration",
-  "tests/federation", 
+  "tests/federation", "crates/config", 
 ]
 exclude = [
   "tests/loadtest"

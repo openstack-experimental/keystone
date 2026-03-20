@@ -16,7 +16,8 @@
 use async_trait::async_trait;
 use std::sync::Arc;
 
-use crate::config::Config;
+use openstack_keystone_config::Config;
+
 use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManagerApi;
 use crate::revoke::{RevokeProviderError, backend::RevokeBackend, types::*};

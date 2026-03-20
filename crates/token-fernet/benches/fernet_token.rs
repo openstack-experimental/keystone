@@ -6,7 +6,7 @@ use std::hint::black_box;
 use std::io::Write;
 use tempfile::tempdir;
 
-use openstack_keystone_core::config::Config;
+use openstack_keystone_config::Config;
 use openstack_keystone_token_fernet::FernetTokenProvider;
 use openstack_keystone_token_fernet::bench_get_fernet_timestamp;
 //use openstack_keystone::token::types::TokenBackend;

@@ -15,7 +15,8 @@
 use sea_orm::ConnectionTrait;
 use sea_orm::entity::*;
 
-use crate::config::Config;
+use openstack_keystone_config::Config;
+
 use crate::db::entity::{local_user, user};
 use crate::error::DbContextExt;
 use crate::identity::{IdentityProviderError, types::UserCreate};

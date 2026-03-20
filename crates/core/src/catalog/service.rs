@@ -15,8 +15,9 @@
 use async_trait::async_trait;
 use std::sync::Arc;
 
+use openstack_keystone_config::Config;
+
 use crate::catalog::{CatalogProviderError, backend::CatalogBackend, types::*};
-use crate::config::Config;
 use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManagerApi;
 

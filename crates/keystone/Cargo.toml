@@ -31,6 +31,7 @@ derive_builder.workspace = true
 eyre.workspace = true
 openstack-keystone-api-types = { version = "0.1", features = ["openapi", "validate"], path = "../api-types/"}
 openstack-keystone-assignment-sql = { version = "0.1", path = "../assignment-sql/" }
+openstack-keystone-config = { version = "0.1", path = "../config" }
 openstack-keystone-core = { version = "0.1", features = ["api"], path = "../core" }
 openstack-keystone-distributed-storage = { version = "0.1", path = "../storage/"}
 openstack-keystone-token-fernet = { version = "0.1", path = "../token-fernet/" }

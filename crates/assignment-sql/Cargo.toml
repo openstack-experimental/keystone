@@ -12,6 +12,7 @@ exclude.workspace = true
 
 [dependencies]
 async-trait.workspace = true
+openstack-keystone-config = { version = "0.1", path = "../config" }
 openstack-keystone-core = { version = "0.1", path = "../core" }
 sea-orm.workspace = true
 tokio = { workspace = true, features = ["macros"] }

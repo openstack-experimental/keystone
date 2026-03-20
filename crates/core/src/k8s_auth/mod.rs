@@ -25,11 +25,13 @@ mod mock;
 pub mod service;
 pub mod types;
 
+use openstack_keystone_config::Config;
+
+use crate::auth::AuthenticatedInfo;
 use crate::k8s_auth::service::K8sAuthService;
 use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManagerApi;
 use crate::token::types::TokenRestriction;
-use crate::{auth::AuthenticatedInfo, config::Config};
 use types::*;
 
 pub use error::K8sAuthProviderError;

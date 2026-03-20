@@ -19,6 +19,8 @@
 
 use async_trait::async_trait;
 
+use openstack_keystone_config::Config;
+
 pub mod backend;
 pub mod error;
 #[cfg(any(test, feature = "mock"))]
@@ -26,7 +28,6 @@ pub mod mock;
 pub mod service;
 pub mod types;
 
-use crate::config::Config;
 use crate::identity_mapping::service::IdentityMappingService;
 use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManagerApi;
