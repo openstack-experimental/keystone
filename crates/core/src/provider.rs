@@ -45,10 +45,9 @@ use crate::identity_mapping::IdentityMappingApi;
 use crate::identity_mapping::IdentityMappingProvider;
 #[cfg(any(test, feature = "mock"))]
 use crate::identity_mapping::MockIdentityMappingProvider;
-use crate::k8s_auth::K8sAuthApi;
-use crate::k8s_auth::K8sAuthProvider;
 #[cfg(any(test, feature = "mock"))]
 use crate::k8s_auth::MockK8sAuthProvider;
+use crate::k8s_auth::{K8sAuthApi, K8sAuthProvider};
 use crate::plugin_manager::PluginManagerApi;
 #[cfg(any(test, feature = "mock"))]
 use crate::resource::MockResourceProvider;
