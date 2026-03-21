@@ -28,7 +28,6 @@ pub mod error;
 #[cfg(any(test, feature = "mock"))]
 mod mock;
 pub mod service;
-//mod token_restriction;
 pub mod types;
 
 use crate::auth::{AuthenticatedInfo, AuthzInfo};

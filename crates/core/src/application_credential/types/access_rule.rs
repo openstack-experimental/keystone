@@ -14,13 +14,13 @@
 //! # Application credential access rule
 
 use derive_builder::Builder;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use validator::Validate;
 
 use crate::error::BuilderError;
 
 /// The application credential access rule object.
-#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(Builder, Clone, Debug, PartialEq, Serialize, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct AccessRule {
@@ -52,7 +52,7 @@ pub struct AccessRule {
 }
 
 /// The application credential access rule object to be created.
-#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(Builder, Clone, Debug, Default, PartialEq, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct AccessRuleCreate {

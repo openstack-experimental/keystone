@@ -16,13 +16,12 @@
 
 use chrono::{DateTime, Timelike, Utc};
 use derive_builder::Builder;
-use serde::{Deserialize, Serialize};
 
 use crate::revoke::RevokeProviderError;
 use crate::token::types::Token;
 
 /// Revocation event.
-#[derive(Builder, Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
+#[derive(Builder, Clone, Debug, Default, PartialEq)]
 #[builder(setter(strip_option, into))]
 pub struct RevocationEvent {
     pub access_token_id: Option<String>,
@@ -52,7 +51,7 @@ pub struct RevocationEvent {
 }
 
 /// Revocation event creation data.
-#[derive(Builder, Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
+#[derive(Builder, Clone, Debug, Default, PartialEq)]
 #[builder(setter(strip_option, into))]
 pub struct RevocationEventCreate {
     #[builder(default)]
@@ -96,7 +95,7 @@ pub struct RevocationEventCreate {
 ///
 /// It may be necessary to list revocation events not related to the certain
 /// token.
-#[derive(Builder, Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
+#[derive(Builder, Clone, Debug, Default, PartialEq)]
 #[builder(setter(strip_option, into))]
 pub struct RevocationEventListParameters {
     //pub access_token_id: Option<String>,

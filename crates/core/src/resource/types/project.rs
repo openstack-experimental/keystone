@@ -13,14 +13,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use derive_builder::Builder;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::Value;
 use std::collections::HashSet;
 use validator::Validate;
 
 use crate::error::BuilderError;
 
-#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(Builder, Clone, Debug, Default, PartialEq, Serialize, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct Project {
@@ -65,7 +65,7 @@ pub struct Project {
 }
 
 /// New project data.
-#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(Builder, Clone, Debug, Default, PartialEq, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct ProjectCreate {
@@ -84,7 +84,6 @@ pub struct ProjectCreate {
 
     /// Additional project properties.
     #[builder(default)]
-    #[serde(flatten)]
     pub extra: Option<Value>,
 
     /// The ID for the project.
@@ -125,7 +124,7 @@ pub struct ProjectCreate {
 }
 
 /// Project listing parameters.
-#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(Builder, Clone, Debug, Default, PartialEq, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 pub struct ProjectListParameters {
     /// Filter project by the domain.

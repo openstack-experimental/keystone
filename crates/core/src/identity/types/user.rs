@@ -14,7 +14,7 @@
 
 use chrono::{DateTime, NaiveDate, NaiveDateTime, Utc};
 use derive_builder::Builder;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::Value;
 use validator::Validate;
 
@@ -22,7 +22,7 @@ use openstack_keystone_config::Config;
 
 use crate::error::BuilderError;
 
-#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(Builder, Clone, Debug, PartialEq, Serialize, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct UserResponse {
@@ -76,7 +76,7 @@ pub struct UserResponse {
 }
 
 /// User creation data.
-#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(Builder, Clone, Debug, PartialEq, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct UserCreate {
@@ -126,7 +126,7 @@ pub struct UserCreate {
     pub password: Option<String>,
 }
 
-#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(Builder, Clone, Debug, Default, PartialEq, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(into))]
 pub struct UserUpdate {
@@ -169,7 +169,7 @@ pub struct UserUpdate {
 }
 
 /// User options.
-#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(Builder, Clone, Debug, Default, PartialEq, Serialize, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct UserOptions {
@@ -192,7 +192,7 @@ pub struct UserOptions {
 }
 
 /// User federation data.
-#[derive(Builder, Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize, Validate)]
+#[derive(Builder, Clone, Debug, Default, Eq, PartialEq, Serialize, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct Federation {
@@ -211,7 +211,7 @@ pub struct Federation {
 }
 
 /// Federation protocol data.
-#[derive(Builder, Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize, Validate)]
+#[derive(Builder, Clone, Debug, Default, Eq, PartialEq, Serialize, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct FederationProtocol {
@@ -226,7 +226,7 @@ pub struct FederationProtocol {
 }
 
 /// User listing parameters.
-#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(Builder, Clone, Debug, Default, PartialEq, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 pub struct UserListParameters {
     /// Filter users by the domain.
@@ -246,13 +246,13 @@ pub struct UserListParameters {
 
     /// Filter users by User Type (local, federated, nonlocal, all).
     #[builder(default)]
-    #[serde(default, rename = "type")]
+    //#[serde(default, rename = "type")]
     pub user_type: Option<UserType>,
 }
 
 /// User type for filtering.
-#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq, Hash, Serialize)]
-#[serde(rename_all = "lowercase")]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+//#[serde(rename_all = "lowercase")]
 pub enum UserType {
     /// All users (default behavior).
     #[default]
@@ -272,7 +272,7 @@ pub enum UserType {
 }
 
 /// User password information.
-#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(Builder, Clone, Debug, Default, PartialEq, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct UserPasswordAuthRequest {
@@ -298,7 +298,7 @@ pub struct UserPasswordAuthRequest {
 }
 
 /// Domain information.
-#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(Builder, Clone, Debug, Default, PartialEq, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct Domain {

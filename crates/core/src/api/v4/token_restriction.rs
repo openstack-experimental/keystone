@@ -87,16 +87,6 @@ impl From<TokenRestrictionUpdateRequest> for ProviderTokenRestrictionUpdate {
     }
 }
 
-//impl From<crate::role::types::RoleRef> for RoleRef {
-//    fn from(value: crate::role::types::RoleRef) -> Self {
-//        Self {
-//            id: value.id,
-//            name: value.name.unwrap_or_default(),
-//            domain_id: value.domain_id,
-//        }
-//    }
-//}
-
 impl IntoResponse for ProviderTokenRestriction {
     fn into_response(self) -> Response {
         (

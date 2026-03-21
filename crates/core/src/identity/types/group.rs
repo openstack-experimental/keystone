@@ -13,12 +13,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use derive_builder::Builder;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::Value;
 
 use crate::error::BuilderError;
 
-#[derive(Builder, Clone, Debug, Default, Deserialize, Eq, Hash, Serialize, PartialEq)]
+#[derive(Builder, Clone, Debug, Default, Eq, Hash, Serialize, PartialEq)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct Group {
@@ -36,7 +36,7 @@ pub struct Group {
     pub name: String,
 }
 
-#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Builder, Clone, Debug, Default, PartialEq)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct GroupListParameters {
@@ -48,7 +48,7 @@ pub struct GroupListParameters {
     pub name: Option<String>,
 }
 
-#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Builder, Clone, Debug, Default, PartialEq)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct GroupCreate {

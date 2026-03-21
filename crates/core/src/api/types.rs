@@ -21,17 +21,6 @@ use crate::catalog::types::Endpoint as ProviderEndpoint;
 use crate::common::types as provider_types;
 use crate::resource::types as resource_provider_types;
 
-//impl From<(Service, Vec<ProviderEndpoint>)> for CatalogService {
-//    fn from(value: (Service, Vec<ProviderEndpoint>)) -> Self {
-//        Self {
-//            id: value.0.id.clone(),
-//            name: value.0.name.clone(),
-//            r#type: value.0.r#type,
-//            endpoints: value.1.into_iter().map(Into::into).collect(),
-//        }
-//    }
-//}
-
 impl From<ProviderEndpoint> for Endpoint {
     fn from(value: ProviderEndpoint) -> Self {
         Self {
@@ -43,17 +32,6 @@ impl From<ProviderEndpoint> for Endpoint {
         }
     }
 }
-
-//impl From<Vec<(Service, Vec<ProviderEndpoint>)>> for Catalog {
-//    fn from(value: Vec<(Service, Vec<ProviderEndpoint>)>) -> Self {
-//        Self(
-//            value
-//                .into_iter()
-//                .map(|(srv, eps)| (srv, eps).into())
-//                .collect(),
-//        )
-//    }
-//}
 
 impl From<resource_provider_types::Domain> for Domain {
     fn from(value: resource_provider_types::Domain) -> Self {

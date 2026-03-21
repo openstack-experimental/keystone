@@ -13,12 +13,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use derive_builder::Builder;
-use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::error::BuilderError;
 
-#[derive(Builder, Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
+#[derive(Builder, Clone, Debug, Default, PartialEq)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct Service {
@@ -40,7 +39,7 @@ pub struct Service {
     pub enabled: bool,
 }
 
-#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Builder, Clone, Debug, Default, PartialEq)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct ServiceListParameters {

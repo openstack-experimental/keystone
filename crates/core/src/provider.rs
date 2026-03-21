@@ -21,54 +21,43 @@ use derive_builder::Builder;
 
 use openstack_keystone_config::Config;
 
-use crate::application_credential::ApplicationCredentialApi;
 use crate::application_credential::ApplicationCredentialProvider;
 #[cfg(any(test, feature = "mock"))]
 use crate::application_credential::MockApplicationCredentialProvider;
-use crate::assignment::AssignmentApi;
 use crate::assignment::AssignmentProvider;
 #[cfg(any(test, feature = "mock"))]
 use crate::assignment::MockAssignmentProvider;
-use crate::catalog::CatalogApi;
 use crate::catalog::CatalogProvider;
 #[cfg(any(test, feature = "mock"))]
 use crate::catalog::MockCatalogProvider;
 use crate::error::KeystoneError;
-use crate::federation::FederationApi;
 use crate::federation::FederationProvider;
 #[cfg(any(test, feature = "mock"))]
 use crate::federation::MockFederationProvider;
-use crate::identity::IdentityApi;
 use crate::identity::IdentityProvider;
 #[cfg(any(test, feature = "mock"))]
 use crate::identity::MockIdentityProvider;
-use crate::identity_mapping::IdentityMappingApi;
 use crate::identity_mapping::IdentityMappingProvider;
 #[cfg(any(test, feature = "mock"))]
 use crate::identity_mapping::MockIdentityMappingProvider;
+use crate::k8s_auth::K8sAuthProvider;
 #[cfg(any(test, feature = "mock"))]
 use crate::k8s_auth::MockK8sAuthProvider;
-use crate::k8s_auth::{K8sAuthApi, K8sAuthProvider};
 use crate::plugin_manager::PluginManagerApi;
 #[cfg(any(test, feature = "mock"))]
 use crate::resource::MockResourceProvider;
-use crate::resource::ResourceApi;
 use crate::resource::ResourceProvider;
 #[cfg(any(test, feature = "mock"))]
 use crate::revoke::MockRevokeProvider;
-use crate::revoke::RevokeApi;
 use crate::revoke::RevokeProvider;
 #[cfg(any(test, feature = "mock"))]
 use crate::role::MockRoleProvider;
-use crate::role::RoleApi;
 use crate::role::RoleProvider;
 #[cfg(any(test, feature = "mock"))]
 use crate::token::MockTokenProvider;
-use crate::token::TokenApi;
 use crate::token::TokenProvider;
 #[cfg(any(test, feature = "mock"))]
 use crate::trust::MockTrustProvider;
-use crate::trust::TrustApi;
 use crate::trust::TrustProvider;
 
 /// Global provider manager.
@@ -243,62 +232,62 @@ impl Provider {
     }
 
     /// Get the application credential provider.
-    pub fn get_application_credential_provider(&self) -> &impl ApplicationCredentialApi {
+    pub fn get_application_credential_provider(&self) -> &ApplicationCredentialProvider {
         &self.application_credential
     }
 
     /// Get the assignment provider.
-    pub fn get_assignment_provider(&self) -> &impl AssignmentApi {
+    pub fn get_assignment_provider(&self) -> &AssignmentProvider {
         &self.assignment
     }
 
     /// Get the catalog provider.
-    pub fn get_catalog_provider(&self) -> &impl CatalogApi {
+    pub fn get_catalog_provider(&self) -> &CatalogProvider {
         &self.catalog
     }
 
     /// Get the federation provider.
-    pub fn get_federation_provider(&self) -> &impl FederationApi {
+    pub fn get_federation_provider(&self) -> &FederationProvider {
         &self.federation
     }
 
     /// Get the identity provider.
-    pub fn get_identity_provider(&self) -> &impl IdentityApi {
+    pub fn get_identity_provider(&self) -> &IdentityProvider {
         &self.identity
     }
 
     /// Get the identity mapping provider.
-    pub fn get_identity_mapping_provider(&self) -> &impl IdentityMappingApi {
+    pub fn get_identity_mapping_provider(&self) -> &IdentityMappingProvider {
         &self.identity_mapping
     }
 
     /// Get the resource provider.
-    pub fn get_k8s_auth_provider(&self) -> &impl K8sAuthApi {
+    pub fn get_k8s_auth_provider(&self) -> &K8sAuthProvider {
         &self.k8s_auth
     }
 
     /// Get the resource provider.
-    pub fn get_resource_provider(&self) -> &impl ResourceApi {
+    pub fn get_resource_provider(&self) -> &ResourceProvider {
         &self.resource
     }
 
     /// Get the revocation provider.
-    pub fn get_revoke_provider(&self) -> &impl RevokeApi {
+    pub fn get_revoke_provider(&self) -> &RevokeProvider {
         &self.revoke
     }
 
     /// Get the role provider.
-    pub fn get_role_provider(&self) -> &impl RoleApi {
+    pub fn get_role_provider(&self) -> &RoleProvider {
         &self.role
     }
 
     /// Get the token provider.
-    pub fn get_token_provider(&self) -> &impl TokenApi {
+    pub fn get_token_provider(&self) -> &TokenProvider {
         &self.token
     }
 
     /// Get the trust provider.
-    pub fn get_trust_provider(&self) -> &impl TrustApi {
+    pub fn get_trust_provider(&self) -> &TrustProvider {
         &self.trust
     }
 }

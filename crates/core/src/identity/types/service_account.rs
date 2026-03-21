@@ -13,13 +13,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use derive_builder::Builder;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use validator::Validate;
 
 use crate::error::BuilderError;
 
 /// Service account representation.
-#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(Builder, Clone, Debug, Default, PartialEq, Serialize, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct ServiceAccount {
@@ -42,7 +42,7 @@ pub struct ServiceAccount {
 }
 
 /// Service account creation data.
-#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(Builder, Clone, Debug, PartialEq, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct ServiceAccountCreate {
@@ -65,7 +65,7 @@ pub struct ServiceAccountCreate {
 }
 
 /// The service account update object.
-#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(Builder, Clone, Debug, Default, PartialEq, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(into))]
 pub struct ServiceAccountUpdate {
@@ -80,7 +80,7 @@ pub struct ServiceAccountUpdate {
 }
 
 /// Service account listing parameters.
-#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(Builder, Clone, Debug, Default, PartialEq, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 pub struct ServiceAccountListParameters {
     /// Filter service accounts by the domain.

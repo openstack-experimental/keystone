@@ -15,10 +15,11 @@
 
 use thiserror::Error;
 
-use crate::error::BuilderError;
+use crate::{error::BuilderError, identity::IdentityProviderError, token::TokenProviderError};
 
 /// K8s auth provider error.
 #[derive(Error, Debug)]
+#[non_exhaustive]
 pub enum K8sAuthProviderError {
     /// Role audience does not match.
     #[error("role `bound_audience` does not match")]
@@ -63,7 +64,7 @@ pub enum K8sAuthProviderError {
     Jwt {
         /// The source of the error.
         #[from]
-        source: jsonwebtoken::errors::Error,
+        source: Box<jsonwebtoken::errors::Error>,
     },
 
     /// Expired token.
@@ -75,7 +76,7 @@ pub enum K8sAuthProviderError {
     Http {
         /// The source of the error.
         #[from]
-        source: reqwest::Error,
+        source: Box<reqwest::Error>,
     },
 
     /// Identity provider error.
@@ -83,7 +84,7 @@ pub enum K8sAuthProviderError {
     IdentityProvider {
         /// The source of the error.
         #[from]
-        source: crate::identity::error::IdentityProviderError,
+        source: Box<crate::identity::error::IdentityProviderError>,
     },
 
     /// Insecure JWT signature algorithm.
@@ -115,7 +116,7 @@ pub enum K8sAuthProviderError {
     StructBuilder {
         /// The source of the error.
         #[from]
-        source: BuilderError,
+        source: Box<BuilderError>,
     },
 
     /// Token provider error.
@@ -123,7 +124,7 @@ pub enum K8sAuthProviderError {
     TokenProvider {
         /// The source of the error.
         #[from]
-        source: crate::token::TokenProviderError,
+        source: Box<crate::token::TokenProviderError>,
     },
 
     /// Token restriction not found.
@@ -145,4 +146,44 @@ pub enum K8sAuthProviderError {
     /// User not found.
     #[error("user {0} not found")]
     UserNotFound(String),
+}
+
+impl From<TokenProviderError> for K8sAuthProviderError {
+    fn from(value: TokenProviderError) -> Self {
+        Self::TokenProvider {
+            source: Box::new(value),
+        }
+    }
+}
+
+impl From<BuilderError> for K8sAuthProviderError {
+    fn from(value: BuilderError) -> Self {
+        Self::StructBuilder {
+            source: Box::new(value),
+        }
+    }
+}
+
+impl From<jsonwebtoken::errors::Error> for K8sAuthProviderError {
+    fn from(value: jsonwebtoken::errors::Error) -> Self {
+        Self::Jwt {
+            source: Box::new(value),
+        }
+    }
+}
+
+impl From<IdentityProviderError> for K8sAuthProviderError {
+    fn from(value: IdentityProviderError) -> Self {
+        Self::IdentityProvider {
+            source: Box::new(value),
+        }
+    }
+}
+
+impl From<reqwest::Error> for K8sAuthProviderError {
+    fn from(value: reqwest::Error) -> Self {
+        Self::Http {
+            source: Box::new(value),
+        }
+    }
 }

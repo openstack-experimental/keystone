@@ -13,13 +13,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use derive_builder::Builder;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::Value;
 
 use crate::error::BuilderError;
 
 /// Attribute mapping data.
-#[derive(Builder, Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
+#[derive(Builder, Clone, Debug, Default, Serialize, PartialEq)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct Mapping {
@@ -91,7 +91,7 @@ pub struct Mapping {
 }
 
 /// Update attribute mapping data.
-#[derive(Builder, Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
+#[derive(Builder, Clone, Debug, Default, PartialEq)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(into))]
 pub struct MappingUpdate {
@@ -157,7 +157,7 @@ pub struct MappingUpdate {
 }
 
 /// Attribute mapping type.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub enum MappingType {
     #[default]
     /// OIDC.
@@ -167,7 +167,7 @@ pub enum MappingType {
 }
 
 /// List attribute mappings request.
-#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Builder, Clone, Debug, Default, PartialEq)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct MappingListParameters {

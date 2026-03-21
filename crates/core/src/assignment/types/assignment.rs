@@ -14,14 +14,14 @@
 
 use crate::error::BuilderError;
 use derive_builder::Builder;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::fmt;
 use validator::Validate;
 
 use crate::assignment::AssignmentProviderError;
 
 /// The assignment object.
-#[derive(Builder, Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize, Validate)]
+#[derive(Builder, Clone, Debug, Eq, Hash, PartialEq, Serialize, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct Assignment {
@@ -55,7 +55,7 @@ pub struct Assignment {
 }
 
 /// The new assignment object.
-#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(Builder, Clone, Debug, PartialEq, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct AssignmentCreate {
@@ -173,7 +173,7 @@ impl AssignmentCreate {
 }
 
 /// Role assignment type.
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Hash, Serialize)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize)]
 pub enum AssignmentType {
     /// Group to the domain.
     GroupDomain,
@@ -218,7 +218,7 @@ impl TryFrom<&str> for AssignmentType {
 }
 
 /// Parameters for listing role assignments for role/target/actor.
-#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(Builder, Clone, Debug, Default, PartialEq, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct RoleAssignmentListParameters {
@@ -267,7 +267,7 @@ pub struct RoleAssignmentListParameters {
 /// Querying effective role assignments for list of actors (typically user with
 /// all groups user is member of) on list of targets (exact project + inherited
 /// from upper projects/domain).
-#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(Builder, Clone, Debug, Default, PartialEq, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct RoleAssignmentListForMultipleActorTargetParameters {
@@ -289,7 +289,7 @@ pub struct RoleAssignmentListForMultipleActorTargetParameters {
 
 /// Role assignment target which is either target_id or target_id with explicit
 /// inherited parameter.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(Clone, Debug, PartialEq, Validate)]
 pub struct RoleAssignmentTarget {
     /// The role assignment target ID.
     #[validate(length(max = 64))]
@@ -302,7 +302,7 @@ pub struct RoleAssignmentTarget {
 }
 
 /// Role assignment target as Project(id), Domain(id) or System(id).
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum RoleAssignmentTargetType {
     /// Project ID.
     Project,

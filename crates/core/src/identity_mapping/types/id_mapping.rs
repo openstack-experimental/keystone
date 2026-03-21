@@ -13,13 +13,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use derive_builder::Builder;
-use serde::{Deserialize, Serialize};
 use validator::Validate;
 
 use crate::error::BuilderError;
 
 /// Id mapping entity.
-#[derive(Builder, Clone, Debug, Deserialize, Eq, Hash, Serialize, PartialEq, Validate)]
+#[derive(Builder, Clone, Debug, Eq, Hash, PartialEq, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct IdMapping {
@@ -35,7 +34,7 @@ pub struct IdMapping {
 }
 
 /// ID mapping entity type.
-#[derive(Clone, Debug, Deserialize, Eq, Hash, Serialize, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub enum IdMappingEntityType {
     /// Group.
     Group,

@@ -29,7 +29,6 @@ use crate::revoke::error::RevokeProviderError;
 use crate::role::error::RoleProviderError;
 use crate::token::TokenProviderError;
 use crate::trust::TrustProviderError;
-//use crate::webauthn::WebauthnError;
 
 /// Keystone error.
 #[derive(Debug, Error)]

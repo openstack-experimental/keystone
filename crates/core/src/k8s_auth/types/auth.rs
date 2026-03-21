@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::BuilderError;
 
 /// K8s authentication request.
-#[derive(Builder, Clone, Debug, Deserialize)]
+#[derive(Builder, Clone, Debug)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct K8sAuthRequest {

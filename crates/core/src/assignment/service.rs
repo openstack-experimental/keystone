@@ -60,7 +60,7 @@ impl AssignmentApi for AssignmentService {
         params: &RoleAssignmentListParameters,
     ) -> Result<Vec<Assignment>, AssignmentProviderError> {
         let mut assignments = self.backend_driver.list_assignments(state, params).await?;
-        if assignments.len() > 0 && params.include_names.is_some_and(|x| x) {
+        if !assignments.is_empty() && params.include_names.is_some_and(|x| x) {
             let roles: BTreeMap<String, Role> = state
                 .provider
                 .get_role_provider()

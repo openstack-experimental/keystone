@@ -33,9 +33,9 @@ pub trait HttpClientProvider: Send + Sync {
 
 /// Http client pool.
 ///
-/// NOTE: Simply placing the RwLock<HashMap<String, Arc<Client>>> into the providers immediately
-/// explodes the compilation time. To deal with it is moved out into a separate structure making it
-/// at the same time reusable.
+/// NOTE: Simply placing the RwLock<HashMap<String, Arc<Client>>> into the
+/// providers immediately explodes the compilation time. To deal with it is
+/// moved out into a separate structure making it at the same time reusable.
 #[derive(Default)]
 pub struct HttpClientPool {
     pub inner: RwLock<HashMap<String, Arc<Client>>>,

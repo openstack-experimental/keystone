@@ -23,7 +23,6 @@
 
 use chrono::{DateTime, Utc};
 use derive_builder::Builder;
-use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tracing::warn;
 
@@ -34,6 +33,7 @@ use crate::resource::types::{Domain, Project};
 use crate::trust::types::Trust;
 
 #[derive(Error, Debug)]
+#[non_exhaustive]
 pub enum AuthenticationError {
     /// Domain is disabled.
     #[error("The domain is disabled.")]
@@ -77,7 +77,7 @@ pub enum AuthenticationError {
 }
 
 /// Information about successful authentication.
-#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Builder, Clone, Debug, Default, PartialEq)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(into, strip_option))]
 pub struct AuthenticatedInfo {
@@ -163,7 +163,7 @@ impl AuthenticatedInfo {
 }
 
 /// Authorization information.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum AuthzInfo {
     /// Domain scope.
     Domain(Domain),

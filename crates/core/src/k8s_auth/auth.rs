@@ -49,7 +49,6 @@ impl K8sAuthService {
     ///   (`/var/run/secrets/kubernetes.io/serviceaccount/ca.crt`) contain the
     ///   certificate content while the `disable_local_ca_jwt` of the
     ///   `AuthProvider` is not `true`.
-    #[tracing::instrument(skip(self, ca_path))]
     async fn get_or_create_client(
         &self,
         instance: &K8sAuthInstance,
@@ -104,7 +103,6 @@ impl K8sAuthService {
     /// * Success with the TokenReview response as `Value`.
     /// * Error if the token is invalid (expired, audience mismatch, kubernetes
     ///   rejects the token).
-    #[tracing::instrument(skip(self, token))]
     pub(super) async fn query_k8s_token_review(
         &self,
         token: &SecretString,
@@ -163,15 +161,13 @@ impl K8sAuthService {
     /// * `K8sAuthProviderError::InvalidToken` when the kubernetes rejected the
     ///   token.
     /// * `K8sAuthProviderError::InvalidTokenReviewResponse` when the necessary
-    ///   information cannot
-    /// be retrieved from the `token_review_data`.
+    ///   information cannot be retrieved from the `token_review_data`.
     /// * `K8sAuthProviderError::FailedBoundServiceAccountName` when the token
-    ///   serviceaccount name does
-    /// not match the `bound_service_account_names` of the role.
+    ///   serviceaccount name does not match the `bound_service_account_names`
+    ///   of the role.
     /// * `K8sAuthProviderError::FailedBoundServiceAccountNamespace` when the
-    ///   token namespace does
-    /// not match the `bound_service_account_namespace` specified in the role.
-    #[tracing::instrument(skip(self))]
+    ///   token namespace does not match the `bound_service_account_namespace`
+    ///   specified in the role.
     pub(super) fn check_k8s_token_review_response(
         &self,
         token_review_data: Value,
@@ -233,6 +229,8 @@ impl K8sAuthService {
         state: &ServiceState,
         req: &K8sAuthRequest,
     ) -> Result<(AuthenticatedInfo, TokenRestriction), K8sAuthProviderError> {
+        let token_provider = state.provider.get_token_provider();
+        let identity_provider = state.provider.get_identity_provider();
         // Fetch k8s auth instance.
         let instance = self
             .get_auth_instance(state, &req.auth_instance_id)
@@ -257,26 +255,17 @@ impl K8sAuthService {
             .first()
             .ok_or(K8sAuthProviderError::RoleNotFound(req.role_name.clone()))?
             .clone();
-        if !role.enabled {
-            return Err(K8sAuthProviderError::RoleNotActive(role.id.clone()));
-        }
-        if role.auth_instance_id != instance.id {
-            return Err(K8sAuthProviderError::RoleInstanceOwnershipMismatch(
-                role.id.clone(),
-            ));
-        }
+        validate_instance_and_role(&instance, &role)?;
 
         // Call the TokenReview and check the response.
-        let token_review_response = self
-            .query_k8s_token_review(&req.jwt, &instance, &role)
-            .await?;
-        debug!("The token review response is {:?}", token_review_response);
-        self.check_k8s_token_review_response(token_review_response, &role)?;
+        self.check_k8s_token_review_response(
+            self.query_k8s_token_review(&req.jwt, &instance, &role)
+                .await?,
+            &role,
+        )?;
 
         // Find the token restriction.
-        let token_restriction = state
-            .provider
-            .get_token_provider()
+        let token_restriction = token_provider
             .get_token_restriction(state, &role.token_restriction_id, true)
             .await?
             .ok_or(K8sAuthProviderError::TokenRestrictionNotFound(
@@ -286,21 +275,36 @@ impl K8sAuthService {
             .user_id
             .as_ref()
             .ok_or(K8sAuthProviderError::TokenRestrictionMustSpecifyUserId)?;
-        let user = state
-            .provider
-            .get_identity_provider()
+        let user = identity_provider
             .get_user(state, user_id)
             .await?
             .ok_or(K8sAuthProviderError::UserNotFound(user_id.clone()))?;
-        let mut authn_builder = AuthenticatedInfo::builder();
-        authn_builder.methods(vec!["mapped".to_string()]);
-        authn_builder.token_restriction_id(role.token_restriction_id.clone());
-        authn_builder.user_id(user_id);
-        authn_builder.user(user);
-
-        let authn_info = authn_builder.build()?;
-        Ok((authn_info, token_restriction))
+        Ok((
+            AuthenticatedInfo {
+                methods: vec!["mapped".to_string()],
+                token_restriction_id: Some(role.token_restriction_id),
+                user: Some(user),
+                user_id: user_id.clone(),
+                ..Default::default()
+            },
+            token_restriction,
+        ))
     }
+}
+
+fn validate_instance_and_role(
+    instance: &K8sAuthInstance,
+    role: &K8sAuthRole,
+) -> Result<(), K8sAuthProviderError> {
+    if !role.enabled {
+        return Err(K8sAuthProviderError::RoleNotActive(role.id.clone()));
+    }
+    if role.auth_instance_id != instance.id {
+        return Err(K8sAuthProviderError::RoleInstanceOwnershipMismatch(
+            role.id.clone(),
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(test)]

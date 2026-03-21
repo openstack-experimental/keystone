@@ -15,7 +15,7 @@
 
 use chrono::{DateTime, Utc};
 use derive_builder::Builder;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use validator::Validate;
 
 use crate::error::BuilderError;
@@ -96,7 +96,7 @@ impl From<RestrictedPayload> for Token {
 }
 
 /// Token restriction information.
-#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Builder, Clone, Debug, Default, PartialEq, Serialize)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(into, strip_option))]
 pub struct TokenRestriction {
@@ -122,7 +122,7 @@ pub struct TokenRestriction {
 }
 
 /// New token restriction information.
-#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Builder, Clone, Debug, Default, PartialEq)]
 #[builder(build_fn(error = "BuilderError"))]
 pub struct TokenRestrictionCreate {
     /// Whether the restriction allows to rescope the token.
@@ -142,7 +142,7 @@ pub struct TokenRestrictionCreate {
 }
 
 /// Token restriction update information.
-#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Builder, Clone, Debug, Default, PartialEq)]
 #[builder(build_fn(error = "BuilderError"))]
 pub struct TokenRestrictionUpdate {
     /// Whether the restriction allows to rescope the token.
@@ -158,7 +158,7 @@ pub struct TokenRestrictionUpdate {
 }
 
 /// Token restriction list filters.
-#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Builder, Clone, Debug, Default, PartialEq)]
 #[builder(build_fn(error = "BuilderError"))]
 pub struct TokenRestrictionListParameters {
     /// Domain id.

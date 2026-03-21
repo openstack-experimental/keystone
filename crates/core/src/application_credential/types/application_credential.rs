@@ -16,7 +16,7 @@
 use chrono::{DateTime, Utc};
 use derive_builder::Builder;
 use secrecy::SecretString;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use validator::Validate;
 
 use super::{AccessRule, AccessRuleCreate};
@@ -24,7 +24,7 @@ use crate::error::BuilderError;
 use crate::role::types::RoleRef;
 
 /// The application credential object.
-#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(Builder, Clone, Debug, PartialEq, Serialize, Validate)]
 #[builder(setter(strip_option, into))]
 #[builder(build_fn(error = "BuilderError"))]
 pub struct ApplicationCredential {
@@ -71,7 +71,7 @@ pub struct ApplicationCredential {
 }
 
 /// The created application credential object.
-#[derive(Builder, Clone, Debug, Deserialize, Validate)]
+#[derive(Builder, Clone, Debug, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct ApplicationCredentialCreateResponse {
@@ -125,7 +125,7 @@ pub struct ApplicationCredentialCreateResponse {
 }
 
 /// The application credential object to be created.
-#[derive(Builder, Clone, Debug, Default, Deserialize, Validate)]
+#[derive(Builder, Clone, Debug, Default, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct ApplicationCredentialCreate {
@@ -180,7 +180,7 @@ pub struct ApplicationCredentialCreate {
 }
 
 /// Parameters for listing application credentials.
-#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(Builder, Clone, Debug, Default, PartialEq, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct ApplicationCredentialListParameters {
