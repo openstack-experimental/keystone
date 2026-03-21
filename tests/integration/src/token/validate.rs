@@ -18,15 +18,14 @@ use sea_orm::{DbConn, entity::*};
 use std::sync::Arc;
 use tempfile::TempDir;
 
-use openstack_keystone::assignment::{AssignmentApi, types::AssignmentCreate};
-use openstack_keystone::config::Config;
-use openstack_keystone::db::entity::prelude::Project;
-use openstack_keystone::db::entity::project;
-use openstack_keystone::identity::{IdentityApi, types::*};
-use openstack_keystone::keystone::Service;
 use openstack_keystone::plugin_manager::PluginManager;
-use openstack_keystone::provider::Provider;
+use openstack_keystone_config::Config;
+use openstack_keystone_core::assignment::{AssignmentApi, types::AssignmentCreate};
+use openstack_keystone_core::identity::{IdentityApi, types::*};
+use openstack_keystone_core::keystone::Service;
 use openstack_keystone_core::policy::MockPolicy;
+use openstack_keystone_core::provider::Provider;
+use openstack_keystone_resource_sql::entity::{prelude::Project, project};
 
 mod application_credential;
 mod trust;

@@ -53,6 +53,10 @@ pub enum ApplicationCredentialProviderError {
         source: crate::role::RoleProviderError,
     },
 
+    /// Referred role not found.
+    #[error("role {0} not found")]
+    RoleNotFound(String),
+
     /// Secret is missing.
     #[error("secret missing")]
     SecretMissing,
@@ -82,4 +86,13 @@ pub enum ApplicationCredentialProviderError {
         #[from]
         source: validator::ValidationErrors,
     },
+}
+
+impl From<crate::error::DatabaseError> for ApplicationCredentialProviderError {
+    fn from(source: crate::error::DatabaseError) -> Self {
+        match source {
+            cfl @ crate::error::DatabaseError::Conflict { .. } => Self::Conflict(cfl.to_string()),
+            other => Self::Driver(other.to_string()),
+        }
+    }
 }

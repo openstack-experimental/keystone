@@ -31,4 +31,3 @@
 //! Image service (glance), that provides one or more endpoints through which
 //! users can access resources and perform operations.
 pub use openstack_keystone_core::catalog::*;
-pub mod backend;

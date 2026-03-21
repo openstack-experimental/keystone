@@ -12,7 +12,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! # Application credentials provider
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -60,6 +60,22 @@ impl ApplicationCredentialApi for ApplicationCredentialService {
         rec: ApplicationCredentialCreate,
     ) -> Result<ApplicationCredentialCreateResponse, ApplicationCredentialProviderError> {
         rec.validate()?;
+        // TODO: implement some filters.
+        let roles: HashSet<String> = state
+            .provider
+            .get_role_provider()
+            .list_roles(state, &RoleListParameters::default())
+            .await?
+            .iter()
+            .map(|role| role.id.clone())
+            .collect();
+        for role in rec.roles.iter() {
+            if !roles.contains(&role.id) {
+                return Err(ApplicationCredentialProviderError::RoleNotFound(
+                    role.id.clone(),
+                ));
+            }
+        }
         // TODO: Check app creds count
         let mut new_rec = rec;
         if new_rec.id.is_none() {

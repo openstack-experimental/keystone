@@ -139,7 +139,7 @@ async fn test_create_secret_reuse() -> Result<(), Report> {
 #[traced_test]
 async fn test_create_nonexisting_role() -> Result<(), Report> {
     let state = get_state().await?;
-    if let Err(ApplicationCredentialProviderError::Conflict(_)) = state
+    if let Err(ApplicationCredentialProviderError::RoleNotFound(r)) = state
         .provider
         .get_application_credential_provider()
         .create_application_credential(
@@ -158,6 +158,7 @@ async fn test_create_nonexisting_role() -> Result<(), Report> {
         )
         .await
     {
+        assert_eq!("missing", r);
     } else {
         panic!("appcred for the missing role should not be created");
     }

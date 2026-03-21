@@ -13,8 +13,8 @@
 // SPDX-License-Identifier: Apache-2.0
 use sea_orm_migration::{prelude::*, schema::*};
 
-use crate::db::entity::prelude::{FederatedMapping, Project, Role, User};
-use crate::db::entity::{project, role, user};
+use crate::db::entity::prelude::{Role, User};
+use crate::db::entity::{role, user};
 
 #[derive(DeriveMigrationName)]
 pub struct Migration;
@@ -35,23 +35,9 @@ impl MigrationTrait for Migration {
                     .col(string_len_null(TokenRestriction::ProjectId, 64))
                     .foreign_key(
                         ForeignKey::create()
-                            .name("fk-token-restriction-domain")
-                            .from(TokenRestriction::Table, TokenRestriction::DomainId)
-                            .to(Project, project::Column::Id)
-                            .on_delete(ForeignKeyAction::Cascade),
-                    )
-                    .foreign_key(
-                        ForeignKey::create()
                             .name("fk-token-restriction-user")
                             .from(TokenRestriction::Table, TokenRestriction::UserId)
                             .to(User, user::Column::Id)
-                            .on_delete(ForeignKeyAction::Cascade),
-                    )
-                    .foreign_key(
-                        ForeignKey::create()
-                            .name("fk-token-restriction-project")
-                            .from(TokenRestriction::Table, TokenRestriction::ProjectId)
-                            .to(Project, project::Column::Id)
                             .on_delete(ForeignKeyAction::Cascade),
                     )
                     .to_owned(),
@@ -96,40 +82,10 @@ impl MigrationTrait for Migration {
                     .to_owned(),
             )
             .await?;
-        manager
-            .alter_table(
-                Table::alter()
-                    .table(FederatedMapping)
-                    .add_column(ColumnDef::new("token_restriction_id").string_len(64))
-                    .drop_column("token_user_id")
-                    .drop_column("token_role_ids")
-                    .add_foreign_key(
-                        &TableForeignKey::new()
-                            .name("fk-federated-mapping-token-restriction")
-                            .from_tbl(FederatedMapping)
-                            .from_col("token_restriction_id")
-                            .to_tbl(TokenRestriction::Table)
-                            .to_col(TokenRestriction::Id)
-                            .on_delete(ForeignKeyAction::Cascade)
-                            .to_owned(),
-                    )
-                    .to_owned(),
-            )
-            .await?;
         Ok(())
     }
 
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
-        manager
-            .alter_table(
-                Table::alter()
-                    .table(FederatedMapping)
-                    .drop_column("token_restriction_id")
-                    .add_column(ColumnDef::new("token_restriction_id").string_len(64))
-                    .add_column(ColumnDef::new("token_role_ids").string_len(128))
-                    .to_owned(),
-            )
-            .await?;
         manager
             .drop_table(
                 Table::drop()

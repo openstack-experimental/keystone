@@ -365,7 +365,7 @@ impl PluginManager {
     fn register_sql_drivers(&mut self) {
         self.register_application_credential_backend(
             "sql",
-            Arc::new(crate::application_credential::backend::SqlBackend::default()),
+            Arc::new(openstack_keystone_appcred_sql::SqlBackend::default()),
         );
         self.register_assignment_backend(
             "sql",
@@ -373,11 +373,11 @@ impl PluginManager {
         );
         self.register_catalog_backend(
             "sql",
-            Arc::new(crate::catalog::backend::sql::SqlBackend::default()),
+            Arc::new(openstack_keystone_catalog_sql::SqlBackend::default()),
         );
         self.register_federation_backend(
             "sql",
-            Arc::new(crate::federation::backend::SqlBackend::default()),
+            Arc::new(openstack_keystone_federation_sql::SqlBackend::default()),
         );
         self.register_identity_backend(
             "sql",
@@ -393,7 +393,7 @@ impl PluginManager {
         );
         self.register_resource_backend(
             "sql",
-            Arc::new(crate::resource::backend::sql::SqlBackend::default()),
+            Arc::new(openstack_keystone_resource_sql::SqlBackend::default()),
         );
         self.register_revoke_backend(
             "sql",

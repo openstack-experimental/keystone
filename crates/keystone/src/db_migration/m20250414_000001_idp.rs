@@ -17,8 +17,8 @@ use sea_orm_migration::{
     schema::*,
 };
 
-use crate::db::entity::prelude::Project;
-use crate::db::entity::project;
+//use crate::db::entity::prelude::Project;
+//use crate::db::entity::project;
 
 #[derive(DeriveMigrationName)]
 pub struct Migration;
@@ -64,16 +64,6 @@ impl MigrationTrait for Migration {
                         FederatedIdentityProvider::DefaultMappingName,
                         255,
                     ))
-                    .foreign_key(
-                        ForeignKey::create()
-                            .name("fk-idp-project")
-                            .from(
-                                FederatedIdentityProvider::Table,
-                                FederatedIdentityProvider::DomainId,
-                            )
-                            .to(Project, project::Column::Id)
-                            .on_delete(ForeignKeyAction::Cascade),
-                    )
                     .index(
                         Index::create()
                             .unique()
@@ -124,9 +114,8 @@ impl MigrationTrait for Migration {
                     .col(json_null(FederatedMapping::BoundClaims))
                     .col(string_len_null(FederatedMapping::OidcScopes, 128))
                     //.col(json_null(FederatedMapping::ClaimMappings))
-                    .col(string_len_null(FederatedMapping::TokenUserId, 64))
-                    .col(string_len_null(FederatedMapping::TokenRoleIds, 128))
                     .col(string_len_null(FederatedMapping::TokenProjectId, 128))
+                    .col(string_len_null(FederatedMapping::TokenRestrictionId, 64))
                     .foreign_key(
                         ForeignKey::create()
                             .name("fk-idp-mapping-idp")
@@ -135,13 +124,6 @@ impl MigrationTrait for Migration {
                                 FederatedIdentityProvider::Table,
                                 FederatedIdentityProvider::Id,
                             )
-                            .on_delete(ForeignKeyAction::Cascade),
-                    )
-                    .foreign_key(
-                        ForeignKey::create()
-                            .name("fk-idp-mapping-project")
-                            .from(FederatedMapping::Table, FederatedMapping::DomainId)
-                            .to(Project, project::Column::Id)
                             .on_delete(ForeignKeyAction::Cascade),
                     )
                     .to_owned(),
@@ -275,9 +257,8 @@ enum FederatedMapping {
     BoundSubject,
     BoundClaims,
     OidcScopes,
-    TokenUserId,
-    TokenRoleIds,
     TokenProjectId,
+    TokenRestrictionId,
 }
 
 #[derive(DeriveIden)]

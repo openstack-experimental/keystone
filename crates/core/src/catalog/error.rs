@@ -47,3 +47,12 @@ pub enum CatalogProviderError {
     #[error("unsupported driver `{0}` for the catalog provider.")]
     UnsupportedDriver(String),
 }
+
+impl From<crate::error::DatabaseError> for CatalogProviderError {
+    fn from(source: crate::error::DatabaseError) -> Self {
+        match source {
+            cfl @ crate::error::DatabaseError::Conflict { .. } => Self::Conflict(cfl.to_string()),
+            other => Self::Driver(other.to_string()),
+        }
+    }
+}

@@ -40,14 +40,6 @@ pub enum Relation {
     )]
     Group,
     #[sea_orm(
-        belongs_to = "super::identity_provider::Entity",
-        from = "Column::IdpId",
-        to = "super::identity_provider::Column::Id",
-        on_update = "NoAction",
-        on_delete = "Cascade"
-    )]
-    IdentityProvider,
-    #[sea_orm(
         belongs_to = "super::user::Entity",
         from = "Column::UserId",
         to = "super::user::Column::Id",
@@ -60,12 +52,6 @@ pub enum Relation {
 impl Related<super::group::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::Group.def()
-    }
-}
-
-impl Related<super::identity_provider::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::IdentityProvider.def()
     }
 }
 

@@ -16,6 +16,5 @@
 //! Federation provider implements the functionality necessary for the user
 //! federation.
 pub mod api;
-pub mod backend;
 
 pub use openstack_keystone_core::federation::*;

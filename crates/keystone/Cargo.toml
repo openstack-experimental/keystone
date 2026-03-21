@@ -30,10 +30,14 @@ config.workspace = true
 derive_builder.workspace = true
 eyre.workspace = true
 openstack-keystone-api-types = { version = "0.1", features = ["openapi", "validate"], path = "../api-types/"}
+openstack-keystone-appcred-sql = { version = "0.1", path = "../appcred-sql/" }
 openstack-keystone-assignment-sql = { version = "0.1", path = "../assignment-sql/" }
+openstack-keystone-catalog-sql = { version = "0.1", path = "../catalog-sql/" }
 openstack-keystone-config = { version = "0.1", path = "../config" }
 openstack-keystone-core = { version = "0.1", features = ["api"], path = "../core" }
 openstack-keystone-distributed-storage = { version = "0.1", path = "../storage/"}
+openstack-keystone-federation-sql = { version = "0.1", path = "../federation-sql" }
+openstack-keystone-resource-sql = { version = "0.1", path = "../resource-sql/" }
 openstack-keystone-token-fernet = { version = "0.1", path = "../token-fernet/" }
 openstack-keystone-webauthn = { version = "0.1", path = "../webauthn/"}
 openidconnect.workspace = true
