@@ -68,7 +68,6 @@ impl IdentityService {
 
 #[async_trait]
 impl IdentityApi for IdentityService {
-    #[tracing::instrument(skip(self, state))]
     async fn add_user_to_group<'a>(
         &self,
         state: &ServiceState,
@@ -80,7 +79,6 @@ impl IdentityApi for IdentityService {
             .await
     }
 
-    #[tracing::instrument(skip(self, state))]
     async fn add_user_to_group_expiring<'a>(
         &self,
         state: &ServiceState,
@@ -93,7 +91,6 @@ impl IdentityApi for IdentityService {
             .await
     }
 
-    #[tracing::instrument(skip(self, state))]
     async fn add_users_to_groups<'a>(
         &self,
         state: &ServiceState,
@@ -104,7 +101,6 @@ impl IdentityApi for IdentityService {
             .await
     }
 
-    #[tracing::instrument(skip(self, state))]
     async fn add_users_to_groups_expiring<'a>(
         &self,
         state: &ServiceState,
@@ -117,7 +113,6 @@ impl IdentityApi for IdentityService {
     }
 
     /// Authenticate user with the password auth method.
-    #[tracing::instrument(skip(self, state, auth))]
     async fn authenticate_by_password(
         &self,
         state: &ServiceState,
@@ -152,7 +147,6 @@ impl IdentityApi for IdentityService {
     }
 
     /// Create group.
-    #[tracing::instrument(skip(self, state))]
     async fn create_group(
         &self,
         state: &ServiceState,
@@ -166,7 +160,6 @@ impl IdentityApi for IdentityService {
     }
 
     /// Create service account.
-    #[tracing::instrument(skip(self, state))]
     async fn create_service_account(
         &self,
         state: &ServiceState,
@@ -186,7 +179,6 @@ impl IdentityApi for IdentityService {
     }
 
     /// Create user.
-    #[tracing::instrument(skip(self, state))]
     async fn create_user(
         &self,
         state: &ServiceState,
@@ -204,7 +196,6 @@ impl IdentityApi for IdentityService {
     }
 
     /// Delete group.
-    #[tracing::instrument(skip(self, state))]
     async fn delete_group<'a>(
         &self,
         state: &ServiceState,
@@ -214,7 +205,6 @@ impl IdentityApi for IdentityService {
     }
 
     /// Delete user.
-    #[tracing::instrument(skip(self, state))]
     async fn delete_user<'a>(
         &self,
         state: &ServiceState,
@@ -228,7 +218,6 @@ impl IdentityApi for IdentityService {
     }
 
     /// Get a service account by ID.
-    #[tracing::instrument(skip(self, state))]
     async fn get_service_account<'a>(
         &self,
         state: &ServiceState,
@@ -240,7 +229,6 @@ impl IdentityApi for IdentityService {
     }
 
     /// Get single user.
-    #[tracing::instrument(skip(self, state))]
     async fn get_user<'a>(
         &self,
         state: &ServiceState,
@@ -293,7 +281,6 @@ impl IdentityApi for IdentityService {
     }
 
     /// Find federated user by `idp_id` and `unique_id`.
-    #[tracing::instrument(skip(self, state))]
     async fn find_federated_user<'a>(
         &self,
         state: &ServiceState,
@@ -306,7 +293,6 @@ impl IdentityApi for IdentityService {
     }
 
     /// List users.
-    #[tracing::instrument(skip(self, state))]
     async fn list_users(
         &self,
         state: &ServiceState,
@@ -316,7 +302,6 @@ impl IdentityApi for IdentityService {
     }
 
     /// List groups.
-    #[tracing::instrument(skip(self, state))]
     async fn list_groups(
         &self,
         state: &ServiceState,
@@ -326,7 +311,6 @@ impl IdentityApi for IdentityService {
     }
 
     /// Get single group.
-    #[tracing::instrument(skip(self, state))]
     async fn get_group<'a>(
         &self,
         state: &ServiceState,
@@ -336,7 +320,6 @@ impl IdentityApi for IdentityService {
     }
 
     /// List groups a user is a member of.
-    #[tracing::instrument(skip(self, state))]
     async fn list_groups_of_user<'a>(
         &self,
         state: &ServiceState,
@@ -347,7 +330,6 @@ impl IdentityApi for IdentityService {
             .await
     }
 
-    #[tracing::instrument(skip(self, state))]
     async fn remove_user_from_group<'a>(
         &self,
         state: &ServiceState,
@@ -359,7 +341,6 @@ impl IdentityApi for IdentityService {
             .await
     }
 
-    #[tracing::instrument(skip(self, state))]
     async fn remove_user_from_group_expiring<'a>(
         &self,
         state: &ServiceState,
@@ -372,7 +353,6 @@ impl IdentityApi for IdentityService {
             .await
     }
 
-    #[tracing::instrument(skip(self, state))]
     async fn remove_user_from_groups<'a>(
         &self,
         state: &ServiceState,
@@ -384,7 +364,6 @@ impl IdentityApi for IdentityService {
             .await
     }
 
-    #[tracing::instrument(skip(self, state))]
     async fn remove_user_from_groups_expiring<'a>(
         &self,
         state: &ServiceState,
@@ -397,7 +376,6 @@ impl IdentityApi for IdentityService {
             .await
     }
 
-    #[tracing::instrument(skip(self, state))]
     async fn set_user_groups<'a>(
         &self,
         state: &ServiceState,
@@ -409,7 +387,6 @@ impl IdentityApi for IdentityService {
             .await
     }
 
-    #[tracing::instrument(skip(self, state))]
     async fn set_user_groups_expiring<'a>(
         &self,
         state: &ServiceState,

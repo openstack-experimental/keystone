@@ -154,6 +154,7 @@ impl ApplicationCredentialProvider {
 #[async_trait]
 impl ApplicationCredentialApi for ApplicationCredentialProvider {
     /// Create a new application credential.
+    #[tracing::instrument(level = "info", skip(self, state))]
     async fn create_application_credential(
         &self,
         state: &ServiceState,

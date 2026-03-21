@@ -44,7 +44,6 @@ impl RevokeService {
 #[async_trait]
 impl RevokeApi for RevokeService {
     /// Create revocation event.
-    #[tracing::instrument(level = "info", skip(self, state))]
     async fn create_revocation_event(
         &self,
         state: &ServiceState,
@@ -59,7 +58,6 @@ impl RevokeApi for RevokeService {
     ///
     /// Checks revocation events matching the token parameters and return
     /// `false` if their count is more than `0`.
-    #[tracing::instrument(level = "info", skip(self, state, token))]
     async fn is_token_revoked(
         &self,
         state: &ServiceState,

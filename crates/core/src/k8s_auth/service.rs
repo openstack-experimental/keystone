@@ -62,7 +62,6 @@ impl K8sAuthApi for K8sAuthService {
     }
 
     /// Register new K8s auth instance.
-    #[tracing::instrument(skip(self, state))]
     async fn create_auth_instance(
         &self,
         state: &ServiceState,
@@ -76,7 +75,6 @@ impl K8sAuthApi for K8sAuthService {
     }
 
     /// Register new K8s auth role.
-    #[tracing::instrument(skip(self, state))]
     async fn create_auth_role(
         &self,
         state: &ServiceState,
@@ -90,7 +88,6 @@ impl K8sAuthApi for K8sAuthService {
     }
 
     /// Delete K8s auth provider.
-    #[tracing::instrument(skip(self, state))]
     async fn delete_auth_instance<'a>(
         &self,
         state: &ServiceState,
@@ -100,7 +97,6 @@ impl K8sAuthApi for K8sAuthService {
     }
 
     /// Delete K8s auth role.
-    #[tracing::instrument(skip(self, state))]
     async fn delete_auth_role<'a>(
         &self,
         state: &ServiceState,
@@ -110,7 +106,6 @@ impl K8sAuthApi for K8sAuthService {
     }
 
     /// Register new K8s auth instance.
-    #[tracing::instrument(skip(self, state))]
     async fn get_auth_instance<'a>(
         &self,
         state: &ServiceState,
@@ -120,7 +115,6 @@ impl K8sAuthApi for K8sAuthService {
     }
 
     /// Register new K8s auth role.
-    #[tracing::instrument(skip(self, state))]
     async fn get_auth_role<'a>(
         &self,
         state: &ServiceState,
@@ -130,7 +124,6 @@ impl K8sAuthApi for K8sAuthService {
     }
 
     /// List K8s auth instances.
-    #[tracing::instrument(skip(self, state))]
     async fn list_auth_instances(
         &self,
         state: &ServiceState,
@@ -140,7 +133,6 @@ impl K8sAuthApi for K8sAuthService {
     }
 
     /// List K8s auth roles.
-    #[tracing::instrument(skip(self, state))]
     async fn list_auth_roles(
         &self,
         state: &ServiceState,
@@ -150,7 +142,6 @@ impl K8sAuthApi for K8sAuthService {
     }
 
     /// Update K8s auth instance.
-    #[tracing::instrument(skip(self, state))]
     async fn update_auth_instance<'a>(
         &self,
         state: &ServiceState,
@@ -163,7 +154,6 @@ impl K8sAuthApi for K8sAuthService {
     }
 
     /// Update K8s auth role.
-    #[tracing::instrument(skip(self, state))]
     async fn update_auth_role<'a>(
         &self,
         state: &ServiceState,

@@ -59,6 +59,7 @@ impl TokenProvider {
 #[async_trait]
 impl TokenApi for TokenProvider {
     /// Authenticate by token.
+    #[tracing::instrument(level = "info", skip(self, state, credential))]
     async fn authenticate_by_token<'a>(
         &self,
         state: &ServiceState,
@@ -82,6 +83,7 @@ impl TokenApi for TokenProvider {
     }
 
     /// Validate token.
+    #[tracing::instrument(level = "info", skip(self, state, credential))]
     async fn validate_token<'a>(
         &self,
         state: &ServiceState,
@@ -105,6 +107,7 @@ impl TokenApi for TokenProvider {
     }
 
     /// Issue the Keystone token.
+    #[tracing::instrument(level = "debug", skip(self))]
     fn issue_token(
         &self,
         authentication_info: AuthenticatedInfo,

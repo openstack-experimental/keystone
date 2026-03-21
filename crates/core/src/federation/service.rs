@@ -44,13 +44,11 @@ impl FederationService {
 #[async_trait]
 impl FederationApi for FederationService {
     /// Cleanup expired resources.
-    #[tracing::instrument(level = "info", skip(self, state))]
     async fn cleanup(&self, state: &ServiceState) -> Result<(), FederationProviderError> {
         self.backend_driver.cleanup(state).await
     }
 
     /// Create new auth state.
-    #[tracing::instrument(level = "debug", skip(self, state))]
     async fn create_auth_state(
         &self,
         state: &ServiceState,
@@ -62,7 +60,6 @@ impl FederationApi for FederationService {
     }
 
     /// Create Identity provider.
-    #[tracing::instrument(level = "debug", skip(self, state))]
     async fn create_identity_provider(
         &self,
         state: &ServiceState,
@@ -79,7 +76,6 @@ impl FederationApi for FederationService {
     }
 
     /// Create mapping.
-    #[tracing::instrument(level = "debug", skip(self, state))]
     async fn create_mapping(
         &self,
         state: &ServiceState,
@@ -101,7 +97,6 @@ impl FederationApi for FederationService {
     }
 
     /// Delete auth state.
-    #[tracing::instrument(level = "debug", skip(self, state))]
     async fn delete_auth_state<'a>(
         &self,
         state: &ServiceState,
@@ -111,7 +106,6 @@ impl FederationApi for FederationService {
     }
 
     /// Delete identity provider.
-    #[tracing::instrument(level = "debug", skip(self, state))]
     async fn delete_identity_provider<'a>(
         &self,
         state: &ServiceState,
@@ -123,7 +117,6 @@ impl FederationApi for FederationService {
     }
 
     /// Delete identity provider.
-    #[tracing::instrument(level = "debug", skip(self, state))]
     async fn delete_mapping<'a>(
         &self,
         state: &ServiceState,
@@ -133,7 +126,6 @@ impl FederationApi for FederationService {
     }
 
     /// Get auth state by ID.
-    #[tracing::instrument(level = "debug", skip(self, state))]
     async fn get_auth_state<'a>(
         &self,
         state: &ServiceState,
@@ -143,7 +135,6 @@ impl FederationApi for FederationService {
     }
 
     /// Get single IDP by ID.
-    #[tracing::instrument(level = "info", skip(self, state))]
     async fn get_identity_provider<'a>(
         &self,
         state: &ServiceState,
@@ -153,7 +144,6 @@ impl FederationApi for FederationService {
     }
 
     /// Get single mapping by ID.
-    #[tracing::instrument(level = "info", skip(self, state))]
     async fn get_mapping<'a>(
         &self,
         state: &ServiceState,
@@ -163,7 +153,6 @@ impl FederationApi for FederationService {
     }
 
     /// List IDP.
-    #[tracing::instrument(level = "info", skip(self, state))]
     async fn list_identity_providers(
         &self,
         state: &ServiceState,
@@ -175,7 +164,6 @@ impl FederationApi for FederationService {
     }
 
     /// List mappings.
-    #[tracing::instrument(level = "info", skip(self, state))]
     async fn list_mappings(
         &self,
         state: &ServiceState,
@@ -185,7 +173,6 @@ impl FederationApi for FederationService {
     }
 
     /// Update Identity provider.
-    #[tracing::instrument(level = "debug", skip(self, state))]
     async fn update_identity_provider<'a>(
         &self,
         state: &ServiceState,
@@ -198,7 +185,6 @@ impl FederationApi for FederationService {
     }
 
     /// Update mapping
-    #[tracing::instrument(level = "debug", skip(self, state))]
     async fn update_mapping<'a>(
         &self,
         state: &ServiceState,

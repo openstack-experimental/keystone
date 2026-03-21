@@ -53,7 +53,6 @@ impl ResourceApi for ResourceService {
     }
 
     /// Create new domain.
-    #[tracing::instrument(level = "info", skip(self, state))]
     async fn create_domain(
         &self,
         state: &ServiceState,
@@ -69,7 +68,6 @@ impl ResourceApi for ResourceService {
     }
 
     /// Create new project.
-    #[tracing::instrument(level = "info", skip(self, state))]
     async fn create_project(
         &self,
         state: &ServiceState,
@@ -85,7 +83,6 @@ impl ResourceApi for ResourceService {
     }
 
     /// Delete a domain by the ID.
-    #[tracing::instrument(level = "info", skip(self, state))]
     async fn delete_domain<'a>(
         &self,
         state: &ServiceState,
@@ -95,7 +92,6 @@ impl ResourceApi for ResourceService {
     }
 
     /// Delete a project by the ID.
-    #[tracing::instrument(level = "info", skip(self, state))]
     async fn delete_project<'a>(
         &self,
         state: &ServiceState,
@@ -105,7 +101,6 @@ impl ResourceApi for ResourceService {
     }
 
     /// Get single domain.
-    #[tracing::instrument(level = "info", skip(self, state))]
     async fn get_domain<'a>(
         &self,
         state: &ServiceState,
@@ -115,7 +110,6 @@ impl ResourceApi for ResourceService {
     }
 
     /// Get single project.
-    #[tracing::instrument(level = "info", skip(self, state))]
     async fn get_project<'a>(
         &self,
         state: &ServiceState,
@@ -125,7 +119,6 @@ impl ResourceApi for ResourceService {
     }
 
     /// Get single project by Name and Domain ID.
-    #[tracing::instrument(level = "info", skip(self, state))]
     async fn get_project_by_name<'a>(
         &self,
         state: &ServiceState,
@@ -138,7 +131,6 @@ impl ResourceApi for ResourceService {
     }
 
     /// Get project parents.
-    #[tracing::instrument(level = "info", skip(self, state))]
     async fn get_project_parents<'a>(
         &self,
         state: &ServiceState,
@@ -150,7 +142,6 @@ impl ResourceApi for ResourceService {
     }
 
     /// Get single domain by its name.
-    #[tracing::instrument(level = "info", skip(self, state))]
     async fn find_domain_by_name<'a>(
         &self,
         state: &ServiceState,
@@ -162,7 +153,6 @@ impl ResourceApi for ResourceService {
     }
 
     /// List domains.
-    #[tracing::instrument(level = "info", skip(self, state))]
     async fn list_domains(
         &self,
         state: &ServiceState,
@@ -172,7 +162,6 @@ impl ResourceApi for ResourceService {
     }
 
     /// List projects.
-    #[tracing::instrument(level = "info", skip(self, state))]
     async fn list_projects(
         &self,
         state: &ServiceState,

@@ -40,7 +40,6 @@ impl CatalogService {
 #[async_trait]
 impl CatalogApi for CatalogService {
     /// List services
-    #[tracing::instrument(level = "info", skip(self, state))]
     async fn list_services(
         &self,
         state: &ServiceState,
@@ -50,7 +49,6 @@ impl CatalogApi for CatalogService {
     }
 
     /// Get single service by ID
-    #[tracing::instrument(level = "info", skip(self, state))]
     async fn get_service<'a>(
         &self,
         state: &ServiceState,
@@ -60,7 +58,6 @@ impl CatalogApi for CatalogService {
     }
 
     /// List Endpoints
-    #[tracing::instrument(level = "info", skip(self, state))]
     async fn list_endpoints(
         &self,
         state: &ServiceState,
@@ -70,7 +67,6 @@ impl CatalogApi for CatalogService {
     }
 
     /// Get single endpoint by ID
-    #[tracing::instrument(level = "info", skip(self, state))]
     async fn get_endpoint<'a>(
         &self,
         state: &ServiceState,
@@ -80,7 +76,6 @@ impl CatalogApi for CatalogService {
     }
 
     /// Get catalog
-    #[tracing::instrument(level = "info", skip(self, state))]
     async fn get_catalog(
         &self,
         state: &ServiceState,

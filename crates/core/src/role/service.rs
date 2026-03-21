@@ -43,7 +43,6 @@ impl RoleService {
 #[async_trait]
 impl RoleApi for RoleService {
     /// Create role.
-    #[tracing::instrument(level = "info", skip(self, state))]
     async fn create_role(
         &self,
         state: &ServiceState,
@@ -60,7 +59,6 @@ impl RoleApi for RoleService {
     }
 
     /// Delete a role by the ID.
-    #[tracing::instrument(level = "info", skip(self, state))]
     async fn delete_role<'a>(
         &self,
         state: &ServiceState,
@@ -70,7 +68,6 @@ impl RoleApi for RoleService {
     }
 
     /// Get single role.
-    #[tracing::instrument(level = "info", skip(self, state))]
     async fn get_role<'a>(
         &self,
         state: &ServiceState,
@@ -82,7 +79,6 @@ impl RoleApi for RoleService {
     /// Expand implied roles.
     ///
     /// Return list of the roles with the imply rules being considered.
-    #[tracing::instrument(level = "info", skip(self, state))]
     async fn expand_implied_roles(
         &self,
         state: &ServiceState,
@@ -98,7 +94,6 @@ impl RoleApi for RoleService {
     }
 
     /// List role imply rules.
-    #[tracing::instrument(level = "info", skip(self, state))]
     async fn list_imply_rules(
         &self,
         state: &ServiceState,
@@ -108,7 +103,6 @@ impl RoleApi for RoleService {
     }
 
     /// List roles.
-    #[tracing::instrument(level = "info", skip(self, state))]
     async fn list_roles(
         &self,
         state: &ServiceState,

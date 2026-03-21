@@ -781,7 +781,6 @@ impl TokenService {
 #[async_trait]
 impl TokenApi for TokenService {
     /// Authenticate by token.
-    #[tracing::instrument(level = "info", skip(self, state, credential))]
     async fn authenticate_by_token<'a>(
         &self,
         state: &ServiceState,
@@ -812,7 +811,6 @@ impl TokenApi for TokenService {
     }
 
     /// Validate token.
-    #[tracing::instrument(level = "info", skip(self, state, credential))]
     async fn validate_token<'a>(
         &self,
         state: &ServiceState,
@@ -852,7 +850,6 @@ impl TokenApi for TokenService {
     }
 
     /// Issue the Keystone token.
-    #[tracing::instrument(level = "debug", skip(self))]
     fn issue_token(
         &self,
         authentication_info: AuthenticatedInfo,
@@ -1007,7 +1004,6 @@ mod tests {
     use chrono::Utc;
     use eyre::{Result, eyre};
     use std::sync::Arc;
-    use tracing_test::traced_test;
     use uuid::Uuid;
 
     use openstack_keystone_config::Config;
@@ -1152,7 +1148,6 @@ mod tests {
 
     /// Test that a valid token with revocation events fails validation.
     #[tokio::test]
-    #[traced_test]
     async fn test_validate_token_revoked() {
         let token = generate_token(Some(TimeDelta::hours(1))).unwrap();
         let token_clone_expect = token.clone();
