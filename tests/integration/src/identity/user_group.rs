@@ -16,17 +16,18 @@ use eyre::Report;
 use sea_orm::{DbConn, entity::*};
 use std::sync::Arc;
 
-use openstack_keystone::config::Config;
-use openstack_keystone::db::entity::{
-    identity_provider as db_identity_provider, prelude::IdentityProvider as DbIdentityProvider,
-    project,
-};
-use openstack_keystone::identity::IdentityApi;
-use openstack_keystone::identity::types::*;
-use openstack_keystone::keystone::{Service, ServiceState};
-use openstack_keystone::plugin_manager::PluginManager;
-use openstack_keystone::provider::Provider;
+use openstack_keystone_config::Config;
 use openstack_keystone_core::policy::MockPolicy;
+use openstack_keystone_federation_sql::entity::{
+    identity_provider as db_identity_provider, prelude::IdentityProvider as DbIdentityProvider,
+};
+use openstack_keystone_resource_sql::entity::project;
+
+use openstack_keystone::plugin_manager::PluginManager;
+use openstack_keystone_core::identity::IdentityApi;
+use openstack_keystone_core::identity::types::*;
+use openstack_keystone_core::keystone::{Service, ServiceState};
+use openstack_keystone_core::provider::Provider;
 
 use crate::common::{bootstrap, get_isolated_database};
 

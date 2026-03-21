@@ -12,6 +12,4 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-pub mod sql;
-
 pub use openstack_keystone_core::resource::backend::ResourceBackend;

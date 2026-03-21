@@ -26,15 +26,18 @@ use sea_orm::{
 use tempfile::TempDir;
 use uuid::Uuid;
 
-use openstack_keystone::config::Config;
 use openstack_keystone::db::entity::prelude::*;
-use openstack_keystone::db::entity::{local_user, project, user};
+use openstack_keystone::db::entity::{local_user, user};
 use openstack_keystone::identity::{IdentityApi, types::*};
-use openstack_keystone::keystone::Service;
 use openstack_keystone::plugin_manager::PluginManager;
-use openstack_keystone::provider::Provider;
-use openstack_keystone::role::{RoleApi, types::RoleCreate};
+use openstack_keystone_appcred_sql::entity::prelude::*;
+use openstack_keystone_config::Config;
+use openstack_keystone_core::keystone::Service;
 use openstack_keystone_core::policy::MockPolicy;
+use openstack_keystone_core::provider::Provider;
+use openstack_keystone_core::role::{RoleApi, types::RoleCreate};
+use openstack_keystone_federation_sql::entity::prelude::*;
+use openstack_keystone_resource_sql::entity::{prelude::Project, project};
 
 /// Create table with the related types and indexes (when known)
 async fn create_table<C, E>(conn: &C, schema: &Schema, entity: E) -> Result<()>

@@ -36,4 +36,3 @@
 //! will get the role on the every project of the domain, but not the domain
 //! itself.
 pub use openstack_keystone_core::assignment::*;
-pub mod backend;

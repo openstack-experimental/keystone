@@ -13,8 +13,8 @@
 // SPDX-License-Identifier: Apache-2.0
 use sea_orm_migration::{prelude::*, schema::*};
 
-use crate::db::entity::prelude::{Project, TokenRestriction};
-use crate::db::entity::{project, token_restriction};
+use crate::db::entity::prelude::TokenRestriction;
+use crate::db::entity::token_restriction;
 
 #[derive(DeriveMigrationName)]
 pub struct Migration;
@@ -34,16 +34,16 @@ impl MigrationTrait for Migration {
                     .col(boolean(KubernetesAuthInstance::Enabled))
                     .col(text_null(KubernetesAuthInstance::CaCert))
                     .col(boolean(KubernetesAuthInstance::DisableLocalCaJwt))
-                    .foreign_key(
-                        ForeignKey::create()
-                            .name("fk-k8auth-provider-domain")
-                            .from(
-                                KubernetesAuthInstance::Table,
-                                KubernetesAuthInstance::DomainId,
-                            )
-                            .to(Project, project::Column::Id)
-                            .on_delete(ForeignKeyAction::Cascade),
-                    )
+                    //.foreign_key(
+                    //    ForeignKey::create()
+                    //        .name("fk-k8auth-provider-domain")
+                    //        .from(
+                    //            KubernetesAuthInstance::Table,
+                    //            KubernetesAuthInstance::DomainId,
+                    //        )
+                    //        .to(Project, project::Column::Id)
+                    //        .on_delete(ForeignKeyAction::Cascade),
+                    //)
                     .index(
                         Index::create()
                             .unique()
@@ -70,13 +70,13 @@ impl MigrationTrait for Migration {
                     .col(text_null(KubernetesAuthRole::BoundServiceAccountNamespaces))
                     .col(string_len_null(KubernetesAuthRole::BoundAudience, 128))
                     .col(string_len(KubernetesAuthRole::TokenRestrictionId, 64))
-                    .foreign_key(
-                        ForeignKey::create()
-                            .name("fk-k8role-domain")
-                            .from(KubernetesAuthRole::Table, KubernetesAuthRole::DomainId)
-                            .to(Project, project::Column::Id)
-                            .on_delete(ForeignKeyAction::Cascade),
-                    )
+                    //.foreign_key(
+                    //    ForeignKey::create()
+                    //        .name("fk-k8role-domain")
+                    //        .from(KubernetesAuthRole::Table, KubernetesAuthRole::DomainId)
+                    //        .to(Project, project::Column::Id)
+                    //        .on_delete(ForeignKeyAction::Cascade),
+                    //)
                     .foreign_key(
                         ForeignKey::create()
                             .name("fk-k8role-k8")

@@ -31,23 +31,6 @@ pub struct Model {
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {
     #[sea_orm(
-        belongs_to = "super::federation_protocol::Entity",
-        from = "(Column::ProtocolId, Column::IdpId)",
-        to = "(super::federation_protocol::Column::Id, super::federation_protocol::Column::IdpId)",
-        fk_name = "federated_user_protocol_id_fkey",
-        on_update = "NoAction",
-        on_delete = "Cascade"
-    )]
-    FederationProtocol,
-    #[sea_orm(
-        belongs_to = "super::identity_provider::Entity",
-        from = "Column::IdpId",
-        to = "super::identity_provider::Column::Id",
-        on_update = "NoAction",
-        on_delete = "Cascade"
-    )]
-    IdentityProvider,
-    #[sea_orm(
         belongs_to = "super::user::Entity",
         from = "Column::UserId",
         to = "super::user::Column::Id",
@@ -57,28 +40,9 @@ pub enum Relation {
     User,
 }
 
-impl Related<super::federation_protocol::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::FederationProtocol.def()
-    }
-}
-
 impl Related<super::user::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::User.def()
-    }
-}
-
-impl Related<super::identity_provider::Entity> for Entity {
-    fn to() -> RelationDef {
-        super::federation_protocol::Relation::IdentityProvider.def()
-    }
-    fn via() -> Option<RelationDef> {
-        Some(
-            super::federation_protocol::Relation::FederatedUser
-                .def()
-                .rev(),
-        )
     }
 }
 

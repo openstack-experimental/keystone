@@ -13,8 +13,12 @@ dist = false
 chrono.workspace = true
 eyre.workspace = true
 itertools.workspace = true
+openstack-keystone-appcred-sql = { version = "0.1", path = "../../crates/appcred-sql/" }
 openstack-keystone-assignment-sql = { version = "0.1", path = "../../crates/assignment-sql/" }
+openstack-keystone-config = { version = "0.1", path = "../../crates/config" }
 openstack-keystone-core = { version = "0.1", path = "../../crates/core", features = ["mock"] }
+openstack-keystone-federation-sql = { version = "0.1", path = "../../crates/federation-sql/" }
+openstack-keystone-resource-sql = { version = "0.1", path = "../../crates/resource-sql/" }
 openstack-keystone-token-fernet = { version = "0.1", path = "../../crates/token-fernet/" }
 openstack-keystone = { version = "0.1", path = "../../crates/keystone/" }
 sea-orm = { workspace = true, features = ["sqlx-sqlite"] }

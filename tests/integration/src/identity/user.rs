@@ -16,12 +16,12 @@ use eyre::Report;
 use sea_orm::{DbConn, entity::*};
 use std::sync::Arc;
 
-use openstack_keystone::config::Config;
-use openstack_keystone::db::entity::project;
-use openstack_keystone::keystone::Service;
 use openstack_keystone::plugin_manager::PluginManager;
-use openstack_keystone::provider::Provider;
+use openstack_keystone_config::Config;
+use openstack_keystone_core::keystone::Service;
 use openstack_keystone_core::policy::MockPolicy;
+use openstack_keystone_core::provider::Provider;
+use openstack_keystone_resource_sql::entity::project;
 
 use crate::common::{bootstrap, get_isolated_database};
 

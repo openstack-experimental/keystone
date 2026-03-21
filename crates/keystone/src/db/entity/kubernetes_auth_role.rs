@@ -51,14 +51,6 @@ pub enum Relation {
     )]
     KubernetesAuthInstance,
     #[sea_orm(
-        belongs_to = "super::project::Entity",
-        from = "Column::DomainId",
-        to = "super::project::Column::Id",
-        on_update = "NoAction",
-        on_delete = "Cascade"
-    )]
-    Project,
-    #[sea_orm(
         belongs_to = "super::token_restriction::Entity",
         from = "Column::TokenRestrictionId",
         to = "super::token_restriction::Column::Id",
@@ -71,12 +63,6 @@ pub enum Relation {
 impl Related<super::kubernetes_auth_instance::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::KubernetesAuthInstance.def()
-    }
-}
-
-impl Related<super::project::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::Project.def()
     }
 }
 

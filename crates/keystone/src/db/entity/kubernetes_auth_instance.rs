@@ -39,25 +39,11 @@ pub struct Model {
 pub enum Relation {
     #[sea_orm(has_many = "super::kubernetes_auth_role::Entity")]
     KubernetesAuthRole,
-    #[sea_orm(
-        belongs_to = "super::project::Entity",
-        from = "Column::DomainId",
-        to = "super::project::Column::Id",
-        on_update = "NoAction",
-        on_delete = "Cascade"
-    )]
-    Project,
 }
 
 impl Related<super::kubernetes_auth_role::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::KubernetesAuthRole.def()
-    }
-}
-
-impl Related<super::project::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::Project.def()
     }
 }
 

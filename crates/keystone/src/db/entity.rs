@@ -16,43 +16,31 @@
 
 pub mod prelude;
 
-pub mod access_rule;
 pub mod access_token;
 pub mod alembic_version;
-pub mod application_credential;
-pub mod application_credential_access_rule;
-pub mod application_credential_role;
 pub mod config_register;
 pub mod consumer;
 pub mod credential;
-pub mod endpoint;
-pub mod endpoint_group;
 pub mod expiring_user_group_membership;
-pub mod federated_auth_state;
-pub mod federated_identity_provider;
-pub mod federated_mapping;
+//pub mod federated_auth_state;
+//pub mod federated_identity_provider;
+//pub mod federated_mapping;
 pub mod federated_user;
-pub mod federation_protocol;
+//pub mod federation_protocol;
 pub mod group;
 pub mod id_mapping;
-pub mod identity_provider;
-pub mod idp_remote_ids;
+//pub mod identity_provider;
+//pub mod idp_remote_ids;
 pub mod implied_role;
 pub mod kubernetes_auth_instance;
 pub mod kubernetes_auth_role;
 pub mod limit;
 pub mod local_user;
-pub mod mapping;
+//pub mod mapping;
 pub mod nonlocal_user;
 pub mod password;
 pub mod policy;
 pub mod policy_association;
-pub mod project;
-pub mod project_endpoint;
-pub mod project_endpoint_group;
-pub mod project_option;
-pub mod project_tag;
-pub mod region;
 pub mod registered_limit;
 pub mod request_token;
 pub mod revocation_event;
@@ -60,7 +48,6 @@ pub mod role;
 pub mod role_option;
 pub mod sea_orm_active_enums;
 pub mod sensitive_config;
-pub mod service;
 pub mod service_provider;
 pub mod token;
 pub mod token_restriction;
@@ -80,32 +67,6 @@ impl Default for role::Model {
             extra: None,
             id: String::new(),
             name: String::new(),
-        }
-    }
-}
-
-impl Default for service::Model {
-    fn default() -> Self {
-        Self {
-            id: String::new(),
-            r#type: None,
-            enabled: false,
-            extra: None,
-        }
-    }
-}
-
-impl Default for endpoint::Model {
-    fn default() -> Self {
-        Self {
-            id: String::new(),
-            legacy_endpoint_id: None,
-            interface: String::new(),
-            service_id: String::new(),
-            url: String::new(),
-            enabled: false,
-            extra: None,
-            region_id: None,
         }
     }
 }

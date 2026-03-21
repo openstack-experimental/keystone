@@ -1,15 +1,20 @@
 [workspace]
 members = [
   "crates/api-types",
+  "crates/appcred-sql",
   "crates/assignment-sql",
+  "crates/catalog-sql",
+  "crates/config",
   "crates/core",
+  "crates/federation-sql", 
   "crates/keystone",
-  "crates/token-fernet",
+  "crates/resource-sql",
   "crates/storage",
+  "crates/token-fernet",
   "crates/webauthn",
   "tests/api",
   "tests/integration",
-  "tests/federation", "crates/config", 
+  "tests/federation", 
 ]
 exclude = [
   "tests/loadtest"

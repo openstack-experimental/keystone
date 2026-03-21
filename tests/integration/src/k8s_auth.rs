@@ -17,12 +17,12 @@ use std::sync::Arc;
 use eyre::Report;
 use sea_orm::entity::*;
 
-use openstack_keystone::config::Config;
-use openstack_keystone::db::entity::{prelude::Project, project};
 use openstack_keystone::keystone::Service;
 use openstack_keystone::plugin_manager::PluginManager;
 use openstack_keystone::provider::Provider;
+use openstack_keystone_config::Config;
 use openstack_keystone_core::policy::MockPolicy;
+use openstack_keystone_resource_sql::entity::{prelude::Project, project};
 
 use crate::common::{bootstrap, get_isolated_database};
 

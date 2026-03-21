@@ -3302,10 +3302,14 @@ dependencies = [
  "mockall",
  "openidconnect",
  "openstack-keystone-api-types",
+ "openstack-keystone-appcred-sql",
  "openstack-keystone-assignment-sql",
+ "openstack-keystone-catalog-sql",
  "openstack-keystone-config",
  "openstack-keystone-core",
  "openstack-keystone-distributed-storage",
+ "openstack-keystone-federation-sql",
+ "openstack-keystone-resource-sql",
  "openstack-keystone-token-fernet",
  "openstack-keystone-webauthn",
  "reqwest 0.13.2",
@@ -3351,6 +3355,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "openstack-keystone-appcred-sql"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "openstack-keystone-config",
+ "openstack-keystone-core",
+ "sea-orm",
+ "secrecy",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "openstack-keystone-assignment-sql"
 version = "0.1.0"
 dependencies = [
@@ -3358,6 +3377,18 @@ dependencies = [
  "openstack-keystone-config",
  "openstack-keystone-core",
  "sea-orm",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "openstack-keystone-catalog-sql"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "openstack-keystone-core",
+ "sea-orm",
+ "serde_json",
  "tokio",
  "tracing",
 ]
@@ -3433,6 +3464,34 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "tracing-test",
+]
+
+[[package]]
+name = "openstack-keystone-federation-sql"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "derive_builder",
+ "openstack-keystone-core",
+ "sea-orm",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "openstack-keystone-resource-sql"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "openstack-keystone-core",
+ "sea-orm",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -5817,8 +5876,12 @@ dependencies = [
  "eyre",
  "itertools 0.14.0",
  "openstack-keystone",
+ "openstack-keystone-appcred-sql",
  "openstack-keystone-assignment-sql",
+ "openstack-keystone-config",
  "openstack-keystone-core",
+ "openstack-keystone-federation-sql",
+ "openstack-keystone-resource-sql",
  "openstack-keystone-token-fernet",
  "sea-orm",
  "secrecy",
