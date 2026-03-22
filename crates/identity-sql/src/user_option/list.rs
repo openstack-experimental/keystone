@@ -1,0 +1,36 @@
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+// SPDX-License-Identifier: Apache-2.0
+
+use sea_orm::DatabaseConnection;
+use sea_orm::entity::*;
+use sea_orm::query::*;
+
+use openstack_keystone_core::error::DbContextExt;
+use openstack_keystone_core::identity::{IdentityProviderError, types::UserOptions};
+
+use crate::entity::{prelude::UserOption as DbUserOptions, user_option};
+
+#[tracing::instrument(skip_all)]
+pub async fn list_by_user_id<S: AsRef<str>>(
+    db: &DatabaseConnection,
+    user_id: S,
+) -> Result<UserOptions, IdentityProviderError> {
+    Ok(UserOptions::from_iter(
+        DbUserOptions::find()
+            .filter(user_option::Column::UserId.eq(user_id.as_ref()))
+            .all(db)
+            .await
+            .context("fetching options of the user")?,
+    ))
+}

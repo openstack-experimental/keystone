@@ -41,7 +41,6 @@ pub trait TokenRestrictionBackend: Send + Sync {
         &self,
         state: &ServiceState,
         id: &'a str,
-        expand_roles: bool,
     ) -> Result<Option<TokenRestriction>, TokenProviderError>;
 
     /// Create new token restriction.

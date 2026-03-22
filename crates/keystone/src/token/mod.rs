@@ -19,5 +19,3 @@
 //! that does not aspire to be a full-fledged identity store and management
 //! solution.
 pub use openstack_keystone_core::token::*;
-
-pub mod token_restriction;

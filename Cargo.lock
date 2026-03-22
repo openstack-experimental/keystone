@@ -3288,18 +3288,12 @@ dependencies = [
  "async-trait",
  "axum",
  "base64 0.22.1",
- "base64urlsafedata",
  "chrono",
  "clap",
  "color-eyre",
- "config",
  "derive_builder",
  "eyre",
  "http-body-util",
- "httpmock",
- "hyper",
- "hyper-util",
- "mockall",
  "openidconnect",
  "openstack-keystone-api-types",
  "openstack-keystone-appcred-sql",
@@ -3309,8 +3303,15 @@ dependencies = [
  "openstack-keystone-core",
  "openstack-keystone-distributed-storage",
  "openstack-keystone-federation-sql",
+ "openstack-keystone-identity-sql",
+ "openstack-keystone-idmapping-sql",
+ "openstack-keystone-k8s-auth-sql",
  "openstack-keystone-resource-sql",
+ "openstack-keystone-revoke-sql",
+ "openstack-keystone-role-sql",
  "openstack-keystone-token-fernet",
+ "openstack-keystone-token-restriction-sql",
+ "openstack-keystone-trust-sql",
  "openstack-keystone-webauthn",
  "reqwest 0.13.2",
  "rstest",
@@ -3482,7 +3483,75 @@ dependencies = [
 ]
 
 [[package]]
+name = "openstack-keystone-identity-sql"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "derive_builder",
+ "openstack-keystone-config",
+ "openstack-keystone-core",
+ "sea-orm",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-test",
+ "uuid",
+]
+
+[[package]]
+name = "openstack-keystone-idmapping-sql"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "openstack-keystone-core",
+ "sea-orm",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "openstack-keystone-k8s-auth-sql"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "openstack-keystone-core",
+ "sea-orm",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "openstack-keystone-resource-sql"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "openstack-keystone-core",
+ "sea-orm",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "openstack-keystone-revoke-sql"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "openstack-keystone-core",
+ "sea-orm",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "openstack-keystone-role-sql"
 version = "0.1.0"
 dependencies = [
  "async-trait",
@@ -3519,6 +3588,30 @@ dependencies = [
  "tracing",
  "uuid",
  "validator",
+]
+
+[[package]]
+name = "openstack-keystone-token-restriction-sql"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "openstack-keystone-core",
+ "sea-orm",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "openstack-keystone-trust-sql"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "openstack-keystone-core",
+ "sea-orm",
+ "serde_json",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -4082,7 +4175,7 @@ version = "0.14.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "343d3bd7056eda839b03204e68deff7d1b13aba7af2b2fd16890697274262ee7"
 dependencies = [
- "heck 0.4.1",
+ "heck 0.5.0",
  "itertools 0.14.0",
  "log",
  "multimap",
@@ -5881,8 +5974,14 @@ dependencies = [
  "openstack-keystone-config",
  "openstack-keystone-core",
  "openstack-keystone-federation-sql",
+ "openstack-keystone-identity-sql",
+ "openstack-keystone-k8s-auth-sql",
  "openstack-keystone-resource-sql",
+ "openstack-keystone-revoke-sql",
+ "openstack-keystone-role-sql",
  "openstack-keystone-token-fernet",
+ "openstack-keystone-token-restriction-sql",
+ "openstack-keystone-trust-sql",
  "sea-orm",
  "secrecy",
  "serde",

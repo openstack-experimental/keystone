@@ -381,15 +381,15 @@ impl PluginManager {
         );
         self.register_identity_backend(
             "sql",
-            Arc::new(crate::identity::backend::sql::SqlBackend::default()),
+            Arc::new(openstack_keystone_identity_sql::SqlBackend::default()),
         );
         self.register_identity_mapping_backend(
             "sql",
-            Arc::new(crate::identity_mapping::backend::sql::SqlBackend::default()),
+            Arc::new(openstack_keystone_idmapping_sql::SqlBackend::default()),
         );
         self.register_k8s_auth_backend(
             "sql",
-            Arc::new(crate::k8s_auth::backend::sql::SqlBackend::default()),
+            Arc::new(openstack_keystone_k8s_auth_sql::SqlBackend::default()),
         );
         self.register_resource_backend(
             "sql",
@@ -397,19 +397,19 @@ impl PluginManager {
         );
         self.register_revoke_backend(
             "sql",
-            Arc::new(crate::revoke::backend::sql::SqlBackend::default()),
+            Arc::new(openstack_keystone_revoke_sql::SqlBackend::default()),
         );
         self.register_role_backend(
             "sql",
-            Arc::new(crate::role::backend::sql::SqlBackend::default()),
+            Arc::new(openstack_keystone_role_sql::SqlBackend::default()),
         );
         self.register_token_restriction_backend(
             "sql",
-            Arc::new(crate::token::token_restriction::SqlBackend::default()),
+            Arc::new(openstack_keystone_token_restriction_sql::SqlBackend::default()),
         );
         self.register_trust_backend(
             "sql",
-            Arc::new(crate::trust::backend::sql::SqlBackend::default()),
+            Arc::new(openstack_keystone_trust_sql::SqlBackend::default()),
         );
     }
 

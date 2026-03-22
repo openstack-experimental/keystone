@@ -35,4 +35,3 @@
 //! Additionally the `token.issued_at` is compared to be lower than the
 //! `issued_before` field of the revocation record.
 pub use openstack_keystone_core::revoke::*;
-pub mod backend;

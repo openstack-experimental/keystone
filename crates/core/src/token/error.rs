@@ -172,3 +172,17 @@ pub enum TokenProviderError {
     #[error("Token validation error: {0}")]
     Validation(#[from] validator::ValidationErrors),
 }
+
+impl From<crate::error::DatabaseError> for TokenProviderError {
+    fn from(source: crate::error::DatabaseError) -> Self {
+        match source {
+            cfl @ crate::error::DatabaseError::Conflict { .. } => Self::Conflict {
+                message: cfl.to_string(),
+                context: String::new(),
+            },
+            other => Self::Driver {
+                source: Box::new(other),
+            },
+        }
+    }
+}

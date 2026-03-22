@@ -17,4 +17,3 @@
 //! Identity mapping provider provides a mapping of the entity ID between
 //! Keystone and the remote system (i.e. LDAP, IdP, OpenFGA, SCIM, etc).
 pub use openstack_keystone_core::identity_mapping::*;
-pub mod backend;

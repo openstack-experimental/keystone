@@ -26,8 +26,6 @@ use sea_orm::{
 use tempfile::TempDir;
 use uuid::Uuid;
 
-use openstack_keystone::db::entity::prelude::*;
-use openstack_keystone::db::entity::{local_user, user};
 use openstack_keystone::identity::{IdentityApi, types::*};
 use openstack_keystone::plugin_manager::PluginManager;
 use openstack_keystone_appcred_sql::entity::prelude::*;
@@ -37,7 +35,13 @@ use openstack_keystone_core::policy::MockPolicy;
 use openstack_keystone_core::provider::Provider;
 use openstack_keystone_core::role::{RoleApi, types::RoleCreate};
 use openstack_keystone_federation_sql::entity::prelude::*;
+use openstack_keystone_identity_sql::entity::{local_user, prelude::*, user};
+use openstack_keystone_k8s_auth_sql::entity::prelude::*;
 use openstack_keystone_resource_sql::entity::{prelude::Project, project};
+use openstack_keystone_revoke_sql::entity::prelude::*;
+use openstack_keystone_role_sql::entity::prelude::*;
+use openstack_keystone_token_restriction_sql::entity::prelude::*;
+use openstack_keystone_trust_sql::entity::prelude::*;
 
 /// Create table with the related types and indexes (when known)
 async fn create_table<C, E>(conn: &C, schema: &Schema, entity: E) -> Result<()>

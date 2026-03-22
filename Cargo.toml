@@ -6,15 +6,20 @@ members = [
   "crates/catalog-sql",
   "crates/config",
   "crates/core",
-  "crates/federation-sql", 
+  "crates/federation-sql",
+  "crates/idmapping-sql",
+  "crates/k8s-auth-sql",
   "crates/keystone",
   "crates/resource-sql",
+  "crates/role-sql",
   "crates/storage",
   "crates/token-fernet",
+  "crates/trust-sql",
+  "crates/revoke-sql",
   "crates/webauthn",
   "tests/api",
   "tests/integration",
-  "tests/federation", 
+  "tests/federation", "crates/token-restriction-sql", "crates/identity-sql",
 ]
 exclude = [
   "tests/loadtest"

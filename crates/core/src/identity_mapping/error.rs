@@ -56,11 +56,11 @@ pub enum IdentityMappingProviderError {
     },
 }
 
-//impl From<IdentityMappingProviderError> for KeystoneApiError {
-//    fn from(source: IdentityMappingProviderError) -> Self {
-//        match source {
-//            IdentityMappingProviderError::Conflict(x) => Self::Conflict(x),
-//            other => Self::InternalError(other.to_string()),
-//        }
-//    }
-//}
+impl From<crate::error::DatabaseError> for IdentityMappingProviderError {
+    fn from(source: crate::error::DatabaseError) -> Self {
+        match source {
+            cfl @ crate::error::DatabaseError::Conflict { .. } => Self::Conflict(cfl.to_string()),
+            other => Self::Driver(other.to_string()),
+        }
+    }
+}

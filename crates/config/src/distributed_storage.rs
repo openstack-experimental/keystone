@@ -27,7 +27,7 @@ pub struct DistributedStorageConfiguration {
     #[serde(default)]
     pub nodes: Vec<ClusterNode>,
 
-    /// Path to the storage
+    /// Path to the storage.
     pub path: PathBuf,
 }
 

@@ -31,4 +31,3 @@
 //! on the service operator, a project might map to a customer, account,
 //! organization, or tenant.
 pub use openstack_keystone_core::resource::*;
-pub mod backend;

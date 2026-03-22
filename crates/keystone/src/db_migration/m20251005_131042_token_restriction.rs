@@ -13,9 +13,6 @@
 // SPDX-License-Identifier: Apache-2.0
 use sea_orm_migration::{prelude::*, schema::*};
 
-use crate::db::entity::prelude::{Role, User};
-use crate::db::entity::{role, user};
-
 #[derive(DeriveMigrationName)]
 pub struct Migration;
 
@@ -33,13 +30,6 @@ impl MigrationTrait for Migration {
                     .col(boolean(TokenRestriction::AllowRenew))
                     .col(boolean(TokenRestriction::AllowRescope))
                     .col(string_len_null(TokenRestriction::ProjectId, 64))
-                    .foreign_key(
-                        ForeignKey::create()
-                            .name("fk-token-restriction-user")
-                            .from(TokenRestriction::Table, TokenRestriction::UserId)
-                            .to(User, user::Column::Id)
-                            .on_delete(ForeignKeyAction::Cascade),
-                    )
                     .to_owned(),
             )
             .await?;
@@ -67,16 +57,6 @@ impl MigrationTrait for Migration {
                                 TokenRestrictionRoleAssociation::RestrictionId,
                             )
                             .to(TokenRestriction::Table, TokenRestriction::Id)
-                            .on_delete(ForeignKeyAction::Cascade),
-                    )
-                    .foreign_key(
-                        ForeignKey::create()
-                            .name("fk-token-restriction-role-association-role")
-                            .from(
-                                TokenRestrictionRoleAssociation::Table,
-                                TokenRestrictionRoleAssociation::RoleId,
-                            )
-                            .to(Role, role::Column::Id)
                             .on_delete(ForeignKeyAction::Cascade),
                     )
                     .to_owned(),

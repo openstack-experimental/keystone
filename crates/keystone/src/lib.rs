@@ -79,7 +79,6 @@ pub mod auth;
 pub mod catalog;
 pub mod common;
 pub mod config;
-pub mod db;
 pub mod db_migration;
 pub mod error;
 pub mod federation;

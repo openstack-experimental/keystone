@@ -942,11 +942,14 @@ impl TokenApi for TokenService {
         &self,
         state: &ServiceState,
         id: &'a str,
-        expand_roles: bool,
+        _expand_roles: bool,
     ) -> Result<Option<TokenRestriction>, TokenProviderError> {
-        self.tr_backend_driver
-            .get_token_restriction(state, id, expand_roles)
-            .await
+        let res = self
+            .tr_backend_driver
+            .get_token_restriction(state, id)
+            .await?;
+
+        Ok(res)
     }
 
     /// Create new token restriction.

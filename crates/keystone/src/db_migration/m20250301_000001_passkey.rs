@@ -14,9 +14,6 @@
 
 use sea_orm_migration::{prelude::*, schema::*};
 
-use crate::db::entity::prelude::User;
-use crate::db::entity::user;
-
 #[derive(DeriveMigrationName)]
 pub struct Migration;
 
@@ -39,13 +36,6 @@ impl MigrationTrait for Migration {
                     .col(date_time(WebauthnCredential::CreatedAt))
                     .col(date_time_null(WebauthnCredential::LastUsedAt))
                     .col(date_time_null(WebauthnCredential::LastUpdatedAt))
-                    .foreign_key(
-                        ForeignKey::create()
-                            .name("fk-user-passkey-credential")
-                            .from(WebauthnCredential::Table, WebauthnCredential::UserId)
-                            .to(User, user::Column::Id)
-                            .on_delete(ForeignKeyAction::Cascade),
-                    )
                     .to_owned(),
             )
             .await?;
@@ -60,13 +50,6 @@ impl MigrationTrait for Migration {
                     .col(string_len(WebauthnState::Type, 10))
                     .col(date_time(WebauthnState::CreatedAt))
                     .primary_key(Index::create().col(WebauthnState::UserId))
-                    .foreign_key(
-                        ForeignKey::create()
-                            .name("fk-user-passkey-state")
-                            .from(WebauthnState::Table, WebauthnState::UserId)
-                            .to(User, user::Column::Id)
-                            .on_delete(ForeignKeyAction::Cascade),
-                    )
                     .to_owned(),
             )
             .await?;

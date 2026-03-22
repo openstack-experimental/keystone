@@ -33,4 +33,3 @@
 //! directly assigned to a particular project and behave as if they are
 //! contained in that project.
 pub use openstack_keystone_core::identity::*;
-pub mod backend;

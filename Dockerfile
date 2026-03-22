@@ -16,10 +16,17 @@ RUN USER=root cargo new keystone
 WORKDIR /usr/src/keystone
 
 RUN USER=root cargo new --name appcred-sql --lib crates/appcred-sql
-RUN USER=root cargo new --name assignment-sql-sql --lib crates/assignment-sql
-RUN USER=root cargo new --name catalog-sql-sql --lib crates/catalog-sql
-RUN USER=root cargo new --name federation-sql-sql --lib crates/federation-sql
-RUN USER=root cargo new --name resource-sql-sql --lib crates/resource-sql
+RUN USER=root cargo new --name assignment-sql --lib crates/assignment-sql
+RUN USER=root cargo new --name catalog-sql --lib crates/catalog-sql
+RUN USER=root cargo new --name federation-sql --lib crates/federation-sql
+RUN USER=root cargo new --name identity-sql --lib crates/identity-sql
+RUN USER=root cargo new --name idmaping-sql --lib crates/idmapping-sql
+RUN USER=root cargo new --name k8s-auth-sql --lib crates/k8s-auth-sql
+RUN USER=root cargo new --name resource-sql --lib crates/resource-sql
+RUN USER=root cargo new --name revoke-sql --lib crates/revoke-sql
+RUN USER=root cargo new --name role-sql --lib crates/role-sql
+RUN USER=root cargo new --name token-restriction-sql --lib crates/token-restriction-sql
+RUN USER=root cargo new --name trust-sql --lib crates/trust-sql
 
 # We want dependencies cached, so copy those first.
 COPY Cargo.toml Cargo.lock /usr/src/keystone/
@@ -30,10 +37,17 @@ COPY crates/config/Cargo.toml /usr/src/keystone/crates/config/
 COPY crates/core/Cargo.toml /usr/src/keystone/crates/core/
 COPY crates/catalog-sql/Cargo.toml /usr/src/keystone/crates/catalog-sql/
 COPY crates/federation-sql/Cargo.toml /usr/src/keystone/crates/federation-sql/
+COPY crates/identity-sql/Cargo.toml /usr/src/keystone/crates/identity-sql/
+COPY crates/idmapping-sql/Cargo.toml /usr/src/keystone/crates/idmapping-sql/
+COPY crates/k8s-auth-sql/Cargo.toml /usr/src/keystone/crates/k8s-auth-sql/
 COPY crates/keystone/Cargo.toml /usr/src/keystone/crates/keystone/
 COPY crates/resource-sql/Cargo.toml /usr/src/keystone/crates/resource-sql/
+COPY crates/revoke-sql/Cargo.toml /usr/src/keystone/crates/revoke-sql/
+COPY crates/role-sql/Cargo.toml /usr/src/keystone/crates/role-sql/
 COPY crates/storage/Cargo.toml /usr/src/keystone/crates/storage/
 COPY crates/token-fernet/Cargo.toml /usr/src/keystone/crates/token-fernet/
+COPY crates/token-restriction-sql/Cargo.toml /usr/src/keystone/crates/token-restriction-sql/
+COPY crates/trust-sql/Cargo.toml /usr/src/keystone/crates/trust-sql/
 COPY crates/webauthn/Cargo.toml /usr/src/keystone/crates/webauthn/
 COPY tests/federation/Cargo.toml /usr/src/keystone/tests/federation/
 COPY tests/integration/Cargo.toml /usr/src/keystone/tests/integration/
@@ -71,7 +85,14 @@ COPY crates/appcred-sql/ /usr/src/keystone/crates/appcred-sql
 COPY crates/assignment-sql/ /usr/src/keystone/crates/assignment-sql
 COPY crates/catalog-sql/ /usr/src/keystone/crates/catalog-sql
 COPY crates/federation-sql/ /usr/src/keystone/crates/federation-sql
+COPY crates/identity-sql/ /usr/src/keystone/crates/identity-sql
+COPY crates/idmapping-sql/ /usr/src/keystone/crates/idmapping-sql
+COPY crates/k8s-auth-sql/ /usr/src/keystone/crates/k8s-auth-sql
 COPY crates/resource-sql/ /usr/src/keystone/crates/resource-sql
+COPY crates/revoke-sql/ /usr/src/keystone/crates/revoke-sql
+COPY crates/role-sql/ /usr/src/keystone/crates/role-sql
+COPY crates/token-restriction-sql/ /usr/src/keystone/crates/token-restriction-sql
+COPY crates/trust-sql/ /usr/src/keystone/crates/trust-sql
 
 ## Touch main.rs to prevent cached release build
 RUN touch crates/keystone/src/lib.rs && touch crates/keystone/src/bin/keystone.rs

@@ -26,7 +26,6 @@ base64.workspace = true
 chrono.workspace = true
 clap = { workspace = true, features = ["derive"] }
 color-eyre.workspace = true
-config.workspace = true
 derive_builder.workspace = true
 eyre.workspace = true
 openstack-keystone-api-types = { version = "0.1", features = ["openapi", "validate"], path = "../api-types/"}
@@ -37,8 +36,15 @@ openstack-keystone-config = { version = "0.1", path = "../config" }
 openstack-keystone-core = { version = "0.1", features = ["api"], path = "../core" }
 openstack-keystone-distributed-storage = { version = "0.1", path = "../storage/"}
 openstack-keystone-federation-sql = { version = "0.1", path = "../federation-sql" }
+openstack-keystone-k8s-auth-sql = { version = "0.1", path = "../k8s-auth-sql/" }
+openstack-keystone-identity-sql = { version = "0.1", path = "../identity-sql" }
+openstack-keystone-idmapping-sql = { version = "0.1", path = "../idmapping-sql" }
 openstack-keystone-resource-sql = { version = "0.1", path = "../resource-sql/" }
+openstack-keystone-revoke-sql = { version = "0.1", path = "../revoke-sql/" }
+openstack-keystone-role-sql = { version = "0.1", path = "../role-sql/" }
 openstack-keystone-token-fernet = { version = "0.1", path = "../token-fernet/" }
+openstack-keystone-token-restriction-sql = { version = "0.1", path = "../token-restriction-sql/" }
+openstack-keystone-trust-sql = { version = "0.1", path = "../trust-sql/" }
 openstack-keystone-webauthn = { version = "0.1", path = "../webauthn/"}
 openidconnect.workspace = true
 reqwest = { workspace = true, features = ["json", "http2", "gzip", "deflate"] }
@@ -64,15 +70,9 @@ uuid = { workspace = true, features = ["v4"] }
 validator = { workspace = true, features = ["derive"] }
 
 [dev-dependencies]
-base64urlsafedata.workspace = true
 http-body-util.workspace = true
-httpmock = { version = "0.8", features = ["http2"] }
-hyper = { workspace = true, features = ["http1"] }
-hyper-util = { workspace = true, features = ["tokio", "http1"] }
 openstack-keystone-core = { version = "0.1", path = "../core", features = ["mock"] }
-mockall.workspace = true
 rstest.workspace = true
-sea-orm = { workspace = true, features = ["mock", "sqlx-sqlite" ]}
 tracing-test = { workspace = true, features = ["no-env-filter"] }
 url.workspace = true
 

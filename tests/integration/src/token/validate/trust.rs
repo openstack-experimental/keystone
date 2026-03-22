@@ -19,9 +19,12 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use tracing_test::traced_test;
 
+use openstack_keystone_trust_sql::entity::{
+    prelude::{Trust as DbTrust, TrustRole as DbTrustRole},
+    trust as db_trust, trust_role as db_trust_role,
+};
+
 use openstack_keystone::auth::*;
-use openstack_keystone::db::entity::prelude::{Trust as DbTrust, TrustRole as DbTrustRole};
-use openstack_keystone::db::entity::{trust as db_trust, trust_role as db_trust_role};
 use openstack_keystone::keystone::Service;
 use openstack_keystone::role::{RoleApi, types::RoleCreate};
 use openstack_keystone::token::{Token, TokenApi, TokenProviderError};

@@ -187,3 +187,14 @@ impl From<reqwest::Error> for K8sAuthProviderError {
         }
     }
 }
+
+impl From<crate::error::DatabaseError> for K8sAuthProviderError {
+    fn from(source: crate::error::DatabaseError) -> Self {
+        match source {
+            cfl @ crate::error::DatabaseError::Conflict { .. } => Self::Conflict(cfl.to_string()),
+            other => Self::Driver {
+                source: other.into(),
+            },
+        }
+    }
+}

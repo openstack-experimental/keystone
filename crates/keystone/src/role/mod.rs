@@ -33,5 +33,3 @@
 //! resources each role grants access.
 
 pub use openstack_keystone_core::role::*;
-
-pub mod backend;
