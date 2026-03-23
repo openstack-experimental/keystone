@@ -82,6 +82,8 @@ pub(super) async fn list(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use axum::{
         body::Body,
         http::{Request, StatusCode},
@@ -161,7 +163,7 @@ mod tests {
                 groups_claim: None,
                 bound_audiences: None,
                 bound_subject: None,
-                bound_claims: None,
+                bound_claims: HashMap::new(),
                 oidc_scopes: None,
                 token_project_id: None,
                 token_restriction_id: None
@@ -199,7 +201,7 @@ mod tests {
                     groups_claim: None,
                     bound_audiences: None,
                     bound_subject: None,
-                    bound_claims: None,
+                    bound_claims: HashMap::new(),
                     oidc_scopes: None,
                     token_project_id: None,
                     token_restriction_id: None,

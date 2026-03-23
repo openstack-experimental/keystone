@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use validator::Validate;
 
 /// A trust object returned in the token.
-#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[cfg_attr(feature = "builder", derive(derive_builder::Builder))]
 #[cfg_attr(
     feature = "builder",
@@ -102,7 +102,7 @@ pub struct TokenTrustRepr {
 }
 
 /// A trust object returned in the token.
-#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[cfg_attr(feature = "builder", derive(derive_builder::Builder))]
 #[cfg_attr(
     feature = "builder",

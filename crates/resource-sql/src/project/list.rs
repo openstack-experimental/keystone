@@ -133,7 +133,7 @@ mod tests {
                 description: None,
                 domain_id: "did".into(),
                 enabled: true,
-                extra: None,
+                extra: std::collections::HashMap::new(),
                 id: "pid1".into(),
                 is_domain: false,
                 name: "name".into(),

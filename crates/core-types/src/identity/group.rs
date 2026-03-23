@@ -12,13 +12,15 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use std::collections::HashMap;
+
 use derive_builder::Builder;
 use serde::Serialize;
 use serde_json::Value;
 
 use crate::error::BuilderError;
 
-#[derive(Builder, Clone, Debug, Default, Eq, Hash, Serialize, PartialEq)]
+#[derive(Builder, Clone, Debug, Default, Eq, Serialize, PartialEq)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct Group {
@@ -29,7 +31,7 @@ pub struct Group {
     pub domain_id: String,
     /// Additional user properties.
     #[builder(default)]
-    pub extra: Option<Value>,
+    pub extra: HashMap<String, Value>,
     /// The ID of the group.
     pub id: String,
     /// The user name. Must be unique within the owning domain.
@@ -59,7 +61,7 @@ pub struct GroupCreate {
     pub domain_id: String,
     /// Additional user properties.
     #[builder(default)]
-    pub extra: Option<Value>,
+    pub extra: HashMap<String, Value>,
     /// The ID of the group.
     pub id: Option<String>,
     /// The user name. Must be unique within the owning domain.

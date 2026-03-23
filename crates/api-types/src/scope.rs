@@ -47,7 +47,7 @@ impl validator::Validate for Scope {
 }
 
 /// Project scope information.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "builder", derive(derive_builder::Builder))]
 #[cfg_attr(
     feature = "builder",
@@ -73,7 +73,7 @@ pub struct ScopeProject {
 }
 
 /// Domain information.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "builder", derive(derive_builder::Builder))]
 #[cfg_attr(
     feature = "builder",
@@ -96,7 +96,7 @@ pub struct Domain {
 }
 
 /// Project information.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "builder", derive(derive_builder::Builder))]
 #[cfg_attr(
     feature = "builder",
@@ -112,7 +112,6 @@ pub struct Project {
     #[cfg_attr(feature = "validate", validate(length(max = 64)))]
     pub id: String,
     /// Project Name.
-    #[cfg_attr(feature = "builder", builder(default))]
     #[cfg_attr(feature = "validate", validate(length(max = 64)))]
     pub name: String,
     /// project domain.
@@ -120,7 +119,7 @@ pub struct Project {
 }
 
 /// System scope.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "builder", derive(derive_builder::Builder))]
 #[cfg_attr(
     feature = "builder",

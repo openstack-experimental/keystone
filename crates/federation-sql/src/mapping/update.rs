@@ -68,7 +68,7 @@ pub async fn update<S: AsRef<str>>(
             entry.bound_subject = Set(val.to_owned());
         }
         if let Some(val) = &mapping.bound_claims {
-            entry.bound_claims = Set(Some(val.clone()));
+            entry.bound_claims = Set(Some(serde_json::to_value(val)?));
         }
         if let Some(val) = mapping.oidc_scopes {
             entry.oidc_scopes = Set(val.clone().map(|x| x.join(",")));
@@ -92,6 +92,8 @@ pub async fn update<S: AsRef<str>>(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use sea_orm::{DatabaseBackend, MockDatabase, MockExecResult, Transaction};
     use serde_json::json;
 
@@ -122,7 +124,7 @@ mod tests {
             groups_claim: Some(Some("groups".into())),
             bound_audiences: Some(Some(vec!["a1".into(), "a2".into()])),
             bound_subject: Some(Some("subject".into())),
-            bound_claims: Some(json!({"department": "foo"})),
+            bound_claims: Some(HashMap::from([("department".into(), json!("foo"))])),
             //claim_mappings: Some(json!({"foo": "bar"})),
             oidc_scopes: Some(Some(vec!["oidc".into(), "oauth".into()])),
             token_project_id: Some(Some("pid".into())),

@@ -11,8 +11,10 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+use std::collections::HashMap;
+
 use sea_orm::entity::*;
-use serde_json::{Value, json};
+use serde_json::Value;
 use tracing::error;
 use uuid::Uuid;
 
@@ -48,7 +50,7 @@ impl TryFrom<db_project::Model> for Domain {
             && "{}" != extra
         {
             domain_builder.extra(
-                serde_json::from_str::<Value>(extra)
+                serde_json::from_str::<HashMap<String, Value>>(extra)
                     .inspect_err(|e| error!("failed to deserialize domain extra: {e}"))
                     .unwrap_or_default(),
             );
@@ -66,10 +68,7 @@ impl TryFrom<DomainCreate> for db_project::ActiveModel {
             description: value.description.map(Set).unwrap_or(NotSet).into(),
             domain_id: Set(NULL_DOMAIN_ID.into()),
             enabled: Set(Some(value.enabled)),
-            extra: Set(Some(serde_json::to_string(
-                // For keystone it is important to have at least "{}"
-                &value.extra.as_ref().or(Some(&json!({}))),
-            )?)),
+            extra: Set(Some(serde_json::to_string(&value.extra)?)),
             id: Set(value.id.unwrap_or(Uuid::new_v4().simple().to_string())),
             is_domain: Set(true),
             name: Set(value.name),

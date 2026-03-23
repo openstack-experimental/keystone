@@ -23,7 +23,7 @@ use crate::trust::TokenTrustRepr;
 use crate::v3::role::RoleRef;
 
 /// Authorization token.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(
     feature = "builder",
     derive(derive_builder::Builder),
@@ -113,7 +113,7 @@ pub struct Token {
     pub catalog: Option<Catalog>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "builder", derive(derive_builder::Builder))]
 #[cfg_attr(
     feature = "builder",
@@ -131,7 +131,7 @@ pub struct TokenResponse {
 }
 
 /// An authentication request.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct AuthRequest {
@@ -141,7 +141,7 @@ pub struct AuthRequest {
 }
 
 /// An authentication request.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct AuthRequestInner {
@@ -164,7 +164,7 @@ pub struct AuthRequestInner {
 }
 
 /// An identity object.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(
     feature = "builder",
     derive(derive_builder::Builder),
@@ -192,7 +192,7 @@ pub struct Identity {
 }
 
 /// The password object, contains the authentication information.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(
     feature = "builder",
     derive(derive_builder::Builder),
@@ -210,7 +210,7 @@ pub struct PasswordAuth {
 }
 
 /// User password information.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(
     feature = "builder",
     derive(derive_builder::Builder),
@@ -240,7 +240,7 @@ pub struct UserPassword {
 }
 
 /// User information.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(
     feature = "builder",
     derive(derive_builder::Builder),
@@ -268,7 +268,7 @@ pub struct User {
 }
 
 /// The token object, contains the authentication information.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(
     feature = "builder",
     derive(derive_builder::Builder),
@@ -285,7 +285,7 @@ pub struct TokenAuth {
     pub id: String,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::IntoParams))]
 #[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct CreateTokenParameters {
@@ -294,7 +294,7 @@ pub struct CreateTokenParameters {
     pub nocatalog: Option<bool>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::IntoParams))]
 #[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct ValidateTokenParameters {
@@ -307,7 +307,7 @@ pub struct ValidateTokenParameters {
 }
 
 /// System information.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(
     feature = "builder",
     derive(derive_builder::Builder),

@@ -45,7 +45,7 @@ async fn test_create_local_with_password() -> Result<()> {
     assert!(user.default_project_id.is_none());
     assert_eq!(user.domain_id, "domain_a");
     assert!(user.enabled);
-    assert!(user.extra.is_none());
+    assert!(user.extra.is_empty());
     assert!(user.federated.is_none());
     assert_eq!(user.id, uid);
     assert_eq!(user.name, "name");
@@ -76,7 +76,7 @@ async fn test_create_local_with_no_password() -> Result<()> {
     assert!(user.default_project_id.is_none());
     assert_eq!(user.domain_id, "domain_a");
     assert!(user.enabled);
-    assert!(user.extra.is_none());
+    assert!(user.extra.is_empty());
     assert!(user.federated.is_none());
     assert_eq!(user.id, uid);
     assert_eq!(user.name, "name");

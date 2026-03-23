@@ -11,9 +11,10 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+use std::collections::HashMap;
 
 use sea_orm::entity::*;
-use serde_json::{Value, json};
+use serde_json::Value;
 use tracing::error;
 use uuid::Uuid;
 
@@ -49,7 +50,7 @@ impl TryFrom<db_role::Model> for Role {
         }
         if let Some(extra) = &value.extra {
             builder.extra(
-                serde_json::from_str::<Value>(extra)
+                serde_json::from_str::<HashMap<String, Value>>(extra)
                     .inspect_err(|e| error!("failed to deserialize role extra: {e}"))
                     .unwrap_or_default(),
             );
@@ -85,9 +86,7 @@ impl TryFrom<RoleCreate> for db_role::ActiveModel {
                 .domain_id
                 .unwrap_or_else(|| NULL_DOMAIN_ID.to_string())),
             description: Set(value.description.clone()),
-            extra: Set(Some(serde_json::to_string(
-                &value.extra.as_ref().or(Some(&json!({}))),
-            )?)),
+            extra: Set(Some(serde_json::to_string(&value.extra)?)),
         })
     }
 }

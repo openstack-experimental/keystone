@@ -166,10 +166,10 @@ mod tests {
             .with_state(state.clone());
 
         let req = TokenRestrictionUpdateRequest {
-            restriction: TokenRestrictionUpdate {
-                project_id: Some(Some("new_pid".into())),
-                ..Default::default()
-            },
+            restriction: TokenRestrictionUpdateBuilder::default()
+                .project_id(Some("new_pid".into()))
+                .build()
+                .unwrap(),
         };
 
         let response = api

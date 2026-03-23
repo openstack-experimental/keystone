@@ -113,7 +113,7 @@ mod tests {
             vec![Domain {
                 description: None,
                 enabled: true,
-                extra: None,
+                extra: std::collections::HashMap::new(),
                 id: "pid1".into(),
                 name: "name".into(),
             }]

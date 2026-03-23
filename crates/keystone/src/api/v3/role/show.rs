@@ -72,7 +72,7 @@ mod tests {
         http::{Request, StatusCode},
     };
     use http_body_util::BodyExt; // for `collect`
-    use serde_json::json;
+
     use tower::ServiceExt; // for `call`, `oneshot`, and `ready`
     use tower_http::trace::TraceLayer;
 
@@ -149,7 +149,7 @@ mod tests {
         assert_eq!(
             ApiRole {
                 id: "bar".into(),
-                extra: Some(json!({})),
+                extra: std::collections::HashMap::default(),
                 name: "bar".into(),
                 domain_id: None,
                 description: None

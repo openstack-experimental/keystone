@@ -20,7 +20,7 @@ use validator::Validate;
 use crate::Link;
 
 /// List of the supported API versions as [Values].
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct Versions {
@@ -30,7 +30,7 @@ pub struct Versions {
 }
 
 /// A container with the [Version] list.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct Values {
@@ -39,7 +39,7 @@ pub struct Values {
 }
 
 /// Single API version container.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct SingleVersion {
@@ -49,7 +49,15 @@ pub struct SingleVersion {
 }
 
 /// Single API version.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(
+    feature = "builder",
+    derive(derive_builder::Builder),
+    builder(
+        build_fn(error = "crate::error::BuilderError"),
+        setter(strip_option, into)
+    )
+)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct Version {
@@ -59,15 +67,18 @@ pub struct Version {
     /// Version status.
     pub status: VersionStatus,
     /// Date of the version update.
+    #[cfg_attr(feature = "builder", builder(default))]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub updated: Option<DateTime<Utc>>,
     /// Links to the API version.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "builder", builder(default))]
     #[cfg_attr(feature = "validate", validate(nested))]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub links: Option<Vec<Link>>,
     /// Supported media types.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "builder", builder(default))]
     #[cfg_attr(feature = "validate", validate(nested))]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub media_types: Option<Vec<MediaType>>,
 }
 

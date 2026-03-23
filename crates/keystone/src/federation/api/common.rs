@@ -70,26 +70,26 @@ pub(super) fn validate_bound_claims(
             });
         }
     }
-    if let Some(bound_claims) = &mapping.bound_claims
-        && let Some(required_claims) = bound_claims.as_object()
-    {
-        for (claim, value) in required_claims.iter() {
-            if !claims_as_json
-                .get(claim)
-                .map(|x| x == value)
-                .is_some_and(|val| val)
-            {
-                return Err(OidcError::BoundClaimsMismatch {
-                    claim: claim.to_string(),
-                    expected: value.to_string(),
-                    found: claims_as_json
-                        .get(claim)
-                        .map(|x| x.to_string())
-                        .unwrap_or_default(),
-                });
-            }
+    //if let Some(bound_claims) = &mapping.bound_claims
+    //    && let Some(required_claims) = bound_claims.as_object()
+    //{
+    for (claim, value) in mapping.bound_claims.iter() {
+        if !claims_as_json
+            .get(claim)
+            .map(|x| x == value)
+            .is_some_and(|val| val)
+        {
+            return Err(OidcError::BoundClaimsMismatch {
+                claim: claim.to_string(),
+                expected: value.to_string(),
+                found: claims_as_json
+                    .get(claim)
+                    .map(|x| x.to_string())
+                    .unwrap_or_default(),
+            });
         }
     }
+    //}
     Ok(())
 }
 

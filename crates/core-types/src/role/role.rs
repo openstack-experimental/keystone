@@ -11,6 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+use std::collections::HashMap;
 
 use derive_builder::Builder;
 use serde::Serialize;
@@ -40,7 +41,8 @@ pub struct Role {
     pub description: Option<String>,
     /// Additional role properties.
     #[builder(default)]
-    pub extra: Option<Value>,
+    #[serde(flatten)]
+    pub extra: HashMap<String, Value>,
 }
 
 /// Short role representation (reference).
@@ -121,5 +123,5 @@ pub struct RoleCreate {
     pub description: Option<String>,
     /// Additional role properties.
     #[builder(default)]
-    pub extra: Option<Value>,
+    pub extra: HashMap<String, Value>,
 }

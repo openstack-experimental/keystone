@@ -13,6 +13,4 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Federated identity provider types.
 
-use openstack_keystone_api_types::k8s_auth::auth;
-
-pub use auth::K8sAuthRequest;
+pub use openstack_keystone_api_types::k8s_auth::auth::*;

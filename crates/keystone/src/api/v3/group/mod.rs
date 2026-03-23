@@ -166,7 +166,6 @@ mod tests {
         http::{Request, StatusCode, header},
     };
     use http_body_util::BodyExt; // for `collect`
-    use serde_json::json;
     use tower::ServiceExt; // for `call`, `oneshot`, and `ready`
     use tower_http::trace::TraceLayer;
 
@@ -175,8 +174,8 @@ mod tests {
     use crate::identity::{MockIdentityProvider, error::IdentityProviderError};
     use crate::{
         api::v3::group::types::{
-            Group as ApiGroup, GroupCreate as ApiGroupCreate, GroupCreateRequest, GroupList,
-            GroupResponse,
+            GroupBuilder as ApiGroupBuilder, GroupCreateBuilder as ApiGroupCreateBuilder,
+            GroupCreateRequest, GroupList, GroupResponse,
         },
         provider::Provider,
     };
@@ -192,6 +191,7 @@ mod tests {
                 Ok(vec![Group {
                     id: "1".into(),
                     name: "2".into(),
+                    domain_id: "did".into(),
                     ..Default::default()
                 }])
             });
@@ -224,14 +224,14 @@ mod tests {
         let body = response.into_body().collect().await.unwrap().to_bytes();
         let res: GroupList = serde_json::from_slice(&body).unwrap();
         assert_eq!(
-            vec![ApiGroup {
-                id: "1".into(),
-                name: "2".into(),
-                // for some reason when deserializing missing value appears still as an empty
-                // object
-                extra: Some(json!({})),
-                ..Default::default()
-            }],
+            vec![
+                ApiGroupBuilder::default()
+                    .id("1")
+                    .name("2")
+                    .domain_id("did")
+                    .build()
+                    .unwrap()
+            ],
             res.groups
         );
     }
@@ -309,6 +309,8 @@ mod tests {
             .returning(|_, _| {
                 Ok(Some(Group {
                     id: "bar".into(),
+                    name: "name".into(),
+                    domain_id: "did".into(),
                     ..Default::default()
                 }))
             });
@@ -355,11 +357,12 @@ mod tests {
         let body = response.into_body().collect().await.unwrap().to_bytes();
         let res: GroupResponse = serde_json::from_slice(&body).unwrap();
         assert_eq!(
-            ApiGroup {
-                id: "bar".into(),
-                extra: Some(json!({})),
-                ..Default::default()
-            },
+            ApiGroupBuilder::default()
+                .id("bar")
+                .name("name")
+                .domain_id("did")
+                .build()
+                .unwrap(),
             res.group,
         );
     }
@@ -391,11 +394,11 @@ mod tests {
             .with_state(state.clone());
 
         let req = GroupCreateRequest {
-            group: ApiGroupCreate {
-                domain_id: "domain".into(),
-                name: "name".into(),
-                ..Default::default()
-            },
+            group: ApiGroupCreateBuilder::default()
+                .domain_id("domain")
+                .name("name")
+                .build()
+                .unwrap(),
         };
 
         let response = api

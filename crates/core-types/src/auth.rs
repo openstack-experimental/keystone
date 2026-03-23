@@ -205,6 +205,7 @@ impl AuthzInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
 
     use crate::identity::{UserOptions, UserResponse};
 
@@ -226,7 +227,7 @@ mod tests {
                 enabled: false,
                 default_project_id: None,
                 domain_id: "did".into(),
-                extra: None,
+                extra: HashMap::new(),
                 name: "foo".into(),
                 options: UserOptions::default(),
                 federated: None,
@@ -250,7 +251,7 @@ mod tests {
                 enabled: false,
                 default_project_id: None,
                 domain_id: "did".into(),
-                extra: None,
+                extra: HashMap::new(),
                 name: "foo".into(),
                 options: UserOptions::default(),
                 federated: None,

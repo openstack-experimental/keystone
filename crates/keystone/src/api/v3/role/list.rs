@@ -61,7 +61,7 @@ mod tests {
         http::{Request, StatusCode},
     };
     use http_body_util::BodyExt; // for `collect`
-    use serde_json::json;
+
     use tower::ServiceExt; // for `call`, `oneshot`, and `ready`
     use tower_http::trace::TraceLayer;
 
@@ -116,9 +116,7 @@ mod tests {
             vec![ApiRole {
                 id: "1".into(),
                 name: "2".into(),
-                // for some reason when deserializing missing value appears still as an empty
-                // object
-                extra: Some(json!({})),
+                extra: std::collections::HashMap::new(),
                 description: None,
                 domain_id: None
             }],

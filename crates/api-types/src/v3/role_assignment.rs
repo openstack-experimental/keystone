@@ -126,7 +126,7 @@ impl validator::Validate for Scope {
 }
 
 /// Assignments.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct AssignmentList {
@@ -136,7 +136,7 @@ pub struct AssignmentList {
 }
 
 /// List role assignments query parameters.
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::IntoParams))]
 #[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct RoleAssignmentListParameters {

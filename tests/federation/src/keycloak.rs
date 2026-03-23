@@ -47,14 +47,13 @@ pub async fn setup_keycloak_idp<T: AsRef<str>, K: AsRef<str>, S: AsRef<str>>(
         config,
         token.as_ref(),
         IdentityProviderCreateRequest {
-            identity_provider: IdentityProviderCreate {
-                name: Uuid::new_v4().simple().to_string(),
-                enabled: true,
-                oidc_discovery_url: Some(format!("{}/realms/master", keycloak_url)),
-                oidc_client_id: Some(client_id.as_ref().into()),
-                oidc_client_secret: Some(client_secret.as_ref().into()),
-                ..Default::default()
-            },
+            identity_provider: IdentityProviderCreateBuilder::default()
+                .name(Uuid::new_v4().simple().to_string())
+                .enabled(true)
+                .oidc_discovery_url(format!("{}/realms/master", keycloak_url))
+                .oidc_client_id(client_id.as_ref())
+                .oidc_client_secret(client_secret.as_ref())
+                .build()?,
         },
     )
     .await?;
@@ -63,23 +62,15 @@ pub async fn setup_keycloak_idp<T: AsRef<str>, K: AsRef<str>, S: AsRef<str>>(
         config,
         token.as_ref(),
         MappingCreateRequest {
-            mapping: MappingCreate {
-                name: Uuid::new_v4().simple().to_string(),
-                enabled: true,
-                idp_id: idp.id.clone(),
-                //allowed_redirect_uris: Some(vec![
-                //    format!(
-                //        "http://localhost:8080/v4/identity_providers/{}/callback",
-                //        idp.id
-                //    )
-                //    .into(),
-                //]),
-                user_id_claim: "sub".into(),
-                user_name_claim: "preferred_username".into(),
-                domain_id_claim: Some("domain_id".into()),
-                groups_claim: Some("groups".into()),
-                ..Default::default()
-            },
+            mapping: MappingCreateBuilder::default()
+                .name(Uuid::new_v4().simple().to_string())
+                .enabled(true)
+                .idp_id(idp.id.clone())
+                .user_id_claim("sub")
+                .user_name_claim("preferred_username")
+                .domain_id_claim("domain_id")
+                .groups_claim("groups")
+                .build()?,
         },
     )
     .await?;
@@ -99,17 +90,16 @@ pub async fn setup_kecloak_idp_jwt<T: AsRef<str>, K: AsRef<str>, S: AsRef<str>>(
         config,
         token.as_ref(),
         IdentityProviderCreateRequest {
-            identity_provider: IdentityProviderCreate {
-                name: Uuid::new_v4().simple().to_string(), //"keycloak_jwt".into(),
-                enabled: true,
-                oidc_discovery_url: Some(format!("{}/realms/master", keycloak_url)),
-                jwks_url: Some(format!(
+            identity_provider: IdentityProviderCreateBuilder::default()
+                .name(Uuid::new_v4().simple().to_string())
+                .enabled(true)
+                .oidc_discovery_url(format!("{}/realms/master", keycloak_url))
+                .jwks_url(format!(
                     "{}/realms/master/protocol/openid-connect/certs",
                     keycloak_url
-                )),
-                bound_issuer: Some(format!("{}/realms/master", keycloak_url)),
-                ..Default::default()
-            },
+                ))
+                .bound_issuer(format!("{}/realms/master", keycloak_url))
+                .build()?,
         },
     )
     .await?;
@@ -118,16 +108,15 @@ pub async fn setup_kecloak_idp_jwt<T: AsRef<str>, K: AsRef<str>, S: AsRef<str>>(
         config,
         token.as_ref(),
         MappingCreateRequest {
-            mapping: MappingCreate {
-                name: Uuid::new_v4().simple().to_string(),
-                enabled: true,
-                r#type: Some(MappingType::Jwt),
-                idp_id: idp.id.clone(),
-                user_id_claim: "sub".into(),
-                user_name_claim: "preferred_username".into(),
-                domain_id_claim: Some("domain_id".into()),
-                ..Default::default()
-            },
+            mapping: MappingCreateBuilder::default()
+                .name(Uuid::new_v4().simple().to_string())
+                .enabled(true)
+                .r#type(MappingType::Jwt)
+                .idp_id(idp.id.clone())
+                .user_id_claim("sub")
+                .user_name_claim("preferred_username")
+                .domain_id_claim("domain_id")
+                .build()?,
         },
     )
     .await?;

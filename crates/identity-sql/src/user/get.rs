@@ -195,7 +195,7 @@ mod tests {
                     ..Default::default()
                 },
                 default_project_id: None,
-                extra: None,
+                extra: std::collections::HashMap::new(),
                 federated: None,
                 password_expires_at: None
             }

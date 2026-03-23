@@ -11,9 +11,10 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+use std::collections::HashMap;
+
 use sea_orm::entity::*;
 use serde_json::Value;
-use serde_json::json;
 use tracing::error;
 use uuid::Uuid;
 
@@ -56,14 +57,11 @@ impl TryFrom<db_project::Model> for Project {
         if let Some(extra) = &value.extra
             && extra != "{}"
         {
-            match serde_json::from_str::<Value>(extra) {
-                Ok(extras) => {
-                    project_builder.extra(extras);
-                }
-                Err(e) => {
-                    error!("failed to deserialize project extra: {e}");
-                }
-            };
+            project_builder.extra(
+                serde_json::from_str::<HashMap<String, Value>>(extra)
+                    .inspect_err(|e| error!("failed to deserialize project extra: {e}"))
+                    .unwrap_or_default(),
+            );
         }
 
         Ok(project_builder.build()?)
@@ -78,10 +76,7 @@ impl TryFrom<ProjectCreate> for db_project::ActiveModel {
             description: value.description.map(Set).unwrap_or(NotSet).into(),
             domain_id: Set(value.domain_id),
             enabled: Set(Some(value.enabled)),
-            extra: Set(Some(serde_json::to_string(
-                // For keystone it is important to have at least "{}"
-                &value.extra.as_ref().or(Some(&json!({}))),
-            )?)),
+            extra: Set(Some(serde_json::to_string(&value.extra)?)),
             id: Set(value.id.unwrap_or(Uuid::new_v4().simple().to_string())),
             is_domain: Set(value.is_domain),
             name: Set(value.name),

@@ -32,6 +32,8 @@ pub async fn create(db: &DatabaseConnection, role: RoleCreate) -> Result<Role, R
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use sea_orm::{DatabaseBackend, MockDatabase};
     use serde_json::json;
 
@@ -54,7 +56,7 @@ mod tests {
             name: "Test Role".to_string(),
             domain_id: Some("default".to_string()),
             description: Some("A role for testing".to_string()),
-            extra: Some(json!({"key": "value"})),
+            extra: HashMap::from([("key".into(), json!("value"))]),
         };
 
         let created = create(&db, role_create).await.unwrap();
@@ -63,8 +65,7 @@ mod tests {
         assert_eq!(created.name, "Test Role");
         assert_eq!(created.domain_id.as_deref(), Some("default"));
         assert_eq!(created.description.as_deref(), Some("A role for testing"));
-        assert!(created.extra.is_some());
-        assert_eq!(created.extra.as_ref().unwrap()["key"], "value");
+        assert_eq!(*created.extra.get("key").unwrap(), json!("value"));
     }
 
     #[tokio::test]
@@ -85,7 +86,7 @@ mod tests {
             name: "Global Role".to_string(),
             domain_id: None, // ← No domain
             description: None,
-            extra: None,
+            extra: HashMap::new(),
         };
 
         let created = create(&db, role_create).await.unwrap();
@@ -113,17 +114,16 @@ mod tests {
             name: "Role With Extra".to_string(),
             domain_id: Some("default".to_string()),
             description: None,
-            extra: Some(json!({
-                "custom": "data",
-                "count": 42
-            })),
+            extra: HashMap::from([
+                ("custom".into(), json!("data")),
+                ("count".into(), json!(42)),
+            ]),
         };
 
         let created = create(&db, role_create).await.unwrap();
 
         assert_eq!(created.name, "Role With Extra");
-        assert!(created.extra.is_some());
-        assert_eq!(created.extra.as_ref().unwrap()["custom"], "data");
-        assert_eq!(created.extra.as_ref().unwrap()["count"], 42);
+        assert_eq!(*created.extra.get("custom").unwrap(), json!("data"));
+        assert_eq!(*created.extra.get("count").unwrap(), json!(42));
     }
 }

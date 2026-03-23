@@ -197,7 +197,6 @@ mod tests {
         http::{self, Request, StatusCode},
     };
     use http_body_util::BodyExt; // for `collect`
-    use serde_json::json;
     use tower::ServiceExt; // for `call`, `oneshot`, and `ready`
     use tower_http::trace::TraceLayer;
 
@@ -213,7 +212,7 @@ mod tests {
     };
     use crate::identity::{MockIdentityProvider, error::IdentityProviderError};
     use crate::{
-        api::v3::group::types::{Group as ApiGroup, GroupList},
+        api::v3::group::types::{GroupBuilder as ApiGroupBuilder, GroupList},
         provider::Provider,
     };
 
@@ -533,6 +532,7 @@ mod tests {
                 Ok(vec![Group {
                     id: "1".into(),
                     name: "2".into(),
+                    domain_id: "did".into(),
                     ..Default::default()
                 }])
             });
@@ -565,12 +565,14 @@ mod tests {
         let body = response.into_body().collect().await.unwrap().to_bytes();
         let res: GroupList = serde_json::from_slice(&body).unwrap();
         assert_eq!(
-            vec![ApiGroup {
-                id: "1".into(),
-                name: "2".into(),
-                extra: Some(json!({})),
-                ..Default::default()
-            }],
+            vec![
+                ApiGroupBuilder::default()
+                    .id("1")
+                    .name("2")
+                    .domain_id("did")
+                    .build()
+                    .unwrap()
+            ],
             res.groups
         );
     }

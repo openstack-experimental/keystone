@@ -82,14 +82,11 @@ impl MergeUserData for UserResponseBuilder {
         if let Some(extra) = &user.extra
             && extra != "{}"
         {
-            match serde_json::from_str::<Value>(extra) {
-                Ok(extras) => {
-                    self.extra(extras);
-                }
-                Err(e) => {
-                    error!("failed to deserialize user extra: {e}");
-                }
-            };
+            self.extra(
+                serde_json::from_str::<std::collections::HashMap<String, Value>>(extra)
+                    .inspect_err(|e| error!("failed to deserialize user extra: {e}"))
+                    .unwrap_or_default(),
+            );
         }
         self.options(options.clone());
         self
@@ -142,7 +139,7 @@ pub mod tests {
         assert_eq!(user.id, "user_id");
         assert_eq!(user.domain_id, "domain_id");
         assert_eq!(user.options, opts);
-        assert_eq!(user.extra.unwrap(), json!({"foo": "bar"}));
+        assert_eq!(*user.extra.get("foo").unwrap(), json!("bar"));
     }
 
     #[test]

@@ -91,7 +91,7 @@ mod tests {
                     domain_id: "domain_id".into(),
                     enabled: true,
                     description: Some("description".into()),
-                    extra: None,
+                    extra: std::collections::HashMap::new(),
                     is_domain: false,
                 },
                 Project {
@@ -101,7 +101,7 @@ mod tests {
                     domain_id: "domain_id".into(),
                     enabled: true,
                     description: Some("description".into()),
-                    extra: None,
+                    extra: std::collections::HashMap::new(),
                     is_domain: false,
                 },
                 Project {
@@ -111,7 +111,7 @@ mod tests {
                     domain_id: "domain_id".into(),
                     enabled: true,
                     description: Some("description".into()),
-                    extra: None,
+                    extra: std::collections::HashMap::new(),
                     is_domain: false,
                 }
             ]

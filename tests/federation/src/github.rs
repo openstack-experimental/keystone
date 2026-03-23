@@ -13,10 +13,11 @@
 // SPDX-License-Identifier: Apache-2.0
 #![allow(clippy::expect_used)]
 #![allow(clippy::unwrap_used)]
+use std::collections::HashMap;
+use std::env;
 
 use eyre::Report;
 use serde_json::json;
-use std::env;
 use tracing_test::traced_test;
 
 use openstack_keystone_api_types::federation::*;
@@ -37,15 +38,12 @@ pub async fn setup_github_idp<T: AsRef<str>>(
         config,
         token.as_ref(),
         IdentityProviderCreateRequest {
-            identity_provider: IdentityProviderCreate {
-                name: "github".into(),
-                enabled: true,
-                bound_issuer: Some("https://token.actions.githubusercontent.com".into()),
-                jwks_url: Some(
-                    "https://token.actions.githubusercontent.com/.well-known/jwks".into(),
-                ),
-                ..Default::default()
-            },
+            identity_provider: IdentityProviderCreateBuilder::default()
+                .name("github")
+                .enabled(true)
+                .bound_issuer("https://token.actions.githubusercontent.com")
+                .jwks_url("https://token.actions.githubusercontent.com/.well-known/jwks")
+                .build()?,
         },
     )
     .await?;
@@ -54,22 +52,19 @@ pub async fn setup_github_idp<T: AsRef<str>>(
         config,
         token.as_ref(),
         MappingCreateRequest {
-            mapping: MappingCreate {
-                id: Some("github".into()),
-                name: "github".into(),
-                r#type: Some(MappingType::Jwt),
-                enabled: true,
-                idp_id: idp.id.clone(),
-                domain_id: Some(user.domain_id.clone()),
-                bound_audiences: Some(vec!["https://github.com".into()]),
-                bound_claims: Some(json!({
-                   "base_ref": "main"
-                })),
-                bound_subject: Some(github_sub),
-                user_id_claim: "actor_id".into(),
-                user_name_claim: "actor".into(),
-                ..Default::default()
-            },
+            mapping: MappingCreateBuilder::default()
+                .id("github")
+                .name("github")
+                .r#type(MappingType::Jwt)
+                .enabled(true)
+                .idp_id(idp.id.clone())
+                .domain_id(user.domain_id.clone())
+                .bound_audiences(vec!["https://github.com".into()])
+                .bound_claims(HashMap::from([("base_ref".into(), json!("main"))]))
+                .bound_subject(github_sub)
+                .user_id_claim("actor_id")
+                .user_name_claim("actor")
+                .build()?,
         },
     )
     .await?;

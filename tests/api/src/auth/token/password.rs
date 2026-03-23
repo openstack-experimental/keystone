@@ -41,7 +41,7 @@ async fn test_login_system_scope() -> Result<()> {
         .build()?;
 
     admin_client
-        .auth(auth, Some(Scope::System(System::default())))
+        .auth(auth, Some(Scope::System(System { all: Some(true) })))
         .await?;
 
     Ok(())

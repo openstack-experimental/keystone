@@ -92,16 +92,18 @@ pub struct TokenRestrictionCreate {
 }
 
 /// New token restriction data.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "builder", derive(derive_builder::Builder))]
 #[cfg_attr(feature = "builder", builder(setter(strip_option, into)))]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct TokenRestrictionUpdate {
     /// Allow token renew.
+    #[cfg_attr(feature = "builder", builder(default))]
     pub allow_renew: Option<bool>,
 
     /// Allow token rescope.
+    #[cfg_attr(feature = "builder", builder(default))]
     pub allow_rescope: Option<bool>,
 
     /// Project ID that the token must be bound to.
@@ -153,7 +155,7 @@ pub struct TokenRestrictionUpdateRequest {
 }
 
 /// Token restriction list filters.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "builder", derive(derive_builder::Builder))]
 #[cfg_attr(feature = "builder", builder(setter(strip_option, into)))]
 #[cfg_attr(feature = "openapi", derive(utoipa::IntoParams))]

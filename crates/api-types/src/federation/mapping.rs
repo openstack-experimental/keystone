@@ -12,6 +12,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //! Federated attribute mapping types.
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 #[cfg(feature = "validate")]
@@ -21,9 +23,9 @@ use crate::Link;
 
 /// OIDC/JWT mapping data.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[cfg_attr(feature = "builder", derive(derive_builder::Builder))]
 #[cfg_attr(
     feature = "builder",
+    derive(derive_builder::Builder),
     builder(
         build_fn(error = "crate::error::BuilderError"),
         setter(strip_option, into)
@@ -92,8 +94,8 @@ pub struct Mapping {
     /// Additional claims that must be present in the token.
     #[cfg_attr(feature = "builder", builder(default))]
     #[cfg_attr(feature = "openapi", schema(value_type = Object))]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub bound_claims: Option<Value>,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub bound_claims: HashMap<String, Value>,
 
     /// List of OIDC scopes.
     #[cfg_attr(feature = "builder", builder(default))]
@@ -121,10 +123,10 @@ pub struct MappingResponse {
 }
 
 /// OIDC/JWT attribute mapping create data.
-#[derive(Clone, Default, Debug, Deserialize, PartialEq, Serialize)]
-#[cfg_attr(feature = "builder", derive(derive_builder::Builder))]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(
     feature = "builder",
+    derive(derive_builder::Builder),
     builder(
         build_fn(error = "crate::error::BuilderError"),
         setter(strip_option, into)
@@ -134,6 +136,7 @@ pub struct MappingResponse {
 #[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct MappingCreate {
     /// Attribute mapping ID for federated logins.
+    #[cfg_attr(feature = "builder", builder(default))]
     #[cfg_attr(feature = "validate", validate(length(max = 64)))]
     pub id: Option<String>,
 
@@ -165,6 +168,7 @@ pub struct MappingCreate {
     pub r#type: Option<MappingType>,
 
     /// Mapping enabled property. Inactive mappings can not be used for login.
+    #[cfg_attr(feature = "builder", builder(default = "true"))]
     #[serde(default = "crate::default_true")]
     pub enabled: bool,
 
@@ -212,8 +216,8 @@ pub struct MappingCreate {
     /// Additional claims that must be present in the token.
     #[cfg_attr(feature = "builder", builder(default))]
     #[cfg_attr(feature = "openapi", schema(nullable = false))]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub bound_claims: Option<Value>,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub bound_claims: HashMap<String, Value>,
 
     /// List of OIDC scopes.
     #[cfg_attr(feature = "builder", builder(default))]
@@ -236,10 +240,10 @@ pub struct MappingCreate {
 }
 
 /// OIDC/JWT attribute mapping update data.
-#[derive(Clone, Default, Debug, Deserialize, PartialEq, Serialize)]
-#[cfg_attr(feature = "builder", derive(derive_builder::Builder))]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(
     feature = "builder",
+    derive(derive_builder::Builder),
     builder(
         build_fn(error = "crate::error::BuilderError"),
         setter(strip_option, into)
@@ -267,6 +271,7 @@ pub struct MappingUpdate {
     /// ID of the federated identity provider for which this attribute mapping
     /// can be used.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "builder", builder(default))]
     #[cfg_attr(feature = "validate", validate(length(max = 64)))]
     pub idp_id: Option<String>,
 
@@ -325,8 +330,8 @@ pub struct MappingUpdate {
     /// Additional claims that must be present in the token.
     #[cfg_attr(feature = "builder", builder(default))]
     #[cfg_attr(feature = "openapi", schema(nullable = false, value_type = Object))]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub bound_claims: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bound_claims: Option<HashMap<String, Value>>,
 
     /// List of OIDC scopes.
     #[cfg_attr(feature = "builder", builder(default))]
@@ -367,7 +372,7 @@ pub struct MappingUpdateRequest {
 }
 
 /// Attribute mapping type.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Default, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(rename_all = "lowercase")]
 pub enum MappingType {
@@ -379,7 +384,7 @@ pub enum MappingType {
 }
 
 /// List of OIDC/JWT attribute mappings.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct MappingList {
     /// Collection of identity provider objects.
@@ -391,7 +396,7 @@ pub struct MappingList {
 }
 
 /// Query parameters for listing OIDC/JWT attribute mappings.
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::IntoParams))]
 #[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct MappingListParameters {

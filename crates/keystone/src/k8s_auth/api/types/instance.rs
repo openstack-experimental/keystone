@@ -13,16 +13,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! # Kubernetes auth instance types
 
-use openstack_keystone_api_types::k8s_auth::instance;
-
-pub use instance::K8sAuthInstance;
-pub use instance::K8sAuthInstanceCreate;
-pub use instance::K8sAuthInstanceCreateRequest;
-pub use instance::K8sAuthInstanceList;
-pub use instance::K8sAuthInstanceListParameters;
-pub use instance::K8sAuthInstanceResponse;
-pub use instance::K8sAuthInstanceUpdate;
-pub use instance::K8sAuthInstanceUpdateRequest;
+pub use openstack_keystone_api_types::k8s_auth::instance::*;
 
 use crate::api::common::ResourceIdentifier;
 

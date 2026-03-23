@@ -155,11 +155,12 @@ mod tests {
     use tower_http::trace::TraceLayer;
     use tracing_test::traced_test;
 
+    use openstack_keystone_api_types::k8s_auth::K8sAuthRoleUpdateBuilder;
     use openstack_keystone_core_types::k8s_auth as provider_types;
 
     use super::{super::*, *};
     use crate::api::tests::get_mocked_state;
-    use crate::k8s_auth::{MockK8sAuthProvider, api::types::K8sAuthRoleUpdate};
+    use crate::k8s_auth::MockK8sAuthProvider;
     use crate::provider::Provider;
 
     #[tokio::test]
@@ -210,10 +211,10 @@ mod tests {
 
         // Nested style
         let req = K8sAuthRoleUpdateRequest {
-            role: K8sAuthRoleUpdate {
-                name: Some("name".into()),
-                ..Default::default()
-            },
+            role: K8sAuthRoleUpdateBuilder::default()
+                .name("name")
+                .build()
+                .unwrap(),
         };
 
         let response = api

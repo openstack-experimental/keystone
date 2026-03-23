@@ -110,11 +110,14 @@ mod tests {
             .with_state(state.clone());
 
         let req = MappingCreateRequest {
-            mapping: MappingCreate {
-                name: "name".into(),
-                domain_id: Some("did".into()),
-                ..Default::default()
-            },
+            mapping: MappingCreateBuilder::default()
+                .name("name")
+                .domain_id("did")
+                .idp_id("idp")
+                .user_id_claim("user_id")
+                .user_name_claim("user_name")
+                .build()
+                .unwrap(),
         };
 
         let response = api

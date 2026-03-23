@@ -13,18 +13,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Federated identity provider types.
 
-use openstack_keystone_api_types::k8s_auth::role;
-
-pub use role::K8sAuthRole;
-pub use role::K8sAuthRoleCreate;
-pub use role::K8sAuthRoleCreateRequest;
-pub use role::K8sAuthRoleList;
-pub use role::K8sAuthRoleListParameters;
-pub use role::K8sAuthRoleListParametersNested;
-pub use role::K8sAuthRolePathParams;
-pub use role::K8sAuthRoleResponse;
-pub use role::K8sAuthRoleUpdate;
-pub use role::K8sAuthRoleUpdateRequest;
+pub use openstack_keystone_api_types::k8s_auth::role::*;
 
 use crate::api::common::ResourceIdentifier;
 
