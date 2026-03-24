@@ -77,6 +77,44 @@ impl AssignmentApi for AssignmentService {
         Ok(assignments)
     }
 
+    /// List user roles on project
+    #[tracing::instrument(level = "info", skip(self, state))]
+    async fn list_user_roles_on_project(
+        &self,
+        state: &ServiceState,
+        params: &RoleAssignmentListParameters,
+    ) -> Result<Vec<Role>, AssignmentProviderError> {
+        // Get assignments for the user on project
+        let assignments = self.backend_driver.list_assignments(state, params).await?;
+
+        // If no assignments, return empty list
+        if assignments.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Extract unique role IDs from assignments
+        let unique_role_ids: std::collections::BTreeSet<String> =
+            assignments.iter().map(|a| a.role_id.clone()).collect();
+
+        // Fetch all roles and build a map
+        let all_roles: std::collections::BTreeMap<String, Role> = state
+            .provider
+            .get_role_provider()
+            .list_roles(state, &RoleListParameters::default())
+            .await?
+            .into_iter()
+            .map(|role| (role.id.clone(), role))
+            .collect();
+
+        // Return only the roles that are in the assignments
+        let roles: Vec<Role> = unique_role_ids
+            .into_iter()
+            .filter_map(|role_id| all_roles.get(&role_id).cloned())
+            .collect();
+
+        Ok(roles)
+    }
+
     /// Revoke grant
     async fn revoke_grant(
         &self,
@@ -289,5 +327,173 @@ mod tests {
         };
 
         assert!(provider.revoke_grant(&state, assignment).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_list_user_roles_on_project_no_roles() {
+        let mut role_mock = MockRoleProvider::default();
+        role_mock.expect_list_roles().returning(|_, _| Ok(vec![]));
+        let state = get_mocked_state(None, Some(Provider::mocked_builder().mock_role(role_mock)));
+
+        let mut backend = MockAssignmentBackend::default();
+        backend
+            .expect_list_assignments()
+            .returning(|_, _| Ok(vec![]));
+
+        let provider = AssignmentService {
+            backend_driver: Arc::new(backend),
+        };
+
+        let roles = provider
+            .list_user_roles_on_project(
+                &state,
+                &RoleAssignmentListParameters {
+                    user_id: Some("user_id".into()),
+                    project_id: Some("project_id".into()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            roles.len(),
+            0,
+            "Should return empty list when no assignments"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_list_user_roles_on_project_single_role() {
+        let mut role_mock = MockRoleProvider::default();
+        role_mock.expect_list_roles().returning(|_, _| {
+            Ok(vec![
+                RoleBuilder::default()
+                    .id("role_id_1")
+                    .name("role_name_1")
+                    .build()
+                    .unwrap(),
+            ])
+        });
+        let state = get_mocked_state(None, Some(Provider::mocked_builder().mock_role(role_mock)));
+
+        let mut backend = MockAssignmentBackend::default();
+        backend
+            .expect_list_assignments()
+            .withf(|_, params: &RoleAssignmentListParameters| {
+                params.user_id == Some("user_id".into())
+                    && params.project_id == Some("project_id".into())
+            })
+            .returning(|_, _| {
+                Ok(vec![
+                    AssignmentBuilder::default()
+                        .actor_id("user_id")
+                        .role_id("role_id_1")
+                        .target_id("project_id")
+                        .r#type(AssignmentType::UserProject)
+                        .build()
+                        .unwrap(),
+                ])
+            });
+
+        let provider = AssignmentService {
+            backend_driver: Arc::new(backend),
+        };
+
+        let roles = provider
+            .list_user_roles_on_project(
+                &state,
+                &RoleAssignmentListParameters {
+                    user_id: Some("user_id".into()),
+                    project_id: Some("project_id".into()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(roles.len(), 1, "Should return one role");
+        assert_eq!(roles[0].id, "role_id_1");
+        assert_eq!(roles[0].name, "role_name_1");
+    }
+
+    #[tokio::test]
+    async fn test_list_user_roles_on_project_multiple_roles() {
+        let mut role_mock = MockRoleProvider::default();
+        role_mock.expect_list_roles().returning(|_, _| {
+            Ok(vec![
+                RoleBuilder::default()
+                    .id("role_id_1")
+                    .name("role_name_1")
+                    .build()
+                    .unwrap(),
+                RoleBuilder::default()
+                    .id("role_id_2")
+                    .name("role_name_2")
+                    .build()
+                    .unwrap(),
+                RoleBuilder::default()
+                    .id("role_id_3")
+                    .name("role_name_3")
+                    .build()
+                    .unwrap(),
+            ])
+        });
+        let state = get_mocked_state(None, Some(Provider::mocked_builder().mock_role(role_mock)));
+
+        let mut backend = MockAssignmentBackend::default();
+        backend
+            .expect_list_assignments()
+            .withf(|_, params: &RoleAssignmentListParameters| {
+                params.user_id == Some("user_id".into())
+                    && params.project_id == Some("project_id".into())
+            })
+            .returning(|_, _| {
+                Ok(vec![
+                    AssignmentBuilder::default()
+                        .actor_id("user_id")
+                        .role_id("role_id_1")
+                        .target_id("project_id")
+                        .r#type(AssignmentType::UserProject)
+                        .build()
+                        .unwrap(),
+                    AssignmentBuilder::default()
+                        .actor_id("user_id")
+                        .role_id("role_id_2")
+                        .target_id("project_id")
+                        .r#type(AssignmentType::UserProject)
+                        .build()
+                        .unwrap(),
+                    AssignmentBuilder::default()
+                        .actor_id("user_id")
+                        .role_id("role_id_3")
+                        .target_id("project_id")
+                        .r#type(AssignmentType::UserProject)
+                        .build()
+                        .unwrap(),
+                ])
+            });
+
+        let provider = AssignmentService {
+            backend_driver: Arc::new(backend),
+        };
+
+        let roles = provider
+            .list_user_roles_on_project(
+                &state,
+                &RoleAssignmentListParameters {
+                    user_id: Some("user_id".into()),
+                    project_id: Some("project_id".into()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(roles.len(), 3, "Should return three roles");
+        let role_ids: Vec<String> = roles.iter().map(|r| r.id.clone()).collect();
+        assert!(role_ids.contains(&"role_id_1".to_string()));
+        assert!(role_ids.contains(&"role_id_2".to_string()));
+        assert!(role_ids.contains(&"role_id_3".to_string()));
     }
 }

@@ -17,6 +17,7 @@ use async_trait::async_trait;
 use super::assignment::*;
 use crate::assignment::AssignmentProviderError;
 use crate::keystone::ServiceState;
+use crate::role::types::Role;
 
 /// The trait covering [`Role`](crate::role::types::Role) assignments between
 /// `actors` and `objects`.
@@ -49,4 +50,11 @@ pub trait AssignmentApi: Send + Sync {
         state: &ServiceState,
         params: Assignment,
     ) -> Result<(), AssignmentProviderError>;
+
+    /// List user roles on project
+    async fn list_user_roles_on_project(
+        &self,
+        state: &ServiceState,
+        params: &RoleAssignmentListParameters,
+    ) -> Result<Vec<Role>, AssignmentProviderError>;
 }

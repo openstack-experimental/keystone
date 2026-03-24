@@ -49,6 +49,7 @@ use openstack_keystone_config::Config;
 use crate::assignment::service::AssignmentService;
 use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManagerApi;
+use crate::role::types::Role;
 use types::*;
 
 pub use error::AssignmentProviderError;
@@ -104,6 +105,19 @@ impl AssignmentApi for AssignmentProvider {
         }
     }
 
+    // List user roles on project
+    #[tracing::instrument(level = "info", skip(self, state))]
+    async fn list_user_roles_on_project(
+        &self,
+        state: &ServiceState,
+        params: &RoleAssignmentListParameters,
+    ) -> Result<Vec<Role>, AssignmentProviderError> {
+        match self {
+            Self::Service(provider) => provider.list_user_roles_on_project(state, params).await,
+            #[cfg(any(test, feature = "mock"))]
+            Self::Mock(provider) => provider.list_user_roles_on_project(state, params).await,
+        }
+    }
     /// Revoke grant
     #[tracing::instrument(level = "info", skip(self, state))]
     async fn revoke_grant(

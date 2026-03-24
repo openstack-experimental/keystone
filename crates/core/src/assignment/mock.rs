@@ -18,6 +18,7 @@ use crate::assignment::AssignmentApi;
 use crate::assignment::AssignmentProviderError;
 use crate::assignment::types::*;
 use crate::keystone::ServiceState;
+use crate::role::types::*;
 
 mock! {
     pub AssignmentProvider {}
@@ -41,5 +42,13 @@ mock! {
             state: &ServiceState,
             params: Assignment,
         ) -> Result<(), AssignmentProviderError>;
+
+           // List user roles on project
+    async fn list_user_roles_on_project(
+        &self,
+        state: &ServiceState,
+        params: &RoleAssignmentListParameters,
+    ) -> Result<Vec<Role>, AssignmentProviderError>;
+
     }
 }
