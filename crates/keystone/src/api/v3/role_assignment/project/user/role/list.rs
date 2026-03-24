@@ -20,12 +20,17 @@ use axum::{
     response::IntoResponse,
 };
 
+use serde_json::json;
+use tracing::info;
+
 use crate::api::error::KeystoneApiError;
 use crate::api::v3::role::types::{Role, RoleList};
 use crate::keystone::ServiceState;
 use crate::{
     api::auth::Auth,
     assignment::{AssignmentApi, types::RoleAssignmentListParameters},
+    identity::IdentityApi,
+    resource::ResourceApi,
 };
 
 /// Check whether user has role assignment on project.
@@ -40,7 +45,8 @@ use crate::{
       ("user_id" = String, Path, description = "The user ID.")
     ),
     responses(
-        (status = OK, description = "Grants has been listed."),
+        (status = OK, description = "Roles listed successfully.", body = RoleList),
+        (status = FORBIDDEN, description = "User does not have permission to list roles."),
     ),
     security(("x-auth" = [])),
     tag="role_assignments"
@@ -56,6 +62,50 @@ pub(super) async fn list(
     Path((project_id, user_id)): Path<(String, String)>,
     State(state): State<ServiceState>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
+    // Get project and user for policy enforcement
+    let (project, user) = tokio::join!(
+        state
+            .provider
+            .get_resource_provider()
+            .get_project(&state, &project_id),
+        state
+            .provider
+            .get_identity_provider()
+            .get_user(&state, &user_id)
+    );
+
+    let project = project?.ok_or_else(|| {
+        info!("Project {} was not found", project_id);
+        KeystoneApiError::NotFound {
+            resource: "project".into(),
+            identifier: project_id.clone(),
+        }
+    })?;
+
+    let user = user?.ok_or_else(|| {
+        info!("User {} was not found", user_id);
+        KeystoneApiError::NotFound {
+            resource: "user".into(),
+            identifier: user_id.clone(),
+        }
+    })?;
+
+    // Enforce policy
+    state
+        .policy_enforcer
+        .enforce(
+            "identity/project/user/role/list",
+            &user_auth,
+            json!({
+                "user": user,
+                "project": project,
+                "target": user  // The user being queried
+            }),
+            None,
+        )
+        .await?;
+
+    // Get roles
     let query_params = RoleAssignmentListParameters {
         user_id: Some(user_id.clone()),
         project_id: Some(project_id.clone()),
@@ -75,6 +125,7 @@ pub(super) async fn list(
 
     Ok((StatusCode::OK, Json(RoleList { roles })).into_response())
 }
+
 #[cfg(test)]
 mod tests {
     use axum::{
@@ -90,12 +141,12 @@ mod tests {
     use crate::assignment::{MockAssignmentProvider, types::*};
     use crate::identity::{MockIdentityProvider, types::*};
     use crate::provider::Provider;
-    use crate::resource::MockResourceProvider;
+    use crate::resource::{MockResourceProvider, types::Project};
     use crate::role::{MockRoleProvider, types::*};
 
     #[tokio::test]
     #[traced_test]
-    async fn test_list_no_roles() {
+    async fn test_list_no_roles_allowed() {
         let mut identity_mock = MockIdentityProvider::default();
         identity_mock
             .expect_get_user()
@@ -126,13 +177,24 @@ mod tests {
             .returning(|_, _| Ok(vec![]));
 
         let role_mock = MockRoleProvider::default();
-        let resource_mock = MockResourceProvider::default();
+        let mut resource_mock = MockResourceProvider::default();
+        resource_mock
+            .expect_get_project()
+            .withf(|_, pid: &'_ str| pid == "project_id")
+            .returning(|_, id: &'_ str| {
+                Ok(Some(Project {
+                    id: id.to_string(),
+                    domain_id: "project_domain_id".into(),
+                    ..Default::default()
+                }))
+            });
 
         let provider_builder = Provider::mocked_builder()
             .mock_assignment(assignment_mock)
             .mock_identity(identity_mock)
             .mock_resource(resource_mock)
             .mock_role(role_mock);
+        // Policy enforcement allowed
         let state = get_mocked_state(provider_builder, true, None, None);
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -156,7 +218,7 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn test_list_single_role() {
+    async fn test_list_single_role_allowed() {
         let mut identity_mock = MockIdentityProvider::default();
         identity_mock
             .expect_get_user()
@@ -195,7 +257,17 @@ mod tests {
             });
 
         let role_mock = MockRoleProvider::default();
-        let resource_mock = MockResourceProvider::default();
+        let mut resource_mock = MockResourceProvider::default();
+        resource_mock
+            .expect_get_project()
+            .withf(|_, pid: &'_ str| pid == "project_id")
+            .returning(|_, id: &'_ str| {
+                Ok(Some(Project {
+                    id: id.to_string(),
+                    domain_id: "project_domain_id".into(),
+                    ..Default::default()
+                }))
+            });
 
         let provider_builder = Provider::mocked_builder()
             .mock_assignment(assignment_mock)
@@ -225,7 +297,7 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn test_list_multiple_roles() {
+    async fn test_list_multiple_roles_allowed() {
         let mut identity_mock = MockIdentityProvider::default();
         identity_mock
             .expect_get_user()
@@ -274,7 +346,17 @@ mod tests {
             });
 
         let role_mock = MockRoleProvider::default();
-        let resource_mock = MockResourceProvider::default();
+        let mut resource_mock = MockResourceProvider::default();
+        resource_mock
+            .expect_get_project()
+            .withf(|_, pid: &'_ str| pid == "project_id")
+            .returning(|_, id: &'_ str| {
+                Ok(Some(Project {
+                    id: id.to_string(),
+                    domain_id: "project_domain_id".into(),
+                    ..Default::default()
+                }))
+            });
 
         let provider_builder = Provider::mocked_builder()
             .mock_assignment(assignment_mock)
@@ -300,5 +382,167 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_list_policy_forbidden() {
+        let mut identity_mock = MockIdentityProvider::default();
+        identity_mock
+            .expect_get_user()
+            .withf(|_, id: &'_ str| id == "user_id")
+            .returning(|_, _| {
+                Ok(Some(
+                    UserResponseBuilder::default()
+                        .id("user_id")
+                        .domain_id("user_domain_id")
+                        .enabled(true)
+                        .name("name")
+                        .build()
+                        .unwrap(),
+                ))
+            });
+
+        let assignment_mock = MockAssignmentProvider::default();
+        let role_mock = MockRoleProvider::default();
+        let mut resource_mock = MockResourceProvider::default();
+        resource_mock
+            .expect_get_project()
+            .withf(|_, pid: &'_ str| pid == "project_id")
+            .returning(|_, id: &'_ str| {
+                Ok(Some(Project {
+                    id: id.to_string(),
+                    domain_id: "project_domain_id".into(),
+                    ..Default::default()
+                }))
+            });
+
+        let provider_builder = Provider::mocked_builder()
+            .mock_assignment(assignment_mock)
+            .mock_identity(identity_mock)
+            .mock_resource(resource_mock)
+            .mock_role(role_mock);
+        // Policy enforcement NOT allowed
+        let state = get_mocked_state(provider_builder, false, None, None);
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state.clone());
+
+        let response = api
+            .as_service()
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/projects/project_id/users/user_id/roles")
+                    .header("x-auth-token", "foo")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_list_user_not_found() {
+        let mut identity_mock = MockIdentityProvider::default();
+        identity_mock
+            .expect_get_user()
+            .withf(|_, id: &'_ str| id == "user_id")
+            .returning(|_, _| Ok(None));
+
+        let assignment_mock = MockAssignmentProvider::default();
+        let role_mock = MockRoleProvider::default();
+        let mut resource_mock = MockResourceProvider::default();
+        resource_mock
+            .expect_get_project()
+            .withf(|_, pid: &'_ str| pid == "project_id")
+            .returning(|_, id: &'_ str| {
+                Ok(Some(Project {
+                    id: id.to_string(),
+                    domain_id: "project_domain_id".into(),
+                    ..Default::default()
+                }))
+            });
+
+        let provider_builder = Provider::mocked_builder()
+            .mock_assignment(assignment_mock)
+            .mock_identity(identity_mock)
+            .mock_resource(resource_mock)
+            .mock_role(role_mock);
+        let state = get_mocked_state(provider_builder, true, None, None);
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state.clone());
+
+        let response = api
+            .as_service()
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/projects/project_id/users/user_id/roles")
+                    .header("x-auth-token", "foo")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_list_project_not_found() {
+        let mut identity_mock = MockIdentityProvider::default();
+        identity_mock
+            .expect_get_user()
+            .withf(|_, id: &'_ str| id == "user_id")
+            .returning(|_, _| {
+                Ok(Some(
+                    UserResponseBuilder::default()
+                        .id("user_id")
+                        .domain_id("user_domain_id")
+                        .enabled(true)
+                        .name("name")
+                        .build()
+                        .unwrap(),
+                ))
+            });
+
+        let assignment_mock = MockAssignmentProvider::default();
+        let role_mock = MockRoleProvider::default();
+        let mut resource_mock = MockResourceProvider::default();
+        resource_mock
+            .expect_get_project()
+            .withf(|_, pid: &'_ str| pid == "project_id")
+            .returning(|_, _| Ok(None));
+
+        let provider_builder = Provider::mocked_builder()
+            .mock_assignment(assignment_mock)
+            .mock_identity(identity_mock)
+            .mock_resource(resource_mock)
+            .mock_role(role_mock);
+        let state = get_mocked_state(provider_builder, true, None, None);
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state.clone());
+
+        let response = api
+            .as_service()
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/projects/project_id/users/user_id/roles")
+                    .header("x-auth-token", "foo")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
 }
