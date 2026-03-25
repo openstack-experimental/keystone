@@ -13,8 +13,8 @@
 // SPDX-License-Identifier: Apache-2.0
 use std::fmt;
 
+//use openraft::Membership;
 use openraft::EntryPayload;
-use openraft::Membership;
 use openraft::alias::LogIdOf;
 use openraft::entry::RaftEntry;
 use openraft::entry::RaftPayload;
@@ -28,8 +28,8 @@ impl fmt::Display for pb::raft::Entry {
     }
 }
 
-impl RaftPayload<TypeConfig> for pb::raft::Entry {
-    fn get_membership(&self) -> Option<Membership<TypeConfig>> {
+impl RaftPayload<crate::types::NodeId, pb::raft::Node> for pb::raft::Entry {
+    fn get_membership(&self) -> Option<crate::types::Membership> {
         // NOTE: Converting the membership is fallible. This interface does not allow us
         // to handle it properly, so the conversion error is treated as `None`.
         self.membership
@@ -40,8 +40,16 @@ impl RaftPayload<TypeConfig> for pb::raft::Entry {
     }
 }
 
-impl RaftEntry<TypeConfig> for pb::raft::Entry {
-    fn new(log_id: LogIdOf<TypeConfig>, payload: EntryPayload<TypeConfig>) -> Self {
+impl RaftEntry for pb::raft::Entry {
+    type CommittedLeaderId = u64;
+    type D = pb::api::SetRequest;
+    type NodeId = u64;
+    type Node = pb::raft::Node;
+
+    fn new(
+        log_id: LogIdOf<TypeConfig>,
+        payload: EntryPayload<pb::api::SetRequest, u64, pb::raft::Node>,
+    ) -> Self {
         let mut app_data = None;
         let mut membership = None;
         match payload {

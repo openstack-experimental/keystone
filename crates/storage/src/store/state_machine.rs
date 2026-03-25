@@ -21,12 +21,13 @@ use std::sync::Arc;
 use fjall::{Database, Keyspace, KeyspaceCreateOptions, PersistMode, Readable};
 use futures::Stream;
 use futures::TryStreamExt;
-use openraft::LogId;
 use openraft::OptionalSend;
 use openraft::RaftSnapshotBuilder;
 use openraft::SnapshotMeta;
 use openraft::StorageError;
-use openraft::StoredMembership;
+use openraft::alias::SnapshotMetaOf;
+use openraft::alias::SnapshotOf;
+use openraft::alias::StoredMembershipOf;
 use openraft::alias::{LogIdOf, SnapshotDataOf};
 use openraft::entry::RaftEntry;
 use openraft::storage::EntryResponder;
@@ -47,7 +48,7 @@ const KEY_LAST_MEMBERSHIP: &[u8] = b"last_membership";
 /// Snapshot file format: metadata + data stored together.
 #[derive(Serialize, Deserialize)]
 struct SnapshotFile {
-    meta: SnapshotMeta<TypeConfig>,
+    meta: SnapshotMetaOf<TypeConfig>,
     data: Vec<(Vec<u8>, Vec<u8>)>,
 }
 
@@ -86,7 +87,7 @@ impl FjallStateMachine {
     #[tracing::instrument(skip(self))]
     fn get_meta(
         &self,
-    ) -> Result<(Option<LogId<TypeConfig>>, StoredMembership<TypeConfig>), StoreError> {
+    ) -> Result<(Option<LogIdOf<TypeConfig>>, StoredMembershipOf<TypeConfig>), StoreError> {
         let last_applied_log = self
             .meta
             .get(KEY_LAST_APPLIED_LOG)?
@@ -112,7 +113,7 @@ fn deserialize<T: for<'de> Deserialize<'de>>(bytes: &[u8]) -> Result<T, StorageE
 
 impl RaftSnapshotBuilder<TypeConfig> for Arc<FjallStateMachine> {
     #[tracing::instrument(level = "trace", skip(self))]
-    async fn build_snapshot(&mut self) -> Result<Snapshot<TypeConfig>, io::Error> {
+    async fn build_snapshot(&mut self) -> Result<SnapshotOf<TypeConfig>, io::Error> {
         //// 1. Get the last applied log ID from the snapshot view
         let (last_applied_log, last_membership) = self.get_meta()?;
 
@@ -157,18 +158,27 @@ impl RaftSnapshotBuilder<TypeConfig> for Arc<FjallStateMachine> {
         };
 
         let file_bytes = serialize(&snapshot_file).map_err(|e| {
-            StorageError::write_snapshot(Some(meta.signature()), TypeConfig::err_from_error(&e))
+            StorageError::<TypeConfig>::write_snapshot(
+                Some(meta.signature()),
+                TypeConfig::err_from_error(&e),
+            )
         })?;
 
         // Write complete snapshot to file
         let snapshot_path = self.snapshot_dir.join(&snapshot_id);
         fs::write(&snapshot_path, &file_bytes).map_err(|e| {
-            StorageError::write_snapshot(Some(meta.signature()), TypeConfig::err_from_error(&e))
+            StorageError::<TypeConfig>::write_snapshot(
+                Some(meta.signature()),
+                TypeConfig::err_from_error(&e),
+            )
         })?;
 
         // Return snapshot with data-only for backward compatibility with the data field
         let data_bytes = serialize(&data_buffer).map_err(|e| {
-            StorageError::write_snapshot(Some(meta.signature()), TypeConfig::err_from_error(&e))
+            StorageError::<TypeConfig>::write_snapshot(
+                Some(meta.signature()),
+                TypeConfig::err_from_error(&e),
+            )
         })?;
         tracing::trace!("snapshot written to {:?}", snapshot_path);
 
@@ -186,7 +196,7 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
     #[tracing::instrument(skip(self))]
     async fn applied_state(
         &mut self,
-    ) -> Result<(Option<LogIdOf<TypeConfig>>, StoredMembership<TypeConfig>), io::Error> {
+    ) -> Result<(Option<LogIdOf<TypeConfig>>, StoredMembershipOf<TypeConfig>), io::Error> {
         self.get_meta().map_err(|e| io::Error::other(e.to_string()))
     }
 
@@ -203,7 +213,7 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
     #[tracing::instrument(skip(self))]
     async fn install_snapshot(
         &mut self,
-        meta: &SnapshotMeta<TypeConfig>,
+        meta: &SnapshotMetaOf<TypeConfig>,
         snapshot: SnapshotDataOf<TypeConfig>,
     ) -> Result<(), io::Error> {
         tracing::info!(
@@ -271,7 +281,7 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
     }
 
     #[tracing::instrument(skip(self))]
-    async fn get_current_snapshot(&mut self) -> Result<Option<Snapshot<TypeConfig>>, io::Error> {
+    async fn get_current_snapshot(&mut self) -> Result<Option<SnapshotOf<TypeConfig>>, io::Error> {
         // Find the latest snapshot file by comparing filenames lexicographically
         let mut latest_snapshot_id: Option<String> = None;
 
@@ -332,7 +342,10 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                 batch.insert(&self.data, req.key.as_bytes(), req.value.as_bytes());
                 Some(req.value.clone())
             } else if let Some(mem) = entry.membership {
-                last_membership = Some(StoredMembership::new(last_applied_log, mem.try_into()?));
+                last_membership = Some(StoredMembershipOf::<TypeConfig>::new(
+                    last_applied_log,
+                    mem.try_into()?,
+                ));
                 None
             } else {
                 None

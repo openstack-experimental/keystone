@@ -19,7 +19,6 @@ use std::fmt;
 use openraft::vote::LeaderIdCompare;
 use openraft::vote::RaftLeaderId;
 
-use crate::TypeConfig;
 use crate::protobuf as pb;
 
 /// Implements PartialOrd for LeaderId to enforce the standard Raft behavior of
@@ -56,8 +55,10 @@ impl fmt::Display for pb::raft::LeaderId {
     }
 }
 
-impl RaftLeaderId<TypeConfig> for pb::raft::LeaderId {
+impl RaftLeaderId for pb::raft::LeaderId {
+    type Term = u64;
     type Committed = u64;
+    type NodeId = u64;
 
     fn new(term: u64, node_id: u64) -> Self {
         Self { term, node_id }
