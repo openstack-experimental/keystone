@@ -1,0 +1,296 @@
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+// SPDX-License-Identifier: Apache-2.0
+
+use crate::error::BuilderError;
+use derive_builder::Builder;
+use serde::Serialize;
+use std::fmt;
+use validator::Validate;
+
+/// The assignment object.
+#[derive(Builder, Clone, Debug, Eq, Hash, PartialEq, Serialize, Validate)]
+#[builder(build_fn(error = "BuilderError"))]
+#[builder(setter(strip_option, into))]
+pub struct Assignment {
+    /// The actor id.
+    #[validate(length(min = 1, max = 64))]
+    pub actor_id: String,
+
+    /// The role ID.
+    #[validate(length(min = 1, max = 64))]
+    pub role_id: String,
+
+    /// The role name.
+    #[builder(default)]
+    #[validate(length(min = 1, max = 255))]
+    pub role_name: Option<String>,
+
+    /// The target id.
+    #[validate(length(min = 1, max = 64))]
+    pub target_id: String,
+
+    /// The assignment type.
+    pub r#type: AssignmentType,
+
+    /// Inherited flag.
+    #[builder(default)]
+    pub inherited: bool,
+
+    /// Assignment through the role inference rules.
+    #[builder(default)]
+    pub implied_via: Option<String>,
+}
+
+/// The new assignment object.
+#[derive(Builder, Clone, Debug, PartialEq, Validate)]
+#[builder(build_fn(error = "BuilderError"))]
+#[builder(setter(strip_option, into))]
+pub struct AssignmentCreate {
+    /// The actor id.
+    #[validate(length(max = 64))]
+    pub actor_id: String,
+
+    /// The role ID.
+    #[validate(length(max = 64))]
+    pub role_id: String,
+
+    /// The role name.
+    #[builder(default)]
+    #[validate(length(max = 64))]
+    pub role_name: Option<String>,
+
+    /// The target id.
+    #[validate(length(max = 64))]
+    pub target_id: String,
+
+    /// The assignment type.
+    pub r#type: AssignmentType,
+
+    /// Inherited flag.
+    pub inherited: bool,
+}
+
+impl AssignmentCreate {
+    /// Instantiate new assignment.
+    pub fn new<A, T, R>(
+        actor_id: A,
+        target_id: T,
+        role_id: R,
+        r#type: AssignmentType,
+        inherited: bool,
+    ) -> Self
+    where
+        A: Into<String>,
+        T: Into<String>,
+        R: Into<String>,
+    {
+        Self {
+            actor_id: actor_id.into(),
+            target_id: target_id.into(),
+            role_id: role_id.into(),
+            r#type,
+            inherited,
+            role_name: None,
+        }
+    }
+
+    /// Instantiate GroupDomain assignment.
+    pub fn group_domain<A, T, R>(actor_id: A, target_id: T, role_id: R, inherited: bool) -> Self
+    where
+        A: Into<String>,
+        T: Into<String>,
+        R: Into<String>,
+    {
+        Self::new(
+            actor_id,
+            target_id,
+            role_id,
+            AssignmentType::GroupDomain,
+            inherited,
+        )
+    }
+
+    /// Instantiate GroupProject assignment.
+    pub fn group_project<A, T, R>(actor_id: A, target_id: T, role_id: R, inherited: bool) -> Self
+    where
+        A: Into<String>,
+        T: Into<String>,
+        R: Into<String>,
+    {
+        Self::new(
+            actor_id,
+            target_id,
+            role_id,
+            AssignmentType::GroupProject,
+            inherited,
+        )
+    }
+
+    /// Instantiate UserDomain assignment.
+    pub fn user_domain<A, T, R>(actor_id: A, target_id: T, role_id: R, inherited: bool) -> Self
+    where
+        A: Into<String>,
+        T: Into<String>,
+        R: Into<String>,
+    {
+        Self::new(
+            actor_id,
+            target_id,
+            role_id,
+            AssignmentType::UserDomain,
+            inherited,
+        )
+    }
+
+    /// Instantiate UserProject assignment.
+    pub fn user_project<A, T, R>(actor_id: A, target_id: T, role_id: R, inherited: bool) -> Self
+    where
+        A: Into<String>,
+        T: Into<String>,
+        R: Into<String>,
+    {
+        Self::new(
+            actor_id,
+            target_id,
+            role_id,
+            AssignmentType::UserProject,
+            inherited,
+        )
+    }
+}
+
+/// Role assignment type.
+#[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize)]
+pub enum AssignmentType {
+    /// Group to the domain.
+    GroupDomain,
+    /// Group to the project.
+    GroupProject,
+    /// User to the domain.
+    UserDomain,
+    /// User to the project.
+    UserProject,
+    /// User to the system.
+    UserSystem,
+    /// Group to the system.
+    GroupSystem,
+}
+
+impl fmt::Display for AssignmentType {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Self::GroupDomain => write!(f, "GroupDomain"),
+            Self::GroupProject => write!(f, "GroupProject"),
+            Self::GroupSystem => write!(f, "GroupSystem"),
+            Self::UserDomain => write!(f, "UserDomain"),
+            Self::UserProject => write!(f, "UserProject"),
+            Self::UserSystem => write!(f, "UserSystem"),
+        }
+    }
+}
+
+/// Parameters for listing role assignments for role/target/actor.
+#[derive(Builder, Clone, Debug, Default, PartialEq, Validate)]
+#[builder(build_fn(error = "BuilderError"))]
+#[builder(setter(strip_option, into))]
+pub struct RoleAssignmentListParameters {
+    /// Query role assignments filtering results by the role.
+    #[builder(default)]
+    #[validate(length(max = 64))]
+    pub role_id: Option<String>,
+
+    /// Get role assignments for the user.
+    #[builder(default)]
+    #[validate(length(max = 64))]
+    pub user_id: Option<String>,
+
+    /// Get role assignments for the group.
+    #[builder(default)]
+    #[validate(length(max = 64))]
+    pub group_id: Option<String>,
+
+    /// Query role assignments on the project.
+    #[builder(default)]
+    #[validate(length(max = 64))]
+    pub project_id: Option<String>,
+    /// Query role assignments on the domain.
+    #[builder(default)]
+    #[validate(length(max = 64))]
+    pub domain_id: Option<String>,
+    /// Query role assignments on the system.
+    #[builder(default)]
+    #[validate(length(max = 64))]
+    pub system_id: Option<String>,
+
+    // #[builder(default)]
+    // pub inherited: Option<bool>,
+    /// Query the effective assignments, including any assignments gained by
+    /// virtue of group membership.
+    #[builder(default)]
+    pub effective: Option<bool>,
+
+    /// If set to true, then the names of any entities returned will be include
+    /// as well as their IDs. Any value other than 0 (including no value)
+    /// will be interpreted as true.
+    #[builder(default)]
+    pub include_names: Option<bool>,
+}
+
+/// Querying effective role assignments for list of actors (typically user with
+/// all groups user is member of) on list of targets (exact project + inherited
+/// from upper projects/domain).
+#[derive(Builder, Clone, Debug, Default, PartialEq, Validate)]
+#[builder(build_fn(error = "BuilderError"))]
+#[builder(setter(strip_option, into))]
+pub struct RoleAssignmentListForMultipleActorTargetParameters {
+    /// List of actors for which assignments are looked up.
+    #[builder(default)]
+    #[validate(length(max = 64))]
+    pub actors: Vec<String>,
+
+    /// Optionally filter for the concrete role ID.
+    #[builder(default)]
+    #[validate(length(max = 64))]
+    pub role_id: Option<String>,
+
+    /// List of targets for which assignments are looked up.
+    #[builder(default)]
+    #[validate(nested)]
+    pub targets: Vec<RoleAssignmentTarget>,
+}
+
+/// Role assignment target which is either target_id or target_id with explicit
+/// inherited parameter.
+#[derive(Clone, Debug, PartialEq, Validate)]
+pub struct RoleAssignmentTarget {
+    /// The role assignment target ID.
+    #[validate(length(max = 64))]
+    pub id: String,
+    /// The role assignment target type.
+    pub r#type: RoleAssignmentTargetType,
+    /// Specifies whether the target is only considered for inherited
+    /// assignments.
+    pub inherited: Option<bool>,
+}
+
+/// Role assignment target as Project(id), Domain(id) or System(id).
+#[derive(Clone, Debug, PartialEq)]
+pub enum RoleAssignmentTargetType {
+    /// Project ID.
+    Project,
+    /// Domain ID.
+    Domain,
+    /// System ID.
+    System,
+}

@@ -33,13 +33,14 @@
 use async_trait::async_trait;
 
 use openstack_keystone_config::Config;
+use openstack_keystone_core_types::catalog::*;
 
 pub mod backend;
 pub mod error;
 #[cfg(any(test, feature = "mock"))]
 mod mock;
+mod provider_api;
 pub mod service;
-pub mod types;
 
 use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManagerApi;
@@ -48,9 +49,7 @@ use service::CatalogService;
 pub use crate::catalog::error::CatalogProviderError;
 #[cfg(any(test, feature = "mock"))]
 pub use mock::MockCatalogProvider;
-pub use types::CatalogApi;
-
-use types::*;
+pub use provider_api::CatalogApi;
 
 pub enum CatalogProvider {
     Service(CatalogService),

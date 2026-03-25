@@ -31,6 +31,8 @@ use axum::{
 use serde_json::{json, to_value};
 use tracing::error;
 
+use openstack_keystone_core::api::v3::auth::token::token_impl::build_api_token_v3;
+
 use crate::api::v3::auth::token::types::{TokenResponse, ValidateTokenParameters};
 use crate::api::{Catalog, CatalogService, auth::Auth, error::KeystoneApiError};
 use crate::catalog::CatalogApi;
@@ -97,7 +99,7 @@ pub(super) async fn show(
         .await?;
 
     //// Expand the token since we didn't expand it before.
-    let mut response_token = token.build_api_token_v3(&state).await?;
+    let mut response_token = build_api_token_v3(&token, &state).await?;
 
     if !query.nocatalog.is_some_and(|x| x) {
         let catalog: Catalog = Catalog(
@@ -138,13 +140,16 @@ mod tests {
     use tower::ServiceExt; // for `call`, `oneshot`, and `ready`
     use tower_http::trace::TraceLayer;
 
+    use openstack_keystone_core_types::identity::UserResponseBuilder;
+    use openstack_keystone_core_types::resource::Domain;
+
     use super::super::openapi_router;
     use crate::api::tests::get_mocked_state;
     use crate::api::v3::auth::token::types::*;
     use crate::catalog::MockCatalogProvider;
-    use crate::identity::{MockIdentityProvider, types::UserResponseBuilder};
+    use crate::identity::MockIdentityProvider;
     use crate::provider::Provider;
-    use crate::resource::{MockResourceProvider, types::Domain};
+    use crate::resource::MockResourceProvider;
     use crate::token::{
         MockTokenProvider, Token as ProviderToken, TokenProviderError, UnscopedPayload,
     };

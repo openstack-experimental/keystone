@@ -21,10 +21,16 @@ use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 
 pub mod catalog;
+#[cfg(feature = "conv")]
+mod catalog_conv;
 pub mod error;
+#[cfg(feature = "conv")]
+mod error_conv;
 pub mod federation;
 pub mod k8s_auth;
 pub mod scope;
+#[cfg(feature = "conv")]
+mod scope_conv;
 pub mod trust;
 pub mod v3;
 pub mod v4;

@@ -19,10 +19,11 @@ use uuid::Uuid;
 use validator::Validate;
 
 use openstack_keystone_config::Config;
+use openstack_keystone_core_types::role::*;
 
 use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManagerApi;
-use crate::role::{RoleProviderError, backend::RoleBackend, types::*};
+use crate::role::{RoleApi, RoleProviderError, backend::RoleBackend};
 
 pub struct RoleService {
     backend_driver: Arc<dyn RoleBackend>,

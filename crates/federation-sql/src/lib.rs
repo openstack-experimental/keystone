@@ -14,10 +14,9 @@
 //! OpenStack Keystone SQL driver for the federation provider
 use async_trait::async_trait;
 
-use openstack_keystone_core::federation::{
-    FederationProviderError, backend::FederationBackend, types::*,
-};
+use openstack_keystone_core::federation::{FederationProviderError, backend::FederationBackend};
 use openstack_keystone_core::keystone::ServiceState;
+use openstack_keystone_core_types::federation::*;
 
 mod auth_state;
 pub mod entity;

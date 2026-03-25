@@ -17,9 +17,10 @@ use std::sync::Arc;
 
 use eyre::Result;
 
-use openstack_keystone::k8s_auth::{K8sAuthApi, types::*};
+use openstack_keystone::k8s_auth::K8sAuthApi;
 use openstack_keystone::keystone::Service;
 use openstack_keystone::keystone::ServiceState;
+use openstack_keystone_core_types::k8s_auth::*;
 
 mod create;
 mod delete;

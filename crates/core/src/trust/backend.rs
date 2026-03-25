@@ -14,8 +14,10 @@
 //! Trust provider Backend trait.
 use async_trait::async_trait;
 
+use openstack_keystone_core_types::trust::*;
+
 use crate::keystone::ServiceState;
-use crate::trust::{TrustProviderError, types::*};
+use crate::trust::TrustProviderError;
 
 /// TrustBackend trait.
 ///

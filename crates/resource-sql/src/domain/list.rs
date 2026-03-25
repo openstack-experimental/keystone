@@ -18,10 +18,8 @@ use sea_orm::query::*;
 use sea_orm::{Cursor, SelectModel};
 
 use openstack_keystone_core::error::DbContextExt;
-use openstack_keystone_core::resource::{
-    ResourceProviderError,
-    types::{Domain, DomainListParameters},
-};
+use openstack_keystone_core::resource::ResourceProviderError;
+use openstack_keystone_core_types::resource::{Domain, DomainListParameters};
 
 use crate::entity::{prelude::Project as DbProject, project as db_project};
 

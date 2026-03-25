@@ -65,7 +65,13 @@ pub(super) async fn create(
         .get_federation_provider()
         .create_identity_provider(&state, req.into())
         .await?;
-    Ok((StatusCode::CREATED, res).into_response())
+    Ok((
+        StatusCode::CREATED,
+        Json(IdentityProviderResponse {
+            identity_provider: IdentityProvider::from(res),
+        }),
+    )
+        .into_response())
 }
 
 #[cfg(test)]
@@ -75,14 +81,15 @@ mod tests {
         http::{Request, StatusCode, header},
     };
     use http_body_util::BodyExt; // for `collect`
-
     use tower::ServiceExt; // for `call`, `oneshot`, and `ready`
     use tower_http::trace::TraceLayer;
     use tracing_test::traced_test;
 
+    use openstack_keystone_core_types::federation as provider_types;
+
     use super::{super::openapi_router, *};
     use crate::api::tests::get_mocked_state;
-    use crate::federation::{MockFederationProvider, types as provider_types};
+    use crate::federation::MockFederationProvider;
     use crate::provider::Provider;
 
     #[tokio::test]

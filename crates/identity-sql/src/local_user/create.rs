@@ -17,7 +17,8 @@ use sea_orm::entity::*;
 
 use openstack_keystone_config::Config;
 use openstack_keystone_core::error::DbContextExt;
-use openstack_keystone_core::identity::{IdentityProviderError, types::UserCreate};
+use openstack_keystone_core::identity::IdentityProviderError;
+use openstack_keystone_core_types::identity::UserCreate;
 
 use crate::entity::{local_user, user};
 

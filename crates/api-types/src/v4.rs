@@ -15,3 +15,6 @@
 pub mod auth;
 pub mod token_restriction;
 pub mod user;
+
+#[cfg(feature = "conv")]
+mod token_restriction_conv;

@@ -16,7 +16,8 @@ use sea_orm::DatabaseConnection;
 use sea_orm::entity::*;
 
 use openstack_keystone_core::error::DbContextExt;
-use openstack_keystone_core::role::{RoleProviderError, types::Role};
+use openstack_keystone_core::role::RoleProviderError;
+use openstack_keystone_core_types::role::Role;
 
 use crate::entity::{prelude::Role as DbRole, role as db_role};
 
@@ -34,7 +35,7 @@ pub async fn get<I: AsRef<str>>(
 pub(super) mod tests {
     use sea_orm::{DatabaseBackend, MockDatabase, Transaction};
 
-    use openstack_keystone_core::role::types::RoleBuilder;
+    use openstack_keystone_core_types::role::RoleBuilder;
 
     use super::*;
     use crate::role::tests::get_role_mock;

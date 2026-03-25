@@ -18,10 +18,8 @@ use sea_orm::query::*;
 use sea_orm::{Cursor, SelectModel};
 
 use openstack_keystone_core::error::DbContextExt;
-use openstack_keystone_core::federation::{
-    FederationProviderError,
-    types::{Mapping, MappingListParameters},
-};
+use openstack_keystone_core::federation::FederationProviderError;
+use openstack_keystone_core_types::federation::{Mapping, MappingListParameters};
 
 use crate::entity::{
     federated_mapping as db_federated_mapping, prelude::FederatedMapping as DbFederatedMapping,
@@ -77,7 +75,7 @@ pub async fn list(
 mod tests {
     use sea_orm::{DatabaseBackend, MockDatabase, QueryOrder, Transaction, sea_query::*};
 
-    use openstack_keystone_core::federation::types::mapping::MappingType;
+    use openstack_keystone_core_types::federation::MappingType;
 
     use super::super::tests::get_mapping_mock;
     use super::*;

@@ -19,10 +19,8 @@ use tracing::info;
 use openstack_keystone_config::Config;
 use openstack_keystone_core::auth::{AuthenticatedInfo, AuthenticationError};
 use openstack_keystone_core::common::password_hashing;
-use openstack_keystone_core::identity::{
-    IdentityProviderError,
-    types::{UserPasswordAuthRequest, UserResponseBuilder},
-};
+use openstack_keystone_core::identity::IdentityProviderError;
+use openstack_keystone_core_types::identity::{UserPasswordAuthRequest, UserResponseBuilder};
 
 use crate::entity::{local_user as db_local_user, password as db_password};
 use crate::local_user;
@@ -90,7 +88,10 @@ pub async fn authenticate_by_password(
             ))?;
 
     // Verify the password
-    if !password_hashing::verify_password(config, &auth.password, expected_hash).await? {
+    if !password_hashing::verify_password(config, &auth.password, expected_hash)
+        .await
+        .map_err(IdentityProviderError::password_hash)?
+    {
         return Err(AuthenticationError::UserNameOrPasswordWrong)?;
     }
     // Check if expired password exempt is on
@@ -180,7 +181,7 @@ mod tests {
     use sea_orm::{DatabaseBackend, MockDatabase, Transaction};
     use tracing_test::traced_test;
 
-    use openstack_keystone_core::identity::types::UserOptions;
+    use openstack_keystone_core_types::identity::UserOptions;
 
     use super::*;
     use crate::entity::local_user as db_local_user;

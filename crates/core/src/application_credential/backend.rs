@@ -15,8 +15,9 @@
 
 use async_trait::async_trait;
 
+use openstack_keystone_core_types::application_credential::*;
+
 use crate::application_credential::ApplicationCredentialProviderError;
-use crate::application_credential::types::*;
 use crate::keystone::ServiceState;
 
 /// Application Credential backend driver interface.

@@ -33,14 +33,14 @@ use tracing::trace;
 use validator::Validate;
 
 use openstack_keystone_config::Config;
-use openstack_keystone_core::token::types::{
-    application_credential::ApplicationCredentialPayload, domain_scoped::DomainScopePayload,
-    federation_domain_scoped::FederationDomainScopePayload,
-    federation_project_scoped::FederationProjectScopePayload,
-    federation_unscoped::FederationUnscopedPayload, project_scoped::ProjectScopePayload,
-    restricted::RestrictedPayload, trust::TrustPayload, unscoped::UnscopedPayload, *,
-};
 use openstack_keystone_core::token::{TokenProviderError, backend::TokenBackend};
+use openstack_keystone_core_types::token::*;
+//    application_credential::ApplicationCredentialPayload, domain_scoped::DomainScopePayload,
+//    federation_domain_scoped::FederationDomainScopePayload,
+//    federation_project_scoped::FederationProjectScopePayload,
+//    federation_unscoped::FederationUnscopedPayload, project_scoped::ProjectScopePayload,
+//    restricted::RestrictedPayload, trust::TrustPayload, unscoped::UnscopedPayload, *,
+//};
 use utils::FernetUtils;
 
 mod application_credential;

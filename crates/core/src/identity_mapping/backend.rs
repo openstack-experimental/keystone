@@ -14,7 +14,9 @@
 
 use async_trait::async_trait;
 
-use crate::identity_mapping::{IdentityMappingProviderError, types::*};
+use openstack_keystone_core_types::identity_mapping::*;
+
+use crate::identity_mapping::IdentityMappingProviderError;
 use crate::keystone::ServiceState;
 
 #[cfg_attr(test, mockall::automock)]

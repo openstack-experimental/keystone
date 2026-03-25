@@ -82,17 +82,25 @@ async fn show(
     Path(user_id): Path<String>,
     State(state): State<ServiceState>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
-    state
-        .provider
-        .get_identity_provider()
-        .get_user(&state, &user_id)
-        .await
-        .map(|x| {
-            x.ok_or_else(|| KeystoneApiError::NotFound {
-                resource: "user".into(),
-                identifier: user_id,
-            })
-        })?
+    Ok((
+        StatusCode::OK,
+        Json(UserResponse {
+            user: User::from(
+                state
+                    .provider
+                    .get_identity_provider()
+                    .get_user(&state, &user_id)
+                    .await
+                    .map(|x| {
+                        x.ok_or_else(|| KeystoneApiError::NotFound {
+                            resource: "user".into(),
+                            identifier: user_id,
+                        })
+                    })??,
+            ),
+        }),
+    )
+        .into_response())
 }
 
 /// Create user
@@ -117,7 +125,13 @@ async fn create(
         .get_identity_provider()
         .create_user(&state, req.into())
         .await?;
-    Ok((StatusCode::CREATED, user).into_response())
+    Ok((
+        StatusCode::CREATED,
+        Json(UserResponse {
+            user: User::from(user),
+        }),
+    )
+        .into_response())
 }
 
 /// Delete user
@@ -185,6 +199,8 @@ mod tests {
     use tower::ServiceExt; // for `call`, `oneshot`, and `ready`
     use tower_http::trace::TraceLayer;
 
+    use openstack_keystone_core_types::identity::*;
+
     use super::openapi_router;
     use crate::api::tests::get_mocked_state;
     use crate::api::v3::group::types::{Group as ApiGroup, GroupList};
@@ -195,7 +211,7 @@ mod tests {
     use crate::identity::{
         MockIdentityProvider,
         error::IdentityProviderError,
-        types::{Group, UserCreate, UserListParameters, UserResponseBuilder},
+        //    types::{Group, UserCreate, UserListParameters, UserResponseBuilder},
     };
     use crate::provider::Provider;
 

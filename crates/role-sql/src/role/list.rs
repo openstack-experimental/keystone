@@ -17,10 +17,8 @@ use sea_orm::entity::*;
 use sea_orm::query::*;
 
 use openstack_keystone_core::error::DbContextExt;
-use openstack_keystone_core::role::{
-    RoleProviderError,
-    types::{Role, RoleListParameters},
-};
+use openstack_keystone_core::role::RoleProviderError;
+use openstack_keystone_core_types::role::{Role, RoleListParameters};
 
 use crate::entity::{prelude::Role as DbRole, role as db_role};
 use crate::role::NULL_DOMAIN_ID;
@@ -52,7 +50,7 @@ pub async fn list(
 pub(super) mod tests {
     use sea_orm::{DatabaseBackend, MockDatabase, Transaction};
 
-    use openstack_keystone_core::role::types::RoleBuilder;
+    use openstack_keystone_core_types::role::RoleBuilder;
 
     use super::*;
     use crate::role::tests::get_role_mock;

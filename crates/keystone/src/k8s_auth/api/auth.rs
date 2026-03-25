@@ -22,17 +22,20 @@ use axum::{
 use utoipa_axum::{router::OpenApiRouter, routes};
 use validator::Validate;
 
+use openstack_keystone_api_types::error::KeystoneApiError;
+use openstack_keystone_api_types::k8s_auth::K8sAuthRequest;
+use openstack_keystone_core::api::v4::auth::token::token_impl::build_api_token_v4;
+use openstack_keystone_core::k8s_auth::K8sAuthApi;
+use openstack_keystone_core::keystone::ServiceState;
+use openstack_keystone_core::token::TokenApi;
+use openstack_keystone_core_types::scope::{Project, Scope};
+
 use crate::api::v4::auth::token::types::TokenResponse;
 use crate::api::{
-    KeystoneApiError,
     common::get_authz_info,
     types::{Catalog, CatalogService},
 };
 use crate::catalog::CatalogApi;
-use crate::common::types::{Project, Scope};
-use crate::k8s_auth::{K8sAuthApi, api::types::K8sAuthRequest};
-use crate::keystone::ServiceState;
-use crate::token::TokenApi;
 
 pub(super) fn openapi_router() -> OpenApiRouter<ServiceState> {
     OpenApiRouter::new().routes(routes!(post))
@@ -78,7 +81,7 @@ pub async fn post(
     let (authn_info, token_restriction) = state
         .provider
         .get_k8s_auth_provider()
-        .authenticate_by_k8s_sa_token(&state, &(req, instance_id).into())
+        .authenticate_by_k8s_sa_token(&state, &req.to_provider_with_instance_id(instance_id))
         .await?;
 
     authn_info.validate()?;
@@ -112,7 +115,7 @@ pub async fn post(
         .map_err(KeystoneApiError::forbidden)?;
 
     let mut api_token = TokenResponse {
-        token: token.build_api_token_v4(&state).await?,
+        token: build_api_token_v4(&token, &state).await?,
     };
     api_token.validate()?;
 

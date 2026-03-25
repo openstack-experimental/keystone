@@ -13,8 +13,3 @@
 // SPDX-License-Identifier: Apache-2.0
 
 pub mod auth;
-pub mod group;
-pub mod project;
-pub mod role;
-pub mod role_assignment;
-pub mod user;

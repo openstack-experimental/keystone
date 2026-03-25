@@ -17,7 +17,8 @@ use sea_orm::entity::*;
 use sea_orm::query::*;
 
 use openstack_keystone_core::error::DbContextExt;
-use openstack_keystone_core::identity_mapping::{IdentityMappingProviderError, types::IdMapping};
+use openstack_keystone_core::identity_mapping::IdentityMappingProviderError;
+use openstack_keystone_core_types::identity_mapping::IdMapping;
 
 use crate::entity::{
     id_mapping, prelude::IdMapping as DbIdMapping, sea_orm_active_enums::EntityType,

@@ -23,7 +23,7 @@ use chrono::Utc;
 use tracing::debug;
 use validator::Validate;
 
-use openstack_keystone_core::api::KeystoneApiError;
+use openstack_keystone_api_types::error::KeystoneApiError;
 use openstack_keystone_core::api::auth::Auth;
 use openstack_keystone_core::identity::IdentityApi;
 

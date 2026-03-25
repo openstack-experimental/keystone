@@ -16,10 +16,8 @@ use sea_orm::ConnectionTrait;
 use sea_orm::entity::*;
 
 use openstack_keystone_core::error::DbContextExt;
-use openstack_keystone_core::resource::{
-    ResourceProviderError,
-    types::{Project, ProjectCreate},
-};
+use openstack_keystone_core::resource::ResourceProviderError;
+use openstack_keystone_core_types::resource::{Project, ProjectCreate};
 
 use crate::entity::project as db_project;
 

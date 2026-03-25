@@ -16,16 +16,18 @@
 use axum::{
     Json,
     extract::{Path, State},
+    http::StatusCode,
     response::IntoResponse,
 };
 use validator::Validate;
 
+use openstack_keystone_api_types::k8s_auth::{
+    K8sAuthRole, K8sAuthRolePathParams, K8sAuthRoleResponse, K8sAuthRoleUpdateRequest,
+};
+
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
-use crate::k8s_auth::{
-    K8sAuthApi,
-    api::types::{K8sAuthRolePathParams, K8sAuthRoleResponse, K8sAuthRoleUpdateRequest},
-};
+use crate::k8s_auth::K8sAuthApi;
 use crate::keystone::ServiceState;
 
 /// Update K8s auth role of an instance.
@@ -75,7 +77,13 @@ pub(super) async fn update_nested(
         .get_k8s_auth_provider()
         .update_auth_role(&state, &path_params.id, req.into())
         .await?;
-    Ok(res.into_response())
+    Ok((
+        StatusCode::OK,
+        Json(K8sAuthRoleResponse {
+            role: K8sAuthRole::from(res),
+        }),
+    )
+        .into_response())
 }
 
 /// Update K8s auth role.
@@ -127,7 +135,13 @@ pub(super) async fn update(
         .get_k8s_auth_provider()
         .update_auth_role(&state, &id, req.into())
         .await?;
-    Ok(res.into_response())
+    Ok((
+        StatusCode::OK,
+        Json(K8sAuthRoleResponse {
+            role: K8sAuthRole::from(res),
+        }),
+    )
+        .into_response())
 }
 
 #[cfg(test)]
@@ -141,11 +155,11 @@ mod tests {
     use tower_http::trace::TraceLayer;
     use tracing_test::traced_test;
 
+    use openstack_keystone_core_types::k8s_auth as provider_types;
+
     use super::{super::*, *};
     use crate::api::tests::get_mocked_state;
-    use crate::k8s_auth::{
-        MockK8sAuthProvider, api::types::K8sAuthRoleUpdate, types as provider_types,
-    };
+    use crate::k8s_auth::{MockK8sAuthProvider, api::types::K8sAuthRoleUpdate};
     use crate::provider::Provider;
 
     #[tokio::test]

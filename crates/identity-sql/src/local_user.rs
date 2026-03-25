@@ -12,7 +12,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use openstack_keystone_core::identity::types::*;
+use openstack_keystone_core_types::identity::*;
 
 use crate::entity::local_user as db_local_user;
 

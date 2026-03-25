@@ -16,8 +16,8 @@ use async_trait::async_trait;
 
 use openstack_keystone_core::identity_mapping::IdentityMappingProviderError;
 use openstack_keystone_core::identity_mapping::backend::IdentityMappingBackend;
-use openstack_keystone_core::identity_mapping::types::*;
 use openstack_keystone_core::keystone::ServiceState;
+use openstack_keystone_core_types::identity_mapping::*;
 
 pub mod entity;
 mod id_mapping;

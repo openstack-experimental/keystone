@@ -16,9 +16,8 @@
 use async_trait::async_trait;
 
 use openstack_keystone_core::keystone::ServiceState;
-use openstack_keystone_core::resource::{
-    ResourceProviderError, backend::ResourceBackend, types::*,
-};
+use openstack_keystone_core::resource::{ResourceProviderError, backend::ResourceBackend};
+use openstack_keystone_core_types::resource::*;
 
 mod domain;
 pub mod entity;

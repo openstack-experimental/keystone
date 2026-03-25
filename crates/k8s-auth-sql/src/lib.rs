@@ -17,8 +17,8 @@ use async_trait::async_trait;
 
 use openstack_keystone_core::k8s_auth::backend::K8sAuthBackend;
 use openstack_keystone_core::k8s_auth::error::K8sAuthProviderError;
-use openstack_keystone_core::k8s_auth::types::*;
 use openstack_keystone_core::keystone::ServiceState;
+use openstack_keystone_core_types::k8s_auth::*;
 
 pub mod entity;
 mod instance;

@@ -6,7 +6,9 @@ members = [
   "crates/catalog-sql",
   "crates/config",
   "crates/core",
+  "crates/core-types",
   "crates/federation-sql",
+  "crates/identity-sql",
   "crates/idmapping-sql",
   "crates/k8s-auth-sql",
   "crates/keystone",
@@ -14,12 +16,13 @@ members = [
   "crates/role-sql",
   "crates/storage",
   "crates/token-fernet",
+  "crates/token-restriction-sql", 
   "crates/trust-sql",
   "crates/revoke-sql",
   "crates/webauthn",
   "tests/api",
   "tests/integration",
-  "tests/federation", "crates/token-restriction-sql", "crates/identity-sql",
+  "tests/federation", 
 ]
 exclude = [
   "tests/loadtest"
@@ -87,7 +90,7 @@ serde_json = { version = "1.0" }
 serde_urlencoded = { version = "0.7" }
 tempfile = { version = "3.27" }
 thiserror = { version = "2.0" }
-tokio = { version = "1.50" }
+tokio = { version = "1.50", default-features = false }
 tokio-util = { version = "0.7" }
 tonic = { version = "0.14" }
 tonic-prost-build = { version = "0.14" }

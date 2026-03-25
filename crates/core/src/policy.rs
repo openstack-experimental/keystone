@@ -63,6 +63,13 @@ pub enum PolicyError {
     UrlParse(#[from] url::ParseError),
 }
 
+#[cfg(feature = "api")]
+impl From<PolicyError> for openstack_keystone_api_types::error::KeystoneApiError {
+    fn from(error: PolicyError) -> Self {
+        Self::forbidden(error)
+    }
+}
+
 #[async_trait]
 pub trait PolicyEnforcer: Send + Sync {
     async fn enforce(

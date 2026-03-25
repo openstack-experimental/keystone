@@ -12,59 +12,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //! # Federation provider error
-use thiserror::Error;
-
-use crate::error::BuilderError;
-
-/// Federation provider error.
-#[derive(Error, Debug)]
-pub enum FederationProviderError {
-    #[error("authentication state is not found")]
-    AuthStateNotFound(String),
-
-    /// Conflict.
-    #[error("conflict: {0}")]
-    Conflict(String),
-
-    /// Driver error.
-    #[error("backend driver error: {0}")]
-    Driver(String),
-
-    /// IDP not found.
-    #[error("identity provider {0} not found")]
-    IdentityProviderNotFound(String),
-
-    /// Mapping not found.
-    #[error("mapping {0} not found")]
-    MappingNotFound(String),
-
-    /// Use of token_project_id requires domain_id to be set.
-    #[error("`mapping.domain_id` must be set")]
-    MappingTokenProjectDomainUnset,
-
-    /// Use of token_user_id requires domain_id to be set.
-    #[error("`mapping.domain_id` must be set")]
-    MappingTokenUserDomainUnset,
-
-    /// Identity provider error.
-    #[error("data serialization error")]
-    Serde {
-        #[from]
-        source: serde_json::Error,
-    },
-
-    /// Structures builder error.
-    #[error(transparent)]
-    StructBuilder {
-        /// The source of the error.
-        #[from]
-        source: BuilderError,
-    },
-
-    /// Unsupported driver.
-    #[error("unsupported driver `{0}` for the federation provider")]
-    UnsupportedDriver(String),
-}
+pub use openstack_keystone_core_types::federation::FederationProviderError;
 
 impl From<crate::error::DatabaseError> for FederationProviderError {
     fn from(source: crate::error::DatabaseError) -> Self {

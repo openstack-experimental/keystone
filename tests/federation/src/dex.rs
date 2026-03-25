@@ -23,7 +23,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::debug;
 use tracing_test::traced_test;
 
-use openstack_keystone_api_types::federation::{identity_provider::*, mapping::*};
+use openstack_keystone_api_types::federation::*;
 
 mod keystone_utils;
 

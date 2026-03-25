@@ -42,10 +42,13 @@ use crate::federation::{
 };
 use crate::identity::IdentityApi;
 use crate::identity::error::IdentityProviderError;
-use crate::identity::types::{FederationBuilder, FederationProtocol, UserCreateBuilder};
-use crate::identity::types::{Group, GroupCreate, GroupListParameters};
 use crate::keystone::ServiceState;
 use crate::token::TokenApi;
+use openstack_keystone_core::api::v4::auth::token::token_impl::build_api_token_v4;
+use openstack_keystone_core_types::identity::{
+    FederationBuilder, FederationProtocol, Group, GroupCreate, GroupListParameters,
+    UserCreateBuilder,
+};
 
 use super::common::{map_user_data, validate_bound_claims};
 
@@ -329,7 +332,7 @@ pub async fn callback(
         .map_err(KeystoneApiError::forbidden)?;
 
     let mut api_token = KeystoneTokenResponse {
-        token: token.build_api_token_v4(&state).await?,
+        token: build_api_token_v4(&token, &state).await?,
     };
     let catalog: Catalog = Catalog(
         state

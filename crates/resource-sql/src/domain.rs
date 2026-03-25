@@ -16,10 +16,8 @@ use serde_json::{Value, json};
 use tracing::error;
 use uuid::Uuid;
 
-use openstack_keystone_core::resource::{
-    ResourceProviderError,
-    types::{Domain, DomainBuilder, DomainCreate},
-};
+use openstack_keystone_core::resource::ResourceProviderError;
+use openstack_keystone_core_types::resource::{Domain, DomainBuilder, DomainCreate};
 
 mod create;
 mod delete;

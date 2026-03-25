@@ -93,11 +93,13 @@ mod tests {
     use tower::ServiceExt; // for `call`, `oneshot`, and `ready`
     use tower_http::trace::TraceLayer;
 
+    use openstack_keystone_core_types::role::RoleRef as ProviderRoleRef;
+    use openstack_keystone_core_types::token as provider_types;
+
     use super::super::{openapi_router, tests::get_token_provider_mock_with_mocks};
     use crate::api::tests::get_mocked_state;
     use crate::provider::Provider;
-    use crate::role::types::RoleRef as ProviderRoleRef;
-    use crate::token::{TokenProviderError, types as provider_types};
+    use crate::token::TokenProviderError;
 
     #[tokio::test]
     async fn test_delete() {

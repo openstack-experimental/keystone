@@ -12,50 +12,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //! # Role provider error types
-use thiserror::Error;
-
-/// Role provider error.
-#[derive(Error, Debug)]
-pub enum RoleProviderError {
-    /// Conflict.
-    #[error("conflict: {0}")]
-    Conflict(String),
-
-    /// Driver error.
-    #[error("backend driver error: {0}")]
-    Driver(String),
-
-    /// Role not found.
-    #[error("role {0} not found")]
-    RoleNotFound(String),
-
-    /// (de)serialize error.
-    #[error(transparent)]
-    Serde {
-        #[from]
-        source: serde_json::Error,
-    },
-
-    /// Structures builder error.
-    #[error(transparent)]
-    StructBuilder {
-        /// The source of the error.
-        #[from]
-        source: crate::error::BuilderError,
-    },
-
-    /// Unsupported driver.
-    #[error("unsupported driver `{0}` for the role provider")]
-    UnsupportedDriver(String),
-
-    /// Validation error.
-    #[error("request validation error: {}", source)]
-    Validation {
-        /// The source of the error.
-        #[from]
-        source: validator::ValidationErrors,
-    },
-}
+pub use openstack_keystone_core_types::role::RoleProviderError;
 
 impl From<crate::error::DatabaseError> for RoleProviderError {
     fn from(source: crate::error::DatabaseError) -> Self {

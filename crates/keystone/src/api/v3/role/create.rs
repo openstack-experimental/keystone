@@ -75,14 +75,13 @@ mod tests {
     use tower::ServiceExt; // for `call`, `oneshot`, and `ready`
     use tower_http::trace::TraceLayer;
 
+    use openstack_keystone_core_types::role::{RoleBuilder, RoleCreate};
+
     use super::super::openapi_router;
     use crate::api::tests::get_mocked_state;
     use crate::api::v3::role::types::{Role as ApiRole, RoleResponse};
     use crate::provider::Provider;
-    use crate::role::{
-        MockRoleProvider,
-        types::{RoleBuilder, RoleCreate},
-    };
+    use crate::role::MockRoleProvider;
 
     #[tokio::test]
     async fn test_create() {

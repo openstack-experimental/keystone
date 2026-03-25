@@ -17,10 +17,8 @@ use sea_orm::entity::*;
 use sea_orm::query::*;
 
 use openstack_keystone_core::error::DbContextExt;
-use openstack_keystone_core::identity::{
-    IdentityProviderError,
-    types::{Group, GroupListParameters},
-};
+use openstack_keystone_core::identity::IdentityProviderError;
+use openstack_keystone_core_types::identity::{Group, GroupListParameters};
 
 use crate::entity::{group, prelude::Group as DbGroup};
 
@@ -53,7 +51,7 @@ mod tests {
     use sea_orm::{DatabaseBackend, MockDatabase, Transaction};
     use serde_json::json;
 
-    use openstack_keystone_core::identity::types::group::GroupListParametersBuilder;
+    use openstack_keystone_core_types::identity::GroupListParametersBuilder;
 
     use crate::entity::group;
 

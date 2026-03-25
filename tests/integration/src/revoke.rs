@@ -18,11 +18,12 @@ use tracing_test::traced_test;
 use uuid::Uuid;
 
 use openstack_keystone::auth::*;
-use openstack_keystone::identity::types::*;
-use openstack_keystone::resource::types::*;
 use openstack_keystone::revoke::RevokeApi;
-use openstack_keystone::role::types::RoleCreateBuilder;
 use openstack_keystone::token::TokenApi;
+use openstack_keystone_core_types::identity::*;
+use openstack_keystone_core_types::resource::*;
+use openstack_keystone_core_types::revoke::*;
+use openstack_keystone_core_types::role::RoleCreateBuilder;
 
 use crate::assignment::grant_role_to_user_on_project;
 use crate::common::get_state;
@@ -186,7 +187,7 @@ async fn test_revoked_event_role() -> Result<(), Report> {
         .get_revoke_provider()
         .create_revocation_event(
             &state,
-            openstack_keystone::revoke::RevocationEventCreateBuilder::default()
+            RevocationEventCreateBuilder::default()
                 .role_id(role.id.clone())
                 .revoked_at(Utc::now())
                 .issued_before(Utc::now())
@@ -277,7 +278,7 @@ async fn test_revoked_event_user() -> Result<(), Report> {
         .get_revoke_provider()
         .create_revocation_event(
             &state,
-            openstack_keystone::revoke::RevocationEventCreateBuilder::default()
+            RevocationEventCreateBuilder::default()
                 .user_id(user.id.clone())
                 .revoked_at(Utc::now())
                 .issued_before(Utc::now())
@@ -368,7 +369,7 @@ async fn test_revoked_event_project() -> Result<(), Report> {
         .get_revoke_provider()
         .create_revocation_event(
             &state,
-            openstack_keystone::revoke::RevocationEventCreateBuilder::default()
+            RevocationEventCreateBuilder::default()
                 .project_id(project.id.clone())
                 .revoked_at(Utc::now())
                 .issued_before(Utc::now())

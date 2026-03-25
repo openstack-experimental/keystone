@@ -14,7 +14,7 @@
 
 use sea_orm::entity::*;
 
-use openstack_keystone_core::k8s_auth::types::*;
+use openstack_keystone_core_types::k8s_auth::*;
 
 use crate::entity::kubernetes_auth_instance as db_k8s_auth_instance;
 
@@ -99,7 +99,7 @@ impl db_k8s_auth_instance::Model {
 pub(crate) mod tests {
     use sea_orm::entity::*;
 
-    use openstack_keystone_core::k8s_auth::types::*;
+    use openstack_keystone_core_types::k8s_auth::*;
 
     use crate::entity::kubernetes_auth_instance;
 

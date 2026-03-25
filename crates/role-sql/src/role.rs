@@ -17,10 +17,8 @@ use serde_json::{Value, json};
 use tracing::error;
 use uuid::Uuid;
 
-use openstack_keystone_core::role::{
-    RoleProviderError,
-    types::{Role, RoleBuilder, RoleCreate, RoleRef},
-};
+use openstack_keystone_core::role::RoleProviderError;
+use openstack_keystone_core_types::role::{Role, RoleBuilder, RoleCreate, RoleRef};
 
 mod create;
 mod delete;

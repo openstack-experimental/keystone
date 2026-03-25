@@ -34,23 +34,24 @@
 use async_trait::async_trait;
 use std::collections::{BTreeMap, BTreeSet};
 
+use openstack_keystone_config::Config;
+use openstack_keystone_core_types::role::*;
+
 pub mod backend;
 pub mod error;
 #[cfg(any(test, feature = "mock"))]
 mod mock;
+mod provider_api;
 pub mod service;
-pub mod types;
-
-use openstack_keystone_config::Config;
 
 use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManagerApi;
-use crate::role::{service::RoleService, types::*};
+use crate::role::service::RoleService;
 
 pub use error::RoleProviderError;
 #[cfg(any(test, feature = "mock"))]
 pub use mock::MockRoleProvider;
-pub use types::RoleApi;
+pub use provider_api::RoleApi;
 
 pub enum RoleProvider {
     Service(RoleService),

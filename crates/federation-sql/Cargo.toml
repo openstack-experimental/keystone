@@ -14,6 +14,7 @@ exclude.workspace = true
 async-trait.workspace = true
 chrono = { workspace = true, features = ["now"] }
 openstack-keystone-core = { version = "0.1", path = "../core" }
+openstack-keystone-core-types = { version = "0.1", path = "../core-types" }
 sea-orm.workspace = true
 serde_json.workspace = true
 tracing.workspace = true

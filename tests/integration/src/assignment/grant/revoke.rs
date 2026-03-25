@@ -19,13 +19,15 @@ use std::ops::Deref;
 use tracing_test::traced_test;
 use uuid::Uuid;
 
-use openstack_keystone::application_credential::{ApplicationCredentialApi, types::*};
-use openstack_keystone::assignment::{AssignmentApi, types::*};
+use openstack_keystone::application_credential::ApplicationCredentialApi;
+use openstack_keystone::assignment::AssignmentApi;
 use openstack_keystone::auth::*;
-use openstack_keystone::identity::types::*;
-use openstack_keystone::resource::types::*;
-use openstack_keystone::role::types::*;
 use openstack_keystone::token::{TokenApi, TokenProviderError};
+use openstack_keystone_core_types::application_credential::*;
+use openstack_keystone_core_types::assignment::*;
+use openstack_keystone_core_types::identity::*;
+use openstack_keystone_core_types::resource::*;
+use openstack_keystone_core_types::role::*;
 
 use crate::assignment::{check_grant, grant_role_to_user_on_project};
 use crate::common::get_state;

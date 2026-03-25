@@ -17,7 +17,8 @@ use eyre::Result;
 use tracing_test::traced_test;
 use uuid::Uuid;
 
-use openstack_keystone::identity::{IdentityApi, types::*};
+use openstack_keystone::identity::IdentityApi;
+use openstack_keystone_core_types::identity::*;
 
 use super::*;
 

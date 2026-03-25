@@ -19,7 +19,7 @@ use sea_orm::query::*;
 
 use openstack_keystone_core::error::DbContextExt;
 use openstack_keystone_core::revoke::RevokeProviderError;
-use openstack_keystone_core::revoke::types::{RevocationEvent, RevocationEventListParameters};
+use openstack_keystone_core_types::revoke::{RevocationEvent, RevocationEventListParameters};
 
 use crate::entity::{
     prelude::RevocationEvent as DbRevocationEvent, revocation_event as db_revocation_event,
@@ -162,7 +162,7 @@ mod tests {
     use sea_orm::{DatabaseBackend, IntoMockRow, MockDatabase, Transaction};
     use std::collections::BTreeMap;
 
-    use openstack_keystone_core::revoke::types::RevocationEventListParametersBuilder;
+    use openstack_keystone_core_types::revoke::RevocationEventListParametersBuilder;
 
     use super::super::tests::get_mock;
     use super::*;

@@ -14,9 +14,9 @@
 use async_trait::async_trait;
 use mockall::mock;
 
-use crate::application_credential::ApplicationCredentialApi;
-use crate::application_credential::ApplicationCredentialProviderError;
-use crate::application_credential::types::*;
+use openstack_keystone_core_types::application_credential::*;
+
+use crate::application_credential::{ApplicationCredentialApi, ApplicationCredentialProviderError};
 use crate::keystone::ServiceState;
 
 mock! {

@@ -14,9 +14,10 @@
 
 use async_trait::async_trait;
 
+use openstack_keystone_core_types::resource::*;
+
 use crate::keystone::ServiceState;
 use crate::resource::ResourceProviderError;
-use crate::resource::types::*;
 
 /// Resource driver interface.
 #[cfg_attr(test, mockall::automock)]

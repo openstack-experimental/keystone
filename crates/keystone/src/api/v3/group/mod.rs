@@ -81,17 +81,25 @@ async fn show(
     Path(group_id): Path<String>,
     State(state): State<ServiceState>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
-    state
-        .provider
-        .get_identity_provider()
-        .get_group(&state, &group_id)
-        .await
-        .map(|x| {
-            x.ok_or_else(|| KeystoneApiError::NotFound {
-                resource: "group".into(),
-                identifier: group_id,
-            })
-        })?
+    Ok((
+        StatusCode::OK,
+        Json(GroupResponse {
+            group: Group::from(
+                state
+                    .provider
+                    .get_identity_provider()
+                    .get_group(&state, &group_id)
+                    .await
+                    .map(|x| {
+                        x.ok_or_else(|| KeystoneApiError::NotFound {
+                            resource: "group".into(),
+                            identifier: group_id,
+                        })
+                    })??,
+            ),
+        }),
+    )
+        .into_response())
 }
 
 /// Create group
@@ -116,7 +124,13 @@ async fn create(
         .get_identity_provider()
         .create_group(&state, req.into())
         .await?;
-    Ok((StatusCode::CREATED, res).into_response())
+    Ok((
+        StatusCode::CREATED,
+        Json(GroupResponse {
+            group: Group::from(res),
+        }),
+    )
+        .into_response())
 }
 
 /// Delete group
@@ -158,11 +172,7 @@ mod tests {
 
     use super::openapi_router;
     use crate::api::tests::get_mocked_state;
-    use crate::identity::{
-        MockIdentityProvider,
-        error::IdentityProviderError,
-        types::{Group, GroupCreate, GroupListParameters},
-    };
+    use crate::identity::{MockIdentityProvider, error::IdentityProviderError};
     use crate::{
         api::v3::group::types::{
             Group as ApiGroup, GroupCreate as ApiGroupCreate, GroupCreateRequest, GroupList,
@@ -170,6 +180,7 @@ mod tests {
         },
         provider::Provider,
     };
+    use openstack_keystone_core_types::identity::*;
 
     #[tokio::test]
     async fn test_list() {

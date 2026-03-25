@@ -16,7 +16,8 @@
 use eyre::Result;
 use uuid::Uuid;
 
-use openstack_keystone::role::{RoleApi, types::*};
+use openstack_keystone::role::RoleApi;
+use openstack_keystone_core_types::role::*;
 
 use crate::common::get_state;
 

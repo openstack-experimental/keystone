@@ -12,9 +12,9 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use openstack_keystone_core::common::types::Scope;
 use openstack_keystone_core::federation::error::FederationProviderError;
-use openstack_keystone_core::federation::types::*;
+use openstack_keystone_core_types::federation::*;
+use openstack_keystone_core_types::scope::Scope;
 
 use crate::entity::federated_auth_state as db_federated_auth_state;
 

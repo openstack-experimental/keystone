@@ -17,7 +17,7 @@ use async_trait::async_trait;
 use openstack_keystone_core::keystone::ServiceState;
 use openstack_keystone_core::token::TokenProviderError;
 use openstack_keystone_core::token::backend::TokenRestrictionBackend;
-use openstack_keystone_core::token::types::*;
+use openstack_keystone_core_types::token::*;
 
 use crate::entity::{token_restriction, token_restriction_role_association};
 

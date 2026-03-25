@@ -16,6 +16,7 @@
 use axum::{
     Json,
     extract::{Path, State},
+    http::StatusCode,
     response::IntoResponse,
 };
 use validator::Validate;
@@ -81,7 +82,13 @@ pub(super) async fn update(
         .get_token_provider()
         .update_token_restriction(&state, &id, req.into())
         .await?;
-    Ok(res.into_response())
+    Ok((
+        StatusCode::OK,
+        Json(TokenRestrictionResponse {
+            restriction: TokenRestriction::from(res),
+        }),
+    )
+        .into_response())
 }
 
 #[cfg(test)]
@@ -95,13 +102,14 @@ mod tests {
     use tower_http::trace::TraceLayer;
     use tracing_test::traced_test;
 
+    use openstack_keystone_core_types::token as provider_types;
+
     use super::{
         super::{openapi_router, tests::get_token_provider_mock_with_mocks},
         *,
     };
     use crate::api::tests::get_mocked_state;
     use crate::provider::Provider;
-    use crate::token::types as provider_types;
 
     #[tokio::test]
     #[traced_test]

@@ -16,13 +16,9 @@ use sea_orm::DatabaseConnection;
 use sea_orm::entity::*;
 use sea_orm::query::*;
 
-use openstack_keystone_core::assignment::{
-    AssignmentProviderError,
-    types::{
-        Assignment, RoleAssignmentListForMultipleActorTargetParameters, RoleAssignmentTargetType,
-    },
-};
+use openstack_keystone_core::assignment::AssignmentProviderError;
 use openstack_keystone_core::error::DbContextExt;
+use openstack_keystone_core_types::assignment::*;
 
 use crate::entity::{
     assignment as db_assignment,
@@ -176,7 +172,7 @@ async fn list_for_multiple_actors_and_targets_system(
 mod tests {
     use sea_orm::{DatabaseBackend, MockDatabase, Transaction};
 
-    use openstack_keystone_core::assignment::types::{AssignmentType, RoleAssignmentTarget};
+    use openstack_keystone_core_types::assignment::*;
 
     use super::super::tests::*;
     use super::*;

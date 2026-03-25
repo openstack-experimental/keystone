@@ -12,6 +12,34 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //! # Federation API types
-pub mod auth;
-pub mod identity_provider;
-pub mod mapping;
+mod auth;
+mod identity_provider;
+#[cfg(feature = "conv")]
+mod identity_provider_conv;
+mod mapping;
+#[cfg(feature = "conv")]
+mod mapping_conv;
+
+pub use auth::*;
+pub use identity_provider::*;
+pub use mapping::*;
+
+#[cfg(feature = "conv")]
+use openstack_keystone_core_types::federation::FederationProviderError;
+#[cfg(feature = "conv")]
+impl From<FederationProviderError> for crate::error::KeystoneApiError {
+    fn from(source: FederationProviderError) -> Self {
+        match source {
+            FederationProviderError::IdentityProviderNotFound(x) => Self::NotFound {
+                resource: "identity provider".into(),
+                identifier: x,
+            },
+            FederationProviderError::MappingNotFound(x) => Self::NotFound {
+                resource: "mapping provider".into(),
+                identifier: x,
+            },
+            FederationProviderError::Conflict(x) => Self::Conflict(x),
+            other => Self::InternalError(other.to_string()),
+        }
+    }
+}

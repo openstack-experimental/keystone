@@ -18,10 +18,8 @@ use sea_orm::query::*;
 
 use openstack_keystone_config::Config;
 use openstack_keystone_core::error::DbContextExt;
-use openstack_keystone_core::identity::{
-    IdentityProviderError,
-    types::{UserOptions, UserResponse, UserResponseBuilder},
-};
+use openstack_keystone_core::identity::IdentityProviderError;
+use openstack_keystone_core_types::identity::{UserOptions, UserResponse, UserResponseBuilder};
 
 use crate::entity::{
     nonlocal_user as db_nonlocal_user,

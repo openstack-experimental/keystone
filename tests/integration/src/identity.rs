@@ -17,9 +17,10 @@ use std::sync::Arc;
 
 use eyre::Result;
 
-use openstack_keystone::identity::{IdentityApi, types::*};
+use openstack_keystone::identity::IdentityApi;
 use openstack_keystone::keystone::Service;
 use openstack_keystone::keystone::ServiceState;
+use openstack_keystone_core_types::identity::*;
 
 use crate::common::*;
 use crate::impl_deleter;

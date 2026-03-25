@@ -15,8 +15,9 @@ base64.workspace = true
 chrono.workspace = true
 derive_builder.workspace = true
 eyre.workspace = true
-openstack-keystone-api-types = { version = "0.1", features = ["validate"], path = "../api-types/" }
+openstack-keystone-api-types = { version = "0.1", features = ["openapi", "validate", "conv"], path = "../api-types/" }
 openstack-keystone-core = { version = "0.1", path = "../core", features = ["api"] }
+openstack-keystone-core-types = { version = "0.1", path = "../core-types/" }
 sea-orm = { workspace = true }
 serde.workspace = true
 serde_json.workspace = true

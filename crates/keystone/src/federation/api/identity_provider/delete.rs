@@ -95,17 +95,15 @@ mod tests {
         body::Body,
         http::{Request, StatusCode},
     };
-    // for `collect`
-
     use tower::ServiceExt; // for `call`, `oneshot`, and `ready`
     use tower_http::trace::TraceLayer;
     use tracing_test::traced_test;
 
+    use openstack_keystone_core_types::federation as provider_types;
+
     use super::super::openapi_router;
     use crate::api::tests::get_mocked_state;
-    use crate::federation::{
-        MockFederationProvider, error::FederationProviderError, types as provider_types,
-    };
+    use crate::federation::{MockFederationProvider, error::FederationProviderError};
     use crate::provider::Provider;
 
     #[tokio::test]

@@ -15,29 +15,28 @@
 
 use async_trait::async_trait;
 
-#[cfg(feature = "api")]
-pub mod api;
 mod auth;
 pub mod backend;
 pub mod error;
 #[cfg(any(test, feature = "mock"))]
 mod mock;
+mod provider_api;
 pub mod service;
-pub mod types;
+mod types;
 
 use openstack_keystone_config::Config;
+use openstack_keystone_core_types::k8s_auth::*;
+use openstack_keystone_core_types::token::TokenRestriction;
 
 use crate::auth::AuthenticatedInfo;
 use crate::k8s_auth::service::K8sAuthService;
 use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManagerApi;
-use crate::token::types::TokenRestriction;
-use types::*;
 
 pub use error::K8sAuthProviderError;
 #[cfg(any(test, feature = "mock"))]
 pub use mock::MockK8sAuthProvider;
-pub use types::K8sAuthApi;
+pub use provider_api::K8sAuthApi;
 
 /// K8s Auth provider.
 pub enum K8sAuthProvider {

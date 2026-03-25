@@ -18,7 +18,8 @@ use sea_orm::query::*;
 use sea_orm::sea_query::*;
 
 use openstack_keystone_core::error::DbContextExt;
-use openstack_keystone_core::identity::{IdentityProviderError, types::Group};
+use openstack_keystone_core::identity::IdentityProviderError;
+use openstack_keystone_core_types::identity::Group;
 
 use crate::entity::{
     expiring_user_group_membership, group as db_group, prelude::Group as DbGroup,

@@ -13,11 +13,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use axum::{
+    Json,
     extract::{Path, State},
+    http::StatusCode,
     response::IntoResponse,
 };
 
-use super::types::RoleResponse;
+use openstack_keystone_api_types::v3::role::{Role, RoleResponse};
+
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
@@ -41,17 +44,25 @@ pub(super) async fn show(
     Path(role_id): Path<String>,
     State(state): State<ServiceState>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
-    state
-        .provider
-        .get_role_provider()
-        .get_role(&state, &role_id)
-        .await
-        .map(|x| {
-            x.ok_or_else(|| KeystoneApiError::NotFound {
-                resource: "role".into(),
-                identifier: role_id,
-            })
-        })?
+    Ok((
+        StatusCode::OK,
+        Json(RoleResponse {
+            role: Role::from(
+                state
+                    .provider
+                    .get_role_provider()
+                    .get_role(&state, &role_id)
+                    .await
+                    .map(|x| {
+                        x.ok_or_else(|| KeystoneApiError::NotFound {
+                            resource: "role".into(),
+                            identifier: role_id,
+                        })
+                    })??,
+            ),
+        }),
+    )
+        .into_response())
 }
 
 #[cfg(test)]
@@ -65,11 +76,13 @@ mod tests {
     use tower::ServiceExt; // for `call`, `oneshot`, and `ready`
     use tower_http::trace::TraceLayer;
 
+    use openstack_keystone_core_types::role::RoleBuilder;
+
     use super::super::openapi_router;
     use crate::api::tests::get_mocked_state;
     use crate::api::v3::role::types::{Role as ApiRole, RoleResponse};
     use crate::provider::Provider;
-    use crate::role::{MockRoleProvider, types::RoleBuilder};
+    use crate::role::MockRoleProvider;
 
     #[tokio::test]
     async fn test_get() {

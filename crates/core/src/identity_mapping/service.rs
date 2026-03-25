@@ -18,9 +18,10 @@ use async_trait::async_trait;
 use std::sync::Arc;
 
 use openstack_keystone_config::Config;
+use openstack_keystone_core_types::identity_mapping::*;
 
 use crate::identity_mapping::{
-    IdentityMappingProviderError, backend::IdentityMappingBackend, types::*,
+    IdentityMappingApi, IdentityMappingProviderError, backend::IdentityMappingBackend,
 };
 use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManagerApi;

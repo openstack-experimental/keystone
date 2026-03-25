@@ -15,11 +15,11 @@
 
 use async_trait::async_trait;
 
-use openstack_keystone_core::application_credential::types::*;
 use openstack_keystone_core::application_credential::{
     ApplicationCredentialProviderError, backend::ApplicationCredentialBackend,
 };
 use openstack_keystone_core::keystone::ServiceState;
+use openstack_keystone_core_types::application_credential::*;
 
 mod application_credential;
 pub mod entity;

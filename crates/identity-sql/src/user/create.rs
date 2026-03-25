@@ -14,7 +14,6 @@
 
 use chrono::{DateTime, Utc};
 use sea_orm::DatabaseConnection;
-//use sea_orm::Iden;
 use sea_orm::entity::*;
 use sea_orm::{ConnectionTrait, TransactionTrait};
 use serde_json::json;
@@ -23,10 +22,8 @@ use uuid::Uuid;
 use openstack_keystone_config::Config;
 use openstack_keystone_core::common::password_hashing;
 use openstack_keystone_core::error::DbContextExt;
-use openstack_keystone_core::identity::{
-    IdentityProviderError,
-    types::{UserCreate, UserOptions, UserResponse, UserResponseBuilder, get_user_last_active_at},
-};
+use openstack_keystone_core::identity::{IdentityProviderError, get_user_last_active_at};
+use openstack_keystone_core_types::identity::*;
 
 use crate::entity::{
     federated_user as db_federated_user, password as db_password, user as db_user,
@@ -174,7 +171,9 @@ pub async fn create(
             let password_entry = password::create(
                 &txn,
                 local_user.id,
-                password_hashing::hash_password(conf, password).await?,
+                password_hashing::hash_password(conf, password)
+                    .await
+                    .map_err(IdentityProviderError::password_hash)?,
                 None,
             )
             .await?;
@@ -196,9 +195,8 @@ mod tests {
     use sea_orm::{DatabaseBackend, MockDatabase, MockExecResult, Transaction};
 
     use openstack_keystone_config::Config;
-    use openstack_keystone_core::identity::types::{
-        UserCreateBuilder,
-        user::{FederationBuilder, FederationProtocol},
+    use openstack_keystone_core_types::identity::{
+        UserCreateBuilder, {FederationBuilder, FederationProtocol},
     };
 
     use super::*;

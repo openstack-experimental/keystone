@@ -24,11 +24,16 @@ use serde_json::{Value, json};
 use tokio::fs;
 use tracing::{debug, trace};
 
+use openstack_keystone_core_types::k8s_auth::*;
+use openstack_keystone_core_types::token::TokenRestriction;
+
 use crate::auth::AuthenticatedInfo;
 use crate::identity::IdentityApi;
-use crate::k8s_auth::{K8sAuthProviderError, service::K8sAuthService, types::*};
+use crate::k8s_auth::{
+    K8sAuthApi, K8sAuthProviderError, service::K8sAuthService, types::K8sClaims,
+};
 use crate::keystone::ServiceState;
-use crate::token::{TokenApi, types::TokenRestriction};
+use crate::token::TokenApi;
 
 /// Kubernetes cluster CA certificate location.
 static SERVICE_ACCOUNT_CERT_PATH_STR: &str = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt";
@@ -67,22 +72,26 @@ impl K8sAuthService {
 
         // Determine the CA certificate for the K8 cluster
         if let Some(val) = &instance.ca_cert {
-            client_builder =
-                client_builder.add_root_certificate(Certificate::from_pem(val.as_bytes())?);
+            client_builder = client_builder.add_root_certificate(
+                Certificate::from_pem(val.as_bytes()).map_err(K8sAuthProviderError::http)?,
+            );
         } else if !instance.disable_local_ca_jwt {
-            client_builder = client_builder.add_root_certificate(Certificate::from_pem(
-                fs::read_to_string(ca_path.as_ref().unwrap_or_else(|| {
-                    SERVICE_ACCOUNT_CERT_PATH
-                        .get_or_init(|| PathBuf::from(SERVICE_ACCOUNT_CERT_PATH_STR))
-                }))
-                .await
-                .map_err(|_| K8sAuthProviderError::CaCertificateUnknown)?
-                .as_bytes(),
-            )?);
+            client_builder = client_builder.add_root_certificate(
+                Certificate::from_pem(
+                    fs::read_to_string(ca_path.as_ref().unwrap_or_else(|| {
+                        SERVICE_ACCOUNT_CERT_PATH
+                            .get_or_init(|| PathBuf::from(SERVICE_ACCOUNT_CERT_PATH_STR))
+                    }))
+                    .await
+                    .map_err(|_| K8sAuthProviderError::CaCertificateUnknown)?
+                    .as_bytes(),
+                )
+                .map_err(K8sAuthProviderError::http)?,
+            );
         };
 
         // Build the client
-        let shared_client = Arc::new(client_builder.build()?);
+        let shared_client = Arc::new(client_builder.build().map_err(K8sAuthProviderError::http)?);
 
         // Store it for future use
         self.http_client_pool
@@ -110,7 +119,8 @@ impl K8sAuthService {
         role: &K8sAuthRole,
     ) -> Result<Value, K8sAuthProviderError> {
         // Pre-flight check to fail early on expired token of wrong audience
-        let claims = insecure_decode::<K8sClaims>(token.expose_secret())?;
+        let claims = insecure_decode::<K8sClaims>(token.expose_secret())
+            .map_err(K8sAuthProviderError::jwt)?;
         if let Some(aud) = &role.bound_audience
             && !claims.claims.aud.contains(aud)
         {
@@ -138,10 +148,13 @@ impl K8sAuthService {
             .header("Authorization", format!("Bearer {}", token.expose_secret()))
             .json(&body)
             .send()
-            .await?;
+            .await
+            .map_err(K8sAuthProviderError::http)?;
 
         match response.status() {
-            StatusCode::OK | StatusCode::CREATED => Ok(response.json().await?),
+            StatusCode::OK | StatusCode::CREATED => {
+                Ok(response.json().await.map_err(K8sAuthProviderError::http)?)
+            }
             _ => {
                 debug!("Kubernetes returned {:?}", response);
                 Err(K8sAuthProviderError::InvalidToken)
@@ -318,14 +331,17 @@ mod tests {
     use jsonwebtoken::{EncodingKey, Header, encode};
     use tempfile::NamedTempFile;
 
+    use openstack_keystone_core_types::identity::*;
+    use openstack_keystone_core_types::token::TokenRestriction;
+
     use super::super::backend::MockK8sAuthBackend;
     use super::*;
     use crate::common::HttpClientPool;
-    use crate::identity::{MockIdentityProvider, types::*};
+    use crate::identity::MockIdentityProvider;
     use crate::keystone::Service;
     use crate::provider::Provider;
     use crate::tests::get_mocked_state;
-    use crate::token::{MockTokenProvider, types::TokenRestriction};
+    use crate::token::MockTokenProvider;
 
     /// fake cert valid till 2036
     static CA_CERT: &str = r#"

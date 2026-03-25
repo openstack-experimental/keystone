@@ -23,11 +23,11 @@ use serde_json::to_value;
 use std::collections::HashSet;
 use validator::Validate;
 
+use openstack_keystone_api_types::federation::*;
+use openstack_keystone_core_types::federation::IdentityProviderListParameters as ProviderIdentityProviderListParameters;
+
 use crate::api::{KeystoneApiError, auth::Auth, common::build_pagination_links};
-use crate::federation::{
-    FederationApi, api::types::*,
-    types::IdentityProviderListParameters as ProviderIdentityProviderListParameters,
-};
+use crate::federation::FederationApi;
 use crate::keystone::ServiceState;
 
 /// List identity providers.
@@ -118,21 +118,22 @@ pub(super) async fn list(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
+
     use axum::{
         body::Body,
         http::{Request, StatusCode},
     };
     use http_body_util::BodyExt; // for `collect`
-
-    use std::collections::HashSet;
-
     use tower::ServiceExt; // for `call`, `oneshot`, and `ready`
     use tower_http::trace::TraceLayer;
     use tracing_test::traced_test;
 
+    use openstack_keystone_core_types::federation as provider_types;
+
     use super::{super::openapi_router, *};
     use crate::api::tests::get_mocked_state;
-    use crate::federation::{MockFederationProvider, types as provider_types};
+    use crate::federation::MockFederationProvider;
     use crate::provider::Provider;
 
     #[tokio::test]

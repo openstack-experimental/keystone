@@ -20,3 +20,49 @@ pub mod role;
 pub use auth::*;
 pub use instance::*;
 pub use role::*;
+
+#[cfg(feature = "conv")]
+mod auth_conv;
+#[cfg(feature = "conv")]
+mod instance_conv;
+#[cfg(feature = "conv")]
+mod role_conv;
+
+#[cfg(feature = "conv")]
+use openstack_keystone_core_types::k8s_auth::K8sAuthProviderError;
+#[cfg(feature = "conv")]
+impl From<K8sAuthProviderError> for crate::error::KeystoneApiError {
+    fn from(source: K8sAuthProviderError) -> Self {
+        match source {
+            K8sAuthProviderError::AudienceMismatch => Self::forbidden(source),
+            K8sAuthProviderError::CaCertificateUnknown => Self::forbidden(source),
+            K8sAuthProviderError::AuthInstanceNotActive(..) => Self::forbidden(source),
+            K8sAuthProviderError::AuthInstanceNotFound(x) => Self::NotFound {
+                resource: "k8s auth configuration".into(),
+                identifier: x,
+            },
+            K8sAuthProviderError::Conflict(x) => Self::Conflict(x),
+            K8sAuthProviderError::FailedBoundServiceAccountName(..) => Self::forbidden(source),
+            K8sAuthProviderError::FailedBoundServiceAccountNamespace(..) => Self::forbidden(source),
+            K8sAuthProviderError::Jwt { .. } => Self::forbidden(source),
+            K8sAuthProviderError::ExpiredToken => Self::forbidden(source),
+            K8sAuthProviderError::InsecureAlgorithm => Self::forbidden(source),
+            K8sAuthProviderError::InvalidToken => Self::forbidden(source),
+            K8sAuthProviderError::RoleNotFound(x) => Self::NotFound {
+                resource: "k8s auth role".into(),
+                identifier: x,
+            },
+            K8sAuthProviderError::RoleNotActive(..) => Self::forbidden(source),
+            K8sAuthProviderError::RoleInstanceOwnershipMismatch(..) => Self::forbidden(source),
+            K8sAuthProviderError::TokenRestrictionNotFound(x) => Self::NotFound {
+                resource: "token restriction".into(),
+                identifier: x,
+            },
+            K8sAuthProviderError::UserNotFound(x) => Self::NotFound {
+                resource: "user/service account".into(),
+                identifier: x,
+            },
+            other => Self::InternalError(other.to_string()),
+        }
+    }
+}

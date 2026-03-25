@@ -17,10 +17,8 @@ use serde_json::json;
 use tracing::error;
 use uuid::Uuid;
 
-use openstack_keystone_core::resource::{
-    ResourceProviderError,
-    types::{Project, ProjectBuilder, ProjectCreate},
-};
+use openstack_keystone_core::resource::ResourceProviderError;
+use openstack_keystone_core_types::resource::{Project, ProjectBuilder, ProjectCreate};
 
 mod create;
 mod delete;

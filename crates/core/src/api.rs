@@ -14,12 +14,10 @@
 
 pub mod auth;
 pub mod common;
-pub mod error;
-pub mod types;
 pub mod v3;
 pub mod v4;
 
-pub use error::KeystoneApiError;
+pub use openstack_keystone_api_types::error::KeystoneApiError;
 
 #[cfg(test)]
 pub(crate) mod tests {
@@ -27,8 +25,8 @@ pub(crate) mod tests {
     use std::sync::Arc;
 
     use openstack_keystone_config::Config;
+    use openstack_keystone_core_types::identity::UserResponseBuilder;
 
-    use crate::identity::types::UserResponseBuilder;
     use crate::keystone::{Service, ServiceState};
     use crate::policy::{MockPolicy, PolicyError, PolicyEvaluationResult};
     use crate::provider::ProviderBuilder;

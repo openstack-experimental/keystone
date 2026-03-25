@@ -13,11 +13,9 @@
 // SPDX-License-Identifier: Apache-2.0
 use sea_orm::{DatabaseConnection, EntityTrait};
 
-use openstack_keystone_core::assignment::{
-    AssignmentProviderError,
-    types::{Assignment, AssignmentType},
-};
+use openstack_keystone_core::assignment::AssignmentProviderError;
 use openstack_keystone_core::error::DbContextExt;
+use openstack_keystone_core_types::assignment::*;
 
 use crate::entity::{
     assignment as db_assignment, sea_orm_active_enums::Type as DbAssignmentType,

@@ -16,14 +16,13 @@
 use async_trait::async_trait;
 use mockall::mock;
 
+use openstack_keystone_core_types::token::*;
+
 use super::error::TokenProviderError;
 use crate::auth::{AuthenticatedInfo, AuthzInfo};
 use crate::keystone::ServiceState;
 
-use super::{
-    Token, TokenApi, TokenRestriction, TokenRestrictionCreate, TokenRestrictionListParameters,
-    TokenRestrictionUpdate,
-};
+use super::TokenApi;
 
 mock! {
     pub TokenProvider {}

@@ -20,11 +20,13 @@ use tempfile::TempDir;
 
 use openstack_keystone::plugin_manager::PluginManager;
 use openstack_keystone_config::Config;
-use openstack_keystone_core::assignment::{AssignmentApi, types::AssignmentCreate};
-use openstack_keystone_core::identity::{IdentityApi, types::*};
+use openstack_keystone_core::assignment::AssignmentApi;
+use openstack_keystone_core::identity::IdentityApi;
 use openstack_keystone_core::keystone::Service;
 use openstack_keystone_core::policy::MockPolicy;
 use openstack_keystone_core::provider::Provider;
+use openstack_keystone_core_types::assignment::AssignmentCreate;
+use openstack_keystone_core_types::identity::*;
 use openstack_keystone_resource_sql::entity::{prelude::Project, project};
 
 mod application_credential;

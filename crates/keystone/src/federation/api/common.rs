@@ -17,13 +17,13 @@ use serde_json::Value;
 use openidconnect::IdTokenClaims;
 use openidconnect::core::CoreGenderClaim;
 
+use openstack_keystone_core_types::federation::{
+    IdentityProvider as ProviderIdentityProvider, Mapping as ProviderMapping,
+};
+
 use crate::federation::api::{
     error::OidcError,
     types::{AllOtherClaims, MappedUserData, MappedUserDataBuilder},
-};
-use crate::federation::types::{
-    identity_provider::IdentityProvider as ProviderIdentityProvider,
-    mapping::Mapping as ProviderMapping,
 };
 use crate::keystone::ServiceState;
 

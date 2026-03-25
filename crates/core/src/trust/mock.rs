@@ -15,7 +15,9 @@
 use async_trait::async_trait;
 use mockall::mock;
 
-use crate::trust::{TrustApi, TrustProviderError, types::*};
+use openstack_keystone_core_types::trust::*;
+
+use crate::trust::{TrustApi, TrustProviderError};
 
 use crate::keystone::ServiceState;
 

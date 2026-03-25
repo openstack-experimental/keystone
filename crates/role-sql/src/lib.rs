@@ -18,7 +18,7 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 use openstack_keystone_core::keystone::ServiceState;
 use openstack_keystone_core::role::RoleProviderError;
 use openstack_keystone_core::role::backend::RoleBackend;
-use openstack_keystone_core::role::types::*;
+use openstack_keystone_core_types::role::*;
 
 pub mod entity;
 mod implied_role;

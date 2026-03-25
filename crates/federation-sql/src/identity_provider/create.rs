@@ -18,10 +18,8 @@ use sea_orm::sea_query::OnConflict;
 use uuid::Uuid;
 
 use openstack_keystone_core::error::DbContextExt;
-use openstack_keystone_core::federation::{
-    FederationProviderError,
-    types::{IdentityProvider, IdentityProviderCreate},
-};
+use openstack_keystone_core::federation::FederationProviderError;
+use openstack_keystone_core_types::federation::*;
 
 use crate::entity::{
     federated_identity_provider as db_federated_identity_provider,

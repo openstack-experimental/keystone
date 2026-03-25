@@ -21,11 +21,14 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use tracing::debug;
 
+use openstack_keystone_config::Config;
+use openstack_keystone_core_types::role::*;
+use openstack_keystone_core_types::trust::*;
+
 use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManagerApi;
-use crate::role::{RoleApi, types::Role};
-use crate::trust::{TrustProviderError, backend::TrustBackend, types::*};
-use openstack_keystone_config::Config;
+use crate::role::RoleApi;
+use crate::trust::{TrustApi, TrustProviderError, backend::TrustBackend};
 
 /// Trust provider.
 pub struct TrustService {
@@ -60,7 +63,7 @@ impl TrustApi for TrustService {
                     .get_role_provider()
                     .list_roles(
                         state,
-                        &crate::role::types::RoleListParameters {
+                        &RoleListParameters {
                             domain_id: Some(None),
                             ..Default::default()
                         },
@@ -110,7 +113,7 @@ impl TrustApi for TrustService {
                 .get_role_provider()
                 .list_roles(
                     state,
-                    &crate::role::types::RoleListParameters {
+                    &RoleListParameters {
                         domain_id: Some(None),
                         ..Default::default()
                     },
@@ -233,9 +236,11 @@ mod tests {
     use chrono::{DateTime, Utc};
     use std::sync::Arc;
 
+    use openstack_keystone_core_types::role::*;
+
     use super::*;
     use crate::provider::Provider;
-    use crate::role::{MockRoleProvider, types::*};
+    use crate::role::MockRoleProvider;
     use crate::tests::get_mocked_state;
     use crate::trust::backend::MockTrustBackend;
 

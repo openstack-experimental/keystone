@@ -15,6 +15,10 @@ RUN USER=root cargo new keystone
 
 WORKDIR /usr/src/keystone
 
+RUN USER=root cargo new --name core --lib crates/core
+RUN USER=root cargo new --name core-types --lib crates/core-types
+RUN USER=root cargo new --name api-types --lib crates/api-types
+
 RUN USER=root cargo new --name appcred-sql --lib crates/appcred-sql
 RUN USER=root cargo new --name assignment-sql --lib crates/assignment-sql
 RUN USER=root cargo new --name catalog-sql --lib crates/catalog-sql
@@ -35,6 +39,7 @@ COPY crates/appcred-sql/Cargo.toml /usr/src/keystone/crates/appcred-sql/
 COPY crates/assignment-sql/Cargo.toml /usr/src/keystone/crates/assignment-sql/
 COPY crates/config/Cargo.toml /usr/src/keystone/crates/config/
 COPY crates/core/Cargo.toml /usr/src/keystone/crates/core/
+COPY crates/core-types/Cargo.toml /usr/src/keystone/crates/core-types/
 COPY crates/catalog-sql/Cargo.toml /usr/src/keystone/crates/catalog-sql/
 COPY crates/federation-sql/Cargo.toml /usr/src/keystone/crates/federation-sql/
 COPY crates/identity-sql/Cargo.toml /usr/src/keystone/crates/identity-sql/
@@ -58,16 +63,11 @@ RUN mkdir -p crates/keystone/src/bin && touch crates/keystone/src/lib.rs &&\
   cp src/main.rs crates/keystone/src/bin/keystone_db.rs &&\
   mkdir -p tests/loadtest/src &&\
   cp src/main.rs tests/loadtest/src/main.rs &&\
-  mkdir -p crates/api-types/src && touch crates/api-types/src/lib.rs &&\
   mkdir -p crates/config/src && touch crates/config/src/lib.rs &&\
-  mkdir -p crates/core/src && touch crates/core/src/lib.rs &&\
   mkdir -p crates/storage/src && touch crates/storage/src/lib.rs &&\
   mkdir -p crates/token-fernet/src && touch crates/token-fernet/src/lib.rs &&\
   mkdir -p crates/token-fernet/benches && touch crates/token-fernet/benches/fernet_token.rs &&\
   mkdir -p crates/webauthn/src && touch crates/webauthn/src/lib.rs
-
-# Set the working directory
-#WORKDIR /usr/src/keystone
 
 ## This is a dummy build to get the dependencies cached.
 #RUN cargo build --target x86_64-unknown-linux-musl --release
@@ -77,6 +77,7 @@ RUN cargo build -p openstack-keystone --release
 COPY crates/keystone/ /usr/src/keystone/crates/keystone
 COPY crates/config/ /usr/src/keystone/crates/config
 COPY crates/core/ /usr/src/keystone/crates/core
+COPY crates/core-types/ /usr/src/keystone/crates/core-types
 COPY crates/api-types/ /usr/src/keystone/crates/api-types
 COPY crates/storage/ /usr/src/keystone/crates/storage
 COPY crates/token-fernet/ /usr/src/keystone/crates/token-fernet

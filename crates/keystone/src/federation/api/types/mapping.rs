@@ -13,19 +13,9 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Federated attribute mapping types.
 
-use openstack_keystone_api_types::federation::mapping;
+use openstack_keystone_api_types::federation::*;
 
 use crate::api::common::{QueryParameterPagination, ResourceIdentifier};
-
-pub use mapping::Mapping;
-pub use mapping::MappingCreate;
-pub use mapping::MappingCreateRequest;
-pub use mapping::MappingList;
-pub use mapping::MappingListParameters;
-pub use mapping::MappingResponse;
-pub use mapping::MappingType;
-pub use mapping::MappingUpdate;
-pub use mapping::MappingUpdateRequest;
 
 impl ResourceIdentifier for Mapping {
     fn get_id(&self) -> String {

@@ -16,7 +16,8 @@ use sea_orm::DatabaseConnection;
 use sea_orm::entity::*;
 
 use openstack_keystone_core::error::DbContextExt;
-use openstack_keystone_core::identity::{IdentityProviderError, types::Group};
+use openstack_keystone_core::identity::IdentityProviderError;
+use openstack_keystone_core_types::identity::Group;
 
 use crate::entity::prelude::Group as DbGroup;
 

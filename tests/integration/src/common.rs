@@ -26,14 +26,16 @@ use sea_orm::{
 use tempfile::TempDir;
 use uuid::Uuid;
 
-use openstack_keystone::identity::{IdentityApi, types::*};
+use openstack_keystone::identity::IdentityApi;
 use openstack_keystone::plugin_manager::PluginManager;
 use openstack_keystone_appcred_sql::entity::prelude::*;
 use openstack_keystone_config::Config;
 use openstack_keystone_core::keystone::Service;
 use openstack_keystone_core::policy::MockPolicy;
 use openstack_keystone_core::provider::Provider;
-use openstack_keystone_core::role::{RoleApi, types::RoleCreate};
+use openstack_keystone_core::role::RoleApi;
+use openstack_keystone_core_types::identity::*;
+use openstack_keystone_core_types::role::RoleCreate;
 use openstack_keystone_federation_sql::entity::prelude::*;
 use openstack_keystone_identity_sql::entity::{local_user, prelude::*, user};
 use openstack_keystone_k8s_auth_sql::entity::prelude::*;

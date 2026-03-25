@@ -17,7 +17,7 @@ use axum::{Json, extract::State, response::IntoResponse};
 use tracing::debug;
 use validator::Validate;
 
-use openstack_keystone_core::api::KeystoneApiError;
+use openstack_keystone_api_types::error::KeystoneApiError;
 
 use crate::{
     WebauthnApi,

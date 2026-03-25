@@ -18,10 +18,8 @@ use sea_orm::TransactionTrait;
 use sea_orm::entity::*;
 
 use openstack_keystone_core::error::DbContextExt;
-use openstack_keystone_core::k8s_auth::{
-    K8sAuthProviderError,
-    types::{K8sAuthRole, K8sAuthRoleUpdate},
-};
+use openstack_keystone_core::k8s_auth::K8sAuthProviderError;
+use openstack_keystone_core_types::k8s_auth::{K8sAuthRole, K8sAuthRoleUpdate};
 
 use crate::entity::prelude::KubernetesAuthRole;
 

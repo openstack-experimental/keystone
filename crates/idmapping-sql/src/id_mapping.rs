@@ -12,7 +12,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use openstack_keystone_core::identity_mapping::types::{IdMapping, IdMappingEntityType};
+use openstack_keystone_core_types::identity_mapping::{IdMapping, IdMappingEntityType};
 
 use crate::entity::id_mapping as db_id_mapping;
 use crate::entity::sea_orm_active_enums::EntityType;

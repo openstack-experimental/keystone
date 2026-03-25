@@ -33,6 +33,8 @@ use openidconnect::core::{
 use openidconnect::reqwest;
 use openidconnect::{Client, ClientId, IdToken, IssuerUrl, JsonWebKeySet, JsonWebKeySetUrl, Nonce};
 
+use openstack_keystone_core::api::v4::auth::token::token_impl::build_api_token_v4;
+
 use super::error::OidcError;
 use crate::api::v4::auth::token::types::TokenResponse as KeystoneTokenResponse;
 use crate::api::{
@@ -42,23 +44,20 @@ use crate::api::{
 };
 use crate::auth::{AuthenticatedInfo, AuthenticationError};
 use crate::catalog::CatalogApi;
-use crate::common::types as provider_types;
-use crate::federation::{
-    FederationApi,
-    api::types::*,
-    types::{
-        MappingListParameters as ProviderMappingListParameters,
-        MappingType as ProviderMappingType,
-        //Project as ProviderProject, Scope as ProviderScope,
-    },
-};
-use crate::identity::{
-    IdentityApi,
-    error::IdentityProviderError,
-    types::{FederationBuilder, FederationProtocol, UserCreateBuilder},
-};
+//use crate::common::types as provider_types;
+use crate::federation::{FederationApi, api::types::*};
+use crate::identity::{IdentityApi, error::IdentityProviderError};
 use crate::keystone::ServiceState;
 use crate::token::TokenApi;
+use openstack_keystone_core_types::federation::{
+    MappingListParameters as ProviderMappingListParameters,
+    MappingType as ProviderMappingType,
+    //Project as ProviderProject, Scope as ProviderScope,
+};
+use openstack_keystone_core_types::identity::{
+    FederationBuilder, FederationProtocol, UserCreateBuilder,
+};
+use openstack_keystone_core_types::scope as provider_types;
 
 use super::common::{map_user_data, validate_bound_claims};
 
@@ -339,7 +338,7 @@ pub async fn login(
         .map_err(KeystoneApiError::forbidden)?;
 
     let mut api_token = KeystoneTokenResponse {
-        token: token.build_api_token_v4(&state).await?,
+        token: build_api_token_v4(&token, &state).await?,
     };
     let catalog: Catalog = Catalog(
         state

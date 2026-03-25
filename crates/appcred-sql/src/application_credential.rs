@@ -16,8 +16,8 @@
 use chrono::DateTime;
 
 use openstack_keystone_core::application_credential::ApplicationCredentialProviderError;
-use openstack_keystone_core::application_credential::types::*;
-use openstack_keystone_core::role::types::RoleRef;
+use openstack_keystone_core_types::application_credential::*;
+use openstack_keystone_core_types::role::RoleRef;
 
 use crate::entity::{
     access_rule as db_access_rule, application_credential as db_application_credential,

@@ -18,13 +18,14 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 use openstack_keystone_config::Config;
+use openstack_keystone_core_types::k8s_auth::*;
+use openstack_keystone_core_types::token::TokenRestriction;
 
 use crate::auth::AuthenticatedInfo;
 use crate::common::{HttpClientPool, HttpClientProvider};
-use crate::k8s_auth::{K8sAuthProviderError, backend::K8sAuthBackend, types::*};
+use crate::k8s_auth::{K8sAuthApi, K8sAuthProviderError, backend::K8sAuthBackend};
 use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManagerApi;
-use crate::token::types::TokenRestriction;
 
 /// K8s Auth provider.
 pub struct K8sAuthService {

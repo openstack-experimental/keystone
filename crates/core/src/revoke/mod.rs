@@ -41,20 +41,22 @@ pub mod backend;
 pub mod error;
 #[cfg(any(test, feature = "mock"))]
 mod mock;
+mod provider_api;
 pub mod service;
-pub mod types;
+//pub mod types;
 
 use openstack_keystone_config::Config;
+use openstack_keystone_core_types::revoke::*;
+use openstack_keystone_core_types::token::Token;
 
 use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManagerApi;
 use crate::revoke::service::RevokeService;
-use crate::token::types::Token;
 
 pub use error::RevokeProviderError;
 #[cfg(any(test, feature = "mock"))]
 pub use mock::MockRevokeProvider;
-pub use types::*;
+pub use provider_api::RevokeApi;
 
 /// Revoke provider.
 pub enum RevokeProvider {

@@ -25,13 +25,10 @@ use openidconnect::{
     IdTokenFields, StandardErrorResponse, StandardTokenResponse,
 };
 
-pub mod auth;
-pub mod identity_provider;
-pub mod mapping;
+pub use openstack_keystone_api_types::federation::*;
 
-pub use auth::*;
-pub use identity_provider::*;
-pub use mapping::*;
+mod identity_provider;
+mod mapping;
 
 pub(super) type OidcIdTokenFields = IdTokenFields<
     AllOtherClaims,

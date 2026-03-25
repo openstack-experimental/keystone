@@ -17,8 +17,10 @@ use chrono::{DateTime, Utc};
 use mockall::mock;
 use std::collections::HashSet;
 
+use openstack_keystone_core_types::identity::*;
+
 use crate::auth::AuthenticatedInfo;
-use crate::identity::{IdentityApi, error::IdentityProviderError, types::*};
+use crate::identity::{IdentityApi, error::IdentityProviderError};
 use crate::keystone::ServiceState;
 
 mock! {

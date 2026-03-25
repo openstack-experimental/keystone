@@ -15,10 +15,11 @@
 use async_trait::async_trait;
 use mockall::mock;
 
-use crate::revoke::{RevokeApi, RevokeProviderError, types::*};
-use crate::token::types::Token;
+use openstack_keystone_core_types::revoke::*;
+use openstack_keystone_core_types::token::Token;
 
 use crate::keystone::ServiceState;
+use crate::revoke::{RevokeApi, RevokeProviderError};
 
 mock! {
     pub RevokeProvider {}

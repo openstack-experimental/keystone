@@ -14,8 +14,9 @@
 use eyre::Result;
 use std::sync::Arc;
 
-use openstack_keystone::assignment::{AssignmentApi, types::*};
+use openstack_keystone::assignment::AssignmentApi;
 use openstack_keystone::keystone::Service;
+use openstack_keystone_core_types::assignment::*;
 
 mod grant;
 

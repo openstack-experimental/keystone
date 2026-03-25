@@ -14,7 +14,9 @@
 //! # K8s auth: Backends.
 use async_trait::async_trait;
 
-use crate::k8s_auth::{K8sAuthProviderError, types::*};
+use openstack_keystone_core_types::k8s_auth::*;
+
+use crate::k8s_auth::K8sAuthProviderError;
 use crate::keystone::ServiceState;
 
 /// K8s auth Backend trait.

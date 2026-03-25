@@ -12,7 +12,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use openstack_keystone_core::identity::{IdentityProviderError, types::UserOptions};
+use openstack_keystone_core::identity::IdentityProviderError;
+use openstack_keystone_core_types::identity::UserOptions;
 
 use crate::entity::user_option;
 
@@ -134,7 +135,7 @@ impl UserOptionIntoModelIterator for UserOptions {
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use openstack_keystone_core::identity::types::UserOptions;
+    use openstack_keystone_core_types::identity::UserOptions;
 
     use super::*;
     use crate::entity::user_option;

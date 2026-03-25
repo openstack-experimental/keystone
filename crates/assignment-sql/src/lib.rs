@@ -16,15 +16,13 @@
 use async_trait::async_trait;
 use std::collections::{BTreeMap, HashSet};
 
-use openstack_keystone_core::assignment::types::*;
 use openstack_keystone_core::assignment::{AssignmentProviderError, backend::AssignmentBackend};
 use openstack_keystone_core::identity::IdentityApi;
 use openstack_keystone_core::keystone::ServiceState;
 use openstack_keystone_core::resource::ResourceApi;
-use openstack_keystone_core::role::{
-    RoleApi,
-    types::{Role, RoleListParameters},
-};
+use openstack_keystone_core::role::RoleApi;
+use openstack_keystone_core_types::assignment::*;
+use openstack_keystone_core_types::role::*;
 
 mod assignment;
 pub mod entity;
@@ -195,7 +193,8 @@ mod tests {
     use openstack_keystone_core::keystone::Service;
     use openstack_keystone_core::policy::MockPolicy;
     use openstack_keystone_core::provider::Provider;
-    use openstack_keystone_core::role::{MockRoleProvider, types::RoleBuilder};
+    use openstack_keystone_core::role::MockRoleProvider;
+    use openstack_keystone_core_types::role::RoleBuilder;
 
     use super::assignment::tests::*;
     use super::*;

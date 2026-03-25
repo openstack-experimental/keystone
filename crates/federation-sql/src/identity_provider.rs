@@ -13,7 +13,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use openstack_keystone_core::federation::error::FederationProviderError;
-use openstack_keystone_core::federation::types::*;
+use openstack_keystone_core_types::federation::*;
 
 use crate::entity::federated_identity_provider as db_federated_identity_provider;
 

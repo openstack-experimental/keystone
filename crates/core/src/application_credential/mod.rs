@@ -113,24 +113,24 @@
 //! ```
 use async_trait::async_trait;
 
+use openstack_keystone_config::Config;
+use openstack_keystone_core_types::application_credential::*;
+
 pub mod backend;
 pub mod error;
 #[cfg(any(test, feature = "mock"))]
 mod mock;
+mod provider_api;
 pub mod service;
-pub mod types;
-
-use openstack_keystone_config::Config;
 
 use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManagerApi;
 use service::ApplicationCredentialService;
-use types::*;
 
 pub use error::ApplicationCredentialProviderError;
 #[cfg(any(test, feature = "mock"))]
 pub use mock::MockApplicationCredentialProvider;
-pub use types::ApplicationCredentialApi;
+pub use provider_api::ApplicationCredentialApi;
 
 /// Application Credential Provider.
 pub enum ApplicationCredentialProvider {

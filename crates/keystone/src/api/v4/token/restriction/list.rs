@@ -21,13 +21,13 @@ use axum::{
 };
 use serde_json::to_value;
 
+use openstack_keystone_core_types::token::TokenRestrictionListParameters as ProviderTokenRestrictionListParameters;
+
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
 use crate::api::v4::token::types::*;
 use crate::keystone::ServiceState;
-use crate::token::{
-    TokenApi, types::TokenRestrictionListParameters as ProviderTokenRestrictionListParameters,
-};
+use crate::token::TokenApi;
 
 /// List token restrictions.
 ///
@@ -96,6 +96,9 @@ mod tests {
     use tower::ServiceExt; // for `call`, `oneshot`, and `ready`
     use tower_http::trace::TraceLayer;
 
+    use openstack_keystone_core_types::role::RoleRef as ProviderRoleRef;
+    use openstack_keystone_core_types::token as provider_types;
+
     use super::{
         super::{openapi_router, tests::get_token_provider_mock_with_mocks},
         *,
@@ -103,8 +106,6 @@ mod tests {
     use crate::api::tests::get_mocked_state;
     use crate::api::v3::role::types::RoleRef;
     use crate::provider::Provider;
-    use crate::role::types::RoleRef as ProviderRoleRef;
-    use crate::token::types as provider_types;
 
     #[tokio::test]
     async fn test_list() {

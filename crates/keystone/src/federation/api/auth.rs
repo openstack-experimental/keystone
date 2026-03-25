@@ -31,9 +31,11 @@ use openidconnect::{
 };
 
 use crate::api::error::KeystoneApiError;
-use crate::federation::types::{AuthState, MappingListParameters as ProviderMappingListParameters};
 use crate::federation::{FederationApi, api::error::OidcError, api::types::*};
 use crate::keystone::ServiceState;
+use openstack_keystone_core_types::federation::{
+    AuthState, MappingListParameters as ProviderMappingListParameters,
+};
 
 pub(super) fn openapi_router() -> OpenApiRouter<ServiceState> {
     OpenApiRouter::new().routes(routes!(post))

@@ -16,7 +16,8 @@ use sea_orm::DatabaseConnection;
 use sea_orm::entity::*;
 
 use openstack_keystone_core::error::DbContextExt;
-use openstack_keystone_core::federation::{FederationProviderError, types::AuthState};
+use openstack_keystone_core::federation::FederationProviderError;
+use openstack_keystone_core_types::federation::AuthState;
 
 use crate::entity::{
     federated_auth_state as db_federated_auth_state,

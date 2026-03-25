@@ -15,8 +15,10 @@ use async_trait::async_trait;
 use mockall::mock;
 use std::collections::{BTreeMap, BTreeSet};
 
+use openstack_keystone_core_types::role::*;
+
 use crate::keystone::ServiceState;
-use crate::role::{RoleApi, RoleProviderError, types::*};
+use crate::role::{RoleApi, RoleProviderError};
 
 mock! {
     pub RoleProvider {}

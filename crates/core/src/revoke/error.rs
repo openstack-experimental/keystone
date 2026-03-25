@@ -12,28 +12,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //! Token revocation errors.
-
-use thiserror::Error;
-
-/// Revoke provider error.
-#[derive(Error, Debug)]
-pub enum RevokeProviderError {
-    /// Conflict.
-    #[error("conflict: {0}")]
-    Conflict(String),
-
-    /// Driver error.
-    #[error("backend driver error: {0}")]
-    Driver(String),
-
-    /// No audit ID in the token.
-    #[error("token does not have the audit_id set")]
-    TokenHasNoAuditId,
-
-    /// Unsupported driver.
-    #[error("unsupported driver `{0}` for the revoke provider")]
-    UnsupportedDriver(String),
-}
+pub use openstack_keystone_core_types::revoke::RevokeProviderError;
 
 impl From<crate::error::DatabaseError> for RevokeProviderError {
     fn from(source: crate::error::DatabaseError) -> Self {

@@ -20,9 +20,9 @@ use uuid::Uuid;
 
 use openstack_keystone_config::Config;
 use openstack_keystone_core::application_credential::ApplicationCredentialProviderError;
-use openstack_keystone_core::application_credential::types::*;
 use openstack_keystone_core::common::password_hashing;
 use openstack_keystone_core::error::DbContextExt;
+use openstack_keystone_core_types::application_credential::*;
 
 use crate::entity::{
     access_rule as db_access_rule, application_credential as db_application_credential,
@@ -67,7 +67,11 @@ pub async fn create(
         .context("starting transaction for persisting application credential")?;
     let mut model = db_application_credential::ActiveModel::try_from(rec.clone())?;
     model.secret_hash = if let Some(secret) = &rec.secret {
-        Set(password_hashing::hash_password(conf, secret.expose_secret()).await?)
+        Set(
+            password_hashing::hash_password(conf, secret.expose_secret())
+                .await
+                .map_err(ApplicationCredentialProviderError::password_hash)?,
+        )
     } else {
         return Err(ApplicationCredentialProviderError::SecretMissing);
     };
@@ -194,8 +198,9 @@ mod tests {
     use chrono::{Timelike, Utc};
     use sea_orm::{DatabaseBackend, MockDatabase, MockExecResult, Statement, Transaction};
 
+    use openstack_keystone_core_types::role::RoleRef;
+
     use openstack_keystone_config::PasswordHashingAlgo;
-    use openstack_keystone_core::role::types::RoleRef;
 
     use super::super::tests::*;
     use super::*;

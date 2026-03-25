@@ -26,10 +26,11 @@ use openstack_keystone_trust_sql::entity::{
 
 use openstack_keystone::auth::*;
 use openstack_keystone::keystone::Service;
-use openstack_keystone::role::{RoleApi, types::RoleCreate};
+use openstack_keystone::role::RoleApi;
 use openstack_keystone::token::{Token, TokenApi, TokenProviderError};
 use openstack_keystone::trust::TrustApi;
-use openstack_keystone::trust::types::*;
+use openstack_keystone_core_types::role::RoleCreate;
+use openstack_keystone_core_types::trust::*;
 
 use super::{create_user, get_state, grant_role_to_user_on_project};
 use crate::common::create_role;

@@ -120,16 +120,14 @@ pub(super) async fn get_authz_info(
 
 #[cfg(test)]
 mod tests {
+    use openstack_keystone_core_types::identity::{UserPasswordAuthRequest, UserResponseBuilder};
 
     use super::super::types::*;
     use super::*;
     use crate::api::KeystoneApiError;
     use crate::api::tests::get_mocked_state;
     use crate::auth::AuthenticatedInfo;
-    use crate::identity::{
-        MockIdentityProvider,
-        types::{UserPasswordAuthRequest, UserResponseBuilder},
-    };
+    use crate::identity::MockIdentityProvider;
     use crate::provider::Provider;
     use crate::token::MockTokenProvider;
 

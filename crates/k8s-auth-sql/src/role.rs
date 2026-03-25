@@ -14,7 +14,7 @@
 
 use sea_orm::entity::*;
 
-use openstack_keystone_core::k8s_auth::types::*;
+use openstack_keystone_core_types::k8s_auth::*;
 
 use crate::entity::kubernetes_auth_role;
 
@@ -127,7 +127,7 @@ impl kubernetes_auth_role::Model {
 pub(crate) mod tests {
     use sea_orm::entity::*;
 
-    use openstack_keystone_core::k8s_auth::types::*;
+    use openstack_keystone_core_types::k8s_auth::*;
 
     use crate::entity::kubernetes_auth_role;
 

@@ -23,16 +23,16 @@ use uuid::Uuid;
 use validator::Validate;
 
 use openstack_keystone_config::Config;
+use openstack_keystone_core_types::application_credential::*;
+use openstack_keystone_core_types::role::{Role, RoleListParameters};
 
 use crate::application_credential::{
-    ApplicationCredentialProviderError, backend::ApplicationCredentialBackend, types::*,
+    ApplicationCredentialApi, ApplicationCredentialProviderError,
+    backend::ApplicationCredentialBackend,
 };
 use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManagerApi;
-use crate::role::{
-    RoleApi,
-    types::{Role, RoleListParameters},
-};
+use crate::role::RoleApi;
 
 /// Application Credential Provider.
 pub struct ApplicationCredentialService {

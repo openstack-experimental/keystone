@@ -22,9 +22,12 @@ use axum::{
 use serde_json::json;
 use validator::Validate;
 
+use openstack_keystone_api_types::error::KeystoneApiError;
+use openstack_keystone_api_types::k8s_auth::*;
+use openstack_keystone_core_types::k8s_auth::K8sAuthRoleCreateBuilder;
+
 use crate::api::auth::Auth;
-use crate::api::error::KeystoneApiError;
-use crate::k8s_auth::{K8sAuthApi, api::types::*};
+use crate::k8s_auth::K8sAuthApi;
 use crate::keystone::ServiceState;
 
 /// Create K8s auth role.
@@ -80,9 +83,21 @@ pub(super) async fn create_nested(
     let res = state
         .provider
         .get_k8s_auth_provider()
-        .create_auth_role(&state, (req, instance_id, instance.domain_id).into())
+        .create_auth_role(
+            &state,
+            K8sAuthRoleCreateBuilder::from(req)
+                .auth_instance_id(instance_id)
+                .domain_id(instance.domain_id)
+                .build()?,
+        )
         .await?;
-    Ok((StatusCode::CREATED, res).into_response())
+    Ok((
+        StatusCode::CREATED,
+        Json(K8sAuthRoleResponse {
+            role: K8sAuthRole::from(res),
+        }),
+    )
+        .into_response())
 }
 
 #[cfg(test)]
@@ -92,14 +107,15 @@ mod tests {
         http::{Request, StatusCode, header},
     };
     use http_body_util::BodyExt; // for `collect`
-
     use tower::ServiceExt; // for `call`, `oneshot`, and `ready`
     use tower_http::trace::TraceLayer;
     use tracing_test::traced_test;
 
+    use openstack_keystone_core_types::k8s_auth as provider_types;
+
     use super::{super::openapi_router, *};
     use crate::api::tests::get_mocked_state;
-    use crate::k8s_auth::{MockK8sAuthProvider, types as provider_types};
+    use crate::k8s_auth::MockK8sAuthProvider;
     use crate::provider::Provider;
 
     #[tokio::test]

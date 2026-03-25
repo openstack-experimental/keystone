@@ -16,10 +16,8 @@ use sea_orm::DatabaseConnection;
 use sea_orm::entity::*;
 
 use openstack_keystone_core::error::DbContextExt;
-use openstack_keystone_core::role::{
-    RoleProviderError,
-    types::role::{Role, RoleCreate},
-};
+use openstack_keystone_core::role::RoleProviderError;
+use openstack_keystone_core_types::role::{Role, RoleCreate};
 
 use crate::entity::role as db_role;
 

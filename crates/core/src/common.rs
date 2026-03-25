@@ -20,7 +20,6 @@ use reqwest::Client;
 use tokio::sync::RwLock;
 
 pub mod password_hashing;
-pub mod types;
 
 /// HTTP Client pool trait.
 #[async_trait]

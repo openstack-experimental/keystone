@@ -22,21 +22,23 @@
 use async_trait::async_trait;
 
 use openstack_keystone_config::Config;
+pub use openstack_keystone_core_types::token::*;
 
 pub mod backend;
 pub mod error;
 #[cfg(any(test, feature = "mock"))]
 mod mock;
+mod provider_api;
 pub mod service;
-pub mod types;
+mod validate;
 
 use crate::auth::{AuthenticatedInfo, AuthzInfo};
 use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManagerApi;
 use crate::token::service::TokenService;
 pub use error::TokenProviderError;
+pub use provider_api::TokenApi;
 
-pub use crate::token::types::*;
 #[cfg(any(test, feature = "mock"))]
 pub use mock::MockTokenProvider;
 

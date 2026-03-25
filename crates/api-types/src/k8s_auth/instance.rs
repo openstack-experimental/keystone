@@ -21,9 +21,9 @@ use crate::Link;
 
 /// K8s authentication instance.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[cfg_attr(feature = "builder", derive(derive_builder::Builder))]
 #[cfg_attr(
     feature = "builder",
+    derive(derive_builder::Builder),
     builder(
         build_fn(error = "crate::error::BuilderError"),
         setter(strip_option, into)

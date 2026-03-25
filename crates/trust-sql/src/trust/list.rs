@@ -18,11 +18,9 @@ use sea_orm::query::*;
 use sea_orm::{Cursor, SelectModel};
 
 use openstack_keystone_core::error::DbContextExt;
-use openstack_keystone_core::role::types::RoleRef;
-use openstack_keystone_core::trust::{
-    TrustProviderError,
-    types::{Trust, TrustListParameters},
-};
+use openstack_keystone_core::trust::TrustProviderError;
+use openstack_keystone_core_types::role::RoleRef;
+use openstack_keystone_core_types::trust::*;
 
 use crate::entity::{
     prelude::{Trust as DbTrust, TrustRole as DbTrustRole},

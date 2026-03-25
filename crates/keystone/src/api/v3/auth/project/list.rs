@@ -17,14 +17,14 @@ use axum::{Json, extract::State, http::StatusCode, response::IntoResponse};
 use serde_json::Value;
 use std::collections::HashSet;
 
+use openstack_keystone_core_types::assignment::{AssignmentType, RoleAssignmentListParameters};
+use openstack_keystone_core_types::resource::ProjectListParameters;
+
 use crate::api::v3::project::types::ProjectShortList;
 use crate::api::{auth::Auth, error::KeystoneApiError};
-use crate::assignment::{
-    AssignmentApi,
-    types::{AssignmentType, RoleAssignmentListParameters},
-};
+use crate::assignment::AssignmentApi;
 use crate::keystone::ServiceState;
-use crate::resource::{ResourceApi, types::ProjectListParameters};
+use crate::resource::ResourceApi;
 
 /// Get available project scopes.
 ///
@@ -110,14 +110,16 @@ mod tests {
     use tower::ServiceExt; // for `call`, `oneshot`, and `ready`
     use tower_http::trace::TraceLayer;
 
+    use openstack_keystone_core_types::assignment::*;
+    use openstack_keystone_core_types::resource::{
+        Project as ProviderProject, ProjectListParameters,
+    };
+
     use crate::api::tests::get_mocked_state;
     use crate::api::v3::project::types::ProjectShort;
-    use crate::assignment::{MockAssignmentProvider, types::*};
+    use crate::assignment::MockAssignmentProvider;
     use crate::provider::Provider;
-    use crate::resource::{
-        MockResourceProvider,
-        types::{Project as ProviderProject, ProjectListParameters},
-    };
+    use crate::resource::MockResourceProvider;
 
     use super::super::openapi_router;
     use super::*;

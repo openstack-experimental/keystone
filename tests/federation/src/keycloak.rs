@@ -25,7 +25,7 @@ use tracing::{debug, info};
 use tracing_test::traced_test;
 use uuid::Uuid;
 
-use openstack_keystone_api_types::federation::{identity_provider::*, mapping::*};
+use openstack_keystone_api_types::federation::*;
 
 mod keystone_utils;
 mod keycloak {

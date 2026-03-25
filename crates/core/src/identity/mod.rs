@@ -34,28 +34,28 @@
 //! contained in that project.
 
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDate, NaiveDateTime, Utc};
 use std::collections::HashSet;
 
 use openstack_keystone_config::Config;
+use openstack_keystone_core_types::identity::*;
 
 pub mod backend;
 pub mod error;
 #[cfg(any(test, feature = "mock"))]
 pub mod mock;
-pub mod types;
 #[cfg(any(test, feature = "mock"))]
 pub use mock::MockIdentityProvider;
-pub mod service;
+mod provider_api;
+mod service;
 
 use crate::auth::AuthenticatedInfo;
-use crate::identity::types::*;
 use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManagerApi;
 use service::IdentityService;
 
 pub use error::IdentityProviderError;
-pub use types::IdentityApi;
+pub use provider_api::IdentityApi;
 
 /// Identity provider.
 pub enum IdentityProvider {
@@ -475,5 +475,46 @@ impl IdentityApi for IdentityProvider {
                     .await
             }
         }
+    }
+}
+/// Calculate the `last_active_at` for the user entry.
+pub fn get_user_last_active_at(
+    conf: &Config,
+    enabled: Option<bool>,
+    activity_date: NaiveDateTime,
+) -> Option<NaiveDate> {
+    if enabled.is_some_and(|x| x) {
+        if conf
+            .security_compliance
+            .disable_user_account_days_inactive
+            .is_some()
+        {
+            Some(activity_date.date())
+        } else {
+            None
+        }
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+pub mod tests {
+    use super::*;
+    #[test]
+    fn test_get_user_last_active_at() {
+        let now = Utc::now().naive_utc();
+        let mut cfg = Config::default();
+        assert!(get_user_last_active_at(&cfg, Some(false), now).is_none());
+        assert!(get_user_last_active_at(&cfg, Some(true), now).is_none());
+        assert!(get_user_last_active_at(&cfg, None, now).is_none());
+
+        cfg.security_compliance.disable_user_account_days_inactive = Some(1);
+        assert_eq!(
+            get_user_last_active_at(&cfg, Some(true), now),
+            Some(now.date())
+        );
+        assert!(get_user_last_active_at(&cfg, Some(false), now).is_none());
+        assert!(get_user_last_active_at(&cfg, None, now).is_none());
     }
 }

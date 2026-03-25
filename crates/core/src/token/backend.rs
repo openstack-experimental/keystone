@@ -15,9 +15,10 @@
 
 use openstack_keystone_config::Config;
 
-use crate::token::{TokenProviderError, types::*};
+use openstack_keystone_core_types::token::*;
 
 use crate::keystone::ServiceState;
+use crate::token::TokenProviderError;
 
 /// Token Provider backend interface.
 #[cfg_attr(test, mockall::automock)]

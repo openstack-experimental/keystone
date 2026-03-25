@@ -16,12 +16,13 @@
 use axum::{Json, debug_handler, extract::State, http::StatusCode, response::IntoResponse};
 use validator::Validate;
 
+use openstack_keystone_api_types::k8s_auth::{
+    K8sAuthInstance, K8sAuthInstanceCreateRequest, K8sAuthInstanceResponse,
+};
+
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
-use crate::k8s_auth::{
-    K8sAuthApi,
-    api::types::{K8sAuthInstanceCreateRequest, K8sAuthInstanceResponse},
-};
+use crate::k8s_auth::K8sAuthApi;
 use crate::keystone::ServiceState;
 
 /// Create the K8s auth instance.
@@ -65,7 +66,13 @@ pub(super) async fn create(
         .get_k8s_auth_provider()
         .create_auth_instance(&state, req.into())
         .await?;
-    Ok((StatusCode::CREATED, res).into_response())
+    Ok((
+        StatusCode::CREATED,
+        Json(K8sAuthInstanceResponse {
+            instance: K8sAuthInstance::from(res),
+        }),
+    )
+        .into_response())
 }
 
 #[cfg(test)]
@@ -79,13 +86,14 @@ mod tests {
     use tower_http::trace::TraceLayer;
     use tracing_test::traced_test;
 
+    use openstack_keystone_api_types::k8s_auth::{
+        K8sAuthInstanceCreate, K8sAuthInstanceCreateRequest,
+    };
+    use openstack_keystone_core_types::k8s_auth as provider_types;
+
     use super::{super::openapi_router, *};
     use crate::api::tests::get_mocked_state;
-    use crate::k8s_auth::{
-        MockK8sAuthProvider,
-        api::types::{K8sAuthInstanceCreate, K8sAuthInstanceCreateRequest},
-        types as provider_types,
-    };
+    use crate::k8s_auth::MockK8sAuthProvider;
     use crate::provider::Provider;
 
     #[tokio::test]

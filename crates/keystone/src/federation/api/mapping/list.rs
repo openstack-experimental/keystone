@@ -91,9 +91,11 @@ mod tests {
     use tower_http::trace::TraceLayer;
     use tracing_test::traced_test;
 
+    use openstack_keystone_core_types::federation as provider_types;
+
     use super::{super::openapi_router, *};
     use crate::api::tests::get_mocked_state;
-    use crate::federation::{MockFederationProvider, types as provider_types};
+    use crate::federation::MockFederationProvider;
     use crate::provider::Provider;
 
     #[tokio::test]

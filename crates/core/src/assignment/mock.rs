@@ -14,9 +14,9 @@
 use async_trait::async_trait;
 use mockall::mock;
 
-use crate::assignment::AssignmentApi;
-use crate::assignment::AssignmentProviderError;
-use crate::assignment::types::*;
+use openstack_keystone_core_types::assignment::*;
+
+use crate::assignment::{AssignmentApi, AssignmentProviderError};
 use crate::keystone::ServiceState;
 
 mock! {

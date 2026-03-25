@@ -13,7 +13,8 @@
 // SPDX-License-Identifier: Apache-2.0
 use chrono::{DateTime, Utc};
 
-use openstack_keystone_core::identity::{IdentityProviderError, types::UserResponseBuilder};
+use openstack_keystone_core::identity::IdentityProviderError;
+use openstack_keystone_core_types::identity::UserResponseBuilder;
 
 use crate::entity::password as db_password;
 

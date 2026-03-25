@@ -18,13 +18,13 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use openstack_keystone::application_credential::ApplicationCredentialApi;
-use openstack_keystone::application_credential::types;
 use openstack_keystone::plugin_manager::PluginManager;
 use openstack_keystone_config::Config;
 use openstack_keystone_core::keystone::Service;
 use openstack_keystone_core::policy::MockPolicy;
 use openstack_keystone_core::provider::Provider;
-use openstack_keystone_core::role::types as role_types;
+use openstack_keystone_core_types::application_credential as types;
+use openstack_keystone_core_types::role as role_types;
 use openstack_keystone_resource_sql::entity::{prelude::Project, project};
 
 mod create;

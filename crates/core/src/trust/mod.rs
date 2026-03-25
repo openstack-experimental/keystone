@@ -53,14 +53,14 @@
 
 use async_trait::async_trait;
 
-#[cfg(feature = "api")]
-pub mod api;
+use openstack_keystone_core_types::trust::*;
+
 pub mod backend;
 pub mod error;
 #[cfg(any(test, feature = "mock"))]
 mod mock;
+mod provider_api;
 pub mod service;
-pub mod types;
 
 use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManagerApi;
@@ -70,7 +70,7 @@ use openstack_keystone_config::Config;
 pub use error::TrustProviderError;
 #[cfg(any(test, feature = "mock"))]
 pub use mock::MockTrustProvider;
-pub use types::*;
+pub use provider_api::TrustApi;
 
 /// Trust provider.
 pub enum TrustProvider {

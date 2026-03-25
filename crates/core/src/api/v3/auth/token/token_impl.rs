@@ -12,213 +12,205 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use openstack_keystone_api_types::error::KeystoneApiError;
 use openstack_keystone_api_types::v3::auth::token::{System, Token, TokenBuilder, UserBuilder};
+use openstack_keystone_core_types::resource::{Domain, Project};
+use openstack_keystone_core_types::token::Token as ProviderToken;
 
 use crate::api::common;
-use crate::api::error::KeystoneApiError;
 use crate::identity::IdentityApi;
 use crate::keystone::ServiceState;
-use crate::resource::{
-    ResourceApi,
-    types::{Domain, Project},
-};
-use crate::token::Token as ProviderToken;
+use crate::resource::ResourceApi;
 use crate::trust::TrustApi;
 
-use super::common::*;
+pub async fn build_api_token_v3(
+    token: &ProviderToken,
+    state: &ServiceState,
+) -> Result<Token, KeystoneApiError> {
+    let mut response = TokenBuilder::default();
+    let mut project: Option<Project> = token.project().cloned();
+    let mut domain: Option<Domain> = token.domain().cloned();
+    response.audit_ids(token.audit_ids().clone());
+    response.methods(token.methods().clone());
+    response.expires_at(*token.expires_at());
+    response.issued_at(*token.issued_at());
 
-impl ProviderToken {
-    pub async fn build_api_token_v3(
-        &self,
-        state: &ServiceState,
-    ) -> Result<Token, KeystoneApiError> {
-        let mut response = TokenBuilder::default();
-        let mut project: Option<Project> = self.project().cloned();
-        let mut domain: Option<Domain> = self.domain().cloned();
-        response.audit_ids(self.audit_ids().clone());
-        response.methods(self.methods().clone());
-        response.expires_at(*self.expires_at());
-        response.issued_at(*self.issued_at());
+    let user = if let Some(user) = token.user() {
+        user
+    } else {
+        &state
+            .provider
+            .get_identity_provider()
+            .get_user(state, token.user_id())
+            .await?
+            .ok_or_else(|| KeystoneApiError::NotFound {
+                resource: "user".into(),
+                identifier: token.user_id().clone(),
+            })?
+    };
 
-        let user = if let Some(user) = self.user() {
-            user
-        } else {
-            &state
-                .provider
-                .get_identity_provider()
-                .get_user(state, self.user_id())
-                .await?
-                .ok_or_else(|| KeystoneApiError::NotFound {
-                    resource: "user".into(),
-                    identifier: self.user_id().clone(),
-                })?
-        };
+    let user_domain = common::get_domain(state, Some(&user.domain_id), None::<&str>).await?;
 
-        let user_domain = common::get_domain(state, Some(&user.domain_id), None::<&str>).await?;
-
-        let mut user_response: UserBuilder = UserBuilder::default();
-        user_response.id(user.id.clone());
-        user_response.name(user.name.clone());
-        if let Some(val) = user.password_expires_at {
-            user_response.password_expires_at(val);
-        }
-        user_response.domain(user_domain.clone());
-        response.user(user_response.build()?);
-
-        if let Some(roles) = self.effective_roles() {
-            response.roles(
-                roles
-                    .clone()
-                    .into_iter()
-                    .map(Into::into)
-                    .collect::<Vec<_>>(),
-            );
-        }
-
-        match self {
-            ProviderToken::ApplicationCredential(token) => {
-                if project.is_none() {
-                    project = Some(
-                        state
-                            .provider
-                            .get_resource_provider()
-                            .get_project(state, &token.project_id)
-                            .await?
-                            .ok_or_else(|| KeystoneApiError::NotFound {
-                                resource: "project".into(),
-                                identifier: token.project_id.clone(),
-                            })?,
-                    );
-                }
-            }
-            ProviderToken::DomainScope(token) => {
-                if domain.is_none() {
-                    domain = Some(
-                        common::get_domain(state, Some(&token.domain_id), None::<&str>).await?,
-                    );
-                }
-            }
-            ProviderToken::FederationUnscoped(_token) => {}
-            ProviderToken::FederationDomainScope(token) => {
-                if domain.is_none() {
-                    domain = Some(
-                        common::get_domain(state, Some(&token.domain_id), None::<&str>).await?,
-                    );
-                }
-            }
-            ProviderToken::FederationProjectScope(token) => {
-                if project.is_none() {
-                    project = Some(
-                        state
-                            .provider
-                            .get_resource_provider()
-                            .get_project(state, &token.project_id)
-                            .await?
-                            .ok_or_else(|| KeystoneApiError::NotFound {
-                                resource: "project".into(),
-                                identifier: token.project_id.clone(),
-                            })?,
-                    );
-                }
-            }
-            ProviderToken::ProjectScope(token) => {
-                if project.is_none() {
-                    project = Some(
-                        state
-                            .provider
-                            .get_resource_provider()
-                            .get_project(state, &token.project_id)
-                            .await?
-                            .ok_or_else(|| KeystoneApiError::NotFound {
-                                resource: "project".into(),
-                                identifier: token.project_id.clone(),
-                            })?,
-                    );
-                }
-            }
-            ProviderToken::Restricted(token) => {
-                if project.is_none() {
-                    project = Some(
-                        state
-                            .provider
-                            .get_resource_provider()
-                            .get_project(state, &token.project_id)
-                            .await?
-                            .ok_or_else(|| KeystoneApiError::NotFound {
-                                resource: "project".into(),
-                                identifier: token.project_id.clone(),
-                            })?,
-                    );
-                }
-            }
-            ProviderToken::SystemScope(_token) => {
-                response.system(System { all: true });
-            }
-            ProviderToken::Trust(token) => {
-                if project.is_none() {
-                    project = Some(
-                        state
-                            .provider
-                            .get_resource_provider()
-                            .get_project(state, &token.project_id)
-                            .await?
-                            .ok_or_else(|| KeystoneApiError::NotFound {
-                                resource: "project".into(),
-                                identifier: token.project_id.clone(),
-                            })?,
-                    );
-                }
-
-                if let Some(trust) = &token.trust {
-                    response.trust(trust);
-                } else {
-                    response.trust(
-                        &state
-                            .provider
-                            .get_trust_provider()
-                            .get_trust(state, &token.trust_id)
-                            .await?
-                            .ok_or_else(|| KeystoneApiError::NotFound {
-                                resource: "trust".into(),
-                                identifier: token.trust_id.clone(),
-                            })?,
-                    );
-                }
-            }
-            ProviderToken::Unscoped(_token) => {}
-        }
-
-        if let Some(domain) = domain {
-            response.domain(domain.clone());
-        }
-        if let Some(project) = project {
-            response.project(
-                get_project_info_builder(state, &project, &user_domain)
-                    .await?
-                    .build()?,
-            );
-        }
-        Ok(response.build()?)
+    let mut user_response: UserBuilder = UserBuilder::default();
+    user_response.id(user.id.clone());
+    user_response.name(user.name.clone());
+    if let Some(val) = user.password_expires_at {
+        user_response.password_expires_at(val);
     }
+    user_response.domain(user_domain.clone());
+    response.user(user_response.build()?);
+
+    if let Some(roles) = token.effective_roles() {
+        response.roles(
+            roles
+                .clone()
+                .into_iter()
+                .map(Into::into)
+                .collect::<Vec<_>>(),
+        );
+    }
+
+    match token {
+        ProviderToken::ApplicationCredential(token) => {
+            if project.is_none() {
+                project = Some(
+                    state
+                        .provider
+                        .get_resource_provider()
+                        .get_project(state, &token.project_id)
+                        .await?
+                        .ok_or_else(|| KeystoneApiError::NotFound {
+                            resource: "project".into(),
+                            identifier: token.project_id.clone(),
+                        })?,
+                );
+            }
+        }
+        ProviderToken::DomainScope(token) => {
+            if domain.is_none() {
+                domain =
+                    Some(common::get_domain(state, Some(&token.domain_id), None::<&str>).await?);
+            }
+        }
+        ProviderToken::FederationUnscoped(_token) => {}
+        ProviderToken::FederationDomainScope(token) => {
+            if domain.is_none() {
+                domain =
+                    Some(common::get_domain(state, Some(&token.domain_id), None::<&str>).await?);
+            }
+        }
+        ProviderToken::FederationProjectScope(token) => {
+            if project.is_none() {
+                project = Some(
+                    state
+                        .provider
+                        .get_resource_provider()
+                        .get_project(state, &token.project_id)
+                        .await?
+                        .ok_or_else(|| KeystoneApiError::NotFound {
+                            resource: "project".into(),
+                            identifier: token.project_id.clone(),
+                        })?,
+                );
+            }
+        }
+        ProviderToken::ProjectScope(token) => {
+            if project.is_none() {
+                project = Some(
+                    state
+                        .provider
+                        .get_resource_provider()
+                        .get_project(state, &token.project_id)
+                        .await?
+                        .ok_or_else(|| KeystoneApiError::NotFound {
+                            resource: "project".into(),
+                            identifier: token.project_id.clone(),
+                        })?,
+                );
+            }
+        }
+        ProviderToken::Restricted(token) => {
+            if project.is_none() {
+                project = Some(
+                    state
+                        .provider
+                        .get_resource_provider()
+                        .get_project(state, &token.project_id)
+                        .await?
+                        .ok_or_else(|| KeystoneApiError::NotFound {
+                            resource: "project".into(),
+                            identifier: token.project_id.clone(),
+                        })?,
+                );
+            }
+        }
+        ProviderToken::SystemScope(_token) => {
+            response.system(System { all: true });
+        }
+        ProviderToken::Trust(token) => {
+            if project.is_none() {
+                project = Some(
+                    state
+                        .provider
+                        .get_resource_provider()
+                        .get_project(state, &token.project_id)
+                        .await?
+                        .ok_or_else(|| KeystoneApiError::NotFound {
+                            resource: "project".into(),
+                            identifier: token.project_id.clone(),
+                        })?,
+                );
+            }
+
+            if let Some(trust) = &token.trust {
+                response.trust(trust);
+            } else {
+                response.trust(
+                    &state
+                        .provider
+                        .get_trust_provider()
+                        .get_trust(state, &token.trust_id)
+                        .await?
+                        .ok_or_else(|| KeystoneApiError::NotFound {
+                            resource: "trust".into(),
+                            identifier: token.trust_id.clone(),
+                        })?,
+                );
+            }
+        }
+        ProviderToken::Unscoped(_token) => {}
+    }
+
+    if let Some(domain) = domain {
+        response.domain(domain.clone());
+    }
+    if let Some(project) = project {
+        response.project(
+            common::get_project_info_scope_builder(state, &project, &user_domain)
+                .await?
+                .build()?,
+        );
+    }
+    Ok(response.build()?)
 }
 
 #[cfg(test)]
 mod tests {
     use openstack_keystone_api_types::v3::role::RoleRef;
+    use openstack_keystone_core_types::identity::UserResponseBuilder;
+    use openstack_keystone_core_types::resource::{Domain, Project};
+    use openstack_keystone_core_types::role::RoleRef as ProviderRoleRef;
+    use openstack_keystone_core_types::trust::Trust;
 
+    use super::*;
     use crate::api::tests::get_mocked_state;
-    use crate::identity::{MockIdentityProvider, types::UserResponseBuilder};
+    use crate::identity::MockIdentityProvider;
     use crate::provider::Provider;
-    use crate::resource::{
-        MockResourceProvider,
-        types::{Domain, Project},
-    };
-    use crate::role::types::RoleRef as ProviderRoleRef;
+    use crate::resource::MockResourceProvider;
     use crate::token::{
         DomainScopePayload, ProjectScopePayload, Token as ProviderToken, TrustPayload,
         UnscopedPayload,
     };
-    use crate::trust::types::Trust;
 
     #[tokio::test]
     async fn test_from_unscoped() {
@@ -254,11 +246,13 @@ mod tests {
 
         let state = get_mocked_state(provider, true, None, Some(true));
 
-        let api_token = ProviderToken::Unscoped(UnscopedPayload {
-            user_id: "bar".into(),
-            ..Default::default()
-        })
-        .build_api_token_v3(&state)
+        let api_token = build_api_token_v3(
+            &ProviderToken::Unscoped(UnscopedPayload {
+                user_id: "bar".into(),
+                ..Default::default()
+            }),
+            &state,
+        )
         .await
         .unwrap();
         assert_eq!("bar", api_token.user.id);
@@ -300,12 +294,14 @@ mod tests {
 
         let state = get_mocked_state(provider, true, None, None);
 
-        let api_token = ProviderToken::DomainScope(DomainScopePayload {
-            user_id: "bar".into(),
-            domain_id: "domain_id".into(),
-            ..Default::default()
-        })
-        .build_api_token_v3(&state)
+        let api_token = build_api_token_v3(
+            &ProviderToken::DomainScope(DomainScopePayload {
+                user_id: "bar".into(),
+                domain_id: "domain_id".into(),
+                ..Default::default()
+            }),
+            &state,
+        )
         .await
         .unwrap();
 
@@ -371,7 +367,7 @@ mod tests {
             ..Default::default()
         });
 
-        let api_token = token.build_api_token_v3(&state).await.unwrap();
+        let api_token = build_api_token_v3(&token, &state).await.unwrap();
 
         assert_eq!("bar", api_token.user.id);
         assert_eq!(Some("user_domain_id"), api_token.user.domain.id.as_deref());
@@ -449,7 +445,7 @@ mod tests {
             ..Default::default()
         });
 
-        let api_token = token.build_api_token_v3(&state).await.unwrap();
+        let api_token = build_api_token_v3(&token, &state).await.unwrap();
 
         assert_eq!("bar", api_token.user.id);
         assert_eq!(Some("user_domain_id"), api_token.user.domain.id.as_deref());

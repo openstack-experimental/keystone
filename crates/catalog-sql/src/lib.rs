@@ -20,9 +20,9 @@ use sea_orm::query::*;
 
 use openstack_keystone_core::catalog::CatalogProviderError;
 use openstack_keystone_core::catalog::backend::CatalogBackend;
-use openstack_keystone_core::catalog::types::*;
 use openstack_keystone_core::error::DbContextExt;
 use openstack_keystone_core::keystone::ServiceState;
+use openstack_keystone_core_types::catalog::*;
 
 use crate::entity::{
     endpoint as db_endpoint,

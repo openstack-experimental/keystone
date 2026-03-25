@@ -76,16 +76,17 @@ mod tests {
     use tower::ServiceExt; // for `call`, `oneshot`, and `ready`
     use tower_http::trace::TraceLayer;
 
+    use openstack_keystone_core_types::assignment::{
+        Assignment, AssignmentType, RoleAssignmentListParameters,
+    };
+
     use super::super::openapi_router;
     use crate::api::tests::get_mocked_state;
     use crate::api::v3::role_assignment::types::{
         Assignment as ApiAssignment, AssignmentList as ApiAssignmentList, Project, Role, Scope,
         User,
     };
-    use crate::assignment::{
-        MockAssignmentProvider,
-        types::{Assignment, AssignmentType, RoleAssignmentListParameters},
-    };
+    use crate::assignment::MockAssignmentProvider;
     use crate::provider::Provider;
 
     #[tokio::test]

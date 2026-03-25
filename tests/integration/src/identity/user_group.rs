@@ -25,9 +25,9 @@ use openstack_keystone_resource_sql::entity::project;
 
 use openstack_keystone::plugin_manager::PluginManager;
 use openstack_keystone_core::identity::IdentityApi;
-use openstack_keystone_core::identity::types::*;
 use openstack_keystone_core::keystone::{Service, ServiceState};
 use openstack_keystone_core::provider::Provider;
+use openstack_keystone_core_types::identity::*;
 
 use crate::common::{bootstrap, get_isolated_database};
 

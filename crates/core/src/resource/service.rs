@@ -18,10 +18,11 @@ use uuid::Uuid;
 use validator::Validate;
 
 use openstack_keystone_config::Config;
+use openstack_keystone_core_types::resource::*;
 
 use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManagerApi;
-use crate::resource::{ResourceProviderError, backend::ResourceBackend, types::*};
+use crate::resource::{ResourceApi, ResourceProviderError, backend::ResourceBackend};
 
 pub struct ResourceService {
     backend_driver: Arc<dyn ResourceBackend>,

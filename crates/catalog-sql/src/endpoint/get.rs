@@ -15,8 +15,9 @@
 use sea_orm::DatabaseConnection;
 use sea_orm::entity::*;
 
-use openstack_keystone_core::catalog::{CatalogProviderError, types::Endpoint};
+use openstack_keystone_core::catalog::CatalogProviderError;
 use openstack_keystone_core::error::DbContextExt;
+use openstack_keystone_core_types::catalog::*;
 
 use crate::entity::prelude::Endpoint as DbEndpoint;
 

@@ -128,8 +128,8 @@ pub(crate) mod tests {
     use std::sync::Arc;
 
     use openstack_keystone_config::Config;
+    use openstack_keystone_core_types::identity::UserResponseBuilder;
 
-    use crate::identity::types::UserResponseBuilder;
     use crate::keystone::{Service, ServiceState};
     use crate::policy::{MockPolicy, PolicyError, PolicyEvaluationResult};
     use crate::provider::ProviderBuilder;

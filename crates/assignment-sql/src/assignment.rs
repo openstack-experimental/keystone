@@ -13,7 +13,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Role assignment database backend.
 
-use openstack_keystone_core::assignment::{AssignmentProviderError, types::*};
+use openstack_keystone_core::assignment::AssignmentProviderError;
+use openstack_keystone_core_types::assignment::*;
 
 use crate::entity::{
     assignment as db_assignment, sea_orm_active_enums::Type as DbAssignmentType,
@@ -53,7 +54,19 @@ impl TryFrom<db_system_assignment::Model> for Assignment {
         builder.actor_id(value.actor_id);
         builder.target_id(value.target_id);
         builder.inherited(value.inherited);
-        builder.r#type(AssignmentType::try_from(value.r#type.as_ref())?);
+        builder.r#type(match value.r#type.as_ref() {
+            "GroupDomain" => AssignmentType::GroupDomain,
+            "GroupProject" => AssignmentType::GroupProject,
+            "GroupSystem" => AssignmentType::GroupSystem,
+            "UserDomain" => AssignmentType::UserDomain,
+            "UserProject" => AssignmentType::UserProject,
+            "UserSystem" => AssignmentType::UserSystem,
+            _ => {
+                return Err(AssignmentProviderError::InvalidAssignmentType(
+                    value.r#type.clone(),
+                ));
+            }
+        });
 
         Ok(builder.build()?)
     }

@@ -17,16 +17,14 @@ use url::Url;
 
 use openstack_keystone_api_types::Link;
 use openstack_keystone_config::Config;
+use openstack_keystone_core_types::resource::{Domain, Project};
+use openstack_keystone_core_types::scope::Scope as ProviderScope;
 
 use crate::api::KeystoneApiError;
 use crate::api::types::ScopeProject;
 use crate::auth::AuthzInfo;
-use crate::common::types::Scope as ProviderScope;
 use crate::keystone::ServiceState;
-use crate::resource::{
-    ResourceApi,
-    types::{Domain, Project},
-};
+use crate::resource::ResourceApi;
 
 /// Get the domain by ID or Name.
 ///
@@ -225,11 +223,12 @@ mod tests {
     use rstest::rstest;
 
     use openstack_keystone_config::Config;
+    use openstack_keystone_core_types::resource::Domain;
 
     use super::*;
     use crate::api::tests::get_mocked_state;
     use crate::provider::Provider;
-    use crate::resource::{MockResourceProvider, types::Domain};
+    use crate::resource::MockResourceProvider;
 
     #[tokio::test]
     async fn test_get_domain() {

@@ -14,7 +14,9 @@
 
 //! Show token restriction.
 use axum::{
+    Json,
     extract::{Path, State},
+    http::StatusCode,
     response::IntoResponse,
 };
 
@@ -73,7 +75,13 @@ pub(super) async fn show(
             None,
         )
         .await?;
-    Ok(current)
+    Ok((
+        StatusCode::OK,
+        Json(TokenRestrictionResponse {
+            restriction: TokenRestriction::from(current),
+        }),
+    )
+        .into_response())
 }
 
 #[cfg(test)]
@@ -86,6 +94,9 @@ mod tests {
     use tower::ServiceExt; // for `call`, `oneshot`, and `ready`
     use tower_http::trace::TraceLayer;
 
+    use openstack_keystone_core_types::role::RoleRef as ProviderRoleRef;
+    use openstack_keystone_core_types::token as provider_types;
+
     use super::{
         super::{openapi_router, tests::get_token_provider_mock_with_mocks},
         *,
@@ -93,8 +104,6 @@ mod tests {
     use crate::api::tests::get_mocked_state;
     use crate::api::v3::role::types::RoleRef;
     use crate::provider::Provider;
-    use crate::role::types::RoleRef as ProviderRoleRef;
-    use crate::token::types as provider_types;
 
     #[tokio::test]
     async fn test_get() {

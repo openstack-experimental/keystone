@@ -23,9 +23,10 @@ use uuid::Uuid;
 use validator::Validate;
 
 use openstack_keystone_config::Config;
+use openstack_keystone_core_types::identity::*;
 
 use crate::auth::AuthenticatedInfo;
-use crate::identity::{IdentityProviderError, backend::IdentityBackend, types::*};
+use crate::identity::{IdentityApi, IdentityProviderError, backend::IdentityBackend};
 use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManagerApi;
 use crate::resource::{ResourceApi, error::ResourceProviderError};
@@ -403,9 +404,10 @@ impl IdentityApi for IdentityService {
 
 #[cfg(test)]
 mod tests {
+    use openstack_keystone_core_types::identity::{UserCreateBuilder, UserResponseBuilder};
+
     use super::*;
     use crate::identity::backend::MockIdentityBackend;
-    use crate::identity::types::user::{UserCreateBuilder, UserResponseBuilder};
     use crate::tests::get_mocked_state;
 
     #[tokio::test]

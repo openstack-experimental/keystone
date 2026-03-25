@@ -15,9 +15,10 @@
 use async_trait::async_trait;
 use mockall::mock;
 
+use openstack_keystone_core_types::catalog::*;
+
 use crate::catalog::CatalogApi;
 use crate::catalog::error::CatalogProviderError;
-use crate::catalog::types::{Endpoint, EndpointListParameters, Service, ServiceListParameters};
 use crate::keystone::ServiceState;
 
 mock! {

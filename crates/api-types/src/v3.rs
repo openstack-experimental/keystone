@@ -18,3 +18,16 @@ pub mod project;
 pub mod role;
 pub mod role_assignment;
 pub mod user;
+
+#[cfg(feature = "conv")]
+mod auth_conv;
+#[cfg(feature = "conv")]
+mod group_conv;
+#[cfg(feature = "conv")]
+mod project_conv;
+#[cfg(feature = "conv")]
+mod role_assignment_conv;
+#[cfg(feature = "conv")]
+mod role_conv;
+#[cfg(feature = "conv")]
+mod user_conv;

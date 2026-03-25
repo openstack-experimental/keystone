@@ -11,50 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-
-use thiserror::Error;
-
-//use crate::api::error::KeystoneApiError;
-use crate::error::BuilderError;
-
-/// Identity mapping provider error.
-#[derive(Error, Debug)]
-pub enum IdentityMappingProviderError {
-    /// Conflict.
-    #[error("conflict: {0}")]
-    Conflict(String),
-
-    /// Driver error.
-    #[error("backend driver error: {0}")]
-    Driver(String),
-
-    /// (de)serialization error.
-    #[error("data serialization error")]
-    Serde {
-        #[from]
-        source: serde_json::Error,
-    },
-
-    /// Structures builder error.
-    #[error(transparent)]
-    StructBuilder {
-        /// The source of the error.
-        #[from]
-        source: BuilderError,
-    },
-
-    /// Unsupported driver.
-    #[error("unsupported driver `{0}` for the identity mapping provider")]
-    UnsupportedDriver(String),
-
-    /// Request validation error.
-    #[error("request validation error: {}", source)]
-    Validation {
-        /// The source of the error.
-        #[from]
-        source: validator::ValidationErrors,
-    },
-}
+pub use openstack_keystone_core_types::identity_mapping::IdentityMappingProviderError;
 
 impl From<crate::error::DatabaseError> for IdentityMappingProviderError {
     fn from(source: crate::error::DatabaseError) -> Self {

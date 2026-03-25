@@ -17,9 +17,9 @@ use sea_orm::entity::*;
 use sea_orm::query::*;
 
 use openstack_keystone_core::application_credential::ApplicationCredentialProviderError;
-use openstack_keystone_core::application_credential::types::*;
 use openstack_keystone_core::error::DbContextExt;
-use openstack_keystone_core::role::types::RoleRef;
+use openstack_keystone_core_types::application_credential::*;
+use openstack_keystone_core_types::role::RoleRef;
 
 use crate::entity::{
     application_credential as db_application_credential,

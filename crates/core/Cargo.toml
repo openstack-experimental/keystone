@@ -10,14 +10,15 @@ repository.workspace = true
 
 [dependencies]
 async-trait.workspace = true
-axum = { workspace = true, features = ["json"], optional = true }
+axum = { workspace = true, default-features = false, features = ["json"], optional = true }
 base64.workspace = true
 bcrypt = { workspace = true, features = ["alloc"] }
 chrono.workspace = true
 derive_builder.workspace = true
 eyre.workspace = true
 jsonwebtoken = { version = "10.3", features = ["rust_crypto"] }
-openstack-keystone-api-types = { version = "0.1", path = "../api-types/" }
+openstack-keystone-api-types = { version = "0.1", path = "../api-types/", optional = true }
+openstack-keystone-core-types = { version = "0.1", path = "../core-types/" }
 openstack-keystone-config = { version = "0.1", path = "../config/" }
 mockall = { workspace = true, optional = true }
 rand.workspace = true
@@ -33,7 +34,7 @@ tokio = { workspace = true, features = ["fs"] }
 tracing.workspace = true
 url = { workspace = true, features = ["serde"] }
 uuid = { workspace = true, features = ["v4"] }
-validator = { workspace = true, features = ["derive"] }
+validator.workspace = true
 
 [dev-dependencies]
 config = { workspace = true }
@@ -45,6 +46,6 @@ url.workspace = true
 
 [features]
 default = []
-api = ["openstack-keystone-api-types/builder", "dep:axum"]
+api = ["openstack-keystone-api-types/builder", "dep:axum", "openstack-keystone-api-types/conv"]
 bench_internals = []
 mock = ["dep:mockall"]

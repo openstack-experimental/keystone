@@ -17,7 +17,8 @@ use eyre::Result;
 use std::collections::BTreeSet;
 
 use openstack_keystone::keystone::ServiceState;
-use openstack_keystone::role::{RoleApi, types::*};
+use openstack_keystone::role::RoleApi;
+use openstack_keystone_core_types::role::*;
 
 use crate::common::create_role;
 use crate::common::get_state;

@@ -16,10 +16,8 @@ use sea_orm::DatabaseConnection;
 use sea_orm::entity::*;
 
 use openstack_keystone_core::error::DbContextExt;
-use openstack_keystone_core::federation::{
-    FederationProviderError,
-    types::{IdentityProvider, IdentityProviderUpdate},
-};
+use openstack_keystone_core::federation::FederationProviderError;
+use openstack_keystone_core_types::federation::*;
 
 use crate::entity::{
     federated_identity_provider as db_federated_identity_provider,

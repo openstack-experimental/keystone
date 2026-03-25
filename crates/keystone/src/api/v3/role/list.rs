@@ -61,23 +61,17 @@ mod tests {
         http::{Request, StatusCode},
     };
     use http_body_util::BodyExt; // for `collect`
-
     use serde_json::json;
-
     use tower::ServiceExt; // for `call`, `oneshot`, and `ready`
     use tower_http::trace::TraceLayer;
 
+    use openstack_keystone_core_types::role::{RoleBuilder, RoleListParameters};
+
     use super::super::openapi_router;
     use crate::api::tests::get_mocked_state;
-    use crate::api::v3::role::types::{
-        Role as ApiRole, //GroupCreate as ApiGroupCreate, GroupCreateRequest,
-        RoleList,
-    };
+    use crate::api::v3::role::types::{Role as ApiRole, RoleList};
     use crate::provider::Provider;
-    use crate::role::{
-        MockRoleProvider,
-        types::{RoleBuilder, RoleListParameters},
-    };
+    use crate::role::MockRoleProvider;
 
     #[tokio::test]
     async fn test_list() {

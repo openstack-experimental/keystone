@@ -16,15 +16,15 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use openstack_keystone_config::Config;
+use openstack_keystone_core_types::assignment::*;
+use openstack_keystone_core_types::revoke::RevocationEventCreate;
+use openstack_keystone_core_types::role::{Role, RoleListParameters};
 
-use crate::assignment::{AssignmentProviderError, backend::AssignmentBackend, types::*};
+use crate::assignment::{AssignmentApi, AssignmentProviderError, backend::AssignmentBackend};
 use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManagerApi;
-use crate::revoke::{RevokeApi, types::RevocationEventCreate};
-use crate::role::{
-    RoleApi,
-    types::{Role, RoleListParameters},
-};
+use crate::revoke::RevokeApi;
+use crate::role::RoleApi;
 
 pub struct AssignmentService {
     backend_driver: Arc<dyn AssignmentBackend>,
@@ -135,11 +135,14 @@ impl AssignmentApi for AssignmentService {
 
 #[cfg(test)]
 mod tests {
+    use openstack_keystone_core_types::revoke::*;
+    use openstack_keystone_core_types::role::*;
+
     use super::*;
     use crate::assignment::backend::MockAssignmentBackend;
     use crate::provider::Provider;
     use crate::revoke::MockRevokeProvider;
-    use crate::role::{MockRoleProvider, types::*};
+    use crate::role::MockRoleProvider;
     use crate::tests::get_mocked_state;
 
     #[tokio::test]
@@ -265,7 +268,7 @@ mod tests {
                     && params.user_id == Some("actor".into())
                     && params.role_id == Some("rid1".into())
             })
-            .returning(|_, _| Ok(crate::revoke::RevocationEvent::default()));
+            .returning(|_, _| Ok(RevocationEvent::default()));
         let state = get_mocked_state(
             None,
             Some(Provider::mocked_builder().mock_revoke(revoke_mock)),

@@ -19,7 +19,8 @@ use eyre::Result;
 
 use openstack_keystone::keystone::Service;
 use openstack_keystone::keystone::ServiceState;
-use openstack_keystone::resource::{ResourceApi, types::*};
+use openstack_keystone::resource::ResourceApi;
+use openstack_keystone_core_types::resource::*;
 
 use crate::common::*;
 use crate::impl_deleter;

@@ -17,11 +17,12 @@ use async_trait::async_trait;
 use std::sync::Arc;
 
 use openstack_keystone_config::Config;
+use openstack_keystone_core_types::revoke::*;
+use openstack_keystone_core_types::token::Token;
 
 use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManagerApi;
-use crate::revoke::{RevokeProviderError, backend::RevokeBackend, types::*};
-use crate::token::types::Token;
+use crate::revoke::{RevokeApi, RevokeProviderError, backend::RevokeBackend};
 
 /// Revoke provider.
 pub struct RevokeService {

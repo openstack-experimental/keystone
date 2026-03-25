@@ -16,7 +16,8 @@ use sea_orm::ConnectionTrait;
 use sea_orm::entity::*;
 
 use openstack_keystone_core::error::DbContextExt;
-use openstack_keystone_core::identity::{IdentityProviderError, types::UserOptions};
+use openstack_keystone_core::identity::IdentityProviderError;
+use openstack_keystone_core_types::identity::UserOptions;
 
 use crate::entity::prelude::UserOption as DbUserOption;
 use crate::entity::user_option as db_user_option;

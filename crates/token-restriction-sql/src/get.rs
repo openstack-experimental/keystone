@@ -18,7 +18,7 @@ use sea_orm::query::*;
 
 use openstack_keystone_core::error::DbContextExt;
 use openstack_keystone_core::token::error::TokenProviderError;
-use openstack_keystone_core::token::types::TokenRestriction;
+use openstack_keystone_core_types::token::TokenRestriction;
 
 use crate::FromModelWithRoleAssociation;
 use crate::entity::prelude::{

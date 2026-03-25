@@ -14,8 +14,9 @@
 
 use async_trait::async_trait;
 
+use openstack_keystone_core_types::assignment::*;
+
 use crate::assignment::AssignmentProviderError;
-use crate::assignment::types::assignment::*;
 use crate::keystone::ServiceState;
 
 #[cfg_attr(test, mockall::automock)]

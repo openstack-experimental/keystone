@@ -16,7 +16,8 @@
 use eyre::Result;
 use tracing_test::traced_test;
 
-use openstack_keystone::k8s_auth::{K8sAuthApi, types::*};
+use openstack_keystone::k8s_auth::K8sAuthApi;
+use openstack_keystone_core_types::k8s_auth::*;
 
 use super::super::get_state;
 use super::create_k8s_auth_instance;

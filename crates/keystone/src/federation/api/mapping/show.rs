@@ -14,7 +14,9 @@
 
 //! Federation attribute mapping: show.
 use axum::{
+    Json,
     extract::{Path, State},
+    http::StatusCode,
     response::IntoResponse,
 };
 
@@ -72,7 +74,13 @@ pub(super) async fn show(
             None,
         )
         .await?;
-    Ok(current)
+    Ok((
+        StatusCode::OK,
+        Json(MappingResponse {
+            mapping: Mapping::from(current),
+        }),
+    )
+        .into_response())
 }
 
 #[cfg(test)]
@@ -86,9 +94,11 @@ mod tests {
     use tower_http::trace::TraceLayer;
     use tracing_test::traced_test;
 
+    use openstack_keystone_core_types::federation as provider_types;
+
     use super::{super::openapi_router, *};
     use crate::api::tests::get_mocked_state;
-    use crate::federation::{MockFederationProvider, types as provider_types};
+    use crate::federation::MockFederationProvider;
     use crate::provider::Provider;
 
     #[tokio::test]

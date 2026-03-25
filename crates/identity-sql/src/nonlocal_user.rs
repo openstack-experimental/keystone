@@ -12,7 +12,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use openstack_keystone_core::identity::types::UserResponseBuilder;
+use openstack_keystone_core_types::identity::UserResponseBuilder;
 
 use crate::entity::nonlocal_user as db_nonlocal_user;
 

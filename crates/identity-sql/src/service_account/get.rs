@@ -15,10 +15,8 @@
 use sea_orm::DatabaseConnection;
 
 use openstack_keystone_config::Config;
-use openstack_keystone_core::identity::{
-    IdentityProviderError,
-    types::{ServiceAccount, ServiceAccountBuilder},
-};
+use openstack_keystone_core::identity::IdentityProviderError;
+use openstack_keystone_core_types::identity::{ServiceAccount, ServiceAccountBuilder};
 
 use crate::nonlocal_user;
 use crate::user;
@@ -75,7 +73,7 @@ mod tests {
     use sea_orm::{DatabaseBackend, MockDatabase};
 
     use openstack_keystone_config::Config;
-    use openstack_keystone_core::identity::types::UserOptions;
+    use openstack_keystone_core_types::identity::UserOptions;
 
     use super::*;
     use crate::nonlocal_user::tests::get_nonlocal_user_mock;

@@ -87,11 +87,13 @@ mod tests {
     use tower_http::trace::TraceLayer;
     use tracing_test::traced_test;
 
+    use openstack_keystone_core_types::resource::Project as ProviderProject;
+
     use super::super::openapi_router;
     use crate::api::tests::get_mocked_state;
     use crate::api::v3::project::types::*;
     use crate::provider::Provider;
-    use crate::resource::{MockResourceProvider, types::Project as ProviderProject};
+    use crate::resource::MockResourceProvider;
 
     #[traced_test]
     #[tokio::test]

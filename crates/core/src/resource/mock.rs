@@ -14,9 +14,10 @@
 use async_trait::async_trait;
 use mockall::mock;
 
+use openstack_keystone_core_types::resource::*;
+
 use crate::keystone::ServiceState;
-use crate::resource::error::ResourceProviderError;
-use crate::resource::types::*;
+use crate::resource::{ResourceApi, error::ResourceProviderError};
 
 mock! {
     pub ResourceProvider {}

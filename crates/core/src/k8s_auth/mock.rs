@@ -15,10 +15,12 @@
 use async_trait::async_trait;
 use mockall::mock;
 
+use openstack_keystone_core_types::k8s_auth::*;
+use openstack_keystone_core_types::token::TokenRestriction;
+
 use crate::auth::AuthenticatedInfo;
-use crate::k8s_auth::{K8sAuthApi, K8sAuthProviderError, types::*};
+use crate::k8s_auth::{K8sAuthApi, K8sAuthProviderError};
 use crate::keystone::ServiceState;
-use crate::token::types::TokenRestriction;
 
 mock! {
     pub K8sAuthProvider {}

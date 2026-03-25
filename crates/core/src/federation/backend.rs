@@ -14,8 +14,9 @@
 
 use async_trait::async_trait;
 
+use openstack_keystone_core_types::federation::*;
+
 use crate::federation::FederationProviderError;
-use crate::federation::types::*;
 use crate::keystone::ServiceState;
 
 /// Backend driver interface for the Federation Provider.

@@ -16,17 +16,36 @@ use serde::Serialize;
 use url::Url;
 
 use openstack_keystone_api_types::Link;
+use openstack_keystone_api_types::error::KeystoneApiError;
+use openstack_keystone_api_types::scope::{ProjectBuilder, ScopeProject};
 use openstack_keystone_config::Config;
+use openstack_keystone_core_types::resource::{Domain, Project};
+use openstack_keystone_core_types::scope::Scope as ProviderScope;
 
-use crate::api::KeystoneApiError;
-use crate::api::types::ScopeProject;
 use crate::auth::AuthzInfo;
-use crate::common::types::Scope as ProviderScope;
 use crate::keystone::ServiceState;
 use crate::resource::{
     ResourceApi,
-    types::{Domain, Project},
+    //    types::{Domain, Project},
 };
+
+/// Get the scope [ProjectBuilder] for the given Project.
+pub(super) async fn get_project_info_scope_builder(
+    state: &ServiceState,
+    project: &Project,
+    user_domain: &Domain,
+) -> Result<ProjectBuilder, KeystoneApiError> {
+    let mut project_response = ProjectBuilder::default();
+    project_response.id(project.id.clone());
+    project_response.name(project.name.clone());
+    if project.domain_id == user_domain.id {
+        project_response.domain(user_domain.clone());
+    } else {
+        let project_domain = get_domain(state, Some(&project.domain_id), None::<&str>).await?;
+        project_response.domain(project_domain.clone());
+    }
+    Ok(project_response)
+}
 
 /// Get the domain by ID or Name.
 ///
@@ -225,11 +244,12 @@ mod tests {
     use rstest::rstest;
 
     use openstack_keystone_config::Config;
+    use openstack_keystone_core_types::resource::Domain;
 
     use super::*;
     use crate::api::tests::get_mocked_state;
     use crate::provider::Provider;
-    use crate::resource::{MockResourceProvider, types::Domain};
+    use crate::resource::MockResourceProvider;
 
     #[tokio::test]
     async fn test_get_domain() {

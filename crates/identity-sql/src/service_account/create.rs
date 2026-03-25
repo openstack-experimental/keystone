@@ -20,8 +20,9 @@ use uuid::Uuid;
 
 use openstack_keystone_config::Config;
 use openstack_keystone_core::error::DbContextExt;
-use openstack_keystone_core::identity::types::get_user_last_active_at;
-use openstack_keystone_core::identity::{IdentityProviderError, types::*};
+use openstack_keystone_core::identity::IdentityProviderError;
+use openstack_keystone_core::identity::get_user_last_active_at;
+use openstack_keystone_core_types::identity::*;
 
 use crate::entity::user as db_user;
 use crate::nonlocal_user;

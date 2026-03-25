@@ -17,10 +17,8 @@ use sea_orm::entity::*;
 use serde_json::json;
 
 use openstack_keystone_core::error::DbContextExt;
-use openstack_keystone_core::identity::{
-    IdentityProviderError,
-    types::{Group, GroupCreate},
-};
+use openstack_keystone_core::identity::IdentityProviderError;
+use openstack_keystone_core_types::identity::{Group, GroupCreate};
 
 use crate::entity::group;
 

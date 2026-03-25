@@ -20,8 +20,9 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use openstack_keystone_config::Config;
+use openstack_keystone_core_types::federation::*;
 
-use crate::federation::{FederationProviderError, backend::FederationBackend, types::*};
+use crate::federation::{FederationApi, FederationProviderError, backend::FederationBackend};
 use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManagerApi;
 

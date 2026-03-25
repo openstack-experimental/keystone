@@ -16,8 +16,9 @@
 use async_trait::async_trait;
 
 use openstack_keystone_core::keystone::ServiceState;
-use openstack_keystone_core::revoke::{RevokeProviderError, backend::RevokeBackend, types::*};
-use openstack_keystone_core::token::types::Token;
+use openstack_keystone_core::revoke::{RevokeProviderError, backend::RevokeBackend};
+use openstack_keystone_core_types::revoke::*;
+use openstack_keystone_core_types::token::Token;
 
 use crate::entity::revocation_event as db_revocation_event;
 

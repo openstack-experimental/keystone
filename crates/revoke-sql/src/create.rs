@@ -18,7 +18,7 @@ use sea_orm::DatabaseConnection;
 use sea_orm::entity::*;
 
 use openstack_keystone_core::error::DbContextExt;
-use openstack_keystone_core::revoke::{RevocationEvent, RevocationEventCreate};
+use openstack_keystone_core_types::revoke::{RevocationEvent, RevocationEventCreate};
 
 use crate::entity::revocation_event as db_revocation_event;
 

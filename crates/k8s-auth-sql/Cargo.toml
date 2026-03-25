@@ -13,6 +13,7 @@ exclude.workspace = true
 [dependencies]
 async-trait.workspace = true
 openstack-keystone-core = { version = "0.1", path = "../core" }
+openstack-keystone-core-types = { version = "0.1", path = "../core-types" }
 sea-orm.workspace = true
 tracing.workspace = true
 uuid = { workspace = true, features = ["v4"] }

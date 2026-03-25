@@ -16,10 +16,8 @@ use sea_orm::DatabaseConnection;
 use sea_orm::entity::*;
 
 use openstack_keystone_core::error::DbContextExt;
-use openstack_keystone_core::federation::{
-    FederationProviderError,
-    types::{Mapping, MappingUpdate},
-};
+use openstack_keystone_core::federation::FederationProviderError;
+use openstack_keystone_core_types::federation::{Mapping, MappingUpdate};
 
 use crate::entity::{
     federated_mapping as db_federated_mapping, prelude::FederatedMapping as DbFederatedMapping,
@@ -97,7 +95,7 @@ mod tests {
     use sea_orm::{DatabaseBackend, MockDatabase, MockExecResult, Transaction};
     use serde_json::json;
 
-    use openstack_keystone_core::federation::types::mapping::MappingType;
+    use openstack_keystone_core_types::federation::MappingType;
 
     use super::super::tests::get_mapping_mock;
     use super::*;

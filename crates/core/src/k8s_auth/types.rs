@@ -12,13 +12,12 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //! # K8s auth provider types definitions.
+use serde::{Deserialize, Serialize};
 
-mod auth;
-mod instance;
-mod provider_api;
-mod role;
-
-pub use auth::*;
-pub use instance::*;
-pub use provider_api::K8sAuthApi;
-pub use role::*;
+/// K8s JWT claims.
+#[derive(Debug, Deserialize, Serialize)]
+pub(crate) struct K8sClaims {
+    pub(crate) aud: Vec<String>,
+    pub(crate) exp: u64,
+    pub(crate) sub: String,
+}

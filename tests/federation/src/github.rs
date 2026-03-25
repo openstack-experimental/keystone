@@ -19,7 +19,7 @@ use serde_json::json;
 use std::env;
 use tracing_test::traced_test;
 
-use openstack_keystone_api_types::federation::{identity_provider::*, mapping::*};
+use openstack_keystone_api_types::federation::*;
 use openstack_keystone_api_types::v4::user::*;
 
 mod keystone_utils;

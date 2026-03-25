@@ -23,8 +23,9 @@ use crate::{
     WebauthnApi, WebauthnError,
     api::types::{CombinedExtensionState, auth::*},
 };
+use openstack_keystone_api_types::error::KeystoneApiError;
 use openstack_keystone_api_types::v4::auth::token::TokenResponse;
-use openstack_keystone_core::api::error::KeystoneApiError;
+use openstack_keystone_core::api::v4::auth::token::token_impl::build_api_token_v4;
 use openstack_keystone_core::auth::{AuthenticatedInfo, AuthenticationError, AuthzInfo};
 use openstack_keystone_core::identity::IdentityApi;
 use openstack_keystone_core::token::TokenApi;
@@ -160,7 +161,7 @@ pub async fn finish(
     )?;
 
     let api_token = TokenResponse {
-        token: token.build_api_token_v4(&state.core).await?,
+        token: build_api_token_v4(&token, &state.core).await?,
     };
     Ok((
         StatusCode::OK,

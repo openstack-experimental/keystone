@@ -16,11 +16,9 @@ use chrono::DateTime;
 use serde_json::Value;
 use tracing::error;
 
-use openstack_keystone_core::role::types::RoleRef;
-use openstack_keystone_core::trust::{
-    TrustProviderError,
-    types::{Trust, TrustBuilder},
-};
+use openstack_keystone_core::trust::TrustProviderError;
+use openstack_keystone_core_types::role::RoleRef;
+use openstack_keystone_core_types::trust::*;
 
 use crate::entity::{trust as db_trust, trust_role as db_trust_role};
 

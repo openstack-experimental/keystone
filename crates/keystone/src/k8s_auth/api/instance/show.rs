@@ -14,13 +14,17 @@
 
 //! K8s auth: show auth instances.
 use axum::{
+    Json,
     extract::{Path, State},
+    http::StatusCode,
     response::IntoResponse,
 };
 
+use openstack_keystone_api_types::k8s_auth::*;
+
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
-use crate::k8s_auth::{K8sAuthApi, api::types::*};
+use crate::k8s_auth::K8sAuthApi;
 use crate::keystone::ServiceState;
 
 /// Get single K8s auth instance.
@@ -72,7 +76,13 @@ pub(super) async fn show(
             None,
         )
         .await?;
-    Ok(current)
+    Ok((
+        StatusCode::OK,
+        Json(K8sAuthInstanceResponse {
+            instance: K8sAuthInstance::from(current),
+        }),
+    )
+        .into_response())
 }
 
 #[cfg(test)]
@@ -86,9 +96,11 @@ mod tests {
     use tower_http::trace::TraceLayer;
     use tracing_test::traced_test;
 
+    use openstack_keystone_core_types::k8s_auth as provider_types;
+
     use super::{super::openapi_router, *};
     use crate::api::tests::get_mocked_state;
-    use crate::k8s_auth::{MockK8sAuthProvider, types as provider_types};
+    use crate::k8s_auth::MockK8sAuthProvider;
     use crate::provider::Provider;
 
     #[tokio::test]

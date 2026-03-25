@@ -20,8 +20,8 @@ use chrono::{DateTime, Utc};
 use openstack_keystone_core::auth::AuthenticatedInfo;
 use openstack_keystone_core::identity::IdentityProviderError;
 use openstack_keystone_core::identity::backend::IdentityBackend;
-use openstack_keystone_core::identity::types::*;
 use openstack_keystone_core::keystone::ServiceState;
+use openstack_keystone_core_types::identity::*;
 
 mod authenticate;
 pub mod entity;

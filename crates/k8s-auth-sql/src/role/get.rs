@@ -16,7 +16,8 @@ use sea_orm::DatabaseConnection;
 use sea_orm::entity::*;
 
 use openstack_keystone_core::error::DbContextExt;
-use openstack_keystone_core::k8s_auth::{K8sAuthProviderError, types::K8sAuthRole};
+use openstack_keystone_core::k8s_auth::K8sAuthProviderError;
+use openstack_keystone_core_types::k8s_auth::K8sAuthRole;
 
 use crate::entity::prelude::KubernetesAuthRole;
 

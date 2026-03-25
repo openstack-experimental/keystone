@@ -17,6 +17,7 @@ openstack-keystone-appcred-sql = { version = "0.1", path = "../../crates/appcred
 openstack-keystone-assignment-sql = { version = "0.1", path = "../../crates/assignment-sql/" }
 openstack-keystone-config = { version = "0.1", path = "../../crates/config" }
 openstack-keystone-core = { version = "0.1", path = "../../crates/core", features = ["mock"] }
+openstack-keystone-core-types = { version = "0.1", path = "../../crates/core-types" }
 openstack-keystone-federation-sql = { version = "0.1", path = "../../crates/federation-sql/" }
 openstack-keystone-identity-sql = { version = "0.1", path = "../../crates/identity-sql/" }
 openstack-keystone-k8s-auth-sql = { version = "0.1", path = "../../crates/k8s-auth-sql/" }

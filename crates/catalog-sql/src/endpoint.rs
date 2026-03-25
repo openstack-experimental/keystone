@@ -15,10 +15,8 @@
 use serde_json::Value;
 use tracing::error;
 
-use openstack_keystone_core::catalog::{
-    CatalogProviderError,
-    types::{Endpoint, EndpointBuilder},
-};
+use openstack_keystone_core::catalog::CatalogProviderError;
+use openstack_keystone_core_types::catalog::*;
 
 use crate::entity::endpoint as db_endpoint;
 

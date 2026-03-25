@@ -56,7 +56,8 @@ pub(super) fn openapi_router() -> OpenApiRouter<ServiceState> {
 #[cfg(test)]
 mod tests {
 
-    use crate::identity::types::*;
+    use openstack_keystone_core_types::identity::*;
+
     use crate::token::{MockTokenProvider, Token, UnscopedPayload};
 
     pub(crate) fn get_token_provider_mock_with_mocks() -> MockTokenProvider {

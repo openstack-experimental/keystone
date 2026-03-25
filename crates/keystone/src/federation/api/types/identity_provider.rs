@@ -12,16 +12,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //! Federated identity provider types.
-use openstack_keystone_api_types::federation::identity_provider;
-
-pub use identity_provider::IdentityProvider;
-pub use identity_provider::IdentityProviderCreate;
-pub use identity_provider::IdentityProviderCreateRequest;
-pub use identity_provider::IdentityProviderList;
-pub use identity_provider::IdentityProviderListParameters;
-pub use identity_provider::IdentityProviderResponse;
-pub use identity_provider::IdentityProviderUpdate;
-pub use identity_provider::IdentityProviderUpdateRequest;
+use openstack_keystone_api_types::federation::*;
 
 use crate::api::common::{QueryParameterPagination, ResourceIdentifier};
 

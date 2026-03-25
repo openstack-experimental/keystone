@@ -18,9 +18,9 @@ use sea_orm::query::*;
 
 use openstack_keystone_config::Config;
 use openstack_keystone_core::error::DbContextExt;
-use openstack_keystone_core::identity::{
-    IdentityProviderError,
-    types::{UserListParameters, UserOptions, UserResponse, UserResponseBuilder, UserType},
+use openstack_keystone_core::identity::IdentityProviderError;
+use openstack_keystone_core_types::identity::{
+    UserListParameters, UserOptions, UserResponse, UserResponseBuilder, UserType,
 };
 
 use crate::entity::{

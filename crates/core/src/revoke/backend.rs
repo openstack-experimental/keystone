@@ -15,9 +15,11 @@
 //! Revocation provider Backend trait.
 use async_trait::async_trait;
 
+use openstack_keystone_core_types::revoke::*;
+use openstack_keystone_core_types::token::Token;
+
 use crate::keystone::ServiceState;
-use crate::revoke::{RevokeProviderError, types::*};
-use crate::token::types::Token;
+use crate::revoke::RevokeProviderError;
 
 //pub mod error;
 

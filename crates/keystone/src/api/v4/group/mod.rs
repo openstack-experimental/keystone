@@ -33,17 +33,15 @@ mod tests {
     use tower::ServiceExt; // for `call`, `oneshot`, and `ready`
     use tower_http::trace::TraceLayer;
 
+    use openstack_keystone_core_types::identity::{Group, GroupCreate, GroupListParameters};
+
     use super::openapi_router;
     use crate::api::tests::get_mocked_state;
     use crate::api::v3::group::types::{
         Group as ApiGroup, GroupCreate as ApiGroupCreate, GroupCreateRequest, GroupList,
         GroupResponse,
     };
-    use crate::identity::{
-        MockIdentityProvider,
-        error::IdentityProviderError,
-        types::{Group, GroupCreate, GroupListParameters},
-    };
+    use crate::identity::{MockIdentityProvider, error::IdentityProviderError};
     use crate::provider::Provider;
 
     #[tokio::test]

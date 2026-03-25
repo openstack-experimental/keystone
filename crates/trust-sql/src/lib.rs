@@ -16,8 +16,9 @@
 use async_trait::async_trait;
 
 use openstack_keystone_core::keystone::ServiceState;
+use openstack_keystone_core::trust::TrustProviderError;
 use openstack_keystone_core::trust::backend::TrustBackend;
-use openstack_keystone_core::trust::{TrustProviderError, types::*};
+use openstack_keystone_core_types::trust::*;
 
 pub mod entity;
 mod trust;

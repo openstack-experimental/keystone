@@ -16,3 +16,22 @@
 pub mod trust;
 
 pub use trust::*;
+
+#[cfg(feature = "conv")]
+mod trust_conv;
+
+#[cfg(feature = "conv")]
+use openstack_keystone_core_types::trust::TrustProviderError;
+#[cfg(feature = "conv")]
+impl From<TrustProviderError> for crate::error::KeystoneApiError {
+    fn from(source: TrustProviderError) -> Self {
+        match source {
+            TrustProviderError::Conflict(x) => Self::Conflict(x),
+            TrustProviderError::ExpirationImpossible => Self::forbidden(source),
+            TrustProviderError::RedelegatedRolesNotAvailable => Self::forbidden(source),
+            TrustProviderError::RedelegationDeepnessExceed { .. } => Self::forbidden(source),
+            TrustProviderError::RemainingUsesExceed => Self::forbidden(source),
+            other => Self::InternalError(other.to_string()),
+        }
+    }
+}

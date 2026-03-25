@@ -11,55 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-
-use thiserror::Error;
-
-#[derive(Error, Debug)]
-pub enum ResourceProviderError {
-    /// Conflict.
-    #[error("conflict: {0}")]
-    Conflict(String),
-
-    /// Domain not found.
-    #[error("domain {0} not found")]
-    DomainNotFound(String),
-
-    /// Driver error.
-    #[error("backend driver error: {0}")]
-    Driver(String),
-
-    /// (De)Ser error.
-    #[error(transparent)]
-    Serde {
-        /// The source of the error.
-        #[from]
-        source: serde_json::Error,
-    },
-
-    /// Structures builder error.
-    #[error(transparent)]
-    StructBuilder {
-        /// The source of the error.
-        #[from]
-        source: crate::error::BuilderError,
-    },
-
-    /// Project not found.
-    #[error("project {0} not found")]
-    ProjectNotFound(String),
-
-    /// Unsupported driver.
-    #[error("unsupported driver `{0}` for the resource provider")]
-    UnsupportedDriver(String),
-
-    /// Request validation error.
-    #[error("request validation error: {}", source)]
-    Validation {
-        /// The source of the error.
-        #[from]
-        source: validator::ValidationErrors,
-    },
-}
+pub use openstack_keystone_core_types::resource::ResourceProviderError;
 
 impl From<crate::error::DatabaseError> for ResourceProviderError {
     fn from(source: crate::error::DatabaseError) -> Self {

@@ -19,10 +19,8 @@ use sea_orm::query::*;
 use sea_orm::{Cursor, SelectModel};
 
 use openstack_keystone_core::error::DbContextExt;
-use openstack_keystone_core::k8s_auth::{
-    K8sAuthProviderError,
-    types::{K8sAuthRole, K8sAuthRoleListParameters},
-};
+use openstack_keystone_core::k8s_auth::K8sAuthProviderError;
+use openstack_keystone_core_types::k8s_auth::{K8sAuthRole, K8sAuthRoleListParameters};
 
 use crate::entity::{kubernetes_auth_role, prelude::KubernetesAuthRole};
 

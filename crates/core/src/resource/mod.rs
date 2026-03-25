@@ -32,24 +32,24 @@
 //! organization, or tenant.
 use async_trait::async_trait;
 
+use openstack_keystone_config::Config;
+use openstack_keystone_core_types::resource::*;
+
 pub mod backend;
 pub mod error;
 #[cfg(any(test, feature = "mock"))]
 mod mock;
+mod provider_api;
 pub mod service;
-pub mod types;
-
-use openstack_keystone_config::Config;
 
 use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManagerApi;
 use crate::resource::service::ResourceService;
-use crate::resource::types::*;
 
 pub use crate::resource::error::ResourceProviderError;
 #[cfg(any(test, feature = "mock"))]
 pub use mock::MockResourceProvider;
-pub use types::ResourceApi;
+pub use provider_api::ResourceApi;
 
 pub enum ResourceProvider {
     Service(ResourceService),

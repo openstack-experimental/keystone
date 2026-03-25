@@ -16,7 +16,7 @@
 use rmp::{decode::read_pfix, encode::write_pfix};
 use std::io::Write;
 
-use openstack_keystone_core::token::types::RestrictedPayload;
+use openstack_keystone_core_types::token::RestrictedPayload;
 
 use crate::{FernetDriverError, FernetTokenProvider, MsgPackToken, utils};
 

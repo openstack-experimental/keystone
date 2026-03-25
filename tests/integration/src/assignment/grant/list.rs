@@ -17,9 +17,10 @@ use eyre::Result;
 use std::collections::BTreeSet;
 use tracing_test::traced_test;
 
-use openstack_keystone::assignment::{AssignmentApi, types::*};
+use openstack_keystone::assignment::AssignmentApi;
 use openstack_keystone::identity::IdentityApi;
 use openstack_keystone::keystone::ServiceState;
+use openstack_keystone_core_types::assignment::*;
 
 use super::get_state;
 use crate::common::{create_group, create_role, create_user};

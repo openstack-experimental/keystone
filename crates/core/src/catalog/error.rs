@@ -11,42 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-
-use thiserror::Error;
-
-use crate::error::BuilderError;
-
-#[derive(Error, Debug)]
-pub enum CatalogProviderError {
-    /// Conflict.
-    #[error("conflict: {0}")]
-    Conflict(String),
-
-    /// Driver error.
-    #[error("backend driver error: {0}")]
-    Driver(String),
-
-    #[error("data serialization error")]
-    Serde {
-        #[from]
-        source: serde_json::Error,
-    },
-    /// The service has not been found.
-    #[error("service {0} not found")]
-    ServiceNotFound(String),
-
-    /// Structures builder error.
-    #[error(transparent)]
-    StructBuilder {
-        /// The source of the error.
-        #[from]
-        source: BuilderError,
-    },
-
-    /// Unsupported driver.
-    #[error("unsupported driver `{0}` for the catalog provider.")]
-    UnsupportedDriver(String),
-}
+pub use openstack_keystone_core_types::catalog::CatalogProviderError;
 
 impl From<crate::error::DatabaseError> for CatalogProviderError {
     fn from(source: crate::error::DatabaseError) -> Self {

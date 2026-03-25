@@ -16,7 +16,7 @@ use chrono::NaiveDate;
 use serde_json::Value;
 use tracing::error;
 
-use openstack_keystone_core::identity::types::{UserOptions, UserResponseBuilder};
+use openstack_keystone_core_types::identity::{UserOptions, UserResponseBuilder};
 
 use crate::entity::user as db_user;
 

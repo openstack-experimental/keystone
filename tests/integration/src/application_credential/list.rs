@@ -18,7 +18,7 @@ use tracing_test::traced_test;
 use uuid::Uuid;
 
 use openstack_keystone::application_credential::ApplicationCredentialApi;
-use openstack_keystone::application_credential::types::*;
+use openstack_keystone_core_types::application_credential::*;
 
 use super::{create_ac, get_state};
 

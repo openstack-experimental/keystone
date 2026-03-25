@@ -16,9 +16,10 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use std::collections::HashSet;
 
+use openstack_keystone_core_types::identity::*;
+
 use crate::auth::AuthenticatedInfo;
 use crate::identity::IdentityProviderError;
-use crate::identity::types::*;
 use crate::keystone::ServiceState;
 
 #[cfg_attr(test, mockall::automock)]

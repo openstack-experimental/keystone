@@ -13,4 +13,4 @@
 // SPDX-License-Identifier: Apache-2.0
 //! # Keystone API error.
 
-pub use openstack_keystone_core::api::KeystoneApiError;
+pub use openstack_keystone_api_types::error::KeystoneApiError;

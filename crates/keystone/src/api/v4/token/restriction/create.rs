@@ -66,7 +66,13 @@ pub(super) async fn create(
         .get_token_provider()
         .create_token_restriction(&state, req.into())
         .await?;
-    Ok((StatusCode::CREATED, res).into_response())
+    Ok((
+        StatusCode::CREATED,
+        Json(TokenRestrictionResponse {
+            restriction: TokenRestriction::from(res),
+        }),
+    )
+        .into_response())
 }
 
 #[cfg(test)]
@@ -79,14 +85,15 @@ mod tests {
     use tower::ServiceExt; // for `call`, `oneshot`, and `ready`
     use tower_http::trace::TraceLayer;
 
+    use openstack_keystone_core_types::role::RoleRef as ProviderRoleRef;
+    use openstack_keystone_core_types::token as provider_types;
+
     use super::{
         super::{openapi_router, tests::get_token_provider_mock_with_mocks},
         *,
     };
     use crate::api::tests::get_mocked_state;
     use crate::provider::Provider;
-    use crate::role::types::RoleRef as ProviderRoleRef;
-    use crate::token::types as provider_types;
 
     #[tokio::test]
     async fn test_create() {

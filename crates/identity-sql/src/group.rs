@@ -14,7 +14,7 @@
 
 use serde_json::{Value, json};
 
-use openstack_keystone_core::identity::types::Group;
+use openstack_keystone_core_types::identity::Group;
 
 use crate::entity::group;
 

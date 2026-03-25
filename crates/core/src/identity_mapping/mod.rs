@@ -20,23 +20,23 @@
 use async_trait::async_trait;
 
 use openstack_keystone_config::Config;
+use openstack_keystone_core_types::identity_mapping::*;
 
 pub mod backend;
 pub mod error;
 #[cfg(any(test, feature = "mock"))]
 pub mod mock;
+mod provider_api;
 pub mod service;
-pub mod types;
 
 use crate::identity_mapping::service::IdentityMappingService;
 use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManagerApi;
-use types::*;
 
 pub use error::IdentityMappingProviderError;
 #[cfg(any(test, feature = "mock"))]
 pub use mock::MockIdentityMappingProvider;
-pub use types::IdentityMappingApi;
+pub use provider_api::IdentityMappingApi;
 
 pub enum IdentityMappingProvider {
     Service(IdentityMappingService),

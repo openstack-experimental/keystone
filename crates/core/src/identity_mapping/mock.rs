@@ -15,7 +15,9 @@
 use async_trait::async_trait;
 use mockall::mock;
 
-use crate::identity_mapping::{IdentityMappingApi, IdentityMappingProviderError, types::*};
+use openstack_keystone_core_types::identity_mapping::*;
+
+use crate::identity_mapping::{IdentityMappingApi, IdentityMappingProviderError};
 use crate::keystone::ServiceState;
 
 mock! {

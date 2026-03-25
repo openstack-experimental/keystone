@@ -145,9 +145,11 @@ mod tests {
     use tower_http::trace::TraceLayer;
     use tracing_test::traced_test;
 
+    use openstack_keystone_core_types::k8s_auth as provider_types;
+
     use super::super::*;
     use crate::api::tests::get_mocked_state;
-    use crate::k8s_auth::{MockK8sAuthProvider, types as provider_types};
+    use crate::k8s_auth::MockK8sAuthProvider;
     use crate::provider::Provider;
 
     #[tokio::test]

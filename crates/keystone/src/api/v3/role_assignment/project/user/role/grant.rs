@@ -21,13 +21,12 @@ use axum::{
 use serde_json::json;
 use tracing::info;
 
+use openstack_keystone_core_types::assignment::AssignmentCreate;
+
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
 use crate::{
-    api::auth::Auth,
-    assignment::{AssignmentApi, types::AssignmentCreate},
-    identity::IdentityApi,
-    resource::ResourceApi,
+    api::auth::Auth, assignment::AssignmentApi, identity::IdentityApi, resource::ResourceApi,
     role::RoleApi,
 };
 
@@ -131,13 +130,18 @@ mod tests {
     use tower_http::trace::TraceLayer;
     use tracing_test::traced_test;
 
+    use openstack_keystone_core_types::assignment::*;
+    use openstack_keystone_core_types::identity::*;
+    use openstack_keystone_core_types::resource::*;
+    use openstack_keystone_core_types::role::*;
+
     use crate::api::tests::get_mocked_state;
     use crate::api::v3::role_assignment::openapi_router;
-    use crate::assignment::{MockAssignmentProvider, types::*};
-    use crate::identity::{MockIdentityProvider, types::*};
+    use crate::assignment::MockAssignmentProvider;
+    use crate::identity::MockIdentityProvider;
     use crate::provider::Provider;
-    use crate::resource::{MockResourceProvider, types::Project};
-    use crate::role::{MockRoleProvider, types::*};
+    use crate::resource::MockResourceProvider;
+    use crate::role::MockRoleProvider;
 
     #[tokio::test]
     #[traced_test]

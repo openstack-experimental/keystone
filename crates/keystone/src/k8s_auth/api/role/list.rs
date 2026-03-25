@@ -22,9 +22,12 @@ use axum::{
 use serde_json::to_value;
 use validator::Validate;
 
+use openstack_keystone_api_types::k8s_auth::*;
+use openstack_keystone_core::k8s_auth::K8sAuthApi;
+use openstack_keystone_core::keystone::ServiceState;
+use openstack_keystone_core_types::k8s_auth as provider_types;
+
 use crate::api::{KeystoneApiError, auth::Auth};
-use crate::k8s_auth::{K8sAuthApi, api::types::*, types as provider_types};
-use crate::keystone::ServiceState;
 
 /// List K8 auth roles.
 ///
@@ -186,9 +189,11 @@ mod tests {
     use tower_http::trace::TraceLayer;
     use tracing_test::traced_test;
 
+    use openstack_keystone_core_types::k8s_auth as provider_types;
+
     use super::{super::*, *};
     use crate::api::tests::get_mocked_state;
-    use crate::k8s_auth::{MockK8sAuthProvider, types as provider_types};
+    use crate::k8s_auth::MockK8sAuthProvider;
     use crate::provider::Provider;
 
     #[tokio::test]

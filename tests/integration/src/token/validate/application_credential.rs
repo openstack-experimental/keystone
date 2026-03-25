@@ -21,11 +21,11 @@ use tracing_test::traced_test;
 use uuid::Uuid;
 
 use openstack_keystone::application_credential::ApplicationCredentialApi;
-use openstack_keystone::application_credential::types::*;
 use openstack_keystone::auth::*;
-use openstack_keystone::resource::types::ProjectBuilder;
-use openstack_keystone::role::types::*;
 use openstack_keystone::token::{Token, TokenApi, TokenProviderError};
+use openstack_keystone_core_types::application_credential::*;
+use openstack_keystone_core_types::resource::ProjectBuilder;
+use openstack_keystone_core_types::role::*;
 
 use super::{create_user, get_state, grant_role_to_user_on_project};
 use crate::common::create_role;

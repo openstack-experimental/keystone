@@ -15,8 +15,9 @@
 use async_trait::async_trait;
 use mockall::mock;
 
-use crate::federation::error::FederationProviderError;
-use crate::federation::types::*;
+use openstack_keystone_core_types::federation::*;
+
+use crate::federation::{FederationApi, error::FederationProviderError};
 use crate::keystone::ServiceState;
 
 mock! {

@@ -37,24 +37,24 @@
 //! itself.
 use async_trait::async_trait;
 
+use openstack_keystone_config::Config;
+use openstack_keystone_core_types::assignment::*;
+
 pub mod backend;
 pub mod error;
 #[cfg(any(test, feature = "mock"))]
 mod mock;
+mod provider_api;
 pub mod service;
-pub mod types;
-
-use openstack_keystone_config::Config;
 
 use crate::assignment::service::AssignmentService;
 use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManagerApi;
-use types::*;
 
 pub use error::AssignmentProviderError;
 #[cfg(any(test, feature = "mock"))]
 pub use mock::MockAssignmentProvider;
-pub use types::AssignmentApi;
+pub use provider_api::AssignmentApi;
 
 pub enum AssignmentProvider {
     Service(AssignmentService),

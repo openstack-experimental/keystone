@@ -28,32 +28,32 @@ use tracing::{debug, trace};
 use uuid::Uuid;
 
 use openstack_keystone_config::Config;
+use openstack_keystone_core_types::assignment::{
+    RoleAssignmentListParameters, RoleAssignmentListParametersBuilder,
+};
+use openstack_keystone_core_types::resource::{Domain, Project};
+use openstack_keystone_core_types::role::RoleRef;
+use openstack_keystone_core_types::token::payload::*;
+use openstack_keystone_core_types::token::*;
+use openstack_keystone_core_types::trust::*;
 
 use crate::auth::{AuthenticatedInfo, AuthenticationError, AuthzInfo};
 use crate::identity::IdentityApi;
 use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManagerApi;
-use crate::resource::{
-    ResourceApi,
-    types::{Domain, Project},
-};
+use crate::resource::ResourceApi;
 use crate::revoke::RevokeApi;
+use crate::token::validate::{validate_token_scope, validate_token_subject};
 use crate::token::{
-    TokenProviderError,
+    TokenApi, TokenProviderError,
     backend::{TokenBackend, TokenRestrictionBackend},
 };
 use crate::{
     application_credential::ApplicationCredentialApi,
-    assignment::{
-        AssignmentApi,
-        error::AssignmentProviderError,
-        types::{RoleAssignmentListParameters, RoleAssignmentListParametersBuilder},
-    },
-    role::{RoleApi, types::RoleRef},
-    trust::{TrustApi, types::Trust},
+    assignment::{AssignmentApi, error::AssignmentProviderError},
+    role::RoleApi,
+    trust::TrustApi,
 };
-
-pub use crate::token::types::*;
 
 pub struct TokenService {
     config: Config,
@@ -843,8 +843,8 @@ impl TokenApi for TokenService {
             return Err(TokenProviderError::TokenRevoked);
         }
 
-        token.validate_subject(state).await?;
-        token.validate_scope(state).await?;
+        validate_token_subject(&token, state).await?;
+        validate_token_scope(&token, state).await?;
 
         Ok(token)
     }
@@ -1010,24 +1010,23 @@ mod tests {
     use uuid::Uuid;
 
     use openstack_keystone_config::Config;
+    use openstack_keystone_core_types::application_credential::*;
+    use openstack_keystone_core_types::assignment::*;
+    use openstack_keystone_core_types::identity::UserResponseBuilder;
+    use openstack_keystone_core_types::resource::*;
+    use openstack_keystone_core_types::trust::*;
 
     use super::super::tests::setup_config;
     use super::*;
-    use crate::application_credential::{
-        MockApplicationCredentialProvider, types::ApplicationCredential,
-    };
-    use crate::assignment::{
-        MockAssignmentProvider,
-        types::{Assignment, AssignmentType, RoleAssignmentListParameters},
-    };
+    use crate::application_credential::MockApplicationCredentialProvider;
+    use crate::assignment::MockAssignmentProvider;
     use crate::auth::AuthenticatedInfoBuilder;
-    use crate::identity::{MockIdentityProvider, types::UserResponseBuilder};
+    use crate::identity::MockIdentityProvider;
     use crate::provider::Provider;
-    use crate::resource::{MockResourceProvider, types::*};
+    use crate::resource::MockResourceProvider;
     use crate::revoke::MockRevokeProvider;
     use crate::tests::get_mocked_state;
     use crate::token::backend::{MockTokenBackend, MockTokenRestrictionBackend};
-    use crate::trust::types::*;
 
     /// Generate test token to use for validation testing.
     fn generate_token(validity: Option<TimeDelta>) -> Result<Token> {

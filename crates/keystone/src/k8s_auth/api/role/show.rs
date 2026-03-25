@@ -14,16 +14,17 @@
 
 //! K8s auth role: show.
 use axum::{
+    Json,
     extract::{Path, State},
+    http::StatusCode,
     response::IntoResponse,
 };
 
+use openstack_keystone_api_types::k8s_auth::*;
+
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
-use crate::k8s_auth::{
-    K8sAuthApi,
-    api::types::{K8sAuthRolePathParams, K8sAuthRoleResponse},
-};
+use crate::k8s_auth::K8sAuthApi;
 use crate::keystone::ServiceState;
 
 /// Get single K8s auth role of a instance.
@@ -74,7 +75,13 @@ pub(super) async fn show_nested(
             None,
         )
         .await?;
-    Ok(current)
+    Ok((
+        StatusCode::OK,
+        Json(K8sAuthRoleResponse {
+            role: K8sAuthRole::from(current),
+        }),
+    )
+        .into_response())
 }
 
 /// Get single K8s auth role.
@@ -126,7 +133,13 @@ pub(super) async fn show(
             None,
         )
         .await?;
-    Ok(current)
+    Ok((
+        StatusCode::OK,
+        Json(K8sAuthRoleResponse {
+            role: K8sAuthRole::from(current),
+        }),
+    )
+        .into_response())
 }
 
 #[cfg(test)]
@@ -140,9 +153,11 @@ mod tests {
     use tower_http::trace::TraceLayer;
     use tracing_test::traced_test;
 
+    use openstack_keystone_core_types::k8s_auth as provider_types;
+
     use super::{super::openapi_router, *};
     use crate::api::tests::get_mocked_state;
-    use crate::k8s_auth::{MockK8sAuthProvider, api::types::K8sAuthRole, types as provider_types};
+    use crate::k8s_auth::{MockK8sAuthProvider, api::types::K8sAuthRole};
     use crate::provider::Provider;
 
     #[tokio::test]
