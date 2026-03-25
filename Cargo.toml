@@ -72,7 +72,7 @@ mockall = { version = "0.14" }
 mockall_double = { version = "0.3" }
 nix = { version = "0.31", default-features = false }
 openidconnect = { version = "4.0" }
-openraft = { version = "0.10.0-alpha.14" }
+openraft = { version = "0.10.0-alpha.17" }
 prost = { version = "0.14" }
 rand = { version = "0.10" }
 regex = { version = "1.12" }
