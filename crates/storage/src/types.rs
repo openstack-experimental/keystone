@@ -58,9 +58,8 @@ pub enum StoreError {
     #[error(transparent)]
     RaftMembership {
         #[from]
-        source: openraft::error::MembershipError<TypeConfig>,
+        source: openraft::error::MembershipError<NodeId>,
     },
-
     /// Raft empty membership data error.
     #[error("raft required parameter {0} missing")]
     RaftMissingParameter(String),
@@ -83,20 +82,26 @@ impl From<StoreError> for io::Error {
 pub use crate::TypeConfig;
 
 pub type NodeId = u64;
+//pub type LogStore = crate::store::log_store::FjallLogStore<TypeConfig>;
 // pub type LogStore =
 // crate::store::log_store::FjallLogStore<crate::TypeConfig>;
 pub type StateMachineStore = crate::store::state_machine::FjallStateMachine;
-pub type Raft = openraft::Raft<TypeConfig>;
+pub type Raft = openraft::Raft<TypeConfig, std::sync::Arc<StateMachineStore>>;
+
+pub type Membership = openraft::membership::Membership<
+    <TypeConfig as openraft::RaftTypeConfig>::NodeId,
+    <TypeConfig as openraft::RaftTypeConfig>::Node,
+>;
 
 pub type Vote = <TypeConfig as openraft::RaftTypeConfig>::Vote;
 pub type LeaderId = <TypeConfig as openraft::RaftTypeConfig>::LeaderId;
-pub type LogId = openraft::LogId<TypeConfig>;
-pub type StoredMembership = openraft::StoredMembership<TypeConfig>;
+pub type LogId = openraft::alias::LogIdOf<TypeConfig>;
+pub type StoredMembership = openraft::alias::StoredMembershipOf<TypeConfig>;
 
 pub type Node = <TypeConfig as openraft::RaftTypeConfig>::Node;
 
-pub type SnapshotMeta = openraft::SnapshotMeta<TypeConfig>;
-pub type Snapshot = openraft::Snapshot<TypeConfig>;
+pub type SnapshotMeta = openraft::alias::SnapshotMetaOf<TypeConfig>;
+pub type Snapshot = openraft::alias::SnapshotOf<TypeConfig>;
 pub type RPCError<E = openraft::error::Infallible> = openraft::error::RPCError<TypeConfig, E>;
 pub type StreamingError = openraft::error::StreamingError<TypeConfig>;
 //pub type RaftMetrics = openraft::RaftMetrics<TypeConfig>;

@@ -14,13 +14,10 @@
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 
-use openraft::Membership;
-
 use crate::StoreError;
-use crate::TypeConfig;
 use crate::pb;
 
-impl TryFrom<pb::raft::Membership> for Membership<TypeConfig> {
+impl TryFrom<pb::raft::Membership> for crate::types::Membership {
     type Error = StoreError;
     fn try_from(value: pb::raft::Membership) -> Result<Self, Self::Error> {
         let mut configs = vec![];
@@ -29,12 +26,12 @@ impl TryFrom<pb::raft::Membership> for Membership<TypeConfig> {
             configs.push(config);
         }
         let nodes = value.nodes;
-        Ok(Membership::new(configs, nodes)?)
+        Ok(crate::types::Membership::new(configs, nodes)?)
     }
 }
 
-impl From<Membership<TypeConfig>> for pb::raft::Membership {
-    fn from(value: Membership<TypeConfig>) -> Self {
+impl From<crate::types::Membership> for pb::raft::Membership {
+    fn from(value: crate::types::Membership) -> Self {
         let mut configs = vec![];
         for c in value.get_joint_config() {
             let mut node_ids = BTreeMap::new();
