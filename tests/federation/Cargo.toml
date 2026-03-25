@@ -17,7 +17,7 @@ hyper-util = { workspace = true, features = ["tokio", "http1"] }
 eyre.workspace = true
 keycloak = { version = "26.5" }
 local-ip-address = { version = "0.6" }
-openstack-keystone-api-types = { version = "0.1", path = "../../crates/api-types" }
+openstack-keystone-api-types = { version = "0.1", path = "../../crates/api-types", features = ["builder" ] }
 reqwest = { workspace = true, features = ["json", "http2", "multipart", "gzip", "deflate"] }
 serde.workspace = true
 serde_json.workspace = true

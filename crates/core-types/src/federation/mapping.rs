@@ -11,6 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+use std::collections::HashMap;
 
 use derive_builder::Builder;
 use serde::Serialize;
@@ -72,7 +73,7 @@ pub struct Mapping {
 
     /// Additional claims to further restrict the attribute mapping.
     #[builder(default)]
-    pub bound_claims: Option<Value>,
+    pub bound_claims: HashMap<String, Value>,
 
     /// List of the oidc scopes to request in the oidc flow.
     #[builder(default)]
@@ -140,7 +141,7 @@ pub struct MappingUpdate {
 
     /// Additional claims to further restrict the attribute mapping.
     #[builder(default)]
-    pub bound_claims: Option<Value>,
+    pub bound_claims: Option<HashMap<String, Value>>,
 
     /// List of the oidc scopes to request in the oidc flow.
     #[builder(default)]

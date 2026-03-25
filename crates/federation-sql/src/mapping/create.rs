@@ -25,77 +25,17 @@ pub async fn create(
     db: &DatabaseConnection,
     mapping: Mapping,
 ) -> Result<Mapping, FederationProviderError> {
-    db_federated_mapping::ActiveModel {
-        id: Set(mapping.id.clone()),
-        domain_id: Set(mapping.domain_id.clone()),
-        name: Set(mapping.name.clone()),
-        idp_id: Set(mapping.idp_id.clone()),
-        r#type: Set(mapping.r#type.into()),
-        enabled: Set(mapping.enabled),
-        allowed_redirect_uris: mapping
-            .allowed_redirect_uris
-            .clone()
-            .map(|x| Set(x.join(",")))
-            .unwrap_or(NotSet)
-            .into(),
-        user_id_claim: Set(mapping.user_id_claim.clone()),
-        user_name_claim: Set(mapping.user_name_claim.clone()),
-        domain_id_claim: mapping
-            .domain_id_claim
-            .clone()
-            .map(Set)
-            .unwrap_or(NotSet)
-            .into(),
-        groups_claim: mapping
-            .groups_claim
-            .clone()
-            .map(Set)
-            .unwrap_or(NotSet)
-            .into(),
-        bound_audiences: mapping
-            .bound_audiences
-            .clone()
-            .map(|x| Set(x.join(",")))
-            .unwrap_or(NotSet)
-            .into(),
-        bound_subject: mapping
-            .bound_subject
-            .clone()
-            .map(Set)
-            .unwrap_or(NotSet)
-            .into(),
-        bound_claims: mapping
-            .bound_claims
-            .clone()
-            .map(|x| Set(Some(x)))
-            .unwrap_or(NotSet),
-        oidc_scopes: mapping
-            .oidc_scopes
-            .clone()
-            .map(|x| Set(x.join(",")))
-            .unwrap_or(NotSet)
-            .into(),
-        token_project_id: mapping
-            .token_project_id
-            .clone()
-            .map(Set)
-            .unwrap_or(NotSet)
-            .into(),
-        token_restriction_id: mapping
-            .token_restriction_id
-            .clone()
-            .map(Set)
-            .unwrap_or(NotSet)
-            .into(),
-    }
-    .insert(db)
-    .await
-    .context("persisting new federation mapping")?
-    .try_into()
+    db_federated_mapping::ActiveModel::try_from(mapping)?
+        .insert(db)
+        .await
+        .context("persisting new federation mapping")?
+        .try_into()
 }
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use sea_orm::{DatabaseBackend, MockDatabase, Transaction};
     use serde_json::json;
 
@@ -124,7 +64,7 @@ mod tests {
             groups_claim: Some("groups".into()),
             bound_audiences: Some(vec!["a1".into(), "a2".into()]),
             bound_subject: Some("subject".into()),
-            bound_claims: Some(json!({"department": "foo"})),
+            bound_claims: HashMap::from([("department".into(), json!("foo"))]),
             //claim_mappings: Some(json!({"foo": "bar"})),
             oidc_scopes: Some(vec!["oidc".into(), "oauth".into()]),
             token_project_id: Some("pid".into()),

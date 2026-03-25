@@ -123,7 +123,7 @@ pub struct K8sAuthInstanceCreateRequest {
 }
 
 /// Update K8s authentication instance.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "builder", derive(derive_builder::Builder))]
 #[cfg_attr(
     feature = "builder",
@@ -185,7 +185,7 @@ pub struct K8sAuthInstanceList {
 }
 
 /// K8s Auth instance list parameters.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::IntoParams))]
 #[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct K8sAuthInstanceListParameters {

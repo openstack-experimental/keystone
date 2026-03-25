@@ -11,6 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+use std::collections::HashMap;
 
 use derive_builder::Builder;
 use serde::Serialize;
@@ -39,7 +40,8 @@ pub struct Project {
 
     /// Additional project properties.
     #[builder(default)]
-    pub extra: Option<Value>,
+    #[serde(flatten)]
+    pub extra: HashMap<String, Value>,
 
     /// The project ID.
     #[validate(length(min = 1, max = 64))]
@@ -84,7 +86,7 @@ pub struct ProjectCreate {
 
     /// Additional project properties.
     #[builder(default)]
-    pub extra: Option<Value>,
+    pub extra: HashMap<String, Value>,
 
     /// The ID for the project.
     #[builder(default)]

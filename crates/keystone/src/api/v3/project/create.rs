@@ -82,7 +82,6 @@ mod tests {
         http::{Request, StatusCode, header},
     };
     use http_body_util::BodyExt; // for `collect`
-    use serde_json::json;
     use tower::ServiceExt; // for `call`, `oneshot`, and `ready`
     use tower_http::trace::TraceLayer;
     use tracing_test::traced_test;
@@ -104,7 +103,7 @@ mod tests {
                 description: Some("A new project".into()),
                 domain_id: "did".into(),
                 enabled: true,
-                extra: None,
+                extra: std::collections::HashMap::new(),
                 id: "pid".into(),
                 is_domain: false,
                 name: "project_name".into(),
@@ -151,7 +150,7 @@ mod tests {
                 description: Some("A new project".into()),
                 domain_id: "did".into(),
                 enabled: true,
-                extra: Some(json!({})),
+                extra: std::collections::HashMap::new(),
                 id: "pid".into(),
                 is_domain: false,
                 name: "project_name".into(),

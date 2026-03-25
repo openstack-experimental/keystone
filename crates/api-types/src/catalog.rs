@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use validator::Validate;
 
 /// A catalog object.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct Catalog(pub Vec<CatalogService>);
 
@@ -29,7 +29,7 @@ impl validator::Validate for Catalog {
 }
 
 /// A catalog object.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(
     feature = "builder",
     derive(derive_builder::Builder),
@@ -51,7 +51,7 @@ pub struct CatalogService {
 }
 
 /// A Catalog Endpoint.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(
     feature = "builder",
     derive(derive_builder::Builder),

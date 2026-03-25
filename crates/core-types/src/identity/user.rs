@@ -11,6 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+use std::collections::HashMap;
 
 use chrono::{DateTime, Utc};
 use derive_builder::Builder;
@@ -45,8 +46,8 @@ pub struct UserResponse {
 
     /// Additional user properties.
     #[builder(default)]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub extra: Option<Value>,
+    #[serde(flatten)]
+    pub extra: HashMap<String, Value>,
 
     /// List of federated objects associated with a user. Each object in the
     /// list contains the `idp_id` and `protocols`. `protocols` is a list of
@@ -94,7 +95,7 @@ pub struct UserCreate {
 
     /// Additional user properties.
     #[builder(default)]
-    pub extra: Option<Value>,
+    pub extra: HashMap<String, Value>,
 
     /// List of federated objects associated with a user. Each object in the
     /// list contains the `idp_id` and `protocols`. `protocols` is a list of
@@ -140,7 +141,7 @@ pub struct UserUpdate {
 
     /// Additional user properties.
     #[builder(default)]
-    pub extra: Option<Value>,
+    pub extra: HashMap<String, Value>,
 
     /// List of federated objects associated with a user. Each object in the
     /// list contains the idp_id and protocols. protocols is a list of objects,

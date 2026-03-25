@@ -14,7 +14,6 @@
 //! Project API types.
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 #[cfg(feature = "validate")]
 use validator::Validate;
 
@@ -77,8 +76,10 @@ pub struct Project {
 
     /// Additional project properties.
     #[cfg_attr(feature = "builder", builder(default))]
-    #[serde(flatten, default, skip_serializing_if = "Option::is_none")]
-    pub extra: Option<Value>,
+    #[cfg_attr(feature = "openapi", schema(inline, additional_properties))]
+    //#[serde(flatten, skip_serializing_if = "HashMap::is_empty")]
+    #[serde(flatten)]
+    pub extra: std::collections::HashMap<String, serde_json::Value>,
 
     /// The ID for the project.
     #[cfg_attr(feature = "validate", validate(length(min = 1, max = 64)))]
@@ -117,6 +118,7 @@ pub struct ProjectCreate {
     /// The description of the project.
     #[cfg_attr(feature = "builder", builder(default))]
     #[cfg_attr(feature = "validate", validate(length(min = 1, max = 255)))]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
 
     /// The ID of the domain for the project.
@@ -130,8 +132,10 @@ pub struct ProjectCreate {
 
     /// Additional project properties.
     #[cfg_attr(feature = "builder", builder(default))]
+    #[cfg_attr(feature = "openapi", schema(inline, additional_properties))]
     #[serde(flatten)]
-    pub extra: Option<Value>,
+    //pub extra: ExtraFields,
+    pub extra: std::collections::HashMap<String, serde_json::Value>,
 
     /// Indicates whether the project also acts as a domain. If set to true,
     /// this project acts as both a project and domain. As a domain, the project
@@ -162,6 +166,7 @@ pub struct ProjectCreate {
     /// created - hence a project cannot be moved within the hierarchy.
     #[cfg_attr(feature = "builder", builder(default))]
     #[cfg_attr(feature = "validate", validate(length(min = 1, max = 64)))]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub parent_id: Option<String>,
 }
 
@@ -211,6 +216,7 @@ mod tests {
     use super::*;
     #[cfg(feature = "builder")]
     use crate::error::BuilderError;
+    use serde_json::json;
 
     #[cfg(feature = "builder")]
     #[test]
@@ -236,5 +242,36 @@ mod tests {
                 "an error should be raised not allowing to set parent_id with the is_domain=true"
             );
         }
+    }
+
+    #[cfg(feature = "builder")]
+    #[test]
+    fn test_project_serialize_extra() {
+        assert_eq!(
+            json!({"name": "name", "domain_id": "did", "enabled": true, "is_domain": false}),
+            serde_json::to_value(
+                &ProjectCreateBuilder::default()
+                    .name("name")
+                    .domain_id("did")
+                    .build()
+                    .unwrap()
+            )
+            .unwrap()
+        );
+        assert_eq!(
+            json!({"name": "name", "domain_id": "did", "enabled": true, "is_domain": false, "unknown": "bar"}),
+            serde_json::to_value(
+                &ProjectCreateBuilder::default()
+                    .name("name")
+                    .domain_id("did")
+                    .extra(std::collections::HashMap::from([(
+                        "unknown".into(),
+                        json!("bar")
+                    )]))
+                    .build()
+                    .unwrap()
+            )
+            .unwrap()
+        );
     }
 }

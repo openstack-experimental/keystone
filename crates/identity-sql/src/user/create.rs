@@ -16,7 +16,6 @@ use chrono::{DateTime, Utc};
 use sea_orm::DatabaseConnection;
 use sea_orm::entity::*;
 use sea_orm::{ConnectionTrait, TransactionTrait};
-use serde_json::json;
 use uuid::Uuid;
 
 use openstack_keystone_config::Config;
@@ -52,10 +51,7 @@ impl db_user::ActiveModel {
                 .clone()
                 .unwrap_or(Uuid::new_v4().simple().to_string())),
             enabled: Set(Some(user.enabled.unwrap_or(true))),
-            extra: Set(Some(serde_json::to_string(
-                // For keystone it is important to have at least "{}"
-                &user.extra.as_ref().or(Some(&json!({}))),
-            )?)),
+            extra: Set(Some(serde_json::to_string(&user.extra)?)),
             default_project_id: user
                 .default_project_id
                 .clone()

@@ -11,6 +11,11 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+use std::collections::HashMap;
+
+use sea_orm::entity::*;
+use serde_json::Value;
+use tracing::error;
 
 use openstack_keystone_core::federation::error::FederationProviderError;
 use openstack_keystone_core_types::federation::*;
@@ -46,6 +51,75 @@ impl From<&MappingType> for db_mapping_type {
             MappingType::Oidc => db_mapping_type::Oidc,
             MappingType::Jwt => db_mapping_type::Jwt,
         }
+    }
+}
+
+impl TryFrom<Mapping> for db_federated_mapping::ActiveModel {
+    type Error = FederationProviderError;
+    fn try_from(mapping: Mapping) -> Result<Self, Self::Error> {
+        Ok(Self {
+            id: Set(mapping.id.clone()),
+            domain_id: Set(mapping.domain_id.clone()),
+            name: Set(mapping.name.clone()),
+            idp_id: Set(mapping.idp_id.clone()),
+            r#type: Set(mapping.r#type.into()),
+            enabled: Set(mapping.enabled),
+            allowed_redirect_uris: mapping
+                .allowed_redirect_uris
+                .clone()
+                .map(|x| Set(x.join(",")))
+                .unwrap_or(NotSet)
+                .into(),
+            user_id_claim: Set(mapping.user_id_claim.clone()),
+            user_name_claim: Set(mapping.user_name_claim.clone()),
+            domain_id_claim: mapping
+                .domain_id_claim
+                .clone()
+                .map(Set)
+                .unwrap_or(NotSet)
+                .into(),
+            groups_claim: mapping
+                .groups_claim
+                .clone()
+                .map(Set)
+                .unwrap_or(NotSet)
+                .into(),
+            bound_audiences: mapping
+                .bound_audiences
+                .clone()
+                .map(|x| Set(x.join(",")))
+                .unwrap_or(NotSet)
+                .into(),
+            bound_subject: mapping
+                .bound_subject
+                .clone()
+                .map(Set)
+                .unwrap_or(NotSet)
+                .into(),
+            bound_claims: if !mapping.bound_claims.is_empty() {
+                Set(Some(serde_json::to_value(&mapping.bound_claims)?))
+            } else {
+                NotSet
+            },
+            oidc_scopes: mapping
+                .oidc_scopes
+                .clone()
+                .map(|x| Set(x.join(",")))
+                .unwrap_or(NotSet)
+                .into(),
+            token_project_id: mapping
+                .token_project_id
+                .clone()
+                .map(Set)
+                .unwrap_or(NotSet)
+                .into(),
+            token_restriction_id: mapping
+                .token_restriction_id
+                .clone()
+                .map(Set)
+                .unwrap_or(NotSet)
+                .into(),
+        })
     }
 }
 
@@ -87,7 +161,11 @@ impl TryFrom<db_federated_mapping::Model> for Mapping {
             builder.bound_subject(val);
         }
         if let Some(val) = value.bound_claims {
-            builder.bound_claims(val);
+            builder.bound_claims(
+                serde_json::from_value::<HashMap<String, Value>>(val)
+                    .inspect_err(|e| error!("failed to deserialize mapping additional claims: {e}"))
+                    .unwrap_or_default(),
+            );
         }
         if let Some(val) = &value.oidc_scopes
             && !val.is_empty()

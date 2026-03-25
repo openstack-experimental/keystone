@@ -21,9 +21,9 @@ use crate::Link;
 
 /// K8s authentication role.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[cfg_attr(feature = "builder", derive(derive_builder::Builder))]
 #[cfg_attr(
     feature = "builder",
+    derive(derive_builder::Builder),
     builder(
         build_fn(error = "crate::error::BuilderError"),
         setter(strip_option, into)
@@ -80,9 +80,9 @@ pub struct K8sAuthRoleResponse {
 
 /// New K8s authentication role.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[cfg_attr(feature = "builder", derive(derive_builder::Builder))]
 #[cfg_attr(
     feature = "builder",
+    derive(derive_builder::Builder),
     builder(
         build_fn(error = "crate::error::BuilderError"),
         setter(strip_option, into)
@@ -132,10 +132,10 @@ pub struct K8sAuthRoleCreateRequest {
 }
 
 /// Update K8s authentication role.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
-#[cfg_attr(feature = "builder", derive(derive_builder::Builder))]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(
     feature = "builder",
+    derive(derive_builder::Builder),
     builder(
         build_fn(error = "crate::error::BuilderError"),
         setter(strip_option, into)
@@ -223,7 +223,7 @@ pub struct K8sAuthRoleListParametersNested {
 }
 
 /// K8s Auth role list parameters.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::IntoParams))]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[cfg_attr(feature = "validate", derive(validator::Validate))]

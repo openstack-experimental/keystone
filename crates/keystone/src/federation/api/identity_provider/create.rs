@@ -98,7 +98,9 @@ mod tests {
         let mut federation_mock = MockFederationProvider::default();
         federation_mock
             .expect_create_identity_provider()
-            .withf(|_, req: &provider_types::IdentityProviderCreate| req.name == "name")
+            .withf(|_, req: &provider_types::IdentityProviderCreate| {
+                req.name == "name" && req.enabled
+            })
             .returning(|_, _| {
                 Ok(provider_types::IdentityProvider {
                     id: "bar".into(),
@@ -120,11 +122,11 @@ mod tests {
             .with_state(state.clone());
 
         let req = IdentityProviderCreateRequest {
-            identity_provider: IdentityProviderCreate {
-                name: "name".into(),
-                domain_id: Some("did".into()),
-                ..Default::default()
-            },
+            identity_provider: IdentityProviderCreateBuilder::default()
+                .name("name")
+                .domain_id("did")
+                .build()
+                .unwrap(),
         };
 
         let response = api

@@ -17,8 +17,7 @@
 //! This crates defines reusable types that OpenStack Keystone is using for
 //! the REST API.
 
-use serde::{Deserialize, Deserializer, Serialize};
-use serde_json::Value;
+use serde::{Deserialize, Serialize};
 
 pub mod catalog;
 #[cfg(feature = "conv")]
@@ -62,18 +61,4 @@ impl Link {
 /// Return `true` to be used as a positive default for the serde macros.
 pub fn default_true() -> bool {
     true
-}
-
-fn deserialize_optional_flatten_value<'de, D>(
-    deserializer: D,
-) -> Result<Option<serde_json::Value>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let val: Value = Value::deserialize(deserializer)?;
-    if val.as_object().is_some_and(|x| x.is_empty()) {
-        Ok(None)
-    } else {
-        Ok(Some(val))
-    }
 }

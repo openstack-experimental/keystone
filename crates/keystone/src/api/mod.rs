@@ -102,20 +102,18 @@ async fn version(
     let res = Versions {
         versions: Values {
             values: vec![
-                Version {
-                    id: "v3.14".into(),
-                    status: VersionStatus::Stable,
-                    links: Some(vec![Link::new(format!("{host}/v3"))]),
-                    media_types: Some(vec![MediaType::default()]),
-                    ..Default::default()
-                },
-                Version {
-                    id: "v4.0".into(),
-                    status: VersionStatus::Experimental,
-                    links: Some(vec![Link::new(format!("{host}/v4"))]),
-                    media_types: Some(vec![MediaType::default()]),
-                    ..Default::default()
-                },
+                VersionBuilder::default()
+                    .id("v3.14")
+                    .status(VersionStatus::Stable)
+                    .links(vec![Link::new(format!("{host}/v3"))])
+                    .media_types(vec![MediaType::default()])
+                    .build()?,
+                VersionBuilder::default()
+                    .id("v4.0")
+                    .status(VersionStatus::Stable)
+                    .links(vec![Link::new(format!("{host}/v4"))])
+                    .media_types(vec![MediaType::default()])
+                    .build()?,
             ],
         },
     };

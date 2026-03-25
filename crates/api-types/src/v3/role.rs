@@ -12,6 +12,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 #[cfg(feature = "validate")]
@@ -36,8 +38,10 @@ pub struct Role {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "validate", validate(length(min = 1, max = 255)))]
     pub description: Option<String>,
-    #[serde(flatten, skip_serializing_if = "Option::is_none")]
-    pub extra: Option<Value>,
+
+    #[cfg_attr(feature = "openapi", schema(inline, additional_properties))]
+    #[serde(flatten)]
+    pub extra: HashMap<String, Value>,
 }
 
 /// The role reference data.
@@ -78,7 +82,7 @@ pub struct RoleList {
     pub roles: Vec<Role>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::IntoParams))]
 #[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct RoleListParameters {
@@ -121,6 +125,7 @@ pub struct RoleCreate {
 
     /// Extra attributes for the role.
     #[cfg_attr(feature = "builder", builder(default))]
-    #[serde(flatten, skip_serializing_if = "Option::is_none")]
-    pub extra: Option<Value>,
+    #[cfg_attr(feature = "openapi", schema(inline, additional_properties))]
+    #[serde(flatten)]
+    pub extra: HashMap<String, Value>,
 }

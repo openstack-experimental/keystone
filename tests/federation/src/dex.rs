@@ -41,16 +41,15 @@ pub async fn setup_idp<T: AsRef<str>, K: AsRef<str>, S: AsRef<str>>(
         config,
         token.as_ref(),
         IdentityProviderCreateRequest {
-            identity_provider: IdentityProviderCreate {
-                name: "dex".into(),
-                enabled: true,
-                domain_id: Some("default".into()),
-                default_mapping_name: Some("default".into()),
-                oidc_discovery_url: Some(format!("{}/dex", dex_url)),
-                oidc_client_id: Some(client_id.as_ref().into()),
-                oidc_client_secret: Some(client_secret.as_ref().into()),
-                ..Default::default()
-            },
+            identity_provider: IdentityProviderCreateBuilder::default()
+                .name("dex")
+                .enabled(true)
+                .domain_id("default")
+                .default_mapping_name("default")
+                .oidc_discovery_url(format!("{}/dex", dex_url))
+                .oidc_client_id(client_id.as_ref())
+                .oidc_client_secret(client_secret.as_ref())
+                .build()?,
         },
     )
     .await?;
@@ -59,20 +58,19 @@ pub async fn setup_idp<T: AsRef<str>, K: AsRef<str>, S: AsRef<str>>(
         config,
         token.as_ref(),
         MappingCreateRequest {
-            mapping: MappingCreate {
-                id: Some("dex".into()),
-                name: "default".into(),
-                enabled: true,
-                domain_id: Some("default".into()),
-                idp_id: idp.id.clone(),
-                allowed_redirect_uris: Some(vec![
+            mapping: MappingCreateBuilder::default()
+                .id("dex")
+                .name("default")
+                .enabled(true)
+                .domain_id("default")
+                .idp_id(idp.id.clone())
+                .allowed_redirect_uris(vec![
                     "http://localhost:8080/v4/identity_providers/dex/callback".into(),
-                ]),
-                user_id_claim: "sub".into(),
-                user_name_claim: "name".into(),
-                oidc_scopes: Some(vec!["email".into(), "profile".into()]),
-                ..Default::default()
-            },
+                ])
+                .user_id_claim("sub")
+                .user_name_claim("name")
+                .oidc_scopes(vec!["email".into(), "profile".into()])
+                .build()?,
         },
     )
     .await?;

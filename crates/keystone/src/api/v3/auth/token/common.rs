@@ -170,12 +170,12 @@ mod tests {
                         identity: Identity {
                             methods: vec!["password".to_string()],
                             password: Some(PasswordAuth {
-                                user: UserPassword {
-                                    id: Some("uid".to_string()),
-                                    password: "pwd".to_string(),
-                                    name: Some("uname".to_string()),
-                                    ..Default::default()
-                                },
+                                user: UserPasswordBuilder::default()
+                                    .id("uid")
+                                    .password("pwd")
+                                    .name("uname")
+                                    .build()
+                                    .unwrap(),
                             }),
                             token: None,
                         },

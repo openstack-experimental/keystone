@@ -12,10 +12,11 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use std::collections::{HashMap, HashSet};
+
 use derive_builder::Builder;
 use serde::Serialize;
 use serde_json::Value;
-use std::collections::HashSet;
 use validator::Validate;
 
 use crate::error::BuilderError;
@@ -43,7 +44,8 @@ pub struct Domain {
 
     /// Additional domain properties.
     #[builder(default)]
-    pub extra: Option<Value>,
+    #[serde(flatten)]
+    pub extra: HashMap<String, Value>,
 }
 
 /// New domain data.
@@ -70,7 +72,7 @@ pub struct DomainCreate {
 
     /// Additional domain properties.
     #[builder(default)]
-    pub extra: Option<Value>,
+    pub extra: HashMap<String, Value>,
 }
 
 /// Domain listing parameters.

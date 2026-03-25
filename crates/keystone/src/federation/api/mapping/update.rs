@@ -146,10 +146,10 @@ mod tests {
             .with_state(state.clone());
 
         let req = MappingUpdateRequest {
-            mapping: MappingUpdate {
-                name: Some("name".into()),
-                ..Default::default()
-            },
+            mapping: MappingUpdateBuilder::default()
+                .name("name")
+                .build()
+                .unwrap(),
         };
 
         let response = api

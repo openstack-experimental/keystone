@@ -11,8 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-
-use serde_json::{Value, json};
+use serde_json::Value;
 
 use openstack_keystone_core_types::identity::Group;
 
@@ -37,7 +36,12 @@ impl From<group::Model> for Group {
             domain_id: value.domain_id.clone(),
             extra: value
                 .extra
-                .map(|x| serde_json::from_str::<Value>(&x).unwrap_or(json!(true))),
+                .map(|x| {
+                    serde_json::from_str::<std::collections::HashMap<String, Value>>(&x)
+                        .inspect_err(|e| tracing::error!("failed to deserialize group extra: {e}"))
+                        .unwrap_or_default()
+                })
+                .unwrap_or_default(),
         }
     }
 }

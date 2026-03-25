@@ -87,13 +87,12 @@ async fn version(
         rel: "self".into(),
         href: format!("{}{}", host, uri.path()),
     };
-    let version = Version {
-        id: "v3.14".into(),
-        status: VersionStatus::Stable,
-        links: Some(vec![link]),
-        media_types: Some(vec![MediaType::default()]),
-        ..Default::default()
-    };
+    let version = VersionBuilder::default()
+        .id("v3.14")
+        .status(VersionStatus::Stable)
+        .links(vec![link])
+        .media_types(vec![MediaType::default()])
+        .build()?;
     let res = SingleVersion { version };
     Ok((StatusCode::OK, Json(res)).into_response())
 }

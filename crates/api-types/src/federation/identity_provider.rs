@@ -21,9 +21,9 @@ use crate::Link;
 
 /// Identity provider data.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[cfg_attr(feature = "builder", derive(derive_builder::Builder))]
 #[cfg_attr(
     feature = "builder",
+    derive(derive_builder::Builder),
     builder(
         build_fn(error = "crate::error::BuilderError"),
         setter(strip_option, into)
@@ -103,14 +103,6 @@ pub struct IdentityProvider {
 
 /// Identity provider response.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[cfg_attr(feature = "builder", derive(derive_builder::Builder))]
-#[cfg_attr(
-    feature = "builder",
-    builder(
-        build_fn(error = "crate::error::BuilderError"),
-        setter(strip_option, into)
-    )
-)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct IdentityProviderResponse {
@@ -120,10 +112,10 @@ pub struct IdentityProviderResponse {
 }
 
 /// Identity provider data.
-#[derive(Clone, Default, Debug, Deserialize, PartialEq, Serialize)]
-#[cfg_attr(feature = "builder", derive(derive_builder::Builder))]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(
     feature = "builder",
+    derive(derive_builder::Builder),
     builder(
         build_fn(error = "crate::error::BuilderError"),
         setter(strip_option, into)
@@ -148,6 +140,7 @@ pub struct IdentityProviderCreate {
 
     /// Identity provider `enabled` property. Inactive Identity Providers can
     /// not be used for login.
+    #[cfg_attr(feature = "builder", builder(default = "true"))]
     #[serde(default = "crate::default_true")]
     pub enabled: bool,
 
@@ -226,10 +219,10 @@ pub struct IdentityProviderCreate {
 }
 
 /// New identity provider data.
-#[derive(Clone, Default, Debug, Deserialize, PartialEq, Serialize)]
-#[cfg_attr(feature = "builder", derive(derive_builder::Builder))]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(
     feature = "builder",
+    derive(derive_builder::Builder),
     builder(
         build_fn(error = "crate::error::BuilderError"),
         setter(strip_option, into)
@@ -303,14 +296,6 @@ pub struct IdentityProviderUpdate {
 
 /// Identity provider create request.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[cfg_attr(feature = "builder", derive(derive_builder::Builder))]
-#[cfg_attr(
-    feature = "builder",
-    builder(
-        build_fn(error = "crate::error::BuilderError"),
-        setter(strip_option, into)
-    )
-)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct IdentityProviderCreateRequest {
@@ -321,14 +306,6 @@ pub struct IdentityProviderCreateRequest {
 
 /// Identity provider update request.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[cfg_attr(feature = "builder", derive(derive_builder::Builder))]
-#[cfg_attr(
-    feature = "builder",
-    builder(
-        build_fn(error = "crate::error::BuilderError"),
-        setter(strip_option, into)
-    )
-)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct IdentityProviderUpdateRequest {
@@ -338,7 +315,7 @@ pub struct IdentityProviderUpdateRequest {
 }
 
 /// List of Identity Providers.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct IdentityProviderList {
@@ -352,7 +329,7 @@ pub struct IdentityProviderList {
 }
 
 /// Query parameters for listing federated identity providers.
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::IntoParams))]
 #[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct IdentityProviderListParameters {

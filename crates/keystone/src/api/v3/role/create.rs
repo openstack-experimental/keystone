@@ -146,7 +146,7 @@ mod tests {
                 name: "new_role".into(),
                 domain_id: Some("domain1".into()),
                 description: Some("A new role".into()),
-                extra: Some(json!({}))
+                extra: std::collections::HashMap::new(),
             },
             res.role,
         );

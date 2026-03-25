@@ -11,33 +11,49 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 #[cfg(feature = "validate")]
 use validator::Validate;
 
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(
+    feature = "builder",
+    derive(derive_builder::Builder),
+    builder(
+        build_fn(error = "crate::error::BuilderError"),
+        setter(strip_option, into)
+    )
+)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct Group {
-    /// Group ID.
-    #[cfg_attr(feature = "validate", validate(length(max = 64)))]
-    pub id: String,
     /// Group domain ID.
     #[cfg_attr(feature = "validate", validate(length(max = 64)))]
     pub domain_id: String,
+
+    /// Group description.
+    #[cfg_attr(feature = "builder", builder(default))]
+    #[cfg_attr(feature = "validate", validate(length(max = 255)))]
+    pub description: Option<String>,
+
+    #[cfg_attr(feature = "builder", builder(default))]
+    #[cfg_attr(feature = "openapi", schema(inline, additional_properties))]
+    #[serde(flatten)]
+    pub extra: std::collections::HashMap<String, serde_json::Value>,
+    //pub extra: ExtraFields,
+    /// Group ID.
+    #[cfg_attr(feature = "validate", validate(length(max = 64)))]
+    pub id: String,
+
     /// Group name.
     #[cfg_attr(feature = "validate", validate(length(max = 64)))]
     pub name: String,
-    /// Group description.
-    #[cfg_attr(feature = "validate", validate(length(max = 255)))]
-    pub description: Option<String>,
-    #[serde(flatten, skip_serializing_if = "Option::is_none")]
-    pub extra: Option<Value>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct GroupResponse {
@@ -46,24 +62,37 @@ pub struct GroupResponse {
     pub group: Group,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(
+    feature = "builder",
+    derive(derive_builder::Builder),
+    builder(
+        build_fn(error = "crate::error::BuilderError"),
+        setter(strip_option, into)
+    )
+)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct GroupCreate {
     /// Group domain ID.
     #[cfg_attr(feature = "validate", validate(length(max = 64)))]
     pub domain_id: String,
+
     /// Group name.
     #[cfg_attr(feature = "validate", validate(length(max = 64)))]
     pub name: String,
+
     /// Group description.
+    #[cfg_attr(feature = "builder", builder(default))]
     #[cfg_attr(feature = "validate", validate(length(max = 255)))]
     pub description: Option<String>,
-    #[serde(default, flatten, skip_serializing_if = "Option::is_none")]
-    pub extra: Option<Value>,
+
+    #[cfg_attr(feature = "builder", builder(default))]
+    #[serde(flatten)]
+    pub extra: HashMap<String, Value>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct GroupCreateRequest {
@@ -73,7 +102,7 @@ pub struct GroupCreateRequest {
 }
 
 /// Groups.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct GroupList {
@@ -82,7 +111,7 @@ pub struct GroupList {
     pub groups: Vec<Group>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::IntoParams))]
 #[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct GroupListParameters {

@@ -74,7 +74,7 @@ mod tests {
                 domain_id: "foo_domain".into(),
                 name: "group".into(),
                 description: Some("fake".into()),
-                extra: Some(json!({"foo": "bar"}))
+                extra: std::collections::HashMap::from([("foo".into(), json!("bar"))])
             }]
         );
 

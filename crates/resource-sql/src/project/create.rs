@@ -50,7 +50,7 @@ mod tests {
             description: Some("description".into()),
             domain_id: "foo_domain".into(),
             enabled: true,
-            extra: None,
+            extra: std::collections::HashMap::new(),
             id: Some("1".into()),
             is_domain: false,
             name: "project_name".into(),

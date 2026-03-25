@@ -14,7 +14,6 @@
 
 use sea_orm::DatabaseConnection;
 use sea_orm::entity::*;
-use serde_json::json;
 
 use openstack_keystone_core::error::DbContextExt;
 use openstack_keystone_core::identity::IdentityProviderError;
@@ -32,9 +31,7 @@ pub async fn create(
         domain_id: Set(group.domain_id.clone()),
         name: Set(group.name.clone()),
         description: Set(group.description.clone()),
-        extra: Set(Some(serde_json::to_string(
-            &group.extra.as_ref().or(Some(&json!({}))),
-        )?)),
+        extra: Set(Some(serde_json::to_string(&group.extra)?)),
     };
 
     let db_entry: group::Model = entry
@@ -65,7 +62,7 @@ mod tests {
             domain_id: "foo_domain".into(),
             name: "group".into(),
             description: Some("fake".into()),
-            extra: Some(json!({"foo": "bar"})),
+            extra: std::collections::HashMap::from([("foo".into(), json!("bar"))]),
         };
         assert_eq!(create(&db, req).await.unwrap(), get_group_mock("1").into());
         // Checking transaction log
@@ -97,7 +94,7 @@ mod tests {
             domain_id: "foo_domain".into(),
             name: "group".into(),
             description: Some("fake".into()),
-            extra: None,
+            extra: std::collections::HashMap::from([("foo".into(), json!("bar"))]),
         };
         assert_eq!(create(&db, req).await.unwrap(), get_group_mock("1").into());
         // Checking transaction log
@@ -111,7 +108,7 @@ mod tests {
                     "foo_domain".into(),
                     "group".into(),
                     "fake".into(),
-                    "{}".into()
+                    "{\"foo\":\"bar\"}".into()
                 ]
             ),]
         );

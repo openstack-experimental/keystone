@@ -148,11 +148,11 @@ mod tests {
             .with_state(state.clone());
 
         let req = IdentityProviderUpdateRequest {
-            identity_provider: IdentityProviderUpdate {
-                name: Some("name".into()),
-                oidc_client_id: Some(None),
-                ..Default::default()
-            },
+            identity_provider: IdentityProviderUpdateBuilder::default()
+                .name("name")
+                .oidc_client_id(None)
+                .build()
+                .unwrap(),
         };
 
         let response = api

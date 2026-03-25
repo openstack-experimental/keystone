@@ -49,7 +49,7 @@ mod tests {
         let req = DomainCreate {
             description: Some("description".into()),
             enabled: true,
-            extra: None,
+            extra: std::collections::HashMap::new(),
             id: Some("1".into()),
             name: "name".into(),
         };
