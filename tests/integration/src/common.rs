@@ -256,6 +256,7 @@ pub async fn get_state() -> Result<(Arc<Service>, TempDir)> {
         key_repository: cfg.fernet_tokens.key_repository.clone(),
         max_active_keys: cfg.fernet_tokens.max_active_keys,
     };
+    cfg.federation.default_authorization_ttl = 20;
     fernet_utils.initialize_key_repository()?;
 
     let plugin_manager = PluginManager::with_config(&cfg);

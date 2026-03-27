@@ -32,3 +32,8 @@ pub mod role;
 pub mod scope;
 pub mod token;
 pub mod trust;
+
+/// Return `true` to be used as a positive default for the serde macros.
+pub fn default_true() -> bool {
+    true
+}

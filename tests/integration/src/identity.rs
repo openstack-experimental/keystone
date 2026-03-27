@@ -30,6 +30,7 @@ mod user;
 mod user_group;
 
 impl_deleter!(Service, UserResponse, get_identity_provider, delete_user);
+impl_deleter!(Service, Group, get_identity_provider, delete_group);
 
 pub async fn create_user(
     state: &ServiceState,
@@ -41,5 +42,17 @@ pub async fn create_user(
         .create_user(state, data)
         .await
         .unwrap();
+    Ok(AsyncResourceGuard::new(res, state.clone()))
+}
+
+pub async fn create_group(
+    state: &Arc<Service>,
+    data: GroupCreate,
+) -> Result<AsyncResourceGuard<Group, ServiceState>> {
+    let res = state
+        .provider
+        .get_identity_provider()
+        .create_group(state, data)
+        .await?;
     Ok(AsyncResourceGuard::new(res, state.clone()))
 }

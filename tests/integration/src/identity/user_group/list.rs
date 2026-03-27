@@ -23,27 +23,31 @@ use openstack_keystone_identity_sql::entity::{
     prelude::ExpiringUserGroupMembership as DbExpiringUserGroupMembership,
 };
 
+use openstack_keystone::identity::IdentityApi;
+
 use super::*;
-use crate::common::{create_group, create_user};
+use crate::common::get_state;
+use crate::{create_domain, create_group, create_user};
 
 #[tokio::test]
 async fn test_list_user_groups() -> Result<(), Report> {
-    let state = get_state().await?;
-    create_user(&state, Some("user_a")).await?;
-    create_group(&state, Some("group_a")).await?;
+    let (state, _tmp) = get_state().await?;
+    let domain = create_domain!(state)?;
+    let user = create_user!(state, domain.id.clone())?;
+    let group = create_group!(state, domain.id.clone())?;
     state
         .provider
         .get_identity_provider()
-        .add_user_to_group(&state, "user_a", "group_a")
+        .add_user_to_group(&state, &user.id, &group.id)
         .await?;
 
     assert_eq!(
-        list_user_groups(&state, "user_a")
+        list_user_groups(&state, &user.id)
             .await?
             .into_iter()
             .map(|group| group.id.clone())
             .collect::<Vec<_>>(),
-        vec!["group_a".to_string()],
+        vec![group.id.clone()],
         "user is member of group a"
     );
     Ok(())
@@ -52,30 +56,32 @@ async fn test_list_user_groups() -> Result<(), Report> {
 #[tokio::test]
 #[traced_test]
 async fn test_expiring_groups() -> Result<(), Report> {
-    let state = get_state().await?;
-    create_user(&state, Some("user_a")).await?;
-    create_group(&state, Some("group_a")).await?;
-    create_group(&state, Some("group_b")).await?;
-    create_group(&state, Some("group_c")).await?;
+    let (state, _tmp) = get_state().await?;
+    let domain = create_domain!(state)?;
+    let user = create_user!(state, domain.id.clone())?;
+    let group_a = create_group!(state, domain.id.clone())?;
+    let group_b = create_group!(state, domain.id.clone())?;
+    let group_c = create_group!(state, domain.id.clone())?;
+
     state
         .provider
         .get_identity_provider()
-        .add_user_to_group(&state, "user_a", "group_a")
+        .add_user_to_group(&state, &user.id, &group_a.id)
         .await?;
 
     // non expired membership
     state
         .provider
         .get_identity_provider()
-        .add_user_to_group_expiring(&state, "user_a", "group_b", "idp_id")
+        .add_user_to_group_expiring(&state, &user.id, &group_b.id, "idp_id")
         .await?;
 
     // TODO: Find a way to add expired group membership for the test
     DbExpiringUserGroupMembership::insert_many([
         // Add expired membership
         expiring_user_group_membership::ActiveModel {
-            user_id: Set("user_a".to_string()),
-            group_id: Set("group_c".to_string()),
+            user_id: Set(user.id.clone()),
+            group_id: Set(group_c.id.clone()),
             idp_id: Set("idp_id".to_string()),
             last_verified: Set(DateTime::<Utc>::default().naive_utc()),
         },
@@ -83,14 +89,10 @@ async fn test_expiring_groups() -> Result<(), Report> {
     .exec(&state.db)
     .await?;
 
-    assert_eq!(
-        list_user_groups(&state, "user_a")
-            .await?
-            .into_iter()
-            .map(|group| group.id.clone())
-            .collect::<Vec<_>>(),
-        vec!["group_a".to_string(), "group_b".to_string()],
-        "user is member of groups a and b"
-    );
+    let groups = list_user_groups(&state, &user.id).await?;
+
+    assert_eq!(2, groups.len());
+    assert!(groups.iter().find(|x| x.id == group_a.id).is_some());
+    assert!(groups.iter().find(|x| x.id == group_b.id).is_some());
     Ok(())
 }

@@ -19,21 +19,23 @@ use tracing_test::traced_test;
 use openstack_keystone::k8s_auth::K8sAuthApi;
 use openstack_keystone_core_types::k8s_auth::*;
 
-use super::super::get_state;
 use super::super::instance::create_k8s_auth_instance;
+use crate::common::get_state;
+use crate::create_domain;
 use crate::token::token_restriction::create_token_restriction;
 
 #[traced_test]
 #[tokio::test]
 async fn test_create() -> Result<()> {
-    let state = get_state().await?;
+    let (state, _) = get_state().await?;
+    let domain = create_domain!(state)?;
 
     let k8s_conf = create_k8s_auth_instance(
         &state,
         K8sAuthInstanceCreate {
             ca_cert: Some("ca".into()),
             disable_local_ca_jwt: Some(false),
-            domain_id: "domain_a".into(),
+            domain_id: domain.id.clone(),
             enabled: true,
             host: "host".into(),
             id: None,
@@ -47,7 +49,7 @@ async fn test_create() -> Result<()> {
             allow_rescope: false,
             allow_renew: false,
             id: String::new(),
-            domain_id: "domain_a".into(),
+            domain_id: domain.id.clone(),
             project_id: None,
             role_ids: Vec::new(),
             user_id: None,
@@ -59,7 +61,7 @@ async fn test_create() -> Result<()> {
         bound_audience: Some("aud".into()),
         bound_service_account_names: vec!["a".into(), "b".into()],
         bound_service_account_namespaces: vec!["na".into(), "nb".into()],
-        domain_id: "domain_a".into(),
+        domain_id: domain.id.clone(),
         enabled: true,
         id: None,
         name: uuid::Uuid::new_v4().to_string(),

@@ -25,48 +25,23 @@ use openstack_keystone::auth::*;
 use openstack_keystone::token::{TokenApi, TokenProviderError};
 use openstack_keystone_core_types::application_credential::*;
 use openstack_keystone_core_types::assignment::*;
-use openstack_keystone_core_types::identity::*;
 use openstack_keystone_core_types::resource::*;
 use openstack_keystone_core_types::role::*;
 
 use crate::assignment::{check_grant, grant_role_to_user_on_project};
 use crate::common::get_state;
-use crate::identity::create_user;
-use crate::resource::{create_domain, create_project};
-use crate::role::create_role;
+use crate::{create_domain, create_project, create_role, create_user};
 
 #[traced_test]
 #[tokio::test]
 async fn test_revoke_user_project_grant() -> Result<()> {
     let (state, _tmp) = get_state().await?;
 
-    let domain = create_domain(
-        &state,
-        DomainCreateBuilder::default()
-            .name(Uuid::new_v4().simple().to_string())
-            .enabled(true)
-            .build()?,
-    )
-    .await?;
-    let project = create_project(
-        &state,
-        ProjectCreateBuilder::default()
-            .name(Uuid::new_v4().simple().to_string())
-            .domain_id(domain.id.clone())
-            .enabled(true)
-            .build()?,
-    )
-    .await?;
-    let user = create_user(
-        &state,
-        UserCreateBuilder::default()
-            .name("user_a")
-            .domain_id(domain.id.clone())
-            .build()?,
-    )
-    .await?;
-    let role_a = create_role(&state, RoleCreateBuilder::default().name("role_a").build()?).await?;
-    let role_b = create_role(&state, RoleCreateBuilder::default().name("role_b").build()?).await?;
+    let domain = create_domain!(state)?;
+    let project = create_project!(state, domain.id.clone())?;
+    let user = create_user!(state, domain.id.clone())?;
+    let role_a = create_role!(state)?;
+    let role_b = create_role!(state)?;
     grant_role_to_user_on_project(&state, &user.id, &project.id, &role_a.id).await?;
     grant_role_to_user_on_project(&state, &user.id, &project.id, &role_b.id).await?;
 
@@ -103,35 +78,13 @@ async fn test_revoke_user_project_grant() -> Result<()> {
 async fn test_revoke_user_project_grant_auth_impact() -> Result<()> {
     let (state, _tmp) = get_state().await?;
 
-    let domain = create_domain(
-        &state,
-        DomainCreateBuilder::default()
-            .name(Uuid::new_v4().simple().to_string())
-            .enabled(true)
-            .build()?,
-    )
-    .await?;
-    let project = create_project(
-        &state,
-        ProjectCreateBuilder::default()
-            .name(Uuid::new_v4().simple().to_string())
-            .domain_id(domain.id.clone())
-            .enabled(true)
-            .build()?,
-    )
-    .await?;
-    let user = create_user(
-        &state,
-        UserCreateBuilder::default()
-            .name("user_a")
-            .domain_id(domain.id.clone())
-            .build()?,
-    )
-    .await?;
+    let domain = create_domain!(state)?;
+    let project = create_project!(state, domain.id.clone())?;
+    let user = create_user!(state, domain.id.clone())?;
     // Create two roles: one that will be granted and revoked, and another to
     // confirm that revocation is specific
-    let role_a = create_role(&state, RoleCreateBuilder::default().name("role_a").build()?).await?;
-    let role_b = create_role(&state, RoleCreateBuilder::default().name("role_b").build()?).await?;
+    let role_a = create_role!(state)?;
+    let role_b = create_role!(state)?;
     // Grant first role that will be revoked
     grant_role_to_user_on_project(&state, &user.id, &project.id, &role_a.id).await?;
     // Grant second role that will remain unaffected

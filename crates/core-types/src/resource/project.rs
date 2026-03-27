@@ -82,6 +82,7 @@ pub struct ProjectCreate {
 
     /// If set to true, project is enabled. If set to false, project is
     /// disabled.
+    #[builder(default = "crate::default_true()")]
     pub enabled: bool,
 
     /// Additional project properties.

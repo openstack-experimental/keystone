@@ -20,12 +20,14 @@ use uuid::Uuid;
 use openstack_keystone::identity::IdentityApi;
 use openstack_keystone_core_types::identity::*;
 
-use super::*;
+use crate::common::get_state;
+use crate::create_domain;
 
 #[tokio::test]
 #[traced_test]
 async fn test_get() -> Result<()> {
-    let state = get_state().await?;
+    let (state, _tmp) = get_state().await?;
+    let domain = create_domain!(state)?;
     let uid = Uuid::new_v4().simple().to_string();
 
     let sa = state
@@ -34,7 +36,7 @@ async fn test_get() -> Result<()> {
         .create_service_account(
             &state,
             ServiceAccountCreate {
-                domain_id: "domain_a".into(),
+                domain_id: domain.id.clone(),
                 enabled: Some(true),
                 id: Some(uid.clone()),
                 name: "sa_foo".into(),

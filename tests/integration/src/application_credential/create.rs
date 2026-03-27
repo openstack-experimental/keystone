@@ -25,12 +25,16 @@ use openstack_keystone::application_credential::{
 use openstack_keystone_core_types::application_credential::*;
 use openstack_keystone_core_types::role::*;
 
-use super::get_state;
+use crate::common::get_state;
+use crate::{create_domain, create_project, create_role, create_user};
 
 #[tokio::test]
 #[traced_test]
 async fn test_create_basic() -> Result<(), Report> {
-    let state = get_state().await?;
+    let (state, _) = get_state().await?;
+    let domain = create_domain!(state)?;
+    let project = create_project!(state, domain.id.clone())?;
+    let user = create_user!(state, domain.id.clone())?;
 
     let sot = ApplicationCredentialCreate {
         access_rules: Some(vec![AccessRuleCreate {
@@ -41,9 +45,9 @@ async fn test_create_basic() -> Result<(), Report> {
         }]),
         description: Some("description".into()),
         name: Uuid::new_v4().to_string(),
-        project_id: "project_a".into(),
+        project_id: project.id.clone(),
         roles: vec![],
-        user_id: "user_a".into(),
+        user_id: user.id.clone(),
         ..Default::default()
     };
 
@@ -81,13 +85,16 @@ async fn test_create_basic() -> Result<(), Report> {
 #[tokio::test]
 #[traced_test]
 async fn test_create_id_reuse() -> Result<(), Report> {
-    let state = get_state().await?;
+    let (state, _) = get_state().await?;
+    let domain = create_domain!(state)?;
+    let project = create_project!(state, domain.id.clone())?;
+    let user = create_user!(state, domain.id.clone())?;
     let sot = ApplicationCredentialCreate {
         id: Some(Uuid::new_v4().to_string()),
         name: Uuid::new_v4().to_string(),
-        project_id: "project_a".into(),
+        project_id: project.id.clone(),
         roles: vec![],
-        user_id: "user_a".into(),
+        user_id: user.id.clone(),
         ..Default::default()
     };
     let cred: ApplicationCredentialCreateResponse = state
@@ -108,7 +115,10 @@ async fn test_create_id_reuse() -> Result<(), Report> {
 #[tokio::test]
 #[traced_test]
 async fn test_create_secret_reuse() -> Result<(), Report> {
-    let state = get_state().await?;
+    let (state, _) = get_state().await?;
+    let domain = create_domain!(state)?;
+    let project = create_project!(state, domain.id.clone())?;
+    let user = create_user!(state, domain.id.clone())?;
     let secret = "this is the secret".to_string();
     let cred: ApplicationCredentialCreateResponse = state
         .provider
@@ -117,10 +127,10 @@ async fn test_create_secret_reuse() -> Result<(), Report> {
             &state,
             ApplicationCredentialCreate {
                 name: Uuid::new_v4().to_string(),
-                project_id: "project_a".into(),
+                project_id: project.id.clone(),
                 roles: vec![],
                 secret: Some(secret.clone().into()),
-                user_id: "user_a".into(),
+                user_id: user.id.clone(),
                 ..Default::default()
             },
         )
@@ -129,7 +139,7 @@ async fn test_create_secret_reuse() -> Result<(), Report> {
     assert_eq!(
         secret,
         cred.secret.expose_secret(),
-        "response secret it same as in the request"
+        "response secret is same as in the request"
     );
 
     Ok(())
@@ -138,7 +148,10 @@ async fn test_create_secret_reuse() -> Result<(), Report> {
 #[tokio::test]
 #[traced_test]
 async fn test_create_nonexisting_role() -> Result<(), Report> {
-    let state = get_state().await?;
+    let (state, _) = get_state().await?;
+    let domain = create_domain!(state)?;
+    let project = create_project!(state, domain.id.clone())?;
+    let user = create_user!(state, domain.id.clone())?;
     if let Err(ApplicationCredentialProviderError::RoleNotFound(r)) = state
         .provider
         .get_application_credential_provider()
@@ -146,13 +159,13 @@ async fn test_create_nonexisting_role() -> Result<(), Report> {
             &state,
             ApplicationCredentialCreate {
                 name: Uuid::new_v4().to_string(),
-                project_id: "project_a".into(),
+                project_id: project.id.clone(),
                 roles: vec![RoleRef {
                     id: "missing".into(),
                     name: None,
                     domain_id: None,
                 }],
-                user_id: "user_a".into(),
+                user_id: user.id.clone(),
                 ..Default::default()
             },
         )
@@ -169,7 +182,11 @@ async fn test_create_nonexisting_role() -> Result<(), Report> {
 #[tokio::test]
 #[traced_test]
 async fn test_create_role() -> Result<(), Report> {
-    let state = get_state().await?;
+    let (state, _) = get_state().await?;
+    let domain = create_domain!(state)?;
+    let project = create_project!(state, domain.id.clone())?;
+    let role_a = create_role!(state)?;
+    let user = create_user!(state, domain.id.clone())?;
     let cred = state
         .provider
         .get_application_credential_provider()
@@ -177,20 +194,16 @@ async fn test_create_role() -> Result<(), Report> {
             &state,
             ApplicationCredentialCreate {
                 name: Uuid::new_v4().to_string(),
-                project_id: "project_a".into(),
-                roles: vec![RoleRef {
-                    id: "role_a".into(),
-                    name: None,
-                    domain_id: None,
-                }],
-                user_id: "user_a".into(),
+                project_id: project.id.clone(),
+                roles: vec![RoleRef::from(role_a.clone())],
+                user_id: user.id.clone(),
                 ..Default::default()
             },
         )
         .await?;
 
     assert!(
-        cred.roles.iter().any(|x| x.id == "role_a"),
+        cred.roles.iter().any(|x| x.id == role_a.id),
         "role_a is present in roles"
     );
     Ok(())

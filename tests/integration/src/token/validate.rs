@@ -14,105 +14,14 @@
 //
 
 use eyre::Report;
-use sea_orm::{DbConn, entity::*};
 use std::sync::Arc;
-use tempfile::TempDir;
 
-use openstack_keystone::plugin_manager::PluginManager;
-use openstack_keystone_config::Config;
 use openstack_keystone_core::assignment::AssignmentApi;
-use openstack_keystone_core::identity::IdentityApi;
 use openstack_keystone_core::keystone::Service;
-use openstack_keystone_core::policy::MockPolicy;
-use openstack_keystone_core::provider::Provider;
 use openstack_keystone_core_types::assignment::AssignmentCreate;
-use openstack_keystone_core_types::identity::*;
-use openstack_keystone_resource_sql::entity::{prelude::Project, project};
 
 mod application_credential;
 mod trust;
-
-use crate::common::{bootstrap, get_isolated_database};
-
-async fn setup_data(db: &DbConn) -> Result<(), Report> {
-    bootstrap(db).await?;
-    // Domain/project data
-    Project::insert_many([
-        project::ActiveModel {
-            is_domain: Set(true),
-            id: Set("domain_a".into()),
-            name: Set("domain_a".into()),
-            extra: NotSet,
-            description: NotSet,
-            enabled: Set(Some(true)),
-            domain_id: Set("<<keystone.domain.root>>".into()),
-            parent_id: NotSet,
-        },
-        project::ActiveModel {
-            is_domain: Set(false),
-            id: Set("project_a".into()),
-            name: Set("project_a".into()),
-            extra: NotSet,
-            description: NotSet,
-            enabled: Set(Some(true)),
-            domain_id: Set("domain_a".into()),
-            parent_id: Set(Some("domain_a".into())),
-        },
-    ])
-    .exec(db)
-    .await?;
-
-    Ok(())
-}
-
-async fn get_state() -> Result<(Arc<Service>, TempDir), Report> {
-    let db = get_isolated_database().await?;
-    setup_data(&db).await?;
-
-    let tmp_fernet_repo = TempDir::new()?;
-
-    let mut cfg: Config = Config::default();
-    cfg.auth.methods = vec!["application_credential".into(), "password".into()];
-    cfg.fernet_tokens.key_repository = tmp_fernet_repo.path().to_path_buf();
-    let fernet_utils = openstack_keystone_token_fernet::utils::FernetUtils {
-        key_repository: cfg.fernet_tokens.key_repository.clone(),
-        max_active_keys: cfg.fernet_tokens.max_active_keys,
-    };
-    fernet_utils.initialize_key_repository()?;
-
-    let plugin_manager = PluginManager::with_config(&cfg);
-    let provider = Provider::new(cfg.clone(), &plugin_manager)?;
-
-    let state = Arc::new(Service::new(
-        cfg,
-        db,
-        provider,
-        Arc::new(MockPolicy::default()),
-    )?);
-
-    Ok((state, tmp_fernet_repo))
-}
-
-async fn create_user<U: Into<String>>(
-    state: &Arc<Service>,
-    user_id: Option<U>,
-) -> Result<UserResponse, Report> {
-    let uid: String = user_id.map(Into::into).unwrap_or("user_id".to_string());
-    Ok(state
-        .provider
-        .get_identity_provider()
-        .create_user(
-            state,
-            UserCreateBuilder::default()
-                .id(&uid)
-                .name(&uid)
-                .domain_id("domain_a")
-                .enabled(true)
-                .password("foobar")
-                .build()?,
-        )
-        .await?)
-}
 
 async fn grant_role_to_user_on_project<U: Into<String>, P: Into<String>, R: Into<String>>(
     state: &Arc<Service>,

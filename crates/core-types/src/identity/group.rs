@@ -27,13 +27,17 @@ pub struct Group {
     /// The description of the group.
     #[builder(default)]
     pub description: Option<String>,
+
     /// The ID of the domain.
     pub domain_id: String,
+
     /// Additional user properties.
     #[builder(default)]
     pub extra: HashMap<String, Value>,
+
     /// The ID of the group.
     pub id: String,
+
     /// The user name. Must be unique within the owning domain.
     pub name: String,
 }
@@ -45,6 +49,7 @@ pub struct GroupListParameters {
     /// Filter groups by the domain.
     #[builder(default)]
     pub domain_id: Option<String>,
+
     /// Filter groups by the name attribute.
     #[builder(default)]
     pub name: Option<String>,
@@ -57,13 +62,18 @@ pub struct GroupCreate {
     /// The description of the group.
     #[builder(default)]
     pub description: Option<String>,
+
     /// The ID of the domain.
     pub domain_id: String,
+
     /// Additional user properties.
     #[builder(default)]
     pub extra: HashMap<String, Value>,
+
     /// The ID of the group.
+    #[builder(default)]
     pub id: Option<String>,
+
     /// The user name. Must be unique within the owning domain.
     pub name: String,
 }

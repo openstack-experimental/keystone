@@ -19,20 +19,23 @@ use tracing_test::traced_test;
 use openstack_keystone::k8s_auth::K8sAuthApi;
 use openstack_keystone_core_types::k8s_auth::*;
 
-use super::super::get_state;
 use super::create_k8s_auth_instance;
+
+use crate::common::get_state;
+use crate::create_domain;
 
 #[traced_test]
 #[tokio::test]
 async fn test_list() -> Result<()> {
-    let state = get_state().await?;
+    let (state, _) = get_state().await?;
+    let domain = create_domain!(state)?;
 
     let k8s_conf = create_k8s_auth_instance(
         &state,
         K8sAuthInstanceCreate {
             ca_cert: Some("ca".into()),
             disable_local_ca_jwt: Some(true),
-            domain_id: "domain_a".into(),
+            domain_id: domain.id.clone(),
             enabled: true,
             host: "host".into(),
             id: None,
@@ -67,14 +70,15 @@ async fn test_list() -> Result<()> {
 #[traced_test]
 #[tokio::test]
 async fn test_list_name() -> Result<()> {
-    let state = get_state().await?;
+    let (state, _) = get_state().await?;
+    let domain = create_domain!(state)?;
 
     let k8s_conf = create_k8s_auth_instance(
         &state,
         K8sAuthInstanceCreate {
             ca_cert: Some("ca".into()),
             disable_local_ca_jwt: Some(true),
-            domain_id: "domain_a".into(),
+            domain_id: domain.id.clone(),
             enabled: true,
             host: "host".into(),
             id: None,
@@ -87,7 +91,7 @@ async fn test_list_name() -> Result<()> {
         K8sAuthInstanceCreate {
             ca_cert: Some("ca".into()),
             disable_local_ca_jwt: Some(false),
-            domain_id: "domain_a".into(),
+            domain_id: domain.id.clone(),
             enabled: true,
             host: "host".into(),
             id: None,
@@ -114,14 +118,15 @@ async fn test_list_name() -> Result<()> {
 #[traced_test]
 #[tokio::test]
 async fn test_list_domain() -> Result<()> {
-    let state = get_state().await?;
+    let (state, _) = get_state().await?;
+    let domain = create_domain!(state)?;
 
     let k8s_conf = create_k8s_auth_instance(
         &state,
         K8sAuthInstanceCreate {
             ca_cert: Some("ca".into()),
             disable_local_ca_jwt: Some(true),
-            domain_id: "domain_a".into(),
+            domain_id: domain.id.clone(),
             enabled: true,
             host: "host".into(),
             id: None,
@@ -134,7 +139,7 @@ async fn test_list_domain() -> Result<()> {
         K8sAuthInstanceCreate {
             ca_cert: Some("ca".into()),
             disable_local_ca_jwt: Some(true),
-            domain_id: "domain_a".into(),
+            domain_id: domain.id.clone(),
             enabled: true,
             host: "host".into(),
             id: None,
@@ -148,7 +153,7 @@ async fn test_list_domain() -> Result<()> {
         .list_auth_instances(
             &state,
             &K8sAuthInstanceListParameters {
-                domain_id: Some("domain_a".into()),
+                domain_id: Some(domain.id.clone()),
                 ..Default::default()
             },
         )

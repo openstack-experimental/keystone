@@ -20,15 +20,20 @@ use uuid::Uuid;
 
 use openstack_keystone::application_credential::ApplicationCredentialApi;
 use openstack_keystone_core_types::application_credential::*;
-use openstack_keystone_core_types::role::RoleRef;
+use openstack_keystone_core_types::role::*;
 
-use super::get_state;
+use crate::common::get_state;
+use crate::{create_domain, create_project, create_role, create_user};
 
 #[tokio::test]
 #[traced_test]
 async fn test_get() -> Result<(), Report> {
-    let state = get_state().await?;
-
+    let (state, _) = get_state().await?;
+    let domain = create_domain!(state)?;
+    let project = create_project!(state, domain.id.clone())?;
+    let role_a = create_role!(state)?;
+    let role_b = create_role!(state)?;
+    let user = create_user!(state, domain.id.clone())?;
     let sot: ApplicationCredentialCreateResponse = state
         .provider
         .get_application_credential_provider()
@@ -43,20 +48,9 @@ async fn test_get() -> Result<(), Report> {
                 }]),
                 description: Some("description".into()),
                 name: Uuid::new_v4().to_string(),
-                project_id: "project_a".into(),
-                roles: vec![
-                    RoleRef {
-                        id: "role_a".into(),
-                        name: None,
-                        domain_id: None,
-                    },
-                    RoleRef {
-                        id: "role_b".into(),
-                        name: None,
-                        domain_id: None,
-                    },
-                ],
-                user_id: "user_a".into(),
+                project_id: project.id.clone().into(),
+                roles: vec![RoleRef::from(role_a.clone()), RoleRef::from(role_b.clone())],
+                user_id: user.id.clone(),
                 ..Default::default()
             },
         )

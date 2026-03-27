@@ -20,12 +20,14 @@ use uuid::Uuid;
 use openstack_keystone::identity::IdentityApi;
 use openstack_keystone_core_types::identity::*;
 
-use super::*;
+use crate::common::get_state;
+use crate::create_domain;
 
 #[tokio::test]
 #[traced_test]
 async fn test_create_local_with_password() -> Result<()> {
-    let state = get_state().await?;
+    let (state, _tmp) = get_state().await?;
+    let domain = create_domain!(state)?;
     let uid = Uuid::new_v4().simple().to_string();
 
     let user = state
@@ -36,14 +38,14 @@ async fn test_create_local_with_password() -> Result<()> {
             UserCreateBuilder::default()
                 .id(&uid)
                 .name("name")
-                .domain_id("domain_a")
+                .domain_id(domain.id.clone())
                 .enabled(true)
                 .password("foobar")
                 .build()?,
         )
         .await?;
     assert!(user.default_project_id.is_none());
-    assert_eq!(user.domain_id, "domain_a");
+    assert_eq!(user.domain_id, domain.id);
     assert!(user.enabled);
     assert!(user.extra.is_empty());
     assert!(user.federated.is_none());
@@ -57,7 +59,8 @@ async fn test_create_local_with_password() -> Result<()> {
 #[tokio::test]
 #[traced_test]
 async fn test_create_local_with_no_password() -> Result<()> {
-    let state = get_state().await?;
+    let (state, _tmp) = get_state().await?;
+    let domain = create_domain!(state)?;
     let uid = Uuid::new_v4().simple().to_string();
 
     let user = state
@@ -68,13 +71,13 @@ async fn test_create_local_with_no_password() -> Result<()> {
             UserCreateBuilder::default()
                 .id(&uid)
                 .name("name")
-                .domain_id("domain_a")
+                .domain_id(domain.id.clone())
                 .enabled(true)
                 .build()?,
         )
         .await?;
     assert!(user.default_project_id.is_none());
-    assert_eq!(user.domain_id, "domain_a");
+    assert_eq!(user.domain_id, domain.id);
     assert!(user.enabled);
     assert!(user.extra.is_empty());
     assert!(user.federated.is_none());

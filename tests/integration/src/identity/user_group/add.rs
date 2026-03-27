@@ -19,37 +19,35 @@ use tracing_test::traced_test;
 use openstack_keystone::identity::IdentityApi;
 
 use super::*;
-use crate::common::{create_group, create_user};
+
+use crate::common::get_state;
+use crate::{create_domain, create_group, create_user};
 
 #[tokio::test]
 #[traced_test]
 async fn test_expiring_groups() -> Result<()> {
-    let state = get_state().await?;
+    let (state, _tmp) = get_state().await?;
+    let domain = create_domain!(state)?;
 
-    create_user(&state, Some("user_a")).await?;
-    create_group(&state, Some("group_a")).await?;
-    create_group(&state, Some("group_b")).await?;
+    let user = create_user!(state, domain.id.clone())?;
+    let group_a = create_group!(state, domain.id.clone())?;
+    let group_b = create_group!(state, domain.id.clone())?;
 
     state
         .provider
         .get_identity_provider()
-        .add_user_to_group(&state, "user_a", "group_a")
+        .add_user_to_group(&state, &user.id, &group_a.id)
         .await?;
 
     state
         .provider
         .get_identity_provider()
-        .add_user_to_group_expiring(&state, "user_a", "group_b", "idp_id")
+        .add_user_to_group_expiring(&state, &user.id, &group_b.id, "idp_id")
         .await?;
 
-    assert_eq!(
-        list_user_groups(&state, "user_a")
-            .await?
-            .into_iter()
-            .map(|group| group.id.clone())
-            .collect::<Vec<_>>(),
-        vec!["group_a".to_string(), "group_b".to_string()],
-        "user is member of groups a and b"
-    );
+    let groups = list_user_groups(&state, &user.id).await?;
+    assert_eq!(2, groups.len());
+    assert!(groups.iter().find(|x| x.id == group_a.id).is_some());
+    assert!(groups.iter().find(|x| x.id == group_b.id).is_some());
     Ok(())
 }

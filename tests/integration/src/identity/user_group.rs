@@ -13,71 +13,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use eyre::Report;
-use sea_orm::{DbConn, entity::*};
-use std::sync::Arc;
 
-use openstack_keystone_config::Config;
-use openstack_keystone_core::policy::MockPolicy;
-use openstack_keystone_federation_sql::entity::{
-    identity_provider as db_identity_provider, prelude::IdentityProvider as DbIdentityProvider,
-};
-use openstack_keystone_resource_sql::entity::project;
-
-use openstack_keystone::plugin_manager::PluginManager;
 use openstack_keystone_core::identity::IdentityApi;
-use openstack_keystone_core::keystone::{Service, ServiceState};
-use openstack_keystone_core::provider::Provider;
+use openstack_keystone_core::keystone::ServiceState;
 use openstack_keystone_core_types::identity::*;
-
-use crate::common::{bootstrap, get_isolated_database};
 
 mod add;
 mod list;
-
-async fn setup_data(db: &DbConn) -> Result<(), Report> {
-    bootstrap(db).await?;
-    // Domain/project data
-    let _domain_a = project::ActiveModel {
-        is_domain: Set(true),
-        id: Set("domain_a".into()),
-        name: Set("domain_a".into()),
-        extra: NotSet,
-        description: NotSet,
-        enabled: Set(Some(true)),
-        domain_id: Set("<<keystone.domain.root>>".into()),
-        parent_id: NotSet,
-    }
-    .insert(db)
-    .await?;
-
-    DbIdentityProvider::insert_many([db_identity_provider::ActiveModel {
-        id: Set("idp_id".into()),
-        enabled: Set(true),
-        description: NotSet,
-        domain_id: Set("domain_a".to_string()),
-        authorization_ttl: NotSet,
-    }])
-    .exec(db)
-    .await?;
-    Ok(())
-}
-
-async fn get_state() -> Result<Arc<Service>, Report> {
-    let db = get_isolated_database().await?;
-    setup_data(&db).await?;
-
-    let mut cfg: Config = Config::default();
-    cfg.federation.default_authorization_ttl = 20;
-
-    let plugin_manager = PluginManager::default();
-    let provider = Provider::new(cfg.clone(), &plugin_manager)?;
-    Ok(Arc::new(Service::new(
-        cfg,
-        db,
-        provider,
-        Arc::new(MockPolicy::default()),
-    )?))
-}
 
 async fn list_user_groups<U>(state: &ServiceState, user_id: U) -> Result<Vec<Group>, Report>
 where

@@ -59,6 +59,7 @@ pub struct DomainCreate {
     pub description: Option<String>,
 
     /// If set to true, domain is enabled. If set to false, domain is disabled.
+    #[builder(default = "crate::default_true()")]
     pub enabled: bool,
 
     /// The domain ID.

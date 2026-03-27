@@ -19,68 +19,52 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use tracing_test::traced_test;
 
-use openstack_keystone_trust_sql::entity::{
-    prelude::{Trust as DbTrust, TrustRole as DbTrustRole},
-    trust as db_trust, trust_role as db_trust_role,
-};
+use openstack_keystone_trust_sql::entity::{trust as db_trust, trust_role as db_trust_role};
 
 use openstack_keystone::auth::*;
 use openstack_keystone::keystone::Service;
-use openstack_keystone::role::RoleApi;
 use openstack_keystone::token::{Token, TokenApi, TokenProviderError};
 use openstack_keystone::trust::TrustApi;
-use openstack_keystone_core_types::role::RoleCreate;
 use openstack_keystone_core_types::trust::*;
 
-use super::{create_user, get_state, grant_role_to_user_on_project};
-use crate::common::create_role;
+use super::grant_role_to_user_on_project;
 
-async fn setup(db: &DbConn) -> Result<(), Report> {
-    DbTrust::insert_many([
-        db_trust::ActiveModel {
-            id: Set("trust_a".into()),
-            trustor_user_id: Set("user_a".into()),
-            trustee_user_id: Set("user_b".into()),
-            project_id: Set(Some("project_a".into())),
-            impersonation: Set(false),
-            deleted_at: NotSet,
-            expires_at: NotSet,
-            remaining_uses: NotSet,
-            extra: Set(Some("{}".into())),
-            expires_at_int: NotSet,
-            redelegated_trust_id: NotSet,
-            redelegation_count: NotSet,
-        },
-        db_trust::ActiveModel {
-            id: Set("trust_a_b".into()),
-            trustor_user_id: Set("user_a".into()),
-            trustee_user_id: Set("user_c".into()),
-            project_id: Set(Some("project_a".into())),
-            impersonation: Set(false),
-            deleted_at: NotSet,
-            expires_at: NotSet,
-            remaining_uses: NotSet,
-            extra: Set(Some("{}".into())),
-            expires_at_int: NotSet,
-            redelegated_trust_id: Set(Some("trust_a".into())),
-            redelegation_count: NotSet,
-        },
-    ])
-    .exec(db)
-    .await?;
+use crate::common::get_state;
+use crate::{create_domain, create_project, create_role, create_user};
 
-    DbTrustRole::insert_many([
-        db_trust_role::ActiveModel {
-            trust_id: Set("trust_a".into()),
-            role_id: Set("role_a".into()),
-        },
-        db_trust_role::ActiveModel {
-            trust_id: Set("trust_a_b".into()),
-            role_id: Set("role_a".into()),
-        },
-    ])
-    .exec(db)
+async fn create_trust<S: Into<String>>(
+    db: &DbConn,
+    trust_id: S,
+    trustor_id: S,
+    trustee_id: S,
+    project_id: S,
+    role_ids: Vec<S>,
+) -> Result<(), Report> {
+    let trust_id = trust_id.into();
+    db_trust::ActiveModel {
+        id: Set(trust_id.clone()),
+        trustor_user_id: Set(trustor_id.into()),
+        trustee_user_id: Set(trustee_id.into()),
+        project_id: Set(Some(project_id.into())),
+        impersonation: Set(false),
+        deleted_at: NotSet,
+        expires_at: NotSet,
+        remaining_uses: NotSet,
+        extra: Set(Some("{}".into())),
+        expires_at_int: NotSet,
+        redelegated_trust_id: NotSet,
+        redelegation_count: NotSet,
+    }
+    .insert(db)
     .await?;
+    for role_id in role_ids {
+        db_trust_role::ActiveModel {
+            trust_id: Set(trust_id.clone()),
+            role_id: Set(role_id.into()),
+        }
+        .insert(db)
+        .await?;
+    }
 
     Ok(())
 }
@@ -97,14 +81,24 @@ async fn get_trust<U: AsRef<str>>(state: &Arc<Service>, id: U) -> Result<Option<
 #[traced_test]
 async fn test_valid() -> Result<(), Report> {
     let (state, _tmp) = get_state().await?;
-    create_role(&state, "role_a").await?;
-    create_role(&state, "role_b").await?;
-    setup(&state.db).await?;
+    let domain = create_domain!(state)?;
+    let project = create_project!(state, domain.id.clone())?;
+    let role_a = create_role!(state)?;
 
-    let user_a = create_user(&state, Some("user_a")).await?;
-    let user_b = create_user(&state, Some("user_b")).await?;
-    grant_role_to_user_on_project(&state, &user_a.id, "project_a", "role_a").await?;
+    let user_a = create_user!(state, domain.id.clone())?;
+    let user_b = create_user!(state, domain.id.clone())?;
+    grant_role_to_user_on_project(&state, &user_a.id, &project.id, &role_a.id).await?;
 
+    create_trust(
+        &state.db,
+        "trust_a".to_string(),
+        user_a.id.clone(),
+        user_b.id.clone(),
+        project.id.clone(),
+        Vec::from([role_a.id.clone()]),
+    )
+    .await?;
+    //setup(&state.db).await?;
     let trust = get_trust(&state, "trust_a")
         .await?
         .expect("trust_a is present");
@@ -112,7 +106,7 @@ async fn test_valid() -> Result<(), Report> {
     let token = state.provider.get_token_provider().issue_token(
         AuthenticatedInfoBuilder::default()
             .user_id(user_b.id.clone())
-            .user(user_b)
+            .user(user_b.clone())
             .methods(vec!["password".into()])
             .build()?,
         AuthzInfo::Trust(trust.clone()),
@@ -143,7 +137,7 @@ async fn test_valid() -> Result<(), Report> {
                             .iter()
                             .map(|role| role.id.clone())
                     ),
-                    HashSet::from(["role_a".to_string()])
+                    HashSet::from([role_a.id.clone()])
                 );
             }
             _ => {
@@ -161,14 +155,22 @@ async fn test_valid() -> Result<(), Report> {
 #[traced_test]
 async fn test_valid_redelegated() -> Result<(), Report> {
     let (state, _tmp) = get_state().await?;
-    create_role(&state, "role_a").await?;
-    create_role(&state, "role_b").await?;
-    setup(&state.db).await?;
+    let domain = create_domain!(state)?;
+    let project = create_project!(state, domain.id.clone())?;
+    let role_a = create_role!(state)?;
 
-    let user_a = create_user(&state, Some("user_a")).await?;
-    let _user_b = create_user(&state, Some("user_b")).await?;
-    let user_c = create_user(&state, Some("user_c")).await?;
-    grant_role_to_user_on_project(&state, &user_a.id, "project_a", "role_a").await?;
+    let user_a = create_user!(state, domain.id.clone())?;
+    let user_c = create_user!(state, domain.id.clone())?;
+    grant_role_to_user_on_project(&state, &user_a.id, &project.id, &role_a.id).await?;
+    create_trust(
+        &state.db,
+        "trust_a_b".to_string(),
+        user_a.id.clone(),
+        user_c.id.clone(),
+        project.id.clone(),
+        Vec::from([role_a.id.clone()]),
+    )
+    .await?;
 
     let trust = get_trust(&state, "trust_a_b")
         .await?
@@ -177,7 +179,7 @@ async fn test_valid_redelegated() -> Result<(), Report> {
     let token = state.provider.get_token_provider().issue_token(
         AuthenticatedInfoBuilder::default()
             .user_id(user_c.id.clone())
-            .user(user_c)
+            .user(user_c.clone())
             .methods(vec!["password".into()])
             .build()?,
         AuthzInfo::Trust(trust.clone()),
@@ -204,7 +206,7 @@ async fn test_valid_redelegated() -> Result<(), Report> {
                             .iter()
                             .map(|role| role.id.clone())
                     ),
-                    HashSet::from(["role_a".to_string()])
+                    HashSet::from([role_a.id.clone()])
                 );
             }
             _ => {
@@ -225,13 +227,22 @@ async fn test_valid_redelegated() -> Result<(), Report> {
 #[traced_test]
 async fn test_fewer_roles() -> Result<(), Report> {
     let (state, _tmp) = get_state().await?;
-    create_role(&state, "role_a").await?;
-    create_role(&state, "role_b").await?;
-    setup(&state.db).await?;
+    let domain = create_domain!(state)?;
+    let project = create_project!(state, domain.id.clone())?;
+    let role_a = create_role!(state)?;
 
-    let _user_a = create_user(&state, Some("user_a")).await?;
-    let user_b = create_user(&state, Some("user_b")).await?;
+    let user_a = create_user!(state, domain.id.clone())?;
+    let user_b = create_user!(state, domain.id.clone())?;
 
+    create_trust(
+        &state.db,
+        "trust_a".to_string(),
+        user_a.id.clone(),
+        user_b.id.clone(),
+        project.id.clone(),
+        Vec::from([role_a.id.clone()]),
+    )
+    .await?;
     let trust = get_trust(&state, "trust_a")
         .await?
         .expect("trust_a is present");
@@ -239,7 +250,7 @@ async fn test_fewer_roles() -> Result<(), Report> {
     let token = state.provider.get_token_provider().issue_token(
         AuthenticatedInfoBuilder::default()
             .user_id(user_b.id.clone())
-            .user(user_b)
+            .user(user_b.clone())
             .methods(vec!["password".into()])
             .build()?,
         AuthzInfo::Trust(trust.clone()),
@@ -267,35 +278,26 @@ async fn test_fewer_roles() -> Result<(), Report> {
 //#[traced_test]
 async fn test_exclude_local_roles() -> Result<(), Report> {
     let (state, _tmp) = get_state().await?;
-    create_role(&state, "role_a").await?;
-    create_role(&state, "role_b").await?;
-    setup(&state.db).await?;
 
-    let user_a = create_user(&state, Some("user_a")).await?;
-    let user_b = create_user(&state, Some("user_b")).await?;
+    let domain = create_domain!(state)?;
+    let project = create_project!(state, domain.id.clone())?;
+    let role_a = create_role!(state)?;
+    let role_x = create_role!(state, "role_x", domain.id.clone())?;
 
-    let role_x = state
-        .provider
-        .get_role_provider()
-        .create_role(
-            &state,
-            RoleCreate {
-                id: Some("role_x".into()),
-                name: "role_x".into(),
-                domain_id: Some("domain_a".into()),
-                ..Default::default()
-            },
-        )
-        .await?;
-    DbTrustRole::insert_many([db_trust_role::ActiveModel {
-        trust_id: Set("trust_a".into()),
-        role_id: Set(role_x.id.clone()),
-    }])
-    .exec(&state.db)
+    let user_a = create_user!(state, domain.id.clone())?;
+    let user_b = create_user!(state, domain.id.clone())?;
+    grant_role_to_user_on_project(&state, &user_a.id, &project.id, &role_a.id).await?;
+    grant_role_to_user_on_project(&state, &user_a.id, &project.id, &role_x.id).await?;
+
+    create_trust(
+        &state.db,
+        "trust_a".to_string(),
+        user_a.id.clone(),
+        user_b.id.clone(),
+        project.id.clone(),
+        Vec::from([role_a.id.clone(), role_x.id.clone()]),
+    )
     .await?;
-
-    grant_role_to_user_on_project(&state, &user_a.id, "project_a", "role_a").await?;
-    grant_role_to_user_on_project(&state, &user_a.id, "project_a", "role_x").await?;
 
     let trust = get_trust(&state, "trust_a")
         .await?
@@ -304,7 +306,7 @@ async fn test_exclude_local_roles() -> Result<(), Report> {
     let token = state.provider.get_token_provider().issue_token(
         AuthenticatedInfoBuilder::default()
             .user_id(user_b.id.clone())
-            .user(user_b)
+            .user(user_b.clone())
             .methods(vec!["password".into()])
             .build()?,
         AuthzInfo::Trust(trust.clone()),
@@ -335,7 +337,7 @@ async fn test_exclude_local_roles() -> Result<(), Report> {
                             .iter()
                             .map(|role| role.id.clone())
                     ),
-                    HashSet::from(["role_a".to_string()])
+                    HashSet::from([role_a.id.clone()])
                 );
             }
             _ => {

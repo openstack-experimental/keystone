@@ -16,27 +16,14 @@
 use eyre::Result;
 use uuid::Uuid;
 
-use openstack_keystone::role::RoleApi;
-use openstack_keystone_core_types::role::*;
-
 use crate::common::get_state;
+use crate::create_role;
 
 #[tokio::test]
 async fn test_create() -> Result<()> {
     let (state, _tmp) = get_state().await?;
     let name = Uuid::new_v4().to_string();
-
-    let role = state
-        .provider
-        .get_role_provider()
-        .create_role(
-            &state,
-            RoleCreate {
-                name: name.clone(),
-                ..Default::default()
-            },
-        )
-        .await?;
+    let role = create_role!(state, name.clone())?;
 
     assert_eq!(name, role.name);
 

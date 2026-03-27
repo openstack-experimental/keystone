@@ -27,17 +27,23 @@ use openstack_keystone_core_types::application_credential::*;
 use openstack_keystone_core_types::resource::ProjectBuilder;
 use openstack_keystone_core_types::role::*;
 
-use super::{create_user, get_state, grant_role_to_user_on_project};
-use crate::common::create_role;
+use super::grant_role_to_user_on_project;
+
+use crate::common::get_state;
+use crate::{create_domain, create_project, create_role, create_user};
 
 #[tokio::test]
 #[traced_test]
 async fn test_valid() -> Result<(), Report> {
     let (state, _tmp) = get_state().await?;
+    let domain = create_domain!(state)?;
+    let project = create_project!(state, domain.id.clone())?;
+    let user = create_user!(state, domain.id.clone())?;
+    let role = create_role!(state)?;
 
-    let user = create_user(&state, Some("user_a")).await?;
-    create_role(&state, "role_a").await?;
-    grant_role_to_user_on_project(&state, &user.id, "project_a", "role_a").await?;
+    //let user = create_user(&state, Some("user_a")).await?;
+    //create_role(&state, "role_a").await?;
+    grant_role_to_user_on_project(&state, &user.id, &project.id, &role.id).await?;
 
     let cred: ApplicationCredentialCreateResponse = state
         .provider
@@ -47,12 +53,8 @@ async fn test_valid() -> Result<(), Report> {
             ApplicationCredentialCreate {
                 access_rules: None,
                 name: Uuid::new_v4().to_string(),
-                project_id: "project_a".into(),
-                roles: vec![RoleRef {
-                    id: "role_a".into(),
-                    name: None,
-                    domain_id: None,
-                }],
+                project_id: project.id.clone(),
+                roles: vec![RoleRef::from(role.clone())],
                 user_id: user.id.clone(),
                 ..Default::default()
             },
@@ -63,14 +65,14 @@ async fn test_valid() -> Result<(), Report> {
         AuthenticatedInfoBuilder::default()
             .application_credential(cred.clone())
             .user_id(user.id.clone())
-            .user(user)
+            .user(user.clone())
             .methods(vec!["application_credential".into()])
             .build()?,
         AuthzInfo::Project(
             ProjectBuilder::default()
                 .id(cred.project_id.clone())
-                .name("project_a")
-                .domain_id("domain_a")
+                .name(project.id.clone())
+                .domain_id(domain.id.clone())
                 .enabled(true)
                 .build()?,
         ),
@@ -97,7 +99,7 @@ async fn test_valid() -> Result<(), Report> {
                             .iter()
                             .map(|role| role.id.clone())
                     ),
-                    HashSet::from(["role_a".to_string()])
+                    HashSet::from([role.id.clone()])
                 );
             }
             _ => {
@@ -116,9 +118,11 @@ async fn test_valid() -> Result<(), Report> {
 async fn test_expired() -> Result<(), Report> {
     let (state, _tmp) = get_state().await?;
 
-    let user = create_user(&state, Some("user_a")).await?;
-    create_role(&state, "role_a").await?;
-    grant_role_to_user_on_project(&state, &user.id, "project_a", "role_a").await?;
+    let domain = create_domain!(state)?;
+    let project = create_project!(state, domain.id.clone())?;
+    let user = create_user!(state, domain.id.clone())?;
+    let role = create_role!(state)?;
+    grant_role_to_user_on_project(&state, &user.id, &project.id, &role.id).await?;
 
     let cred: ApplicationCredentialCreateResponse = state
         .provider
@@ -129,12 +133,8 @@ async fn test_expired() -> Result<(), Report> {
                 access_rules: None,
                 expires_at: Some(Utc::now()),
                 name: Uuid::new_v4().to_string(),
-                project_id: "project_a".into(),
-                roles: vec![RoleRef {
-                    id: "role_a".into(),
-                    name: None,
-                    domain_id: None,
-                }],
+                project_id: project.id.clone(),
+                roles: vec![RoleRef::from(role.clone())],
                 user_id: user.id.clone(),
                 ..Default::default()
             },
@@ -145,14 +145,14 @@ async fn test_expired() -> Result<(), Report> {
         AuthenticatedInfoBuilder::default()
             .application_credential(cred.clone())
             .user_id(user.id.clone())
-            .user(user)
+            .user(user.clone())
             .methods(vec!["application_credential".into()])
             .build()?,
         AuthzInfo::Project(
             ProjectBuilder::default()
                 .id(cred.project_id.clone())
-                .name("project_a")
-                .domain_id("domain_a")
+                .name(project.id.clone())
+                .domain_id(domain.id.clone())
                 .enabled(true)
                 .build()?,
         ),
@@ -180,10 +180,12 @@ async fn test_expired() -> Result<(), Report> {
 async fn test_valid_fewer_roles() -> Result<(), Report> {
     let (state, _tmp) = get_state().await?;
 
-    let user = create_user(&state, Some("user_a")).await?;
-    create_role(&state, "role_a").await?;
-    create_role(&state, "role_b").await?;
-    grant_role_to_user_on_project(&state, &user.id, "project_a", "role_a").await?;
+    let domain = create_domain!(state)?;
+    let project = create_project!(state, domain.id.clone())?;
+    let user = create_user!(state, domain.id.clone())?;
+    let role_a = create_role!(state)?;
+    let role_b = create_role!(state)?;
+    grant_role_to_user_on_project(&state, &user.id, &project.id, &role_a.id).await?;
 
     let cred: ApplicationCredentialCreateResponse = state
         .provider
@@ -193,19 +195,8 @@ async fn test_valid_fewer_roles() -> Result<(), Report> {
             ApplicationCredentialCreate {
                 access_rules: None,
                 name: Uuid::new_v4().to_string(),
-                project_id: "project_a".into(),
-                roles: vec![
-                    RoleRef {
-                        id: "role_a".into(),
-                        name: None,
-                        domain_id: None,
-                    },
-                    RoleRef {
-                        id: "role_b".into(),
-                        name: None,
-                        domain_id: None,
-                    },
-                ],
+                project_id: project.id.clone(),
+                roles: vec![RoleRef::from(role_a.clone()), RoleRef::from(role_b.clone())],
                 user_id: user.id.clone(),
                 ..Default::default()
             },
@@ -216,14 +207,14 @@ async fn test_valid_fewer_roles() -> Result<(), Report> {
         AuthenticatedInfoBuilder::default()
             .application_credential(cred.clone())
             .user_id(user.id.clone())
-            .user(user)
+            .user(user.clone())
             .methods(vec!["application_credential".into()])
             .build()?,
         AuthzInfo::Project(
             ProjectBuilder::default()
                 .id(cred.project_id.clone())
-                .name("project_a")
-                .domain_id("domain_a")
+                .name(project.id.clone())
+                .domain_id(domain.id.clone())
                 .enabled(true)
                 .build()?,
         ),
@@ -250,7 +241,7 @@ async fn test_valid_fewer_roles() -> Result<(), Report> {
                             .iter()
                             .map(|role| role.id.clone())
                     ),
-                    HashSet::from(["role_a".to_string()])
+                    HashSet::from([role_a.id.clone()])
                 );
             }
             _ => {
@@ -269,8 +260,10 @@ async fn test_valid_fewer_roles() -> Result<(), Report> {
 async fn test_valid_all_roles_revoked() -> Result<(), Report> {
     let (state, _tmp) = get_state().await?;
 
-    let user = create_user(&state, Some("user_a")).await?;
-    create_role(&state, "role_b").await?;
+    let domain = create_domain!(state)?;
+    let project = create_project!(state, domain.id.clone())?;
+    let user = create_user!(state, domain.id.clone())?;
+    let role_b = create_role!(state)?;
 
     let cred: ApplicationCredentialCreateResponse = state
         .provider
@@ -280,12 +273,8 @@ async fn test_valid_all_roles_revoked() -> Result<(), Report> {
             ApplicationCredentialCreate {
                 access_rules: None,
                 name: Uuid::new_v4().to_string(),
-                project_id: "project_a".into(),
-                roles: vec![RoleRef {
-                    id: "role_b".into(),
-                    name: None,
-                    domain_id: None,
-                }],
+                project_id: project.id.clone(),
+                roles: vec![RoleRef::from(role_b.clone())],
                 user_id: user.id.clone(),
                 ..Default::default()
             },
@@ -296,14 +285,14 @@ async fn test_valid_all_roles_revoked() -> Result<(), Report> {
         AuthenticatedInfoBuilder::default()
             .application_credential(cred.clone())
             .user_id(user.id.clone())
-            .user(user)
+            .user(user.clone())
             .methods(vec!["application_credential".into()])
             .build()?,
         AuthzInfo::Project(
             ProjectBuilder::default()
                 .id(cred.project_id.clone())
-                .name("project_a")
-                .domain_id("domain_a")
+                .name(project.id.clone())
+                .domain_id(domain.id.clone())
                 .enabled(true)
                 .build()?,
         ),
@@ -332,9 +321,11 @@ async fn test_valid_all_roles_revoked() -> Result<(), Report> {
 async fn test_token_revoked() -> Result<(), Report> {
     let (state, _tmp) = get_state().await?;
 
-    let user = create_user(&state, Some("user_a")).await?;
-    create_role(&state, "role_b").await?;
-    grant_role_to_user_on_project(&state, &user.id, "project_a", "role_b").await?;
+    let domain = create_domain!(state)?;
+    let project = create_project!(state, domain.id.clone())?;
+    let user = create_user!(state, domain.id.clone())?;
+    let role = create_role!(state)?;
+    grant_role_to_user_on_project(&state, &user.id, &project.id, &role.id).await?;
 
     let cred: ApplicationCredentialCreateResponse = state
         .provider
@@ -344,12 +335,8 @@ async fn test_token_revoked() -> Result<(), Report> {
             ApplicationCredentialCreate {
                 access_rules: None,
                 name: Uuid::new_v4().to_string(),
-                project_id: "project_a".into(),
-                roles: vec![RoleRef {
-                    id: "role_b".into(),
-                    name: None,
-                    domain_id: None,
-                }],
+                project_id: project.id.clone(),
+                roles: vec![RoleRef::from(role.clone())],
                 user_id: user.id.clone(),
                 ..Default::default()
             },
@@ -360,14 +347,14 @@ async fn test_token_revoked() -> Result<(), Report> {
         AuthenticatedInfoBuilder::default()
             .application_credential(cred.clone())
             .user_id(user.id.clone())
-            .user(user)
+            .user(user.clone())
             .methods(vec!["application_credential".into()])
             .build()?,
         AuthzInfo::Project(
             ProjectBuilder::default()
                 .id(cred.project_id.clone())
-                .name("project_a")
-                .domain_id("domain_a")
+                .name(project.id.clone())
+                .domain_id(domain.id.clone())
                 .enabled(true)
                 .build()?,
         ),
