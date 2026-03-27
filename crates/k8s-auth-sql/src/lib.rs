@@ -15,14 +15,25 @@
 
 use async_trait::async_trait;
 
+use sea_orm::{DatabaseConnection, Schema};
+
 use openstack_keystone_core::k8s_auth::backend::K8sAuthBackend;
 use openstack_keystone_core::k8s_auth::error::K8sAuthProviderError;
 use openstack_keystone_core::keystone::ServiceState;
+use openstack_keystone_core::{
+    SqlDriver, SqlDriverRegistration, db::create_table, error::DatabaseError,
+};
 use openstack_keystone_core_types::k8s_auth::*;
 
 pub mod entity;
 mod instance;
 mod role;
+
+// Submit the plugin to the registry at compile-time
+static PLUGIN: SqlBackend = SqlBackend {};
+inventory::submit! {
+    SqlDriverRegistration { driver: &PLUGIN }
+}
 
 /// Sql Database K8s auth backend.
 #[derive(Default)]
@@ -130,6 +141,29 @@ impl K8sAuthBackend for SqlBackend {
         data: K8sAuthRoleUpdate,
     ) -> Result<K8sAuthRole, K8sAuthProviderError> {
         Ok(role::update(&state.db, id, data).await?)
+    }
+}
+
+#[async_trait]
+impl SqlDriver for SqlBackend {
+    async fn setup(
+        &self,
+        connection: &DatabaseConnection,
+        schema: &Schema,
+    ) -> Result<(), DatabaseError> {
+        create_table(
+            connection,
+            schema,
+            crate::entity::prelude::KubernetesAuthInstance,
+        )
+        .await?;
+        create_table(
+            connection,
+            schema,
+            crate::entity::prelude::KubernetesAuthRole,
+        )
+        .await?;
+        Ok(())
     }
 }
 

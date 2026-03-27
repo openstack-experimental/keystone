@@ -12,20 +12,13 @@ dist = false
 [dependencies]
 chrono.workspace = true
 eyre.workspace = true
+inventory.workspace = true
 itertools.workspace = true
-openstack-keystone-appcred-sql = { version = "0.1", path = "../../crates/appcred-sql/" }
-openstack-keystone-assignment-sql = { version = "0.1", path = "../../crates/assignment-sql/" }
 openstack-keystone-config = { version = "0.1", path = "../../crates/config" }
 openstack-keystone-core = { version = "0.1", path = "../../crates/core", features = ["mock"] }
 openstack-keystone-core-types = { version = "0.1", path = "../../crates/core-types" }
-openstack-keystone-federation-sql = { version = "0.1", path = "../../crates/federation-sql/" }
 openstack-keystone-identity-sql = { version = "0.1", path = "../../crates/identity-sql/" }
-openstack-keystone-k8s-auth-sql = { version = "0.1", path = "../../crates/k8s-auth-sql/" }
-openstack-keystone-resource-sql = { version = "0.1", path = "../../crates/resource-sql/" }
-openstack-keystone-role-sql = { version = "0.1", path = "../../crates/role-sql/" }
-openstack-keystone-revoke-sql = { version = "0.1", path = "../../crates/revoke-sql/" }
 openstack-keystone-token-fernet = { version = "0.1", path = "../../crates/token-fernet/" }
-openstack-keystone-token-restriction-sql = { version = "0.1", path = "../../crates/token-restriction-sql/" }
 openstack-keystone-trust-sql = { version = "0.1", path = "../../crates/trust-sql/" }
 openstack-keystone = { version = "0.1", path = "../../crates/keystone/" }
 sea-orm = { workspace = true, features = ["sqlx-sqlite"] }

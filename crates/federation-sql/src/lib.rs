@@ -14,8 +14,13 @@
 //! OpenStack Keystone SQL driver for the federation provider
 use async_trait::async_trait;
 
+use sea_orm::{DatabaseConnection, Schema};
+
 use openstack_keystone_core::federation::{FederationProviderError, backend::FederationBackend};
 use openstack_keystone_core::keystone::ServiceState;
+use openstack_keystone_core::{
+    SqlDriver, SqlDriverRegistration, db::create_table, error::DatabaseError,
+};
 use openstack_keystone_core_types::federation::*;
 
 mod auth_state;
@@ -25,6 +30,12 @@ mod mapping;
 
 #[derive(Default)]
 pub struct SqlBackend {}
+
+// Submit the plugin to the registry at compile-time
+static PLUGIN: SqlBackend = SqlBackend {};
+inventory::submit! {
+    SqlDriverRegistration { driver: &PLUGIN }
+}
 
 #[async_trait]
 impl FederationBackend for SqlBackend {
@@ -164,6 +175,39 @@ impl FederationBackend for SqlBackend {
         idp: MappingUpdate,
     ) -> Result<Mapping, FederationProviderError> {
         Ok(mapping::update(&state.db, id, idp).await?)
+    }
+}
+
+#[async_trait]
+impl SqlDriver for SqlBackend {
+    async fn setup(
+        &self,
+        connection: &DatabaseConnection,
+        schema: &Schema,
+    ) -> Result<(), DatabaseError> {
+        create_table(
+            connection,
+            schema,
+            crate::entity::prelude::FederatedIdentityProvider,
+        )
+        .await?;
+        create_table(connection, schema, crate::entity::prelude::FederatedMapping).await?;
+        create_table(connection, schema, crate::entity::prelude::IdentityProvider).await?;
+        create_table(
+            connection,
+            schema,
+            crate::entity::prelude::FederationProtocol,
+        )
+        .await?;
+        create_table(connection, schema, crate::entity::prelude::IdpRemoteIds).await?;
+        create_table(connection, schema, crate::entity::prelude::Mapping).await?;
+        create_table(
+            connection,
+            schema,
+            crate::entity::prelude::FederatedAuthState,
+        )
+        .await?;
+        Ok(())
     }
 }
 

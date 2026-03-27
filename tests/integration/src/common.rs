@@ -20,64 +20,18 @@ use std::sync::Arc;
 
 use eyre::{Result, WrapErr};
 use sea_orm::{
-    ConnectOptions, ConnectionTrait, Database, DatabaseConnection, DbConn, EntityTrait, entity::*,
-    schema::Schema, sea_query::*,
+    ConnectOptions, ConnectionTrait, Database, DatabaseConnection, DbConn, schema::Schema,
 };
 use tempfile::TempDir;
 use uuid::Uuid;
 
-use openstack_keystone::identity::IdentityApi;
 use openstack_keystone::plugin_manager::PluginManager;
-use openstack_keystone_appcred_sql::entity::prelude::*;
 use openstack_keystone_config::Config;
-use openstack_keystone_core::keystone::Service;
 use openstack_keystone_core::policy::MockPolicy;
 use openstack_keystone_core::provider::Provider;
-use openstack_keystone_core::role::RoleApi;
-use openstack_keystone_core_types::identity::*;
-use openstack_keystone_core_types::role::RoleCreate;
-use openstack_keystone_federation_sql::entity::prelude::*;
-use openstack_keystone_identity_sql::entity::{local_user, prelude::*, user};
-use openstack_keystone_k8s_auth_sql::entity::prelude::*;
-use openstack_keystone_resource_sql::entity::{prelude::Project, project};
-use openstack_keystone_revoke_sql::entity::prelude::*;
-use openstack_keystone_role_sql::entity::prelude::*;
-use openstack_keystone_token_restriction_sql::entity::prelude::*;
-use openstack_keystone_trust_sql::entity::prelude::*;
-
-/// Create table with the related types and indexes (when known)
-async fn create_table<C, E>(conn: &C, schema: &Schema, entity: E) -> Result<()>
-where
-    C: ConnectionTrait,
-    E: EntityTrait,
-{
-    // Create types before the table
-    for ttype in schema.create_enum_from_entity(entity) {
-        conn.execute(conn.get_database_backend().build(&ttype))
-            .await?;
-    }
-    // Create the table
-    conn.execute(
-        conn.get_database_backend()
-            .build(&schema.create_table_from_entity(entity)),
-    )
-    .await?;
-    // Create related indexes
-    for tidx in schema.create_index_from_entity(entity) {
-        conn.execute(conn.get_database_backend().build(&tidx))
-            .await?;
-    }
-    Ok(())
-}
-
-async fn create_index<C>(conn: &C, index: IndexCreateStatement) -> Result<()>
-where
-    C: ConnectionTrait,
-{
-    conn.execute(conn.get_database_backend().build(&index))
-        .await?;
-    Ok(())
-}
+use openstack_keystone_core::resource::ResourceApi;
+use openstack_keystone_core::{SqlDriverRegistration, keystone::Service};
+use openstack_keystone_core_types::resource::DomainCreate;
 
 /// Setup the database schema.
 ///
@@ -88,92 +42,14 @@ pub async fn setup_schema(db: &DbConn) -> Result<()> {
     // Setup Schema helper
     let schema = Schema::new(db.get_database_backend());
 
-    create_table(db, &schema, Project).await?;
-    create_index(
-        db,
-        Index::create()
-            .name("ixu_project_name_domain_id")
-            .table(Project)
-            .col(project::Column::Name)
-            .col(project::Column::DomainId)
-            .unique()
-            .to_owned(),
-    )
-    .await?;
-    create_table(db, &schema, User).await?;
-    create_index(
-        db,
-        Index::create()
-            .name("ixu_user_id_domain_id")
-            .table(User)
-            .col(user::Column::Id)
-            .col(user::Column::DomainId)
-            .unique()
-            .to_owned(),
-    )
-    .await?;
-    create_table(db, &schema, LocalUser).await?;
-    create_index(
-        db,
-        Index::create()
-            .name("local_user_domain_id_name")
-            .table(LocalUser)
-            .col(local_user::Column::Name)
-            .col(local_user::Column::DomainId)
-            .unique()
-            .to_owned(),
-    )
-    .await?;
-    create_table(db, &schema, Password).await?;
-    create_table(db, &schema, UserOption).await?;
-    create_table(db, &schema, NonlocalUser).await?;
-    create_table(db, &schema, IdentityProvider).await?;
-    create_table(db, &schema, FederationProtocol).await?;
-    create_table(db, &schema, FederatedUser).await?;
-    create_table(db, &schema, Group).await?;
-    create_table(db, &schema, UserGroupMembership).await?;
-    create_table(db, &schema, ExpiringUserGroupMembership).await?;
-
-    create_table(db, &schema, Role).await?;
-    create_table(db, &schema, ImpliedRole).await?;
-    create_table(
-        db,
-        &schema,
-        openstack_keystone_assignment_sql::entity::prelude::Assignment,
-    )
-    .await?;
-    create_table(db, &schema, RevocationEvent).await?;
-
-    create_table(db, &schema, AccessRule).await?;
-    create_table(db, &schema, ApplicationCredential).await?;
-    create_table(db, &schema, ApplicationCredentialRole).await?;
-    create_table(db, &schema, ApplicationCredentialAccessRule).await?;
-
-    create_table(db, &schema, Trust).await?;
-    create_table(db, &schema, TrustRole).await?;
-
-    create_table(db, &schema, TokenRestriction).await?;
-    create_table(db, &schema, TokenRestrictionRoleAssociation).await?;
-    create_table(db, &schema, KubernetesAuthInstance).await?;
-    create_table(db, &schema, KubernetesAuthRole).await?;
-
-    Ok(())
-}
-
-pub async fn bootstrap(db: &DbConn) -> Result<()> {
-    // Domain/project data
-    Project::insert_many([project::ActiveModel {
-        is_domain: Set(true),
-        id: Set("<<keystone.domain.root>>".into()),
-        name: Set("<<keystone.domain.root>>".into()),
-        extra: NotSet,
-        description: NotSet,
-        enabled: Set(Some(true)),
-        domain_id: Set("<<keystone.domain.root>>".into()),
-        parent_id: NotSet,
-    }])
-    .exec(db)
-    .await?;
+    // Iterate over the registered sql plugins and let the create everything they need in the
+    // database.
+    for driver in inventory::iter::<SqlDriverRegistration>
+        .into_iter()
+        .map(|x| x.driver)
+    {
+        driver.setup(db, &schema).await?;
+    }
 
     Ok(())
 }
@@ -245,7 +121,6 @@ pub async fn get_isolated_database() -> Result<DatabaseConnection> {
 
 pub async fn get_state() -> Result<(Arc<Service>, TempDir)> {
     let db = get_isolated_database().await?;
-    bootstrap(&db).await?;
 
     let tmp_fernet_repo = TempDir::new()?;
 
@@ -269,6 +144,21 @@ pub async fn get_state() -> Result<(Arc<Service>, TempDir)> {
         Arc::new(MockPolicy::default()),
     )?);
 
+    state
+        .provider
+        .get_resource_provider()
+        .create_domain(
+            &state,
+            DomainCreate {
+                id: Some("<<keystone.domain.root>>".into()),
+                name: "<<keystone.domain.root>>".into(),
+                enabled: true,
+                extra: std::collections::HashMap::new(),
+                description: None,
+            },
+        )
+        .await
+        .unwrap();
     Ok((state, tmp_fernet_repo))
 }
 
@@ -331,61 +221,4 @@ where
     fn deref(&self) -> &Self::Target {
         &self.resource
     }
-}
-
-pub async fn create_user<U: Into<String>>(
-    state: &Arc<Service>,
-    user_id: Option<U>,
-) -> Result<UserResponse> {
-    let uid: String = user_id.map(Into::into).unwrap_or("user_id".to_string());
-    Ok(state
-        .provider
-        .get_identity_provider()
-        .create_user(
-            state,
-            UserCreateBuilder::default()
-                .id(&uid)
-                .name(&uid)
-                .domain_id("domain_a")
-                .enabled(true)
-                .build()?,
-        )
-        .await?)
-}
-
-pub async fn create_group<U: Into<String>>(
-    state: &Arc<Service>,
-    group_id: Option<U>,
-) -> Result<()> {
-    let uid: String = group_id.map(Into::into).unwrap_or("user_id".to_string());
-    state
-        .provider
-        .get_identity_provider()
-        .create_group(
-            state,
-            GroupCreateBuilder::default()
-                .id(&uid)
-                .name(&uid)
-                .domain_id("domain_a")
-                .build()?,
-        )
-        .await?;
-    Ok(())
-}
-
-pub async fn create_role<U: Into<String>>(state: &Arc<Service>, role_id: U) -> Result<()> {
-    let id: String = role_id.into();
-    state
-        .provider
-        .get_role_provider()
-        .create_role(
-            state,
-            RoleCreate {
-                id: Some(id.clone()),
-                name: id.clone(),
-                ..Default::default()
-            },
-        )
-        .await?;
-    Ok(())
 }

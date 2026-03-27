@@ -21,11 +21,23 @@ use sea_orm::entity::prelude::*;
 pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
     pub r#type: String,
-    #[sea_orm(primary_key, auto_increment = false)]
+    #[sea_orm(
+        primary_key,
+        auto_increment = false,
+        column_type = "String(StringLen::N(64))"
+    )]
     pub actor_id: String,
-    #[sea_orm(primary_key, auto_increment = false)]
+    #[sea_orm(
+        primary_key,
+        auto_increment = false,
+        column_type = "String(StringLen::N(64))"
+    )]
     pub target_id: String,
-    #[sea_orm(primary_key, auto_increment = false)]
+    #[sea_orm(
+        primary_key,
+        auto_increment = false,
+        column_type = "String(StringLen::N(64))"
+    )]
     pub role_id: String,
     #[sea_orm(primary_key, auto_increment = false)]
     pub inherited: bool,
@@ -33,11 +45,5 @@ pub struct Model {
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {}
-
-//impl Related<super::role::Entity> for Entity {
-//    fn to() -> RelationDef {
-//        Relation::Role.def()
-//    }
-//}
 
 impl ActiveModelBehavior for ActiveModel {}

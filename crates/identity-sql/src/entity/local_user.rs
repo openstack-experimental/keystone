@@ -21,8 +21,11 @@ use sea_orm::entity::prelude::*;
 pub struct Model {
     #[sea_orm(primary_key)]
     pub id: i32,
+    #[sea_orm(column_type = "String(StringLen::N(64))")]
     pub user_id: String,
+    #[sea_orm(column_type = "String(StringLen::N(64))")]
     pub domain_id: String,
+    #[sea_orm(column_type = "String(StringLen::N(255))")]
     pub name: String,
     pub failed_auth_count: Option<i32>,
     pub failed_auth_at: Option<DateTime>,
@@ -36,7 +39,6 @@ pub enum Relation {
         belongs_to = "super::user::Entity",
         from = "(Column::UserId, Column::DomainId)",
         to = "(super::user::Column::Id, super::user::Column::DomainId)",
-        fk_name = "local_user_user_id_fkey",
         on_update = "Cascade",
         on_delete = "Cascade"
     )]

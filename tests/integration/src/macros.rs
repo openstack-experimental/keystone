@@ -31,7 +31,7 @@ macro_rules! impl_deleter {
 #[macro_export]
 macro_rules! create_domain {
     ($state:ident) => {
-        crate::resource::create_domain(
+        $crate::resource::create_domain(
             &$state,
             openstack_keystone_core_types::resource::DomainCreateBuilder::default()
                 .name(uuid::Uuid::new_v4().simple().to_string())
@@ -44,7 +44,7 @@ macro_rules! create_domain {
 #[macro_export]
 macro_rules! create_project {
     ($state:ident, $domain_id:expr) => {
-        crate::resource::create_project(
+        $crate::resource::create_project(
             &$state,
             openstack_keystone_core_types::resource::ProjectCreateBuilder::default()
                 .name(uuid::Uuid::new_v4().simple().to_string())
@@ -55,7 +55,7 @@ macro_rules! create_project {
         .await
     };
     ($state:ident, $domain_id:expr, $parent_id:expr) => {
-        crate::resource::create_project(
+        $crate::resource::create_project(
             &$state,
             openstack_keystone_core_types::resource::ProjectCreateBuilder::default()
                 .name(uuid::Uuid::new_v4().simple().to_string())
@@ -70,7 +70,7 @@ macro_rules! create_project {
 #[macro_export]
 macro_rules! create_role {
     ($state:ident) => {
-        crate::role::create_role(
+        $crate::role::create_role(
             &$state,
             openstack_keystone_core_types::role::RoleCreateBuilder::default()
                 .name(uuid::Uuid::new_v4().simple().to_string())
@@ -79,7 +79,7 @@ macro_rules! create_role {
         .await
     };
     ($state:ident, $name:expr) => {
-        crate::role::create_role(
+        $crate::role::create_role(
             &$state,
             openstack_keystone_core_types::role::RoleCreateBuilder::default()
                 .name($name)
@@ -88,7 +88,7 @@ macro_rules! create_role {
         .await
     };
     ($state:ident, $name:expr, $domain_id:expr) => {
-        crate::role::create_role(
+        $crate::role::create_role(
             &$state,
             openstack_keystone_core_types::role::RoleCreateBuilder::default()
                 .name($name)
@@ -102,7 +102,7 @@ macro_rules! create_role {
 #[macro_export]
 macro_rules! create_user {
     ($state:ident, $domain_id:expr) => {
-        crate::identity::create_user(
+        $crate::identity::create_user(
             &$state,
             openstack_keystone_core_types::identity::UserCreateBuilder::default()
                 .name(uuid::Uuid::new_v4().simple().to_string())
@@ -116,7 +116,7 @@ macro_rules! create_user {
 #[macro_export]
 macro_rules! create_group {
     ($state:ident, $domain_id:expr) => {
-        crate::identity::create_group(
+        $crate::identity::create_group(
             &$state,
             openstack_keystone_core_types::identity::GroupCreateBuilder::default()
                 .name(uuid::Uuid::new_v4().simple().to_string())
@@ -130,7 +130,7 @@ macro_rules! create_group {
 #[macro_export]
 macro_rules! create_application_credential {
     ($state:ident, $user_id:expr, $project_id:expr) => {
-        crate::application_credential::create_application_credential(
+        $crate::application_credential::create_application_credential(
             &$state,
             openstack_keystone_core_types::application_credential::ApplicationCredentialCreateBuilder::default()
                 .name(uuid::Uuid::new_v4().simple().to_string())

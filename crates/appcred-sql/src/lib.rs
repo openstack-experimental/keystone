@@ -14,11 +14,15 @@
 //! # OpenStack Keystone Application Credential SQL driver
 
 use async_trait::async_trait;
+use sea_orm::{DatabaseConnection, Schema};
 
 use openstack_keystone_core::application_credential::{
     ApplicationCredentialProviderError, backend::ApplicationCredentialBackend,
 };
 use openstack_keystone_core::keystone::ServiceState;
+use openstack_keystone_core::{
+    SqlDriver, SqlDriverRegistration, db::create_table, error::DatabaseError,
+};
 use openstack_keystone_core_types::application_credential::*;
 
 mod application_credential;
@@ -28,6 +32,12 @@ pub mod entity;
 /// interface.
 #[derive(Default)]
 pub struct SqlBackend {}
+
+// Submit the plugin to the registry at compile-time
+static PLUGIN: SqlBackend = SqlBackend {};
+inventory::submit! {
+    SqlDriverRegistration { driver: &PLUGIN }
+}
 
 #[async_trait]
 impl ApplicationCredentialBackend for SqlBackend {
@@ -56,5 +66,35 @@ impl ApplicationCredentialBackend for SqlBackend {
         params: &ApplicationCredentialListParameters,
     ) -> Result<Vec<ApplicationCredential>, ApplicationCredentialProviderError> {
         Ok(application_credential::list(&state.db, params).await?)
+    }
+}
+
+#[async_trait]
+impl SqlDriver for SqlBackend {
+    async fn setup(
+        &self,
+        connection: &DatabaseConnection,
+        schema: &Schema,
+    ) -> Result<(), DatabaseError> {
+        create_table(connection, schema, crate::entity::prelude::AccessRule).await?;
+        create_table(
+            connection,
+            schema,
+            crate::entity::prelude::ApplicationCredential,
+        )
+        .await?;
+        create_table(
+            connection,
+            schema,
+            crate::entity::prelude::ApplicationCredentialRole,
+        )
+        .await?;
+        create_table(
+            connection,
+            schema,
+            crate::entity::prelude::ApplicationCredentialAccessRule,
+        )
+        .await?;
+        Ok(())
     }
 }

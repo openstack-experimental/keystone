@@ -14,10 +14,14 @@
 //! # OpenStack Keystone SQL driver for the Trust provider
 
 use async_trait::async_trait;
+use sea_orm::{DatabaseConnection, Schema};
 
 use openstack_keystone_core::keystone::ServiceState;
 use openstack_keystone_core::trust::TrustProviderError;
 use openstack_keystone_core::trust::backend::TrustBackend;
+use openstack_keystone_core::{
+    SqlDriver, SqlDriverRegistration, db::create_table, error::DatabaseError,
+};
 use openstack_keystone_core_types::trust::*;
 
 pub mod entity;
@@ -26,6 +30,12 @@ mod trust;
 /// Sql Database revocation backend.
 #[derive(Default)]
 pub struct SqlBackend {}
+
+// Submit the plugin to the registry at compile-time
+static PLUGIN: SqlBackend = SqlBackend {};
+inventory::submit! {
+    SqlDriverRegistration { driver: &PLUGIN }
+}
 
 #[async_trait]
 impl TrustBackend for SqlBackend {
@@ -57,6 +67,19 @@ impl TrustBackend for SqlBackend {
         params: &TrustListParameters,
     ) -> Result<Vec<Trust>, TrustProviderError> {
         Ok(trust::list(&state.db, params).await?)
+    }
+}
+
+#[async_trait]
+impl SqlDriver for SqlBackend {
+    async fn setup(
+        &self,
+        connection: &DatabaseConnection,
+        schema: &Schema,
+    ) -> Result<(), DatabaseError> {
+        create_table(connection, schema, crate::entity::prelude::Trust).await?;
+        create_table(connection, schema, crate::entity::prelude::TrustRole).await?;
+        Ok(())
     }
 }
 

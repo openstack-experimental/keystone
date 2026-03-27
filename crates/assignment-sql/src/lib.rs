@@ -13,14 +13,19 @@
 // SPDX-License-Identifier: Apache-2.0
 //! # Assignment driver to the OpenStack Keystone for the SQL database.
 
-use async_trait::async_trait;
 use std::collections::{BTreeMap, HashSet};
 
+use async_trait::async_trait;
+use sea_orm::{DatabaseConnection, Schema};
+
 use openstack_keystone_core::assignment::{AssignmentProviderError, backend::AssignmentBackend};
+use openstack_keystone_core::db::create_table;
+use openstack_keystone_core::error::DatabaseError;
 use openstack_keystone_core::identity::IdentityApi;
 use openstack_keystone_core::keystone::ServiceState;
 use openstack_keystone_core::resource::ResourceApi;
 use openstack_keystone_core::role::RoleApi;
+use openstack_keystone_core::{SqlDriver, SqlDriverRegistration};
 use openstack_keystone_core_types::assignment::*;
 use openstack_keystone_core_types::role::*;
 
@@ -29,6 +34,12 @@ pub mod entity;
 
 #[derive(Default)]
 pub struct SqlBackend {}
+
+// Submit the plugin to the registry at compile-time
+static PLUGIN: SqlBackend = SqlBackend {};
+inventory::submit! {
+    SqlDriverRegistration { driver: &PLUGIN }
+}
 
 impl SqlBackend {
     /// List role assignments for multiple actors/targets.
@@ -79,6 +90,19 @@ impl SqlBackend {
         }
 
         Ok(result_map.into_iter().collect())
+    }
+}
+
+#[async_trait]
+impl SqlDriver for SqlBackend {
+    async fn setup(
+        &self,
+        connection: &DatabaseConnection,
+        schema: &Schema,
+    ) -> Result<(), DatabaseError> {
+        create_table(connection, schema, crate::entity::prelude::Assignment).await?;
+        create_table(connection, schema, crate::entity::prelude::SystemAssignment).await?;
+        Ok(())
     }
 }
 

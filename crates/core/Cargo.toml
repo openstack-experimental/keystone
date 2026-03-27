@@ -16,6 +16,7 @@ bcrypt = { workspace = true, features = ["alloc"] }
 chrono = { workspace = true, default-features = false }
 derive_builder.workspace = true
 eyre.workspace = true
+inventory.workspace = true
 jsonwebtoken = { version = "10.3", features = ["rust_crypto"] }
 openstack-keystone-api-types = { version = "0.1", path = "../api-types/", optional = true }
 openstack-keystone-core-types = { version = "0.1", path = "../core-types/" }

@@ -14,9 +14,14 @@
 //! OpenStack Keystone SQL driver for the ID Mapping provider
 use async_trait::async_trait;
 
+use sea_orm::{DatabaseConnection, Schema};
+
 use openstack_keystone_core::identity_mapping::IdentityMappingProviderError;
 use openstack_keystone_core::identity_mapping::backend::IdentityMappingBackend;
 use openstack_keystone_core::keystone::ServiceState;
+use openstack_keystone_core::{
+    SqlDriver, SqlDriverRegistration, db::create_table, error::DatabaseError,
+};
 use openstack_keystone_core_types::identity_mapping::*;
 
 pub mod entity;
@@ -24,6 +29,12 @@ mod id_mapping;
 
 #[derive(Default)]
 pub struct SqlBackend {}
+
+// Submit the plugin to the registry at compile-time
+static PLUGIN: SqlBackend = SqlBackend {};
+inventory::submit! {
+    SqlDriverRegistration { driver: &PLUGIN }
+}
 
 #[async_trait]
 impl IdentityMappingBackend for SqlBackend {
@@ -45,5 +56,17 @@ impl IdentityMappingBackend for SqlBackend {
         public_id: &'a str,
     ) -> Result<Option<IdMapping>, IdentityMappingProviderError> {
         Ok(id_mapping::get_by_public_id(&state.db, public_id).await?)
+    }
+}
+
+#[async_trait]
+impl SqlDriver for SqlBackend {
+    async fn setup(
+        &self,
+        connection: &DatabaseConnection,
+        schema: &Schema,
+    ) -> Result<(), DatabaseError> {
+        create_table(connection, schema, crate::entity::prelude::IdMapping).await?;
+        Ok(())
     }
 }

@@ -71,6 +71,8 @@
 //! current objective is to retain the existing Keystone Python implementation
 //! as the trusted, mature baseline and incrementally build the “Keystone-NG”
 //! Rust service as the complement.
+use async_trait::async_trait;
+use sea_orm::{DatabaseConnection, Schema};
 
 #[cfg(feature = "api")]
 pub mod api;
@@ -79,6 +81,7 @@ pub mod assignment;
 pub mod auth;
 pub mod catalog;
 pub mod common;
+pub mod db;
 pub mod error;
 pub mod federation;
 pub mod identity;
@@ -96,3 +99,20 @@ pub mod trust;
 
 #[cfg(test)]
 pub mod tests;
+
+#[async_trait]
+pub trait SqlDriver: Send + Sync {
+    async fn setup(
+        &self,
+        connection: &DatabaseConnection,
+        schema: &Schema,
+    ) -> Result<(), error::DatabaseError>;
+}
+
+// This struct "wraps" the trait object so inventory can track it
+pub struct SqlDriverRegistration {
+    pub driver: &'static dyn SqlDriver,
+}
+
+// Essential: This creates the global registry for this specific struct
+inventory::collect!(SqlDriverRegistration);

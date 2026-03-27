@@ -15,8 +15,13 @@
 
 use async_trait::async_trait;
 
+use sea_orm::{DatabaseConnection, Schema};
+
 use openstack_keystone_core::keystone::ServiceState;
 use openstack_keystone_core::revoke::{RevokeProviderError, backend::RevokeBackend};
+use openstack_keystone_core::{
+    SqlDriver, SqlDriverRegistration, db::create_table, error::DatabaseError,
+};
 use openstack_keystone_core_types::revoke::*;
 use openstack_keystone_core_types::token::Token;
 
@@ -29,6 +34,12 @@ mod list;
 /// Sql Database revocation backend.
 #[derive(Default)]
 pub struct SqlBackend {}
+
+// Submit the plugin to the registry at compile-time
+static PLUGIN: SqlBackend = SqlBackend {};
+inventory::submit! {
+    SqlDriverRegistration { driver: &PLUGIN }
+}
 
 impl From<db_revocation_event::Model> for RevocationEvent {
     fn from(value: db_revocation_event::Model) -> Self {
@@ -89,6 +100,18 @@ impl RevokeBackend for SqlBackend {
         Ok(create::create(&state.db, token.try_into()?)
             .await
             .map(|_| ())?)
+    }
+}
+
+#[async_trait]
+impl SqlDriver for SqlBackend {
+    async fn setup(
+        &self,
+        connection: &DatabaseConnection,
+        schema: &Schema,
+    ) -> Result<(), DatabaseError> {
+        create_table(connection, schema, crate::entity::prelude::RevocationEvent).await?;
+        Ok(())
     }
 }
 

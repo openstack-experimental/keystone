@@ -12,12 +12,18 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //! OpenStack Keystone SQL driver for the role provider
-use async_trait::async_trait;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
+
+use async_trait::async_trait;
+
+use sea_orm::{DatabaseConnection, Schema};
 
 use openstack_keystone_core::keystone::ServiceState;
 use openstack_keystone_core::role::RoleProviderError;
 use openstack_keystone_core::role::backend::RoleBackend;
+use openstack_keystone_core::{
+    SqlDriver, SqlDriverRegistration, db::create_table, error::DatabaseError,
+};
 use openstack_keystone_core_types::role::*;
 
 pub mod entity;
@@ -26,6 +32,12 @@ mod role;
 
 #[derive(Default)]
 pub struct SqlBackend {}
+
+// Submit the plugin to the registry at compile-time
+static PLUGIN: SqlBackend = SqlBackend {};
+inventory::submit! {
+    SqlDriverRegistration { driver: &PLUGIN }
+}
 
 #[async_trait]
 impl RoleBackend for SqlBackend {
@@ -111,5 +123,19 @@ impl RoleBackend for SqlBackend {
         params: &RoleListParameters,
     ) -> Result<Vec<Role>, RoleProviderError> {
         Ok(role::list(&state.db, params).await?)
+    }
+}
+
+#[async_trait]
+impl SqlDriver for SqlBackend {
+    async fn setup(
+        &self,
+        connection: &DatabaseConnection,
+        schema: &Schema,
+    ) -> Result<(), DatabaseError> {
+        create_table(connection, schema, crate::entity::prelude::Role).await?;
+        create_table(connection, schema, crate::entity::prelude::RoleOption).await?;
+        create_table(connection, schema, crate::entity::prelude::ImpliedRole).await?;
+        Ok(())
     }
 }

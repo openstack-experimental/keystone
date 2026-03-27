@@ -48,7 +48,7 @@ async fn test_get() -> Result<(), Report> {
                 }]),
                 description: Some("description".into()),
                 name: Uuid::new_v4().to_string(),
-                project_id: project.id.clone().into(),
+                project_id: project.id.clone(),
                 roles: vec![RoleRef::from(role_a.clone()), RoleRef::from(role_b.clone())],
                 user_id: user.id.clone(),
                 ..Default::default()

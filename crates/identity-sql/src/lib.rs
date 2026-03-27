@@ -16,11 +16,17 @@ use std::collections::HashSet;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use sea_orm::{DatabaseConnection, Schema, sea_query::Index};
 
 use openstack_keystone_core::auth::AuthenticatedInfo;
 use openstack_keystone_core::identity::IdentityProviderError;
 use openstack_keystone_core::identity::backend::IdentityBackend;
 use openstack_keystone_core::keystone::ServiceState;
+use openstack_keystone_core::{
+    SqlDriver, SqlDriverRegistration,
+    db::{create_index, create_table},
+    error::DatabaseError,
+};
 use openstack_keystone_core_types::identity::*;
 
 mod authenticate;
@@ -37,6 +43,12 @@ mod user_option;
 
 #[derive(Default)]
 pub struct SqlBackend {}
+
+// Submit the plugin to the registry at compile-time
+static PLUGIN: SqlBackend = SqlBackend {};
+inventory::submit! {
+    SqlDriverRegistration { driver: &PLUGIN }
+}
 
 #[async_trait]
 impl IdentityBackend for SqlBackend {
@@ -320,6 +332,48 @@ impl IdentityBackend for SqlBackend {
             last_verified,
         )
         .await?)
+    }
+}
+
+#[async_trait]
+impl SqlDriver for SqlBackend {
+    async fn setup(
+        &self,
+        connection: &DatabaseConnection,
+        schema: &Schema,
+    ) -> Result<(), DatabaseError> {
+        create_table(connection, schema, crate::entity::prelude::User).await?;
+        create_index(
+            connection,
+            Index::create()
+                .name("ixu_user_id_domain_id")
+                .table(crate::entity::prelude::User)
+                .col(crate::entity::user::Column::Id)
+                .col(crate::entity::user::Column::DomainId)
+                .unique()
+                .to_owned(),
+        )
+        .await?;
+        create_table(connection, schema, crate::entity::prelude::UserOption).await?;
+        create_table(connection, schema, crate::entity::prelude::LocalUser).await?;
+        create_table(connection, schema, crate::entity::prelude::Password).await?;
+        create_table(connection, schema, crate::entity::prelude::NonlocalUser).await?;
+        create_table(connection, schema, crate::entity::prelude::FederatedUser).await?;
+        create_table(connection, schema, crate::entity::prelude::Group).await?;
+        create_table(
+            connection,
+            schema,
+            crate::entity::prelude::UserGroupMembership,
+        )
+        .await?;
+        create_table(
+            connection,
+            schema,
+            crate::entity::prelude::ExpiringUserGroupMembership,
+        )
+        .await?;
+
+        Ok(())
     }
 }
 

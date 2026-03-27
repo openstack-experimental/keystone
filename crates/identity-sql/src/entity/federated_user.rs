@@ -21,6 +21,7 @@ use sea_orm::entity::prelude::*;
 pub struct Model {
     #[sea_orm(primary_key)]
     pub id: i32,
+    #[sea_orm(column_type = "String(StringLen::N(64))")]
     pub user_id: String,
     pub idp_id: String,
     pub protocol_id: String,

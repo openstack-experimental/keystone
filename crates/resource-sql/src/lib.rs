@@ -14,9 +14,13 @@
 //! # OpenStack Keystone SQL driver for the resource provider
 
 use async_trait::async_trait;
+use sea_orm::{DatabaseConnection, Schema};
 
 use openstack_keystone_core::keystone::ServiceState;
 use openstack_keystone_core::resource::{ResourceProviderError, backend::ResourceBackend};
+use openstack_keystone_core::{
+    SqlDriver, SqlDriverRegistration, db::create_table, error::DatabaseError,
+};
 use openstack_keystone_core_types::resource::*;
 
 mod domain;
@@ -25,6 +29,12 @@ mod project;
 
 #[derive(Default)]
 pub struct SqlBackend {}
+
+// Submit the plugin to the registry at compile-time
+static PLUGIN: SqlBackend = SqlBackend {};
+inventory::submit! {
+    SqlDriverRegistration { driver: &PLUGIN }
+}
 
 #[async_trait]
 impl ResourceBackend for SqlBackend {
@@ -147,5 +157,19 @@ impl ResourceBackend for SqlBackend {
         params: &ProjectListParameters,
     ) -> Result<Vec<Project>, ResourceProviderError> {
         Ok(project::list(&state.db, params).await?)
+    }
+}
+
+#[async_trait]
+impl SqlDriver for SqlBackend {
+    async fn setup(
+        &self,
+        connection: &DatabaseConnection,
+        schema: &Schema,
+    ) -> Result<(), DatabaseError> {
+        create_table(connection, schema, crate::entity::prelude::Project).await?;
+        create_table(connection, schema, crate::entity::prelude::ProjectOption).await?;
+        create_table(connection, schema, crate::entity::prelude::ProjectTag).await?;
+        Ok(())
     }
 }

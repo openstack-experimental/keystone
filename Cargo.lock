@@ -2506,6 +2506,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "inventory"
+version = "0.3.22"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "009ae045c87e7082cb72dab0ccd01ae075dd00141ddc108f43a0ea150a9e7227"
+dependencies = [
+ "rustversion",
+]
+
+[[package]]
 name = "ipnet"
 version = "2.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3390,6 +3399,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "chrono",
+ "inventory",
  "openstack-keystone-config",
  "openstack-keystone-core",
  "openstack-keystone-core-types",
@@ -3405,6 +3415,7 @@ name = "openstack-keystone-assignment-sql"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "inventory",
  "openstack-keystone-config",
  "openstack-keystone-core",
  "openstack-keystone-core-types",
@@ -3418,6 +3429,7 @@ name = "openstack-keystone-catalog-sql"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "inventory",
  "openstack-keystone-core",
  "openstack-keystone-core-types",
  "sea-orm",
@@ -3453,6 +3465,7 @@ dependencies = [
  "derive_builder",
  "eyre",
  "httpmock",
+ "inventory",
  "jsonwebtoken",
  "mockall",
  "openstack-keystone-api-types",
@@ -3525,6 +3538,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "derive_builder",
+ "inventory",
  "openstack-keystone-core",
  "openstack-keystone-core-types",
  "sea-orm",
@@ -3541,6 +3555,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "derive_builder",
+ "inventory",
  "openstack-keystone-config",
  "openstack-keystone-core",
  "openstack-keystone-core-types",
@@ -3559,6 +3574,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "chrono",
+ "inventory",
  "openstack-keystone-core",
  "openstack-keystone-core-types",
  "sea-orm",
@@ -3571,6 +3587,7 @@ name = "openstack-keystone-k8s-auth-sql"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "inventory",
  "openstack-keystone-core",
  "openstack-keystone-core-types",
  "sea-orm",
@@ -3584,6 +3601,7 @@ name = "openstack-keystone-resource-sql"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "inventory",
  "openstack-keystone-core",
  "openstack-keystone-core-types",
  "sea-orm",
@@ -3599,6 +3617,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "chrono",
+ "inventory",
  "openstack-keystone-core",
  "openstack-keystone-core-types",
  "sea-orm",
@@ -3612,6 +3631,7 @@ name = "openstack-keystone-role-sql"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "inventory",
  "openstack-keystone-core",
  "openstack-keystone-core-types",
  "sea-orm",
@@ -3654,6 +3674,7 @@ name = "openstack-keystone-token-restriction-sql"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "inventory",
  "openstack-keystone-core",
  "openstack-keystone-core-types",
  "sea-orm",
@@ -3667,6 +3688,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "chrono",
+ "inventory",
  "openstack-keystone-core",
  "openstack-keystone-core-types",
  "sea-orm",
@@ -6029,21 +6051,14 @@ version = "0.0.0"
 dependencies = [
  "chrono",
  "eyre",
+ "inventory",
  "itertools 0.14.0",
  "openstack-keystone",
- "openstack-keystone-appcred-sql",
- "openstack-keystone-assignment-sql",
  "openstack-keystone-config",
  "openstack-keystone-core",
  "openstack-keystone-core-types",
- "openstack-keystone-federation-sql",
  "openstack-keystone-identity-sql",
- "openstack-keystone-k8s-auth-sql",
- "openstack-keystone-resource-sql",
- "openstack-keystone-revoke-sql",
- "openstack-keystone-role-sql",
  "openstack-keystone-token-fernet",
- "openstack-keystone-token-restriction-sql",
  "openstack-keystone-trust-sql",
  "sea-orm",
  "secrecy",

@@ -30,8 +30,10 @@ pub struct Model {
     pub created_at: Option<DateTime>,
 
     #[cfg_attr(test, builder(default))]
+    #[sea_orm(column_type = "String(StringLen::N(64))")]
     pub default_project_id: Option<String>,
 
+    #[sea_orm(column_type = "String(StringLen::N(64))")]
     pub domain_id: String,
 
     #[cfg_attr(test, builder(default))]
@@ -41,7 +43,11 @@ pub struct Model {
     #[cfg_attr(test, builder(default))]
     pub extra: Option<String>,
 
-    #[sea_orm(primary_key, auto_increment = false)]
+    #[sea_orm(
+        primary_key,
+        auto_increment = false,
+        column_type = "String(StringLen::N(64))"
+    )]
     pub id: String,
 
     #[cfg_attr(test, builder(default))]

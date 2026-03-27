@@ -13,10 +13,14 @@
 // SPDX-License-Identifier: Apache-2.0
 //! # OpenStack Keystone SQL driver for the token restriction provider
 use async_trait::async_trait;
+use sea_orm::{DatabaseConnection, Schema};
 
 use openstack_keystone_core::keystone::ServiceState;
 use openstack_keystone_core::token::TokenProviderError;
 use openstack_keystone_core::token::backend::TokenRestrictionBackend;
+use openstack_keystone_core::{
+    SqlDriver, SqlDriverRegistration, db::create_table, error::DatabaseError,
+};
 use openstack_keystone_core_types::token::*;
 
 use crate::entity::{token_restriction, token_restriction_role_association};
@@ -30,6 +34,12 @@ mod update;
 
 #[derive(Default)]
 pub struct SqlBackend {}
+
+// Submit the plugin to the registry at compile-time
+static PLUGIN: SqlBackend = SqlBackend {};
+inventory::submit! {
+    SqlDriverRegistration { driver: &PLUGIN }
+}
 
 #[async_trait]
 impl TokenRestrictionBackend for SqlBackend {
@@ -77,6 +87,24 @@ impl TokenRestrictionBackend for SqlBackend {
         id: &'a str,
     ) -> Result<(), TokenProviderError> {
         delete::delete(&state.db, id).await
+    }
+}
+
+#[async_trait]
+impl SqlDriver for SqlBackend {
+    async fn setup(
+        &self,
+        connection: &DatabaseConnection,
+        schema: &Schema,
+    ) -> Result<(), DatabaseError> {
+        create_table(connection, schema, crate::entity::prelude::TokenRestriction).await?;
+        create_table(
+            connection,
+            schema,
+            crate::entity::prelude::TokenRestrictionRoleAssociation,
+        )
+        .await?;
+        Ok(())
     }
 }
 

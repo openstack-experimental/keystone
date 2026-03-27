@@ -14,14 +14,17 @@
 //! # OpenStack Keystone SQL driver for the catalog provider
 
 use async_trait::async_trait;
-use sea_orm::DatabaseConnection;
 use sea_orm::entity::*;
 use sea_orm::query::*;
+use sea_orm::{DatabaseConnection, Schema};
 
 use openstack_keystone_core::catalog::CatalogProviderError;
 use openstack_keystone_core::catalog::backend::CatalogBackend;
 use openstack_keystone_core::error::DbContextExt;
 use openstack_keystone_core::keystone::ServiceState;
+use openstack_keystone_core::{
+    SqlDriver, SqlDriverRegistration, db::create_table, error::DatabaseError,
+};
 use openstack_keystone_core_types::catalog::*;
 
 use crate::entity::{
@@ -36,6 +39,12 @@ mod service;
 
 #[derive(Default)]
 pub struct SqlBackend {}
+
+// Submit the plugin to the registry at compile-time
+static PLUGIN: SqlBackend = SqlBackend {};
+inventory::submit! {
+    SqlDriverRegistration { driver: &PLUGIN }
+}
 
 #[async_trait]
 impl CatalogBackend for SqlBackend {
@@ -112,6 +121,28 @@ async fn get_catalog(
         res.push((service, endpoints?));
     }
     Ok(res)
+}
+
+#[async_trait]
+impl SqlDriver for SqlBackend {
+    async fn setup(
+        &self,
+        connection: &DatabaseConnection,
+        schema: &Schema,
+    ) -> Result<(), DatabaseError> {
+        create_table(connection, schema, crate::entity::prelude::Region).await?;
+        create_table(connection, schema, crate::entity::prelude::Service).await?;
+        create_table(connection, schema, crate::entity::prelude::Endpoint).await?;
+        create_table(connection, schema, crate::entity::prelude::EndpointGroup).await?;
+        create_table(connection, schema, crate::entity::prelude::ProjectEndpoint).await?;
+        create_table(
+            connection,
+            schema,
+            crate::entity::prelude::ProjectEndpointGroup,
+        )
+        .await?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
