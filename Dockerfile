@@ -1,6 +1,6 @@
 ################
 ##### Builder
-FROM rust:1.93.1-slim-trixie AS builder
+FROM rust:1.94.1-slim-trixie AS builder
 
 #RUN rustup target add x86_64-unknown-linux-gnu &&\
 RUN apt update &&\
