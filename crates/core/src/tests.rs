@@ -12,6 +12,12 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //! # Test related functionality
+//!
+//! Compiled both under `#[cfg(test)]` and the `mock` feature so downstream
+//! driver crates can reuse `get_mocked_state`. `clippy.toml`'s
+//! `allow-unwrap-in-tests` only covers `#[cfg(test)]` builds, so the
+//! `unwrap`/`expect` allowances are restated here for the `mock`-feature build.
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 use std::sync::Arc;
 
 use sea_orm::DatabaseConnection;

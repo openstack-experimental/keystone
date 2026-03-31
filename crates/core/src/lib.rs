@@ -127,7 +127,7 @@ pub mod trust;
 #[cfg(any(test, feature = "mock"))]
 pub mod mocks;
 
-#[cfg(test)]
+#[cfg(any(test, feature = "mock"))]
 pub mod tests;
 
 #[async_trait]

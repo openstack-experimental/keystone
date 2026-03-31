@@ -219,6 +219,7 @@ impl From<AssignmentProviderError> for KeystoneApiError {
             ref err @ AssignmentProviderError::Validation { .. } => {
                 Self::BadRequest(err.to_string())
             }
+            AssignmentProviderError::NotImplemented(x) => Self::NotImplemented(x),
             other => Self::InternalError(other.to_string()),
         }
     }

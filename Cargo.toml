@@ -5,6 +5,7 @@ members = [
   "crates/audit",
   "crates/appcred-driver-sql",
   "crates/assignment-driver-sql",
+  "crates/assignment-driver-openfga",
   "crates/catalog-driver-sql",
   "crates/config",
   "crates/core",
@@ -106,6 +107,7 @@ futures-util = { version = "0.3" }
 governor = "0.10"
 http-body-util = "0.1"
 http = { version = "1.5" }
+httpmock = { version = "0.8", features = ["http2"] }
 hyper = { version = "1.11" }
 hyper-util = { version = "0.1" }
 hkdf = { version = "0.13" }
@@ -125,6 +127,7 @@ openstack-keystone-api-key-driver-raft = { version = "0.1", path = "crates/api-k
 openstack-keystone-api-types = { version = "0.1", features = ["openapi", "validate", "conv"], path = "crates/api-types" }
 openstack-keystone-audit = { version = "0.1.0", path = "crates/audit" }
 openstack-keystone-appcred-driver-sql = { version = "0.1", path = "crates/appcred-driver-sql/" }
+openstack-keystone-assignment-driver-openfga = { version = "0.1", path = "crates/assignment-driver-openfga/" }
 openstack-keystone-assignment-driver-sql = { version = "0.1", path = "crates/assignment-driver-sql/" }
 openstack-keystone-catalog-driver-sql = { version = "0.1", path = "crates/catalog-driver-sql/" }
 openstack-keystone-config = { version = "0.1.0", path = "crates/config"}
