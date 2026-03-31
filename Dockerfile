@@ -1,102 +1,34 @@
 ################
 ##### Builder
-FROM rust:1.94.1-slim-trixie AS builder
+FROM rust:1.94.1-slim-trixie AS base
+
+RUN cargo install --locked cargo-chef
+WORKDIR app
+
+################
+##### Plan
+FROM base AS planner
+
+COPY . .
+RUN cargo chef prepare --recipe-path recipe.json
+
+################
+##### Build
+FROM base AS builder
 
 #RUN rustup target add x86_64-unknown-linux-gnu &&\
 RUN apt update &&\
-    apt install -y openssl libssl-dev libssl3 pkg-config musl-tools musl-dev \
+    apt install -y openssl libssl-dev libssl3 pkg-config \
     protobuf-compiler &&\
     update-ca-certificates
 
-WORKDIR /usr/src
+COPY --from=planner /app/recipe.json recipe.json
 
-# Create blank project
-RUN USER=root cargo new keystone
+# Build dependencies - this is the caching Docker layer!
+RUN cargo chef cook --release --recipe-path recipe.json
 
-WORKDIR /usr/src/keystone
-
-RUN USER=root cargo new --name core --lib crates/core
-RUN USER=root cargo new --name core-types --lib crates/core-types
-RUN USER=root cargo new --name api-types --lib crates/api-types
-
-RUN USER=root cargo new --name appcred-sql --lib crates/appcred-sql
-RUN USER=root cargo new --name assignment-sql --lib crates/assignment-sql
-RUN USER=root cargo new --name catalog-sql --lib crates/catalog-sql
-RUN USER=root cargo new --name federation-sql --lib crates/federation-sql
-RUN USER=root cargo new --name identity-sql --lib crates/identity-sql
-RUN USER=root cargo new --name idmaping-sql --lib crates/idmapping-sql
-RUN USER=root cargo new --name k8s-auth-sql --lib crates/k8s-auth-sql
-RUN USER=root cargo new --name resource-sql --lib crates/resource-sql
-RUN USER=root cargo new --name revoke-sql --lib crates/revoke-sql
-RUN USER=root cargo new --name role-sql --lib crates/role-sql
-RUN USER=root cargo new --name token-restriction-sql --lib crates/token-restriction-sql
-RUN USER=root cargo new --name trust-sql --lib crates/trust-sql
-
-# We want dependencies cached, so copy those first.
-COPY Cargo.toml Cargo.lock /usr/src/keystone/
-COPY crates/api-types/Cargo.toml /usr/src/keystone/crates/api-types/
-COPY crates/appcred-sql/Cargo.toml /usr/src/keystone/crates/appcred-sql/
-COPY crates/assignment-sql/Cargo.toml /usr/src/keystone/crates/assignment-sql/
-COPY crates/config/Cargo.toml /usr/src/keystone/crates/config/
-COPY crates/core/Cargo.toml /usr/src/keystone/crates/core/
-COPY crates/core-types/Cargo.toml /usr/src/keystone/crates/core-types/
-COPY crates/catalog-sql/Cargo.toml /usr/src/keystone/crates/catalog-sql/
-COPY crates/federation-sql/Cargo.toml /usr/src/keystone/crates/federation-sql/
-COPY crates/identity-sql/Cargo.toml /usr/src/keystone/crates/identity-sql/
-COPY crates/idmapping-sql/Cargo.toml /usr/src/keystone/crates/idmapping-sql/
-COPY crates/k8s-auth-sql/Cargo.toml /usr/src/keystone/crates/k8s-auth-sql/
-COPY crates/keystone/Cargo.toml /usr/src/keystone/crates/keystone/
-COPY crates/resource-sql/Cargo.toml /usr/src/keystone/crates/resource-sql/
-COPY crates/revoke-sql/Cargo.toml /usr/src/keystone/crates/revoke-sql/
-COPY crates/role-sql/Cargo.toml /usr/src/keystone/crates/role-sql/
-COPY crates/storage/Cargo.toml /usr/src/keystone/crates/storage/
-COPY crates/token-fernet/Cargo.toml /usr/src/keystone/crates/token-fernet/
-COPY crates/token-restriction-sql/Cargo.toml /usr/src/keystone/crates/token-restriction-sql/
-COPY crates/trust-sql/Cargo.toml /usr/src/keystone/crates/trust-sql/
-COPY crates/webauthn/Cargo.toml /usr/src/keystone/crates/webauthn/
-COPY tests/federation/Cargo.toml /usr/src/keystone/tests/federation/
-COPY tests/integration/Cargo.toml /usr/src/keystone/tests/integration/
-COPY tests/api/Cargo.toml /usr/src/keystone/tests/api/
-COPY tests/loadtest/Cargo.toml /usr/src/keystone/tests/loadtest/
-RUN mkdir -p crates/keystone/src/bin && touch crates/keystone/src/lib.rs &&\
-  cp src/main.rs crates/keystone/src/bin/keystone.rs &&\
-  cp src/main.rs crates/keystone/src/bin/keystone_db.rs &&\
-  mkdir -p tests/loadtest/src &&\
-  cp src/main.rs tests/loadtest/src/main.rs &&\
-  mkdir -p crates/config/src && touch crates/config/src/lib.rs &&\
-  mkdir -p crates/storage/src && touch crates/storage/src/lib.rs &&\
-  mkdir -p crates/token-fernet/src && touch crates/token-fernet/src/lib.rs &&\
-  mkdir -p crates/token-fernet/benches && touch crates/token-fernet/benches/fernet_token.rs &&\
-  mkdir -p crates/webauthn/src && touch crates/webauthn/src/lib.rs
-
-## This is a dummy build to get the dependencies cached.
-#RUN cargo build --target x86_64-unknown-linux-musl --release
-RUN cargo build -p openstack-keystone --release
-
-# Now copy in the rest of the sources
-COPY crates/keystone/ /usr/src/keystone/crates/keystone
-COPY crates/config/ /usr/src/keystone/crates/config
-COPY crates/core/ /usr/src/keystone/crates/core
-COPY crates/core-types/ /usr/src/keystone/crates/core-types
-COPY crates/api-types/ /usr/src/keystone/crates/api-types
-COPY crates/storage/ /usr/src/keystone/crates/storage
-COPY crates/token-fernet/ /usr/src/keystone/crates/token-fernet
-COPY crates/webauthn/ /usr/src/keystone/crates/webauthn
-COPY crates/appcred-sql/ /usr/src/keystone/crates/appcred-sql
-COPY crates/assignment-sql/ /usr/src/keystone/crates/assignment-sql
-COPY crates/catalog-sql/ /usr/src/keystone/crates/catalog-sql
-COPY crates/federation-sql/ /usr/src/keystone/crates/federation-sql
-COPY crates/identity-sql/ /usr/src/keystone/crates/identity-sql
-COPY crates/idmapping-sql/ /usr/src/keystone/crates/idmapping-sql
-COPY crates/k8s-auth-sql/ /usr/src/keystone/crates/k8s-auth-sql
-COPY crates/resource-sql/ /usr/src/keystone/crates/resource-sql
-COPY crates/revoke-sql/ /usr/src/keystone/crates/revoke-sql
-COPY crates/role-sql/ /usr/src/keystone/crates/role-sql
-COPY crates/token-restriction-sql/ /usr/src/keystone/crates/token-restriction-sql
-COPY crates/trust-sql/ /usr/src/keystone/crates/trust-sql
-
-## Touch main.rs to prevent cached release build
-RUN touch crates/keystone/src/lib.rs && touch crates/keystone/src/bin/keystone.rs
+# Copy the actual sources
+COPY . .
 
 # This is the actual application build.
 RUN cargo build --release --bins
@@ -111,7 +43,7 @@ LABEL maintainer="Artem Goncharov"
 RUN apt update && apt install -y ca-certificates libssl3 && update-ca-certificates
 
 # Copy application binary from builder image
-COPY --from=builder /usr/src/keystone/target/release/keystone /usr/local/bin
-COPY --from=builder /usr/src/keystone/target/release/keystone-db /usr/local/bin
+COPY --from=builder /app/target/release/keystone /usr/local/bin
+COPY --from=builder /app/target/release/keystone-db /usr/local/bin
 
 CMD ["/usr/local/bin/keystone"]

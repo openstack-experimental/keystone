@@ -1,82 +1,27 @@
-# Stage 1: Build
-FROM rust:1.94.1-slim-trixie AS builder
+# Stage 1: Base
+FROM rust:1.94.1-slim-trixie AS base
 
+RUN cargo install --locked cargo-chef
+WORKDIR app
+
+# Stage 2: Plan
+FROM base AS planner 
+
+COPY . .
+RUN cargo chef prepare --recipe-path recipe.json
+
+# Stage 3: Build
+FROM base AS builder
 RUN apt update &&\
     apt install -y openssl libssl-dev libssl3 pkg-config &&\
     update-ca-certificates
 
-WORKDIR /usr/src
+COPY --from=planner /app/recipe.json recipe.json
 
-RUN mkdir /app
+# Build dependencies - this is the caching Docker layer!
+RUN cargo chef cook --release --recipe-path recipe.json
 
-# Create blank project
-RUN USER=root cargo new keystone
-
-WORKDIR /usr/src/keystone
-
-RUN USER=root cargo new --name core --lib crates/core
-RUN USER=root cargo new --name core-types --lib crates/core-types
-RUN USER=root cargo new --name api-types --lib crates/api-types
-
-RUN USER=root cargo new --name appcred-sql --lib crates/appcred-sql
-RUN USER=root cargo new --name assignment-sql --lib crates/assignment-sql
-RUN USER=root cargo new --name catalog-sql --lib crates/catalog-sql
-RUN USER=root cargo new --name federation-sql --lib crates/federation-sql
-RUN USER=root cargo new --name identity-sql --lib crates/identity-sql
-RUN USER=root cargo new --name idmaping-sql --lib crates/idmapping-sql
-RUN USER=root cargo new --name k8s-auth-sql --lib crates/k8s-auth-sql
-RUN USER=root cargo new --name resource-sql --lib crates/resource-sql
-RUN USER=root cargo new --name revoke-sql --lib crates/revoke-sql
-RUN USER=root cargo new --name role-sql --lib crates/role-sql
-RUN USER=root cargo new --name token-restriction-sql --lib crates/token-restriction-sql
-RUN USER=root cargo new --name trust-sql --lib crates/trust-sql
-
-# We want dependencies cached, so copy those first.
-COPY Cargo.toml Cargo.lock /usr/src/keystone/
-COPY crates/api-types/Cargo.toml /usr/src/keystone/crates/api-types/
-COPY crates/appcred-sql/Cargo.toml /usr/src/keystone/crates/appcred-sql/
-COPY crates/assignment-sql/Cargo.toml /usr/src/keystone/crates/assignment-sql/
-COPY crates/config/Cargo.toml /usr/src/keystone/crates/config/
-COPY crates/core/Cargo.toml /usr/src/keystone/crates/core/
-COPY crates/core-types/Cargo.toml /usr/src/keystone/crates/core-types/
-COPY crates/catalog-sql/Cargo.toml /usr/src/keystone/crates/catalog-sql/
-COPY crates/federation-sql/Cargo.toml /usr/src/keystone/crates/federation-sql/
-COPY crates/identity-sql/Cargo.toml /usr/src/keystone/crates/identity-sql/
-COPY crates/idmapping-sql/Cargo.toml /usr/src/keystone/crates/idmapping-sql/
-COPY crates/k8s-auth-sql/Cargo.toml /usr/src/keystone/crates/k8s-auth-sql/
-COPY crates/keystone/Cargo.toml /usr/src/keystone/crates/keystone/
-COPY crates/resource-sql/Cargo.toml /usr/src/keystone/crates/resource-sql/
-COPY crates/revoke-sql/Cargo.toml /usr/src/keystone/crates/revoke-sql/
-COPY crates/role-sql/Cargo.toml /usr/src/keystone/crates/role-sql/
-COPY crates/storage/Cargo.toml /usr/src/keystone/crates/storage/
-COPY crates/token-fernet/Cargo.toml /usr/src/keystone/crates/token-fernet/
-COPY crates/token-restriction-sql/Cargo.toml /usr/src/keystone/crates/token-restriction-sql/
-COPY crates/trust-sql/Cargo.toml /usr/src/keystone/crates/trust-sql/
-COPY crates/webauthn/Cargo.toml /usr/src/keystone/crates/webauthn/
-COPY tests/federation/Cargo.toml /usr/src/keystone/tests/federation/
-COPY tests/integration/Cargo.toml /usr/src/keystone/tests/integration/
-COPY tests/api/Cargo.toml /usr/src/keystone/tests/api/
-COPY tests/loadtest/Cargo.toml /usr/src/keystone/tests/loadtest/
-RUN mkdir -p crates/keystone/src/bin && touch crates/keystone/src/lib.rs &&\
-  cp src/main.rs crates/keystone/src/bin/keystone.rs &&\
-  cp src/main.rs crates/keystone/src/bin/keystone_db.rs &&\
-  mkdir -p tests/loadtest/src &&\
-  cp src/main.rs tests/loadtest/src/main.rs &&\
-  mkdir -p crates/assignment-sql/src && touch crates/assignment-sql/src/lib.rs &&\
-  mkdir -p crates/config/src && touch crates/config/src/lib.rs &&\
-  mkdir -p crates/storage/src && touch crates/storage/src/lib.rs &&\
-  mkdir -p crates/token-fernet/src && touch crates/token-fernet/src/lib.rs &&\
-  mkdir -p crates/token-fernet/benches && touch crates/token-fernet/benches/fernet_token.rs &&\
-  mkdir -p crates/webauthn/src && touch crates/webauthn/src/lib.rs 
-
-## This is a dummy build to get the dependencies cached.
-RUN cargo build
-
-COPY crates/core-types/ /usr/src/keystone/crates/core-types
-COPY crates/api-types/ /usr/src/keystone/crates/api-types
-COPY tests ./tests
-
-# RUN touch tests/api/k8s_auth.rs
+COPY . .
 
 # Compile the specific functional test file
 RUN cargo test --test api --no-run && \
@@ -88,15 +33,14 @@ RUN cargo test --test keycloak --no-run && \
 RUN cargo test --test dex --no-run && \
     cp $(find target/debug/deps -name "dex-*" -type f -executable) /app/test-dex
 
-
-# Stage 2: Package
+# Stage 4: Package
 FROM debian:trixie-slim AS runtime
 
 LABEL org.opencontainers.image.authors="Artem Goncharov"
 LABEL description="Keystone-rs tests"
 
 RUN apt update &&\
-    apt install -y ca-certificates openssl libssl-dev libssl3 pkg-config &&\
+    apt install -y ca-certificates libssl-dev libssl3 pkg-config &&\
     update-ca-certificates
 
 WORKDIR /tests
