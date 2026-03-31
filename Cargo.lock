@@ -4838,6 +4838,7 @@ dependencies = [
  "openstack-keystone-api-key-driver-raft",
  "openstack-keystone-api-types",
  "openstack-keystone-appcred-driver-sql",
+ "openstack-keystone-assignment-driver-openfga",
  "openstack-keystone-assignment-driver-sql",
  "openstack-keystone-audit",
  "openstack-keystone-auth-plugin-identity-driver-raft",
@@ -4960,6 +4961,31 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "openstack-keystone-assignment-driver-openfga"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "derive_builder",
+ "eyre",
+ "httpmock",
+ "inventory",
+ "openstack-keystone-api-types",
+ "openstack-keystone-config",
+ "openstack-keystone-core",
+ "openstack-keystone-core-types",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "tracing-test",
+ "url",
+ "validator",
 ]
 
 [[package]]

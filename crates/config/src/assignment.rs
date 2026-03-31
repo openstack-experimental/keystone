@@ -11,7 +11,10 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+use std::collections::HashMap;
+
 use serde::Deserialize;
+use url::Url;
 
 use crate::common::default_sql_driver;
 use crate::pagination::ListLimitConfig;
@@ -35,4 +38,16 @@ impl Default for AssignmentProvider {
             list_limit: ListLimitConfig::default(),
         }
     }
+}
+
+/// OpenFGA driver.
+#[derive(Debug, Deserialize, Clone)]
+pub struct OpenFGAAssignmentDriver {
+    /// Assignment provider driver.
+    pub api_url: Url,
+    pub api_key: String,
+    pub model_id: Option<String>,
+    pub store_id: String,
+    pub timeout: Option<u16>,
+    pub role_to_relation: Option<HashMap<String, String>>,
 }

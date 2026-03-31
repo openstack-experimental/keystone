@@ -58,7 +58,7 @@ subtle = "2.6.1"
 [dev-dependencies]
 axum = { workspace = true, default-features = false, features = ["json", "tokio"] }
 config = { workspace = true }
-httpmock = { version = "0.8", features = ["http2"] }
+httpmock.workspace = true
 mockall.workspace = true
 openstack-keystone-api-types = { workspace = true, features = ["builder", "conv"] }
 openstack-keystone-audit = { workspace = true, features = ["testing"] }

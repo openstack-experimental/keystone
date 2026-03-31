@@ -33,9 +33,36 @@ fn main() {
         .and_then(|v| v.as_table())
         .expect("Cargo.toml must have a [dependencies] section");
 
+    // Optional dependencies are only linked into the build when the feature
+    // that activates them (`dep:<name>`) is enabled; anchoring them
+    // unconditionally would reference a crate that was never compiled in.
+    let enabled_optional_deps: std::collections::HashSet<String> = parsed
+        .get("features")
+        .and_then(|v| v.as_table())
+        .map(|features| {
+            features
+                .iter()
+                .filter(|(name, _)| {
+                    let env_name =
+                        format!("CARGO_FEATURE_{}", name.to_uppercase().replace('-', "_"));
+                    env::var(env_name).is_ok()
+                })
+                .flat_map(|(_, activations)| {
+                    activations
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|v| v.as_str())
+                        .filter_map(|v| v.strip_prefix("dep:"))
+                        .map(String::from)
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
     let mut plugin_deps = Vec::new();
 
-    for key in deps.keys() {
+    for (key, spec) in deps {
         // Only include openstack-keystone-* crates
         if !key.starts_with("openstack-keystone-") {
             continue;
@@ -43,6 +70,14 @@ fn main() {
 
         // Only anchor driver crates and webauthn
         if !key.contains("-driver-") && !key.starts_with("openstack-keystone-webauthn") {
+            continue;
+        }
+
+        let is_optional = spec
+            .get("optional")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        if is_optional && !enabled_optional_deps.contains(key) {
             continue;
         }
 
