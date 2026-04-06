@@ -91,7 +91,7 @@ serde_json = { version = "1.0" }
 serde_urlencoded = { version = "0.7" }
 tempfile = { version = "3.27" }
 thiserror = { version = "2.0" }
-tokio = { version = "1.50", default-features = false }
+tokio = { version = "1.51", default-features = false }
 tokio-util = { version = "0.7" }
 tonic = { version = "0.14" }
 tonic-prost-build = { version = "0.14" }
