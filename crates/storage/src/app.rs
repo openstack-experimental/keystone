@@ -11,12 +11,12 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-use std::path::Path;
 use std::sync::Arc;
 
 use openraft::Config;
-use tonic::transport::{Server, server::Router};
-use tracing::info;
+use tonic::service::Routes;
+
+use openstack_keystone_config::DistributedStorageConfiguration;
 
 use crate::grpc::cluster_admin_service::ClusterAdminServiceImpl;
 use crate::grpc::identity_service::IdentityServiceImpl;
@@ -27,29 +27,14 @@ use crate::pb::raft::cluster_admin_service_server::ClusterAdminServiceServer;
 use crate::pb::raft::raft_service_server::RaftServiceServer;
 use crate::types::*;
 
-/// Start storage node.
-pub async fn start_raft_app<P: AsRef<Path>>(
-    node_id: NodeId,
-    http_addr: String,
-    db_path: P,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let server_future = get_app_server(node_id, db_path)
-        .await?
-        .serve(http_addr.parse()?);
-
-    info!("Node {node_id} starting server at {http_addr}");
-    server_future.await?;
-
-    Ok(())
-}
-
 /// Build a tonic `Server` instance for the raft instance.
-pub async fn get_app_server<P: AsRef<Path>>(
-    node_id: NodeId,
-    db_path: P,
-) -> Result<Router, StoreError> {
+pub async fn get_app_server(
+    ks_config: &DistributedStorageConfiguration,
+    //node_id: NodeId,
+    //db_path: P,
+) -> Result<Routes, StoreError> {
     // Create a configuration for the raft instance.
-    let config = Arc::new(
+    let raft_config = Arc::new(
         Config {
             heartbeat_interval: 500,
             election_timeout_min: 1500,
@@ -60,14 +45,14 @@ pub async fn get_app_server<P: AsRef<Path>>(
     );
 
     // Create stores and network
-    let (log_store, sm) = crate::new::<crate::TypeConfig, _>(db_path).await?;
+    let (log_store, sm) = crate::new::<crate::TypeConfig, _>(ks_config.path.clone()).await?;
     let state_machine_store = Arc::new(sm);
-    let network = Network {};
+    let network = Network::new(ks_config)?;
 
     // Create Raft instance
     let raft = Raft::new(
-        node_id,
-        config.clone(),
+        ks_config.node_id,
+        raft_config.clone(),
         network,
         log_store,
         state_machine_store.clone(),
@@ -84,8 +69,11 @@ pub async fn get_app_server<P: AsRef<Path>>(
     let identity_service = IdentityServiceServer::new(identity_service);
     let cluster_admin_service = ClusterAdminServiceServer::new(cluster_admin_service);
 
-    Ok(Server::builder()
+    let mut router = Routes::builder();
+    router
         .add_service(raft_service)
         .add_service(cluster_admin_service)
-        .add_service(identity_service))
+        .add_service(identity_service);
+
+    Ok(router.routes())
 }

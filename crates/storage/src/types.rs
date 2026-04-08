@@ -36,6 +36,9 @@ pub enum StoreError {
         source: serde_json::Error,
     },
 
+    #[error("missing mTLS configuration")]
+    TlsConfigMissing,
+
     /// Raft config error.
     #[error(transparent)]
     RaftConfig {
@@ -69,6 +72,9 @@ pub enum StoreError {
         #[from]
         source: openraft::StorageError<TypeConfig>,
     },
+
+    #[error(transparent)]
+    Other(#[from] eyre::Report),
 }
 
 impl From<StoreError> for io::Error {

@@ -35,14 +35,14 @@ use crate::types::*;
 /// This service implements the client-facing API and should validate all inputs
 /// before processing them through the Raft consensus protocol.
 pub struct IdentityServiceImpl {
-    /// The Raft node instance for consensus operations
+    /// The Raft node instance for consensus operations.
     raft_node: Raft,
-    /// The state machine store for direct reads
+    /// The state machine store for direct reads.
     state_machine_store: Arc<StateMachineStore>,
 }
 
 impl IdentityServiceImpl {
-    /// Creates a new instance of the API service
+    /// Creates a new instance of the API service.
     ///
     /// # Arguments
     /// * `raft_node` - The Raft node instance this service will use
@@ -57,7 +57,7 @@ impl IdentityServiceImpl {
 
 #[tonic::async_trait]
 impl IdentityService for IdentityServiceImpl {
-    /// Sets a value for a given key in the distributed store
+    /// Sets a value for a given key in the distributed store.
     ///
     /// # Arguments
     /// * `request` - Contains the key and value to set
@@ -83,7 +83,7 @@ impl IdentityService for IdentityServiceImpl {
         Ok(Response::new(res.data))
     }
 
-    /// Gets a value for a given key from the distributed store
+    /// Gets a value for a given key from the distributed store.
     ///
     /// # Arguments
     /// * `request` - Contains the key to retrieve

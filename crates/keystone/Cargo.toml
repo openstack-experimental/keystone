@@ -49,6 +49,7 @@ openstack-keystone-trust-sql = { version = "0.1", path = "../trust-sql/" }
 openstack-keystone-webauthn = { version = "0.1", path = "../webauthn/"}
 openidconnect.workspace = true
 reqwest = { workspace = true, features = ["json", "http2", "gzip", "deflate"] }
+rustls = { workspace = true, features = ["aws-lc-rs"] }
 sea-orm = { workspace = true, features = ["debug-print", "sqlx-mysql", "sqlx-postgres", "runtime-tokio", "runtime-tokio-native-tls"] }
 sea-orm-migration = { workspace = true, features = ["sqlx-mysql", "sqlx-postgres", "runtime-tokio"] }
 secrecy = { workspace = true, features = ["serde"] }
@@ -58,6 +59,7 @@ serde_urlencoded.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["fs", "macros", "signal", "rt-multi-thread"] }
 tokio-util.workspace = true
+tonic = { workspace = true, features = ["server", "tls-aws-lc" ] }
 tower.workspace = true
 tower-http = { workspace = true, features = ["compression-full", "request-id", "sensitive-headers", "trace", "util"] }
 tracing.workspace = true

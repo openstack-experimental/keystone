@@ -42,8 +42,8 @@ pub async fn setup_schema(db: &DbConn) -> Result<()> {
     // Setup Schema helper
     let schema = Schema::new(db.get_database_backend());
 
-    // Iterate over the registered sql plugins and let the create everything they need in the
-    // database.
+    // Iterate over the registered sql plugins and let the create everything they
+    // need in the database.
     for driver in inventory::iter::<SqlDriverRegistration>
         .into_iter()
         .map(|x| x.driver)
