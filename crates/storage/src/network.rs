@@ -14,29 +14,20 @@
 use std::future::Future;
 use std::time::Duration;
 
+use eyre::WrapErr;
 use futures::SinkExt;
 use futures::Stream;
 use futures::StreamExt;
 use futures::channel::mpsc;
-use openraft::AnyError;
-use openraft::OptionalSend;
-use openraft::RaftNetworkFactory;
-use openraft::base::BoxFuture;
-use openraft::base::BoxStream;
-use openraft::error::NetworkError;
-use openraft::error::ReplicationClosed;
-use openraft::error::Unreachable;
-use openraft::network::Backoff;
-use openraft::network::NetBackoff;
-use openraft::network::NetSnapshot;
-use openraft::network::NetStreamAppend;
-use openraft::network::NetTransferLeader;
-use openraft::network::NetVote;
-use openraft::network::RPCOption;
-use openraft::raft::StreamAppendError;
-use openraft::raft::StreamAppendResult;
-use openraft::raft::TransferLeaderRequest;
-use tonic::transport::Channel;
+use openraft::base::{BoxFuture, BoxStream};
+use openraft::error::{NetworkError, ReplicationClosed, Unreachable};
+use openraft::network::{
+    Backoff, NetBackoff, NetSnapshot, NetStreamAppend, NetTransferLeader, NetVote, RPCOption,
+};
+use openraft::raft::{StreamAppendError, StreamAppendResult, TransferLeaderRequest};
+use openraft::{AnyError, OptionalSend, RaftNetworkFactory};
+use openstack_keystone_config::DistributedStorageConfiguration;
+use tonic::transport::{Certificate, Channel, ClientTlsConfig, Identity};
 
 use crate::protobuf as pb;
 use crate::protobuf::raft::VoteRequest as PbVoteRequest;
@@ -48,9 +39,53 @@ use crate::types::*;
 
 /// Network implementation for gRPC-based Raft communication.
 /// Provides the networking layer for Raft nodes to communicate with each other.
-pub struct Network {}
+pub struct Network {
+    tls_ca_cert: Option<Certificate>,
+    tls_client_identity: Option<Identity>,
+}
 
-impl Network {}
+impl Network {
+    pub fn new(config: &DistributedStorageConfiguration) -> Result<Self, StoreError> {
+        if !config.disable_tls {
+            let tls_config = config
+                .tls_configuration
+                .as_ref()
+                .ok_or(StoreError::TlsConfigMissing)?;
+            let tls_client_identity = Identity::from_pem(
+                std::fs::read_to_string(&tls_config.tls_cert_file)
+                    .wrap_err("reading server cert file")?,
+                std::fs::read_to_string(&tls_config.tls_key_file)
+                    .wrap_err("reading server cert key file")?,
+            );
+            let tls_ca_cert = if let Some(cert_ca) = &tls_config.tls_client_ca_file {
+                Some(Certificate::from_pem(std::fs::read_to_string(cert_ca)?))
+            } else {
+                None
+            };
+
+            Ok(Self {
+                tls_ca_cert,
+                tls_client_identity: Some(tls_client_identity),
+            })
+        } else {
+            Ok(Self {
+                tls_ca_cert: None,
+                tls_client_identity: None,
+            })
+        }
+    }
+
+    fn get_server_tls_config(&self) -> Option<ClientTlsConfig> {
+        if let Some(identity) = &self.tls_client_identity {
+            let mut config = ClientTlsConfig::new().identity(identity.clone());
+            if let Some(ca) = &self.tls_ca_cert {
+                config = config.ca_certificate(ca.clone());
+            }
+            return Some(config);
+        }
+        None
+    }
+}
 
 /// Implementation of the RaftNetworkFactory trait for creating new network
 /// connections. This factory creates gRPC client connections to other Raft
@@ -60,7 +95,7 @@ impl RaftNetworkFactory<TypeConfig> for Network {
 
     #[tracing::instrument(level = "debug", skip_all)]
     async fn new_client(&mut self, _: NodeId, node: &Node) -> Self::Network {
-        NetworkConnection::new(node.clone())
+        NetworkConnection::new(node.clone(), self.get_server_tls_config())
     }
 }
 
@@ -68,25 +103,42 @@ impl RaftNetworkFactory<TypeConfig> for Network {
 /// Handles serialization and deserialization of Raft messages over gRPC.
 pub struct NetworkConnection {
     target_node: pb::raft::Node,
+    tls_config: Option<ClientTlsConfig>,
 }
 
 impl NetworkConnection {
     /// Creates a new NetworkConnection with the provided gRPC client.
-    pub fn new(target_node: Node) -> Self {
-        NetworkConnection { target_node }
+    pub fn new(target_node: Node, tls_config: Option<ClientTlsConfig>) -> Self {
+        NetworkConnection {
+            target_node,
+            tls_config,
+        }
     }
 
     /// Creates a gRPC client to the target node.
     async fn make_client(&self) -> Result<RaftServiceClient<Channel>, RPCError> {
         let server_addr = &self.target_node.rpc_addr;
-        let channel = Channel::builder(
-            format!("http://{}", server_addr)
-                .parse()
-                .map_err(|e| RPCError::Network(NetworkError::<TypeConfig>::new(&e)))?,
-        )
-        .connect()
-        .await
-        .map_err(|e| RPCError::Unreachable(Unreachable::<TypeConfig>::new(&e)))?;
+
+        let ep = if let Some(tls_config) = &self.tls_config {
+            Channel::builder(
+                format!("https://{}", server_addr)
+                    .parse()
+                    .map_err(|e| RPCError::Unreachable(Unreachable::new(&e)))?,
+            )
+            .tls_config(tls_config.clone())
+            .map_err(|e| RPCError::Unreachable(Unreachable::new(&e)))?
+        } else {
+            Channel::builder(
+                format!("http://{}", server_addr)
+                    .parse()
+                    .map_err(|e| RPCError::Unreachable(Unreachable::new(&e)))?,
+            )
+        };
+
+        let channel = ep
+            .connect()
+            .await
+            .map_err(|e| RPCError::Unreachable(Unreachable::<TypeConfig>::new(&e)))?;
         Ok(RaftServiceClient::new(channel))
     }
 

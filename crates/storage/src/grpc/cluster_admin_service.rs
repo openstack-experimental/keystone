@@ -32,15 +32,15 @@ use crate::types::*;
 /// This service implements the client-facing API and should validate all inputs
 /// before processing them through the Raft consensus protocol.
 pub struct ClusterAdminServiceImpl {
-    /// The Raft node instance for consensus operations
+    /// The Raft node instance for consensus operations.
     raft_node: Raft,
 }
 
 impl ClusterAdminServiceImpl {
-    /// Creates a new instance of the API service
+    /// Creates a new instance of the API service.
     ///
     /// # Arguments
-    /// * `raft_node` - The Raft node instance this service will use
+    /// * `raft_node` - The Raft node instance this service will use.
     pub fn new(raft_node: Raft) -> Self {
         ClusterAdminServiceImpl { raft_node }
     }
@@ -48,7 +48,7 @@ impl ClusterAdminServiceImpl {
 
 #[tonic::async_trait]
 impl ClusterAdminService for ClusterAdminServiceImpl {
-    /// Initializes a new Raft cluster with the specified nodes
+    /// Initializes a new Raft cluster with the specified nodes.
     ///
     /// # Arguments
     /// * `request` - Contains the initial set of nodes for the cluster
@@ -79,7 +79,7 @@ impl ClusterAdminService for ClusterAdminServiceImpl {
         Ok(Response::new(result))
     }
 
-    /// Adds a learner node to the Raft cluster
+    /// Adds a learner node to the Raft cluster.
     ///
     /// # Arguments
     /// * `request` - Contains the node information and blocking preference
@@ -115,7 +115,7 @@ impl ClusterAdminService for ClusterAdminServiceImpl {
         Ok(Response::new(result.into()))
     }
 
-    /// Changes the membership of the Raft cluster
+    /// Changes the membership of the Raft cluster.
     ///
     /// # Arguments
     /// * `request` - Contains the new member set and retention policy
@@ -156,6 +156,7 @@ impl ClusterAdminService for ClusterAdminServiceImpl {
         let resp = pb::raft::MetricsResponse {
             membership: Some(metrics.membership_config.membership().clone().into()),
             other_metrics: metrics.to_string(),
+            current_leader: metrics.current_leader,
         };
         Ok(Response::new(resp))
     }

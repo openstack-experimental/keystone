@@ -47,7 +47,7 @@ pub struct RaftServiceImpl {
 }
 
 impl RaftServiceImpl {
-    /// Creates a new instance of the internal service
+    /// Creates a new instance of the internal service.
     ///
     /// # Arguments
     /// * `raft_node` - The Raft node instance this service will operate on

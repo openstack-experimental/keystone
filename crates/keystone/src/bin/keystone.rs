@@ -15,21 +15,24 @@
 //!
 //! This is the entry point of the `keystone` binary.
 
-use axum::Router;
-use axum::extract::DefaultBodyLimit;
-use axum::http::{self, HeaderName, Request, header};
-use clap::{Parser, ValueEnum};
-use color_eyre::eyre::{Report, Result};
-use eyre::WrapErr;
-use sea_orm::{ConnectOptions, Database};
-use secrecy::ExposeSecret;
 use std::io;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
+
+use axum::{
+    Router,
+    extract::DefaultBodyLimit,
+    http::{self, HeaderName, Request, header},
+};
+use clap::{Parser, ValueEnum};
+use color_eyre::eyre::{OptionExt, Report, Result, WrapErr};
+use sea_orm::{ConnectOptions, Database};
+use secrecy::ExposeSecret;
 use tokio::{net::TcpListener, signal, spawn, time};
 use tokio_util::sync::CancellationToken;
+use tonic::transport::{Certificate, Identity, ServerTlsConfig};
 use tower::ServiceBuilder;
 use tower_http::{
     LatencyUnit, ServiceBuilderExt,
@@ -110,16 +113,29 @@ impl MakeRequestId for OpenStackRequestId {
 async fn main() -> Result<(), Report> {
     let args = Args::parse();
 
-    let stderr_log_filter = Targets::new().with_default(match args.verbose {
-        0 => LevelFilter::WARN,
-        1 => LevelFilter::INFO,
-        2 => LevelFilter::DEBUG,
-        _ => LevelFilter::TRACE,
-    });
-    // .with_target("cranelift_codegen", Level::INFO)
-    // .with_target("wasmtime_codegen", Level::INFO)
-    // .with_target("wasmtime_cranelift", Level::INFO)
-    // .with_target("wasmtime::runtime", Level::INFO);
+    let stderr_log_filter = Targets::new()
+        .with_default(match args.verbose {
+            0 => LevelFilter::WARN,
+            1 => LevelFilter::INFO,
+            2 => LevelFilter::DEBUG,
+            _ => LevelFilter::TRACE,
+        })
+        .with_target(
+            "openraft",
+            match args.verbose {
+                0 | 1 => LevelFilter::WARN,
+                2 => LevelFilter::INFO,
+                _ => LevelFilter::DEBUG,
+            },
+        )
+        .with_target(
+            "lsm_tree",
+            match args.verbose {
+                0 | 1 => LevelFilter::WARN,
+                2 => LevelFilter::INFO,
+                _ => LevelFilter::DEBUG,
+            },
+        );
 
     // Build the stderr log layer.
     let stderr_layer = tracing_subscriber::fmt::layer()
@@ -263,18 +279,46 @@ async fn main() -> Result<(), Report> {
         .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", openapi))
         .layer(middleware);
 
-    let address = SocketAddr::from((Ipv4Addr::UNSPECIFIED, 8080));
+    let address = SocketAddr::from((Ipv4Addr::UNSPECIFIED, shared_state.config.default.port));
     let listener = TcpListener::bind(&address).await?;
 
     let mut handles = tokio::task::JoinSet::new();
     if let Some(ds) = &cfg.distributed_storage {
-        let storage_app = get_app_server(ds.node_id, &ds.path).await?;
+        let storage_app = get_app_server(&ds).await?;
 
         let grpc_addr: SocketAddr = ds.cluster_addr.parse()?;
-
         let state_clone = shared_state.clone();
+
+        let mut server = tonic::transport::Server::builder();
+        if !ds.disable_tls {
+            let tls_config = ds
+                .tls_configuration
+                .as_ref()
+                .ok_or_eyre("mTLS configuration missing")?;
+            // Without an explicit select of the default provider the initialization fails
+            // since some of the dependencies cause rustls to have `ring` and
+            // `aws_lc_rs` enabled.
+            let provider = rustls::crypto::aws_lc_rs::default_provider();
+            rustls::crypto::CryptoProvider::install_default(provider).unwrap();
+
+            // CA is used to validate client and peer connections
+            let identity = Identity::from_pem(
+                std::fs::read_to_string(&tls_config.tls_cert_file)
+                    .wrap_err("reading server cert file")?,
+                std::fs::read_to_string(&tls_config.tls_key_file)
+                    .wrap_err("reading server cert key file")?,
+            );
+            let mut server_tls_config = ServerTlsConfig::new().identity(identity);
+            if let Some(ca) = &tls_config.tls_client_ca_file {
+                server_tls_config = server_tls_config
+                    .client_ca_root(Certificate::from_pem(std::fs::read_to_string(&ca)?));
+            }
+            server = server.tls_config(server_tls_config)?;
+        }
+        let tonic_router = server.add_routes(storage_app);
+
         handles.spawn(async move {
-            storage_app
+            tonic_router
                 .serve_with_shutdown(grpc_addr, shutdown_signal(state_clone))
                 .await
                 .unwrap();

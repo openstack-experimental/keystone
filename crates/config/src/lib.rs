@@ -49,7 +49,7 @@ pub use auth::AuthProvider;
 pub use catalog::CatalogProvider;
 pub use database::DatabaseSection;
 pub use default::DefaultSection;
-pub use distributed_storage::DistributedStorageConfiguration;
+pub use distributed_storage::*;
 pub use federation::FederationProvider;
 pub use fernet_token::FernetTokenProvider;
 pub use identity::*;

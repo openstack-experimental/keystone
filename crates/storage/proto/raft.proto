@@ -201,10 +201,11 @@ message MetricsResponse {
   // Cluster membership config.
   Membership membership = 1;
 
-  // In this example, only membership is used.
-  // Other metrics are just encoded in string for simplicity.
-  // In real-world scenarios, metrics should be encoded in a more structured format.
-  string other_metrics = 2;
+  // Leader information.
+  optional uint64 current_leader = 2;
+
+  // Remaining metrics as a string.
+  string other_metrics = 3;
 }
 
 

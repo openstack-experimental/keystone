@@ -24,7 +24,8 @@ mod create;
 mod get;
 mod list;
 
-//impl_deleter!(Service, ApplicationCredential, get_application_credential_provider, delete_application_credential);
+//impl_deleter!(Service, ApplicationCredential,
+// get_application_credential_provider, delete_application_credential);
 //
 async fn create_application_credential(
     state: &Arc<Service>,

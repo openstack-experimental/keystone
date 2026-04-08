@@ -13,7 +13,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! # OpenStack Keystone core provider types
-//!
 
 #![allow(clippy::module_inception)]
 

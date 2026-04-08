@@ -20,5 +20,8 @@ serde = { workspace = true, features = ["derive"] }
 url = { workspace = true, features = ["serde"] }
 url-macro.workspace = true
 
+[dev-dependencies]
+serde_json.workspace = true
+
 [lints]
 workspace = true

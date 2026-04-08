@@ -23,12 +23,35 @@ pub struct DistributedStorageConfiguration {
     /// Node id.
     pub node_id: u64,
 
-    /// List of cluster nodes.
-    #[serde(default)]
-    pub nodes: Vec<ClusterNode>,
-
+    // /// List of cluster nodes.
+    // #[serde(default)]
+    // pub nodes: Vec<ClusterNode>,
     /// Path to the storage.
     pub path: PathBuf,
+
+    /// Disable the mTLS for cluster nodes communication.
+    #[serde(default)]
+    pub disable_tls: bool,
+
+    /// TLS configuration.
+    #[serde(flatten)]
+    pub tls_configuration: Option<TlsConfiguration>,
+}
+
+#[derive(Debug, Default, Deserialize, Clone)]
+pub struct TlsConfiguration {
+    /// Path to the CA certificate to validate connections from clients or
+    /// peers.
+    #[serde(default)]
+    pub tls_client_ca_file: Option<PathBuf>,
+
+    /// Path to the mTLS client certificate file.
+    #[serde(default)]
+    pub tls_cert_file: PathBuf,
+
+    /// Path to the mTLS certificate key file.
+    #[serde(default)]
+    pub tls_key_file: PathBuf,
 }
 
 /// Raft cluster node.
@@ -38,4 +61,24 @@ pub struct ClusterNode {
     pub addr: String,
     /// Node ID.
     pub id: u64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_deser() {
+        let cfg: DistributedStorageConfiguration = serde_json::from_value(json!({
+            "cluster_addr": "1.2.3.4:5678",
+            "node_id": 1,
+            "path": "/tmp",
+            "tls_cert_file": "/tmp/tls.cert",
+            "tls_key_file": "/tmp/tls.key"
+        }))
+        .unwrap();
+        assert!(!cfg.disable_tls);
+        assert!(cfg.tls_configuration.is_some());
+    }
 }
