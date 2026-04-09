@@ -137,12 +137,7 @@ pub async fn get_state() -> Result<(Arc<Service>, TempDir)> {
     let plugin_manager = PluginManager::with_config(&cfg);
     let provider = Provider::new(cfg.clone(), &plugin_manager)?;
 
-    let state = Arc::new(Service::new(
-        cfg,
-        db,
-        provider,
-        Arc::new(MockPolicy::default()),
-    )?);
+    let state = Arc::new(Service::new(cfg, db, provider, Arc::new(MockPolicy::default())).await?);
 
     state
         .provider

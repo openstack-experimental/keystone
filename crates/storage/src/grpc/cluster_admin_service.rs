@@ -12,6 +12,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use openraft::async_runtime::WatchReceiver;
 use tonic::Request;
@@ -19,35 +20,13 @@ use tonic::Response;
 use tonic::Status;
 use tracing::trace;
 
+use crate::cluster_admin_service::ClusterAdminService as ClusterAdminServiceImpl;
 use crate::pb;
 use crate::protobuf::raft::cluster_admin_service_server::ClusterAdminService;
 use crate::types::*;
 
-/// Raft cluster administrative operations.
-///
-/// # Responsibilities
-/// - Manages the Raft cluster
-///
-/// # Protocol Safety
-/// This service implements the client-facing API and should validate all inputs
-/// before processing them through the Raft consensus protocol.
-pub struct ClusterAdminServiceImpl {
-    /// The Raft node instance for consensus operations.
-    raft_node: Raft,
-}
-
-impl ClusterAdminServiceImpl {
-    /// Creates a new instance of the API service.
-    ///
-    /// # Arguments
-    /// * `raft_node` - The Raft node instance this service will use.
-    pub fn new(raft_node: Raft) -> Self {
-        ClusterAdminServiceImpl { raft_node }
-    }
-}
-
 #[tonic::async_trait]
-impl ClusterAdminService for ClusterAdminServiceImpl {
+impl ClusterAdminService for Arc<ClusterAdminServiceImpl> {
     /// Initializes a new Raft cluster with the specified nodes.
     ///
     /// # Arguments

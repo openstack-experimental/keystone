@@ -32,7 +32,7 @@ pub(crate) mod tests {
     use crate::provider::ProviderBuilder;
     use crate::token::{MockTokenProvider, Token, UnscopedPayload};
 
-    pub fn get_mocked_state(
+    pub async fn get_mocked_state(
         provider_builder: ProviderBuilder,
         policy_allowed: bool,
         policy_allowed_see_other_domains: Option<bool>,
@@ -93,6 +93,7 @@ pub(crate) mod tests {
                 provider,
                 Arc::new(policy_enforcer_mock),
             )
+            .await
             .unwrap(),
         )
     }

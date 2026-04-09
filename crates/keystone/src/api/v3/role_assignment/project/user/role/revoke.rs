@@ -208,7 +208,7 @@ mod tests {
             .mock_identity(identity_mock)
             .mock_resource(resource_mock)
             .mock_role(role_mock);
-        let state = get_mocked_state(provider_builder, true, None, None);
+        let state = get_mocked_state(provider_builder, true, None, None).await;
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
             .with_state(state);
@@ -277,7 +277,7 @@ mod tests {
             .mock_identity(identity_mock)
             .mock_resource(resource_mock)
             .mock_role(role_mock);
-        let state = get_mocked_state(provider_builder, false, None, None); // Policy NOT allowed
+        let state = get_mocked_state(provider_builder, false, None, None).await; // Policy NOT allowed
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
             .with_state(state);
@@ -337,7 +337,7 @@ mod tests {
             .mock_identity(identity_mock)
             .mock_resource(resource_mock)
             .mock_role(role_mock);
-        let state = get_mocked_state(provider_builder, true, None, None);
+        let state = get_mocked_state(provider_builder, true, None, None).await;
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
             .with_state(state);
@@ -401,7 +401,7 @@ mod tests {
             .mock_identity(identity_mock)
             .mock_resource(resource_mock)
             .mock_role(role_mock);
-        let state = get_mocked_state(provider_builder, true, None, None);
+        let state = get_mocked_state(provider_builder, true, None, None).await;
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
             .with_state(state);
@@ -463,7 +463,7 @@ mod tests {
             .mock_identity(identity_mock)
             .mock_resource(resource_mock)
             .mock_role(role_mock);
-        let state = get_mocked_state(provider_builder, true, None, None);
+        let state = get_mocked_state(provider_builder, true, None, None).await;
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
             .with_state(state);

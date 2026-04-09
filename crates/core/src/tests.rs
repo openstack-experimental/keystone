@@ -21,7 +21,7 @@ use crate::keystone::{Service, ServiceState};
 use crate::policy::MockPolicy;
 use crate::provider::{Provider, ProviderBuilder};
 
-pub fn get_mocked_state(
+pub async fn get_mocked_state(
     config: Option<Config>,
     provider_builder: Option<ProviderBuilder>,
 ) -> ServiceState {
@@ -35,6 +35,7 @@ pub fn get_mocked_state(
                 .unwrap(),
             Arc::new(MockPolicy::default()),
         )
+        .await
         .unwrap(),
     )
 }

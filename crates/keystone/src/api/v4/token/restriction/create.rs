@@ -133,7 +133,8 @@ mod tests {
             true,
             None,
             Some(true),
-        );
+        )
+        .await;
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())

@@ -280,7 +280,8 @@ mod tests {
             true,
             None,
             Some(false),
-        );
+        )
+        .await;
 
         assert_eq!(
             "domain_id",

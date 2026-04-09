@@ -223,7 +223,7 @@ mod tests {
     use super::assignment::tests::*;
     use super::*;
 
-    fn get_mock_state(db: DatabaseConnection, provider: Provider) -> Arc<Service> {
+    async fn get_mock_state(db: DatabaseConnection, provider: Provider) -> Arc<Service> {
         Arc::new(
             Service::new(
                 Config::default(),
@@ -231,6 +231,7 @@ mod tests {
                 provider,
                 Arc::new(MockPolicy::default()),
             )
+            .await
             .unwrap(),
         )
     }
@@ -262,7 +263,7 @@ mod tests {
             .build()
             .unwrap();
 
-        let state = get_mock_state(db, provider);
+        let state = get_mock_state(db, provider).await;
 
         let sot = SqlBackend {};
         let res = sot
@@ -329,7 +330,7 @@ mod tests {
             .build()
             .unwrap();
 
-        let state = get_mock_state(db, provider);
+        let state = get_mock_state(db, provider).await;
 
         let sot = SqlBackend {};
         let params = RoleAssignmentListForMultipleActorTargetParameters {

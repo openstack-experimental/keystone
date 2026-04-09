@@ -13,50 +13,16 @@
 // SPDX-License-Identifier: Apache-2.0
 use std::sync::Arc;
 
-use tonic::Request;
-use tonic::Response;
-use tonic::Status;
+use tonic::{Request, Response, Status};
 use tracing::debug;
 
 use crate::pb;
 use crate::protobuf::api::Response as PbResponse;
 use crate::protobuf::api::identity_service_server::IdentityService;
-use crate::types::StateMachineStore;
-use crate::types::*;
-
-/// External API service implementation providing key-value store operations.
-/// This service handles client requests for getting and setting values in the
-/// distributed store.
-///
-/// # Responsibilities
-/// - Ensure consistency through Raft consensus
-///
-/// # Protocol Safety
-/// This service implements the client-facing API and should validate all inputs
-/// before processing them through the Raft consensus protocol.
-pub struct IdentityServiceImpl {
-    /// The Raft node instance for consensus operations.
-    raft_node: Raft,
-    /// The state machine store for direct reads.
-    state_machine_store: Arc<StateMachineStore>,
-}
-
-impl IdentityServiceImpl {
-    /// Creates a new instance of the API service.
-    ///
-    /// # Arguments
-    /// * `raft_node` - The Raft node instance this service will use
-    /// * `state_machine_store` - The state machine store for reading data
-    pub fn new(raft_node: Raft, state_machine_store: Arc<StateMachineStore>) -> Self {
-        Self {
-            raft_node,
-            state_machine_store,
-        }
-    }
-}
+use crate::store_service::StoreService;
 
 #[tonic::async_trait]
-impl IdentityService for IdentityServiceImpl {
+impl IdentityService for Arc<StoreService> {
     /// Sets a value for a given key in the distributed store.
     ///
     /// # Arguments
@@ -74,8 +40,7 @@ impl IdentityService for IdentityServiceImpl {
         debug!("Processing set request for key: {}", req.key.clone());
 
         let res = self
-            .raft_node
-            .client_write(req.clone())
+            .set_value(req.key.clone(), req.value)
             .await
             .map_err(|e| Status::internal(format!("Failed to write to store: {}", e)))?;
 
@@ -100,11 +65,10 @@ impl IdentityService for IdentityServiceImpl {
         debug!("Processing get request for key: {}", req.key);
 
         let value = self
-            .state_machine_store
-            .data()
-            .get(&req.key)
+            .get_by_key(&req.key)
+            .await
             .map_err(|_| Status::internal(format!("Key not found: {}", req.key)))?
-            .map(|x| String::from_utf8(x.to_vec()))
+            .map(String::from_utf8)
             .transpose()
             .map_err(|e| Status::internal(format!("error while converting the data, {}", e)))?;
 

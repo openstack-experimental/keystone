@@ -17,9 +17,9 @@ use std::sync::Arc;
 use tracing::info;
 
 use openstack_keystone_config::Config;
+use openstack_keystone_distributed_storage::app::{Storage, init_storage};
 
 use crate::error::KeystoneError;
-//#[double]
 use crate::policy::PolicyEnforcer;
 use crate::provider::Provider;
 
@@ -39,6 +39,9 @@ pub struct Service {
     /// Service/resource Provider.
     pub provider: Provider,
 
+    /// Distributed storage.
+    pub storage: Option<Storage>,
+
     /// Shutdown flag.
     pub shutdown: bool,
 }
@@ -46,17 +49,31 @@ pub struct Service {
 pub type ServiceState = Arc<Service>;
 
 impl Service {
-    pub fn new(
+    pub async fn new(
         cfg: Config,
         db: DatabaseConnection,
         provider: Provider,
         policy_enforcer: Arc<dyn PolicyEnforcer>,
     ) -> Result<Self, KeystoneError> {
+        let storage = if let Some(ds) = &cfg.distributed_storage {
+            // Initialize the raft backed storage.
+            Some(
+                init_storage(ds)
+                    .await
+                    .map_err(|e| KeystoneError::Provider {
+                        source: Box::new(e),
+                    })?,
+            )
+        } else {
+            None
+        };
+
         Ok(Self {
             config: cfg.clone(),
             provider,
             db,
             policy_enforcer,
+            storage,
             shutdown: false,
         })
     }

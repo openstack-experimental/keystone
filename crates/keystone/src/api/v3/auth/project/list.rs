@@ -202,7 +202,7 @@ mod tests {
         let provider_builder = Provider::mocked_builder()
             .mock_assignment(assignment_mock)
             .mock_resource(resource_mock);
-        let state = get_mocked_state(provider_builder, true, None, None);
+        let state = get_mocked_state(provider_builder, true, None, None).await;
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())

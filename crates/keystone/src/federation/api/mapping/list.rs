@@ -126,7 +126,8 @@ mod tests {
             true,
             None,
             None,
-        );
+        )
+        .await;
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -213,7 +214,8 @@ mod tests {
             true,
             None,
             None,
-        );
+        )
+        .await;
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -261,7 +263,8 @@ mod tests {
             true,
             None,
             None,
-        );
+        )
+        .await;
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())

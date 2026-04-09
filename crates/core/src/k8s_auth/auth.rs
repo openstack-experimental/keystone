@@ -399,7 +399,7 @@ FPrC1HpT3dzIAiEAtEB0so+KoJb/2Opn1RycVzxke1CQrWgjS8ySnnFK5ok=
             .mock_token(token_mock)
             .mock_identity(identity_mock);
         let mock_srv = MockServer::start_async().await;
-        let state = get_mocked_state(None, Some(provider_mock));
+        let state = get_mocked_state(None, Some(provider_mock)).await;
         let host = format!("http://{}:{}", mock_srv.host(), mock_srv.port());
 
         let mut backend = MockK8sAuthBackend::default();
@@ -875,7 +875,7 @@ FPrC1HpT3dzIAiEAtEB0so+KoJb/2Opn1RycVzxke1CQrWgjS8ySnnFK5ok=
 
     #[tokio::test]
     async fn test_auth_conf_not_found() {
-        let state = get_mocked_state(None, None);
+        let state = get_mocked_state(None, None).await;
         let mut backend = MockK8sAuthBackend::default();
         backend
             .expect_get_auth_instance()
@@ -905,7 +905,7 @@ FPrC1HpT3dzIAiEAtEB0so+KoJb/2Opn1RycVzxke1CQrWgjS8ySnnFK5ok=
 
     #[tokio::test]
     async fn test_auth_role_not_found() {
-        let state = get_mocked_state(None, None);
+        let state = get_mocked_state(None, None).await;
         let mut backend = MockK8sAuthBackend::default();
         backend
             .expect_get_auth_instance()
@@ -954,7 +954,7 @@ FPrC1HpT3dzIAiEAtEB0so+KoJb/2Opn1RycVzxke1CQrWgjS8ySnnFK5ok=
 
     #[tokio::test]
     async fn test_auth_conf_or_auth_role_disabled() {
-        let state = get_mocked_state(None, None);
+        let state = get_mocked_state(None, None).await;
         let mut backend = MockK8sAuthBackend::default();
         backend
             .expect_get_auth_instance()

@@ -1088,7 +1088,7 @@ mod tests {
             });
         let provider = Provider::mocked_builder().mock_assignment(assignment_mock);
 
-        let state = get_mocked_state(None, Some(provider));
+        let state = get_mocked_state(None, Some(provider)).await;
 
         let mut ptoken = Token::ProjectScope(ProjectScopePayload {
             user_id: "bar".into(),
@@ -1227,7 +1227,7 @@ mod tests {
             .mock_revoke(revoke_mock)
             .mock_resource(resource_mock);
 
-        let state = get_mocked_state(Some(config), Some(provider));
+        let state = get_mocked_state(Some(config), Some(provider)).await;
 
         let credential = token_provider.encode_token(&token).unwrap();
         match token_provider
@@ -1341,7 +1341,7 @@ mod tests {
             .mock_application_credential(ac_mock)
             .mock_assignment(assignment_mock);
 
-        let state = get_mocked_state(None, Some(provider));
+        let state = get_mocked_state(None, Some(provider)).await;
 
         let mut token = Token::ApplicationCredential(ApplicationCredentialPayload {
             user_id: "bar".into(),

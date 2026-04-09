@@ -175,7 +175,7 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn test_create_auth_instance() {
-        let state = get_mocked_state(None, None);
+        let state = get_mocked_state(None, None).await;
         let mut backend = MockK8sAuthBackend::default();
         backend
             .expect_create_auth_instance()
@@ -206,7 +206,7 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn test_create_auth_role() {
-        let state = get_mocked_state(None, None);
+        let state = get_mocked_state(None, None).await;
         let mut backend = MockK8sAuthBackend::default();
         backend
             .expect_create_auth_role()

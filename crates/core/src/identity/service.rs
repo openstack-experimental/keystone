@@ -412,7 +412,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_user() {
-        let state = get_mocked_state(None, None);
+        let state = get_mocked_state(None, None).await;
         let mut backend = MockIdentityBackend::default();
         backend.expect_create_user().returning(|_, _| {
             Ok(UserResponseBuilder::default()
@@ -449,7 +449,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_user() {
-        let state = get_mocked_state(None, None);
+        let state = get_mocked_state(None, None).await;
         let mut backend = MockIdentityBackend::default();
         backend
             .expect_get_user()
@@ -485,7 +485,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_user_domain_id() {
-        let state = get_mocked_state(None, None);
+        let state = get_mocked_state(None, None).await;
         let mut backend = MockIdentityBackend::default();
         backend
             .expect_get_user_domain_id()
@@ -524,7 +524,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_delete_user() {
-        let state = get_mocked_state(None, None);
+        let state = get_mocked_state(None, None).await;
         let mut backend = MockIdentityBackend::default();
         backend
             .expect_delete_user()

@@ -257,7 +257,7 @@ mod tests {
             })
             .returning(|_, _| Ok(Vec::new()));
         let provider_builder = Provider::mocked_builder().mock_role(role_mock);
-        let state = get_mocked_state(None, Some(provider_builder));
+        let state = get_mocked_state(None, Some(provider_builder)).await;
 
         let mut backend = MockTrustBackend::new();
         backend
@@ -295,7 +295,7 @@ mod tests {
             })
             .returning(|_, _| Ok(Vec::new()));
         let provider_builder = Provider::mocked_builder().mock_role(role_mock);
-        let state = get_mocked_state(None, Some(provider_builder));
+        let state = get_mocked_state(None, Some(provider_builder)).await;
 
         let mut backend = MockTrustBackend::new();
         backend
@@ -340,7 +340,7 @@ mod tests {
             })
             .returning(|_, _| Ok(Vec::new()));
         let provider_builder = Provider::mocked_builder().mock_role(role_mock);
-        let state = get_mocked_state(None, Some(provider_builder));
+        let state = get_mocked_state(None, Some(provider_builder)).await;
 
         let mut backend = MockTrustBackend::new();
         backend
@@ -380,7 +380,7 @@ mod tests {
             })
             .returning(|_, _| Ok(Vec::new()));
         let provider_builder = Provider::mocked_builder().mock_role(role_mock);
-        let state = get_mocked_state(None, Some(provider_builder));
+        let state = get_mocked_state(None, Some(provider_builder)).await;
         let mut backend = MockTrustBackend::new();
         backend
             .expect_get_trust()
@@ -436,7 +436,7 @@ mod tests {
             })
             .returning(|_, _| Ok(Vec::new()));
         let provider_builder = Provider::mocked_builder().mock_role(role_mock);
-        let state = get_mocked_state(None, Some(provider_builder));
+        let state = get_mocked_state(None, Some(provider_builder)).await;
         let mut backend = MockTrustBackend::new();
         backend
             .expect_get_trust()
@@ -502,7 +502,7 @@ mod tests {
             })
             .returning(|_, _| Ok(Vec::new()));
         let provider_builder = Provider::mocked_builder().mock_role(role_mock);
-        let state = get_mocked_state(None, Some(provider_builder));
+        let state = get_mocked_state(None, Some(provider_builder)).await;
         let mut backend = MockTrustBackend::new();
         backend
             .expect_get_trust()
@@ -579,7 +579,7 @@ mod tests {
             })
             .returning(|_, _| Ok(Vec::new()));
         let provider_builder = Provider::mocked_builder().mock_role(role_mock);
-        let state = get_mocked_state(None, Some(provider_builder));
+        let state = get_mocked_state(None, Some(provider_builder)).await;
         let mut backend = MockTrustBackend::new();
         backend
             .expect_get_trust()
@@ -650,7 +650,7 @@ mod tests {
             })
             .returning(|_, _| Ok(Vec::new()));
         let provider_builder = Provider::mocked_builder().mock_role(role_mock);
-        let state = get_mocked_state(None, Some(provider_builder));
+        let state = get_mocked_state(None, Some(provider_builder)).await;
         let mut backend = MockTrustBackend::new();
         backend
             .expect_get_trust()
@@ -772,7 +772,7 @@ mod tests {
             })
             .returning(|_, _| Ok(Vec::new()));
         let provider_builder = Provider::mocked_builder().mock_role(role_mock);
-        let state = get_mocked_state(None, Some(provider_builder));
+        let state = get_mocked_state(None, Some(provider_builder)).await;
 
         let mut backend = MockTrustBackend::new();
         backend

@@ -169,7 +169,7 @@ mod tests {
             .mock_token(token_mock)
             .mock_revoke(revoke_mock);
 
-        let state = get_mocked_state(provider, true, None, Some(true));
+        let state = get_mocked_state(provider, true, None, Some(true)).await;
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -203,7 +203,7 @@ mod tests {
 
         let provider = Provider::mocked_builder().mock_token(token_mock);
 
-        let state = get_mocked_state(provider, true, None, Some(true));
+        let state = get_mocked_state(provider, true, None, Some(true)).await;
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -236,7 +236,7 @@ mod tests {
             .returning(move |_, _, _, _| Err(TokenProviderError::TokenRevoked));
 
         let provider = Provider::mocked_builder().mock_token(token_mock);
-        let state = get_mocked_state(provider, true, None, Some(true));
+        let state = get_mocked_state(provider, true, None, Some(true)).await;
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())

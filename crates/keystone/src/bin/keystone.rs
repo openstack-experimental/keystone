@@ -216,7 +216,7 @@ async fn main() -> Result<(), Report> {
 
     let policy = HttpPolicyEnforcer::new(cfg.api_policy.opa_base_url.clone()).await?;
 
-    let shared_state = Arc::new(Service::new(cfg.clone(), conn, provider, Arc::new(policy))?);
+    let shared_state = Arc::new(Service::new(cfg.clone(), conn, provider, Arc::new(policy)).await?);
 
     spawn(cleanup(cloned_token, shared_state.clone()));
 
@@ -283,8 +283,10 @@ async fn main() -> Result<(), Report> {
     let listener = TcpListener::bind(&address).await?;
 
     let mut handles = tokio::task::JoinSet::new();
-    if let Some(ds) = &cfg.distributed_storage {
-        let storage_app = get_app_server(&ds).await?;
+    if let Some(ds) = &cfg.distributed_storage
+        && let Some(storage) = &shared_state.storage
+    {
+        let storage_app = get_app_server(storage).await?;
 
         let grpc_addr: SocketAddr = ds.cluster_addr.parse()?;
         let state_clone = shared_state.clone();

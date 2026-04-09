@@ -205,7 +205,7 @@ mod tests {
             .mock_token(token_mock)
             .mock_catalog(catalog_mock);
 
-        let state = get_mocked_state(provider, true, None, Some(true));
+        let state = get_mocked_state(provider, true, None, Some(true)).await;
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -309,7 +309,7 @@ mod tests {
             .mock_token(token_mock)
             .mock_catalog(catalog_mock);
 
-        let state = get_mocked_state(provider, true, None, Some(true));
+        let state = get_mocked_state(provider, true, None, Some(true)).await;
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -349,7 +349,7 @@ mod tests {
             .returning(|_, _, _, _| Err(TokenProviderError::Expired));
 
         let provider = Provider::mocked_builder().mock_token(token_mock);
-        let state = get_mocked_state(provider, true, None, Some(true));
+        let state = get_mocked_state(provider, true, None, Some(true)).await;
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -390,7 +390,7 @@ mod tests {
 
         let provider = Provider::mocked_builder().mock_token(token_mock);
 
-        let state = get_mocked_state(provider, true, None, Some(true));
+        let state = get_mocked_state(provider, true, None, Some(true)).await;
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -414,7 +414,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_unauth() {
-        let state = get_mocked_state(Provider::mocked_builder(), false, None, None);
+        let state = get_mocked_state(Provider::mocked_builder(), false, None, None).await;
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())

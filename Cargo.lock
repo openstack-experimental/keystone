@@ -3588,6 +3588,7 @@ dependencies = [
  "openstack-keystone-api-types",
  "openstack-keystone-config",
  "openstack-keystone-core-types",
+ "openstack-keystone-distributed-storage",
  "rand 0.10.0",
  "reqwest 0.13.2",
  "rstest",

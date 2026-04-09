@@ -201,7 +201,8 @@ mod tests {
             true,
             None,
             None,
-        );
+        )
+        .await;
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -254,7 +255,8 @@ mod tests {
             true,
             None,
             None,
-        );
+        )
+        .await;
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -280,7 +282,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_list_unauth() {
-        let state = get_mocked_state(Provider::mocked_builder(), false, None, None);
+        let state = get_mocked_state(Provider::mocked_builder(), false, None, None).await;
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -320,7 +322,8 @@ mod tests {
             true,
             None,
             None,
-        );
+        )
+        .await;
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -387,7 +390,8 @@ mod tests {
             true,
             None,
             None,
-        );
+        )
+        .await;
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -441,7 +445,8 @@ mod tests {
             true,
             None,
             None,
-        );
+        )
+        .await;
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())

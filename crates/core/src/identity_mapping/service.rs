@@ -78,7 +78,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_by_local_id() {
-        let state = get_mocked_state(None, None);
+        let state = get_mocked_state(None, None).await;
         let sot = IdMapping {
             public_id: "pid".into(),
             local_id: "lid".into(),
@@ -107,7 +107,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_by_public_id() {
-        let state = get_mocked_state(None, None);
+        let state = get_mocked_state(None, None).await;
         let sot = IdMapping {
             public_id: "pid".into(),
             local_id: "lid".into(),

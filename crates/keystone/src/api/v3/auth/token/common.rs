@@ -159,7 +159,7 @@ mod tests {
 
         let provider = Provider::mocked_builder().mock_identity(identity_mock);
 
-        let state = get_mocked_state(provider, true, None, None);
+        let state = get_mocked_state(provider, true, None, None).await;
 
         assert_eq!(
             auth_info,
@@ -221,7 +221,7 @@ mod tests {
             .mock_identity(identity_mock)
             .mock_token(token_mock);
 
-        let state = get_mocked_state(provider, true, None, Some(true));
+        let state = get_mocked_state(provider, true, None, Some(true)).await;
 
         assert_eq!(
             AuthenticatedInfo::builder()
@@ -259,7 +259,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_authenticate_request_unsupported() {
-        let state = get_mocked_state(Provider::mocked_builder(), true, None, Some(true));
+        let state = get_mocked_state(Provider::mocked_builder(), true, None, Some(true)).await;
 
         let rsp = authenticate_request(
             &state,

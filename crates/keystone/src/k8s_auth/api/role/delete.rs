@@ -180,7 +180,7 @@ mod tests {
             .returning(|_, _| Ok(()));
 
         provider = provider.mock_k8s_auth(mock);
-        let state = get_mocked_state(provider, true, None, None);
+        let state = get_mocked_state(provider, true, None, None).await;
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())

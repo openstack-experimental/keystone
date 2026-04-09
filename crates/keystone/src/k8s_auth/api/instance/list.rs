@@ -142,7 +142,7 @@ mod tests {
                 }])
             });
         provider = provider.mock_k8s_auth(mock);
-        let state = get_mocked_state(provider, true, None, None);
+        let state = get_mocked_state(provider, true, None, None).await;
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -203,7 +203,7 @@ mod tests {
             });
 
         provider = provider.mock_k8s_auth(mock);
-        let state = get_mocked_state(provider, true, None, None);
+        let state = get_mocked_state(provider, true, None, None).await;
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -231,7 +231,7 @@ mod tests {
     #[traced_test]
     async fn test_list_forbidden() {
         let provider = Provider::mocked_builder();
-        let state = get_mocked_state(provider, false, None, None);
+        let state = get_mocked_state(provider, false, None, None).await;
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -277,7 +277,7 @@ mod tests {
             });
 
         provider = provider.mock_k8s_auth(mock);
-        let state = get_mocked_state(provider, true, None, None);
+        let state = get_mocked_state(provider, true, None, None).await;
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -328,7 +328,7 @@ mod tests {
             });
 
         provider = provider.mock_k8s_auth(mock);
-        let state = get_mocked_state(provider, true, Some(true), None);
+        let state = get_mocked_state(provider, true, Some(true), None).await;
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())

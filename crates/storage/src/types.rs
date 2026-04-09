@@ -50,18 +50,25 @@ pub enum StoreError {
     #[error("raft membership information missing")]
     RaftEmptyMembership,
 
+    /// Raft error.
+    #[error(transparent)]
+    RaftError {
+        #[from]
+        source: openraft::errors::RaftError<TypeConfig, ClientWriteError>,
+    },
+
     /// Raft fatal error.
     #[error(transparent)]
     RaftFatal {
         #[from]
-        source: openraft::error::Fatal<TypeConfig>,
+        source: openraft::errors::Fatal<TypeConfig>,
     },
 
     /// Raft membership error.
     #[error(transparent)]
     RaftMembership {
         #[from]
-        source: openraft::error::MembershipError<NodeId>,
+        source: openraft::errors::MembershipError<NodeId>,
     },
     /// Raft empty membership data error.
     #[error("raft required parameter {0} missing")]
@@ -108,8 +115,9 @@ pub type Node = <TypeConfig as openraft::RaftTypeConfig>::Node;
 
 pub type SnapshotMeta = openraft::alias::SnapshotMetaOf<TypeConfig>;
 pub type Snapshot = openraft::alias::SnapshotOf<TypeConfig>;
-pub type RPCError<E = openraft::error::Infallible> = openraft::error::RPCError<TypeConfig, E>;
-pub type StreamingError = openraft::error::StreamingError<TypeConfig>;
+pub type RPCError<E = openraft::errors::Infallible> = openraft::error::RPCError<TypeConfig, E>;
+pub type StreamingError = openraft::errors::StreamingError<TypeConfig>;
+pub type ClientWriteError = openraft::errors::ClientWriteError<TypeConfig>;
 //pub type RaftMetrics = openraft::RaftMetrics<TypeConfig>;
 
 pub type VoteRequest = openraft::raft::VoteRequest<TypeConfig>;

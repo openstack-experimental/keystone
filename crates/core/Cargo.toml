@@ -21,6 +21,7 @@ jsonwebtoken = { version = "10.3", features = ["rust_crypto"] }
 openstack-keystone-api-types = { version = "0.1", path = "../api-types/", optional = true }
 openstack-keystone-core-types = { version = "0.1", path = "../core-types/" }
 openstack-keystone-config = { version = "0.1", path = "../config/" }
+openstack-keystone-distributed-storage = { version = "0.1", path = "../storage/"}
 mockall = { workspace = true, optional = true }
 rand.workspace = true
 reqwest = { workspace = true, features = ["json", "http2", "gzip", "deflate"] }

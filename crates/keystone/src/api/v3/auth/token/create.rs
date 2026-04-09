@@ -273,6 +273,7 @@ mod tests {
                 provider,
                 Arc::new(MockPolicy::default()),
             )
+            .await
             .unwrap(),
         );
 
@@ -379,6 +380,7 @@ mod tests {
                 provider,
                 Arc::new(MockPolicy::default()),
             )
+            .await
             .unwrap(),
         );
 

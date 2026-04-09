@@ -18,21 +18,19 @@ use tonic::service::Routes;
 
 use openstack_keystone_config::DistributedStorageConfiguration;
 
-use crate::grpc::cluster_admin_service::ClusterAdminServiceImpl;
-use crate::grpc::identity_service::IdentityServiceImpl;
-use crate::grpc::raft_service::RaftServiceImpl;
+use crate::cluster_admin_service::ClusterAdminService;
 use crate::network::Network;
 use crate::pb::api::identity_service_server::IdentityServiceServer;
 use crate::pb::raft::cluster_admin_service_server::ClusterAdminServiceServer;
 use crate::pb::raft::raft_service_server::RaftServiceServer;
-use crate::types::*;
+use crate::raft_service::RaftService;
+use crate::store_service::StoreService;
+use crate::{FjallStateMachine, types::*};
 
-/// Build a tonic `Server` instance for the raft instance.
-pub async fn get_app_server(
+/// Build a Raft instance.
+pub async fn init_raft(
     ks_config: &DistributedStorageConfiguration,
-    //node_id: NodeId,
-    //db_path: P,
-) -> Result<Routes, StoreError> {
+) -> Result<(Raft, Arc<FjallStateMachine>), StoreError> {
     // Create a configuration for the raft instance.
     let raft_config = Arc::new(
         Config {
@@ -50,24 +48,54 @@ pub async fn get_app_server(
     let network = Network::new(ks_config)?;
 
     // Create Raft instance
-    let raft = Raft::new(
-        ks_config.node_id,
-        raft_config.clone(),
-        network,
-        log_store,
-        state_machine_store.clone(),
-    )
-    .await?;
+    Ok((
+        Raft::new(
+            ks_config.node_id,
+            raft_config.clone(),
+            network,
+            log_store,
+            state_machine_store.clone(),
+        )
+        .await?,
+        state_machine_store,
+    ))
+}
+
+/// Initialize storage services backed by the raft.
+pub async fn init_storage(
+    ks_config: &DistributedStorageConfiguration,
+) -> Result<Storage, StoreError> {
+    // Create Raft instance
+    let (raft, state_machine_store) = init_raft(ks_config).await?;
 
     //// Create the management service with raft instance
-    let internal_service = RaftServiceImpl::new(raft.clone());
-    let cluster_admin_service = ClusterAdminServiceImpl::new(raft.clone());
-    let identity_service = IdentityServiceImpl::new(raft.clone(), state_machine_store.clone());
+    let internal_service_impl = RaftService::new(raft.clone());
+    let cluster_admin_impl = ClusterAdminService::new(raft.clone());
+    let store_impl = StoreService::new(raft.clone(), state_machine_store.clone());
 
+    Ok(Storage {
+        admin: Arc::new(cluster_admin_impl),
+        store: Arc::new(store_impl),
+        raft: Arc::new(internal_service_impl),
+    })
+}
+
+/// Distributed storage.
+pub struct Storage {
+    /// Admin service (cluster management).
+    pub admin: Arc<ClusterAdminService>,
+    /// Identity service (read/write operations).
+    pub store: Arc<StoreService>,
+    /// Raft service (voting and sync).
+    pub raft: Arc<RaftService>,
+}
+
+/// Build a tonic `Server` instance for the raft instance.
+pub async fn get_app_server(storage: &Storage) -> Result<Routes, StoreError> {
     //// The app service uses the default limit since it's user-facing.
-    let raft_service = RaftServiceServer::new(internal_service);
-    let identity_service = IdentityServiceServer::new(identity_service);
-    let cluster_admin_service = ClusterAdminServiceServer::new(cluster_admin_service);
+    let raft_service = RaftServiceServer::new(storage.raft.clone());
+    let identity_service = IdentityServiceServer::new(storage.store.clone());
+    let cluster_admin_service = ClusterAdminServiceServer::new(storage.admin.clone());
 
     let mut router = Routes::builder();
     router

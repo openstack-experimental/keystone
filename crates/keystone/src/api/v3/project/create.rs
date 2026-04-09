@@ -112,7 +112,7 @@ mod tests {
         });
 
         let provider_builder = Provider::mocked_builder().mock_resource(resource_mock);
-        let state = get_mocked_state(provider_builder, true, None, None);
+        let state = get_mocked_state(provider_builder, true, None, None).await;
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -163,7 +163,7 @@ mod tests {
     #[traced_test]
     #[tokio::test]
     async fn test_not_allowed() {
-        let state = get_mocked_state(Provider::mocked_builder(), false, None, None);
+        let state = get_mocked_state(Provider::mocked_builder(), false, None, None).await;
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())

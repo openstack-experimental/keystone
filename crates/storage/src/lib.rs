@@ -32,6 +32,9 @@ pub mod store {
     pub mod log_store;
     pub mod state_machine;
 }
+pub mod cluster_admin_service;
+pub mod raft_service;
+pub mod store_service;
 
 pub use store::log_store::FjallLogStore;
 pub use store::state_machine::FjallStateMachine;

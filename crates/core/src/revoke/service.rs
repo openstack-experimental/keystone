@@ -91,7 +91,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_revocation_event() {
-        let state = get_mocked_state(None, None);
+        let state = get_mocked_state(None, None).await;
         let mut backend = MockRevokeBackend::default();
         backend
             .expect_create_revocation_event()

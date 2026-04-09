@@ -35,7 +35,7 @@ use tracing_subscriber::EnvFilter;
 
 use openstack_keystone_config::{DistributedStorageConfiguration, TlsConfiguration};
 use openstack_keystone_distributed_storage::TypeConfig;
-use openstack_keystone_distributed_storage::app::get_app_server;
+use openstack_keystone_distributed_storage::app::{get_app_server, init_storage};
 use openstack_keystone_distributed_storage::protobuf as pb;
 use openstack_keystone_distributed_storage::protobuf::api::identity_service_client::IdentityServiceClient;
 use openstack_keystone_distributed_storage::protobuf::raft::cluster_admin_service_client::ClusterAdminServiceClient;
@@ -367,8 +367,9 @@ pub async fn start_raft_app(
         server = server.tls_config(tls_config)?;
     }
 
+    let storage = init_storage(config).await?;
     let server_future = server
-        .add_routes(get_app_server(config).await?)
+        .add_routes(get_app_server(&storage).await?)
         .serve(http_addr.parse()?);
 
     println!("Node {node_id} starting server at {http_addr}");

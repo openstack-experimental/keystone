@@ -147,7 +147,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_crate_grant() {
-        let state = get_mocked_state(None, None);
+        let state = get_mocked_state(None, None).await;
         let mut backend = MockAssignmentBackend::default();
         backend.expect_create_grant().returning(|_, _| {
             Ok(AssignmentBuilder::default()
@@ -176,7 +176,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_list_assignments() {
-        let state = get_mocked_state(None, None);
+        let state = get_mocked_state(None, None).await;
         let mut backend = MockAssignmentBackend::default();
         backend
             .expect_list_assignments()
@@ -217,7 +217,8 @@ mod tests {
                     .unwrap(),
             ])
         });
-        let state = get_mocked_state(None, Some(Provider::mocked_builder().mock_role(role_mock)));
+        let state =
+            get_mocked_state(None, Some(Provider::mocked_builder().mock_role(role_mock))).await;
         let mut backend = MockAssignmentBackend::default();
         backend
             .expect_list_assignments()
@@ -272,7 +273,8 @@ mod tests {
         let state = get_mocked_state(
             None,
             Some(Provider::mocked_builder().mock_revoke(revoke_mock)),
-        );
+        )
+        .await;
         let mut backend = MockAssignmentBackend::default();
         let assignment = AssignmentBuilder::default()
             .actor_id("actor")
