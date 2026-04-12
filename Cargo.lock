@@ -3675,19 +3675,25 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "byteorder",
+ "dashmap",
  "eyre",
  "fjall",
  "futures",
+ "http",
  "openraft",
  "openstack-keystone-config",
  "prost",
  "rand 0.10.1",
  "rcgen",
+ "rmp",
+ "rmp-serde",
  "rustls",
  "serde",
+ "serde_bytes",
  "serde_json",
  "tempfile",
  "thiserror 2.0.18",
+ "tokio",
  "tonic",
  "tonic-prost",
  "tonic-prost-build",
@@ -4935,6 +4941,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4ba8be72d372b2c9b35542551678538b562e7cf86c3315773cae48dfbfe7790c"
 dependencies = [
  "num-traits",
+]
+
+[[package]]
+name = "rmp-serde"
+version = "1.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "72f81bee8c8ef9b577d1681a70ebbc962c232461e397b22c208c43c04b67a155"
+dependencies = [
+ "rmp",
+ "serde",
 ]
 
 [[package]]

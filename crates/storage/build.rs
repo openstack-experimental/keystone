@@ -1,8 +1,8 @@
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let proto_files = [
         "proto/raft.proto",
-        "proto/identity_types.proto",
-        "proto/identity.proto",
+        "proto/storage_types.proto",
+        "proto/storage.proto",
     ];
 
     tonic_prost_build::configure()
@@ -23,11 +23,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "#[derive(Deserialize, Serialize)]",
         )
         .type_attribute("keystone.raft.Vote", "#[derive(Deserialize, Serialize)]")
+        .type_attribute("keystone.api.Response", "#[derive(Deserialize, Serialize)]")
         .type_attribute(
-            "keystone.api.SetRequest",
+            "keystone.api.CommandRequest",
             "#[derive(Deserialize, Serialize)]",
         )
-        .type_attribute("keystone.api.Response", "#[derive(Deserialize, Serialize)]")
+        //        .type_attribute(
+        //            "keystone.api.DeleteRequest",
+        //            "#[derive(Deserialize, Serialize)]",
+        //        )
+        //        .type_attribute(
+        //            "keystone.api.StoreRequest",
+        //            "#[derive(Deserialize, Serialize)]",
+        //        )
+        //        .type_attribute(
+        //            "keystone.api.StoreRequest.request",
+        //            "#[derive(serde::Deserialize, serde::Serialize)]",
+        //        )
+        //.type_attribute("keystone.api.Response", "#[derive(Deserialize, Serialize)]")
         .compile_protos(&proto_files, &["proto"])?;
     Ok(())
 }

@@ -32,13 +32,12 @@ pub mod store {
     pub mod log_store;
     pub mod state_machine;
 }
-pub mod cluster_admin_service;
-pub mod raft_service;
-pub mod store_service;
+mod error;
+pub mod store_command;
 
+pub use error::StoreError;
 pub use store::log_store::FjallLogStore;
 pub use store::state_machine::FjallStateMachine;
-pub use types::StoreError;
 
 pub mod protobuf {
     pub mod api {
@@ -57,7 +56,7 @@ pub use crate::protobuf as pb;
 openraft::declare_raft_types!(
     /// Declare the type configuration for example K/V store.
     pub TypeConfig:
-        D = pb::api::SetRequest,
+        D = pb::api::CommandRequest,
         R = pb::api::Response,
         LeaderId = pb::raft::LeaderId,
         Vote = pb::raft::Vote,

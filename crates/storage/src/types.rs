@@ -11,87 +11,10 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-use std::io;
-use thiserror::Error;
-
-/// Keystone Store error.
-#[derive(Error, Debug)]
-pub enum StoreError {
-    /// Database error.
-    #[error(transparent)]
-    Fjall {
-        #[from]
-        source: fjall::Error,
-    },
-
-    #[error(transparent)]
-    IO {
-        #[from]
-        source: std::io::Error,
-    },
-
-    #[error(transparent)]
-    Json {
-        #[from]
-        source: serde_json::Error,
-    },
-
-    #[error("missing mTLS configuration")]
-    TlsConfigMissing,
-
-    /// Raft config error.
-    #[error(transparent)]
-    RaftConfig {
-        #[from]
-        source: openraft::ConfigError,
-    },
-
-    /// Raft empty membership data error.
-    #[error("raft membership information missing")]
-    RaftEmptyMembership,
-
-    /// Raft error.
-    #[error(transparent)]
-    RaftError {
-        #[from]
-        source: openraft::errors::RaftError<TypeConfig, ClientWriteError>,
-    },
-
-    /// Raft fatal error.
-    #[error(transparent)]
-    RaftFatal {
-        #[from]
-        source: openraft::errors::Fatal<TypeConfig>,
-    },
-
-    /// Raft membership error.
-    #[error(transparent)]
-    RaftMembership {
-        #[from]
-        source: openraft::errors::MembershipError<NodeId>,
-    },
-    /// Raft empty membership data error.
-    #[error("raft required parameter {0} missing")]
-    RaftMissingParameter(String),
-
-    #[error(transparent)]
-    Storage {
-        #[from]
-        source: openraft::StorageError<TypeConfig>,
-    },
-
-    #[error(transparent)]
-    Other(#[from] eyre::Report),
-}
-
-impl From<StoreError> for io::Error {
-    fn from(value: StoreError) -> Self {
-        io::Error::other(value.to_string())
-    }
-}
 
 // Declare the Raft type with the TypeConfig.
 // Reference the containing module's type config and re-export it.
+
 pub use crate::TypeConfig;
 
 pub type NodeId = u64;
@@ -118,7 +41,7 @@ pub type Snapshot = openraft::alias::SnapshotOf<TypeConfig>;
 pub type RPCError<E = openraft::errors::Infallible> = openraft::error::RPCError<TypeConfig, E>;
 pub type StreamingError = openraft::errors::StreamingError<TypeConfig>;
 pub type ClientWriteError = openraft::errors::ClientWriteError<TypeConfig>;
-//pub type RaftMetrics = openraft::RaftMetrics<TypeConfig>;
+pub type RaftMetrics = openraft::RaftMetrics<TypeConfig>;
 
 pub type VoteRequest = openraft::raft::VoteRequest<TypeConfig>;
 pub type VoteResponse = openraft::raft::VoteResponse<TypeConfig>;

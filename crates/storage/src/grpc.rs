@@ -12,5 +12,5 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 pub mod cluster_admin_service;
-pub mod identity_service;
 pub mod raft_service;
+pub mod storage_service;

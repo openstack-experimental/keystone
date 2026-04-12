@@ -12,7 +12,6 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 use std::collections::BTreeMap;
-use std::sync::Arc;
 
 use openraft::async_runtime::WatchReceiver;
 use tonic::Request;
@@ -20,37 +19,82 @@ use tonic::Response;
 use tonic::Status;
 use tracing::trace;
 
-use crate::cluster_admin_service::ClusterAdminService as ClusterAdminServiceImpl;
+//use crate::cluster_admin_service::ClusterAdminService as ClusterAdminServiceImpl;
+use crate::StoreError;
 use crate::pb;
 use crate::protobuf::raft::cluster_admin_service_server::ClusterAdminService;
 use crate::types::*;
 
+/// Raft cluster administrative operations.
+///
+/// # Responsibilities
+/// - Manages the Raft cluster
+///
+/// # Protocol Safety
+/// This service implements the client-facing API and should validate all inputs
+/// before processing them through the Raft consensus protocol.
+pub struct ClusterAdminServiceImpl {
+    /// The Raft node instance for consensus operations.
+    pub(crate) raft_node: Raft,
+}
+
+impl ClusterAdminServiceImpl {
+    /// Creates a new instance of the API service.
+    ///
+    /// # Arguments
+    /// * `raft_node` - The Raft node instance this service will use.
+    pub fn new(raft_node: Raft) -> Self {
+        Self { raft_node }
+    }
+
+    /// Initializes a new Raft cluster with the specified nodes.
+    ///
+    /// # Arguments
+    /// * `nodes` - Contains the initial set of nodes for the cluster
+    ///
+    /// # Returns
+    /// * Success response
+    /// * Error if initialization fails
+    #[tracing::instrument(level = "trace", skip(self))]
+    pub async fn init_cluster(&self, nodes: Vec<pb::raft::Node>) -> Result<(), StoreError> {
+        // Convert nodes into required format
+        let nodes_map: BTreeMap<u64, pb::raft::Node> =
+            nodes.into_iter().map(|node| (node.node_id, node)).collect();
+
+        // Initialize the cluster
+        Ok(self.raft_node.initialize(nodes_map).await?)
+    }
+
+    /// Retrieves metrics about the Raft node
+    pub fn get_metrics(&self) -> Result<RaftMetrics, StoreError> {
+        Ok(self.raft_node.metrics().borrow_watched().clone())
+    }
+
+    /// Retrieves last log index appended to the node's log.
+    pub fn get_last_log_index(&self) -> Result<Option<u64>, StoreError> {
+        let metrics = self.get_metrics()?;
+        Ok(metrics.last_log_index)
+    }
+}
+
 #[tonic::async_trait]
-impl ClusterAdminService for Arc<ClusterAdminServiceImpl> {
+impl ClusterAdminService for ClusterAdminServiceImpl {
     /// Initializes a new Raft cluster with the specified nodes.
     ///
     /// # Arguments
     /// * `request` - Contains the initial set of nodes for the cluster
     ///
     /// # Returns
-    /// * Success response with initialization details
+    /// * Success response
     /// * Error if initialization fails
     #[tracing::instrument(level = "trace", skip(self))]
     async fn init(&self, request: Request<pb::raft::InitRequest>) -> Result<Response<()>, Status> {
         trace!("Initializing Raft cluster");
         let req = request.into_inner();
 
-        // Convert nodes into required format
-        let nodes_map: BTreeMap<u64, pb::raft::Node> = req
-            .nodes
-            .into_iter()
-            .map(|node| (node.node_id, node))
-            .collect();
-
         // Initialize the cluster
         let result = self
-            .raft_node
-            .initialize(nodes_map)
+            .init_cluster(req.nodes)
             .await
             .map_err(|e| Status::internal(format!("Failed to initialize cluster: {}", e)))?;
 
@@ -131,7 +175,9 @@ impl ClusterAdminService for Arc<ClusterAdminServiceImpl> {
         _request: Request<()>,
     ) -> Result<Response<pb::raft::MetricsResponse>, Status> {
         trace!("Collecting metrics");
-        let metrics = self.raft_node.metrics().borrow_watched().clone();
+        let metrics = self
+            .get_metrics()
+            .map_err(|e| Status::internal(format!("Failed to write to store: {}", e)))?;
         let resp = pb::raft::MetricsResponse {
             membership: Some(metrics.membership_config.membership().clone().into()),
             other_metrics: metrics.to_string(),

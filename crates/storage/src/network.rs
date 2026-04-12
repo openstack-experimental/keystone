@@ -12,6 +12,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 use std::future::Future;
+use std::sync::Arc;
 use std::time::Duration;
 
 use eyre::WrapErr;
@@ -27,99 +28,72 @@ use openraft::network::{
 use openraft::raft::{StreamAppendError, StreamAppendResult, TransferLeaderRequest};
 use openraft::{AnyError, OptionalSend, RaftNetworkFactory};
 use openstack_keystone_config::DistributedStorageConfiguration;
+use openstack_keystone_config::TlsConfiguration;
+use tokio::sync::watch;
 use tonic::transport::{Certificate, Channel, ClientTlsConfig, Identity};
+use tracing::error;
 
+use crate::StoreError;
 use crate::protobuf as pb;
 use crate::protobuf::raft::VoteRequest as PbVoteRequest;
 use crate::protobuf::raft::VoteResponse as PbVoteResponse;
 use crate::protobuf::raft::raft_service_client::RaftServiceClient;
-use crate::types::NodeId;
-use crate::types::TypeConfig;
 use crate::types::*;
 
 /// Network implementation for gRPC-based Raft communication.
 /// Provides the networking layer for Raft nodes to communicate with each other.
-pub struct Network {
-    tls_ca_cert: Option<Certificate>,
-    tls_client_identity: Option<Identity>,
+#[derive(Clone)]
+pub struct NetworkManager {
+    /// Tls client config watcher.
+    tls_config_watcher: watch::Receiver<Option<ClientTlsConfig>>,
 }
 
-impl Network {
-    pub fn new(config: &DistributedStorageConfiguration) -> Result<Self, StoreError> {
-        if !config.disable_tls {
-            let tls_config = config
-                .tls_configuration
-                .as_ref()
-                .ok_or(StoreError::TlsConfigMissing)?;
-            let tls_client_identity = Identity::from_pem(
-                std::fs::read_to_string(&tls_config.tls_cert_file)
-                    .wrap_err("reading server cert file")?,
-                std::fs::read_to_string(&tls_config.tls_key_file)
-                    .wrap_err("reading server cert key file")?,
-            );
-            let tls_ca_cert = if let Some(cert_ca) = &tls_config.tls_client_ca_file {
-                Some(Certificate::from_pem(std::fs::read_to_string(cert_ca)?))
-            } else {
-                None
-            };
-
-            Ok(Self {
-                tls_ca_cert,
-                tls_client_identity: Some(tls_client_identity),
-            })
-        } else {
-            Ok(Self {
-                tls_ca_cert: None,
-                tls_client_identity: None,
-            })
-        }
-    }
-
-    fn get_server_tls_config(&self) -> Option<ClientTlsConfig> {
-        if let Some(identity) = &self.tls_client_identity {
-            let mut config = ClientTlsConfig::new().identity(identity.clone());
-            if let Some(ca) = &self.tls_ca_cert {
-                config = config.ca_certificate(ca.clone());
-            }
-            return Some(config);
-        }
-        None
+impl NetworkManager {
+    pub fn new(
+        tls_config_watcher: watch::Receiver<Option<ClientTlsConfig>>,
+    ) -> Result<Self, StoreError> {
+        Ok(Self { tls_config_watcher })
     }
 }
 
 /// Implementation of the RaftNetworkFactory trait for creating new network
 /// connections. This factory creates gRPC client connections to other Raft
 /// nodes.
-impl RaftNetworkFactory<TypeConfig> for Network {
+impl RaftNetworkFactory<TypeConfig> for Arc<NetworkManager> {
     type Network = NetworkConnection;
 
     #[tracing::instrument(level = "debug", skip_all)]
     async fn new_client(&mut self, _: NodeId, node: &Node) -> Self::Network {
-        NetworkConnection::new(node.clone(), self.get_server_tls_config())
+        NetworkConnection::new(node.clone(), self.tls_config_watcher.clone())
     }
 }
 
 /// Represents an active network connection to a remote Raft node.
 /// Handles serialization and deserialization of Raft messages over gRPC.
 pub struct NetworkConnection {
+    /// Target node.
     target_node: pb::raft::Node,
-    tls_config: Option<ClientTlsConfig>,
+    /// Watcher of the ClientTlsConfig.
+    tls_config_watcher: watch::Receiver<Option<ClientTlsConfig>>,
 }
 
 impl NetworkConnection {
     /// Creates a new NetworkConnection with the provided gRPC client.
-    pub fn new(target_node: Node, tls_config: Option<ClientTlsConfig>) -> Self {
+    pub fn new(
+        target_node: Node,
+        tls_config_watcher: watch::Receiver<Option<ClientTlsConfig>>,
+    ) -> Self {
         NetworkConnection {
             target_node,
-            tls_config,
+            tls_config_watcher,
         }
     }
 
     /// Creates a gRPC client to the target node.
-    async fn make_client(&self) -> Result<RaftServiceClient<Channel>, RPCError> {
+    pub async fn make_client(&self) -> Result<RaftServiceClient<Channel>, RPCError> {
         let server_addr = &self.target_node.rpc_addr;
 
-        let ep = if let Some(tls_config) = &self.tls_config {
+        let ep = if let Some(tls_config) = &*self.tls_config_watcher.borrow() {
             Channel::builder(
                 format!("https://{}", server_addr)
                     .parse()
@@ -182,16 +156,6 @@ impl NetworkConnection {
         Ok(())
     }
 }
-
-// =============================================================================
-// Sub-trait implementations for NetworkConnection
-// =============================================================================
-//
-// Instead of implementing RaftNetworkV2 as a monolithic trait, this example
-// demonstrates implementing individual sub-traits directly. This approach:
-// - Shows exactly which network capabilities are provided
-// - Each impl is focused on a single concern
-// - gRPC's native bidirectional streaming maps naturally to NetStreamAppend
 
 impl NetStreamAppend<TypeConfig> for NetworkConnection {
     fn stream_append<'s, S>(
@@ -318,4 +282,69 @@ impl NetTransferLeader<TypeConfig> for NetworkConnection {
             "transfer_leader not implemented",
         ))))
     }
+}
+
+/// Parse the [TlsConfiguration] into the [ClientTlsConfig].
+pub fn load_tls_client_config(
+    disable_tls: bool,
+    tls_config: Option<&TlsConfiguration>,
+) -> Result<Option<ClientTlsConfig>, StoreError> {
+    if !disable_tls {
+        let tls_config = tls_config.as_ref().ok_or(StoreError::TlsConfigMissing)?;
+        let identity = Identity::from_pem(
+            std::fs::read_to_string(&tls_config.tls_cert_file)
+                .wrap_err("reading server cert file")?,
+            std::fs::read_to_string(&tls_config.tls_key_file)
+                .wrap_err("reading server cert key file")?,
+        );
+        let mut tls_client_config = ClientTlsConfig::new().identity(identity);
+        if let Some(cert_ca) = &tls_config.tls_client_ca_file {
+            tls_client_config = tls_client_config
+                .ca_certificate(Certificate::from_pem(std::fs::read_to_string(cert_ca)?));
+        };
+        Ok(Some(tls_client_config))
+    } else {
+        Ok(None)
+    }
+}
+
+/// Initialize the [ClientTlsConfig] configuration watcher.
+pub fn init_tls_watcher(
+    ks_config: &DistributedStorageConfiguration,
+) -> Result<watch::Receiver<Option<ClientTlsConfig>>, StoreError> {
+    // 1. Initial Load: Try to load the certs once to start with a valid state
+    let initial_config =
+        load_tls_client_config(ks_config.disable_tls, ks_config.tls_configuration.as_ref())?;
+
+    // 2. Create the channel
+    let (tx, rx) = watch::channel(initial_config);
+
+    if !ks_config.disable_tls && ks_config.tls_configuration.is_some() {
+        // 3. Spawn the File Watcher Task
+        let config_clone = ks_config.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+
+            loop {
+                interval.tick().await;
+
+                // Reload from disk
+                match load_tls_client_config(
+                    config_clone.disable_tls,
+                    config_clone.tls_configuration.as_ref(),
+                ) {
+                    Ok(new_config) => {
+                        // If the cert changed, broadcast to all receivers
+                        let _ = tx.send(new_config);
+                    }
+                    Err(e) => {
+                        error!("failed to reload TLS certificates: {:?}", e.to_string());
+                    }
+                }
+            }
+        });
+    }
+
+    // 4. Return the Receiver to be cloned into your RaftNetworkFactory
+    Ok(rx)
 }
