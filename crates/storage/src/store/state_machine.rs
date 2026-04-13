@@ -41,6 +41,7 @@ use serde::Serialize;
 use crate::StoreError;
 use crate::TypeConfig;
 use crate::protobuf as pb;
+use crate::store_command::*;
 
 const KEY_LAST_APPLIED_LOG: &[u8] = b"last_applied_log";
 const KEY_LAST_MEMBERSHIP: &[u8] = b"last_membership";
@@ -81,6 +82,16 @@ impl FjallStateMachine {
 
     pub fn data(&self) -> &Keyspace {
         &self.data
+    }
+
+    pub fn db(&self) -> &Arc<Database> {
+        &self.db
+    }
+
+    pub fn keyspace<S: AsRef<str>>(&self, name: S) -> Result<Keyspace, StoreError> {
+        Ok(self
+            .db
+            .keyspace(name.as_ref(), KeyspaceCreateOptions::default)?)
     }
 
     #[allow(clippy::result_large_err)]
@@ -336,11 +347,30 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
         let mut last_membership = None;
         let mut batch = self.db.batch();
 
+        // TODO: https://docs.rs/openraft/latest/openraft/raft/struct.Raft.html#method.client_write
         while let Some((entry, responder)) = entries.try_next().await? {
             last_applied_log = Some(entry.log_id());
-            let response = if let Some(req) = entry.app_data {
-                batch.insert(&self.data, req.key.as_bytes(), req.value.as_bytes());
-                Some(req.value.clone())
+            let response = if let Some(store_req) = entry.app_data {
+                // Unpack the payload and apply the command
+                match StoreCommand::unpack(&store_req)? {
+                    StoreCommand::Delete(cmd) => {
+                        let ks = &self
+                            .db
+                            .keyspace(&cmd.keyspace, KeyspaceCreateOptions::default)
+                            .map_err(|e| io::Error::other(e.to_string()))?;
+                        batch.remove(ks, cmd.key.as_bytes());
+                        None
+                    }
+                    StoreCommand::Set(cmd) => {
+                        let ks = &self
+                            .db
+                            .keyspace(&cmd.keyspace, KeyspaceCreateOptions::default)
+                            .map_err(|e| io::Error::other(e.to_string()))?;
+                        // TODO: at REST encryption would come here
+                        batch.insert(ks, cmd.key.as_bytes(), cmd.value.clone());
+                        Some(cmd.value)
+                    }
+                }
             } else if let Some(mem) = entry.membership {
                 last_membership = Some(StoredMembershipOf::<TypeConfig>::new(
                     last_applied_log,

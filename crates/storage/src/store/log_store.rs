@@ -165,6 +165,7 @@ where
     {
         for entry in entries {
             let key = entry.log_id().index.to_be_bytes();
+            // TODO: encrypt the payload with AEAD using log_id and term as metadata
             tracing::debug!("appending {:?}, {:?}", entry.log_id().index, entry);
             let val = serde_json::to_vec(&entry).map_err(|e| io::Error::other(e.to_string()))?;
             self.logs

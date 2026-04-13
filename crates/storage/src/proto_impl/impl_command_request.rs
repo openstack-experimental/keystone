@@ -15,14 +15,21 @@
 use std::fmt;
 use std::fmt::Formatter;
 
+use crate::StoreError;
 use crate::protobuf as pb;
+use crate::store_command::StoreCommand;
 
-impl fmt::Display for pb::api::SetRequest {
+impl fmt::Display for pb::api::CommandRequest {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "SetRequest {{ key: {}, value: {} }}",
-            self.key, self.value
-        )
+        write!(f, "CommandRequest",)
+    }
+}
+
+impl TryFrom<StoreCommand> for pb::api::CommandRequest {
+    type Error = StoreError;
+    fn try_from(value: StoreCommand) -> Result<Self, Self::Error> {
+        Ok(Self {
+            payload: value.pack()?,
+        })
     }
 }

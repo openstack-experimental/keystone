@@ -1,0 +1,14 @@
+syntax = "proto3";
+
+package keystone.api;
+
+message CommandRequest {
+  // Store request.
+  bytes payload = 1;
+}
+
+// GetResponse contains the value associated with the requested key.
+message Response {
+  // Retrieved value.
+  optional bytes value = 1;
+}

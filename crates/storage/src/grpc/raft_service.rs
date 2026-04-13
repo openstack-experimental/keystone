@@ -12,7 +12,6 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 use std::pin::Pin;
-use std::sync::Arc;
 
 use futures::Stream;
 use futures::StreamExt;
@@ -27,11 +26,38 @@ use crate::protobuf as pb;
 use crate::protobuf::raft::VoteRequest;
 use crate::protobuf::raft::VoteResponse;
 use crate::protobuf::raft::raft_service_server::RaftService;
-use crate::raft_service::RaftService as RaftServiceImpl;
 use crate::types::*;
 
+/// Internal service implementation for Raft protocol communications.
+/// This service handles the core Raft consensus protocol operations between
+/// cluster nodes.
+///
+/// # Responsibilities
+/// - Vote requests/responses during leader election
+/// - Log replication between nodes
+/// - Snapshot installation for state synchronization
+///
+/// # Protocol Safety
+/// This service implements critical consensus protocol operations and should
+/// only be exposed to other trusted Raft cluster nodes, never to external
+/// clients.
+pub struct RaftServiceImpl {
+    /// The local Raft node instance that this service operates on
+    pub(crate) raft_node: Raft,
+}
+
+impl RaftServiceImpl {
+    /// Creates a new instance of the internal service.
+    ///
+    /// # Arguments
+    /// * `raft_node` - The Raft node instance this service will operate on
+    pub fn new(raft_node: Raft) -> Self {
+        Self { raft_node }
+    }
+}
+
 #[tonic::async_trait]
-impl RaftService for Arc<RaftServiceImpl> {
+impl RaftService for RaftServiceImpl {
     /// Handles vote requests during leader election.
     ///
     /// # Arguments

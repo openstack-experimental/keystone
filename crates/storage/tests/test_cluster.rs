@@ -12,12 +12,11 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 #![allow(clippy::uninlined_format_args)]
-use std::backtrace::Backtrace;
 use std::collections::BTreeMap;
 use std::io::Write;
 use std::net::IpAddr;
-use std::panic::PanicHookInfo;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
@@ -31,103 +30,75 @@ use rcgen::{
 };
 use tempfile::TempDir;
 use tonic::transport::{Channel, ClientTlsConfig, Identity, ServerTlsConfig};
-use tracing_subscriber::EnvFilter;
 
 use openstack_keystone_config::{DistributedStorageConfiguration, TlsConfiguration};
 use openstack_keystone_distributed_storage::TypeConfig;
-use openstack_keystone_distributed_storage::app::{get_app_server, init_storage};
+use openstack_keystone_distributed_storage::app::{Storage, get_app_server, init_storage};
+use openstack_keystone_distributed_storage::network::load_tls_client_config;
 use openstack_keystone_distributed_storage::protobuf as pb;
-use openstack_keystone_distributed_storage::protobuf::api::identity_service_client::IdentityServiceClient;
 use openstack_keystone_distributed_storage::protobuf::raft::cluster_admin_service_client::ClusterAdminServiceClient;
-
-pub fn log_panic(panic: &PanicHookInfo) {
-    let backtrace = { format!("{:?}", Backtrace::force_capture()) };
-
-    eprintln!("{}", panic);
-
-    if let Some(location) = panic.location() {
-        tracing::error!(
-            message = %panic,
-            backtrace = %backtrace,
-            panic.file = location.file(),
-            panic.line = location.line(),
-            panic.column = location.column(),
-        );
-        eprintln!(
-            "{}:{}:{}",
-            location.file(),
-            location.line(),
-            location.column()
-        );
-    } else {
-        tracing::error!(message = %panic, backtrace = %backtrace);
-    }
-
-    eprintln!("{}", backtrace);
-}
 
 /// Set up a cluster of 3 nodes.
 /// Write to it and read from it.
+#[tracing_test::traced_test]
 #[test]
 fn test_cluster() {
     TypeConfig::run(test_cluster_inner()).unwrap();
 }
 
+struct InstanceHolder {
+    pub node_id: u64,
+    pub config: DistributedStorageConfiguration,
+    storage_dir: TempDir,
+    pub storage: Storage,
+}
+
+impl InstanceHolder {
+    async fn new(node_id: u64, tls_config: Option<TlsConfiguration>) -> Result<Self> {
+        let storage_dir = tempfile::TempDir::new().unwrap();
+        let config = get_config(node_id, storage_dir.path().to_path_buf(), tls_config);
+        let storage = init_storage(&config).await?;
+        Ok(Self {
+            node_id,
+            config,
+            storage_dir,
+            storage,
+        })
+    }
+}
+
 async fn test_cluster_inner() -> Result<()> {
-    std::panic::set_hook(Box::new(|panic| {
-        log_panic(panic);
-    }));
-
-    tracing_subscriber::fmt()
-        .with_target(true)
-        .with_thread_ids(true)
-        .with_level(true)
-        .with_ansi(false)
-        .with_env_filter(EnvFilter::from_default_env())
-        .init();
-
     let provider = rustls::crypto::aws_lc_rs::default_provider();
     rustls::crypto::CryptoProvider::install_default(provider).unwrap();
 
     let certs_dir = TempDir::new()?;
     let tls_configuration = Some(make_certificates(&certs_dir)?);
-    let tls_client_config = get_client_tls_config(&tls_configuration)?;
+    let tls_client_config = load_tls_client_config(false, tls_configuration.as_ref())?;
 
     // --- Start 3 raft node in 3 threads.
+    let instance1 = Arc::new(InstanceHolder::new(1, tls_configuration.clone()).await?);
+    let instance2 = Arc::new(InstanceHolder::new(2, tls_configuration.clone()).await?);
+    let instance3 = Arc::new(InstanceHolder::new(3, tls_configuration.clone()).await?);
+    let instances = vec![instance1.clone(), instance2.clone(), instance3.clone()];
 
-    let certs_h1 = tls_configuration.clone();
-    let _h1 = thread::spawn(|| {
-        let d1 = tempfile::TempDir::new().unwrap();
+    let inst1 = instance1.clone();
+    let _h1 = thread::spawn(move || {
         let mut rt = AsyncRuntimeOf::<TypeConfig>::new(1);
-        let x = rt.block_on(start_raft_app(&get_config(
-            1,
-            d1.path().to_path_buf(),
-            certs_h1,
-        )));
+        let x = rt.block_on(start_raft_app(&inst1.config, &inst1.storage));
         println!("raft app exit result: {:?}", x);
     });
 
-    let certs_h2 = tls_configuration.clone();
-    let _h2 = thread::spawn(|| {
-        let d2 = tempfile::TempDir::new().unwrap();
+    let inst2 = instance2.clone();
+    let _h2 = thread::spawn(move || {
         let mut rt = AsyncRuntimeOf::<TypeConfig>::new(1);
-        let x = rt.block_on(start_raft_app(&get_config(
-            2,
-            d2.path().to_path_buf(),
-            certs_h2,
-        )));
+        let x = rt.block_on(start_raft_app(&inst2.config, &inst2.storage));
         println!("raft app exit result: {:?}", x);
     });
 
-    let certs_h3 = tls_configuration.clone();
-    let _h3 = thread::spawn(|| {
-        let d3 = tempfile::TempDir::new().unwrap();
+    let inst3 = instance3.clone();
+    let _h3 = thread::spawn(move || {
         let mut rt = AsyncRuntimeOf::<TypeConfig>::new(1);
-        let x = rt.block_on(start_raft_app(&get_config(
-            3,
-            d3.path().to_path_buf(),
-            certs_h3,
-        )));
+        let x = rt.block_on(start_raft_app(&inst3.config, &inst3.storage));
         println!("raft app exit result: {:?}", x);
     });
 
@@ -203,16 +174,44 @@ async fn test_cluster_inner() -> Result<()> {
             metrics.membership.unwrap().configs
         );
     }
-    let mut client1 = new_client(get_addr(1), &tls_client_config).await?;
 
     println!("=== write `foo=bar`");
     {
-        client1
-            .set(pb::api::SetRequest {
-                key: "foo".to_string(),
-                value: "bar".to_string(),
-            })
+        // Need to try to write to different nodes ensuring the write operation distributes across
+        // the cluster
+        instance1
+            .storage
+            .set_value("foo", "bar", None::<String>)
             .await?;
+        instance2
+            .storage
+            .set_value("foo1", "bar1", Some("another_keyspace"))
+            .await?;
+        //    // --- Wait for a while to let the replication get done.
+        TypeConfig::sleep(Duration::from_millis(1_000)).await;
+    }
+
+    println!("=== read `foo` on every node");
+    {
+        for instance in &instances {
+            println!("=== read `foo` on node {}", instance.node_id);
+            let got: Option<String> = instance.storage.get_by_key("foo", None::<String>).await?;
+            assert_eq!(Some("bar".to_string()), got);
+
+            let got: Option<String> = instance.storage.get_by_key("foo1", None::<String>).await?;
+            assert!(got.is_none());
+
+            let got: Option<String> = instance
+                .storage
+                .get_by_key("foo1", Some("another_keyspace"))
+                .await?;
+            assert_eq!(Some("bar1".to_string()), got);
+        }
+    }
+
+    println!("=== delete `foo=bar`");
+    {
+        instance3.storage.remove("foo", None::<String>).await?;
 
         // --- Wait for a while to let the replication get done.
         TypeConfig::sleep(Duration::from_millis(1_000)).await;
@@ -220,36 +219,17 @@ async fn test_cluster_inner() -> Result<()> {
 
     println!("=== read `foo` on every node");
     {
-        println!("=== read `foo` on node 1");
-        {
-            let got = client1
-                .get(pb::api::GetRequest {
-                    key: "foo".to_string(),
-                })
-                .await?;
-            assert_eq!(Some("bar".to_string()), got.into_inner().value);
-        }
+        for instance in &instances {
+            println!("=== read `foo` on node {}", instance.node_id);
 
-        println!("=== read `foo` on node 2");
-        {
-            let mut client2 = new_client(get_addr(2), &tls_client_config).await?;
-            let got = client2
-                .get(pb::api::GetRequest {
-                    key: "foo".to_string(),
-                })
-                .await?;
-            assert_eq!(Some("bar".to_string()), got.into_inner().value);
-        }
+            let got: Option<String> = instance.storage.get_by_key("foo", None::<String>).await?;
+            assert!(got.is_none());
 
-        println!("=== read `foo` on node 3");
-        {
-            let mut client3 = new_client(get_addr(3), &tls_client_config).await?;
-            let got = client3
-                .get(pb::api::GetRequest {
-                    key: "foo".to_string(),
-                })
+            let got: Option<String> = instance
+                .storage
+                .get_by_key("foo1", Some("another_keyspace"))
                 .await?;
-            assert_eq!(Some("bar".to_string()), got.into_inner().value);
+            assert_eq!(Some("bar1".to_string()), got);
         }
     }
 
@@ -280,23 +260,6 @@ async fn test_cluster_inner() -> Result<()> {
     Ok(())
 }
 
-fn get_client_tls_config(config: &Option<TlsConfiguration>) -> Result<Option<ClientTlsConfig>> {
-    if let Some(tls_config) = &config {
-        let ca = tonic::transport::Certificate::from_pem(std::fs::read_to_string(
-            &tls_config.tls_client_ca_file.as_ref().unwrap(),
-        )?);
-        let identity = Identity::from_pem(
-            std::fs::read_to_string(&tls_config.tls_cert_file)?,
-            std::fs::read_to_string(&tls_config.tls_key_file)?,
-        );
-        return Ok(Some(
-            ClientTlsConfig::new().identity(identity).ca_certificate(ca),
-        ));
-    } else {
-        Ok(None)
-    }
-}
-
 async fn new_admin_client(
     addr: String,
     client_tls_config: &Option<ClientTlsConfig>,
@@ -307,19 +270,6 @@ async fn new_admin_client(
         Channel::builder(format!("http://{}", addr).parse()?)
     };
     let client = ClusterAdminServiceClient::new(channel.connect().await?);
-    Ok(client)
-}
-
-async fn new_client(
-    addr: String,
-    client_tls_config: &Option<ClientTlsConfig>,
-) -> Result<IdentityServiceClient<Channel>> {
-    let channel = if let Some(tls_config) = client_tls_config {
-        Channel::builder(format!("https://{}", addr).parse()?).tls_config(tls_config.clone())?
-    } else {
-        Channel::builder(format!("http://{}", addr).parse()?)
-    };
-    let client = IdentityServiceClient::new(channel.connect().await?);
     Ok(client)
 }
 
@@ -343,9 +293,11 @@ fn get_addr(node_id: u64) -> String {
 
 pub async fn start_raft_app(
     config: &DistributedStorageConfiguration,
+    storage: &Storage,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let http_addr = config.cluster_addr.clone();
     let node_id = config.node_id;
+    //let storage = init_storage(config).await?;
 
     let mut server = tonic::transport::Server::builder();
     if !config.disable_tls
@@ -367,7 +319,6 @@ pub async fn start_raft_app(
         server = server.tls_config(tls_config)?;
     }
 
-    let storage = init_storage(config).await?;
     let server_future = server
         .add_routes(get_app_server(&storage).await?)
         .serve(http_addr.parse()?);

@@ -25,6 +25,7 @@
     - [Federation OIDC: Expiring Group Membership](adr/0013-federation-oidc-expiring-group-membership.md)
     - [Application Credentials](adr/0014-application-credentials.md)
     - [Kubernetes Auth](adr/0015-kubernetes-auth.md)
+    - [Distributed Storage](adr/0016-raft-storage.md)
 - [Policy enforcement](policy.md)
 - [Fernet token]()
   - [Token payloads]()
