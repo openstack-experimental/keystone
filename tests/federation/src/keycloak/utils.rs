@@ -119,6 +119,8 @@ pub async fn create_keycloak_user<U: AsRef<str>, P: AsRef<str>>(
                 None,
                 None,
                 None,
+                None,
+                None,
                 Some(username.as_ref().into()),
             )
             .await?
