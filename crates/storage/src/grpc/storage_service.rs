@@ -33,7 +33,7 @@ use crate::types::*;
 /// only be exposed to other trusted Raft cluster nodes, never to external
 /// clients.
 pub struct StorageServiceImpl {
-    /// The local Raft node instance that this service operates on
+    /// The local Raft node instance that this service operates on.
     pub(crate) raft_node: Raft,
 }
 
@@ -41,7 +41,7 @@ impl StorageServiceImpl {
     /// Creates a new instance of the internal service.
     ///
     /// # Arguments
-    /// * `raft_node` - The Raft node instance this service will operate on
+    /// * `raft_node` - The Raft node instance this service will operate on.
     pub fn new(raft_node: Raft) -> Self {
         Self { raft_node }
     }

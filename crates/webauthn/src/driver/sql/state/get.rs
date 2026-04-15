@@ -14,20 +14,18 @@
 
 use sea_orm::DatabaseConnection;
 use sea_orm::entity::*;
-use sea_orm::query::*;
 use webauthn_rs::prelude::{PasskeyAuthentication, PasskeyRegistration};
 
 use openstack_keystone_core::error::DbContextExt;
 
 use crate::WebauthnError;
-use crate::driver::model::{prelude::WebauthnState as DbPasskeyState, webauthn_state};
+use crate::driver::sql::model::prelude::WebauthnState as DbPasskeyState;
 
 pub async fn get_register<U: AsRef<str>>(
     db: &DatabaseConnection,
     user_id: U,
 ) -> Result<Option<PasskeyRegistration>, WebauthnError> {
-    match DbPasskeyState::find_by_id(user_id.as_ref())
-        .filter(webauthn_state::Column::Type.eq("register"))
+    match DbPasskeyState::find_by_id((user_id.as_ref().to_string(), String::from("register")))
         .one(db)
         .await
         .context("searching for webauthn registration state record")?
@@ -41,8 +39,7 @@ pub async fn get_auth<U: AsRef<str>>(
     db: &DatabaseConnection,
     user_id: U,
 ) -> Result<Option<PasskeyAuthentication>, WebauthnError> {
-    match DbPasskeyState::find_by_id(user_id.as_ref())
-        .filter(webauthn_state::Column::Type.eq("auth"))
+    match DbPasskeyState::find_by_id((user_id.as_ref().to_string(), String::from("auth")))
         .one(db)
         .await
         .context("searching for webauthn auth state record")?
@@ -57,6 +54,7 @@ mod tests {
     use sea_orm::{DatabaseBackend, MockDatabase, Transaction};
 
     use super::*;
+    use crate::driver::sql::model::webauthn_state;
 
     #[tokio::test]
     async fn test_get_auth() {

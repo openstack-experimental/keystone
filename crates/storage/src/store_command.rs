@@ -11,7 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-//! Store modification command
+//! # Store modification command
 
 use serde::{Deserialize, Serialize};
 

@@ -20,7 +20,7 @@ use sea_orm::query::*;
 use openstack_keystone_core::error::DbContextExt;
 
 use crate::WebauthnError;
-use crate::driver::model::{
+use crate::driver::sql::model::{
     prelude::WebauthnState as DbPasskeyState, webauthn_state as db_webauthn_state,
 };
 
@@ -28,7 +28,8 @@ pub async fn delete<U: AsRef<str>>(
     db: &DatabaseConnection,
     user_id: U,
 ) -> Result<(), WebauthnError> {
-    DbPasskeyState::delete_by_id(user_id.as_ref())
+    DbPasskeyState::delete_many()
+        .filter(db_webauthn_state::Column::UserId.eq(user_id.as_ref()))
         .exec(db)
         .await
         .context("deleting webauthn state record")?;

@@ -31,7 +31,7 @@ pub trait WebauthnApi: Send + Sync {
     async fn create_user_webauthn_credential(
         &self,
         state: &ServiceState,
-        passkey: WebauthnCredential,
+        passkey: &WebauthnCredential,
     ) -> Result<WebauthnCredential, WebauthnError>;
 
     /// Get webauthn credential of the user by the credential_id.
@@ -42,57 +42,71 @@ pub trait WebauthnApi: Send + Sync {
         credential_id: &'a str,
     ) -> Result<Option<WebauthnCredential>, WebauthnError>;
 
-    /// Delete passkey registration state of a user
+    /// Delete credential for the user.
+    async fn delete_user_webauthn_credential<'a>(
+        &self,
+        state: &ServiceState,
+        user_id: &'a str,
+        credential_id: &'a str,
+    ) -> Result<(), WebauthnError>;
+
+    /// Delete credential registration state for the user user.
     async fn delete_user_webauthn_credential_authentication_state<'a>(
         &self,
         state: &ServiceState,
         user_id: &'a str,
     ) -> Result<(), WebauthnError>;
 
-    /// Delete passkey registration state of a user
+    /// Delete credential registration state for the user.
     async fn delete_user_webauthn_credential_registration_state<'a>(
         &self,
         state: &ServiceState,
         user_id: &'a str,
     ) -> Result<(), WebauthnError>;
 
+    /// Get authentication state for the user.
     async fn get_user_webauthn_credential_authentication_state<'a>(
         &self,
         state: &ServiceState,
         user_id: &'a str,
     ) -> Result<Option<PasskeyAuthentication>, WebauthnError>;
 
+    /// Get credential registration state for the user.
     async fn get_user_webauthn_credential_registration_state<'a>(
         &self,
         state: &ServiceState,
         user_id: &'a str,
     ) -> Result<Option<PasskeyRegistration>, WebauthnError>;
 
+    /// List credentials of the user.
     async fn list_user_webauthn_credentials<'a>(
         &self,
         state: &ServiceState,
         user_id: &'a str,
     ) -> Result<Vec<WebauthnCredential>, WebauthnError>;
 
+    /// State the authentication state.
     async fn save_user_webauthn_credential_authentication_state<'a>(
         &self,
         state: &ServiceState,
         user_id: &'a str,
-        auth: PasskeyAuthentication,
+        auth: &PasskeyAuthentication,
     ) -> Result<(), WebauthnError>;
 
+    /// Save credential registration state.
     async fn save_user_webauthn_credential_registration_state<'a>(
         &self,
         state: &ServiceState,
         user_id: &'a str,
-        reg_state: PasskeyRegistration,
+        reg_state: &PasskeyRegistration,
     ) -> Result<(), WebauthnError>;
 
     /// Update credential data.
-    async fn update_user_webauthn_credential(
+    async fn update_user_webauthn_credential<'a>(
         &self,
         state: &ServiceState,
-        internal_id: i32,
+        user_id: &'a str,
+        credential_id: &'a str,
         credential: &WebauthnCredential,
     ) -> Result<WebauthnCredential, WebauthnError>;
 }

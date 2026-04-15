@@ -50,7 +50,7 @@ pub enum StoreError {
     #[error(transparent)]
     RaftConfig {
         #[from]
-        source: openraft::ConfigError,
+        source: Box<dyn std::error::Error + Send + Sync + 'static>,
     },
 
     /// Raft empty membership data error.
@@ -167,5 +167,13 @@ pub enum StoreError {
 impl From<StoreError> for std::io::Error {
     fn from(value: StoreError) -> Self {
         std::io::Error::other(value.to_string())
+    }
+}
+
+impl From<openraft::ConfigError> for StoreError {
+    fn from(value: openraft::ConfigError) -> Self {
+        Self::RaftConfig {
+            source: Box::new(value),
+        }
     }
 }

@@ -19,10 +19,7 @@ use validator::Validate;
 
 use openstack_keystone_api_types::error::KeystoneApiError;
 
-use crate::{
-    WebauthnApi,
-    api::types::{CombinedExtensionState, auth::*},
-};
+use crate::api::types::{CombinedExtensionState, auth::*};
 
 /// Start passkey authentication for the user.
 ///
@@ -42,7 +39,8 @@ use crate::{
 #[tracing::instrument(
     name = "api::user_webauthn_credential_authentication_start",
     level = "debug",
-    skip(state)
+    skip(state),
+    err
 )]
 pub async fn start(
     State(state): State<CombinedExtensionState>,
@@ -76,7 +74,7 @@ pub async fn start(
                 .save_user_webauthn_credential_authentication_state(
                     &state.core,
                     &req.passkey.user_id,
-                    auth_state,
+                    &auth_state,
                 )
                 .await?;
             Json(PasskeyAuthenticationStartResponse::from(rcr))

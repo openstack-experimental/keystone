@@ -20,7 +20,7 @@ use openstack_keystone_core::api::KeystoneApiError;
 use openstack_keystone_core::api::auth::Auth;
 use openstack_keystone_core::keystone::ServiceState;
 
-use crate::{WebauthnError, driver::SqlDriver};
+use crate::{WebauthnApi, WebauthnError};
 
 pub mod auth;
 pub mod register;
@@ -29,7 +29,7 @@ pub mod register;
 #[derive()]
 pub struct ExtensionState {
     /// Provider.
-    pub provider: SqlDriver,
+    pub provider: Box<dyn WebauthnApi>,
     /// WebAuthN provider.
     pub webauthn: Webauthn,
 }

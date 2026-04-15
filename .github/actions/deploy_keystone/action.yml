@@ -57,6 +57,7 @@ runs:
         key_repository = $(pwd)/etc/fernet-keys
         [webauthn]
         enabled = true
+        driver = sql
         relying_party_id = local
         relying_party_origin = https://keystone.local
         EOF

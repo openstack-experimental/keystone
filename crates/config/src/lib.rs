@@ -43,28 +43,27 @@ mod token_restriction;
 mod trust;
 mod webauthn;
 
-pub use application_credentials::ApplicationCredentialProvider;
-pub use assignment::AssignmentProvider;
-pub use auth::AuthProvider;
-pub use catalog::CatalogProvider;
-pub use database::DatabaseSection;
-pub use default::DefaultSection;
+pub use application_credentials::*;
+pub use assignment::*;
+pub use auth::*;
+pub use catalog::*;
+pub use database::*;
+pub use default::*;
 pub use distributed_storage::*;
-pub use federation::FederationProvider;
-pub use fernet_token::FernetTokenProvider;
+pub use federation::*;
+pub use fernet_token::*;
 pub use identity::*;
-pub use identity_mapping::IdentityMappingProvider;
-pub use k8s_auth::K8sAuthProvider;
-pub use policy::PolicyProvider;
-pub use resource::ResourceProvider;
-pub use revoke::RevokeProvider;
-pub use role::RoleProvider;
-pub use security_compliance::SecurityComplianceProvider;
-pub use token::TokenProvider;
-pub use token::TokenProviderDriver;
-pub use token_restriction::TokenRestrictionProvider;
-pub use trust::TrustProvider;
-pub use webauthn::WebauthnSection;
+pub use identity_mapping::*;
+pub use k8s_auth::*;
+pub use policy::*;
+pub use resource::*;
+pub use revoke::*;
+pub use role::*;
+pub use security_compliance::*;
+pub use token::*;
+pub use token_restriction::*;
+pub use trust::*;
+pub use webauthn::*;
 
 /// Keystone configuration.
 #[derive(Debug, Default, Deserialize, Clone)]

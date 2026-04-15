@@ -18,8 +18,8 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
-use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
-use chrono::Utc;
+//use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+//use chrono::Utc;
 use tracing::debug;
 use validator::Validate;
 
@@ -28,9 +28,9 @@ use openstack_keystone_core::api::auth::Auth;
 use openstack_keystone_core::identity::IdentityApi;
 
 use crate::{
-    WebauthnApi, WebauthnError,
+    WebauthnError,
     api::types::{CombinedExtensionState, register::*},
-    types::{CredentialType, WebauthnCredential},
+    types::WebauthnCredential,
 };
 
 /// Finish passkey registration for the user.
@@ -52,7 +52,7 @@ use crate::{
     name = "api::user_webauthn_credential_register_finish",
     level = "debug",
     skip(state, req),
-    err(Debug)
+    err
 )]
 pub(super) async fn finish(
     Auth(user_auth): Auth,
@@ -98,22 +98,12 @@ pub(super) async fn finish(
             .finish_passkey_registration(&req.try_into().map_err(WebauthnError::from)?, &s)
         {
             Ok(sk) => {
-                let cred = WebauthnCredential {
-                    counter: 0,
-                    created_at: Utc::now(),
-                    credential_id: URL_SAFE_NO_PAD.encode(sk.cred_id()),
-                    data: sk,
-                    description: credential_description,
-                    internal_id: 0,
-                    last_used_at: None,
-                    r#type: CredentialType::CrossPlatform,
-                    updated_at: None,
-                    user_id: user_id.to_string(),
-                };
+                let cred =
+                    WebauthnCredential::from_passkey(sk, &user_id, credential_description.as_ref());
                 state
                     .extension
                     .provider
-                    .create_user_webauthn_credential(&state.core, cred)
+                    .create_user_webauthn_credential(&state.core, &cred)
                     .await?
             }
             Err(e) => {

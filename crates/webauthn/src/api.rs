@@ -31,7 +31,7 @@ mod register;
 pub mod types;
 
 use crate::api::types::{CombinedExtensionState, ExtensionState};
-use crate::{WebauthnApi, WebauthnError, driver::SqlDriver};
+use crate::{WebauthnApi, WebauthnError, driver::*};
 
 /// OpenApi specification for the user passkey support.
 #[derive(OpenApi)]
@@ -49,11 +49,11 @@ pub fn openapi_router() -> OpenApiRouter<CombinedExtensionState> {
         .nest("/users/{user_id}/passkeys", register::openapi_router())
 }
 
-/// Initialize the extension.
-pub fn init_extension(
+/// Initialize the extension state.
+pub fn init_extension_state(
     main_state: ServiceState,
     cancellation_token: CancellationToken,
-) -> Result<Router, KeystoneError> {
+) -> Result<CombinedExtensionState, KeystoneError> {
     // Url containing the effective domain name
     // MUST include the port number!
     let rp = main_state
@@ -75,8 +75,13 @@ pub fn init_extension(
     // Consume the builder and create our webauthn instance.
     let webauthn = builder.build().map_err(WebauthnError::from)?;
 
+    let driver: Box<dyn WebauthnApi> = match main_state.config.webauthn.driver.as_str() {
+        "sql" => Box::new(SqlDriver::default()),
+        "raft" => Box::new(RaftDriver::default()),
+        other => return Err(WebauthnError::UnsupportedDriver(other.to_string()))?,
+    };
     let extension_state = Arc::new(ExtensionState {
-        provider: SqlDriver::default(),
+        provider: driver,
         webauthn,
     });
 
@@ -85,6 +90,15 @@ pub fn init_extension(
         extension: extension_state,
     };
     spawn(cleanup(cancellation_token, combined_state.clone()));
+    Ok(combined_state)
+}
+
+/// Initialize the extension.
+pub fn init_extension(
+    main_state: ServiceState,
+    cancellation_token: CancellationToken,
+) -> Result<Router, KeystoneError> {
+    let combined_state = init_extension_state(main_state, cancellation_token)?;
     let (router, _openapi) = OpenApiRouter::new()
         .merge(openapi_router())
         .with_state(combined_state)

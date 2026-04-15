@@ -17,12 +17,12 @@ use sea_orm::entity::*;
 
 use openstack_keystone_core::error::DbContextExt;
 
-use crate::driver::model::webauthn_credential;
+use crate::driver::sql::model::webauthn_credential;
 use crate::{WebauthnError, types::WebauthnCredential};
 
 pub async fn create(
     db: &DatabaseConnection,
-    credential: WebauthnCredential,
+    credential: &WebauthnCredential,
 ) -> Result<WebauthnCredential, WebauthnError> {
     webauthn_credential::ActiveModel::try_from(credential)?
         .insert(db)
@@ -59,20 +59,19 @@ mod tests {
             data: passkey.clone(),
             counter: 0,
             description: Some("description".into()),
-            internal_id: 0,
             last_used_at: None,
             r#type: CredentialType::CrossPlatform,
             updated_at: None,
             user_id: "uid".into(),
         };
-        create(&db, cred).await.unwrap();
+        create(&db, &cred).await.unwrap();
 
         // Checking transaction log
         assert_eq!(
             db.into_transaction_log(),
             [Transaction::from_sql_and_values(
                 DatabaseBackend::Postgres,
-                r#"INSERT INTO "webauthn_credential" ("user_id", "credential_id", "description", "passkey", "counter", "type", "created_at") VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING "id", "user_id", "credential_id", "description", "passkey", "counter", "type", "aaguid", "created_at", "last_used_at", "last_updated_at""#,
+                r#"INSERT INTO "webauthn_credential" ("user_id", "credential_id", "description", "passkey", "counter", "type", "created_at") VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING "user_id", "credential_id", "description", "passkey", "counter", "type", "aaguid", "created_at", "last_used_at", "last_updated_at""#,
                 [
                     "uid".into(),
                     URL_SAFE_NO_PAD.encode(passkey.cred_id()).into(),

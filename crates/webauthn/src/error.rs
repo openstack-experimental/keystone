@@ -64,6 +64,18 @@ pub enum WebauthnError {
     #[error("backend driver error: {0}")]
     Driver(String),
 
+    /// Raft storage is not available.
+    #[error("raft storage is not available in the webauthn")]
+    RaftNotAvailable,
+
+    /// Raft storage is not available.
+    #[error("raft storage error in the webauthn provider")]
+    RaftStoreError {
+        /// The source of the error.
+        #[from]
+        source: openstack_keystone_distributed_storage::StoreError,
+    },
+
     /// Relying party configuration is missing.
     #[error("webauthn relying party configuration is missing")]
     RelyingPartyConfigurationUnset,
@@ -79,6 +91,18 @@ pub enum WebauthnError {
     /// Int conversion error.
     #[error(transparent)]
     TryFromIntError(#[from] std::num::TryFromIntError),
+
+    /// Unsupported driver.
+    #[error("unsupported driver `{0}` for the WebauthN provider")]
+    UnsupportedDriver(String),
+
+    /// Non UTF8 data.
+    #[error(transparent)]
+    Utf8 {
+        /// The source of the error.
+        #[from]
+        source: std::string::FromUtf8Error,
+    },
 
     /// WebauthN error.
     #[error("webauthn error: {}", source)]

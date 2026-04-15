@@ -15,9 +15,11 @@ base64.workspace = true
 chrono.workspace = true
 derive_builder.workspace = true
 eyre.workspace = true
+inventory.workspace = true
 openstack-keystone-api-types = { version = "0.1", features = ["openapi", "validate", "conv"], path = "../api-types/" }
 openstack-keystone-core = { version = "0.1", path = "../core", features = ["api"] }
 openstack-keystone-core-types = { version = "0.1", path = "../core-types/" }
+openstack-keystone-distributed-storage = { version = "0.1", path = "../storage/"}
 sea-orm = { workspace = true }
 serde.workspace = true
 serde_json.workspace = true
@@ -32,10 +34,20 @@ validator.workspace = true
 webauthn-rs = { workspace = true, features = ["danger-allow-state-serialisation"] }
 
 [dev-dependencies]
+axum = { workspace = true, features = ["http2", "tokio"] }
 base64urlsafedata.workspace = true
 mockall.workspace = true
+openstack-keystone-config = { version = "0.1", path = "../config" }
 openstack-keystone-core = { version = "0.1", path = "../core", features = ["mock"] }
-sea-orm = { workspace = true, features = ["mock", "sqlx-sqlite" ]}
+openstack-keystone-token-fernet = { version = "0.1", path = "../token-fernet/" }
+reqwest.workspace = true
+reserve-port = "2.4"
+sea-orm = { workspace = true, features = ["mock", "sqlx-sqlite", "sqlx-postgres", "sqlx-mysql", "runtime-tokio" ]}
+serde_json.workspace = true
+tempfile.workspace = true
+tower.workspace = true
+tower-http = { workspace = true, features = ["trace"] }
+tracing.workspace = true
 tracing-test = { workspace = true, features = ["no-env-filter"] }
 url.workspace = true
 webauthn-authenticator-rs = { workspace = true, features = ["softtoken"] }

@@ -20,7 +20,7 @@ use tracing::debug;
 use validator::Validate;
 
 use crate::{
-    WebauthnApi, WebauthnError,
+    WebauthnError,
     api::types::{CombinedExtensionState, auth::*},
 };
 use openstack_keystone_api_types::error::KeystoneApiError;
@@ -51,7 +51,8 @@ use openstack_keystone_core::token::TokenApi;
 #[tracing::instrument(
     name = "api::user_webauthn_credential_login_finish",
     level = "debug",
-    skip(state, req)
+    skip(state, req),
+    err
 )]
 pub async fn finish(
     State(state): State<CombinedExtensionState>,
@@ -113,7 +114,8 @@ pub async fn finish(
                     .provider
                     .update_user_webauthn_credential(
                         &state.core,
-                        credential.internal_id,
+                        &user_id,
+                        &credential.credential_id,
                         &credential,
                     )
                     .await?;

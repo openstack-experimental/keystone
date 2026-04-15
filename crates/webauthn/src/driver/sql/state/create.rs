@@ -20,12 +20,12 @@ use webauthn_rs::prelude::{PasskeyAuthentication, PasskeyRegistration};
 use openstack_keystone_core::error::DbContextExt;
 
 use crate::WebauthnError;
-use crate::driver::model::webauthn_state;
+use crate::driver::sql::model::webauthn_state;
 
 pub async fn create_register<U: AsRef<str>>(
     db: &DatabaseConnection,
     user_id: U,
-    state: PasskeyRegistration,
+    state: &PasskeyRegistration,
 ) -> Result<(), WebauthnError> {
     let now = Local::now().naive_utc();
     let entry = webauthn_state::ActiveModel {
@@ -45,9 +45,10 @@ pub async fn create_register<U: AsRef<str>>(
 pub async fn create_auth<U: AsRef<str>>(
     db: &DatabaseConnection,
     user_id: U,
-    state: PasskeyAuthentication,
+    state: &PasskeyAuthentication,
 ) -> Result<(), WebauthnError> {
     let now = Local::now().naive_utc();
+    tracing::debug!("write {} to db", serde_json::to_string(&state)?.len());
     let entry = webauthn_state::ActiveModel {
         user_id: Set(user_id.as_ref().to_string()),
         state: Set(serde_json::to_string(&state)?),

@@ -26,7 +26,7 @@ use openstack_keystone_core::api::auth::Auth;
 use openstack_keystone_core::identity::IdentityApi;
 
 use crate::{
-    WebauthnApi, WebauthnError,
+    WebauthnError,
     api::types::{CombinedExtensionState, register::*},
 };
 
@@ -53,7 +53,7 @@ use crate::{
     name = "api::user_webauthn_credential_register_start",
     level = "debug",
     skip(state),
-    err(Debug)
+    err
 )]
 pub(super) async fn start(
     Auth(user_auth): Auth,
@@ -103,7 +103,7 @@ pub(super) async fn start(
             state
                 .extension
                 .provider
-                .save_user_webauthn_credential_registration_state(&state.core, &user_id, reg_state)
+                .save_user_webauthn_credential_registration_state(&state.core, &user_id, &reg_state)
                 .await?;
             Json(UserPasskeyRegistrationStartResponse::try_from(ccr).map_err(WebauthnError::from)?)
         }

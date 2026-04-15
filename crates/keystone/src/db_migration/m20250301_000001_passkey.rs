@@ -25,9 +25,8 @@ impl MigrationTrait for Migration {
                 Table::create()
                     .table(WebauthnCredential::Table)
                     .if_not_exists()
-                    .col(pk_auto(WebauthnCredential::Id))
                     .col(string_len(WebauthnCredential::UserId, 64))
-                    .col(string_len(WebauthnCredential::CredentialId, 1024))
+                    .col(string_len(WebauthnCredential::CredentialId, 1024).primary_key())
                     .col(string_len_null(WebauthnCredential::Description, 64))
                     .col(text(WebauthnCredential::Passkey))
                     .col(unsigned(WebauthnCredential::Counter))
@@ -72,7 +71,6 @@ impl MigrationTrait for Migration {
 #[derive(DeriveIden)]
 enum WebauthnCredential {
     Table,
-    Id,
     UserId,
     CredentialId,
     Description,

@@ -17,18 +17,21 @@ use sea_orm::entity::*;
 
 use openstack_keystone_core::error::DbContextExt;
 
-use crate::driver::model::{
+use crate::driver::sql::model::{
     prelude::WebauthnCredential as DbWebauthnCredential,
     webauthn_credential as db_webauthn_credential,
 };
 use crate::{WebauthnCredential, WebauthnError};
 
-pub async fn update(
+pub async fn update<S>(
     db: &DatabaseConnection,
-    internal_id: i32,
+    credential_id: S,
     credential: &WebauthnCredential,
-) -> Result<WebauthnCredential, WebauthnError> {
-    if let Some(current) = DbWebauthnCredential::find_by_id(internal_id)
+) -> Result<WebauthnCredential, WebauthnError>
+where
+    S: AsRef<str>,
+{
+    if let Some(current) = DbWebauthnCredential::find_by_id(credential_id.as_ref())
         .one(db)
         .await
         .context("fetching current webauthn_credential data for update")?
@@ -58,7 +61,9 @@ pub async fn update(
             .context("updating webauthn credential")?
             .try_into()
     } else {
-        Err(WebauthnError::CredentialNotFound(internal_id.to_string()))
+        Err(WebauthnError::CredentialNotFound(
+            credential_id.as_ref().into(),
+        ))
     }
 }
 
@@ -88,7 +93,7 @@ mod tests {
         cred.data = get_fake_passkey();
         cred.counter = 5;
 
-        update(&db, 1, &cred).await.unwrap();
+        update(&db, "1", &cred).await.unwrap();
 
         // Checking transaction log
         assert_eq!(
@@ -96,19 +101,19 @@ mod tests {
             [
                 Transaction::from_sql_and_values(
                     DatabaseBackend::Postgres,
-                    r#"SELECT "webauthn_credential"."id", "webauthn_credential"."user_id", "webauthn_credential"."credential_id", "webauthn_credential"."description", "webauthn_credential"."passkey", "webauthn_credential"."counter", "webauthn_credential"."type", "webauthn_credential"."aaguid", "webauthn_credential"."created_at", "webauthn_credential"."last_used_at", "webauthn_credential"."last_updated_at" FROM "webauthn_credential" WHERE "webauthn_credential"."id" = $1 LIMIT $2"#,
-                    [1i32.into(), 1u64.into()]
+                    r#"SELECT "webauthn_credential"."user_id", "webauthn_credential"."credential_id", "webauthn_credential"."description", "webauthn_credential"."passkey", "webauthn_credential"."counter", "webauthn_credential"."type", "webauthn_credential"."aaguid", "webauthn_credential"."created_at", "webauthn_credential"."last_used_at", "webauthn_credential"."last_updated_at" FROM "webauthn_credential" WHERE "webauthn_credential"."credential_id" = $1 LIMIT $2"#,
+                    ["1".into(), 1u64.into()]
                 ),
                 Transaction::from_sql_and_values(
                     DatabaseBackend::Postgres,
-                    r#"UPDATE "webauthn_credential" SET "description" = $1, "passkey" = $2, "counter" = $3, "last_used_at" = $4, "last_updated_at" = $5 WHERE "webauthn_credential"."id" = $6 RETURNING "id", "user_id", "credential_id", "description", "passkey", "counter", "type", "aaguid", "created_at", "last_used_at", "last_updated_at""#,
+                    r#"UPDATE "webauthn_credential" SET "description" = $1, "passkey" = $2, "counter" = $3, "last_used_at" = $4, "last_updated_at" = $5 WHERE "webauthn_credential"."credential_id" = $6 RETURNING "user_id", "credential_id", "description", "passkey", "counter", "type", "aaguid", "created_at", "last_used_at", "last_updated_at""#,
                     [
                         cred.description.into(),
                         serde_json::to_string(&passkey).unwrap().into(),
                         5.into(),
                         now.naive_utc().into(),
                         now.naive_utc().into(),
-                        cred.internal_id.into()
+                        cred.credential_id.into()
                     ]
                 ),
             ]
@@ -126,15 +131,15 @@ mod tests {
 
         cred.credential_id = "new".into();
 
-        match update(&db, 1, &cred).await {
+        match update(&db, "1", &cred).await {
             Err(WebauthnError::Conflict(_)) => {
                 // Checking transaction log
                 assert_eq!(
                     db.into_transaction_log(),
                     [Transaction::from_sql_and_values(
                         DatabaseBackend::Postgres,
-                        r#"SELECT "webauthn_credential"."id", "webauthn_credential"."user_id", "webauthn_credential"."credential_id", "webauthn_credential"."description", "webauthn_credential"."passkey", "webauthn_credential"."counter", "webauthn_credential"."type", "webauthn_credential"."aaguid", "webauthn_credential"."created_at", "webauthn_credential"."last_used_at", "webauthn_credential"."last_updated_at" FROM "webauthn_credential" WHERE "webauthn_credential"."id" = $1 LIMIT $2"#,
-                        [1i32.into(), 1u64.into()]
+                        r#"SELECT "webauthn_credential"."user_id", "webauthn_credential"."credential_id", "webauthn_credential"."description", "webauthn_credential"."passkey", "webauthn_credential"."counter", "webauthn_credential"."type", "webauthn_credential"."aaguid", "webauthn_credential"."created_at", "webauthn_credential"."last_used_at", "webauthn_credential"."last_updated_at" FROM "webauthn_credential" WHERE "webauthn_credential"."credential_id" = $1 LIMIT $2"#,
+                        ["1".into(), 1u64.into()]
                     ),]
                 );
             }

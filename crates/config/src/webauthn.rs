@@ -18,8 +18,11 @@ use serde::{Deserialize, Serialize};
 use url::Url;
 
 /// WebauthN configuration.
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct WebauthnSection {
+    /// Driver.
+    #[serde(default = "default_raft")]
+    pub driver: String,
     /// Enable WebauthN support.
     #[serde(default)]
     pub enabled: bool,
@@ -47,4 +50,18 @@ pub struct RelyingParty {
     /// The relying party origin url. It must contain the scheme (i.e. `http://localhost`.
     #[serde(rename = "relying_party_origin")]
     pub origin: Url,
+}
+
+impl Default for WebauthnSection {
+    fn default() -> Self {
+        Self {
+            driver: default_raft(),
+            enabled: false,
+            relying_party: None,
+        }
+    }
+}
+
+fn default_raft() -> String {
+    "raft".to_string()
 }

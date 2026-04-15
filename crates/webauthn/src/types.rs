@@ -14,7 +14,8 @@
 
 //! # WebAuthN Extension types
 
-use chrono::{DateTime, Utc};
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+use chrono::{DateTime, SubsecRound, Utc};
 use derive_builder::Builder;
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -46,9 +47,6 @@ pub struct WebauthnCredential {
     #[validate(length(min = 1, max = 64))]
     pub description: Option<String>,
 
-    /// Internal ID of the credential.
-    pub internal_id: i32,
-
     /// Last used date.
     pub last_used_at: Option<DateTime<Utc>>,
 
@@ -61,6 +59,27 @@ pub struct WebauthnCredential {
     /// User ID.
     #[validate(length(min = 1, max = 64))]
     pub user_id: String,
+}
+
+impl WebauthnCredential {
+    pub fn from_passkey<U: Into<String>, D: Into<String>>(
+        value: Passkey,
+        user_id: U,
+        description: Option<D>,
+    ) -> WebauthnCredential {
+        WebauthnCredential {
+            counter: 0,
+            // truncating nanosecs since typical DB (pg) cannot handle it natively.
+            created_at: Utc::now().trunc_subsecs(6),
+            credential_id: URL_SAFE_NO_PAD.encode(value.cred_id()),
+            data: value,
+            description: description.map(Into::into),
+            last_used_at: None,
+            r#type: CredentialType::CrossPlatform,
+            updated_at: None,
+            user_id: user_id.into(),
+        }
+    }
 }
 
 /// WebauthN credential type.

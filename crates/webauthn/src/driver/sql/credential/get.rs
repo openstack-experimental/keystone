@@ -18,7 +18,7 @@ use sea_orm::query::*;
 
 use openstack_keystone_core::error::DbContextExt;
 
-use crate::driver::model::{prelude::WebauthnCredential as DbCred, webauthn_credential};
+use crate::driver::sql::model::{prelude::WebauthnCredential as DbCred, webauthn_credential};
 use crate::{WebauthnCredential, WebauthnError};
 
 pub async fn find<U: AsRef<str>, C: AsRef<str>>(
@@ -56,7 +56,7 @@ mod tests {
             db.into_transaction_log(),
             [Transaction::from_sql_and_values(
                 DatabaseBackend::Postgres,
-                r#"SELECT "webauthn_credential"."id", "webauthn_credential"."user_id", "webauthn_credential"."credential_id", "webauthn_credential"."description", "webauthn_credential"."passkey", "webauthn_credential"."counter", "webauthn_credential"."type", "webauthn_credential"."aaguid", "webauthn_credential"."created_at", "webauthn_credential"."last_used_at", "webauthn_credential"."last_updated_at" FROM "webauthn_credential" WHERE "webauthn_credential"."user_id" = $1 AND "webauthn_credential"."credential_id" = $2 LIMIT $3"#,
+                r#"SELECT "webauthn_credential"."user_id", "webauthn_credential"."credential_id", "webauthn_credential"."description", "webauthn_credential"."passkey", "webauthn_credential"."counter", "webauthn_credential"."type", "webauthn_credential"."aaguid", "webauthn_credential"."created_at", "webauthn_credential"."last_used_at", "webauthn_credential"."last_updated_at" FROM "webauthn_credential" WHERE "webauthn_credential"."user_id" = $1 AND "webauthn_credential"."credential_id" = $2 LIMIT $3"#,
                 ["uid".into(), "cred_id".into(), 1u64.into()]
             ),]
         );

@@ -42,7 +42,7 @@ use crate::types::*;
 /// only be exposed to other trusted Raft cluster nodes, never to external
 /// clients.
 pub struct RaftServiceImpl {
-    /// The local Raft node instance that this service operates on
+    /// The local Raft node instance that this service operates on.
     pub(crate) raft_node: Raft,
 }
 

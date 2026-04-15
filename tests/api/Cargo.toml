@@ -31,7 +31,7 @@ uuid = { workspace = true, features = ["v4"] }
 async-trait.workspace = true
 
 [[test]]
-name = "api"
+name = "integration_api"
 path = "src/api.rs"
 test = false
 

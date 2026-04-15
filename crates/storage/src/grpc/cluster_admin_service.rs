@@ -65,7 +65,7 @@ impl ClusterAdminServiceImpl {
         Ok(self.raft_node.initialize(nodes_map).await?)
     }
 
-    /// Retrieves metrics about the Raft node
+    /// Retrieves metrics about the Raft node.
     pub fn get_metrics(&self) -> Result<RaftMetrics, StoreError> {
         Ok(self.raft_node.metrics().borrow_watched().clone())
     }

@@ -13,7 +13,8 @@ RUN cargo chef prepare --recipe-path recipe.json
 # Stage 3: Build
 FROM base AS builder
 RUN apt update &&\
-    apt install -y openssl libssl-dev libssl3 pkg-config &&\
+    apt install -y openssl libssl-dev libssl3 pkg-config \
+    protobuf-compiler &&\
     update-ca-certificates
 
 COPY --from=planner /app/recipe.json recipe.json
@@ -24,8 +25,8 @@ RUN cargo chef cook --release --recipe-path recipe.json
 COPY . .
 
 # Compile the specific functional test file
-RUN cargo test --test api --no-run && \
-    cp $(find target/debug/deps -name "api-*" -type f -executable) /app/test-api
+RUN cargo test --test integration_api --no-run && \
+    cp $(find target/debug/deps -name "integration_api-*" -type f -executable) /app/test-api
 RUN cargo test --test k8s_auth --no-run && \
     cp $(find target/debug/deps -name "k8s_auth-*" -type f -executable) /app/test-k8s-auth
 RUN cargo test --test keycloak --no-run && \

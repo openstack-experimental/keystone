@@ -244,7 +244,7 @@ impl Storage {
     {
         let key: String = key.into();
         let request = StoreCommand::Set(SetCommand {
-            key: key.into(),
+            key,
             value: rmp_serde::to_vec(&value)?,
             keyspace: keyspace.map(Into::into).unwrap_or("data".into()),
         });

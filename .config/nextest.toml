@@ -15,11 +15,23 @@ command = { command-line = [ "tools/teardown-db.sh" ] }
 # --- POSTGRES PROFILE ---
 [profile.postgres]
 [[profile.postgres.scripts]]
+filter = "binary(api)"
+setup = "setup-pg"
+[[profile.postgres.scripts]]
 filter = "binary(integration)"
+setup = "setup-pg"
+[[profile.postgres.scripts]]
+filter = "binary(provider)"
 setup = "setup-pg"
 
 # --- MYSQL PROFILE ---
 [profile.mysql]
 [[profile.mysql.scripts]]
+filter = "binary(api)"
+setup = "setup-mysql"
+[[profile.mysql.scripts]]
 filter = "binary(integration)"
+setup = "setup-mysql"
+[[profile.mysql.scripts]]
+filter = "binary(provider)"
 setup = "setup-mysql"

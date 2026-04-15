@@ -14,15 +14,16 @@
 
 use sea_orm::entity::*;
 
-use super::super::types::WebauthnCredential;
-use crate::{WebauthnError, driver::model::webauthn_credential};
+use crate::{WebauthnError, driver::sql::model::webauthn_credential, types::WebauthnCredential};
 
 mod create;
+mod delete;
 mod get;
 mod list;
 mod update;
 
 pub use create::create;
+pub use delete::delete;
 pub use get::find;
 pub use list::list;
 pub use update::update;
@@ -36,7 +37,6 @@ impl TryFrom<webauthn_credential::Model> for WebauthnCredential {
             data: serde_json::from_str(&value.passkey)?,
             counter: value.counter.try_into()?,
             description: value.description,
-            internal_id: value.id,
             last_used_at: value.last_used_at.map(|x| x.and_utc()),
             r#type: value.r#type.into(),
             updated_at: value.last_updated_at.map(|x| x.and_utc()),
@@ -50,11 +50,6 @@ impl TryFrom<WebauthnCredential> for webauthn_credential::ActiveModel {
 
     fn try_from(value: WebauthnCredential) -> Result<Self, Self::Error> {
         Ok(Self {
-            id: if value.internal_id == 0 {
-                NotSet
-            } else {
-                Set(value.internal_id)
-            },
             user_id: Set(value.user_id),
             credential_id: Set(value.credential_id),
             description: value.description.map(Set).unwrap_or(NotSet).into(),
@@ -75,6 +70,14 @@ impl TryFrom<WebauthnCredential> for webauthn_credential::ActiveModel {
     }
 }
 
+impl TryFrom<&WebauthnCredential> for webauthn_credential::ActiveModel {
+    type Error = WebauthnError;
+
+    fn try_from(value: &WebauthnCredential) -> Result<Self, Self::Error> {
+        Self::try_from(value.clone())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use base64urlsafedata::HumanBinaryData;
@@ -82,7 +85,7 @@ mod tests {
     use webauthn_rs::prelude::*;
     use webauthn_rs_proto::*;
 
-    use crate::driver::model::webauthn_credential;
+    use crate::driver::sql::model::webauthn_credential;
 
     pub(super) fn get_fake_passkey() -> Passkey {
         Credential {
@@ -126,7 +129,6 @@ mod tests {
 
     pub(super) fn get_mock<S: Into<String>>(id: S) -> webauthn_credential::Model {
         webauthn_credential::Model {
-            id: 1,
             user_id: id.into(),
             credential_id: "cred".into(),
             description: Some("fake".into()),
