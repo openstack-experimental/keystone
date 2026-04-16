@@ -15,9 +15,8 @@
 
 use async_trait::async_trait;
 use clap::{Parser, Subcommand};
-use color_eyre::eyre::OptionExt;
 use color_eyre::{Report, eyre::WrapErr};
-use tonic::transport::{Certificate, Channel, ClientTlsConfig, Identity};
+use tonic::transport::{Certificate, Channel, ClientTlsConfig, Identity, Uri};
 
 use openstack_keystone_config::{Config, DistributedStorageConfiguration};
 use openstack_keystone_distributed_storage::protobuf::raft::cluster_admin_service_client::ClusterAdminServiceClient;
@@ -73,36 +72,27 @@ enum StorageCommands {
 
 pub async fn get_grpc_client_tls_config(
     cfg: &DistributedStorageConfiguration,
-) -> Result<Option<ClientTlsConfig>, Report> {
-    if !cfg.disable_tls {
-        let tls_config = cfg
-            .tls_configuration
-            .as_ref()
-            .ok_or_eyre("mTLS configuration missing")?;
-        let identity = Identity::from_pem(
-            std::fs::read_to_string(&tls_config.tls_cert_file)
-                .wrap_err("reading client cert file")?,
-            std::fs::read_to_string(&tls_config.tls_key_file)
-                .wrap_err("reading client cert key file")?,
-        );
-        let mut config = ClientTlsConfig::new().identity(identity);
-        if let Some(ca) = &tls_config.tls_client_ca_file {
-            // ca for validation of the "server"
-            config = config.ca_certificate(Certificate::from_pem(std::fs::read_to_string(&ca)?));
-        }
-        return Ok(Some(config));
+) -> Result<ClientTlsConfig, Report> {
+    let identity = Identity::from_pem(
+        std::fs::read_to_string(&cfg.tls_configuration.tls_cert_file)
+            .wrap_err("reading client cert file")?,
+        std::fs::read_to_string(&cfg.tls_configuration.tls_key_file)
+            .wrap_err("reading client cert key file")?,
+    );
+    let mut config = ClientTlsConfig::new().identity(identity);
+    if let Some(ca) = &cfg.tls_configuration.tls_client_ca_file {
+        // ca for validation of the "server"
+        config = config.ca_certificate(Certificate::from_pem(std::fs::read_to_string(&ca)?));
     }
-    Ok(None)
+    return Ok(config);
 }
 
 async fn get_grpc_client(
     cfg: &DistributedStorageConfiguration,
+    addr: Option<Uri>,
 ) -> Result<ClusterAdminServiceClient<Channel>, Report> {
-    let channel = if let Some(tls_config) = get_grpc_client_tls_config(cfg).await? {
-        Channel::builder(format!("https://{}", cfg.cluster_addr).parse()?).tls_config(tls_config)?
-    } else {
-        Channel::builder(format!("http://{}", cfg.cluster_addr).parse()?)
-    };
-    let client = ClusterAdminServiceClient::new(channel.connect().await?);
+    let ep = Channel::builder(addr.unwrap_or(cfg.cluster_addr.clone()))
+        .tls_config(get_grpc_client_tls_config(cfg).await?)?;
+    let client = ClusterAdminServiceClient::new(ep.connect().await?);
     Ok(client)
 }

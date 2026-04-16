@@ -55,6 +55,9 @@ manifests:
   rawYaml:
     - tools/k8s/tests/k8s-auth-test-sa.yaml
     - tools/k8s/tests/selenium.yaml
+    - tools/k8s/tests/cluster-issuer.yaml
+    - tools/k8s/tests/keystone-ca.yaml
+    - tools/k8s/tests/keystone-peer-cert.yaml
 deploy:
   statusCheck: true
   statusCheckDeadlineSeconds: 300
@@ -74,6 +77,14 @@ deploy:
         remoteChart: cloudnative-pg
         createNamespace: true
         namespace: cnpg
+      - name: cert-manager
+        repo: https://charts.jetstack.io
+        remoteChart: cert-manager
+        version: 1.20.2
+        createNamespace: true
+        namespace: cert-manager
+        setValues:
+          crds.enabled: true
 verify:
   - name: "api-test"
     container:

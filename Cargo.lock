@@ -2278,6 +2278,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "http-serde"
+version = "2.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0f056c8559e3757392c8d091e796416e4649d8e49e88b8d76df6c002f05027fd"
+dependencies = [
+ "http",
+ "serde",
+]
+
+[[package]]
 name = "httparse"
 version = "1.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3605,10 +3615,14 @@ dependencies = [
  "chrono",
  "config",
  "eyre",
+ "http",
+ "http-serde",
  "regex",
  "secrecy",
  "serde",
  "serde_json",
+ "temp-env",
+ "tempfile",
  "url",
  "url-macro",
 ]
@@ -3887,6 +3901,7 @@ dependencies = [
  "openstack-keystone-core-types",
  "openstack-keystone-distributed-storage",
  "openstack-keystone-token-fernet",
+ "rcgen",
  "reqwest 0.13.2",
  "reserve-port",
  "sea-orm",
@@ -6186,6 +6201,15 @@ name = "tap"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "55937e1799185b12863d447f42597ed69d9928686b8d88a1df17376a097d8369"
+
+[[package]]
+name = "temp-env"
+version = "0.3.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "96374855068f47402c3121c6eed88d29cb1de8f3ab27090e273e420bdabcf050"
+dependencies = [
+ "parking_lot",
+]
 
 [[package]]
 name = "tempfile"

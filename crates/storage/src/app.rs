@@ -104,7 +104,7 @@ pub struct Storage {
     /// Raft cluster nodes connection pool.
     connection_pool: DashMap<u64, Channel>,
     /// Tls client config watcher.
-    tls_watcher: watch::Receiver<Option<ClientTlsConfig>>,
+    tls_watcher: watch::Receiver<ClientTlsConfig>,
     /// Raft instance.
     pub raft: Raft,
     /// The state machine store for direct reads.
@@ -292,11 +292,8 @@ impl Storage {
         }
 
         // 2. Otherwise, build it (applying Optional TLS)
-        let endpoint = if let Some(tls) = &*self.tls_watcher.borrow() {
-            Endpoint::from_shared(format!("https://{}", addr))?.tls_config(tls.clone())?
-        } else {
-            Endpoint::from_shared(format!("http://{}", addr))?
-        };
+        let endpoint = Endpoint::from_shared(format!("https://{}", addr))?
+            .tls_config(self.tls_watcher.borrow().clone())?;
 
         let channel = endpoint.connect_lazy();
 

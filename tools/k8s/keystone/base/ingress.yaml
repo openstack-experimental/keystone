@@ -2,6 +2,8 @@ apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: "keystone"
+  annotations:
+    cert-manager.io/cluster-issuer: nameOfClusterIssuer
   labels:
     app.kubernetes.io/name: "keystone"
     app.kubernetes.io/component: "keystone"
@@ -38,6 +40,11 @@ spec:
                   number: 5000
             path: "/v3"
             pathType: "Prefix"
+  tls:
+    - hosts:
+        - "keystone.local"
+      secretName: api-tls
+
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress

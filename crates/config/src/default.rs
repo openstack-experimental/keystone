@@ -32,9 +32,6 @@ pub struct DefaultSection {
     /// Log output to standard error.
     #[serde(default)]
     pub use_stderr: bool,
-
-    #[serde(default = "default_port")]
-    pub port: u16,
 }
 
 impl Default for DefaultSection {
@@ -44,11 +41,6 @@ impl Default for DefaultSection {
             log_dir: None,
             public_endpoint: None,
             use_stderr: false,
-            port: default_port(),
         }
     }
-}
-
-fn default_port() -> u16 {
-    8080
 }

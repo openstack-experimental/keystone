@@ -45,5 +45,6 @@ RUN apt update && apt install -y ca-certificates libssl3 && update-ca-certificat
 # Copy application binary from builder image
 COPY --from=builder /app/target/release/keystone /usr/local/bin
 COPY --from=builder /app/target/release/keystone-db /usr/local/bin
+COPY --from=builder /app/target/release/keystone-manage /usr/local/bin
 
 CMD ["/usr/local/bin/keystone"]

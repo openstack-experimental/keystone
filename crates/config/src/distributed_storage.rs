@@ -14,31 +14,37 @@
 use serde::Deserialize;
 use std::path::PathBuf;
 
+use http::Uri;
+
 /// Raft cluster configuration.
-#[derive(Debug, Default, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct DistributedStorageConfiguration {
     /// Cluster address.
-    pub cluster_addr: String,
+    #[serde(with = "http_serde::uri")]
+    pub cluster_addr: Uri,
 
     /// Node id.
     pub node_id: u64,
 
-    // /// List of cluster nodes.
-    // #[serde(default)]
-    // pub nodes: Vec<ClusterNode>,
     /// Path to the storage.
     pub path: PathBuf,
 
-    /// Disable the mTLS for cluster nodes communication.
-    #[serde(default)]
-    pub disable_tls: bool,
-
-    /// TLS configuration.
+    /// TLS configuration for the Raft cluster communication.
     #[serde(flatten)]
-    pub tls_configuration: Option<TlsConfiguration>,
+    pub tls_configuration: TlsConfiguration,
 }
 
-#[derive(Debug, Default, Deserialize, Clone)]
+/// Raft cluster node.
+#[derive(Debug, Deserialize, Clone)]
+pub struct ClusterNode {
+    /// Node address.
+    pub addr: String,
+    /// Node ID.
+    pub id: u64,
+}
+
+/// mTLS configuration for the Raft cluster.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
 pub struct TlsConfiguration {
     /// Path to the CA certificate to validate connections from clients or
     /// peers.
@@ -54,31 +60,87 @@ pub struct TlsConfiguration {
     pub tls_key_file: PathBuf,
 }
 
-/// Raft cluster node.
-#[derive(Debug, Deserialize, Clone)]
-pub struct ClusterNode {
-    /// Node address.
-    pub addr: String,
-    /// Node ID.
-    pub id: u64,
-}
-
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::io::Write;
+
+    use config::{Config, File, FileFormat};
     use serde_json::json;
+    use tempfile::NamedTempFile;
+
+    use super::*;
 
     #[test]
     fn test_deser() {
-        let cfg: DistributedStorageConfiguration = serde_json::from_value(json!({
-            "cluster_addr": "1.2.3.4:5678",
+        let _cfg: DistributedStorageConfiguration = serde_json::from_value(json!({
+            "cluster_addr": "http://1.2.3.4:5678",
             "node_id": 1,
             "path": "/tmp",
             "tls_cert_file": "/tmp/tls.cert",
             "tls_key_file": "/tmp/tls.key"
         }))
         .unwrap();
-        assert!(!cfg.disable_tls);
-        assert!(cfg.tls_configuration.is_some());
+    }
+
+    #[test]
+    fn test_deser_ini() {
+        let c = Config::builder()
+            .add_source(File::from_str(
+                r#"
+cluster_addr = https://localhost:8310
+node_id = 1
+path = /keystone/storage
+tls_key_file = /foo
+tls_cert_file = /bar
+tls_client_ca_file = /baz
+"#,
+                FileFormat::Ini,
+            ))
+            .build()
+            .unwrap();
+        let cfg: DistributedStorageConfiguration = c.try_deserialize().unwrap();
+        assert_eq!("https://localhost:8310/", cfg.cluster_addr.to_string());
+        assert_eq!(1, cfg.node_id);
+        assert_eq!("/keystone/storage", cfg.path.to_str().unwrap());
+        assert_eq!(
+            TlsConfiguration {
+                tls_key_file: "/foo".into(),
+                tls_cert_file: "/bar".into(),
+                tls_client_ca_file: Some("/baz".into())
+            },
+            cfg.tls_configuration
+        );
+    }
+
+    #[test]
+    fn test_env() {
+        temp_env::with_vars(
+            [("OS_DISTRIBUTED_STORAGE__CLUSTER_ADDR", Some("http://test/"))],
+            || {
+                let mut cfg_file = NamedTempFile::new().unwrap();
+                write!(
+                    cfg_file,
+                    r#"
+[auth]
+methods = []
+[database]
+connection = "foo"
+[distributed_storage]
+node_id = 5
+path = /foo
+            "#
+                )
+                .unwrap();
+
+                let cfg = crate::Config::new(cfg_file.path().to_path_buf()).unwrap();
+                assert_eq!(
+                    "http://test/",
+                    cfg.distributed_storage
+                        .expect("must be present")
+                        .cluster_addr
+                        .to_string()
+                );
+            },
+        );
     }
 }

@@ -13,10 +13,17 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #![allow(dead_code)]
+use std::io::Write;
+use std::net::IpAddr;
+use std::path::Path;
 use std::sync::Arc;
 use std::time;
 
 use eyre::{Result, WrapErr};
+use rcgen::{
+    BasicConstraints, CertificateParams, DistinguishedName, DnType, ExtendedKeyUsagePurpose, IsCa,
+    Issuer, KeyPair, KeyUsagePurpose, SanType,
+};
 use sea_orm::{
     ConnectOptions, ConnectionTrait, Database, DatabaseConnection, DbConn, schema::Schema,
 };
@@ -26,7 +33,9 @@ use url::Url;
 use uuid::Uuid;
 use webauthn_authenticator_rs::{AuthenticatorBackend, WebauthnAuthenticator};
 
-use openstack_keystone_config::{Config, DistributedStorageConfiguration, RelyingParty};
+use openstack_keystone_config::{
+    Config, DistributedStorageConfiguration, RelyingParty, TlsConfiguration,
+};
 use openstack_keystone_core::SqlDriverRegistration;
 use openstack_keystone_core::keystone::Service;
 use openstack_keystone_core::policy::{MockPolicy, PolicyEvaluationResult};
@@ -135,12 +144,12 @@ pub async fn get_state(
     });
     cfg.auth.methods = vec!["application_credential".into(), "password".into()];
     if std::env::var("DATABASE_URL").is_err() {
+        let tls_configuration = make_certificates(&tmp_db_dir)?;
         cfg.distributed_storage = Some(DistributedStorageConfiguration {
-            cluster_addr: "127.0.0.1:12345".into(),
+            cluster_addr: "http://127.0.0.1:12345".parse()?,
             node_id: 1,
             path: tmp_db_dir.path().to_path_buf(),
-            disable_tls: true,
-            tls_configuration: None,
+            tls_configuration,
         });
     }
     let mut policy_enforcer_mock = MockPolicy::default();
@@ -212,4 +221,52 @@ pub fn generate_webauthn_credential<T: AuthenticatorBackend>(
         Some("descr"),
     );
     Ok(cred)
+}
+
+fn make_certificates<P: AsRef<Path>>(certs_path: P) -> Result<TlsConfiguration> {
+    // 1. Generate CA private key and certificate
+    let mut ca_params = CertificateParams::default();
+    ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+    ca_params.key_usages = vec![
+        KeyUsagePurpose::KeyCertSign,
+        KeyUsagePurpose::DigitalSignature,
+        KeyUsagePurpose::CrlSign,
+    ];
+
+    let mut ca_dn = DistinguishedName::new();
+    ca_dn.push(DnType::CommonName, "CA");
+    ca_params.distinguished_name = ca_dn;
+
+    let ca_key = KeyPair::generate()?;
+    let ca_cert = ca_params.self_signed(&ca_key)?;
+    let ca = Issuer::new(ca_params, ca_key);
+    let ca_cert_file_name = certs_path.as_ref().join("ca.crt");
+    let mut ca_cert_file = std::fs::File::create(&ca_cert_file_name)?;
+    ca_cert_file.write_all(ca_cert.pem().as_bytes())?;
+
+    // 2. Generate peer certificate (signed by CA)
+    let mut peer_cert_params = CertificateParams::default();
+
+    let client_ip: IpAddr = "127.0.0.1".parse()?;
+    peer_cert_params.subject_alt_names = vec![SanType::IpAddress(client_ip)];
+    peer_cert_params.key_usages = vec![KeyUsagePurpose::DigitalSignature];
+    peer_cert_params.extended_key_usages = vec![
+        ExtendedKeyUsagePurpose::ServerAuth,
+        ExtendedKeyUsagePurpose::ClientAuth,
+    ];
+    let peer_key = KeyPair::generate()?;
+    let peer_cert = peer_cert_params.signed_by(&peer_key, &ca)?;
+
+    let peer_cert_file_name = certs_path.as_ref().join("peer.crt");
+    let mut peer_cert_file = std::fs::File::create(&peer_cert_file_name)?;
+    peer_cert_file.write_all(peer_cert.pem().as_bytes())?;
+    let peer_key_file_name = certs_path.as_ref().join("peer.key");
+    let mut peer_key_file = std::fs::File::create(&peer_key_file_name)?;
+    peer_key_file.write_all(peer_key.serialize_pem().as_bytes())?;
+
+    Ok(TlsConfiguration {
+        tls_client_ca_file: Some(ca_cert_file_name.to_path_buf()),
+        tls_cert_file: peer_cert_file_name.to_path_buf(),
+        tls_key_file: peer_key_file_name.to_path_buf(),
+    })
 }

@@ -27,3 +27,20 @@ spec:
       targetPort: 8080
   selector:
     app.kubernetes.io/name: keystone-rs
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app.kubernetes.io/name: keystone-rs-raft
+  name: keystone-rs-internal
+spec:
+  clusterIP: None
+  ports:
+    - name: raft
+      port: 8300
+      protocol: TCP
+      targetPort: 8300
+  selector:
+    app.kubernetes.io/name: keystone-rs

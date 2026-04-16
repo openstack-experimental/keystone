@@ -8,6 +8,8 @@ images:
     newTag: main
   - name: opa
     newName: keystone-opa
+  - name: busybox
+    newTag: 1.36.1
 secretGenerator:
   - name: fernet-keys
     # NOTE: Secret keys cannot be digits,so prefix them with letter
@@ -18,7 +20,7 @@ secretGenerator:
 resources:
   - bootstrap-job.yaml
   - deployment-py.yaml
-  - deployment-rs.yaml
+  - statefulset-rs.yaml
   - db.yaml
   - service.yaml
   - ingress.yaml

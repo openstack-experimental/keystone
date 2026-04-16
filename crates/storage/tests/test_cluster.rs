@@ -14,7 +14,7 @@
 #![allow(clippy::uninlined_format_args)]
 use std::collections::BTreeMap;
 use std::io::Write;
-use std::net::IpAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::thread;
@@ -29,9 +29,9 @@ use rcgen::{
     Issuer, KeyPair, KeyUsagePurpose, SanType,
 };
 use tempfile::TempDir;
-use tonic::transport::{Channel, ClientTlsConfig, Identity, ServerTlsConfig};
+use tonic::transport::{Channel, ClientTlsConfig, Identity, ServerTlsConfig, Uri};
 
-use openstack_keystone_config::{DistributedStorageConfiguration, TlsConfiguration};
+use openstack_keystone_config::{Config, DistributedStorageConfiguration, TlsConfiguration};
 use openstack_keystone_distributed_storage::TypeConfig;
 use openstack_keystone_distributed_storage::app::{Storage, get_app_server, init_storage};
 use openstack_keystone_distributed_storage::network::load_tls_client_config;
@@ -48,16 +48,20 @@ fn test_cluster() {
 
 struct InstanceHolder {
     pub node_id: u64,
-    pub config: DistributedStorageConfiguration,
+    pub config: Config,
     storage_dir: TempDir,
     pub storage: Storage,
 }
 
 impl InstanceHolder {
-    async fn new(node_id: u64, tls_config: Option<TlsConfiguration>) -> Result<Self> {
+    async fn new(node_id: u64, tls_config: TlsConfiguration) -> Result<Self> {
         let storage_dir = tempfile::TempDir::new().unwrap();
-        let config = get_config(node_id, storage_dir.path().to_path_buf(), tls_config);
-        let storage = init_storage(&config).await?;
+        let addr = get_addr(node_id);
+        let ds_config = get_ds_config(node_id, storage_dir.path().to_path_buf(), tls_config);
+        let storage = init_storage(&ds_config).await?;
+        let mut config = Config::default();
+        config.listener.cluster_address = Some(addr);
+        config.distributed_storage = Some(ds_config);
         Ok(Self {
             node_id,
             config,
@@ -72,8 +76,8 @@ async fn test_cluster_inner() -> Result<()> {
     rustls::crypto::CryptoProvider::install_default(provider).unwrap();
 
     let certs_dir = TempDir::new()?;
-    let tls_configuration = Some(make_certificates(&certs_dir)?);
-    let tls_client_config = load_tls_client_config(false, tls_configuration.as_ref())?;
+    let tls_configuration = make_certificates(&certs_dir)?;
+    let tls_client_config = load_tls_client_config(&tls_configuration)?;
 
     // --- Start 3 raft node in 3 threads.
     let instance1 = Arc::new(InstanceHolder::new(1, tls_configuration.clone()).await?);
@@ -105,7 +109,17 @@ async fn test_cluster_inner() -> Result<()> {
     // Wait for server to start up.
     TypeConfig::sleep(Duration::from_millis(200)).await;
 
-    let mut admin_client1 = new_admin_client(get_addr(1), &tls_client_config).await?;
+    let mut admin_client1 = new_admin_client(
+        instance1
+            .config
+            .distributed_storage
+            .as_ref()
+            .unwrap()
+            .cluster_addr
+            .clone(),
+        &tls_client_config,
+    )
+    .await?;
 
     // --- Initialize the target node as a cluster of only one node.
     //     After init(), the single node cluster will be fully functional.
@@ -261,30 +275,26 @@ async fn test_cluster_inner() -> Result<()> {
 }
 
 async fn new_admin_client(
-    addr: String,
-    client_tls_config: &Option<ClientTlsConfig>,
+    addr: Uri,
+    client_tls_config: &ClientTlsConfig,
 ) -> Result<ClusterAdminServiceClient<Channel>> {
-    let channel = if let Some(tls_config) = client_tls_config {
-        Channel::builder(format!("https://{}", addr).parse()?).tls_config(tls_config.clone())?
-    } else {
-        Channel::builder(format!("http://{}", addr).parse()?)
-    };
-    let client = ClusterAdminServiceClient::new(channel.connect().await?);
+    let endpoint = Channel::builder(addr).tls_config(client_tls_config.clone())?;
+    let client = ClusterAdminServiceClient::new(endpoint.connect().await?);
     Ok(client)
 }
 
 fn new_node(node_id: u64) -> pb::raft::Node {
     pb::raft::Node {
         node_id,
-        rpc_addr: get_addr(node_id),
+        rpc_addr: get_addr(node_id).to_string(),
     }
 }
 
-fn get_addr(node_id: u64) -> String {
+fn get_addr(node_id: u64) -> SocketAddr {
     match node_id {
-        1 => "127.0.0.1:21001".to_string(),
-        2 => "127.0.0.1:21002".to_string(),
-        3 => "127.0.0.1:21003".to_string(),
+        1 => "127.0.0.1:21001".parse().unwrap(),
+        2 => "127.0.0.1:21002".parse().unwrap(),
+        3 => "127.0.0.1:21003".parse().unwrap(),
         _ => {
             unreachable!("node_id must be 1, 2, or 3");
         }
@@ -292,36 +302,36 @@ fn get_addr(node_id: u64) -> String {
 }
 
 pub async fn start_raft_app(
-    config: &DistributedStorageConfiguration,
+    config: &Config,
     storage: &Storage,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let http_addr = config.cluster_addr.clone();
-    let node_id = config.node_id;
-    //let storage = init_storage(config).await?;
+    let http_addr = config.listener.get_cluster_address();
+    let ds_config = config
+        .distributed_storage
+        .as_ref()
+        .expect("ds config must be present");
+    let node_id = ds_config.node_id;
 
     let mut server = tonic::transport::Server::builder();
-    if !config.disable_tls
-        && let Some(tls_config) = &config.tls_configuration
-    {
-        let ca = tonic::transport::Certificate::from_pem(std::fs::read_to_string(
-            &tls_config
-                .tls_client_ca_file
-                .as_ref()
-                .expect("ca cert must be present"),
-        )?);
-        let identity = Identity::from_pem(
-            std::fs::read_to_string(&tls_config.tls_cert_file)
-                .wrap_err("reading server cert file")?,
-            std::fs::read_to_string(&tls_config.tls_key_file)
-                .wrap_err("reading server cert key file")?,
-        );
-        let tls_config = ServerTlsConfig::new().client_ca_root(ca).identity(identity);
-        server = server.tls_config(tls_config)?;
-    }
+    let ca = tonic::transport::Certificate::from_pem(std::fs::read_to_string(
+        &ds_config
+            .tls_configuration
+            .tls_client_ca_file
+            .as_ref()
+            .expect("ca cert must be present"),
+    )?);
+    let identity = Identity::from_pem(
+        std::fs::read_to_string(&ds_config.tls_configuration.tls_cert_file)
+            .wrap_err("reading server cert file")?,
+        std::fs::read_to_string(&ds_config.tls_configuration.tls_key_file)
+            .wrap_err("reading server cert key file")?,
+    );
+    let tls_config = ServerTlsConfig::new().client_ca_root(ca).identity(identity);
+    server = server.tls_config(tls_config)?;
 
     let server_future = server
         .add_routes(get_app_server(&storage).await?)
-        .serve(http_addr.parse()?);
+        .serve(http_addr);
 
     println!("Node {node_id} starting server at {http_addr}");
     server_future.await?;
@@ -377,16 +387,15 @@ fn make_certificates<P: AsRef<Path>>(certs_path: P) -> Result<TlsConfiguration> 
     })
 }
 
-fn get_config(
+fn get_ds_config(
     node_id: u64,
     db_path: PathBuf,
-    tls_config: Option<TlsConfiguration>,
+    tls_config: TlsConfiguration,
 ) -> DistributedStorageConfiguration {
     DistributedStorageConfiguration {
-        cluster_addr: get_addr(node_id),
+        cluster_addr: format!("https://{}", get_addr(node_id)).parse().unwrap(),
         node_id: node_id,
         path: db_path,
-        disable_tls: tls_config.is_none(),
         tls_configuration: tls_config.clone(),
     }
 }

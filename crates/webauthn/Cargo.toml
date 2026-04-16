@@ -40,6 +40,7 @@ mockall.workspace = true
 openstack-keystone-config = { version = "0.1", path = "../config" }
 openstack-keystone-core = { version = "0.1", path = "../core", features = ["mock"] }
 openstack-keystone-token-fernet = { version = "0.1", path = "../token-fernet/" }
+rcgen.workspace = true
 reqwest.workspace = true
 reserve-port = "2.4"
 sea-orm = { workspace = true, features = ["mock", "sqlx-sqlite", "sqlx-postgres", "sqlx-mysql", "runtime-tokio" ]}

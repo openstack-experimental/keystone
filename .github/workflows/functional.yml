@@ -420,7 +420,7 @@ jobs:
         run: |
           # This ensures all pods in the namespace can pull from GHCR 
           # without you needing to edit every deployment.yaml
-          kubectl patch serviceaccount default -p '{"imagePullSecrets": [{"name": "ghcr-pull-secret"}]}'
+          kubectl patch serviceaccount default --namespace default -p '{"imagePullSecrets": [{"name": "ghcr-pull-secret"}]}'
 
       - name: Deploy the development stack
         env:

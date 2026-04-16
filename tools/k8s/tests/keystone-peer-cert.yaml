@@ -1,0 +1,28 @@
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: keystone-peer-tls
+  labels:
+    app.kubernetes.io/name: keystone-peer-certificate
+    app.kubernetes.io/part-of: keystone
+    app.kubernetes.io/component: keystone-peer-certificate
+spec:
+  privateKey:
+    encoding: PKCS8
+  secretName: keystone-peer-tls
+  commonName: client
+  dnsNames:
+    - keystone-rs-0.keystone-rs-internal.default.svc.cluster.local
+    - keystone-rs-1.keystone-rs-internal.default.svc.cluster.local
+    - keystone-rs-2.keystone-rs-internal.default.svc.cluster.local
+    - keystone-rs-internal
+    - localhost
+  usages:
+    - digital signature
+    - key encipherment
+    - server auth
+    - client auth
+  issuerRef:
+    name: ca-issuer
+    kind: Issuer
