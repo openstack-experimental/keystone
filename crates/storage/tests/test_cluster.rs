@@ -37,6 +37,7 @@ use openstack_keystone_distributed_storage::app::{Storage, get_app_server, init_
 use openstack_keystone_distributed_storage::network::load_tls_client_config;
 use openstack_keystone_distributed_storage::protobuf as pb;
 use openstack_keystone_distributed_storage::protobuf::raft::cluster_admin_service_client::ClusterAdminServiceClient;
+use openstack_keystone_distributed_storage::store_command::*;
 
 /// Set up a cluster of 3 nodes.
 /// Write to it and read from it.
@@ -46,6 +47,7 @@ fn test_cluster() {
     TypeConfig::run(test_cluster_inner()).unwrap();
 }
 
+#[allow(dead_code)]
 struct InstanceHolder {
     pub node_id: u64,
     pub config: Config,
@@ -246,6 +248,38 @@ async fn test_cluster_inner() -> Result<()> {
             assert_eq!(Some("bar1".to_string()), got);
         }
     }
+
+    println!("=== Transaction test");
+
+    let mutations = vec![
+        Mutation::set("new_foo", "new_val", None::<&str>)?,
+        Mutation::set("new_foo2", "new_val2", None::<&str>)?,
+        Mutation::remove("foo1", Some("another_keyspace"))?,
+    ];
+    instance1.storage.transaction(mutations).await?;
+    assert_eq!(
+        "new_val",
+        instance1
+            .storage
+            .get_by_key::<String, &str, &str>("new_foo", None)
+            .await?
+            .expect("data should be there")
+    );
+    assert_eq!(
+        "new_val2",
+        instance1
+            .storage
+            .get_by_key::<String, &str, &str>("new_foo2", None)
+            .await?
+            .expect("data should be there")
+    );
+    assert!(
+        instance1
+            .storage
+            .get_by_key::<String, &str, &str>("foo1", Some("another_keyspace"))
+            .await?
+            .is_none()
+    );
 
     println!("=== Remove node 1,2 by change-membership to {{3}}");
     {

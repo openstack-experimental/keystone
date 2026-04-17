@@ -24,7 +24,6 @@ use tonic::transport::{Identity, ServerTlsConfig};
 use openstack_keystone_config::{Config, DistributedStorageConfiguration, TlsConfiguration};
 use openstack_keystone_distributed_storage::TypeConfig;
 use openstack_keystone_distributed_storage::app::{Storage, get_app_server, init_storage};
-use openstack_keystone_distributed_storage::network::load_tls_client_config;
 use openstack_keystone_distributed_storage::protobuf as pb;
 use openstack_keystone_distributed_storage::store_command::*;
 
@@ -227,15 +226,12 @@ async fn test_remove(instances: &Vec<Arc<InstanceHolder>>) {
 }
 
 fn bench_command_serde(c: &mut Criterion) {
-    let delete_cmd = StoreCommand::Delete(DeleteCommand {
-        key: "foo".into(),
-        keyspace: "bar".into(),
-    });
-    let set_cmd = StoreCommand::Set(SetCommand {
+    let delete_cmd = StoreCommand::Transaction(vec![Mutation::remove("foo", Some("bar")).unwrap()]);
+    let set_cmd = StoreCommand::Transaction(vec![Mutation::Set {
         key: "foo".into(),
         keyspace: "bar".into(),
         value: "value".as_bytes().to_vec(),
-    });
+    }]);
     let delete_packed = delete_cmd.pack().unwrap();
     let set_packed = set_cmd.pack().unwrap();
     let mut group = c.benchmark_group("Command_Serde");

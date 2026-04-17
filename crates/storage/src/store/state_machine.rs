@@ -88,6 +88,7 @@ impl FjallStateMachine {
         &self.db
     }
 
+    /// Get the reference to the Flall `keyspace` by name.
     pub fn keyspace<S: AsRef<str>>(&self, name: S) -> Result<Keyspace, StoreError> {
         Ok(self
             .db
@@ -353,22 +354,31 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
             let response = if let Some(store_req) = entry.app_data {
                 // Unpack the payload and apply the command
                 match StoreCommand::unpack(&store_req)? {
-                    StoreCommand::Delete(cmd) => {
-                        let ks = &self
-                            .db
-                            .keyspace(&cmd.keyspace, KeyspaceCreateOptions::default)
-                            .map_err(|e| io::Error::other(e.to_string()))?;
-                        batch.remove(ks, cmd.key.as_bytes());
+                    StoreCommand::Transaction(mutations) => {
+                        for mutation in mutations {
+                            match mutation {
+                                Mutation::Remove { key, keyspace } => {
+                                    let ks = &self
+                                        .db
+                                        .keyspace(&keyspace, KeyspaceCreateOptions::default)
+                                        .map_err(|e| io::Error::other(e.to_string()))?;
+                                    batch.remove(ks, key);
+                                }
+                                Mutation::Set {
+                                    key,
+                                    keyspace,
+                                    value,
+                                } => {
+                                    let ks = &self
+                                        .db
+                                        .keyspace(&keyspace, KeyspaceCreateOptions::default)
+                                        .map_err(|e| io::Error::other(e.to_string()))?;
+                                    // TODO: at REST encryption would come here
+                                    batch.insert(ks, key, value);
+                                }
+                            }
+                        }
                         None
-                    }
-                    StoreCommand::Set(cmd) => {
-                        let ks = &self
-                            .db
-                            .keyspace(&cmd.keyspace, KeyspaceCreateOptions::default)
-                            .map_err(|e| io::Error::other(e.to_string()))?;
-                        // TODO: at REST encryption would come here
-                        batch.insert(ks, cmd.key.as_bytes(), cmd.value.clone());
-                        Some(cmd.value)
                     }
                 }
             } else if let Some(mem) = entry.membership {
