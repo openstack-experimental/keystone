@@ -112,6 +112,35 @@ pub struct Storage {
 }
 
 impl Storage {
+    /// Mutation transaction
+    ///
+    /// # Arguments
+    /// * `mutations` - List of mutations that must be applied as a single transaction.
+    ///
+    /// # Returns
+    /// * `Ok(Response)` - Success response after the value is deleted
+    /// * `Err(Status)` - Error status if the set operation fails
+    pub async fn transaction(&self, mutations: Vec<Mutation>) -> Result<(), StoreError> {
+        let request = StoreCommand::Transaction(mutations);
+        let payload = crate::pb::api::CommandRequest::try_from(request)?;
+        match self.raft.client_write(payload.clone()).await {
+            Ok(_) => {}
+            Err(RaftError::APIError(ClientWriteError::ForwardToLeader(ForwardToLeader {
+                leader_id: Some(leader_id),
+                leader_node: Some(leader_node),
+            }))) => {
+                let channel = self.get_or_create_channel(leader_id, leader_node.rpc_addr)?;
+
+                let mut client = StorageServiceClient::new(channel);
+                client.command(payload).await?;
+            }
+            Err(other) => {
+                return Err(other)?;
+            }
+        };
+        Ok(())
+    }
+
     /// Deletes a value for a given key in the distributed store.
     ///
     /// # Arguments
@@ -123,13 +152,10 @@ impl Storage {
     /// * `Err(Status)` - Error status if the set operation fails
     pub async fn remove<K, S>(&self, key: K, keyspace: Option<S>) -> Result<(), StoreError>
     where
-        K: Into<String>,
+        K: Into<Vec<u8>>,
         S: Into<String>,
     {
-        let request = StoreCommand::Delete(DeleteCommand {
-            key: key.into(),
-            keyspace: keyspace.map(Into::into).unwrap_or("data".into()),
-        });
+        let request = StoreCommand::Transaction(vec![Mutation::remove(key, keyspace)?]);
         let payload = crate::pb::api::CommandRequest::try_from(request)?;
         match self.raft.client_write(payload.clone()).await {
             Ok(_) => {}
@@ -246,15 +272,9 @@ impl Storage {
         S: Into<String>,
     {
         let key: String = key.into();
-        let request = StoreCommand::Set(SetCommand {
-            key,
-            value: rmp_serde::to_vec(&value)?,
-            keyspace: keyspace.map(Into::into).unwrap_or("data".into()),
-        });
+        let request = StoreCommand::Transaction(vec![Mutation::set(key, value, keyspace)?]);
 
         let payload = crate::pb::api::CommandRequest::try_from(request)?;
-        tracing::debug!("payload is {:?}", payload);
-        tracing::debug!("state is {:?}", self.raft.metrics().borrow_watched());
         match self.raft.client_write(payload.clone()).await {
             Ok(_) => {
                 tracing::debug!("written");
