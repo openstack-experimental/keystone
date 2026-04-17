@@ -3768,6 +3768,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "openstack-keystone-k8s-auth-raft"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "openstack-keystone-core",
+ "openstack-keystone-core-types",
+ "openstack-keystone-distributed-storage",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "openstack-keystone-k8s-auth-sql"
 version = "0.1.0"
 dependencies = [

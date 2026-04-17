@@ -23,7 +23,7 @@ members = [
   "crates/cli-manage",
   "tests/api",
   "tests/integration",
-  "tests/federation",
+  "tests/federation", "crates/k8s-auth-raft",
 ]
 exclude = [
   "tests/loadtest"

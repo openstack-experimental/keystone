@@ -135,6 +135,10 @@ pub enum KeystoneError {
     #[error("policy enforcement is requested, but not available with the enabled features")]
     PolicyEnforcementNotAvailable,
 
+    /// Raft storage is not available.
+    #[error("raft storage is not available")]
+    RaftNotAvailable,
+
     /// Resource provider.
     #[error(transparent)]
     ResourceProvider {
