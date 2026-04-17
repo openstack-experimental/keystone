@@ -3467,7 +3467,7 @@ dependencies = [
 
 [[package]]
 name = "openstack-keystone"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "async-trait",
  "axum",
@@ -3527,7 +3527,7 @@ dependencies = [
 
 [[package]]
 name = "openstack-keystone-api-types"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "axum",
  "base64 0.22.1",
@@ -3629,7 +3629,7 @@ dependencies = [
 
 [[package]]
 name = "openstack-keystone-core"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "async-trait",
  "axum",
@@ -3685,7 +3685,7 @@ dependencies = [
 
 [[package]]
 name = "openstack-keystone-distributed-storage"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "byteorder",
