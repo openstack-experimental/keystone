@@ -185,12 +185,15 @@ impl Storage {
 
     /// List key value pairs by the prefix.
     ///
+    /// Return key value pairs matching the specified prefix deserializing the data back to the
+    /// requested type.
+    ///
     /// # Arguments
     /// * `prefix` - The prefix to query.
     /// * `keyspace` - Optional keyspace name.
     ///
     /// # Returns
-    /// * `Ok(Vec<(String, Vec<u8>)>` - Success response containing the value as bytes
+    /// * `Ok(Vec<(String, T)>` - Success response containing the value as bytes
     /// * `Err(Status)` - Error status if the operation fails
     pub async fn prefix<T, K, S>(
         &self,
@@ -250,18 +253,24 @@ impl Storage {
         });
 
         let payload = crate::pb::api::CommandRequest::try_from(request)?;
+        tracing::debug!("payload is {:?}", payload);
+        tracing::debug!("state is {:?}", self.raft.metrics().borrow_watched());
         match self.raft.client_write(payload.clone()).await {
-            Ok(_) => {}
+            Ok(_) => {
+                tracing::debug!("written");
+            }
             Err(RaftError::APIError(ClientWriteError::ForwardToLeader(ForwardToLeader {
                 leader_id: Some(leader_id),
                 leader_node: Some(leader_node),
             }))) => {
+                tracing::debug!("need to redirect to {:?}", leader_id);
                 let channel = self.get_or_create_channel(leader_id, leader_node.rpc_addr)?;
 
                 let mut client = StorageServiceClient::new(channel);
                 client.command(payload).await?;
             }
             Err(other) => {
+                tracing::debug!("error {:?}", other);
                 return Err(other)?;
             }
         };

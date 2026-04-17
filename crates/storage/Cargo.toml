@@ -13,6 +13,10 @@ exclude.workspace = true
 [lints]
 workspace = true
 
+[[bench]]
+name = "write"
+harness = false
+
 [dependencies]
 async-trait.workspace = true
 byteorder.workspace = true
@@ -37,7 +41,9 @@ tracing.workspace = true
 tokio.workspace = true
 
 [dev-dependencies]
+criterion = { workspace = true, features = ["async_tokio"] }
 rcgen.workspace = true
+reserve-port = "2.4.0"
 rustls.workspace = true
 tempfile.workspace = true
 tracing-subscriber.workspace = true
