@@ -1,0 +1,31 @@
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: keystone-ca-cert
+  namespace: default
+spec:
+  # Secret names are always required.
+  secretName: keystone-ca-cert
+  duration: 87600h # 10y
+  renewBefore: 360h # 15d
+  isCA: true
+  privateKey:
+    size: 2048
+    algorithm: RSA
+    encoding: PKCS1
+  commonName: cacert
+  # At least one of a DNS Name, URI, or IP address is required.
+  dnsNames:
+    - caroot
+  # Issuer references are always required.
+  issuerRef:
+    name: selfsigned-issuer
+    kind: ClusterIssuer
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: ca-issuer
+spec:
+  ca:
+    secretName: keystone-ca-cert

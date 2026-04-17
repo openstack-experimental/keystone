@@ -15,8 +15,8 @@
 //!
 //! This is the entry point of the `keystone` binary.
 
+use std::collections::HashMap;
 use std::io;
-use std::net::{Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -27,7 +27,7 @@ use axum::{
     http::{self, HeaderName, Request, header},
 };
 use clap::{Parser, ValueEnum};
-use color_eyre::eyre::{OptionExt, Report, Result, WrapErr};
+use color_eyre::eyre::{Report, Result, WrapErr};
 use sea_orm::{ConnectOptions, Database};
 use secrecy::ExposeSecret;
 use tokio::{net::TcpListener, signal, spawn, time};
@@ -279,54 +279,65 @@ async fn main() -> Result<(), Report> {
         .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", openapi))
         .layer(middleware);
 
-    let address = SocketAddr::from((Ipv4Addr::UNSPECIFIED, shared_state.config.default.port));
-    let listener = TcpListener::bind(&address).await?;
-
     let mut handles = tokio::task::JoinSet::new();
     if let Some(ds) = &cfg.distributed_storage
         && let Some(storage) = &shared_state.storage
     {
         let storage_app = get_app_server(storage).await?;
 
-        let grpc_addr: SocketAddr = ds.cluster_addr.parse()?;
         let state_clone = shared_state.clone();
 
         let mut server = tonic::transport::Server::builder();
-        if !ds.disable_tls {
-            let tls_config = ds
-                .tls_configuration
-                .as_ref()
-                .ok_or_eyre("mTLS configuration missing")?;
-            // Without an explicit select of the default provider the initialization fails
-            // since some of the dependencies cause rustls to have `ring` and
-            // `aws_lc_rs` enabled.
-            let provider = rustls::crypto::aws_lc_rs::default_provider();
-            rustls::crypto::CryptoProvider::install_default(provider).unwrap();
+        // Without an explicit select of the default provider the initialization fails
+        // since some of the dependencies cause rustls to have `ring` and
+        // `aws_lc_rs` enabled.
+        let provider = rustls::crypto::aws_lc_rs::default_provider();
+        rustls::crypto::CryptoProvider::install_default(provider).unwrap();
 
-            // CA is used to validate client and peer connections
-            let identity = Identity::from_pem(
-                std::fs::read_to_string(&tls_config.tls_cert_file)
-                    .wrap_err("reading server cert file")?,
-                std::fs::read_to_string(&tls_config.tls_key_file)
-                    .wrap_err("reading server cert key file")?,
-            );
-            let mut server_tls_config = ServerTlsConfig::new().identity(identity);
-            if let Some(ca) = &tls_config.tls_client_ca_file {
-                server_tls_config = server_tls_config
-                    .client_ca_root(Certificate::from_pem(std::fs::read_to_string(&ca)?));
-            }
-            server = server.tls_config(server_tls_config)?;
+        // CA is used to validate client and peer connections
+        let identity = Identity::from_pem(
+            std::fs::read_to_string(&ds.tls_configuration.tls_cert_file)
+                .wrap_err("reading server cert file")?,
+            std::fs::read_to_string(&ds.tls_configuration.tls_key_file)
+                .wrap_err("reading server cert key file")?,
+        );
+        let mut server_tls_config = ServerTlsConfig::new().identity(identity);
+        if let Some(ca) = &ds.tls_configuration.tls_client_ca_file {
+            server_tls_config = server_tls_config
+                .client_ca_root(Certificate::from_pem(std::fs::read_to_string(&ca)?));
         }
+        server = server.tls_config(server_tls_config)?;
         let tonic_router = server.add_routes(storage_app);
 
+        let grpc_addr = cfg.listener.get_cluster_address();
+        info!("Starting distributed storage at {:?}", grpc_addr);
         handles.spawn(async move {
             tonic_router
                 .serve_with_shutdown(grpc_addr, shutdown_signal(state_clone))
                 .await
                 .unwrap();
         });
+
+        if !storage.raft.is_initialized().await?
+            && ds.node_id == 0
+            && let (Some(host), Some(port)) = (ds.cluster_addr.host(), ds.cluster_addr.port())
+        {
+            info!("Initializing the integrated storage since it is not initialized.");
+            storage
+                .raft
+                .initialize(HashMap::from([(
+                    0,
+                    openstack_keystone_distributed_storage::pb::raft::Node {
+                        node_id: 0,
+                        rpc_addr: format!("{host}:{port}"),
+                    },
+                )]))
+                .await?;
+        }
     }
 
+    let listener = TcpListener::bind(&cfg.listener.tcp_address).await?;
+    info!("Starting Rest API at {:?}", listener.local_addr());
     handles.spawn(async move {
         axum::serve(listener, app.into_make_service())
             .with_graceful_shutdown(shutdown_signal(shared_state))

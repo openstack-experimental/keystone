@@ -1,13 +1,12 @@
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
   labels:
     app.kubernetes.io/name: keystone-rs
   name: keystone-rs
 spec:
   replicas: 1
-  revisionHistoryLimit: 10
-  progressDeadlineSeconds: 300
+  serviceName: keystone-rs-internal
   selector:
     matchLabels:
       app.kubernetes.io/name: keystone-rs
@@ -18,10 +17,40 @@ spec:
     spec:
       initContainers:
         - name: db-waiter
-          image: busybox:1.36.1
+          image: busybox
           imagePullPolicy: IfNotPresent
           command: ['sh', '-c', 'echo "Waiting for PostgreSQL to be available..."; while ! nc -z -w 1 keystone-db-rw 5432; do echo "Still waiting for postgres-service..."; sleep 2; done; echo "PostgreSQL is available! Starting application."']
 
+        - name: identity-generator
+          image: busybox
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+          volumeMounts:
+            - name: raft-config-shared
+              mountPath: /etc/keystone
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              # Extract the u64 ID
+              NODE_ID=$(echo $POD_NAME | grep -o '[0-9]\+$')
+
+              # Write the identity file
+              cat <<EOF > /etc/keystone/site.toml
+              [distributed_storage]
+              node_id = $NODE_ID
+              cluster_addr = "https://$POD_NAME.keystone-rs-internal.default.svc.cluster.local:8300"
+              path = "/storage"
+              tls_client_ca_file = "/certs/ca.crt"
+              tls_cert_file = "/certs/tls.crt"
+              tls_key_file = "/certs/tls.key"
+              EOF
       containers:
         - env:
             - name: OS_DATABASE__CONNECTION
@@ -29,12 +58,18 @@ spec:
                 secretKeyRef:
                   key: fqdn-uri
                   name: keystone-db-app
+            - name: KEYSTONE_SITE_VARS_FILE
+              value: "/etc/keystone/site.toml"
           command: ["keystone", "-vv"]
+
           image: keystone-rs
           name: keystone
           ports:
             - containerPort: 8080
               name: keystone-rs
+              protocol: TCP
+            - containerPort: 8300
+              name: keystone-raft
               protocol: TCP
 
           livenessProbe:
@@ -65,9 +100,17 @@ spec:
           volumeMounts:
             - mountPath: /etc/keystone/fernet-keys
               name: fernet
+            - mountPath: /certs
+              name: keystone-tls
+              readOnly: true
+            - mountPath: /etc/keystone
+              name: raft-config-shared
+            - mountPath: /storage
+              name: raft-storage
             - mountPath: /etc/keystone/keystone.conf
               name: config
               subPath: keystone.conf
+              readOnly: true
 
         - command: ["opa", "run", "--server", "/policy", "--addr", ":8181", "--log-level", "debug"]
           image: opa
@@ -93,3 +136,12 @@ spec:
                 path: "0"
               - key: "k1"
                 path: "1"
+        - name: keystone-tls
+          secret:
+            defaultMode: 420
+            optional: false
+            secretName: keystone-peer-tls
+        - name: raft-storage
+          emptyDir: {}
+        - name: raft-config-shared
+          emptyDir: {}

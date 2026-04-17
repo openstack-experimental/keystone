@@ -33,17 +33,23 @@ pub(super) struct InitCommand {}
 impl PerformAction for InitCommand {
     async fn take_action(self, config: &Config) -> Result<(), Report> {
         if let Some(cfg) = &config.distributed_storage {
-            let mut client = get_grpc_client(cfg).await?;
+            if let (Some(host), Some(port)) = (cfg.cluster_addr.host(), cfg.cluster_addr.port()) {
+                let mut client = get_grpc_client(cfg, None).await?;
 
-            client
-                .init(pb::raft::InitRequest {
-                    nodes: vec![pb::raft::Node {
-                        node_id: cfg.node_id,
-                        rpc_addr: cfg.cluster_addr.clone(),
-                    }],
-                })
-                .await?;
-            Ok(())
+                client
+                    .init(pb::raft::InitRequest {
+                        nodes: vec![pb::raft::Node {
+                            node_id: cfg.node_id,
+                            rpc_addr: format!("{host}:{port}"),
+                        }],
+                    })
+                    .await?;
+                Ok(())
+            } else {
+                Err(eyre!(
+                    "cannot determine the host:port of the current node to initialize the cluster"
+                ))
+            }
         } else {
             Err(eyre!("no distributed_storage configuration"))
         }

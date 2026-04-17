@@ -45,13 +45,11 @@ use crate::types::*;
 #[derive(Clone)]
 pub struct NetworkManager {
     /// Tls client config watcher.
-    tls_config_watcher: watch::Receiver<Option<ClientTlsConfig>>,
+    tls_config_watcher: watch::Receiver<ClientTlsConfig>,
 }
 
 impl NetworkManager {
-    pub fn new(
-        tls_config_watcher: watch::Receiver<Option<ClientTlsConfig>>,
-    ) -> Result<Self, StoreError> {
+    pub fn new(tls_config_watcher: watch::Receiver<ClientTlsConfig>) -> Result<Self, StoreError> {
         Ok(Self { tls_config_watcher })
     }
 }
@@ -74,15 +72,12 @@ pub struct NetworkConnection {
     /// Target node.
     target_node: pb::raft::Node,
     /// Watcher of the ClientTlsConfig.
-    tls_config_watcher: watch::Receiver<Option<ClientTlsConfig>>,
+    tls_config_watcher: watch::Receiver<ClientTlsConfig>,
 }
 
 impl NetworkConnection {
     /// Creates a new NetworkConnection with the provided gRPC client.
-    pub fn new(
-        target_node: Node,
-        tls_config_watcher: watch::Receiver<Option<ClientTlsConfig>>,
-    ) -> Self {
+    pub fn new(target_node: Node, tls_config_watcher: watch::Receiver<ClientTlsConfig>) -> Self {
         NetworkConnection {
             target_node,
             tls_config_watcher,
@@ -93,21 +88,13 @@ impl NetworkConnection {
     pub async fn make_client(&self) -> Result<RaftServiceClient<Channel>, RPCError> {
         let server_addr = &self.target_node.rpc_addr;
 
-        let ep = if let Some(tls_config) = &*self.tls_config_watcher.borrow() {
-            Channel::builder(
-                format!("https://{}", server_addr)
-                    .parse()
-                    .map_err(|e| RPCError::Unreachable(Unreachable::new(&e)))?,
-            )
-            .tls_config(tls_config.clone())
-            .map_err(|e| RPCError::Unreachable(Unreachable::new(&e)))?
-        } else {
-            Channel::builder(
-                format!("http://{}", server_addr)
-                    .parse()
-                    .map_err(|e| RPCError::Unreachable(Unreachable::new(&e)))?,
-            )
-        };
+        let ep = Channel::builder(
+            format!("https://{}", server_addr)
+                .parse()
+                .map_err(|e| RPCError::Unreachable(Unreachable::new(&e)))?,
+        )
+        .tls_config(self.tls_config_watcher.borrow().clone())
+        .map_err(|e| RPCError::Unreachable(Unreachable::new(&e)))?;
 
         let channel = ep
             .connect()
@@ -286,64 +273,51 @@ impl NetTransferLeader<TypeConfig> for NetworkConnection {
 
 /// Parse the [TlsConfiguration] into the [ClientTlsConfig].
 pub fn load_tls_client_config(
-    disable_tls: bool,
-    tls_config: Option<&TlsConfiguration>,
-) -> Result<Option<ClientTlsConfig>, StoreError> {
-    if !disable_tls {
-        let tls_config = tls_config.as_ref().ok_or(StoreError::TlsConfigMissing)?;
-        let identity = Identity::from_pem(
-            std::fs::read_to_string(&tls_config.tls_cert_file)
-                .wrap_err("reading server cert file")?,
-            std::fs::read_to_string(&tls_config.tls_key_file)
-                .wrap_err("reading server cert key file")?,
-        );
-        let mut tls_client_config = ClientTlsConfig::new().identity(identity);
-        if let Some(cert_ca) = &tls_config.tls_client_ca_file {
-            tls_client_config = tls_client_config
-                .ca_certificate(Certificate::from_pem(std::fs::read_to_string(cert_ca)?));
-        };
-        Ok(Some(tls_client_config))
-    } else {
-        Ok(None)
-    }
+    tls_config: &TlsConfiguration,
+) -> Result<ClientTlsConfig, StoreError> {
+    let identity = Identity::from_pem(
+        std::fs::read_to_string(&tls_config.tls_cert_file).wrap_err("reading server cert file")?,
+        std::fs::read_to_string(&tls_config.tls_key_file)
+            .wrap_err("reading server cert key file")?,
+    );
+    let mut tls_client_config = ClientTlsConfig::new().identity(identity);
+    if let Some(cert_ca) = &tls_config.tls_client_ca_file {
+        tls_client_config = tls_client_config
+            .ca_certificate(Certificate::from_pem(std::fs::read_to_string(cert_ca)?));
+    };
+    Ok(tls_client_config)
 }
 
 /// Initialize the [ClientTlsConfig] configuration watcher.
 pub fn init_tls_watcher(
     ks_config: &DistributedStorageConfiguration,
-) -> Result<watch::Receiver<Option<ClientTlsConfig>>, StoreError> {
+) -> Result<watch::Receiver<ClientTlsConfig>, StoreError> {
     // 1. Initial Load: Try to load the certs once to start with a valid state
-    let initial_config =
-        load_tls_client_config(ks_config.disable_tls, ks_config.tls_configuration.as_ref())?;
+    let initial_config = load_tls_client_config(&ks_config.tls_configuration)?;
 
     // 2. Create the channel
     let (tx, rx) = watch::channel(initial_config);
 
-    if !ks_config.disable_tls && ks_config.tls_configuration.is_some() {
-        // 3. Spawn the File Watcher Task
-        let config_clone = ks_config.clone();
-        tokio::spawn(async move {
-            let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+    // 3. Spawn the File Watcher Task
+    let config_clone = ks_config.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
 
-            loop {
-                interval.tick().await;
+        loop {
+            interval.tick().await;
 
-                // Reload from disk
-                match load_tls_client_config(
-                    config_clone.disable_tls,
-                    config_clone.tls_configuration.as_ref(),
-                ) {
-                    Ok(new_config) => {
-                        // If the cert changed, broadcast to all receivers
-                        let _ = tx.send(new_config);
-                    }
-                    Err(e) => {
-                        error!("failed to reload TLS certificates: {:?}", e.to_string());
-                    }
+            // Reload from disk
+            match load_tls_client_config(&config_clone.tls_configuration) {
+                Ok(new_config) => {
+                    // If the cert changed, broadcast to all receivers
+                    let _ = tx.send(new_config);
+                }
+                Err(e) => {
+                    error!("failed to reload TLS certificates: {:?}", e.to_string());
                 }
             }
-        });
-    }
+        }
+    });
 
     // 4. Return the Receiver to be cloned into your RaftNetworkFactory
     Ok(rx)

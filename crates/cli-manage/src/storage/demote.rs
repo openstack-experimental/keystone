@@ -39,7 +39,7 @@ pub(super) struct DemoteCommand {
 impl PerformAction for DemoteCommand {
     async fn take_action(self, config: &Config) -> Result<(), Report> {
         if let Some(cfg) = &config.distributed_storage {
-            let mut client = get_grpc_client(cfg).await?;
+            let mut client = get_grpc_client(cfg, None).await?;
 
             let membership = client
                 .metrics(())
