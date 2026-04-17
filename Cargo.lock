@@ -3490,6 +3490,7 @@ dependencies = [
  "openstack-keystone-federation-sql",
  "openstack-keystone-identity-sql",
  "openstack-keystone-idmapping-sql",
+ "openstack-keystone-k8s-auth-raft",
  "openstack-keystone-k8s-auth-sql",
  "openstack-keystone-resource-sql",
  "openstack-keystone-revoke-sql",
@@ -3696,6 +3697,7 @@ dependencies = [
  "fjall",
  "futures",
  "http",
+ "mockall",
  "openraft",
  "openstack-keystone-config",
  "prost",
@@ -3768,6 +3770,19 @@ dependencies = [
  "sea-orm",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "openstack-keystone-k8s-auth-raft"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "inventory",
+ "openstack-keystone-core",
+ "openstack-keystone-core-types",
+ "openstack-keystone-distributed-storage",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -6294,9 +6309,11 @@ dependencies = [
  "openstack-keystone-config",
  "openstack-keystone-core",
  "openstack-keystone-core-types",
+ "openstack-keystone-distributed-storage",
  "openstack-keystone-identity-sql",
  "openstack-keystone-token-fernet",
  "openstack-keystone-trust-sql",
+ "rcgen",
  "sea-orm",
  "secrecy",
  "serde",

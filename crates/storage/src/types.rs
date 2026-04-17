@@ -64,6 +64,12 @@ pub struct Metadata {
     pub created_at: i64,
 }
 
+impl Default for Metadata {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Metadata {
     pub fn new() -> Self {
         Self {
@@ -72,8 +78,11 @@ impl Metadata {
         }
     }
 
-    pub fn increment_revision(&mut self) {
-        self.revision = self.revision + 1;
+    pub fn new_revision(&self) -> Self {
+        Self {
+            revision: self.revision + 1,
+            created_at: self.created_at,
+        }
     }
 
     /// Pack the metadata for storing in the db.
@@ -146,7 +155,7 @@ impl StoreDataInnerEnvelope {
     ///
     /// # Returns
     /// * `Ok(StoreDataResponse)` - Success response with the deserialized data and the associated
-    /// metadata.
+    ///   metadata.
     /// * `Err(StoreError)` - Error if the operation fails.
     pub(crate) fn unpack<T: DeserializeOwned>(value: &[u8]) -> Result<T, StoreError> {
         let raw_envelope: StoreDataInnerEnvelope = rmp_serde::from_slice(value)?;

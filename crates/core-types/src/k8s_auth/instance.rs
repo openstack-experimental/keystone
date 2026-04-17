@@ -121,3 +121,52 @@ pub struct K8sAuthInstanceListParameters {
     /// Name.
     pub name: Option<String>,
 }
+
+pub enum K8sAuthInstanceFilter {
+    Domain(String),
+    Name(String),
+}
+
+impl K8sAuthInstanceFilter {
+    pub fn matches(&self, obj: &K8sAuthInstance) -> bool {
+        match self {
+            K8sAuthInstanceFilter::Domain(val) => obj.domain_id == *val,
+            K8sAuthInstanceFilter::Name(val) => obj.name.as_ref().is_some_and(|x| x == val),
+        }
+    }
+}
+
+impl From<K8sAuthInstanceCreate> for K8sAuthInstance {
+    fn from(value: K8sAuthInstanceCreate) -> Self {
+        Self {
+            ca_cert: value.ca_cert,
+            disable_local_ca_jwt: value.disable_local_ca_jwt.unwrap_or_default(),
+            domain_id: value.domain_id,
+            enabled: value.enabled,
+            host: value.host,
+            id: value
+                .id
+                .unwrap_or_else(|| uuid::Uuid::new_v4().simple().to_string()),
+            name: value.name,
+        }
+    }
+}
+
+impl K8sAuthInstance {
+    /// Apply the [`K8sAuthInstanceUpdate`] to the [`K8sAuthInstance`] structure returning the new object.
+    ///
+    /// Construct a new version of the [`K8sAuthInstance`] for persisting in the storage.
+    pub fn with_update(self, update: K8sAuthInstanceUpdate) -> Self {
+        Self {
+            ca_cert: update.ca_cert,
+            disable_local_ca_jwt: update
+                .disable_local_ca_jwt
+                .unwrap_or(self.disable_local_ca_jwt),
+            domain_id: self.domain_id,
+            enabled: update.enabled.unwrap_or(self.enabled),
+            host: update.host.unwrap_or(self.host),
+            id: self.id,
+            name: update.name,
+        }
+    }
+}

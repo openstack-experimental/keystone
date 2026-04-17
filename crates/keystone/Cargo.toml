@@ -38,6 +38,7 @@ openstack-keystone-core-types = { version = "0.1", path = "../core-types" }
 openstack-keystone-distributed-storage = { version = "0.1", path = "../storage/"}
 openstack-keystone-federation-sql = { version = "0.1", path = "../federation-sql" }
 openstack-keystone-k8s-auth-sql = { version = "0.1", path = "../k8s-auth-sql/" }
+openstack-keystone-k8s-auth-raft = { version = "0.1", path = "../k8s-auth-raft/" }
 openstack-keystone-identity-sql = { version = "0.1", path = "../identity-sql" }
 openstack-keystone-idmapping-sql = { version = "0.1", path = "../idmapping-sql" }
 openstack-keystone-resource-sql = { version = "0.1", path = "../resource-sql/" }

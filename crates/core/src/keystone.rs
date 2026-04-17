@@ -12,6 +12,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //! # Keystone state
+use openstack_keystone_distributed_storage::StorageApi;
 use sea_orm::DatabaseConnection;
 use std::sync::Arc;
 use tracing::info;
@@ -76,6 +77,10 @@ impl Service {
             storage,
             shutdown: false,
         })
+    }
+
+    pub fn get_storage(&self) -> Option<&impl StorageApi> {
+        self.storage.as_ref()
     }
 
     pub async fn terminate(&self) -> Result<(), KeystoneError> {

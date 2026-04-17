@@ -13,6 +13,7 @@
 // SPDX-License-Identifier: Apache-2.0
 use std::sync::Arc;
 
+use async_trait::async_trait;
 use dashmap::DashMap;
 use eyre::eyre;
 use openraft::Config;
@@ -29,6 +30,7 @@ use tracing::debug;
 use openstack_keystone_config::DistributedStorageConfiguration;
 
 use crate::StoreError;
+use crate::api::StorageApi;
 use crate::grpc::cluster_admin_service::ClusterAdminServiceImpl;
 use crate::grpc::raft_service::RaftServiceImpl;
 use crate::grpc::storage_service::StorageServiceImpl;
@@ -115,7 +117,8 @@ pub struct Storage {
     state_machine_store: Arc<StateMachineStore>,
 }
 
-impl Storage {
+#[async_trait]
+impl StorageApi for Storage {
     /// Checks whether a given key is present in the keyspace of the distributed store.
     ///
     /// # Arguments
@@ -125,10 +128,10 @@ impl Storage {
     /// # Returns
     /// * `Ok(bool)` - Success response
     /// * `Err(Status)` - Error status if the get operation fails
-    pub async fn contains_key<K, S>(&self, key: K, keyspace: Option<S>) -> Result<bool, StoreError>
+    async fn contains_key<K, S>(&self, key: K, keyspace: Option<S>) -> Result<bool, StoreError>
     where
-        K: AsRef<[u8]>,
-        S: AsRef<str>,
+        K: AsRef<[u8]> + Send,
+        S: AsRef<str> + Send,
     {
         // wait for the node to apply the latest state
         // self.raft.ensure_linearizable(ReadPolicy::ReadIndex).await?;
@@ -149,15 +152,15 @@ impl Storage {
     /// # Returns
     /// * `Ok(Vec<u8>)` - Success response containing the value as bytes
     /// * `Err(Status)` - Error status if the get operation fails
-    pub async fn get_by_key<T, K, S>(
+    async fn get_by_key<T, K, S>(
         &self,
         key: K,
         keyspace: Option<S>,
     ) -> Result<Option<StoreDataEnvelope<T>>, StoreError>
     where
-        T: DeserializeOwned,
-        K: AsRef<[u8]>,
-        S: AsRef<str>,
+        T: DeserializeOwned + Send,
+        K: AsRef<[u8]> + Send,
+        S: AsRef<str> + Send,
     {
         // wait for the node to apply the latest state
         // self.raft.ensure_linearizable(ReadPolicy::ReadIndex).await?;
@@ -199,15 +202,15 @@ impl Storage {
     /// # Returns
     /// * `Ok(Vec<(String, T)>` - Success response containing the value as bytes
     /// * `Err(Status)` - Error status if the operation fails
-    pub async fn prefix<T, K, S>(
+    async fn prefix<T, K, S>(
         &self,
         prefix: K,
         keyspace: Option<S>,
     ) -> Result<Vec<(String, StoreDataEnvelope<T>)>, StoreError>
     where
-        T: DeserializeOwned,
-        K: AsRef<[u8]>,
-        S: AsRef<str>,
+        T: DeserializeOwned + Send,
+        K: AsRef<[u8]> + Send,
+        S: AsRef<str> + Send,
     {
         // wait for the node to apply the latest state
         // self.raft.ensure_linearizable(ReadPolicy::ReadIndex).await?;
@@ -251,9 +254,9 @@ impl Storage {
     /// # Returns
     /// * `Ok(Vec<String>)` - Success response containing the value as bytes
     /// * `Err(Status)` - Error status if the operation fails
-    pub async fn prefix_index<K>(&self, prefix: K) -> Result<Vec<String>, StoreError>
+    async fn prefix_index<K>(&self, prefix: K) -> Result<Vec<String>, StoreError>
     where
-        K: AsRef<[u8]>,
+        K: AsRef<[u8]> + Send,
     {
         // wait for the node to apply the latest state
         // self.raft.ensure_linearizable(ReadPolicy::ReadIndex).await?;
@@ -278,10 +281,10 @@ impl Storage {
     /// # Returns
     /// * `Ok(Response)` - Success response after the value is deleted
     /// * `Err(Status)` - Error status if the set operation fails
-    pub async fn remove<K, S>(&self, key: K, keyspace: Option<S>) -> Result<Response, StoreError>
+    async fn remove<K, S>(&self, key: K, keyspace: Option<S>) -> Result<Response, StoreError>
     where
-        K: Into<Vec<u8>>,
-        S: Into<String>,
+        K: Into<Vec<u8>> + Send,
+        S: Into<String> + Send,
     {
         let request = StoreCommand::Transaction(vec![MutationInner::convert(
             Mutation::remove(key, keyspace)?,
@@ -299,9 +302,9 @@ impl Storage {
     /// # Returns
     /// * `Ok(Response)` - Success response after the value is deleted
     /// * `Err(Status)` - Error status if the set operation fails
-    pub async fn remove_index<K>(&self, key: K) -> Result<Response, StoreError>
+    async fn remove_index<K>(&self, key: K) -> Result<Response, StoreError>
     where
-        K: Into<Vec<u8>>,
+        K: Into<Vec<u8>> + Send,
     {
         let request =
             StoreCommand::Transaction(vec![MutationInner::RemoveIndex { key: key.into() }]);
@@ -319,7 +322,7 @@ impl Storage {
     /// # Returns
     /// * `Ok(Response)` - Success response after the value is set
     /// * `Err(StoreError)` - Error status if the set operation fails
-    pub async fn set_value<K, V, S>(
+    async fn set_value<K, V, S>(
         &self,
         key: K,
         value: StoreDataEnvelope<V>,
@@ -327,9 +330,9 @@ impl Storage {
         expected_revision: Option<u64>,
     ) -> Result<Response, StoreError>
     where
-        K: Into<String>,
-        V: Serialize,
-        S: Into<String>,
+        K: Into<String> + Send,
+        V: Serialize + Send,
+        S: Into<String> + Send,
     {
         let key: String = key.into();
         let metrics = self.raft.metrics().borrow_watched().clone();
@@ -353,9 +356,9 @@ impl Storage {
     /// # Returns
     /// * `Ok(Response)` - Success response after the value is set
     /// * `Err(StoreError)` - Error status if the set operation fails
-    pub async fn set_index_key<K>(&self, key: K) -> Result<Response, StoreError>
+    async fn set_index_key<K>(&self, key: K) -> Result<Response, StoreError>
     where
-        K: Into<String>,
+        K: Into<String> + Send,
     {
         let key: String = key.into();
         let request = StoreCommand::Transaction(vec![MutationInner::SetIndex { key: key.into() }]);
@@ -372,7 +375,7 @@ impl Storage {
     /// # Returns
     /// * `Ok(Response)` - Success response after the value is deleted
     /// * `Err(Status)` - Error status if the set operation fails
-    pub async fn transaction(&self, mutations: Vec<Mutation>) -> Result<Response, StoreError> {
+    async fn transaction(&self, mutations: Vec<Mutation>) -> Result<Response, StoreError> {
         let metrics = self.raft.metrics().borrow_watched().clone();
         let nonce = Nonce::new(metrics.current_term, metrics.last_log_index.unwrap_or(1));
         let request = StoreCommand::Transaction(
@@ -384,7 +387,9 @@ impl Storage {
         let payload = crate::pb::api::CommandRequest::try_from(request)?;
         self.write_command_to_storage(payload).await
     }
+}
 
+impl Storage {
     /// Get the last log index processed by the node.
     pub fn last_log_index(&self) -> Option<u64> {
         self.raft.metrics().borrow_watched().last_log_index
@@ -444,9 +449,7 @@ impl Storage {
                 self.command_with_forwarding(command, leader_id, leader_node.rpc_addr)
                     .await
             }
-            Err(other) => {
-                return Err(other)?;
-            }
+            Err(other) => Err(other)?,
         }
     }
 
@@ -471,8 +474,8 @@ impl Storage {
     ) -> Result<Response, StoreError> {
         let max_retries = 3;
 
-        let mut node_addr = node_addr.clone();
-        let mut node_id = node_id.clone();
+        let mut node_addr = node_addr;
+        let mut node_id = node_id;
 
         for _attempt in 0..=max_retries {
             // Establish a gRPC channel to the given node
@@ -483,7 +486,7 @@ impl Storage {
             let result = client.command(command.clone()).await;
 
             match result {
-                Ok(resp) => return Ok(resp.into_inner().into()),
+                Ok(resp) => return Ok(resp.into_inner()),
                 Err(status) if status.code() == Code::Unavailable => {
                     // Extract leader endpoint from gRPC metadata
                     // TODO: teach the gRPC app to start exposing the headers.
@@ -518,6 +521,6 @@ impl Storage {
             }
         }
 
-        return Err(eyre!("max retries exceeded").into());
+        Err(eyre!("max retries exceeded").into())
     }
 }

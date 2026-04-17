@@ -101,6 +101,18 @@ pub enum K8sAuthProviderError {
     #[error("invalid token review response")]
     InvalidTokenReviewResponse,
 
+    /// Raft storage is not available.
+    #[error("raft storage is not available in the k8s_auth provider")]
+    RaftNotAvailable,
+
+    /// Raft storage is not available.
+    #[error("raft storage error in the k8s_auth provider")]
+    RaftStoreError {
+        /// The source of the error.
+        #[from]
+        source: Box<dyn std::error::Error + Send + Sync + 'static>,
+    },
+
     /// K8s auth role not found.
     #[error("k8s auth role {0} not found")]
     RoleNotFound(String),
@@ -165,6 +177,16 @@ impl K8sAuthProviderError {
         E: std::error::Error + Send + Sync + 'static,
     {
         Self::Http {
+            source: Box::new(source),
+        }
+    }
+
+    /// Raft storage error.
+    pub fn raft<E>(source: E) -> Self
+    where
+        E: std::error::Error + Send + Sync + 'static,
+    {
+        Self::RaftStoreError {
             source: Box::new(source),
         }
     }

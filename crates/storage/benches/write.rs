@@ -22,6 +22,7 @@ use tokio::runtime::Runtime;
 use tonic::transport::{Identity, ServerTlsConfig};
 
 use openstack_keystone_config::{Config, DistributedStorageConfiguration, TlsConfiguration};
+use openstack_keystone_distributed_storage::StorageApi;
 use openstack_keystone_distributed_storage::app::{Storage, get_app_server, init_storage};
 use openstack_keystone_distributed_storage::protobuf as pb;
 use openstack_keystone_distributed_storage::store_command::*;

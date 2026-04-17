@@ -13,12 +13,21 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 
+use std::fs::create_dir;
 use std::future::Future;
+use std::io::Write;
+use std::net::IpAddr;
 use std::ops::Deref;
+use std::path::Path;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::time;
 
 use eyre::{Result, WrapErr};
+use rcgen::{
+    BasicConstraints, CertificateParams, DistinguishedName, DnType, ExtendedKeyUsagePurpose, IsCa,
+    Issuer, KeyPair, KeyUsagePurpose, SanType,
+};
 use sea_orm::{
     ConnectOptions, ConnectionTrait, Database, DatabaseConnection, DbConn, schema::Schema,
 };
@@ -26,7 +35,7 @@ use tempfile::TempDir;
 use uuid::Uuid;
 
 use openstack_keystone::plugin_manager::PluginManager;
-use openstack_keystone_config::Config;
+use openstack_keystone_config::{Config, DistributedStorageConfiguration, TlsConfiguration};
 use openstack_keystone_core::policy::MockPolicy;
 use openstack_keystone_core::provider::Provider;
 use openstack_keystone_core::resource::ResourceApi;
@@ -122,17 +131,32 @@ pub async fn get_isolated_database() -> Result<DatabaseConnection> {
 pub async fn get_state() -> Result<(Arc<Service>, TempDir)> {
     let db = get_isolated_database().await?;
 
-    let tmp_fernet_repo = TempDir::new()?;
+    let tmp_dir = TempDir::new()?;
+    let tmp_fernet_repo = tmp_dir.path().join("fernet");
+    create_dir(&tmp_fernet_repo)?;
 
     let mut cfg: Config = Config::default();
     cfg.auth.methods = vec!["application_credential".into(), "password".into()];
-    cfg.fernet_tokens.key_repository = tmp_fernet_repo.path().to_path_buf();
+    cfg.fernet_tokens.key_repository = tmp_fernet_repo.to_path_buf();
     let fernet_utils = openstack_keystone_token_fernet::utils::FernetUtils {
         key_repository: cfg.fernet_tokens.key_repository.clone(),
         max_active_keys: cfg.fernet_tokens.max_active_keys,
     };
     cfg.federation.default_authorization_ttl = 20;
     fernet_utils.initialize_key_repository()?;
+
+    if std::env::var("USE_RAFT").is_ok() {
+        let tmp_db_dir = tmp_dir.path().join("certs");
+        create_dir(&tmp_db_dir)?;
+        let tls_configuration = make_certificates(&tmp_db_dir)?;
+        cfg.distributed_storage = Some(DistributedStorageConfiguration {
+            cluster_addr: "http://127.0.0.1:12345".parse()?,
+            node_id: 1,
+            path: tmp_db_dir.to_path_buf(),
+            tls_configuration,
+        });
+        cfg.k8s_auth.driver = "raft".to_string();
+    }
 
     let plugin_manager = PluginManager::with_config(&cfg);
     let provider = Provider::new(cfg.clone(), &plugin_manager)?;
@@ -154,7 +178,21 @@ pub async fn get_state() -> Result<(Arc<Service>, TempDir)> {
         )
         .await
         .unwrap();
-    Ok((state, tmp_fernet_repo))
+
+    if let Some(store) = &state.storage {
+        store
+            .raft
+            .initialize(std::collections::BTreeMap::from([(
+                1u64,
+                openstack_keystone_distributed_storage::pb::raft::Node {
+                    node_id: 1,
+                    rpc_addr: "127.0.0.1:12345".into(),
+                },
+            )]))
+            .await?;
+    }
+    std::thread::sleep(time::Duration::from_millis(200));
+    Ok((state, tmp_dir))
 }
 
 /// Trait to allow State to delete various resource types T
@@ -216,4 +254,52 @@ where
     fn deref(&self) -> &Self::Target {
         &self.resource
     }
+}
+
+fn make_certificates<P: AsRef<Path>>(certs_path: P) -> Result<TlsConfiguration> {
+    // 1. Generate CA private key and certificate
+    let mut ca_params = CertificateParams::default();
+    ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+    ca_params.key_usages = vec![
+        KeyUsagePurpose::KeyCertSign,
+        KeyUsagePurpose::DigitalSignature,
+        KeyUsagePurpose::CrlSign,
+    ];
+
+    let mut ca_dn = DistinguishedName::new();
+    ca_dn.push(DnType::CommonName, "CA");
+    ca_params.distinguished_name = ca_dn;
+
+    let ca_key = KeyPair::generate()?;
+    let ca_cert = ca_params.self_signed(&ca_key)?;
+    let ca = Issuer::new(ca_params, ca_key);
+    let ca_cert_file_name = certs_path.as_ref().join("ca.crt");
+    let mut ca_cert_file = std::fs::File::create(&ca_cert_file_name)?;
+    ca_cert_file.write_all(ca_cert.pem().as_bytes())?;
+
+    // 2. Generate peer certificate (signed by CA)
+    let mut peer_cert_params = CertificateParams::default();
+
+    let client_ip: IpAddr = "127.0.0.1".parse()?;
+    peer_cert_params.subject_alt_names = vec![SanType::IpAddress(client_ip)];
+    peer_cert_params.key_usages = vec![KeyUsagePurpose::DigitalSignature];
+    peer_cert_params.extended_key_usages = vec![
+        ExtendedKeyUsagePurpose::ServerAuth,
+        ExtendedKeyUsagePurpose::ClientAuth,
+    ];
+    let peer_key = KeyPair::generate()?;
+    let peer_cert = peer_cert_params.signed_by(&peer_key, &ca)?;
+
+    let peer_cert_file_name = certs_path.as_ref().join("peer.crt");
+    let mut peer_cert_file = std::fs::File::create(&peer_cert_file_name)?;
+    peer_cert_file.write_all(peer_cert.pem().as_bytes())?;
+    let peer_key_file_name = certs_path.as_ref().join("peer.key");
+    let mut peer_key_file = std::fs::File::create(&peer_key_file_name)?;
+    peer_key_file.write_all(peer_key.serialize_pem().as_bytes())?;
+
+    Ok(TlsConfiguration {
+        tls_client_ca_file: Some(ca_cert_file_name.to_path_buf()),
+        tls_cert_file: peer_cert_file_name.to_path_buf(),
+        tls_key_file: peer_key_file_name.to_path_buf(),
+    })
 }

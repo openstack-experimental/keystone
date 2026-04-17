@@ -16,7 +16,7 @@ use std::path::PathBuf;
 use url::Url;
 
 /// Default configuration section.
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Default, Deserialize, Clone)]
 pub struct DefaultSection {
     /// If set to true, the logging level for the file will be set to DEBUG
     /// instead of the default INFO level.
@@ -32,15 +32,4 @@ pub struct DefaultSection {
     /// Log output to standard error.
     #[serde(default)]
     pub use_stderr: bool,
-}
-
-impl Default for DefaultSection {
-    fn default() -> Self {
-        Self {
-            debug: false,
-            log_dir: None,
-            public_endpoint: None,
-            use_stderr: false,
-        }
-    }
 }

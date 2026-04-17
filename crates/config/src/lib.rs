@@ -21,7 +21,7 @@
 //!   `KEYSTONE_SITE_VARS_FILE` environment variable. When it is not set no additional file is
 //!   loaded.
 //! - Environment variables take final precedence. They use the traditional OpenStack style and
-//!  look like `OS_API_POLICY__OPA_BASE_URL` for setting `[api_policy].opa_base_url` variable.
+//!   look like `OS_API_POLICY__OPA_BASE_URL` for setting `[api_policy].opa_base_url` variable.
 //!
 //! # Example
 //!

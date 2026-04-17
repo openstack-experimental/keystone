@@ -40,7 +40,7 @@ impl Listener {
     /// Obtain the address to use for the server to server communication. This defaults to one port higher than the value of address.
     pub fn get_cluster_address(&self) -> SocketAddr {
         match self.cluster_address {
-            Some(addr) => addr.clone(),
+            Some(addr) => addr,
             None => SocketAddr::new(self.tcp_address.ip(), self.tcp_address.port() + 1),
         }
     }

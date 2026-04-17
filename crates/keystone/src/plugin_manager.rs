@@ -437,6 +437,10 @@ impl PluginManager {
                 config.clone(),
             )),
         );
+        slf.register_k8s_auth_backend(
+            "raft",
+            Arc::new(openstack_keystone_k8s_auth_raft::RaftBackend::default()),
+        );
         slf
     }
 }

@@ -11,13 +11,15 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-
+//! # Raft driver for the K8s Auth module
 use async_trait::async_trait;
 use chrono::Utc;
 use webauthn_rs::prelude::{PasskeyAuthentication, PasskeyRegistration};
 
 use openstack_keystone_core::keystone::ServiceState;
-use openstack_keystone_distributed_storage::{Metadata, StoreDataEnvelope, app::Storage};
+use openstack_keystone_distributed_storage::{
+    Metadata, StorageApi, StoreDataEnvelope, app::Storage,
+};
 
 use crate::{
     WebauthnError,
@@ -25,10 +27,9 @@ use crate::{
 };
 
 static DATA_KEYSPACE: &str = "data";
-//static META_KEYSPACE: &str = "meta";
 static KEY_CURRENT_STATE: &str = "webauthn:state:current";
 
-/// Raft driver for the WebAuthN extension.
+/// Raft driver for the K8s Auth module.
 #[derive(Default)]
 pub struct RaftDriver {}
 
@@ -336,8 +337,7 @@ impl WebauthnApi for RaftDriver {
             )
             .await?
         {
-            let mut new_meta = curr.metadata.clone();
-            new_meta.increment_revision();
+            let new_meta = curr.metadata.new_revision();
             let curr_revision = curr.metadata.revision;
             raft.set_value(
                 self.get_cred_key_name(user_id, credential_id),

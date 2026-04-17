@@ -69,6 +69,9 @@ jobs:
       - name: Run tests for postgres
         run: cargo nextest run --test integration --profile postgres --no-capture
 
+      - name: Run tests for raft drivers
+        run: cargo nextest run --test integration --profile raft --no-capture
+
       - name: Run Doc tests
         run: cargo test --doc
 

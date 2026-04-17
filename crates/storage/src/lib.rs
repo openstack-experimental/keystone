@@ -23,6 +23,7 @@ use std::sync::Arc;
 use fjall::Database;
 use openraft::RaftTypeConfig;
 
+pub mod api;
 pub mod app;
 pub mod grpc;
 pub mod network;
@@ -52,6 +53,7 @@ pub mod protobuf {
     }
 }
 pub use crate::protobuf as pb;
+pub use api::StorageApi;
 pub use types::{Metadata, Nonce, StoreDataEnvelope};
 #[cfg(feature = "bench_internals")]
 pub use types::{bench_pack, bench_unpack};

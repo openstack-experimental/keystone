@@ -131,3 +131,62 @@ pub struct K8sAuthRoleListParameters {
     /// Name.
     pub name: Option<String>,
 }
+
+pub enum K8sAuthRoleFilter {
+    Domain(String),
+    Instance(String),
+    Name(String),
+}
+
+impl K8sAuthRoleFilter {
+    pub fn matches(&self, obj: &K8sAuthRole) -> bool {
+        match self {
+            K8sAuthRoleFilter::Domain(val) => obj.domain_id == *val,
+            K8sAuthRoleFilter::Instance(val) => obj.auth_instance_id == *val,
+            K8sAuthRoleFilter::Name(val) => obj.name == *val,
+        }
+    }
+}
+
+impl From<K8sAuthRoleCreate> for K8sAuthRole {
+    fn from(value: K8sAuthRoleCreate) -> Self {
+        Self {
+            auth_instance_id: value.auth_instance_id,
+            bound_audience: value.bound_audience,
+            bound_service_account_names: value.bound_service_account_names,
+            bound_service_account_namespaces: value.bound_service_account_namespaces,
+            domain_id: value.domain_id,
+            enabled: value.enabled,
+            id: value
+                .id
+                .unwrap_or_else(|| uuid::Uuid::new_v4().simple().to_string()),
+            name: value.name,
+            token_restriction_id: value.token_restriction_id,
+        }
+    }
+}
+
+impl K8sAuthRole {
+    /// Apply the [`K8sAuthRoleUpdate`] to the [`K8sAuthRole`] structure returning the new object.
+    ///
+    /// Construct a new version of the [`K8sAuthInstance`] for persisting in the storage.
+    pub fn with_update(self, update: K8sAuthRoleUpdate) -> Self {
+        Self {
+            auth_instance_id: self.auth_instance_id,
+            bound_audience: update.bound_audience,
+            bound_service_account_names: update
+                .bound_service_account_names
+                .unwrap_or(self.bound_service_account_names),
+            bound_service_account_namespaces: update
+                .bound_service_account_namespaces
+                .unwrap_or(self.bound_service_account_namespaces),
+            domain_id: self.domain_id,
+            enabled: update.enabled.unwrap_or(self.enabled),
+            id: self.id,
+            name: update.name.unwrap_or(self.name),
+            token_restriction_id: update
+                .token_restriction_id
+                .unwrap_or(self.token_restriction_id),
+        }
+    }
+}

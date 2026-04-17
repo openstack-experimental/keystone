@@ -12,6 +12,9 @@ command = { command-line = [ "tools/setup-db.sh", "mysql" ] }
 [scripts.setup.teardown]
 command = { command-line = [ "tools/teardown-db.sh" ] }
 
+[scripts.setup.raft-env]
+command = { command-line = [ "tools/raft-env.sh" ] }
+
 # --- POSTGRES PROFILE ---
 [profile.postgres]
 [[profile.postgres.scripts]]
@@ -35,3 +38,8 @@ setup = "setup-mysql"
 [[profile.mysql.scripts]]
 filter = "binary(provider)"
 setup = "setup-mysql"
+
+[profile.raft]
+[[profile.raft.scripts]]
+filter = "binary(integration)"
+setup = "raft-env"

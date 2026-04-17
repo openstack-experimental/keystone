@@ -20,7 +20,9 @@ openstack-keystone-core-types = { version = "0.1", path = "../../crates/core-typ
 openstack-keystone-identity-sql = { version = "0.1", path = "../../crates/identity-sql/" }
 openstack-keystone-token-fernet = { version = "0.1", path = "../../crates/token-fernet/" }
 openstack-keystone-trust-sql = { version = "0.1", path = "../../crates/trust-sql/" }
+openstack-keystone-distributed-storage = { version = "0.1", path = "../../crates/storage/" }
 openstack-keystone = { version = "0.1", path = "../../crates/keystone/" }
+rcgen.workspace = true
 sea-orm = { workspace = true, features = ["sqlx-sqlite"] }
 secrecy = { workspace = true, features = ["serde"] }
 serde.workspace = true

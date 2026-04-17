@@ -421,9 +421,9 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                                             .map_err(|e| io::Error::other(e.to_string()))?
                                             .map(|x| Metadata::unpack(x.as_ref()))
                                             .transpose()?;
-                                        if !curr_meta
+                                        if curr_meta
                                             .as_ref()
-                                            .is_some_and(|x| x.revision == expected_revision)
+                                            .is_none_or(|x| x.revision != expected_revision)
                                         {
                                             violations.push(Violation {
                                                 r#type: "CONFLICT".to_string(),
@@ -437,11 +437,8 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                                         }
                                     }
                                     let ks = &self.keyspace(keyspace)?;
-                                    let inner_data = StoreDataInnerEnvelope {
-                                        cipher: cipher,
-                                        nonce: nonce,
-                                    }
-                                    .pack()?;
+                                    let inner_data =
+                                        StoreDataInnerEnvelope { cipher, nonce }.pack()?;
                                     batch.insert(ks, key.clone(), inner_data);
                                     batch.insert(&self.meta, key.clone(), metadata.pack()?);
                                 }

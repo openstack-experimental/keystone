@@ -184,7 +184,7 @@ impl Mutation {
             key: key.into(),
             value: rmp_serde::to_vec(&value)?,
             keyspace: keyspace.map(Into::into).unwrap_or("data".into()),
-            metadata: metadata,
+            metadata,
             expected_revision,
         })
     }

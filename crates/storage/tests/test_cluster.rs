@@ -32,13 +32,13 @@ use tempfile::TempDir;
 use tonic::transport::{Channel, ClientTlsConfig, Identity, ServerTlsConfig, Uri};
 
 use openstack_keystone_config::{Config, DistributedStorageConfiguration, TlsConfiguration};
-use openstack_keystone_distributed_storage::TypeConfig;
 use openstack_keystone_distributed_storage::app::{Storage, get_app_server, init_storage};
 use openstack_keystone_distributed_storage::network::load_tls_client_config;
 use openstack_keystone_distributed_storage::protobuf as pb;
 use openstack_keystone_distributed_storage::protobuf::raft::cluster_admin_service_client::ClusterAdminServiceClient;
 use openstack_keystone_distributed_storage::store_command::*;
 use openstack_keystone_distributed_storage::{Metadata, StoreDataEnvelope};
+use openstack_keystone_distributed_storage::{StorageApi, TypeConfig};
 
 /// Set up a cluster of 3 nodes.
 /// Write to it and read from it.

@@ -1,0 +1,25 @@
+[package]
+name = "openstack-keystone-k8s-auth-raft"
+description = "OpenStack Keystone Raft driver for the K8s auth provider"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+homepage.workspace = true
+exclude.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+inventory.workspace = true
+openstack-keystone-core = { version = "0.1", path = "../core" }
+openstack-keystone-core-types = { version = "0.1", path = "../core-types/" }
+openstack-keystone-distributed-storage = { version = "0.1", path = "../storage/"}
+tracing.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+
+[lints]
+workspace = true
