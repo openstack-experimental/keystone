@@ -33,6 +33,13 @@ pub enum StoreError {
         source: std::io::Error,
     },
 
+    /// Tasks join error.
+    #[error(transparent)]
+    Join {
+        #[from]
+        source: tokio::task::JoinError,
+    },
+
     #[error(transparent)]
     Json {
         #[from]

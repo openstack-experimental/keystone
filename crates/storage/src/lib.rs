@@ -52,6 +52,9 @@ pub mod protobuf {
     }
 }
 pub use crate::protobuf as pb;
+pub use types::{Metadata, Nonce, StoreDataEnvelope};
+#[cfg(feature = "bench_internals")]
+pub use types::{bench_pack, bench_unpack};
 
 openraft::declare_raft_types!(
     /// Declare the type configuration for example K/V store.

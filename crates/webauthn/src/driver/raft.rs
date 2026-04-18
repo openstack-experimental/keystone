@@ -17,15 +17,15 @@ use chrono::Utc;
 use webauthn_rs::prelude::{PasskeyAuthentication, PasskeyRegistration};
 
 use openstack_keystone_core::keystone::ServiceState;
-use openstack_keystone_distributed_storage::app::Storage;
+use openstack_keystone_distributed_storage::{Metadata, StoreDataEnvelope, app::Storage};
 
 use crate::{
     WebauthnError,
     types::{WebauthnApi, WebauthnCredential},
 };
 
-static DATA_KEYSPACE: &str = "webauthn:data";
-static META_KEYSPACE: &str = "webauthn:meta";
+static DATA_KEYSPACE: &str = "data";
+//static META_KEYSPACE: &str = "meta";
 static KEY_CURRENT_STATE: &str = "webauthn:state:current";
 
 /// Raft driver for the WebAuthN extension.
@@ -48,18 +48,26 @@ impl RaftDriver {
         storage: &Storage,
     ) -> Result<String, WebauthnError> {
         let res = match storage
-            .get_by_key(KEY_CURRENT_STATE, Some(META_KEYSPACE))
+            .get_by_key(KEY_CURRENT_STATE, Some(DATA_KEYSPACE))
             .await?
         {
             Some(val) => {
                 // Use the current value
-                val
+                val.data
             }
             None => {
                 // Write the new value and use the result as the name
                 let ks_name = self.generate_state_keyspace_name(&storage);
                 storage
-                    .set_value(KEY_CURRENT_STATE, &ks_name, Some(META_KEYSPACE))
+                    .set_value(
+                        KEY_CURRENT_STATE,
+                        StoreDataEnvelope {
+                            metadata: Metadata::new(),
+                            data: ks_name.clone(),
+                        },
+                        Some(DATA_KEYSPACE),
+                        None,
+                    )
                     .await?;
                 ks_name
             }
@@ -109,8 +117,12 @@ impl WebauthnApi for RaftDriver {
             .ok_or(WebauthnError::RaftNotAvailable)?;
         raft.set_value(
             self.get_cred_key_name(&credential.user_id, &credential.credential_id),
-            &credential,
+            StoreDataEnvelope {
+                metadata: Metadata::new(),
+                data: credential.clone(),
+            },
             Some(DATA_KEYSPACE),
+            None,
         )
         .await?;
         Ok(credential.clone())
@@ -133,7 +145,8 @@ impl WebauthnApi for RaftDriver {
                 self.get_cred_key_name(user_id, credential_id),
                 Some(DATA_KEYSPACE),
             )
-            .await?)
+            .await?
+            .map(|x| x.data))
     }
 
     /// Delete credential for the user.
@@ -210,7 +223,8 @@ impl WebauthnApi for RaftDriver {
                 self.get_user_cred_auth_state_key_name(user_id),
                 Some(self.get_current_state_keyspace_name(&raft).await?),
             )
-            .await?)
+            .await?
+            .map(|x| x.data))
     }
 
     /// Get webauthn credential registration state.
@@ -229,7 +243,8 @@ impl WebauthnApi for RaftDriver {
                 self.get_user_cred_registration_state_key_name(user_id),
                 Some(self.get_current_state_keyspace_name(&raft).await?),
             )
-            .await?)
+            .await?
+            .map(|x| x.data))
     }
 
     /// List user webauthn credentials.
@@ -247,7 +262,7 @@ impl WebauthnApi for RaftDriver {
             .prefix(self.get_user_cred_list_prefix(user_id), Some(DATA_KEYSPACE))
             .await?
             .into_iter()
-            .map(|(_, v)| v)
+            .map(|(_, v)| v.data)
             .collect())
     }
 
@@ -265,8 +280,12 @@ impl WebauthnApi for RaftDriver {
             .ok_or(WebauthnError::RaftNotAvailable)?;
         raft.set_value(
             self.get_user_cred_auth_state_key_name(user_id),
-            &auth_state,
+            StoreDataEnvelope {
+                metadata: Metadata::new(),
+                data: auth_state,
+            },
             Some(self.get_current_state_keyspace_name(&raft).await?),
+            None,
         )
         .await?;
         Ok(())
@@ -286,8 +305,12 @@ impl WebauthnApi for RaftDriver {
             .ok_or(WebauthnError::RaftNotAvailable)?;
         raft.set_value(
             self.get_user_cred_registration_state_key_name(user_id),
-            &reg_state,
+            StoreDataEnvelope {
+                metadata: Metadata::new(),
+                data: reg_state,
+            },
             Some(self.get_current_state_keyspace_name(&raft).await?),
+            None,
         )
         .await?;
         Ok(())
@@ -306,12 +329,29 @@ impl WebauthnApi for RaftDriver {
             .storage
             .as_ref()
             .ok_or(WebauthnError::RaftNotAvailable)?;
-        raft.set_value(
-            self.get_cred_key_name(user_id, credential_id),
-            &credential,
-            Some(DATA_KEYSPACE),
-        )
-        .await?;
-        Ok(credential.clone())
+        if let Some(curr) = raft
+            .get_by_key::<WebauthnCredential, String, &str>(
+                self.get_cred_key_name(user_id, credential_id),
+                Some(DATA_KEYSPACE),
+            )
+            .await?
+        {
+            let mut new_meta = curr.metadata.clone();
+            new_meta.increment_revision();
+            let curr_revision = curr.metadata.revision;
+            raft.set_value(
+                self.get_cred_key_name(user_id, credential_id),
+                StoreDataEnvelope {
+                    metadata: new_meta,
+                    data: credential,
+                },
+                Some(DATA_KEYSPACE),
+                Some(curr_revision),
+            )
+            .await?;
+            Ok(credential.clone())
+        } else {
+            return Err(WebauthnError::CredentialNotFound(credential_id.to_string()));
+        }
     }
 }
