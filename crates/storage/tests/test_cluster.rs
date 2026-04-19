@@ -38,6 +38,7 @@ use openstack_keystone_distributed_storage::network::load_tls_client_config;
 use openstack_keystone_distributed_storage::protobuf as pb;
 use openstack_keystone_distributed_storage::protobuf::raft::cluster_admin_service_client::ClusterAdminServiceClient;
 use openstack_keystone_distributed_storage::store_command::*;
+use openstack_keystone_distributed_storage::{Metadata, StoreDataEnvelope};
 
 /// Set up a cluster of 3 nodes.
 /// Write to it and read from it.
@@ -197,11 +198,16 @@ async fn test_cluster_inner() -> Result<()> {
         // the cluster
         instance1
             .storage
-            .set_value("foo", "bar", None::<String>)
+            .set_value("foo", StoreDataEnvelope::from("bar"), None::<String>, None)
             .await?;
         instance2
             .storage
-            .set_value("foo1", "bar1", Some("another_keyspace"))
+            .set_value(
+                "foo1",
+                StoreDataEnvelope::from("bar1"),
+                Some("another_keyspace"),
+                None,
+            )
             .await?;
         //    // --- Wait for a while to let the replication get done.
         TypeConfig::sleep(Duration::from_millis(1_000)).await;
@@ -211,17 +217,23 @@ async fn test_cluster_inner() -> Result<()> {
     {
         for instance in &instances {
             println!("=== read `foo` on node {}", instance.node_id);
-            let got: Option<String> = instance.storage.get_by_key("foo", None::<String>).await?;
-            assert_eq!(Some("bar".to_string()), got);
+            let got: StoreDataEnvelope<String> = instance
+                .storage
+                .get_by_key("foo", None::<String>)
+                .await?
+                .expect("must present");
+            println!("the data is {:?}", got);
+            assert_eq!("bar", got.data);
 
-            let got: Option<String> = instance.storage.get_by_key("foo1", None::<String>).await?;
+            let got: Option<StoreDataEnvelope<String>> =
+                instance.storage.get_by_key("foo1", None::<String>).await?;
             assert!(got.is_none());
 
-            let got: Option<String> = instance
+            let got: Option<StoreDataEnvelope<String>> = instance
                 .storage
                 .get_by_key("foo1", Some("another_keyspace"))
                 .await?;
-            assert_eq!(Some("bar1".to_string()), got);
+            assert_eq!("bar1", got.unwrap().data);
         }
     }
 
@@ -238,25 +250,34 @@ async fn test_cluster_inner() -> Result<()> {
         for instance in &instances {
             println!("=== read `foo` on node {}", instance.node_id);
 
-            let got: Option<String> = instance.storage.get_by_key("foo", None::<String>).await?;
+            let got: Option<StoreDataEnvelope<String>> =
+                instance.storage.get_by_key("foo", None::<String>).await?;
             assert!(got.is_none());
 
-            let got: Option<String> = instance
+            let got: Option<StoreDataEnvelope<String>> = instance
                 .storage
                 .get_by_key("foo1", Some("another_keyspace"))
                 .await?;
-            assert_eq!(Some("bar1".to_string()), got);
+            assert_eq!("bar1", got.unwrap().data);
         }
     }
 
     println!("=== Transaction test");
 
     let mutations = vec![
-        Mutation::set("new_foo", "new_val", None::<&str>)?,
-        Mutation::set("new_foo2", "new_val2", None::<&str>)?,
+        Mutation::set("new_foo", "new_val", Metadata::new(), None::<&str>, Some(1))?,
+        Mutation::set(
+            "new_foo2",
+            "new_val2",
+            Metadata::new(),
+            None::<&str>,
+            Some(1),
+        )?,
         Mutation::remove("foo1", Some("another_keyspace"))?,
     ];
     instance1.storage.transaction(mutations).await?;
+    // wait for the log to be applied
+    TypeConfig::sleep(Duration::from_millis(10)).await;
     assert_eq!(
         "new_val",
         instance1
@@ -264,6 +285,7 @@ async fn test_cluster_inner() -> Result<()> {
             .get_by_key::<String, &str, &str>("new_foo", None)
             .await?
             .expect("data should be there")
+            .data
     );
     assert_eq!(
         "new_val2",
@@ -272,11 +294,12 @@ async fn test_cluster_inner() -> Result<()> {
             .get_by_key::<String, &str, &str>("new_foo2", None)
             .await?
             .expect("data should be there")
+            .data
     );
     assert!(
         instance1
             .storage
-            .get_by_key::<String, &str, &str>("foo1", Some("another_keyspace"))
+            .get_by_key::<StoreDataEnvelope<String>, &str, &str>("foo1", Some("another_keyspace"))
             .await?
             .is_none()
     );

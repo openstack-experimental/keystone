@@ -16,12 +16,79 @@
 use serde::{Deserialize, Serialize};
 
 use crate::StoreError;
+use crate::types::{Metadata, Nonce};
 
 /// Store command.
+///
+/// An operation to be performed on the storage. The data is transferred encrypted over the wire
+/// since it is stored in the raft log files.
 #[derive(Debug, Deserialize, PartialEq, Serialize)]
 pub enum StoreCommand {
     /// Store mutation transaction.
-    Transaction(Vec<Mutation>),
+    Transaction(Vec<MutationInner>),
+}
+
+/// Inner representation of the store modification operation encrypting the data for at-rest
+/// storage.
+#[derive(Debug, Deserialize, PartialEq, Serialize)]
+pub enum MutationInner {
+    /// Delete the entry from the store.
+    Remove {
+        /// The Key to delete.
+        key: Vec<u8>,
+
+        /// The `keyspace` of the key.
+        keyspace: String,
+    },
+
+    /// Set the value for the key in the store.
+    Set {
+        /// The value to set.
+        #[serde(with = "serde_bytes")]
+        cipher: Vec<u8>,
+
+        /// Expected revision.
+        expected_revision: Option<u64>,
+
+        /// The key to set.
+        key: Vec<u8>,
+
+        /// The `keyspace` of the key.
+        keyspace: String,
+
+        /// The resource metadata.
+        metadata: Metadata,
+
+        /// Nonce.
+        nonce: Nonce,
+    },
+}
+
+impl MutationInner {
+    /// Convert the mutation operation into the Raft operation.
+    ///
+    /// Convert the mutation command into the raft operation encrypting the data for the at-rest
+    /// encryption.
+    pub fn convert(value: Mutation, nonce: Nonce) -> Result<MutationInner, StoreError> {
+        Ok(match value {
+            Mutation::Remove { key, keyspace } => MutationInner::Remove { key, keyspace },
+            Mutation::Set {
+                key,
+                keyspace,
+                value,
+                metadata,
+                expected_revision,
+            } => MutationInner::Set {
+                key,
+                keyspace,
+                metadata,
+                // TODO: encrypt for at-rest
+                cipher: value,
+                nonce,
+                expected_revision,
+            },
+        })
+    }
 }
 
 /// Store modification operation.
@@ -38,11 +105,17 @@ pub enum Mutation {
 
     /// Set the value for the key in the store.
     Set {
+        /// Expected revision.
+        expected_revision: Option<u64>,
+
         /// The key to set.
         key: Vec<u8>,
 
         /// The `keyspace` of the key.
         keyspace: String,
+
+        /// The resource metadata.
+        metadata: Metadata,
 
         /// The value to set.
         #[serde(with = "serde_bytes")]
@@ -62,7 +135,13 @@ impl Mutation {
         })
     }
 
-    pub fn set<K, V, S>(key: K, value: V, keyspace: Option<S>) -> Result<Self, StoreError>
+    pub fn set<K, V, S>(
+        key: K,
+        value: V,
+        metadata: Metadata,
+        keyspace: Option<S>,
+        expected_revision: Option<u64>,
+    ) -> Result<Self, StoreError>
     where
         K: Into<Vec<u8>>,
         V: Serialize,
@@ -72,6 +151,8 @@ impl Mutation {
             key: key.into(),
             value: rmp_serde::to_vec(&value)?,
             keyspace: keyspace.map(Into::into).unwrap_or("data".into()),
+            metadata: metadata,
+            expected_revision,
         })
     }
 }
@@ -110,7 +191,9 @@ mod tests {
     #[test]
     fn test_delete_command() {
         let mutation = Mutation::remove("foo", Some("bar")).unwrap();
-        let cmd = StoreCommand::Transaction(vec![mutation]);
+        let cmd = StoreCommand::Transaction(vec![
+            MutationInner::convert(mutation, Nonce::default()).unwrap(),
+        ]);
 
         let packed = cmd.pack().unwrap();
         let unpacked = StoreCommand::unpack(&packed).unwrap();
@@ -119,16 +202,19 @@ mod tests {
 
     #[test]
     fn test_set_command() {
-        let mutation = Mutation::set("foo", "value", Some("bar")).unwrap();
-        let cmd = StoreCommand::Transaction(vec![mutation]);
+        let mutation =
+            Mutation::set("foo", "value", Metadata::new(), Some("bar"), Some(3)).unwrap();
+        let cmd = StoreCommand::Transaction(vec![
+            MutationInner::convert(mutation, Nonce::default()).unwrap(),
+        ]);
         let packed = cmd.pack().unwrap();
         let unpacked = StoreCommand::unpack(&packed).unwrap();
         assert_eq!(cmd, unpacked);
         if let StoreCommand::Transaction(data) = unpacked
             && let Some(mutation) = data.first()
-            && let Mutation::Set { value, .. } = mutation
+            && let MutationInner::Set { cipher, .. } = mutation
         {
-            assert_eq!(value, &rmp_serde::to_vec("value").unwrap());
+            assert_eq!(cipher, &rmp_serde::to_vec("value").unwrap());
         } else {
             panic!("should be the set command");
         }

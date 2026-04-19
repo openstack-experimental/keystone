@@ -15,7 +15,6 @@ use std::sync::Arc;
 
 use dashmap::DashMap;
 use openraft::Config;
-// use openraft::ReadPolicy;
 use openraft::async_runtime::WatchReceiver;
 use openraft::errors::{ForwardToLeader, RaftError};
 use serde::Serialize;
@@ -121,7 +120,14 @@ impl Storage {
     /// * `Ok(Response)` - Success response after the value is deleted
     /// * `Err(Status)` - Error status if the set operation fails
     pub async fn transaction(&self, mutations: Vec<Mutation>) -> Result<(), StoreError> {
-        let request = StoreCommand::Transaction(mutations);
+        let metrics = self.raft.metrics().borrow_watched().clone();
+        let nonce = Nonce::new(metrics.current_term, metrics.last_log_index.unwrap_or(1));
+        let request = StoreCommand::Transaction(
+            mutations
+                .into_iter()
+                .map(|x| MutationInner::convert(x, nonce.clone()))
+                .collect::<Result<Vec<_>, _>>()?,
+        );
         let payload = crate::pb::api::CommandRequest::try_from(request)?;
         match self.raft.client_write(payload.clone()).await {
             Ok(_) => {}
@@ -155,7 +161,10 @@ impl Storage {
         K: Into<Vec<u8>>,
         S: Into<String>,
     {
-        let request = StoreCommand::Transaction(vec![Mutation::remove(key, keyspace)?]);
+        let request = StoreCommand::Transaction(vec![MutationInner::convert(
+            Mutation::remove(key, keyspace)?,
+            Nonce::default(),
+        )?]);
         let payload = crate::pb::api::CommandRequest::try_from(request)?;
         match self.raft.client_write(payload.clone()).await {
             Ok(_) => {}
@@ -188,7 +197,7 @@ impl Storage {
         &self,
         key: K,
         keyspace: Option<S>,
-    ) -> Result<Option<T>, StoreError>
+    ) -> Result<Option<StoreDataEnvelope<T>>, StoreError>
     where
         T: DeserializeOwned,
         K: AsRef<[u8]>,
@@ -201,12 +210,25 @@ impl Storage {
             None => self.state_machine_store.data(),
             Some(name) => &self.state_machine_store.keyspace(name)?,
         };
-        let value = ks
+        // NOTE: running lookups in separate tasks make huge negative performance impact (+1000%).
+        if let Some(data) = ks
             .get(&key)?
-            .map(|x| rmp_serde::from_slice(x.as_ref()))
-            .transpose()?;
-        // TODO: at REST decryption would come here
-        Ok(value)
+            .map(|x| StoreDataInnerEnvelope::unpack(x.as_ref()))
+            .transpose()?
+        {
+            let metadata = if let Some(meta) = self.state_machine_store.meta().get(&key)? {
+                Metadata::unpack(&meta)?
+            } else {
+                // Need to repair data and insert the new metadata
+                let res = Metadata::new();
+                self.state_machine_store
+                    .meta()
+                    .insert(key.as_ref(), res.pack()?)?;
+                res
+            };
+            return Ok(Some(StoreDataEnvelope { data, metadata }));
+        }
+        Ok(None)
     }
 
     /// List key value pairs by the prefix.
@@ -225,7 +247,7 @@ impl Storage {
         &self,
         prefix: K,
         keyspace: Option<S>,
-    ) -> Result<Vec<(String, T)>, StoreError>
+    ) -> Result<Vec<(String, StoreDataEnvelope<T>)>, StoreError>
     where
         T: DeserializeOwned,
         K: AsRef<[u8]>,
@@ -238,13 +260,26 @@ impl Storage {
             None => self.state_machine_store.data(),
             Some(name) => &self.state_machine_store.keyspace(name)?,
         };
-        // TODO: at REST decryption would come here
         ks.prefix(&prefix)
             .map(|item| {
                 let (key, val) = item.into_inner()?;
+                let k = String::from_utf8(key.to_vec())?;
+                let meta = if let Some(meta) = self.state_machine_store.meta().get(&k)? {
+                    Metadata::unpack(&meta)?
+                } else {
+                    // Need to repair data and insert the new metadata
+                    let res = Metadata::new();
+                    self.state_machine_store
+                        .meta()
+                        .insert(k.clone(), res.pack()?)?;
+                    res
+                };
                 Ok((
-                    String::from_utf8(key.to_vec())?,
-                    rmp_serde::from_slice(val.as_ref())?,
+                    k.clone(),
+                    StoreDataEnvelope {
+                        data: StoreDataInnerEnvelope::unpack(val.as_ref())?,
+                        metadata: meta,
+                    },
                 ))
             })
             .collect()
@@ -263,8 +298,9 @@ impl Storage {
     pub async fn set_value<K, V, S>(
         &self,
         key: K,
-        value: V,
+        value: StoreDataEnvelope<V>,
         keyspace: Option<S>,
+        expected_revision: Option<u64>,
     ) -> Result<(), StoreError>
     where
         K: Into<String>,
@@ -272,25 +308,26 @@ impl Storage {
         S: Into<String>,
     {
         let key: String = key.into();
-        let request = StoreCommand::Transaction(vec![Mutation::set(key, value, keyspace)?]);
+        let metrics = self.raft.metrics().borrow_watched().clone();
+        let nonce = Nonce::new(metrics.current_term, metrics.last_log_index.unwrap_or(1));
+        let request = StoreCommand::Transaction(vec![MutationInner::convert(
+            Mutation::set(key, value.data, value.metadata, keyspace, expected_revision)?,
+            nonce,
+        )?]);
 
         let payload = crate::pb::api::CommandRequest::try_from(request)?;
         match self.raft.client_write(payload.clone()).await {
-            Ok(_) => {
-                tracing::debug!("written");
-            }
+            Ok(_) => {}
             Err(RaftError::APIError(ClientWriteError::ForwardToLeader(ForwardToLeader {
                 leader_id: Some(leader_id),
                 leader_node: Some(leader_node),
             }))) => {
-                tracing::debug!("need to redirect to {:?}", leader_id);
                 let channel = self.get_or_create_channel(leader_id, leader_node.rpc_addr)?;
 
                 let mut client = StorageServiceClient::new(channel);
                 client.command(payload).await?;
             }
             Err(other) => {
-                tracing::debug!("error {:?}", other);
                 return Err(other)?;
             }
         };
@@ -304,7 +341,7 @@ impl Storage {
 
     /// Get the channel to the given node.
     ///
-    /// Get the channel to the node if it is already establed or create a new one. This method uses
+    /// Get the channel to the node if it is already established or create a new one. This method uses
     /// the connection pool.
     ///
     /// # Arguments
