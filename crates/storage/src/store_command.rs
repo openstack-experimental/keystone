@@ -41,6 +41,12 @@ pub enum MutationInner {
         keyspace: String,
     },
 
+    /// Delete the entry from the index store.
+    RemoveIndex {
+        /// The Key to delete.
+        key: Vec<u8>,
+    },
+
     /// Set the value for the key in the store.
     Set {
         /// The value to set.
@@ -62,6 +68,12 @@ pub enum MutationInner {
         /// Nonce.
         nonce: Nonce,
     },
+
+    /// Set the key in the index keyspace.
+    SetIndex {
+        /// The key to set.
+        key: Vec<u8>,
+    },
 }
 
 impl MutationInner {
@@ -72,6 +84,7 @@ impl MutationInner {
     pub fn convert(value: Mutation, nonce: Nonce) -> Result<MutationInner, StoreError> {
         Ok(match value {
             Mutation::Remove { key, keyspace } => MutationInner::Remove { key, keyspace },
+            Mutation::RemoveIndex { key } => MutationInner::RemoveIndex { key },
             Mutation::Set {
                 key,
                 keyspace,
@@ -87,6 +100,7 @@ impl MutationInner {
                 nonce,
                 expected_revision,
             },
+            Mutation::SetIndex { key } => MutationInner::SetIndex { key },
         })
     }
 }
@@ -101,6 +115,12 @@ pub enum Mutation {
 
         /// The `keyspace` of the key.
         keyspace: String,
+    },
+
+    /// Delete the entry from the store.
+    RemoveIndex {
+        /// The Key to delete.
+        key: Vec<u8>,
     },
 
     /// Set the value for the key in the store.
@@ -121,6 +141,12 @@ pub enum Mutation {
         #[serde(with = "serde_bytes")]
         value: Vec<u8>,
     },
+
+    /// Set the value for the key in the store.
+    SetIndex {
+        /// The key to set.
+        key: Vec<u8>,
+    },
 }
 
 impl Mutation {
@@ -133,6 +159,13 @@ impl Mutation {
             key: key.into(),
             keyspace: keyspace.map(Into::into).unwrap_or("data".into()),
         })
+    }
+
+    pub fn remove_index<K>(key: K) -> Result<Self, StoreError>
+    where
+        K: Into<Vec<u8>>,
+    {
+        Ok(Self::RemoveIndex { key: key.into() })
     }
 
     pub fn set<K, V, S>(
@@ -154,6 +187,13 @@ impl Mutation {
             metadata: metadata,
             expected_revision,
         })
+    }
+
+    pub fn set_index<K>(key: K) -> Result<Self, StoreError>
+    where
+        K: Into<Vec<u8>>,
+    {
+        Ok(Self::SetIndex { key: key.into() })
     }
 }
 
@@ -201,6 +241,18 @@ mod tests {
     }
 
     #[test]
+    fn test_delete_index_command() {
+        let mutation = Mutation::remove_index("foo").unwrap();
+        let cmd = StoreCommand::Transaction(vec![
+            MutationInner::convert(mutation, Nonce::default()).unwrap(),
+        ]);
+
+        let packed = cmd.pack().unwrap();
+        let unpacked = StoreCommand::unpack(&packed).unwrap();
+        assert_eq!(cmd, unpacked);
+    }
+
+    #[test]
     fn test_set_command() {
         let mutation =
             Mutation::set("foo", "value", Metadata::new(), Some("bar"), Some(3)).unwrap();
@@ -217,6 +269,25 @@ mod tests {
             assert_eq!(cipher, &rmp_serde::to_vec("value").unwrap());
         } else {
             panic!("should be the set command");
+        }
+    }
+
+    #[test]
+    fn test_set_index_command() {
+        let mutation = Mutation::set_index("foo").unwrap();
+        let cmd = StoreCommand::Transaction(vec![
+            MutationInner::convert(mutation, Nonce::default()).unwrap(),
+        ]);
+        let packed = cmd.pack().unwrap();
+        let unpacked = StoreCommand::unpack(&packed).unwrap();
+        assert_eq!(cmd, unpacked);
+        if let StoreCommand::Transaction(data) = unpacked
+            && let Some(mutation) = data.first()
+            && let MutationInner::SetIndex { key } = mutation
+        {
+            assert_eq!("foo".as_bytes(), key);
+        } else {
+            panic!("should be the set_index command");
         }
     }
 }

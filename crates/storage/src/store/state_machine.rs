@@ -95,6 +95,11 @@ impl FjallStateMachine {
         &self.data
     }
 
+    /// Get the index `keyspace` handle.
+    pub fn index(&self) -> &Keyspace {
+        &self.index
+    }
+
     /// Get the metadata `keyspace` handle.
     pub fn meta(&self) -> &Keyspace {
         &self.meta
@@ -390,6 +395,9 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                                     batch.remove(ks, key.clone());
                                     batch.remove(&self.meta, key.clone());
                                 }
+                                MutationInner::RemoveIndex { key } => {
+                                    batch.remove(&self.index, key.clone());
+                                }
                                 MutationInner::Set {
                                     key,
                                     keyspace,
@@ -436,6 +444,9 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                                     .pack()?;
                                     batch.insert(ks, key.clone(), inner_data);
                                     batch.insert(&self.meta, key.clone(), metadata.pack()?);
+                                }
+                                MutationInner::SetIndex { key } => {
+                                    batch.insert(&self.index, key, vec![]);
                                 }
                             }
                         }

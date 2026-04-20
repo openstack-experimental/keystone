@@ -64,12 +64,10 @@ impl StorageService for StorageServiceImpl {
     ) -> Result<Response<PbResponse>, Status> {
         let req = request.into_inner();
 
-        let res = self
-            .raft_node
-            .client_write(req)
-            //.set_value(req.key.clone(), req.value, req.keyspace)
-            .await
-            .map_err(|e| Status::internal(format!("Failed to write command to store: {}", e)))?;
+        let res =
+            self.raft_node.client_write(req).await.map_err(|e| {
+                Status::internal(format!("Failed to write command to store: {}", e))
+            })?;
 
         //debug!("Successfully set value for key: {}", req.key);
         Ok(Response::new(res.data))

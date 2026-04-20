@@ -209,6 +209,9 @@ async fn test_cluster_inner() -> Result<()> {
                 None,
             )
             .await?;
+        instance3.storage.set_index_key("idx:foo:1").await?;
+        instance3.storage.set_index_key("idx:foo:2").await?;
+        instance3.storage.set_index_key("idx:foo:3").await?;
         //    // --- Wait for a while to let the replication get done.
         TypeConfig::sleep(Duration::from_millis(1_000)).await;
     }
@@ -224,22 +227,30 @@ async fn test_cluster_inner() -> Result<()> {
                 .expect("must present");
             println!("the data is {:?}", got);
             assert_eq!("bar", got.data);
+            assert!(instance.storage.contains_key("foo", None::<&str>).await?);
 
             let got: Option<StoreDataEnvelope<String>> =
                 instance.storage.get_by_key("foo1", None::<String>).await?;
             assert!(got.is_none());
+            assert!(!instance.storage.contains_key("foo1", None::<&str>).await?);
 
             let got: Option<StoreDataEnvelope<String>> = instance
                 .storage
                 .get_by_key("foo1", Some("another_keyspace"))
                 .await?;
             assert_eq!("bar1", got.unwrap().data);
+            let indexes = instance.storage.prefix_index("idx:foo").await?;
+            assert!(indexes.contains(&"idx:foo:1".to_string()));
+            assert!(indexes.contains(&"idx:foo:2".to_string()));
+            assert!(indexes.contains(&"idx:foo:3".to_string()));
+            assert_eq!(indexes.len(), 3);
         }
     }
 
     println!("=== delete `foo=bar`");
     {
         instance3.storage.remove("foo", None::<String>).await?;
+        instance2.storage.remove_index("idx:foo:1").await?;
 
         // --- Wait for a while to let the replication get done.
         TypeConfig::sleep(Duration::from_millis(1_000)).await;
@@ -259,6 +270,10 @@ async fn test_cluster_inner() -> Result<()> {
                 .get_by_key("foo1", Some("another_keyspace"))
                 .await?;
             assert_eq!("bar1", got.unwrap().data);
+            let indexes = instance.storage.prefix_index("idx:foo").await?;
+            assert!(indexes.contains(&"idx:foo:2".to_string()));
+            assert!(indexes.contains(&"idx:foo:3".to_string()));
+            assert_eq!(indexes.len(), 2);
         }
     }
 
