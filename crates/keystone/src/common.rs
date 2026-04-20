@@ -12,4 +12,60 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //! # Common functionality
+use std::fmt;
+
+use axum::http::{Request, Response, StatusCode};
+use tower_http::classify::{
+    ClassifiedResponse, ClassifyResponse, MakeClassifier, NeverClassifyEos,
+};
+
 pub use openstack_keystone_core::common::*;
+
+/// Custom Response classifier to silent the 503 errors which are "normal" logic.
+#[derive(Clone)]
+pub struct KeystoneResponseClassifier;
+
+impl ClassifyResponse for KeystoneResponseClassifier {
+    type FailureClass = String;
+    type ClassifyEos = NeverClassifyEos<Self::FailureClass>;
+
+    fn classify_response<B>(
+        self,
+        res: &Response<B>,
+    ) -> ClassifiedResponse<Self::FailureClass, Self::ClassifyEos> {
+        let status = res.status();
+
+        // Logic: If it's a 503, we check if we should "ignore" it.
+        // For a global layer, you can simply decide that 503s are NEVER hard errors
+        // because in a Raft/Distributed system, 503 is an expected state (Catching up).
+        if status == StatusCode::SERVICE_UNAVAILABLE {
+            return ClassifiedResponse::Ready(Ok(()));
+        }
+
+        if status.is_server_error() {
+            ClassifiedResponse::Ready(Err(format!("Server Error: {}", status)))
+        } else if status.is_client_error() {
+            ClassifiedResponse::Ready(Err(format!("Client Error: {}", status)))
+        } else {
+            ClassifiedResponse::Ready(Ok(()))
+        }
+    }
+
+    fn classify_error<E>(self, error: &E) -> Self::FailureClass
+    where
+        E: fmt::Display,
+    {
+        error.to_string()
+    }
+}
+
+// Factory to provide the classifier to the middleware.
+impl MakeClassifier for KeystoneResponseClassifier {
+    type Classifier = Self;
+    type FailureClass = String;
+    type ClassifyEos = NeverClassifyEos<Self::FailureClass>;
+
+    fn make_classifier<B>(&self, _request: &Request<B>) -> Self::Classifier {
+        self.clone()
+    }
+}
