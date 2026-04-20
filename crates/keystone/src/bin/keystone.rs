@@ -49,14 +49,14 @@ use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 use uuid::Uuid;
 
-use openstack_keystone::api;
-use openstack_keystone::config::Config;
 use openstack_keystone::federation::FederationApi;
 use openstack_keystone::keystone::{Service, ServiceState};
 use openstack_keystone::plugin_manager::PluginManager;
 use openstack_keystone::policy::HttpPolicyEnforcer;
 use openstack_keystone::provider::Provider;
 use openstack_keystone::webauthn;
+use openstack_keystone::{api, common};
+use openstack_keystone::{common::KeystoneResponseClassifier, config::Config};
 use openstack_keystone_distributed_storage::app::get_app_server;
 
 // Default body limit 256kB
@@ -240,8 +240,7 @@ async fn main() -> Result<(), Report> {
         .sensitive_request_headers(sensitive_headers.clone())
         .layer(DefaultBodyLimit::max(DEFAULT_BODY_LIMIT))
         .layer(
-            TraceLayer::new_for_http()
-                //.make_span_with(DefaultMakeSpan::new().include_headers(true))
+            TraceLayer::new(common::KeystoneResponseClassifier)
                 .make_span_with(|request: &Request<_>| {
                     info_span!(
                         "request",

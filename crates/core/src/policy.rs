@@ -79,6 +79,10 @@ pub trait PolicyEnforcer: Send + Sync {
         target: Value,
         update: Option<Value>,
     ) -> Result<PolicyEvaluationResult, PolicyError>;
+
+    async fn health_check(&self) -> Result<(), PolicyError> {
+        Ok(())
+    }
 }
 
 #[cfg(any(test, feature = "mock"))]
@@ -94,6 +98,8 @@ mock! {
             target: Value,
             current: Option<Value>
         ) -> Result<PolicyEvaluationResult, PolicyError>;
+
+        async fn health_check(&self) -> Result<(), PolicyError>;
     }
 }
 

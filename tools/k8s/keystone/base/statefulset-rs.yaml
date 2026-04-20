@@ -75,7 +75,7 @@ spec:
           livenessProbe:
             failureThreshold: 3
             httpGet:
-              path: /
+              path: /health
               port: keystone-rs
               scheme: HTTP
             periodSeconds: 10

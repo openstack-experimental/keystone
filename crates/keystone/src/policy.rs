@@ -28,6 +28,8 @@ pub struct HttpPolicyEnforcer {
     http_client: Arc<Client>,
     /// OPA url address.
     base_url: Url,
+    /// OPA health url address.
+    health_url: Url,
 }
 
 impl HttpPolicyEnforcer {
@@ -42,6 +44,7 @@ impl HttpPolicyEnforcer {
         Ok(Self {
             http_client: Arc::new(client),
             base_url: url.join("/v1/data/")?,
+            health_url: url.join("/health")?,
         })
     }
 }
@@ -96,5 +99,14 @@ impl PolicyEnforcer for HttpPolicyEnforcer {
             return Err(PolicyError::Forbidden(res));
         }
         Ok(res)
+    }
+
+    async fn health_check(&self) -> Result<(), PolicyError> {
+        self.http_client
+            .get(self.health_url.as_str())
+            .send()
+            .await?
+            .error_for_status()?;
+        Ok(())
     }
 }

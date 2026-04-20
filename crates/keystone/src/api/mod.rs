@@ -33,6 +33,7 @@ use crate::keystone::ServiceState;
 pub mod auth;
 pub(crate) mod common;
 pub mod error;
+pub mod health;
 pub mod types;
 pub mod v3;
 pub mod v4;
@@ -69,6 +70,7 @@ pub fn openapi_router() -> OpenApiRouter<ServiceState> {
     OpenApiRouter::new()
         .nest("/v3", v3::openapi_router())
         .nest("/v4", v4::openapi_router())
+        .merge(health::openapi_router())
         .routes(routes!(version))
 }
 
@@ -122,15 +124,18 @@ async fn version(
 
 #[cfg(test)]
 pub(crate) mod tests {
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
     use sea_orm::DatabaseConnection;
     use std::sync::Arc;
+    use tower::ServiceExt;
 
     use openstack_keystone_config::Config;
     use openstack_keystone_core_types::identity::UserResponseBuilder;
 
     use crate::keystone::{Service, ServiceState};
     use crate::policy::{MockPolicy, PolicyError, PolicyEvaluationResult};
-    use crate::provider::ProviderBuilder;
+    use crate::provider::{Provider, ProviderBuilder};
     use crate::token::{MockTokenProvider, Token, UnscopedPayload};
 
     pub async fn get_mocked_state(
@@ -186,6 +191,10 @@ pub(crate) mod tests {
                     Err(PolicyError::Forbidden(PolicyEvaluationResult::forbidden()))
                 }
             });
+
+        policy_enforcer_mock
+            .expect_health_check()
+            .returning(|| Ok(()));
 
         Arc::new(
             Service::new(
