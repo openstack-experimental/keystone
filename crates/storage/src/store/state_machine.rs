@@ -41,7 +41,9 @@ use serde::Serialize;
 use crate::StoreError;
 use crate::TypeConfig;
 use crate::protobuf as pb;
+use crate::protobuf::api::response::Violation;
 use crate::store_command::*;
+use crate::types::{Metadata, StoreDataInnerEnvelope};
 
 const KEY_LAST_APPLIED_LOG: &[u8] = b"last_applied_log";
 const KEY_LAST_MEMBERSHIP: &[u8] = b"last_membership";
@@ -61,6 +63,7 @@ pub struct FjallStateMachine {
     db: Arc<Database>,
     meta: Keyspace,
     data: Keyspace,
+    index: Keyspace,
     snapshot_dir: PathBuf,
 }
 
@@ -69,6 +72,7 @@ impl FjallStateMachine {
     pub fn new(db: Arc<Database>, snapshot_dir: PathBuf) -> Result<Self, StoreError> {
         let meta = db.keyspace("meta", KeyspaceCreateOptions::default)?;
         let data = db.keyspace("data", KeyspaceCreateOptions::default)?;
+        let index = db.keyspace("index", KeyspaceCreateOptions::default)?;
 
         fs::create_dir_all(&snapshot_dir)?;
 
@@ -77,22 +81,37 @@ impl FjallStateMachine {
             snapshot_dir,
             meta,
             data,
+            index,
         })
     }
 
-    pub fn data(&self) -> &Keyspace {
-        &self.data
-    }
-
+    /// Get the database handle.
     pub fn db(&self) -> &Arc<Database> {
         &self.db
     }
 
-    /// Get the reference to the Flall `keyspace` by name.
+    /// Get the data `keyspace` handle.
+    pub fn data(&self) -> &Keyspace {
+        &self.data
+    }
+
+    /// Get the metadata `keyspace` handle.
+    pub fn meta(&self) -> &Keyspace {
+        &self.meta
+    }
+
+    /// Get the Flall `keyspace` handle by name.
+    ///
+    /// Get a handle to the keyspace creating a new one when not exists.
     pub fn keyspace<S: AsRef<str>>(&self, name: S) -> Result<Keyspace, StoreError> {
-        Ok(self
-            .db
-            .keyspace(name.as_ref(), KeyspaceCreateOptions::default)?)
+        Ok(match name.as_ref() {
+            "data" => self.data.clone(),
+            "meta" => self.meta.clone(),
+            "index" => self.index.clone(),
+            other => self
+                .db
+                .keyspace(other.as_ref(), KeyspaceCreateOptions::default)?,
+        })
     }
 
     #[allow(clippy::result_large_err)]
@@ -116,11 +135,11 @@ impl FjallStateMachine {
 }
 
 fn serialize<T: Serialize>(value: &T) -> Result<Vec<u8>, StorageError<TypeConfig>> {
-    serde_json::to_vec(value).map_err(|e| StorageError::write(TypeConfig::err_from_error(&e)))
+    rmp_serde::to_vec(value).map_err(|e| StorageError::write(TypeConfig::err_from_error(&e)))
 }
 
 fn deserialize<T: for<'de> Deserialize<'de>>(bytes: &[u8]) -> Result<T, StorageError<TypeConfig>> {
-    serde_json::from_slice(bytes).map_err(|e| StorageError::read(TypeConfig::err_from_error(&e)))
+    rmp_serde::from_slice(bytes).map_err(|e| StorageError::read(TypeConfig::err_from_error(&e)))
 }
 
 impl RaftSnapshotBuilder<TypeConfig> for Arc<FjallStateMachine> {
@@ -326,11 +345,11 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
 
         // Read and deserialize snapshot file
         let file_bytes = fs::read(&snapshot_path)?;
-        let snapshot_file: SnapshotFile = serde_json::from_slice(&file_bytes)
+        let snapshot_file: SnapshotFile = rmp_serde::from_slice(&file_bytes)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
 
         // Serialize data for snapshot field
-        let data_bytes = serde_json::to_vec(&snapshot_file.data)
+        let data_bytes = rmp_serde::to_vec(&snapshot_file.data)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
 
         Ok(Some(Snapshot {
@@ -355,30 +374,72 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                 // Unpack the payload and apply the command
                 match StoreCommand::unpack(&store_req)? {
                     StoreCommand::Transaction(mutations) => {
+                        let mut violations: Vec<Violation> = Vec::new();
                         for mutation in mutations {
                             match mutation {
-                                Mutation::Remove { key, keyspace } => {
-                                    let ks = &self
-                                        .db
-                                        .keyspace(&keyspace, KeyspaceCreateOptions::default)
-                                        .map_err(|e| io::Error::other(e.to_string()))?;
-                                    batch.remove(ks, key);
+                                MutationInner::Remove { key, keyspace } => {
+                                    // Protect own data
+                                    if keyspace == "meta" && key == KEY_LAST_MEMBERSHIP
+                                        || key == KEY_LAST_APPLIED_LOG
+                                    {
+                                        return Err(io::Error::other(
+                                            "not allowed to delete system data",
+                                        ));
+                                    }
+                                    let ks = &self.keyspace(keyspace)?;
+                                    batch.remove(ks, key.clone());
+                                    batch.remove(&self.meta, key.clone());
                                 }
-                                Mutation::Set {
+                                MutationInner::Set {
                                     key,
                                     keyspace,
-                                    value,
+                                    cipher,
+                                    metadata,
+                                    nonce,
+                                    expected_revision,
                                 } => {
-                                    let ks = &self
-                                        .db
-                                        .keyspace(&keyspace, KeyspaceCreateOptions::default)
-                                        .map_err(|e| io::Error::other(e.to_string()))?;
-                                    // TODO: at REST encryption would come here
-                                    batch.insert(ks, key, value);
+                                    // Protect own data
+                                    if keyspace == "meta" && key == KEY_LAST_MEMBERSHIP
+                                        || key == KEY_LAST_APPLIED_LOG
+                                    {
+                                        return Err(io::Error::other(
+                                            "not allowed to overwrite system data",
+                                        ));
+                                    }
+                                    if let Some(expected_revision) = expected_revision {
+                                        let curr_meta = self
+                                            .meta()
+                                            .get(&key)
+                                            .map_err(|e| io::Error::other(e.to_string()))?
+                                            .map(|x| Metadata::unpack(x.as_ref()))
+                                            .transpose()?;
+                                        if !curr_meta
+                                            .as_ref()
+                                            .is_some_and(|x| x.revision == expected_revision)
+                                        {
+                                            violations.push(Violation {
+                                                r#type: "CONFLICT".to_string(),
+                                                subject: String::from_utf8_lossy(&key).to_string(),
+                                                description: format!(
+                                                    "Current revision is {:?} while {} was expected",
+                                                    curr_meta.map(|x| x.revision),
+                                                    expected_revision
+                                                ),
+                                            });
+                                        }
+                                    }
+                                    let ks = &self.keyspace(keyspace)?;
+                                    let inner_data = StoreDataInnerEnvelope {
+                                        cipher: cipher,
+                                        nonce: nonce,
+                                    }
+                                    .pack()?;
+                                    batch.insert(ks, key.clone(), inner_data);
+                                    batch.insert(&self.meta, key.clone(), metadata.pack()?);
                                 }
                             }
                         }
-                        None
+                        (None, violations)
                     }
                 }
             } else if let Some(mem) = entry.membership {
@@ -386,26 +447,29 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                     last_applied_log,
                     mem.try_into()?,
                 ));
-                None
+                (None, vec![])
             } else {
-                None
+                (None, vec![])
             };
             if let Some(responder) = responder {
-                responder.send(pb::api::Response { value: response });
+                responder.send(pb::api::Response {
+                    value: response.0,
+                    violations: response.1,
+                });
             }
         }
         if let Some(val) = last_membership {
             batch.insert(
                 &self.meta,
                 KEY_LAST_MEMBERSHIP,
-                serde_json::to_vec(&val).map_err(|e| io::Error::other(e.to_string()))?,
+                rmp_serde::to_vec(&val).map_err(|e| io::Error::other(e.to_string()))?,
             );
         }
         if let Some(val) = last_applied_log {
             batch.insert(
                 &self.meta,
                 KEY_LAST_APPLIED_LOG,
-                serde_json::to_vec(&val).map_err(|e| io::Error::other(e.to_string()))?,
+                rmp_serde::to_vec(&val).map_err(|e| io::Error::other(e.to_string()))?,
             );
         }
 

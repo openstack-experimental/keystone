@@ -25,6 +25,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .type_attribute("keystone.raft.Vote", "#[derive(Deserialize, Serialize)]")
         .type_attribute("keystone.api.Response", "#[derive(Deserialize, Serialize)]")
         .type_attribute(
+            "keystone.api.Response.Violation",
+            "#[derive(serde::Deserialize, serde::Serialize)]",
+        )
+        .type_attribute(
             "keystone.api.CommandRequest",
             "#[derive(Deserialize, Serialize)]",
         )

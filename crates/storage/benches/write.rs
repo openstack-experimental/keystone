@@ -22,10 +22,10 @@ use tokio::runtime::Runtime;
 use tonic::transport::{Identity, ServerTlsConfig};
 
 use openstack_keystone_config::{Config, DistributedStorageConfiguration, TlsConfiguration};
-use openstack_keystone_distributed_storage::TypeConfig;
 use openstack_keystone_distributed_storage::app::{Storage, get_app_server, init_storage};
 use openstack_keystone_distributed_storage::protobuf as pb;
 use openstack_keystone_distributed_storage::store_command::*;
+use openstack_keystone_distributed_storage::{Metadata, Nonce, StoreDataEnvelope, TypeConfig};
 
 #[allow(dead_code)]
 struct InstanceHolder {
@@ -201,7 +201,7 @@ async fn build_cluster(count_nodes: u64) -> Result<Vec<Arc<InstanceHolder>>> {
 async fn test_write(instances: &Vec<Arc<InstanceHolder>>) {
     if let Some(inst) = instances.first() {
         inst.storage
-            .set_value("foo", "barz", None::<&str>)
+            .set_value("foo", StoreDataEnvelope::from("barz"), None::<&str>, None)
             .await
             .unwrap();
     }
@@ -209,13 +209,15 @@ async fn test_write(instances: &Vec<Arc<InstanceHolder>>) {
 
 async fn test_read(instances: &Vec<Arc<InstanceHolder>>) {
     if let Some(inst) = instances.first() {
-        let _: Option<String> = inst.storage.get_by_key("foo", None::<&str>).await.unwrap();
+        let _: Option<StoreDataEnvelope<String>> =
+            inst.storage.get_by_key("foo", None::<&str>).await.unwrap();
     }
 }
 
 async fn test_prefix(instances: &Vec<Arc<InstanceHolder>>) {
     if let Some(inst) = instances.first() {
-        let _: Vec<(String, String)> = inst.storage.prefix("foo", None::<&str>).await.unwrap();
+        let _: Vec<(String, StoreDataEnvelope<String>)> =
+            inst.storage.prefix("foo", None::<&str>).await.unwrap();
     }
 }
 
@@ -226,12 +228,20 @@ async fn test_remove(instances: &Vec<Arc<InstanceHolder>>) {
 }
 
 fn bench_command_serde(c: &mut Criterion) {
-    let delete_cmd = StoreCommand::Transaction(vec![Mutation::remove("foo", Some("bar")).unwrap()]);
-    let set_cmd = StoreCommand::Transaction(vec![Mutation::Set {
-        key: "foo".into(),
-        keyspace: "bar".into(),
-        value: "value".as_bytes().to_vec(),
-    }]);
+    let delete_cmd = StoreCommand::Transaction(vec![
+        MutationInner::convert(
+            Mutation::remove("foo", Some("bar")).unwrap(),
+            Nonce::default(),
+        )
+        .unwrap(),
+    ]);
+    let set_cmd = StoreCommand::Transaction(vec![
+        MutationInner::convert(
+            Mutation::set("foo", "bar", Metadata::new(), Some("bar"), None).unwrap(),
+            Nonce::default(),
+        )
+        .unwrap(),
+    ]);
     let delete_packed = delete_cmd.pack().unwrap();
     let set_packed = set_cmd.pack().unwrap();
     let mut group = c.benchmark_group("Command_Serde");

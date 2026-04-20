@@ -11,4 +11,11 @@ message CommandRequest {
 message Response {
   // Retrieved value.
   optional bytes value = 1;
+
+  message Violation {
+    string type = 1;        // Use "REVISION_MISMATCH"
+    string subject = 2;     // The Resource ID
+    string description = 3; // e.g., "Current revision is 5, provided was 4"
+  }
+  repeated Violation violations = 2;
 }

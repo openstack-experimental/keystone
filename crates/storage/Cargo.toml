@@ -17,6 +17,14 @@ workspace = true
 name = "write"
 harness = false
 
+[[bench]]
+name = "encryption"
+harness = false
+
+[[bench]]
+name = "state_machine"
+harness = false
+
 [dependencies]
 async-trait.workspace = true
 byteorder.workspace = true
@@ -39,6 +47,7 @@ tonic = { workspace = true, features = ["router", "_tls-any"] }
 tonic-prost.workspace = true
 tracing.workspace = true
 tokio.workspace = true
+chrono.workspace = true
 
 [dev-dependencies]
 criterion = { workspace = true, features = ["async_tokio"] }
@@ -55,3 +64,6 @@ all-features = true
 
 [build-dependencies]
 tonic-prost-build.workspace = true
+
+[features]
+bench_internals = []
