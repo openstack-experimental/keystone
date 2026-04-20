@@ -21,8 +21,9 @@ use axum::{
     http::{HeaderMap, StatusCode, header},
     response::IntoResponse,
 };
+use serde::Serialize;
 use utoipa::{
-    Modify, OpenApi,
+    Modify, OpenApi, ToSchema,
     openapi::security::{ApiKey, ApiKeyValue, SecurityScheme},
 };
 use utoipa_axum::{router::OpenApiRouter, routes};
@@ -64,12 +65,44 @@ impl Modify for SecurityAddon {
     }
 }
 
+#[derive(Clone, Copy, Debug, Serialize, ToSchema, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+enum HealthStatus {
+    Ok,
+    Error,
+    Skipped,
+}
+
+#[derive(Clone, Debug, Serialize, ToSchema)]
+struct HealthDependency {
+    name: String,
+    status: HealthStatus,
+    error: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, ToSchema)]
+struct HealthResponse {
+    status: HealthStatus,
+    dependencies: Vec<HealthDependency>,
+}
+
+impl HealthDependency {
+    fn new(name: &str, status: HealthStatus, error: Option<String>) -> Self {
+        Self {
+            name: name.to_string(),
+            status,
+            error,
+        }
+    }
+}
+
 /// Main API router.
 pub fn openapi_router() -> OpenApiRouter<ServiceState> {
     OpenApiRouter::new()
         .nest("/v3", v3::openapi_router())
         .nest("/v4", v4::openapi_router())
         .routes(routes!(version))
+        .routes(routes!(health))
 }
 
 /// Version discovery endpoint.
@@ -120,17 +153,96 @@ async fn version(
     Ok((StatusCode::OK, Json(res)).into_response())
 }
 
+/// Health check endpoint.
+#[utoipa::path(
+    get,
+    path = "/health",
+    description = "Health check for Keystone and its dependencies",
+    responses(
+        (status = OK, description = "Service is healthy", body = HealthResponse),
+        (status = SERVICE_UNAVAILABLE, description = "Service is unhealthy", body = HealthResponse),
+    ),
+    tag = "health"
+)]
+async fn health(State(state): State<ServiceState>) -> impl IntoResponse {
+    let mut dependencies = Vec::new();
+
+    let db_status = match check_database(&state).await {
+        Ok(()) => HealthDependency::new("database", HealthStatus::Ok, None),
+        Err(err) => HealthDependency::new("database", HealthStatus::Error, Some(err)),
+    };
+    dependencies.push(db_status);
+
+    let policy_status = if state.config.api_policy.enable {
+        match state.policy_enforcer.health_check().await {
+            Ok(()) => HealthDependency::new("policy", HealthStatus::Ok, None),
+            Err(err) => HealthDependency::new("policy", HealthStatus::Error, Some(err.to_string())),
+        }
+    } else {
+        HealthDependency::new("policy", HealthStatus::Skipped, None)
+    };
+    dependencies.push(policy_status);
+
+    let storage_status = match &state.storage {
+        None => HealthDependency::new("distributed_storage", HealthStatus::Skipped, None),
+        Some(storage) => match storage.raft.is_initialized().await {
+            Ok(true) => HealthDependency::new("distributed_storage", HealthStatus::Ok, None),
+            Ok(false) => HealthDependency::new(
+                "distributed_storage",
+                HealthStatus::Error,
+                Some("storage not initialized".to_string()),
+            ),
+            Err(err) => HealthDependency::new(
+                "distributed_storage",
+                HealthStatus::Error,
+                Some(err.to_string()),
+            ),
+        },
+    };
+    dependencies.push(storage_status);
+
+    let status = if dependencies
+        .iter()
+        .any(|dep| dep.status == HealthStatus::Error)
+    {
+        HealthStatus::Error
+    } else {
+        HealthStatus::Ok
+    };
+
+    let status_code = match status {
+        HealthStatus::Ok => StatusCode::OK,
+        _ => StatusCode::SERVICE_UNAVAILABLE,
+    };
+
+    (
+        status_code,
+        Json(HealthResponse {
+            status,
+            dependencies,
+        }),
+    )
+        .into_response()
+}
+
+async fn check_database(state: &ServiceState) -> Result<(), String> {
+    state.db.ping().await.map_err(|err| err.to_string())
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
     use sea_orm::DatabaseConnection;
     use std::sync::Arc;
+    use tower::ServiceExt;
 
     use openstack_keystone_config::Config;
     use openstack_keystone_core_types::identity::UserResponseBuilder;
 
     use crate::keystone::{Service, ServiceState};
     use crate::policy::{MockPolicy, PolicyError, PolicyEvaluationResult};
-    use crate::provider::ProviderBuilder;
+    use crate::provider::{Provider, ProviderBuilder};
     use crate::token::{MockTokenProvider, Token, UnscopedPayload};
 
     pub async fn get_mocked_state(
@@ -187,6 +299,10 @@ pub(crate) mod tests {
                 }
             });
 
+        policy_enforcer_mock
+            .expect_health_check()
+            .returning(|| Ok(()));
+
         Arc::new(
             Service::new(
                 Config::default(),
@@ -197,5 +313,24 @@ pub(crate) mod tests {
             .await
             .unwrap(),
         )
+    }
+
+    #[tokio::test]
+    async fn health_returns_service_unavailable_for_disconnected_db() {
+        let state = get_mocked_state(Provider::mocked_builder(), true, None, None).await;
+        let (router, _api) = super::openapi_router().split_for_parts();
+        let app = router.with_state(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/health")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
     }
 }
