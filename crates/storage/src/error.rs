@@ -132,6 +132,13 @@ pub enum StoreError {
         source: rmp_serde::encode::Error,
     },
 
+    /// Parse int error.
+    #[error(transparent)]
+    ParseInt {
+        #[from]
+        source: std::num::ParseIntError,
+    },
+
     #[error(transparent)]
     Storage {
         #[from]

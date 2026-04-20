@@ -235,6 +235,9 @@ fn bench_command_serde(c: &mut Criterion) {
         )
         .unwrap(),
     ]);
+    let delete_index_cmd = StoreCommand::Transaction(vec![
+        MutationInner::convert(Mutation::remove_index("foo").unwrap(), Nonce::default()).unwrap(),
+    ]);
     let set_cmd = StoreCommand::Transaction(vec![
         MutationInner::convert(
             Mutation::set("foo", "bar", Metadata::new(), Some("bar"), None).unwrap(),
@@ -242,33 +245,30 @@ fn bench_command_serde(c: &mut Criterion) {
         )
         .unwrap(),
     ]);
-    let delete_packed = delete_cmd.pack().unwrap();
-    let set_packed = set_cmd.pack().unwrap();
+    let set_index_cmd = StoreCommand::Transaction(vec![
+        MutationInner::convert(Mutation::set_index("foo").unwrap(), Nonce::default()).unwrap(),
+    ]);
     let mut group = c.benchmark_group("Command_Serde");
-    group.bench_with_input(BenchmarkId::new("serde", "set_pack"), &set_cmd, |b, cmd| {
-        b.iter(|| cmd.pack());
-    });
-    group.bench_with_input(
-        BenchmarkId::new("serde", "delete_pack"),
-        &delete_cmd,
-        |b, cmd| {
+    for (cmd, name) in [
+        (&set_cmd, "set"),
+        (&set_index_cmd, "set_index"),
+        (&delete_cmd, "delete"),
+        (&delete_index_cmd, "delete_index"),
+    ] {
+        group.bench_with_input(BenchmarkId::new("pack", name), &cmd, |b, cmd| {
             b.iter(|| cmd.pack());
-        },
-    );
-    group.bench_with_input(
-        BenchmarkId::new("serde", "set_unpack"),
-        &set_packed,
-        |b, payload| {
-            b.iter(|| StoreCommand::unpack(black_box(payload)));
-        },
-    );
-    group.bench_with_input(
-        BenchmarkId::new("serde", "delete_unpack"),
-        &delete_packed,
-        |b, payload| {
-            b.iter(|| StoreCommand::unpack(black_box(payload)));
-        },
-    );
+        });
+    }
+    for (data, name) in [
+        (set_cmd.pack().unwrap(), "set"),
+        (set_index_cmd.pack().unwrap(), "set_index"),
+        (delete_cmd.pack().unwrap(), "delete"),
+        (delete_index_cmd.pack().unwrap(), "delete_index"),
+    ] {
+        group.bench_with_input(BenchmarkId::new("unpack", name), &data, |b, data| {
+            b.iter(|| StoreCommand::unpack(black_box(data)));
+        });
+    }
     group.finish();
 }
 
