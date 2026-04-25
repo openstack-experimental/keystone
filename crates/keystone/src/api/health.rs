@@ -303,7 +303,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_overall_status() {
-        let dummy_err = || std::io::Error::new(std::io::ErrorKind::Other, "dummy error");
+        let dummy_err = || std::io::Error::other("dummy error");
         assert_eq!(
             HealthStatus::Ok,
             HealthComponents {
