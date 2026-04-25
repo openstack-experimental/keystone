@@ -49,6 +49,7 @@ use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 use uuid::Uuid;
 
+use openstack_keystone::config::Config;
 use openstack_keystone::federation::FederationApi;
 use openstack_keystone::keystone::{Service, ServiceState};
 use openstack_keystone::plugin_manager::PluginManager;
@@ -56,7 +57,6 @@ use openstack_keystone::policy::HttpPolicyEnforcer;
 use openstack_keystone::provider::Provider;
 use openstack_keystone::webauthn;
 use openstack_keystone::{api, common};
-use openstack_keystone::{common::KeystoneResponseClassifier, config::Config};
 use openstack_keystone_distributed_storage::app::get_app_server;
 
 // Default body limit 256kB
@@ -303,7 +303,7 @@ async fn main() -> Result<(), Report> {
         let mut server_tls_config = ServerTlsConfig::new().identity(identity);
         if let Some(ca) = &ds.tls_configuration.tls_client_ca_file {
             server_tls_config = server_tls_config
-                .client_ca_root(Certificate::from_pem(std::fs::read_to_string(&ca)?));
+                .client_ca_root(Certificate::from_pem(std::fs::read_to_string(ca)?));
         }
         server = server.tls_config(server_tls_config)?;
         let tonic_router = server.add_routes(storage_app);

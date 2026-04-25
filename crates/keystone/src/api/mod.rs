@@ -124,18 +124,16 @@ async fn version(
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use axum::body::Body;
-    use axum::http::{Request, StatusCode};
+
     use sea_orm::DatabaseConnection;
     use std::sync::Arc;
-    use tower::ServiceExt;
 
     use openstack_keystone_config::Config;
     use openstack_keystone_core_types::identity::UserResponseBuilder;
 
     use crate::keystone::{Service, ServiceState};
     use crate::policy::{MockPolicy, PolicyError, PolicyEvaluationResult};
-    use crate::provider::{Provider, ProviderBuilder};
+    use crate::provider::ProviderBuilder;
     use crate::token::{MockTokenProvider, Token, UnscopedPayload};
 
     pub async fn get_mocked_state(
