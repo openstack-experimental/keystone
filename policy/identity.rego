@@ -77,3 +77,13 @@ foreign_target if {
 	input.target.domain_id != null
 	input.target.domain_id != input.credentials.domain_id
 }
+
+project_domain_matches_domain_scope if {
+	input.target.project.domain_id != null
+	input.target.project.domain_id = input.credentials.domain_id
+}
+
+domain_matches_domain_scope if {
+	input.target.domain_id != null
+	input.target.domain_id = input.credentials.domain_id
+}

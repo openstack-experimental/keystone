@@ -12,6 +12,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 use axum::{Json, debug_handler, extract::State, http::StatusCode, response::IntoResponse};
+use validator::Validate;
 
 use super::types::{Group, GroupCreateRequest, GroupResponse};
 use crate::api::auth::Auth;
@@ -35,6 +36,17 @@ pub async fn create(
     State(state): State<ServiceState>,
     Json(req): Json<GroupCreateRequest>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
+    req.validate()?;
+    state
+        .policy_enforcer
+        .enforce(
+            "identity/group/create",
+            &user_auth,
+            serde_json::to_value(&req.group)?,
+            None,
+        )
+        .await?;
+
     let res = state
         .provider
         .get_identity_provider()
@@ -125,5 +137,82 @@ mod tests {
         let res: GroupResponse = serde_json::from_slice(&body).unwrap();
         assert_eq!(res.group.name, req.group.name);
         assert_eq!(res.group.domain_id, req.group.domain_id);
+    }
+
+    #[tokio::test]
+    async fn test_create_unauth() {
+        let state = crate::api::tests::get_mocked_state(
+            crate::provider::Provider::mocked_builder(),
+            false,
+            None,
+            None,
+        )
+        .await;
+
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        let req = crate::api::v3::group::types::GroupCreateRequest {
+            group: crate::api::v3::group::types::GroupCreateBuilder::default()
+                .domain_id("domain")
+                .name("name")
+                .build()
+                .unwrap(),
+        };
+
+        let response = api
+            .as_service()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .uri("/")
+                    .body(Body::from(serde_json::to_string(&req).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_create_not_allowed() {
+        let state = crate::api::tests::get_mocked_state(
+            crate::provider::Provider::mocked_builder(),
+            false,
+            None,
+            None,
+        )
+        .await;
+
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        let req = crate::api::v3::group::types::GroupCreateRequest {
+            group: crate::api::v3::group::types::GroupCreateBuilder::default()
+                .domain_id("domain")
+                .name("name")
+                .build()
+                .unwrap(),
+        };
+
+        let response = api
+            .as_service()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .uri("/")
+                    .header("x-auth-token", "foo")
+                    .body(Body::from(serde_json::to_string(&req).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
     }
 }

@@ -17,6 +17,7 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
+use validator::Validate;
 
 use super::types::{Group, GroupList, GroupListParameters};
 use crate::api::auth::Auth;
@@ -41,6 +42,17 @@ pub async fn list(
     Query(query): Query<GroupListParameters>,
     State(state): State<ServiceState>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
+    query.validate()?;
+    state
+        .policy_enforcer
+        .enforce(
+            "identity/group/list",
+            &user_auth,
+            serde_json::to_value(&query)?,
+            None,
+        )
+        .await?;
+
     let groups: Vec<Group> = state
         .provider
         .get_identity_provider()
@@ -185,5 +197,34 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_list_not_allowed() {
+        let state = crate::api::tests::get_mocked_state(
+            crate::provider::Provider::mocked_builder(),
+            false,
+            None,
+            None,
+        )
+        .await;
+
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        let response = api
+            .as_service()
+            .oneshot(
+                Request::builder()
+                    .uri("/")
+                    .header("x-auth-token", "foo")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
     }
 }
