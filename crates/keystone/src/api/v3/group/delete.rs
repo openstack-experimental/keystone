@@ -34,11 +34,27 @@ use crate::keystone::ServiceState;
     tag="groups"
 )]
 #[tracing::instrument(name = "api::group_delete", level = "debug", skip(state))]
-pub async fn remove(
+pub async fn delete(
     Auth(user_auth): Auth,
     Path(group_id): Path<String>,
     State(state): State<ServiceState>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
+    let current = state
+        .provider
+        .get_identity_provider()
+        .get_group(&state, &group_id)
+        .await?;
+
+    state
+        .policy_enforcer
+        .enforce(
+            "identity/group/delete",
+            &user_auth,
+            serde_json::to_value(&current)?,
+            None,
+        )
+        .await?;
+
     state
         .provider
         .get_identity_provider()
@@ -56,6 +72,8 @@ mod tests {
     use tower::ServiceExt; // for `call`, `oneshot`, and `ready`
     use tower_http::trace::TraceLayer;
 
+    use openstack_keystone_core_types::identity::*;
+
     use super::super::openapi_router;
     use crate::api::tests::get_mocked_state;
     use crate::identity::{MockIdentityProvider, error::IdentityProviderError};
@@ -65,9 +83,21 @@ mod tests {
     async fn test_delete() {
         let mut identity_mock = MockIdentityProvider::default();
         identity_mock
-            .expect_delete_group()
+            .expect_get_group()
             .withf(|_, id: &'_ str| id == "foo")
             .returning(|_, _| Err(IdentityProviderError::GroupNotFound("foo".into())));
+
+        identity_mock
+            .expect_get_group()
+            .withf(|_, id: &'_ str| id == "bar")
+            .returning(|_, _| {
+                Ok(Some(Group {
+                    id: "bar".into(),
+                    name: "name".into(),
+                    domain_id: "did".into(),
+                    ..Default::default()
+                }))
+            });
 
         identity_mock
             .expect_delete_group()
@@ -115,5 +145,77 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    }
+
+    #[tokio::test]
+    async fn test_remove_unauth() {
+        let state = crate::api::tests::get_mocked_state(
+            crate::provider::Provider::mocked_builder(),
+            false,
+            None,
+            None,
+        )
+        .await;
+
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        let response = api
+            .as_service()
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri("/foo")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_delete_not_allowed() {
+        let mut identity_mock = MockIdentityProvider::default();
+        identity_mock
+            .expect_get_group()
+            .withf(|_, id: &'_ str| id == "foo")
+            .returning(|_, _| {
+                Ok(Some(Group {
+                    id: "foo".into(),
+                    name: "name".into(),
+                    domain_id: "did".into(),
+                    ..Default::default()
+                }))
+            });
+
+        let state = get_mocked_state(
+            Provider::mocked_builder().mock_identity(identity_mock),
+            false,
+            None,
+            None,
+        )
+        .await;
+
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        let response = api
+            .as_service()
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri("/foo")
+                    .header("x-auth-token", "foo")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
     }
 }

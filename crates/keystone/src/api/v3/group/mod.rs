@@ -17,13 +17,16 @@ use utoipa_axum::{router::OpenApiRouter, routes};
 use crate::keystone::ServiceState;
 
 pub mod create;
+pub mod delete;
 pub mod list;
-pub mod remove;
 pub mod show;
 pub mod types;
 
 pub(crate) fn openapi_router() -> OpenApiRouter<ServiceState> {
     OpenApiRouter::new()
         .routes(routes!(list::list, create::create))
-        .routes(routes!(show::show, remove::remove))
+        .routes(routes!(show::show, delete::delete))
 }
+
+#[cfg(test)]
+mod tests {}
