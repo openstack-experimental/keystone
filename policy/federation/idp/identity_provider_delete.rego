@@ -1,3 +1,5 @@
+# METADATA
+# description: Policy for deleting identity providers
 package identity.identity_provider_delete
 
 import data.identity

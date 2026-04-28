@@ -1,3 +1,5 @@
+# METADATA
+# description: Policy for creating federation mappings
 package identity.mapping_create
 
 import data.identity

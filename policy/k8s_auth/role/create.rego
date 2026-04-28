@@ -1,3 +1,5 @@
+# METADATA
+# description: Policy for creating k8s auth roles
 package identity.k8s_auth.role.create
 
 import data.identity

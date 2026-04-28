@@ -1,3 +1,5 @@
+# METADATA
+# description: Policy for listing token restrictions
 package identity.token_restriction.list
 
 import data.identity

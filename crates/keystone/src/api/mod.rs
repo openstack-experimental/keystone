@@ -136,6 +136,15 @@ pub(crate) mod tests {
     use crate::provider::ProviderBuilder;
     use crate::token::{MockTokenProvider, Token, UnscopedPayload};
 
+    /// Initialize the mocked service state.
+    ///
+    /// # Arguments
+    /// * `provider_builder` - The provider builder with mock expectations set.
+    /// * `policy_allowed` - Whether the mock policy should allow all requests or not.
+    /// * `policy_allowed_see_other_domains` - Policy extenstion to contain
+    ///   "allow_to_see_other_domain" in the response.
+    /// * `skip_default_token_provider` - Whether to ignore the token provider set in the
+    ///   `provider_builder` and use the default one (treating the "foo" as the valid token).
     pub async fn get_mocked_state(
         provider_builder: ProviderBuilder,
         policy_allowed: bool,

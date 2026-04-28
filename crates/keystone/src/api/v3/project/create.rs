@@ -51,7 +51,7 @@ pub(super) async fn create(
     state
         .policy_enforcer
         .enforce(
-            "identity/project/user/role/check",
+            "identity/project/create",
             &user_auth,
             serde_json::to_value(&payload.project)?,
             None,

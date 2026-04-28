@@ -1,8 +1,8 @@
+# METADATA
+# description: Policy for finishing passkey registration
 package identity.user.passkey.register.finish
 
 import data.identity
-
-# Finish registering a passkey for the user
 
 default allow := false
 

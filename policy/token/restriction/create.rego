@@ -1,8 +1,8 @@
+# METADATA
+# description: Policy for creating token restrictions
 package identity.token_restriction.create
 
 import data.identity
-
-# Create token restriction.
 
 default allow := false
 

@@ -1,3 +1,5 @@
+# METADATA
+# description: Policy for deleting federation mappings
 package identity.mapping_delete
 
 import data.identity

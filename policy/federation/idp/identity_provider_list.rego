@@ -1,3 +1,5 @@
+# METADATA
+# description: Policy for listing identity providers
 package identity.identity_provider_list
 
 import data.identity

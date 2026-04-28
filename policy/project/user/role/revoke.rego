@@ -1,3 +1,5 @@
+# METADATA
+# description: Policy for revoking roles from users in a project
 package identity.project.user.role.revoke
 
 import data.identity

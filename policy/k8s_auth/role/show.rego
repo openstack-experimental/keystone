@@ -1,3 +1,5 @@
+# METADATA
+# description: Policy for viewing k8s auth role details
 package identity.k8s_auth.role.show
 
 import data.identity

@@ -1,3 +1,5 @@
+# METADATA
+# description: Policy for updating token restrictions
 package identity.token_restriction.update
 
 import data.identity

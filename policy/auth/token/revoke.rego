@@ -1,8 +1,8 @@
+# METADATA
+# description: Policy for revoking authentication tokens
 package identity.auth.token.revoke
 
 import data.identity
-
-# Revoke the token
 
 default allow := false
 
@@ -20,6 +20,8 @@ allow if {
 # 	"all" == input.credentials.system_scope
 # }
 
+# METADATA
+# description: Token owner can revoke own token
 allow if {
 	identity.token_subject
 }

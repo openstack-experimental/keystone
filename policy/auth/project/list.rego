@@ -1,8 +1,8 @@
+# METADATA
+# description: Policy for listing projects the authentication have access to
 package identity.auth.project.list
 
 import data.identity
-
-# List projects the user is having access to
 
 default allow := false
 

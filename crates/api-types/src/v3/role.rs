@@ -129,3 +129,13 @@ pub struct RoleCreate {
     #[serde(flatten)]
     pub extra: HashMap<String, Value>,
 }
+
+/// New role creation request.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
+pub struct RoleCreateRequest {
+    /// Role object.
+    #[cfg_attr(feature = "validate", validate(nested))]
+    pub role: RoleCreate,
+}

@@ -45,13 +45,7 @@ pub async fn show(
         .provider
         .get_identity_provider()
         .get_group(&state, &group_id)
-        .await
-        .map(|x| {
-            x.ok_or_else(|| KeystoneApiError::NotFound {
-                resource: "group".into(),
-                identifier: group_id,
-            })
-        })??;
+        .await?;
     state
         .policy_enforcer
         .enforce(
@@ -62,13 +56,19 @@ pub async fn show(
         )
         .await?;
 
-    Ok((
-        StatusCode::OK,
-        Json(GroupResponse {
-            group: Group::from(current),
+    match current {
+        Some(current) => Ok((
+            StatusCode::OK,
+            Json(GroupResponse {
+                group: Group::from(current),
+            }),
+        )
+            .into_response()),
+        _ => Err(KeystoneApiError::NotFound {
+            resource: "group".into(),
+            identifier: group_id,
         }),
-    )
-        .into_response())
+    }
 }
 
 #[cfg(test)]
@@ -213,6 +213,41 @@ mod tests {
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
             .with_state(state);
+
+        let response = api
+            .as_service()
+            .oneshot(
+                Request::builder()
+                    .uri("/foo")
+                    .header("x-auth-token", "foo")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn test_get_not_found_not_allowed() {
+        let mut identity_mock = MockIdentityProvider::default();
+        identity_mock
+            .expect_get_group()
+            .withf(|_, id: &'_ str| id == "foo")
+            .returning(|_, _| Ok(None));
+
+        let state = get_mocked_state(
+            Provider::mocked_builder().mock_identity(identity_mock),
+            false,
+            None,
+            None,
+        )
+        .await;
+
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state.clone());
 
         let response = api
             .as_service()

@@ -18,49 +18,51 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
+use validator::Validate;
 
-use super::types::{Role, RoleList, RoleListParameters};
+use super::types::{User, UserList, UserListParameters};
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
+use crate::identity::IdentityApi;
 use crate::keystone::ServiceState;
-use crate::role::RoleApi;
 
-/// List roles
+/// List users
 #[utoipa::path(
     get,
     path = "/",
-    params(RoleListParameters),
-    description = "List roles",
+    params(UserListParameters),
+    description = "List users",
     responses(
-        (status = OK, description = "List of roles", body = RoleList),
+        (status = OK, description = "List of users", body = UserList),
         (status = 500, description = "Internal error", example = json!(KeystoneApiError::InternalError(String::from("id = 1"))))
     ),
-    tag="roles"
+    tag="users"
 )]
-#[tracing::instrument(name = "api::role_list", level = "debug", skip(state))]
+#[tracing::instrument(name = "api::user_list", level = "debug", skip(state))]
 pub(super) async fn list(
     Auth(user_auth): Auth,
-    Query(query): Query<RoleListParameters>,
+    Query(query): Query<UserListParameters>,
     State(state): State<ServiceState>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
+    query.validate()?;
     state
         .policy_enforcer
         .enforce(
-            "identity/role/list",
+            "identity/user/list",
             &user_auth,
             serde_json::to_value(&query)?,
             None,
         )
         .await?;
-    let roles: Vec<Role> = state
+    let users: Vec<User> = state
         .provider
-        .get_role_provider()
-        .list_roles(&state, &query.into())
+        .get_identity_provider()
+        .list_users(&state, &query.into())
         .await?
         .into_iter()
         .map(Into::into)
         .collect();
-    Ok((StatusCode::OK, Json(RoleList { roles })).into_response())
+    Ok((StatusCode::OK, Json(UserList { users })).into_response())
 }
 
 #[cfg(test)]
@@ -70,32 +72,37 @@ mod tests {
         http::{Request, StatusCode},
     };
     use http_body_util::BodyExt; // for `collect`
-
     use tower::ServiceExt; // for `call`, `oneshot`, and `ready`
     use tower_http::trace::TraceLayer;
 
-    use openstack_keystone_core_types::role::{RoleBuilder, RoleListParameters};
+    use openstack_keystone_core_types::identity::{UserListParameters, UserResponseBuilder};
 
     use super::super::openapi_router;
     use crate::api::tests::get_mocked_state;
-    use crate::api::v3::role::types::{Role as ApiRole, RoleList};
+    use crate::api::v3::user::types::{UserBuilder as ApiUser, UserList};
+    use crate::identity::MockIdentityProvider;
     use crate::provider::Provider;
-    use crate::role::MockRoleProvider;
 
     #[tokio::test]
     async fn test_list() {
-        let mut role_mock = MockRoleProvider::default();
-        role_mock
-            .expect_list_roles()
-            .withf(|_, _: &RoleListParameters| true)
+        let mut identity_mock = MockIdentityProvider::default();
+        identity_mock
+            .expect_list_users()
+            .withf(|_, _: &UserListParameters| true)
             .returning(|_, _| {
                 Ok(vec![
-                    RoleBuilder::default().id("1").name("2").build().unwrap(),
+                    UserResponseBuilder::default()
+                        .id("1")
+                        .domain_id("user_domain_id")
+                        .enabled(true)
+                        .name("2")
+                        .build()
+                        .unwrap(),
                 ])
             });
 
         let state = get_mocked_state(
-            Provider::mocked_builder().mock_role(role_mock),
+            Provider::mocked_builder().mock_identity(identity_mock),
             true,
             None,
             None,
@@ -121,34 +128,37 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
 
         let body = response.into_body().collect().await.unwrap().to_bytes();
-        let res: RoleList = serde_json::from_slice(&body).unwrap();
+        let res: UserList = serde_json::from_slice(&body).unwrap();
         assert_eq!(
-            vec![ApiRole {
-                id: "1".into(),
-                name: "2".into(),
-                extra: std::collections::HashMap::new(),
-                description: None,
-                domain_id: None
-            }],
-            res.roles
+            vec![
+                ApiUser::default()
+                    .id("1")
+                    .name("2")
+                    .domain_id("user_domain_id")
+                    .enabled(true)
+                    .build()
+                    .unwrap()
+            ],
+            res.users
         );
     }
 
     #[tokio::test]
     async fn test_list_qp() {
-        let mut role_mock = MockRoleProvider::default();
-        role_mock
-            .expect_list_roles()
-            .withf(|_, qp: &RoleListParameters| {
-                RoleListParameters {
-                    domain_id: Some(Some("domain".into())),
+        let mut identity_mock = MockIdentityProvider::default();
+        identity_mock
+            .expect_list_users()
+            .withf(|_, qp: &UserListParameters| {
+                UserListParameters {
+                    domain_id: Some("domain".into()),
                     name: Some("name".into()),
+                    ..Default::default()
                 } == *qp
             })
             .returning(|_, _| Ok(Vec::new()));
 
         let state = get_mocked_state(
-            Provider::mocked_builder().mock_role(role_mock),
+            Provider::mocked_builder().mock_identity(identity_mock),
             true,
             None,
             None,
@@ -174,7 +184,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
 
         let body = response.into_body().collect().await.unwrap().to_bytes();
-        let _res: RoleList = serde_json::from_slice(&body).unwrap();
+        let _res: UserList = serde_json::from_slice(&body).unwrap();
     }
 
     #[tokio::test]

@@ -44,25 +44,35 @@ pub(super) async fn show(
     Path(role_id): Path<String>,
     State(state): State<ServiceState>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
-    Ok((
-        StatusCode::OK,
-        Json(RoleResponse {
-            role: Role::from(
-                state
-                    .provider
-                    .get_role_provider()
-                    .get_role(&state, &role_id)
-                    .await
-                    .map(|x| {
-                        x.ok_or_else(|| KeystoneApiError::NotFound {
-                            resource: "role".into(),
-                            identifier: role_id,
-                        })
-                    })??,
-            ),
+    let current = state
+        .provider
+        .get_role_provider()
+        .get_role(&state, &role_id)
+        .await?;
+
+    state
+        .policy_enforcer
+        .enforce(
+            "identity/role/show",
+            &user_auth,
+            serde_json::to_value(&current)?,
+            None,
+        )
+        .await?;
+
+    match current {
+        Some(current) => Ok((
+            StatusCode::OK,
+            Json(RoleResponse {
+                role: Role::from(current),
+            }),
+        )
+            .into_response()),
+        _ => Err(KeystoneApiError::NotFound {
+            resource: "role".into(),
+            identifier: role_id,
         }),
-    )
-        .into_response())
+    }
 }
 
 #[cfg(test)]
@@ -71,43 +81,25 @@ mod tests {
         body::Body,
         http::{Request, StatusCode},
     };
-    use http_body_util::BodyExt; // for `collect`
-
     use tower::ServiceExt; // for `call`, `oneshot`, and `ready`
     use tower_http::trace::TraceLayer;
 
-    use openstack_keystone_core_types::role::RoleBuilder;
-
     use super::super::openapi_router;
     use crate::api::tests::get_mocked_state;
-    use crate::api::v3::role::types::{Role as ApiRole, RoleResponse};
     use crate::provider::Provider;
     use crate::role::MockRoleProvider;
 
     #[tokio::test]
-    async fn test_get() {
+    async fn test_get_not_found_not_allowed() {
         let mut role_mock = MockRoleProvider::default();
         role_mock
             .expect_get_role()
             .withf(|_, id: &'_ str| id == "foo")
             .returning(|_, _| Ok(None));
 
-        role_mock
-            .expect_get_role()
-            .withf(|_, id: &'_ str| id == "bar")
-            .returning(|_, _| {
-                Ok(Some(
-                    RoleBuilder::default()
-                        .id("bar")
-                        .name("bar")
-                        .build()
-                        .unwrap(),
-                ))
-            });
-
         let state = get_mocked_state(
             Provider::mocked_builder().mock_role(role_mock),
-            true,
+            false,
             None,
             None,
         )
@@ -115,7 +107,7 @@ mod tests {
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
-            .with_state(state.clone());
+            .with_state(state);
 
         let response = api
             .as_service()
@@ -129,33 +121,6 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(response.status(), StatusCode::NOT_FOUND);
-
-        let response = api
-            .as_service()
-            .oneshot(
-                Request::builder()
-                    .uri("/bar")
-                    .header("x-auth-token", "foo")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(response.status(), StatusCode::OK);
-
-        let body = response.into_body().collect().await.unwrap().to_bytes();
-        let res: RoleResponse = serde_json::from_slice(&body).unwrap();
-        assert_eq!(
-            ApiRole {
-                id: "bar".into(),
-                extra: std::collections::HashMap::default(),
-                name: "bar".into(),
-                domain_id: None,
-                description: None
-            },
-            res.role,
-        );
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
     }
 }

@@ -1,3 +1,5 @@
+# METADATA
+# description: Policy for deleting k8s auth instances
 package identity.k8s_auth.instance.delete
 
 import data.identity

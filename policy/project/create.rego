@@ -1,3 +1,5 @@
+# METADATA
+# description: Policy for creating projects
 package identity.project.create
 
 import data.identity
