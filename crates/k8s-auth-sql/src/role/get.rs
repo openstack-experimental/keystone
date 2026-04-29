@@ -22,6 +22,14 @@ use openstack_keystone_core_types::k8s_auth::K8sAuthRole;
 use crate::entity::prelude::KubernetesAuthRole;
 
 /// Get existing k8s auth configuration by the ID.
+///
+/// # Parameters
+/// - `db`: The database connection.
+/// - `id`: The ID of the K8s auth configuration to retrieve.
+///
+/// # Returns
+/// A `Result` containing an `Option` with the `K8sAuthRole` if found, or an
+/// `Error`.
 pub async fn get<S: AsRef<str>>(
     db: &DatabaseConnection,
     id: S,

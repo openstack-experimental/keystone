@@ -27,6 +27,16 @@ use crate::entity::{
 };
 
 /// Load local user record with passwords from database.
+///
+/// # Parameters
+/// - `db`: The database connection.
+/// - `user_id`: The optional user ID.
+/// - `name`: The optional user name.
+/// - `domain_id`: The optional domain ID.
+///
+/// # Returns
+/// A `Result` containing an `Option` with the `(local_user::Model, impl
+/// IntoIterator<Item = password::Model>)` if found, or an `Error`.
 #[tracing::instrument(skip_all)]
 pub async fn load_local_user_with_passwords<S1: AsRef<str>, S2: AsRef<str>, S3: AsRef<str>>(
     db: &DatabaseConnection,
@@ -66,6 +76,13 @@ pub async fn load_local_user_with_passwords<S1: AsRef<str>, S2: AsRef<str>, S3: 
 ///
 /// Returns vector of optional vectors with passwords in the same order as
 /// requested keeping None in place where local_user was empty.
+///
+/// # Parameters
+/// - `db`: The database connection.
+/// - `user_ids`: The list of optional local user IDs.
+///
+/// # Returns
+/// A `Result` containing a list of optional password vectors, or an `Error`.
 #[tracing::instrument(skip_all)]
 pub async fn load_local_users_passwords<L: IntoIterator<Item = Option<i32>> + std::fmt::Debug>(
     db: &DatabaseConnection,

@@ -21,6 +21,15 @@ use openstack_keystone_core_types::resource::Project;
 
 use crate::entity::prelude::Project as DbProject;
 
+/// Get the parents of a project.
+///
+/// # Parameters
+/// - `db`: Database connection.
+/// - `id`: ID of the project.
+///
+/// # Returns
+/// A `Result` containing an `Option` with the `Vec<Project>` if found, or an
+/// `Error`.
 pub async fn get_project_parents<I: AsRef<str>>(
     db: &DatabaseConnection,
     id: I,

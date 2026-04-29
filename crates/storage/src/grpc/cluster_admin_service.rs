@@ -42,20 +42,22 @@ pub struct ClusterAdminServiceImpl {
 impl ClusterAdminServiceImpl {
     /// Creates a new instance of the API service.
     ///
-    /// # Arguments
-    /// * `raft_node` - The Raft node instance this service will use.
+    /// # Parameters
+    /// - `raft_node`: The Raft node instance this service will use.
+    ///
+    /// # Returns
+    /// A new `ClusterAdminServiceImpl` instance.
     pub fn new(raft_node: Raft) -> Self {
         Self { raft_node }
     }
 
     /// Initializes a new Raft cluster with the specified nodes.
     ///
-    /// # Arguments
-    /// * `nodes` - Contains the initial set of nodes for the cluster
+    /// # Parameters
+    /// - `nodes`: Contains the initial set of nodes for the cluster.
     ///
     /// # Returns
-    /// * Success response
-    /// * Error if initialization fails
+    /// A `Result` indicating success, or a `StoreError`.
     #[tracing::instrument(level = "trace", skip(self))]
     pub async fn init_cluster(&self, nodes: Vec<pb::raft::Node>) -> Result<(), StoreError> {
         // Convert nodes into required format
@@ -67,11 +69,18 @@ impl ClusterAdminServiceImpl {
     }
 
     /// Retrieves metrics about the Raft node.
+    ///
+    /// # Returns
+    /// A `Result` containing `RaftMetrics`, or a `StoreError`.
     pub fn get_metrics(&self) -> Result<RaftMetrics, StoreError> {
         Ok(self.raft_node.metrics().borrow_watched().clone())
     }
 
     /// Retrieves last log index appended to the node's log.
+    ///
+    /// # Returns
+    /// A `Result` containing an `Option` with the last log index, or a
+    /// `StoreError`.
     pub fn get_last_log_index(&self) -> Result<Option<u64>, StoreError> {
         let metrics = self.get_metrics()?;
         Ok(metrics.last_log_index)
@@ -82,12 +91,11 @@ impl ClusterAdminServiceImpl {
 impl ClusterAdminService for ClusterAdminServiceImpl {
     /// Initializes a new Raft cluster with the specified nodes.
     ///
-    /// # Arguments
-    /// * `request` - Contains the initial set of nodes for the cluster
+    /// # Parameters
+    /// - `request`: Contains the initial set of nodes for the cluster.
     ///
     /// # Returns
-    /// * Success response
-    /// * Error if initialization fails
+    /// A `Result` containing a `Response`, or a `Status` error.
     #[tracing::instrument(level = "trace", skip(self))]
     async fn init(&self, request: Request<pb::raft::InitRequest>) -> Result<Response<()>, Status> {
         trace!("Initializing Raft cluster");
@@ -105,12 +113,12 @@ impl ClusterAdminService for ClusterAdminServiceImpl {
 
     /// Adds a learner node to the Raft cluster.
     ///
-    /// # Arguments
-    /// * `request` - Contains the node information and blocking preference
+    /// # Parameters
+    /// - `request`: Contains the node information and blocking preference.
     ///
     /// # Returns
-    /// * Success response with learner addition details
-    /// * Error if the operation fails
+    /// A `Result` containing a `Response` with learner addition details, or a
+    /// `Status` error.
     #[tracing::instrument(level = "trace", skip(self))]
     async fn add_learner(
         &self,
@@ -141,12 +149,12 @@ impl ClusterAdminService for ClusterAdminServiceImpl {
 
     /// Changes the membership of the Raft cluster.
     ///
-    /// # Arguments
-    /// * `request` - Contains the new member set and retention policy
+    /// # Parameters
+    /// - `request`: Contains the new member set and retention policy.
     ///
     /// # Returns
-    /// * Success response with membership change details
-    /// * Error if the operation fails
+    /// A `Result` containing a `Response` with membership change details, or a
+    /// `Status` error.
     #[tracing::instrument(level = "trace", skip(self))]
     async fn change_membership(
         &self,
@@ -169,7 +177,13 @@ impl ClusterAdminService for ClusterAdminServiceImpl {
         Ok(Response::new(result.into()))
     }
 
-    /// Retrieves metrics about the Raft node
+    /// Retrieves metrics about the Raft node.
+    ///
+    /// # Parameters
+    /// - `_request`: The request object.
+    ///
+    /// # Returns
+    /// A `Result` containing a `Response` with metrics, or a `Status` error.
     #[tracing::instrument(level = "trace", skip(self))]
     async fn metrics(
         &self,

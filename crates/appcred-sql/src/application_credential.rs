@@ -35,6 +35,14 @@ pub use list::list;
 impl TryFrom<db_application_credential::Model> for ApplicationCredentialBuilder {
     type Error = ApplicationCredentialProviderError;
 
+    /// Try to convert a `db_application_credential::Model` into an
+    /// `ApplicationCredentialBuilder`.
+    ///
+    /// # Parameters
+    /// - `value`: The database model of the application credential.
+    ///
+    /// # Returns
+    /// A `Result` containing the `ApplicationCredentialBuilder` or an `Error`.
     fn try_from(value: db_application_credential::Model) -> Result<Self, Self::Error> {
         let mut builder = ApplicationCredentialBuilder::default();
         builder.id(value.id.clone());
@@ -66,6 +74,15 @@ impl TryFrom<db_application_credential::Model> for ApplicationCredentialBuilder 
 impl TryFrom<db_application_credential::Model> for ApplicationCredentialCreateResponseBuilder {
     type Error = ApplicationCredentialProviderError;
 
+    /// Try to convert a `db_application_credential::Model` into an
+    /// `ApplicationCredentialCreateResponseBuilder`.
+    ///
+    /// # Parameters
+    /// - `value`: The database model of the application credential.
+    ///
+    /// # Returns
+    /// A `Result` containing the `ApplicationCredentialCreateResponseBuilder`
+    /// or an `Error`.
     fn try_from(value: db_application_credential::Model) -> Result<Self, Self::Error> {
         let mut builder = ApplicationCredentialCreateResponseBuilder::default();
         builder.id(value.id.clone());
@@ -97,6 +114,15 @@ impl TryFrom<db_application_credential::Model> for ApplicationCredentialCreateRe
 impl TryFrom<&db_application_credential::Model> for ApplicationCredentialBuilder {
     type Error = ApplicationCredentialProviderError;
 
+    /// Try to convert a reference to `db_application_credential::Model` into an
+    /// `ApplicationCredentialBuilder`.
+    ///
+    /// # Parameters
+    /// - `value`: A reference to the database model of the application
+    ///   credential.
+    ///
+    /// # Returns
+    /// A `Result` containing the `ApplicationCredentialBuilder` or an `Error`.
     fn try_from(value: &db_application_credential::Model) -> Result<Self, Self::Error> {
         ApplicationCredentialBuilder::try_from(value.clone())
     }
@@ -104,6 +130,13 @@ impl TryFrom<&db_application_credential::Model> for ApplicationCredentialBuilder
 
 impl TryFrom<db_access_rule::Model> for AccessRule {
     type Error = ApplicationCredentialProviderError;
+    /// Try to convert a `db_access_rule::Model` into an `AccessRule`.
+    ///
+    /// # Parameters
+    /// - `value`: The database model of the access rule.
+    ///
+    /// # Returns
+    /// A `Result` containing the `AccessRule` or an `Error`.
     fn try_from(value: db_access_rule::Model) -> Result<Self, Self::Error> {
         Ok(Self {
             id: value
@@ -118,6 +151,13 @@ impl TryFrom<db_access_rule::Model> for AccessRule {
 }
 
 impl From<db_application_credential_role::Model> for RoleRef {
+    /// Convert a `db_application_credential_role::Model` into a `RoleRef`.
+    ///
+    /// # Parameters
+    /// - `value`: The database model of the application credential role.
+    ///
+    /// # Returns
+    /// A `RoleRef`.
     fn from(value: db_application_credential_role::Model) -> Self {
         Self {
             id: value.role_id,

@@ -21,6 +21,14 @@ use openstack_keystone_core::error::DbContextExt;
 use crate::driver::sql::model::{prelude::WebauthnCredential as DbCred, webauthn_credential};
 use crate::{WebauthnCredential, WebauthnError};
 
+/// List webauthn credentials.
+///
+/// # Parameters
+/// - `db`: The database connection.
+/// - `user_id`: The user ID.
+///
+/// # Returns
+/// A `Result` containing a `Vec` of `WebauthnCredential`, or a `WebauthnError`.
 pub async fn list<U: AsRef<str>>(
     db: &DatabaseConnection,
     user_id: U,

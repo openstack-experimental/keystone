@@ -62,6 +62,15 @@ pub struct WebauthnCredential {
 }
 
 impl WebauthnCredential {
+    /// Creates a WebauthnCredential object instance from a Passkey.
+    ///
+    /// # Parameters
+    /// - `value`: The passkey to convert.
+    /// - `user_id`: The ID of the user.
+    /// - `description`: An optional description of the credential.
+    ///
+    /// # Returns
+    /// A `WebauthnCredential` instance.
     pub fn from_passkey<U: Into<String>, D: Into<String>>(
         value: Passkey,
         user_id: U,

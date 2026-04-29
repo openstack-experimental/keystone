@@ -45,6 +45,13 @@ where
     C: RaftTypeConfig,
 {
     #[allow(clippy::result_large_err)]
+    /// Create a new `FjallLogStore`.
+    ///
+    /// # Parameters
+    /// - `db`: Database instance.
+    ///
+    /// # Returns
+    /// A `Result` containing the `FjallLogStore`, or a `StoreError`.
     pub fn new(db: Arc<Database>) -> Result<Self, StoreError> {
         let logs = db.keyspace("logs", KeyspaceCreateOptions::default)?;
         let meta = db.keyspace("meta", KeyspaceCreateOptions::default)?;
@@ -59,6 +66,14 @@ where
 
     #[allow(clippy::result_large_err)]
     #[tracing::instrument(skip(self, value))]
+    /// Set metadata for the log store.
+    ///
+    /// # Parameters
+    /// - `key`: The metadata key.
+    /// - `value`: The metadata value.
+    ///
+    /// # Returns
+    /// A `Result` indicating success, or a `StoreError`.
     fn set_meta<T: serde::Serialize>(&self, key: &[u8], value: &T) -> Result<(), StoreError> {
         let bytes = serde_json::to_vec(value)?;
         self.meta.insert(key, bytes)?;
@@ -68,6 +83,14 @@ where
 
     #[allow(clippy::result_large_err)]
     #[tracing::instrument(skip(self))]
+    /// Get metadata for the log store.
+    ///
+    /// # Parameters
+    /// - `key`: The metadata key.
+    ///
+    /// # Returns
+    /// A `Result` containing an `Option` with the metadata if found, or a
+    /// `StoreError`.
     fn get_meta<T: serde::de::DeserializeOwned>(
         &self,
         key: &[u8],

@@ -20,6 +20,15 @@ use openstack_keystone_core::identity::IdentityProviderError;
 
 use crate::entity::local_user as db_local_user;
 
+/// Reset the failed authentication counters for a local user.
+///
+/// # Parameters
+/// - `db`: The database connection.
+/// - `user`: The local user model.
+///
+/// # Returns
+/// A `Result` containing the updated `db_local_user::Model` if successful, or
+/// an `Error`.
 #[tracing::instrument(skip_all)]
 pub async fn reset_failed_auth(
     db: &DatabaseConnection,

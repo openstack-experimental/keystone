@@ -23,6 +23,14 @@ use openstack_keystone_core::identity::IdentityProviderError;
 use crate::entity::user as db_user;
 
 /// Reset the `user.last_active_at` to the current date.
+///
+/// # Parameters
+/// - `db`: The database connection.
+/// - `user`: The user model.
+///
+/// # Returns
+/// A `Result` containing the updated `db_user::Model` if successful, or an
+/// `Error`.
 #[tracing::instrument(skip_all)]
 pub async fn reset_last_active(
     db: &DatabaseConnection,

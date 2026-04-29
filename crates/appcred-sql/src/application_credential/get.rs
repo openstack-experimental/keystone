@@ -30,6 +30,14 @@ use crate::entity::{
 };
 
 /// Get application credential by the ID.
+///
+/// # Parameters
+/// - `db`: The database connection.
+/// - `id`: The ID of the application credential.
+///
+/// # Returns
+/// A `Result` containing an `Option` with the `ApplicationCredential` if found,
+/// or an `Error`.
 pub async fn get<I: AsRef<str>>(
     db: &DatabaseConnection,
     id: I,

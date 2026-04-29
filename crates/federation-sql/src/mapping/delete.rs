@@ -20,6 +20,14 @@ use openstack_keystone_core::federation::FederationProviderError;
 
 use crate::entity::prelude::FederatedMapping as DbFederatedMapping;
 
+/// Delete a federation mapping by its ID.
+///
+/// # Parameters
+/// - `db`: The database connection.
+/// - `id`: The ID of the mapping to delete.
+///
+/// # Returns
+/// A `Result` indicating success, or an `Error`.
 pub async fn delete<S: AsRef<str>>(
     db: &DatabaseConnection,
     id: S,

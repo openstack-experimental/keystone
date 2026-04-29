@@ -22,6 +22,14 @@ use openstack_keystone_core_types::k8s_auth::K8sAuthInstance;
 use crate::entity::prelude::KubernetesAuthInstance;
 
 /// Get existing k8s auth instance by the ID.
+///
+/// # Parameters
+/// - `db`: The database connection.
+/// - `id`: The ID of the K8s auth instance to retrieve.
+///
+/// # Returns
+/// A `Result` containing an `Option` with the `K8sAuthInstance` if found, or an
+/// `Error`.
 pub async fn get<S: AsRef<str>>(
     db: &DatabaseConnection,
     id: S,

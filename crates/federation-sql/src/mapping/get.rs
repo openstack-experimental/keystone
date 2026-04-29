@@ -23,6 +23,15 @@ use crate::entity::{
     federated_mapping as db_federated_mapping, prelude::FederatedMapping as DbFederatedMapping,
 };
 
+/// Get a federation mapping by its ID.
+///
+/// # Parameters
+/// - `db`: The database connection.
+/// - `id`: The ID of the mapping.
+///
+/// # Returns
+/// A `Result` containing an `Option` with the `Mapping` if found, or an
+/// `Error`.
 pub async fn get<I: AsRef<str>>(
     db: &DatabaseConnection,
     id: I,

@@ -20,6 +20,14 @@ use openstack_keystone_core::identity::IdentityProviderError;
 
 use crate::entity::federated_user;
 
+/// Create a new federated user entry.
+///
+/// # Parameters
+/// - `db`: Database connection.
+/// - `federation`: Federated user data to persist.
+///
+/// # Returns
+/// A `Result` containing the created federated user model, or an `Error`.
 #[tracing::instrument(skip_all)]
 pub async fn create<A, C>(
     db: &C,

@@ -42,6 +42,13 @@ inventory::submit! {
 }
 
 impl From<db_revocation_event::Model> for RevocationEvent {
+    /// Convert database revocation event model to core revocation event.
+    ///
+    /// # Parameters
+    /// - `value`: The database model to convert.
+    ///
+    /// # Returns
+    /// The converted `RevocationEvent`.
     fn from(value: db_revocation_event::Model) -> Self {
         Self {
             domain_id: value.domain_id,
@@ -63,6 +70,14 @@ impl From<db_revocation_event::Model> for RevocationEvent {
 #[async_trait]
 impl RevokeBackend for SqlBackend {
     /// Create revocation event.
+    ///
+    /// # Parameters
+    /// - `state`: The service state containing the database connection.
+    /// - `event`: The revocation event details to create.
+    ///
+    /// # Returns
+    /// A `Result` containing the created `RevocationEvent`, or a
+    /// `RevokeProviderError`.
     async fn create_revocation_event(
         &self,
         state: &ServiceState,
@@ -75,6 +90,14 @@ impl RevokeBackend for SqlBackend {
     ///
     /// List not expired revocation records that invalidate the token and
     /// returns true if there is at least one such record.
+    ///
+    /// # Parameters
+    /// - `state`: The service state containing the database connection.
+    /// - `token`: The token to check.
+    ///
+    /// # Returns
+    /// A `Result` containing a boolean indicating if the token is revoked, or a
+    /// `RevokeProviderError`.
     async fn is_token_revoked(
         &self,
         state: &ServiceState,
@@ -92,6 +115,13 @@ impl RevokeBackend for SqlBackend {
     ///
     /// Mark the token as revoked to prohibit from being used even while not
     /// expired.
+    ///
+    /// # Parameters
+    /// - `state`: The service state containing the database connection.
+    /// - `token`: The token to revoke.
+    ///
+    /// # Returns
+    /// A `Result` indicating success or a `RevokeProviderError`.
     async fn revoke_token(
         &self,
         state: &ServiceState,
@@ -105,6 +135,14 @@ impl RevokeBackend for SqlBackend {
 
 #[async_trait]
 impl SqlDriver for SqlBackend {
+    /// Set up the database schema for revocation events.
+    ///
+    /// # Parameters
+    /// - `connection`: The database connection.
+    /// - `schema`: The database schema.
+    ///
+    /// # Returns
+    /// A `Result` indicating success or a `DatabaseError`.
     async fn setup(
         &self,
         connection: &DatabaseConnection,

@@ -34,6 +34,15 @@ use crate::entity::{
 ///
 /// This method does not resolve the implied roles and the resulting list will
 /// not have `role_name` set.
+///
+/// # Parameters
+///
+/// * `db` - The database connection.
+/// * `params` - The list parameters.
+///
+/// # Returns
+///
+/// A `Result` containing a `Vec` of `Assignment` if successful, or an `Error`.
 pub async fn list_for_multiple_actors_and_targets(
     db: &DatabaseConnection,
     params: &RoleAssignmentListForMultipleActorTargetParameters,
@@ -60,6 +69,16 @@ pub async fn list_for_multiple_actors_and_targets(
 ///
 /// Return Vec<Assignment> for the regular role assignments or `None` when no
 /// corresponding targets were given in the query parameters.
+///
+/// # Parameters
+///
+/// * `db` - The database connection.
+/// * `params` - The list parameters.
+///
+/// # Returns
+///
+/// A `Result` containing an `Option` with the `Vec<Assignment>` if found, or an
+/// `Error`.
 async fn list_for_multiple_actors_and_targets_regular(
     db: &DatabaseConnection,
     params: &RoleAssignmentListForMultipleActorTargetParameters,
@@ -117,6 +136,16 @@ async fn list_for_multiple_actors_and_targets_regular(
 ///
 /// Return Vec<Assignment> for the regular role assignments or `None` when no
 /// corresponding targets were given in the query parameters.
+///
+/// # Parameters
+///
+/// * `db` - The database connection.
+/// * `params` - The list parameters.
+///
+/// # Returns
+///
+/// A `Result` containing an `Option` with the `Vec<Assignment>` if found, or an
+/// `Error`.
 async fn list_for_multiple_actors_and_targets_system(
     db: &DatabaseConnection,
     params: &RoleAssignmentListForMultipleActorTargetParameters,

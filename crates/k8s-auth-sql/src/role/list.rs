@@ -25,6 +25,12 @@ use openstack_keystone_core_types::k8s_auth::{K8sAuthRole, K8sAuthRoleListParame
 use crate::entity::{kubernetes_auth_role, prelude::KubernetesAuthRole};
 
 /// Prepare the query for listing k8s auth roles.
+///
+/// # Parameters
+/// - `params`: The parameters for listing K8s auth roles.
+///
+/// # Returns
+/// A `Result` containing a `Cursor` for the select model, or an `Error`.
 fn get_list_query(
     params: &K8sAuthRoleListParameters,
 ) -> Result<Cursor<SelectModel<kubernetes_auth_role::Model>>, K8sAuthProviderError> {
@@ -43,6 +49,13 @@ fn get_list_query(
 }
 
 /// List K8s auth roles.
+///
+/// # Parameters
+/// - `db`: The database connection.
+/// - `params`: The parameters for listing K8s auth roles.
+///
+/// # Returns
+/// A `Result` containing a vector of `K8sAuthRole`s, or an `Error`.
 pub async fn list(
     db: &DatabaseConnection,
     params: &K8sAuthRoleListParameters,

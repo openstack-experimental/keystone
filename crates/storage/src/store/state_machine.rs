@@ -69,6 +69,14 @@ pub struct FjallStateMachine {
 
 impl FjallStateMachine {
     #[allow(clippy::result_large_err)]
+    /// Create a new `FjallStateMachine`.
+    ///
+    /// # Parameters
+    /// - `db`: Database instance.
+    /// - `snapshot_dir`: Directory to store snapshots.
+    ///
+    /// # Returns
+    /// A `Result` containing the `FjallStateMachine`, or a `StoreError`.
     pub fn new(db: Arc<Database>, snapshot_dir: PathBuf) -> Result<Self, StoreError> {
         let meta = db.keyspace("meta", KeyspaceCreateOptions::default)?;
         let data = db.keyspace("data", KeyspaceCreateOptions::default)?;
@@ -86,21 +94,33 @@ impl FjallStateMachine {
     }
 
     /// Get the database handle.
+    ///
+    /// # Returns
+    /// A reference to the database.
     pub fn db(&self) -> &Arc<Database> {
         &self.db
     }
 
     /// Get the data `keyspace` handle.
+    ///
+    /// # Returns
+    /// A reference to the data keyspace.
     pub fn data(&self) -> &Keyspace {
         &self.data
     }
 
     /// Get the index `keyspace` handle.
+    ///
+    /// # Returns
+    /// A reference to the index keyspace.
     pub fn index(&self) -> &Keyspace {
         &self.index
     }
 
     /// Get the metadata `keyspace` handle.
+    ///
+    /// # Returns
+    /// A reference to the metadata keyspace.
     pub fn meta(&self) -> &Keyspace {
         &self.meta
     }
@@ -108,6 +128,12 @@ impl FjallStateMachine {
     /// Get the Flall `keyspace` handle by name.
     ///
     /// Get a handle to the keyspace creating a new one when not exists.
+    ///
+    /// # Parameters
+    /// - `name`: The name of the keyspace.
+    ///
+    /// # Returns
+    /// A `Result` containing the `Keyspace`, or a `StoreError`.
     pub fn keyspace<S: AsRef<str>>(&self, name: S) -> Result<Keyspace, StoreError> {
         Ok(match name.as_ref() {
             "data" => self.data.clone(),
@@ -121,6 +147,11 @@ impl FjallStateMachine {
 
     #[allow(clippy::result_large_err)]
     #[tracing::instrument(skip(self))]
+    /// Get the internal metadata.
+    ///
+    /// # Returns
+    /// A `Result` containing a tuple of the last applied log ID and the stored
+    /// membership, or a `StoreError`.
     fn get_meta(
         &self,
     ) -> Result<(Option<LogIdOf<TypeConfig>>, StoredMembershipOf<TypeConfig>), StoreError> {
@@ -139,10 +170,24 @@ impl FjallStateMachine {
     }
 }
 
+/// Serialize a value to bytes.
+///
+/// # Parameters
+/// - `value`: The value to serialize.
+///
+/// # Returns
+/// A `Result` containing the serialized bytes, or a `StorageError`.
 fn serialize<T: Serialize>(value: &T) -> Result<Vec<u8>, StorageError<TypeConfig>> {
     rmp_serde::to_vec(value).map_err(|e| StorageError::write(TypeConfig::err_from_error(&e)))
 }
 
+/// Deserialize bytes into a value.
+///
+/// # Parameters
+/// - `bytes`: The bytes to deserialize.
+///
+/// # Returns
+/// A `Result` containing the deserialized value, or a `StorageError`.
 fn deserialize<T: for<'de> Deserialize<'de>>(bytes: &[u8]) -> Result<T, StorageError<TypeConfig>> {
     rmp_serde::from_slice(bytes).map_err(|e| StorageError::read(TypeConfig::err_from_error(&e)))
 }

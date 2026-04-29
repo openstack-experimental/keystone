@@ -24,6 +24,12 @@ use openstack_keystone_core_types::resource::{Domain, DomainListParameters};
 use crate::entity::{prelude::Project as DbProject, project as db_project};
 
 /// Prepare the paginated query for listing domains.
+///
+/// # Parameters
+/// - `params`: List parameters for domains.
+///
+/// # Returns
+/// A `Result` containing a `Cursor` for the select model.
 fn get_list_query(
     params: &DomainListParameters,
 ) -> Result<Cursor<SelectModel<db_project::Model>>, ResourceProviderError> {
@@ -42,6 +48,14 @@ fn get_list_query(
     Ok(select.cursor_by(db_project::Column::Id))
 }
 
+/// List domains.
+///
+/// # Parameters
+/// - `db`: Database connection.
+/// - `params`: List parameters for domains.
+///
+/// # Returns
+/// A `Vec<Domain>`.
 pub async fn list(
     db: &DatabaseConnection,
     params: &DomainListParameters,

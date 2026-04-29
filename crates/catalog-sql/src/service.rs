@@ -29,6 +29,13 @@ pub use list::list;
 impl TryFrom<db_service::Model> for Service {
     type Error = CatalogProviderError;
 
+    /// Tries to convert a database service model into a domain service.
+    ///
+    /// # Parameters
+    /// - `value`: The database service model.
+    ///
+    /// # Returns
+    /// A `Result` containing the `Service`, or a `CatalogProviderError`.
     fn try_from(value: db_service::Model) -> Result<Self, Self::Error> {
         let mut builder = ServiceBuilder::default();
         builder.id(value.id.clone());

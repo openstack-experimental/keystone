@@ -53,6 +53,12 @@ pub const LEADER_ENDPOINT_HEADER: &str = "x-openraft-leader-endpoint";
 pub const LEADER_ID_HEADER: &str = "x-openraft-leader-id";
 
 /// Initialize storage services backed by the raft.
+///
+/// # Parameters
+/// - `ks_config`: Distributed storage configuration.
+///
+/// # Returns
+/// A `Result` containing the `Storage` instance, or a `StoreError`.
 pub async fn init_storage(
     ks_config: &DistributedStorageConfiguration,
 ) -> Result<Storage, StoreError> {
@@ -92,6 +98,12 @@ pub async fn init_storage(
 }
 
 /// Build a tonic `Server` instance for the raft instance.
+///
+/// # Parameters
+/// - `storage`: Reference to the storage instance.
+///
+/// # Returns
+/// A `Result` containing the `Routes`, or a `StoreError`.
 pub async fn get_app_server(storage: &Storage) -> Result<Routes, StoreError> {
     let raft_svc_impl = RaftServiceImpl::new(storage.raft.clone());
     let cluster_admin_svc_impl = ClusterAdminServiceImpl::new(storage.raft.clone());
@@ -123,13 +135,13 @@ impl StorageApi for Storage {
     /// Checks whether a given key is present in the keyspace of the distributed
     /// store.
     ///
-    /// # Arguments
-    /// * `key` - Contains the key to retrieve.
-    /// * `keyspace` - Optional keyspace name.
+    /// # Parameters
+    /// - `key`: Contains the key to retrieve.
+    /// - `keyspace`: Optional keyspace name.
     ///
     /// # Returns
-    /// * `Ok(bool)` - Success response
-    /// * `Err(Status)` - Error status if the get operation fails
+    /// A `Result` containing a boolean indicating if the key exists, or a
+    /// `StoreError`.
     async fn contains_key<K, S>(&self, key: K, keyspace: Option<S>) -> Result<bool, StoreError>
     where
         K: AsRef<[u8]> + Send,
@@ -147,13 +159,13 @@ impl StorageApi for Storage {
 
     /// Gets a value for a given key from the distributed store.
     ///
-    /// # Arguments
-    /// * `key` - Contains the key to retrieve.
-    /// * `keyspace` - Optional keyspace name.
+    /// # Parameters
+    /// - `key`: Contains the key to retrieve.
+    /// - `keyspace`: Optional keyspace name.
     ///
     /// # Returns
-    /// * `Ok(Vec<u8>)` - Success response containing the value as bytes
-    /// * `Err(Status)` - Error status if the get operation fails
+    /// A `Result` containing an `Option` with the `StoreDataEnvelope<T>` if
+    /// found, or a `StoreError`.
     async fn get_by_key<T, K, S>(
         &self,
         key: K,
@@ -198,13 +210,12 @@ impl StorageApi for Storage {
     /// Return key value pairs matching the specified prefix deserializing the
     /// data back to the requested type.
     ///
-    /// # Arguments
-    /// * `prefix` - The prefix to query.
-    /// * `keyspace` - Optional keyspace name.
+    /// # Parameters
+    /// - `prefix`: The prefix to query.
+    /// - `keyspace`: Optional keyspace name.
     ///
     /// # Returns
-    /// * `Ok(Vec<(String, T)>` - Success response containing the value as bytes
-    /// * `Err(Status)` - Error status if the operation fails
+    /// A `Result` containing a vector of key-value pairs, or a `StoreError`.
     async fn prefix<T, K, S>(
         &self,
         prefix: K,
@@ -251,12 +262,11 @@ impl StorageApi for Storage {
     ///
     /// Return keys matching the specified prefix in the index keyspace.
     ///
-    /// # Arguments
-    /// * `prefix` - The prefix to query.
+    /// # Parameters
+    /// - `prefix`: The prefix to query.
     ///
     /// # Returns
-    /// * `Ok(Vec<String>)` - Success response containing the value as bytes
-    /// * `Err(Status)` - Error status if the operation fails
+    /// A `Result` containing a vector of keys, or a `StoreError`.
     async fn prefix_index<K>(&self, prefix: K) -> Result<Vec<String>, StoreError>
     where
         K: AsRef<[u8]> + Send,
@@ -277,13 +287,12 @@ impl StorageApi for Storage {
 
     /// Deletes a value for a given key in the distributed store.
     ///
-    /// # Arguments
-    /// * `key` - The key.
-    /// * `keyspace` - Optional keyspace name.
+    /// # Parameters
+    /// - `key`: The key.
+    /// - `keyspace`: Optional keyspace name.
     ///
     /// # Returns
-    /// * `Ok(Response)` - Success response after the value is deleted
-    /// * `Err(Status)` - Error status if the set operation fails
+    /// A `Result` containing the `Response`, or a `StoreError`.
     async fn remove<K, S>(&self, key: K, keyspace: Option<S>) -> Result<Response, StoreError>
     where
         K: Into<Vec<u8>> + Send,
@@ -299,12 +308,11 @@ impl StorageApi for Storage {
 
     /// Deletes index key in the distributed store.
     ///
-    /// # Arguments
-    /// * `key` - The key.
+    /// # Parameters
+    /// - `key`: The key.
     ///
     /// # Returns
-    /// * `Ok(Response)` - Success response after the value is deleted
-    /// * `Err(Status)` - Error status if the set operation fails
+    /// A `Result` containing the `Response`, or a `StoreError`.
     async fn remove_index<K>(&self, key: K) -> Result<Response, StoreError>
     where
         K: Into<Vec<u8>> + Send,
@@ -317,14 +325,14 @@ impl StorageApi for Storage {
 
     /// Sets a value for a given key in the distributed store.
     ///
-    /// # Arguments
-    /// * `key` - The key.
-    /// * `value` - The value to set for the key.
-    /// * `keyspace` - Optional keyspace name.
+    /// # Parameters
+    /// - `key`: The key.
+    /// - `value`: The value to set for the key.
+    /// - `keyspace`: Optional keyspace name.
+    /// - `expected_revision`: Expected revision.
     ///
     /// # Returns
-    /// * `Ok(Response)` - Success response after the value is set
-    /// * `Err(StoreError)` - Error status if the set operation fails
+    /// A `Result` containing the `Response`, or a `StoreError`.
     async fn set_value<K, V, S>(
         &self,
         key: K,
@@ -353,12 +361,11 @@ impl StorageApi for Storage {
     ///
     /// Sets the key with an empty value in the index keyspace of the storage.
     ///
-    /// # Arguments
-    /// * `key` - The key.
+    /// # Parameters
+    /// - `key`: The key.
     ///
     /// # Returns
-    /// * `Ok(Response)` - Success response after the value is set
-    /// * `Err(StoreError)` - Error status if the set operation fails
+    /// A `Result` containing the `Response`, or a `StoreError`.
     async fn set_index_key<K>(&self, key: K) -> Result<Response, StoreError>
     where
         K: Into<String> + Send,
@@ -370,15 +377,14 @@ impl StorageApi for Storage {
         self.write_command_to_storage(payload).await
     }
 
-    /// Mutation transaction
+    /// Mutation transaction.
     ///
-    /// # Arguments
-    /// * `mutations` - List of mutations that must be applied as a single
+    /// # Parameters
+    /// - `mutations`: List of mutations that must be applied as a single
     ///   transaction.
     ///
     /// # Returns
-    /// * `Ok(Response)` - Success response after the value is deleted
-    /// * `Err(Status)` - Error status if the set operation fails
+    /// A `Result` containing the `Response`, or a `StoreError`.
     async fn transaction(&self, mutations: Vec<Mutation>) -> Result<Response, StoreError> {
         let metrics = self.raft.metrics().borrow_watched().clone();
         let nonce = Nonce::new(metrics.current_term, metrics.last_log_index.unwrap_or(1));
@@ -395,6 +401,9 @@ impl StorageApi for Storage {
 
 impl Storage {
     /// Get the last log index processed by the node.
+    ///
+    /// # Returns
+    /// The last log index, if available.
     pub fn last_log_index(&self) -> Option<u64> {
         self.raft.metrics().borrow_watched().last_log_index
     }
@@ -404,13 +413,12 @@ impl Storage {
     /// Get the channel to the node if it is already established or create a new
     /// one. This method uses the connection pool.
     ///
-    /// # Arguments
-    /// * `target` - Node Id.
-    /// * `addr` - String address of the node.
+    /// # Parameters
+    /// - `target`: Node Id.
+    /// - `addr`: String address of the node.
     ///
     /// # Returns
-    /// * `Ok(Channel)` - A channel result.
-    /// * `Err(StoreError)` - An error if the operation fails.
+    /// A `Result` containing the `Channel`, or a `StoreError`.
     fn get_or_create_channel(&self, target: u64, addr: String) -> Result<Channel, StoreError> {
         // 1. Return existing connection if valid
         if let Some(channel) = self.connection_pool.get(&target) {
@@ -433,13 +441,11 @@ impl Storage {
     /// Attempt to commit command to the current node forwarding the request
     /// with a retry mechanism to the leader node.
     ///
-    /// # Arguments
-    ///
-    /// * `command` - A command to apply to the cluster.
+    /// # Parameters
+    /// - `command`: A command to apply to the cluster.
     ///
     /// # Returns
-    /// * `Ok(Response)` - A command response.
-    /// * `Err(StoreError)` - An error if the operation fails.
+    /// A `Result` containing the `Response`, or a `StoreError`.
     async fn write_command_to_storage(
         &self,
         command: crate::pb::api::CommandRequest,
@@ -464,14 +470,13 @@ impl Storage {
     /// to the "new" leader if the switch happens and a generic retry
     /// mechanism.
     ///
-    /// # Arguments
-    /// * `command` - A command to apply.
-    /// * `node_id` - The cluster node id to connect to.
-    /// * `node_addr` - The cluster node address.
+    /// # Parameters
+    /// - `command`: A command to apply.
+    /// - `node_id`: The cluster node id to connect to.
+    /// - `node_addr`: The cluster node address.
     ///
     /// # Returns
-    /// * `Ok(Response)` - The command response.
-    /// * `Err(StoreError)` - The error if operation failed.
+    /// A `Result` containing the `Response`, or a `StoreError`.
     async fn command_with_forwarding(
         &self,
         command: crate::pb::api::CommandRequest,

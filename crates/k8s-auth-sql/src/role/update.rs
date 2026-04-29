@@ -26,6 +26,14 @@ use crate::entity::prelude::KubernetesAuthRole;
 /// Update existing k8s auth role by the ID.
 ///
 /// Perform search and update of the k8s auth role in an isolated transaction.
+///
+/// # Parameters
+/// - `db`: The database connection.
+/// - `id`: The ID of the K8s auth role to update.
+/// - `data`: The updated data for the K8s auth role.
+///
+/// # Returns
+/// A `Result` containing the updated `K8sAuthRole`, or an `Error`.
 pub async fn update<S: AsRef<str>>(
     db: &DatabaseConnection,
     id: S,

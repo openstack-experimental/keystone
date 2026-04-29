@@ -43,12 +43,26 @@ inventory::submit! {
 #[async_trait]
 impl WebauthnApi for SqlDriver {
     /// Cleanup expired Webauthn states.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    ///
+    /// # Returns
+    /// A `Result` containing `()` on success, or a `WebauthnError`.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn cleanup(&self, state: &ServiceState) -> Result<(), WebauthnError> {
         state::delete_expired(&state.db).await
     }
 
     /// Create webauthn credential for the user.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `credential`: The credential to create.
+    ///
+    /// # Returns
+    /// A `Result` containing the created `WebauthnCredential`, or a
+    /// `WebauthnError`.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn create_user_webauthn_credential(
         &self,
@@ -59,6 +73,15 @@ impl WebauthnApi for SqlDriver {
     }
 
     /// Get webauthn credential of the user by the credential_id.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `user_id`: The user ID.
+    /// - `credential_id`: The credential ID.
+    ///
+    /// # Returns
+    /// A `Result` containing an `Option` with the `WebauthnCredential` if
+    /// found, or an `Error`.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn get_user_webauthn_credential<'a>(
         &self,
@@ -70,6 +93,14 @@ impl WebauthnApi for SqlDriver {
     }
 
     /// Delete credential for the user.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `_user_id`: The user ID (unused).
+    /// - `credential_id`: The credential ID.
+    ///
+    /// # Returns
+    /// A `Result` containing `()` on success, or a `WebauthnError`.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn delete_user_webauthn_credential<'a>(
         &self,
@@ -82,6 +113,13 @@ impl WebauthnApi for SqlDriver {
     }
 
     /// Delete webauthn credential auth state for a user.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `user_id`: The user ID.
+    ///
+    /// # Returns
+    /// A `Result` containing `()` on success, or a `WebauthnError`.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn delete_user_webauthn_credential_authentication_state<'a>(
         &self,
@@ -92,6 +130,13 @@ impl WebauthnApi for SqlDriver {
     }
 
     /// Delete webauthn credential registration state for the user.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `user_id`: The user ID.
+    ///
+    /// # Returns
+    /// A `Result` containing `()` on success, or a `WebauthnError`.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn delete_user_webauthn_credential_registration_state<'a>(
         &self,
@@ -102,6 +147,14 @@ impl WebauthnApi for SqlDriver {
     }
 
     /// Get webauthn credential auth state.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `user_id`: The user ID.
+    ///
+    /// # Returns
+    /// A `Result` containing an `Option` with the `PasskeyAuthentication` if
+    /// found, or an `Error`.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn get_user_webauthn_credential_authentication_state<'a>(
         &self,
@@ -112,6 +165,14 @@ impl WebauthnApi for SqlDriver {
     }
 
     /// Get webauthn credential registration state.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `user_id`: The user ID.
+    ///
+    /// # Returns
+    /// A `Result` containing an `Option` with the `PasskeyRegistration` if
+    /// found, or an `Error`.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn get_user_webauthn_credential_registration_state<'a>(
         &self,
@@ -122,6 +183,14 @@ impl WebauthnApi for SqlDriver {
     }
 
     /// List user webauthn credentials.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `user_id`: The user ID.
+    ///
+    /// # Returns
+    /// A `Result` containing a `Vec` of `WebauthnCredential`, or a
+    /// `WebauthnError`.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn list_user_webauthn_credentials<'a>(
         &self,
@@ -132,6 +201,14 @@ impl WebauthnApi for SqlDriver {
     }
 
     /// Save webauthn credential auth state.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `user_id`: The user ID.
+    /// - `auth_state`: The authentication state to save.
+    ///
+    /// # Returns
+    /// A `Result` containing `()` on success, or a `WebauthnError`.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn save_user_webauthn_credential_authentication_state<'a>(
         &self,
@@ -143,6 +220,14 @@ impl WebauthnApi for SqlDriver {
     }
 
     /// Save webauthn credential registration state.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `user_id`: The user ID.
+    /// - `reg_state`: The registration state to save.
+    ///
+    /// # Returns
+    /// A `Result` containing `()` on success, or a `WebauthnError`.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn save_user_webauthn_credential_registration_state<'a>(
         &self,
@@ -154,6 +239,16 @@ impl WebauthnApi for SqlDriver {
     }
 
     /// Update credential data.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `user_id`: The user ID.
+    /// - `credential_id`: The credential ID.
+    /// - `credential`: The updated credential data.
+    ///
+    /// # Returns
+    /// A `Result` containing the updated `WebauthnCredential`, or a
+    /// `WebauthnError`.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn update_user_webauthn_credential<'a>(
         &self,
@@ -168,6 +263,14 @@ impl WebauthnApi for SqlDriver {
 
 #[async_trait]
 impl openstack_keystone_core::SqlDriver for SqlDriver {
+    /// Setup the database tables for the WebAuthN extension.
+    ///
+    /// # Parameters
+    /// - `connection`: The database connection.
+    /// - `schema`: The database schema.
+    ///
+    /// # Returns
+    /// A `Result` containing `()` on success, or a `DatabaseError`.
     async fn setup(
         &self,
         connection: &DatabaseConnection,

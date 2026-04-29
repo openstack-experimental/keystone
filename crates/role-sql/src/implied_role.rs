@@ -22,6 +22,12 @@ use openstack_keystone_core::role::RoleProviderError;
 use crate::entity::prelude::ImpliedRole as DbImpliedRole;
 
 /// Build a resolved tree of role inference.
+///
+/// # Parameters
+/// - `data`: The map of implied roles.
+///
+/// # Returns
+/// A `Result` containing the expanded map of implied roles.
 fn expand_implied_role_ids(
     data: &BTreeMap<String, BTreeSet<String>>,
 ) -> BTreeMap<String, BTreeSet<String>> {
@@ -37,6 +43,13 @@ fn expand_implied_role_ids(
 }
 
 /// Recursively resolve inference tree.
+///
+/// # Parameters
+/// - `id`: The role ID to resolve.
+/// - `data`: The map of implied roles.
+///
+/// # Returns
+/// A `BTreeSet` containing the implied role IDs.
 fn get_implied_role_ids(
     id: &String,
     data: &BTreeMap<String, BTreeSet<String>>,
@@ -52,6 +65,13 @@ fn get_implied_role_ids(
 }
 
 /// List role recursively resolving imply rules.
+///
+/// # Parameters
+/// - `db`: The database connection.
+/// - `resolve`: Whether to resolve the rules recursively.
+///
+/// # Returns
+/// A `Result` containing the map of implied role rules, or an `Error`.
 pub async fn list_rules(
     db: &DatabaseConnection,
     resolve: bool,

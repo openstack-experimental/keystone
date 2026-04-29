@@ -23,6 +23,14 @@ use crate::{FernetDriverError, FernetTokenProvider, MsgPackToken, utils};
 impl MsgPackToken for RestrictedPayload {
     type Token = Self;
 
+    /// Construct MsgPack payload for the Token.
+    ///
+    /// # Parameters
+    /// - `wd`: The writer to write the payload to.
+    /// - `fernet_provider`: The Fernet token provider.
+    ///
+    /// # Returns
+    /// A `Result` indicating success or a `FernetDriverError`.
     fn assemble<W: Write>(
         &self,
         wd: &mut W,
@@ -44,6 +52,15 @@ impl MsgPackToken for RestrictedPayload {
         Ok(())
     }
 
+    /// Parse MsgPack payload into the Token.
+    ///
+    /// # Parameters
+    /// - `rd`: The reader to read the payload from.
+    /// - `fernet_provider`: The Fernet token provider.
+    ///
+    /// # Returns
+    /// A `Result` containing the `RestrictedPayload` if successful, or a
+    /// `FernetDriverError`.
     fn disassemble(
         rd: &mut &[u8],
         fernet_provider: &FernetTokenProvider,

@@ -22,6 +22,15 @@ use openstack_keystone_core::error::DbContextExt;
 use crate::WebauthnError;
 use crate::driver::sql::model::webauthn_state;
 
+/// Create registration state.
+///
+/// # Parameters
+/// - `db`: The database connection.
+/// - `user_id`: The user ID.
+/// - `state`: The registration state to save.
+///
+/// # Returns
+/// A `Result` containing `()` on success, or a `WebauthnError`.
 pub async fn create_register<U: AsRef<str>>(
     db: &DatabaseConnection,
     user_id: U,
@@ -42,6 +51,15 @@ pub async fn create_register<U: AsRef<str>>(
     Ok(())
 }
 
+/// Create authentication state.
+///
+/// # Parameters
+/// - `db`: The database connection.
+/// - `user_id`: The user ID.
+/// - `state`: The authentication state to save.
+///
+/// # Returns
+/// A `Result` containing `()` on success, or a `WebauthnError`.
 pub async fn create_auth<U: AsRef<str>>(
     db: &DatabaseConnection,
     user_id: U,

@@ -21,8 +21,16 @@ use openstack_keystone_core::identity::IdentityProviderError;
 
 use crate::entity::{nonlocal_user, prelude::NonlocalUser};
 
-#[allow(unused)]
-#[tracing::instrument(skip_all)]
+/// Get a nonlocal user by name and domain.
+///
+/// # Parameters
+/// - `db`: The database connection.
+/// - `name`: The user name.
+/// - `domain_id`: The domain ID.
+///
+/// # Returns
+/// A `Result` containing an `Option` with the `nonlocal_user::Model` if found,
+/// or an `Error`.
 pub async fn get_by_name_and_domain<N: AsRef<str>, D: AsRef<str>>(
     db: &DatabaseConnection,
     name: N,
@@ -37,6 +45,15 @@ pub async fn get_by_name_and_domain<N: AsRef<str>, D: AsRef<str>>(
 }
 
 #[tracing::instrument(skip_all)]
+/// Get a nonlocal user by user ID.
+///
+/// # Parameters
+/// - `db`: The database connection.
+/// - `user_id`: The user ID.
+///
+/// # Returns
+/// A `Result` containing an `Option` with the `nonlocal_user::Model` if found,
+/// or an `Error`.
 pub async fn get_by_user_id<U: AsRef<str>>(
     db: &DatabaseConnection,
     user_id: U,

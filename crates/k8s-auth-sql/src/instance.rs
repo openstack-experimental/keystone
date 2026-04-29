@@ -70,6 +70,12 @@ impl From<K8sAuthInstanceCreate> for db_k8s_auth_instance::ActiveModel {
 impl db_k8s_auth_instance::Model {
     /// Build an [`kubernetes_auth::ActiveModel`] for the update operation using
     /// the [`K8sAuthInstanceUpdate`].
+    ///
+    /// # Parameters
+    /// - `update`: The updated data for the K8s auth instance.
+    ///
+    /// # Returns
+    /// An `ActiveModel` for the update operation.
     fn into_active_model_update(
         self,
         update: K8sAuthInstanceUpdate,

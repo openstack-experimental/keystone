@@ -21,7 +21,11 @@ use openstack_keystone_core::resource::ResourceProviderError;
 
 use crate::entity::prelude::Project;
 
-/// Delete existing domain
+/// Delete an existing domain.
+///
+/// # Parameters
+/// - `db`: Database connection.
+/// - `id`: ID of the domain to delete.
 pub async fn delete<S: AsRef<str>>(
     db: &DatabaseConnection,
     id: S,

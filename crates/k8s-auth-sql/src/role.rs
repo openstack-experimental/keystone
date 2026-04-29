@@ -91,6 +91,12 @@ impl From<K8sAuthRoleCreate> for kubernetes_auth_role::ActiveModel {
 impl kubernetes_auth_role::Model {
     /// Build an [`kubernetes_auth_role::ActiveModel`] for the update operation
     /// using the [`K8sAuthRoleUpdate`].
+    ///
+    /// # Parameters
+    /// - `update`: The updated data for the K8s auth role.
+    ///
+    /// # Returns
+    /// An `ActiveModel` for the update operation.
     fn into_active_model_update(
         self,
         update: K8sAuthRoleUpdate,

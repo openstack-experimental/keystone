@@ -67,6 +67,13 @@ pub trait UserOptionIntoModelIterator {
 }
 
 impl UserOptionIntoModelIterator for UserOptions {
+    /// Convert user options to a model iterator.
+    ///
+    /// # Parameters
+    /// - `user_id`: The user ID.
+    ///
+    /// # Returns
+    /// A `Result` containing an iterator of user option models, or an `Error`.
     fn to_model_iter<U: Into<String>>(
         &self,
         user_id: U,

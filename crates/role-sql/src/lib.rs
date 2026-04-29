@@ -42,6 +42,13 @@ inventory::submit! {
 #[async_trait]
 impl RoleBackend for SqlBackend {
     /// Create role.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `params`: The role creation parameters.
+    ///
+    /// # Returns
+    /// A `Result` containing the created `Role`, or an `Error`.
     #[tracing::instrument(level = "info", skip(self, state))]
     async fn create_role(
         &self,
@@ -52,6 +59,13 @@ impl RoleBackend for SqlBackend {
     }
 
     /// Delete a role by the ID.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `id`: The role ID.
+    ///
+    /// # Returns
+    /// A `Result` indicating success or an `Error`.
     async fn delete_role<'a>(
         &self,
         state: &ServiceState,
@@ -61,6 +75,14 @@ impl RoleBackend for SqlBackend {
     }
 
     /// Get single role by ID.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `id`: The role ID.
+    ///
+    /// # Returns
+    /// A `Result` containing an `Option` with the `Role` if found, or an
+    /// `Error`.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn get_role<'a>(
         &self,
@@ -73,6 +95,13 @@ impl RoleBackend for SqlBackend {
     /// Expand implied roles.
     ///
     /// Modify the list of roles resolving the role inheritance.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `roles`: The list of roles to expand.
+    ///
+    /// # Returns
+    /// A `Result` indicating success or an `Error`.
     #[tracing::instrument(level = "info", skip(self, state))]
     async fn expand_implied_roles(
         &self,
@@ -106,6 +135,13 @@ impl RoleBackend for SqlBackend {
     }
 
     /// List role imply rules.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `resolve`: Whether to resolve the rules recursively.
+    ///
+    /// # Returns
+    /// A `Result` containing the map of role imply rules, or an `Error`.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn list_imply_rules(
         &self,
@@ -116,6 +152,13 @@ impl RoleBackend for SqlBackend {
     }
 
     /// List roles.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `params`: The list parameters.
+    ///
+    /// # Returns
+    /// A `Result` containing a list of `Role`s, or an `Error`.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn list_roles(
         &self,
@@ -128,6 +171,14 @@ impl RoleBackend for SqlBackend {
 
 #[async_trait]
 impl SqlDriver for SqlBackend {
+    /// Set up the database schema.
+    ///
+    /// # Parameters
+    /// - `connection`: The database connection.
+    /// - `schema`: The database schema.
+    ///
+    /// # Returns
+    /// A `Result` indicating success or a `DatabaseError`.
     async fn setup(
         &self,
         connection: &DatabaseConnection,

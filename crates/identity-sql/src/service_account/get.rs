@@ -22,6 +22,16 @@ use crate::nonlocal_user;
 use crate::user;
 use crate::user_option;
 
+/// Get a service account by user ID.
+///
+/// # Parameters
+/// - `conf`: The configuration.
+/// - `db`: The database connection.
+/// - `user_id`: The user ID of the service account.
+///
+/// # Returns
+/// A `Result` containing an `Option` with the `ServiceAccount` if found, or an
+/// `Error`.
 #[tracing::instrument(skip_all)]
 pub async fn get<U>(
     conf: &Config,

@@ -30,10 +30,15 @@ use crate::entity::{
 
 /// Check whether the grant exists.
 ///
-/// # Result
+/// # Parameters
 ///
-/// * `Ok(true)` when the grant is present.
-/// * `Ok(false)` when the grant does not exist
+/// * `db` - The database connection.
+/// * `grant` - The assignment to check.
+///
+/// # Returns
+///
+/// A `Result` containing a `bool` indicating if the grant is present, or an
+/// `Error`.
 pub async fn check(
     db: &DatabaseConnection,
     grant: &Assignment,

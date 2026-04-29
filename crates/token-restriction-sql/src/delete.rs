@@ -22,6 +22,13 @@ use openstack_keystone_core::token::error::TokenProviderError;
 use crate::entity::prelude::TokenRestriction as DbTokenRestriction;
 
 /// Delete existing token restriction by the ID.
+///
+/// # Parameters
+/// - `db`: The database connection.
+/// - `id`: The token restriction ID.
+///
+/// # Returns
+/// A `Result` indicating success or a `TokenProviderError`.
 pub async fn delete<S: AsRef<str>>(
     db: &DatabaseConnection,
     id: S,

@@ -27,6 +27,14 @@ use crate::entity::{
     identity_provider as db_old_identity_provider, mapping as db_old_mapping,
 };
 
+/// Create a new identity provider.
+///
+/// # Parameters
+/// - `db`: The database connection.
+/// - `idp`: The identity provider details to create.
+///
+/// # Returns
+/// A `Result` containing the created `IdentityProvider`, or an `Error`.
 pub async fn create(
     db: &DatabaseConnection,
     idp: IdentityProviderCreate,

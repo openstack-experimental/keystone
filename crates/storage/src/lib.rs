@@ -72,6 +72,13 @@ openraft::declare_raft_types!(
 
 /// Create a pair of `FjallLogStore` and `FjallStateMachine` that are backed by
 /// a same fjall db instance.
+///
+/// # Parameters
+/// - `db_path`: Path to the database directory.
+///
+/// # Returns
+/// A `Result` containing a tuple of `FjallLogStore` and `FjallStateMachine`, or
+/// an `io::Error`.
 pub async fn new<C, P: AsRef<Path>>(
     db_path: P,
 ) -> Result<(FjallLogStore<C>, FjallStateMachine), io::Error>

@@ -23,6 +23,13 @@ mod create;
 pub use create::create;
 
 /// Verify whether the password has expired or not.
+///
+/// # Parameters
+/// - `password_entry`: The password entry to check.
+///
+/// # Returns
+/// A `Result` containing a boolean indicating if the password has expired, or
+/// an `Error`.
 pub(super) fn is_password_expired(
     password_entry: &db_password::Model,
 ) -> Result<bool, IdentityProviderError> {
@@ -43,6 +50,13 @@ pub trait MergePasswordData {
 }
 
 impl MergePasswordData for UserResponseBuilder {
+    /// Merge password data into the user response builder.
+    ///
+    /// # Parameters
+    /// - `passwords`: An iterator of password models.
+    ///
+    /// # Returns
+    /// A mutable reference to the builder.
     fn merge_passwords_data<I>(&mut self, passwords: I) -> &mut Self
     where
         I: IntoIterator<Item = db_password::Model>,
@@ -68,6 +82,13 @@ pub mod tests {
 
     use super::*;
 
+    /// Create a mock password for testing.
+    ///
+    /// # Parameters
+    /// - `user_id`: The ID of the user.
+    ///
+    /// # Returns
+    /// A `db_password::Model` instance.
     pub fn get_password_mock(user_id: i32) -> db_password::Model {
         let datetime = Utc::now();
         db_password::Model {
@@ -83,11 +104,22 @@ pub mod tests {
     }
 
     impl db_password::ModelBuilder {
+        /// Set the password expiration date.
+        ///
+        /// # Parameters
+        /// - `value`: The expiration date.
+        ///
+        /// # Returns
+        /// A mutable reference to the builder.
         pub fn expires(&mut self, value: DateTime<Utc>) -> &mut Self {
             self.expires_at_int(value.timestamp())
                 .expires_at(value.naive_utc())
         }
 
+        /// Create an expired password builder.
+        ///
+        /// # Returns
+        /// An expired `Self` builder.
         pub fn expired() -> Self {
             Self::default()
                 .expires_at(DateTime::<Utc>::MIN_UTC.naive_utc())
@@ -95,6 +127,10 @@ pub mod tests {
                 .to_owned()
         }
 
+        /// Create a non-expired password builder.
+        ///
+        /// # Returns
+        /// A non-expired `Self` builder.
         pub fn not_expired() -> Self {
             Self::default()
                 .expires_at(DateTime::<Utc>::MAX_UTC.naive_utc())
@@ -102,6 +138,10 @@ pub mod tests {
                 .to_owned()
         }
 
+        /// Create a dummy password model.
+        ///
+        /// # Returns
+        /// A `db_password::Model` instance.
         pub fn dummy() -> db_password::Model {
             db_password::ModelBuilder::default().build().unwrap()
         }

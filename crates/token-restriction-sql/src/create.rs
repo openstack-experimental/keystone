@@ -27,6 +27,14 @@ use crate::entity::{
 };
 
 /// Create new token restriction.
+///
+/// # Parameters
+/// - `db`: The database connection.
+/// - `restriction`: The token restriction to create.
+///
+/// # Returns
+/// A `Result` containing the created `TokenRestriction`, or a
+/// `TokenProviderError`.
 pub async fn create(
     db: &DatabaseConnection,
     restriction: TokenRestrictionCreate,

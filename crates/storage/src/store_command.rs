@@ -81,6 +81,13 @@ impl MutationInner {
     ///
     /// Convert the mutation command into the raft operation encrypting the data
     /// for the at-rest encryption.
+    ///
+    /// # Parameters
+    /// - `value`: The mutation to convert.
+    /// - `nonce`: The encryption nonce.
+    ///
+    /// # Returns
+    /// A `Result` containing the `MutationInner`, or a `StoreError`.
     pub fn convert(value: Mutation, nonce: Nonce) -> Result<MutationInner, StoreError> {
         Ok(match value {
             Mutation::Remove { key, keyspace } => MutationInner::Remove { key, keyspace },
@@ -150,6 +157,14 @@ pub enum Mutation {
 }
 
 impl Mutation {
+    /// Create a remove mutation.
+    ///
+    /// # Parameters
+    /// - `key`: The key to remove.
+    /// - `keyspace`: The keyspace for the key.
+    ///
+    /// # Returns
+    /// A `Result` containing the `Mutation`, or a `StoreError`.
     pub fn remove<K, S>(key: K, keyspace: Option<S>) -> Result<Self, StoreError>
     where
         K: Into<Vec<u8>>,
@@ -161,6 +176,13 @@ impl Mutation {
         })
     }
 
+    /// Create a remove index mutation.
+    ///
+    /// # Parameters
+    /// - `key`: The key to remove from the index.
+    ///
+    /// # Returns
+    /// A `Result` containing the `Mutation`, or a `StoreError`.
     pub fn remove_index<K>(key: K) -> Result<Self, StoreError>
     where
         K: Into<Vec<u8>>,
@@ -168,6 +190,17 @@ impl Mutation {
         Ok(Self::RemoveIndex { key: key.into() })
     }
 
+    /// Create a set mutation.
+    ///
+    /// # Parameters
+    /// - `key`: The key to set.
+    /// - `value`: The value to set.
+    /// - `metadata`: The resource metadata.
+    /// - `keyspace`: The keyspace for the key.
+    /// - `expected_revision`: The expected revision.
+    ///
+    /// # Returns
+    /// A `Result` containing the `Mutation`, or a `StoreError`.
     pub fn set<K, V, S>(
         key: K,
         value: V,
@@ -189,6 +222,13 @@ impl Mutation {
         })
     }
 
+    /// Create a set index mutation.
+    ///
+    /// # Parameters
+    /// - `key`: The key to set in the index.
+    ///
+    /// # Returns
+    /// A `Result` containing the `Mutation`, or a `StoreError`.
     pub fn set_index<K>(key: K) -> Result<Self, StoreError>
     where
         K: Into<Vec<u8>>,
@@ -203,8 +243,7 @@ impl StoreCommand {
     /// Serialize the data into the bytes using the MsgPack format.
     ///
     /// # Returns
-    /// * `Ok(Vec<u8>)` - Bytes vector.
-    /// * `Err(StoreError)` - Error.
+    /// A `Result` containing the serialized bytes, or a `StoreError`.
     pub fn pack(&self) -> Result<Vec<u8>, StoreError> {
         Ok(rmp_serde::to_vec(self)?)
     }
@@ -213,12 +252,11 @@ impl StoreCommand {
     ///
     /// Unpack the [StoreCommand] from the bytes array.
     ///
-    /// # Arguments
-    /// * `value` - The binary data.
+    /// # Parameters
+    /// - `value`: The binary data.
     ///
     /// # Returns
-    /// * `Ok(StoreCommand)` - Success response.
-    /// * `Err(StoreError)` - Error if the operation fails.
+    /// A `Result` containing the `StoreCommand`, or a `StoreError`.
     pub fn unpack(value: &[u8]) -> Result<StoreCommand, StoreError> {
         Ok(rmp_serde::from_slice(value)?)
     }

@@ -23,6 +23,13 @@ use openstack_keystone_core_types::k8s_auth::{K8sAuthInstance, K8sAuthInstanceCr
 use crate::entity::kubernetes_auth_instance;
 
 /// Create new k8s auth instance.
+///
+/// # Parameters
+/// - `db`: The database connection.
+/// - `data`: The data for creating a new K8s auth instance.
+///
+/// # Returns
+/// A `Result` containing the created `K8sAuthInstance`, or an `Error`.
 pub async fn create(
     db: &DatabaseConnection,
     data: K8sAuthInstanceCreate,

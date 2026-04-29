@@ -22,6 +22,13 @@ use openstack_keystone_core::k8s_auth::K8sAuthProviderError;
 use crate::entity::prelude::KubernetesAuthRole;
 
 /// Delete existing K8s auth configuration.
+///
+/// # Parameters
+/// - `db`: The database connection.
+/// - `id`: The ID of the K8s auth configuration to delete.
+///
+/// # Returns
+/// A `Result` indicating success or an `Error`.
 pub async fn delete<S: AsRef<str>>(
     db: &DatabaseConnection,
     id: S,

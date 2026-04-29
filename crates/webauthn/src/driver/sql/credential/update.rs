@@ -23,6 +23,16 @@ use crate::driver::sql::model::{
 };
 use crate::{WebauthnCredential, WebauthnError};
 
+/// Update a webauthn credential.
+///
+/// # Parameters
+/// - `db`: The database connection.
+/// - `credential_id`: The ID of the credential to update.
+/// - `credential`: The updated credential data.
+///
+/// # Returns
+/// A `Result` containing the updated `WebauthnCredential`, or a
+/// `WebauthnError`.
 pub async fn update<S>(
     db: &DatabaseConnection,
     credential_id: S,

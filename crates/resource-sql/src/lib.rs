@@ -39,6 +39,13 @@ inventory::submit! {
 #[async_trait]
 impl ResourceBackend for SqlBackend {
     /// Get `enabled` property of a domain.
+    ///
+    /// # Parameters
+    /// - `state`: Service state containing the database connection.
+    /// - `domain_id`: ID of the domain.
+    ///
+    /// # Returns
+    /// A `bool` indicating if the domain is enabled.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn get_domain_enabled<'a>(
         &self,
@@ -49,6 +56,13 @@ impl ResourceBackend for SqlBackend {
     }
 
     /// Create new domain.
+    ///
+    /// # Parameters
+    /// - `state`: Service state containing the database connection.
+    /// - `domain`: Domain creation parameters.
+    ///
+    /// # Returns
+    /// The created `Domain`.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn create_domain(
         &self,
@@ -59,6 +73,13 @@ impl ResourceBackend for SqlBackend {
     }
 
     /// Create new project.
+    ///
+    /// # Parameters
+    /// - `state`: Service state containing the database connection.
+    /// - `project`: Project creation parameters.
+    ///
+    /// # Returns
+    /// The created `Project`.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn create_project(
         &self,
@@ -68,7 +89,11 @@ impl ResourceBackend for SqlBackend {
         Ok(project::create(&state.db, project).await?)
     }
 
-    /// Delete domain by the ID
+    /// Delete domain by the ID.
+    ///
+    /// # Parameters
+    /// - `state`: Service state containing the database connection.
+    /// - `id`: ID of the domain to delete.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn delete_domain<'a>(
         &self,
@@ -78,7 +103,11 @@ impl ResourceBackend for SqlBackend {
         Ok(domain::delete(&state.db, id).await?)
     }
 
-    /// Delete project by the ID
+    /// Delete project by the ID.
+    ///
+    /// # Parameters
+    /// - `state`: Service state containing the database connection.
+    /// - `id`: ID of the project to delete.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn delete_project<'a>(
         &self,
@@ -88,7 +117,15 @@ impl ResourceBackend for SqlBackend {
         Ok(project::delete(&state.db, id).await?)
     }
 
-    /// Get single domain by ID
+    /// Get single domain by ID.
+    ///
+    /// # Parameters
+    /// - `state`: Service state containing the database connection.
+    /// - `domain_id`: ID of the domain.
+    ///
+    /// # Returns
+    /// A `Result` containing an `Option` with the `Domain` if found, or an
+    /// `Error`.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn get_domain<'a>(
         &self,
@@ -98,7 +135,15 @@ impl ResourceBackend for SqlBackend {
         Ok(domain::get_domain_by_id(&state.db, domain_id).await?)
     }
 
-    /// Get single domain by Name
+    /// Get single domain by Name.
+    ///
+    /// # Parameters
+    /// - `state`: Service state containing the database connection.
+    /// - `domain_name`: Name of the domain.
+    ///
+    /// # Returns
+    /// A `Result` containing an `Option` with the `Domain` if found, or an
+    /// `Error`.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn get_domain_by_name<'a>(
         &self,
@@ -108,7 +153,15 @@ impl ResourceBackend for SqlBackend {
         Ok(domain::get_domain_by_name(&state.db, domain_name).await?)
     }
 
-    /// Get single project by ID
+    /// Get single project by ID.
+    ///
+    /// # Parameters
+    /// - `state`: Service state containing the database connection.
+    /// - `project_id`: ID of the project.
+    ///
+    /// # Returns
+    /// A `Result` containing an `Option` with the `Project` if found, or an
+    /// `Error`.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn get_project<'a>(
         &self,
@@ -118,7 +171,16 @@ impl ResourceBackend for SqlBackend {
         Ok(project::get_project(&state.db, project_id).await?)
     }
 
-    /// Get single project by Name and Domain ID
+    /// Get single project by Name and Domain ID.
+    ///
+    /// # Parameters
+    /// - `state`: Service state containing the database connection.
+    /// - `name`: Name of the project.
+    /// - `domain_id`: ID of the domain.
+    ///
+    /// # Returns
+    /// A `Result` containing an `Option` with the `Project` if found, or an
+    /// `Error`.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn get_project_by_name<'a>(
         &self,
@@ -129,7 +191,15 @@ impl ResourceBackend for SqlBackend {
         Ok(project::get_project_by_name(&state.db, name, domain_id).await?)
     }
 
-    /// Get project parents
+    /// Get project parents.
+    ///
+    /// # Parameters
+    /// - `state`: Service state containing the database connection.
+    /// - `project_id`: ID of the project.
+    ///
+    /// # Returns
+    /// A `Result` containing an `Option` with the `Vec<Project>` if found, or
+    /// an `Error`.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn get_project_parents<'a>(
         &self,
@@ -140,6 +210,13 @@ impl ResourceBackend for SqlBackend {
     }
 
     /// List domains.
+    ///
+    /// # Parameters
+    /// - `state`: Service state containing the database connection.
+    /// - `params`: List parameters for domains.
+    ///
+    /// # Returns
+    /// A `Vec<Domain>`.
     #[tracing::instrument(level = "info", skip(self, state))]
     async fn list_domains(
         &self,
@@ -150,6 +227,13 @@ impl ResourceBackend for SqlBackend {
     }
 
     /// List projects.
+    ///
+    /// # Parameters
+    /// - `state`: Service state containing the database connection.
+    /// - `params`: List parameters for projects.
+    ///
+    /// # Returns
+    /// A `Vec<Project>`.
     #[tracing::instrument(level = "info", skip(self, state))]
     async fn list_projects(
         &self,

@@ -23,6 +23,15 @@ use crate::entity::{
     federated_mapping as db_federated_mapping, prelude::FederatedMapping as DbFederatedMapping,
 };
 
+/// Update an existing federation mapping.
+///
+/// # Parameters
+/// - `db`: The database connection.
+/// - `id`: The ID of the mapping to update.
+/// - `mapping`: The updates to apply to the mapping.
+///
+/// # Returns
+/// A `Result` containing the updated `Mapping`, or an `Error`.
 pub async fn update<S: AsRef<str>>(
     db: &DatabaseConnection,
     id: S,

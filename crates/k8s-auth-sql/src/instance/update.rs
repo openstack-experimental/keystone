@@ -27,6 +27,14 @@ use crate::entity::prelude::KubernetesAuthInstance;
 ///
 /// Perform search and update of the k8s auth instance in an isolated
 /// transaction.
+///
+/// # Parameters
+/// - `db`: The database connection.
+/// - `id`: The ID of the K8s auth instance to update.
+/// - `data`: The updated data for the K8s auth instance.
+///
+/// # Returns
+/// A `Result` containing the updated `K8sAuthInstance`, or an `Error`.
 pub async fn update<S: AsRef<str>>(
     db: &DatabaseConnection,
     id: S,

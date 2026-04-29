@@ -22,6 +22,13 @@ mod get;
 pub use get::*;
 
 impl From<db_id_mapping::Model> for IdMapping {
+    /// Convert a `db_id_mapping::Model` into an `IdMapping`.
+    ///
+    /// # Parameters
+    /// - `value`: The database model.
+    ///
+    /// # Returns
+    /// The converted `IdMapping`.
     fn from(value: db_id_mapping::Model) -> Self {
         IdMapping {
             public_id: value.public_id.clone(),
@@ -33,6 +40,13 @@ impl From<db_id_mapping::Model> for IdMapping {
 }
 
 impl From<IdMappingEntityType> for EntityType {
+    /// Convert `IdMappingEntityType` into `EntityType`.
+    ///
+    /// # Parameters
+    /// - `value`: The mapping entity type.
+    ///
+    /// # Returns
+    /// The converted `EntityType`.
     fn from(value: IdMappingEntityType) -> Self {
         match value {
             IdMappingEntityType::User => EntityType::User,
@@ -42,6 +56,13 @@ impl From<IdMappingEntityType> for EntityType {
 }
 
 impl From<EntityType> for IdMappingEntityType {
+    /// Convert `EntityType` into `IdMappingEntityType`.
+    ///
+    /// # Parameters
+    /// - `value`: The entity type.
+    ///
+    /// # Returns
+    /// The converted `IdMappingEntityType`.
     fn from(value: EntityType) -> Self {
         match value {
             EntityType::User => IdMappingEntityType::User,

@@ -30,6 +30,14 @@ use crate::entity::{
 ///
 /// Selects all groups with the ID in the list of user group memberships and
 /// expiring group memberships.
+///
+/// # Parameters
+/// - `db`: Database connection.
+/// - `user_id`: User ID.
+/// - `last_verified_cutof`: Cutoff date for verifying expiring memberships.
+///
+/// # Returns
+/// A `Result` containing a `Vec` of `Group`s, or an `Error`.
 #[tracing::instrument(skip_all)]
 pub async fn list_user_groups<S: AsRef<str>>(
     db: &DatabaseConnection,

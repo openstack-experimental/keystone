@@ -27,6 +27,12 @@ use crate::entity::{
 };
 
 /// Prepare the paginated query for listing identity providers.
+///
+/// # Parameters
+/// - `params`: The parameters for listing identity providers.
+///
+/// # Returns
+/// A `Result` containing the paginated query cursor, or an `Error`.
 fn get_list_query(
     params: &IdentityProviderListParameters,
 ) -> Result<Cursor<SelectModel<db_federated_identity_provider::Model>>, FederationProviderError> {
@@ -60,6 +66,13 @@ fn get_list_query(
 }
 
 /// List federated identity providers.
+///
+/// # Parameters
+/// - `db`: The database connection.
+/// - `params`: The parameters for listing identity providers.
+///
+/// # Returns
+/// A `Result` containing a list of `IdentityProvider` objects, or an `Error`.
 pub async fn list(
     db: &DatabaseConnection,
     params: &IdentityProviderListParameters,

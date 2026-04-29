@@ -21,6 +21,15 @@ use openstack_keystone_core::error::DbContextExt;
 use crate::WebauthnError;
 use crate::driver::sql::model::prelude::WebauthnState as DbPasskeyState;
 
+/// Get registration state.
+///
+/// # Parameters
+/// - `db`: The database connection.
+/// - `user_id`: The user ID.
+///
+/// # Returns
+/// A `Result` containing an `Option` with the `PasskeyRegistration` if found,
+/// or an `Error`.
 pub async fn get_register<U: AsRef<str>>(
     db: &DatabaseConnection,
     user_id: U,
@@ -35,6 +44,15 @@ pub async fn get_register<U: AsRef<str>>(
     }
 }
 
+/// Get authentication state.
+///
+/// # Parameters
+/// - `db`: The database connection.
+/// - `user_id`: The user ID.
+///
+/// # Returns
+/// A `Result` containing an `Option` with the `PasskeyAuthentication` if found,
+/// or an `Error`.
 pub async fn get_auth<U: AsRef<str>>(
     db: &DatabaseConnection,
     user_id: U,

@@ -46,6 +46,16 @@ impl SqlBackend {
     ///
     /// List all role assignments matching the parameters resolving the imply
     /// rules and role names.
+    ///
+    /// # Parameters
+    ///
+    /// * `state` - The service state.
+    /// * `params` - The list parameters.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing a `Vec` of `Assignment` if successful, or an
+    /// `Error`.
     #[tracing::instrument(level = "info", skip(self, state))]
     async fn list_assignments_for_multiple_actors_and_targets(
         &self,
@@ -95,6 +105,16 @@ impl SqlBackend {
 
 #[async_trait]
 impl SqlDriver for SqlBackend {
+    /// Set up the database tables.
+    ///
+    /// # Parameters
+    ///
+    /// * `connection` - The database connection.
+    /// * `schema` - The database schema.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` indicating success or a `DatabaseError`.
     async fn setup(
         &self,
         connection: &DatabaseConnection,
@@ -109,6 +129,16 @@ impl SqlDriver for SqlBackend {
 #[async_trait]
 impl AssignmentBackend for SqlBackend {
     /// Check assignment grant.
+    ///
+    /// # Parameters
+    ///
+    /// * `state` - The service state.
+    /// * `grant` - The assignment to check.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing a `bool` indicating if the grant exists, or an
+    /// `Error`.
     #[tracing::instrument(level = "info", skip(self, state))]
     async fn check_grant(
         &self,
@@ -119,6 +149,16 @@ impl AssignmentBackend for SqlBackend {
     }
 
     /// Create assignment grant.
+    ///
+    /// # Parameters
+    ///
+    /// * `state` - The service state.
+    /// * `grant` - The assignment to create.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing the created `Assignment` if successful, or an
+    /// `Error`.
     #[tracing::instrument(level = "info", skip(self, state))]
     async fn create_grant(
         &self,
@@ -129,6 +169,16 @@ impl AssignmentBackend for SqlBackend {
     }
 
     /// List role assignments.
+    ///
+    /// # Parameters
+    ///
+    /// * `state` - The service state.
+    /// * `params` - The list parameters.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing a `Vec` of `Assignment` if successful, or an
+    /// `Error`.
     #[tracing::instrument(level = "info", skip(self, state))]
     async fn list_assignments(
         &self,
@@ -197,6 +247,15 @@ impl AssignmentBackend for SqlBackend {
     }
 
     /// Revoke assignment grant.
+    ///
+    /// # Parameters
+    ///
+    /// * `state` - The service state.
+    /// * `grant` - The assignment to revoke.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` indicating success or an `Error`.
     #[tracing::instrument(level = "info", skip(self, state))]
     async fn revoke_grant(
         &self,

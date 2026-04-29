@@ -25,6 +25,14 @@ use crate::entity::{
     prelude::FederatedAuthState as DbFederatedAuthState,
 };
 
+/// Delete an authentication state by its ID.
+///
+/// # Parameters
+/// - `db`: The database connection.
+/// - `id`: The ID of the authentication state to delete.
+///
+/// # Returns
+/// A `Result` indicating success, or an `Error`.
 pub async fn delete<S: AsRef<str>>(
     db: &DatabaseConnection,
     id: S,
@@ -42,6 +50,13 @@ pub async fn delete<S: AsRef<str>>(
     }
 }
 
+/// Delete all expired authentication states.
+///
+/// # Parameters
+/// - `db`: The database connection.
+///
+/// # Returns
+/// A `Result` indicating success, or an `Error`.
 pub async fn delete_expired(db: &DatabaseConnection) -> Result<(), FederationProviderError> {
     DbFederatedAuthState::delete_many()
         .filter(db_federated_auth_state::Column::ExpiresAt.lt(Utc::now()))

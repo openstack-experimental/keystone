@@ -22,6 +22,14 @@ use openstack_keystone_core_types::identity::UserOptions;
 
 use crate::entity::{prelude::UserOption as DbUserOptions, user_option};
 
+/// List user options by user ID.
+///
+/// # Parameters
+/// - `db`: The database connection.
+/// - `user_id`: The user ID.
+///
+/// # Returns
+/// A `Result` containing `UserOptions` if successful, or an `Error`.
 #[tracing::instrument(skip_all)]
 pub async fn list_by_user_id<S: AsRef<str>>(
     db: &DatabaseConnection,

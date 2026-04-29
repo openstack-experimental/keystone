@@ -32,6 +32,15 @@ use crate::entity::{
 };
 
 /// Update existing token restriction by the ID.
+///
+/// # Parameters
+/// - `db`: The database connection.
+/// - `id`: The token restriction ID.
+/// - `restriction`: The updates to apply.
+///
+/// # Returns
+/// A `Result` containing the updated `TokenRestriction`, or a
+/// `TokenProviderError`.
 pub async fn update<S: AsRef<str>>(
     db: &DatabaseConnection,
     id: S,

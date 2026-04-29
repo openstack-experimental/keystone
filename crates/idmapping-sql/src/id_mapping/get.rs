@@ -25,6 +25,14 @@ use crate::entity::{
 };
 
 /// Get the `IdMapping` by the public_id.
+///
+/// # Parameters
+/// - `db`: The database connection.
+/// - `public_id`: The public ID.
+///
+/// # Returns
+/// A `Result` containing an `Option` with the `IdMapping` if found, or an
+/// `Error`.
 pub async fn get_by_public_id<P: AsRef<str>>(
     db: &DatabaseConnection,
     public_id: P,
@@ -37,6 +45,16 @@ pub async fn get_by_public_id<P: AsRef<str>>(
 }
 
 /// Get the `IdMapping` by the local data.
+///
+/// # Parameters
+/// - `db`: The database connection.
+/// - `local_id`: The local ID.
+/// - `domain_id`: The domain ID.
+/// - `entity_type`: The entity type.
+///
+/// # Returns
+/// A `Result` containing an `Option` with the `IdMapping` if found, or an
+/// `Error`.
 pub async fn get_by_local_id<L: AsRef<str>, D: AsRef<str>, E: Into<EntityType>>(
     db: &DatabaseConnection,
     local_id: L,

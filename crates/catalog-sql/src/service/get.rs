@@ -20,6 +20,15 @@ use openstack_keystone_core_types::catalog::Service;
 
 use crate::entity::prelude::Service as DbService;
 
+/// Gets a service by ID.
+///
+/// # Parameters
+/// - `db`: The database connection.
+/// - `id`: The ID of the service to retrieve.
+///
+/// # Returns
+/// A `Result` containing an `Option` with the `Service` if found, or an
+/// `Error`.
 pub async fn get<I: AsRef<str>>(
     db: &DatabaseConnection,
     id: I,

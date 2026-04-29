@@ -21,7 +21,14 @@ use openstack_keystone_core::role::RoleProviderError;
 
 use crate::entity::prelude::Role;
 
-/// Delete existing role
+/// Delete existing role.
+///
+/// # Parameters
+/// - `db`: The database connection.
+/// - `id`: The role ID.
+///
+/// # Returns
+/// A `Result` indicating success or an `Error`.
 pub async fn delete<S: AsRef<str>>(
     db: &DatabaseConnection,
     id: S,

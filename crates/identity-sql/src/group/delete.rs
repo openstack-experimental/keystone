@@ -20,6 +20,14 @@ use openstack_keystone_core::identity::IdentityProviderError;
 
 use crate::entity::prelude::Group as DbGroup;
 
+/// Deletes a group by its ID.
+///
+/// # Parameters
+/// - `db`: The database connection.
+/// - `group_id`: The ID of the group to delete.
+///
+/// # Returns
+/// A `Result` indicating success or an `Error`.
 #[tracing::instrument(skip_all)]
 pub async fn delete<S: AsRef<str>>(
     db: &DatabaseConnection,

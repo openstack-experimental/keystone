@@ -26,6 +26,14 @@ use crate::entity::{
 };
 
 /// Add the user to the single group.
+///
+/// # Parameters
+/// - `db`: Database connection.
+/// - `user_id`: User ID.
+/// - `group_id`: Group ID.
+///
+/// # Returns
+/// A `Result` indicating success or failure.
 #[tracing::instrument(skip_all)]
 pub async fn add_user_to_group<U: AsRef<str>, G: AsRef<str>>(
     db: &DatabaseConnection,
@@ -45,6 +53,13 @@ pub async fn add_user_to_group<U: AsRef<str>, G: AsRef<str>>(
 
 /// Add group user relations as specified by the tuples (user_id, group_id)
 /// iterator.
+///
+/// # Parameters
+/// - `db`: Database connection.
+/// - `iter`: Iterator of (user_id, group_id) tuples.
+///
+/// # Returns
+/// A `Result` indicating success or failure.
 #[tracing::instrument(skip_all)]
 pub async fn add_users_to_groups<I, U, G>(
     db: &DatabaseConnection,
@@ -70,6 +85,16 @@ where
 }
 
 /// Add the user to the single group with expiring membership.
+///
+/// # Parameters
+/// - `db`: Database connection.
+/// - `user_id`: User ID.
+/// - `group_id`: Group ID.
+/// - `idp_id`: Identity Provider ID.
+/// - `last_verified`: Optional last verification date.
+///
+/// # Returns
+/// A `Result` indicating success or failure.
 #[tracing::instrument(skip_all)]
 pub async fn add_user_to_group_expiring<U: AsRef<str>, G: AsRef<str>, IDP: AsRef<str>>(
     db: &DatabaseConnection,
@@ -93,6 +118,15 @@ pub async fn add_user_to_group_expiring<U: AsRef<str>, G: AsRef<str>, IDP: AsRef
 
 /// Add expiring group user relations as specified by the tuples (user_id,
 /// group_id) iterator.
+///
+/// # Parameters
+/// - `db`: Database connection.
+/// - `iter`: Iterator of (user_id, group_id) tuples.
+/// - `idp_id`: Identity Provider ID.
+/// - `last_verified`: Optional last verification date.
+///
+/// # Returns
+/// A `Result` indicating success or failure.
 #[tracing::instrument(skip_all)]
 pub async fn add_users_to_groups_expiring<I, U, G, IDP>(
     db: &DatabaseConnection,

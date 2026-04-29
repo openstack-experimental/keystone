@@ -20,6 +20,14 @@ use openstack_keystone_core::identity::IdentityProviderError;
 
 use crate::entity::prelude::User as DbUser;
 
+/// Delete a user by its ID.
+///
+/// # Parameters
+/// - `db`: The database connection.
+/// - `user_id`: The user ID.
+///
+/// # Returns
+/// A `Result` containing `()` if successful, or an `Error`.
 #[tracing::instrument(skip_all)]
 pub async fn delete<U: AsRef<str>>(
     db: &DatabaseConnection,

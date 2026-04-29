@@ -21,6 +21,14 @@ use openstack_keystone_core_types::resource::{Domain, DomainCreate};
 
 use crate::entity::project as db_project;
 
+/// Create a new domain.
+///
+/// # Parameters
+/// - `db`: Database connection.
+/// - `domain`: Domain creation parameters.
+///
+/// # Returns
+/// The created `Domain`.
 pub async fn create<C>(db: &C, domain: DomainCreate) -> Result<Domain, ResourceProviderError>
 where
     C: ConnectionTrait,

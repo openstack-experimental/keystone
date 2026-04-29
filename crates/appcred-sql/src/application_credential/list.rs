@@ -31,6 +31,12 @@ use crate::entity::{
 };
 
 /// Prepare the paginated query for listing application credentials.
+///
+/// # Parameters
+/// - `params`: The parameters for listing application credentials.
+///
+/// # Returns
+/// A `Result` containing a `Cursor` for the query or an `Error`.
 fn get_list_query(
     params: &ApplicationCredentialListParameters,
 ) -> Result<Cursor<SelectModel<db_application_credential::Model>>, ApplicationCredentialProviderError>
@@ -53,6 +59,13 @@ fn get_list_query(
 }
 
 /// List application credentials.
+///
+/// # Parameters
+/// - `db`: The database connection.
+/// - `params`: The parameters for listing application credentials.
+///
+/// # Returns
+/// A `Result` containing a `Vec` of `ApplicationCredential` or an `Error`.
 pub async fn list(
     db: &DatabaseConnection,
     params: &ApplicationCredentialListParameters,

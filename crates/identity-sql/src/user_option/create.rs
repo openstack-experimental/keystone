@@ -24,6 +24,14 @@ use crate::entity::user_option as db_user_option;
 use crate::user_option::UserOptionIntoModelIterator;
 
 /// Persist user options.
+///
+/// # Parameters
+/// - `db`: The database connection.
+/// - `user_id`: The user ID.
+/// - `opts`: The user options.
+///
+/// # Returns
+/// A `Result` containing `()` if successful, or an `Error`.
 #[tracing::instrument(skip_all)]
 pub async fn create<C, U>(
     db: &C,

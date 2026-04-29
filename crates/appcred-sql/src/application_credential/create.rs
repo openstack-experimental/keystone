@@ -35,6 +35,14 @@ use crate::entity::{
 
 impl TryFrom<ApplicationCredentialCreate> for db_application_credential::ActiveModel {
     type Error = ApplicationCredentialProviderError;
+    /// Try to convert `ApplicationCredentialCreate` into a
+    /// `db_application_credential::ActiveModel`.
+    ///
+    /// # Parameters
+    /// - `value`: The application credential creation request.
+    ///
+    /// # Returns
+    /// A `Result` containing the `ActiveModel` or an `Error`.
     fn try_from(value: ApplicationCredentialCreate) -> Result<Self, Self::Error> {
         Ok(Self {
             internal_id: NotSet,
@@ -55,6 +63,15 @@ impl TryFrom<ApplicationCredentialCreate> for db_application_credential::ActiveM
 }
 
 /// Create the application credential.
+///
+/// # Parameters
+/// - `conf`: The service configuration.
+/// - `db`: The database connection.
+/// - `rec`: The application credential to create.
+///
+/// # Returns
+/// A `Result` containing the `ApplicationCredentialCreateResponse` or an
+/// `Error`.
 pub async fn create(
     conf: &Config,
     db: &DatabaseConnection,
@@ -124,6 +141,16 @@ pub async fn create(
 /// - When multiple records are matching raise an error.
 /// - When only 1 record exist - reuse it (id).
 /// - When not exist - create new one.
+///
+/// # Parameters
+/// - `db`: The database connection.
+/// - `rules`: The access rules to process.
+/// - `application_credential_internal_id`: The internal ID of the application
+///   credential.
+/// - `user_id`: The ID of the user.
+///
+/// # Returns
+/// A `Result` containing a `Vec` of `AccessRule` or an `Error`.
 async fn process_access_rules<C, I, S>(
     db: &C,
     rules: I,

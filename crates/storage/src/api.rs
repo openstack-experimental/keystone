@@ -25,12 +25,28 @@ use crate::types::*;
 pub trait StorageApi {
     /// Checks whether a given key is present in the keyspace of the distributed
     /// store.
+    ///
+    /// # Parameters
+    /// - `key`: Contains the key to retrieve.
+    /// - `keyspace`: Optional keyspace name.
+    ///
+    /// # Returns
+    /// A `Result` containing a boolean indicating if the key exists, or a
+    /// `StoreError`.
     async fn contains_key<K, S>(&self, key: K, keyspace: Option<S>) -> Result<bool, StoreError>
     where
         K: AsRef<[u8]> + Send,
         S: AsRef<str> + Send;
 
     /// Gets a value for a given key from the distributed store.
+    ///
+    /// # Parameters
+    /// - `key`: Contains the key to retrieve.
+    /// - `keyspace`: Optional keyspace name.
+    ///
+    /// # Returns
+    /// A `Result` containing an `Option` with the `StoreDataEnvelope<T>` if
+    /// found, or a `StoreError`.
     async fn get_by_key<T, K, S>(
         &self,
         key: K,
@@ -42,6 +58,13 @@ pub trait StorageApi {
         S: AsRef<str> + Send;
 
     /// List key value pairs by the prefix.
+    ///
+    /// # Parameters
+    /// - `prefix`: The prefix to query.
+    /// - `keyspace`: Optional keyspace name.
+    ///
+    /// # Returns
+    /// A `Result` containing a vector of key-value pairs, or a `StoreError`.
     async fn prefix<T, K, S>(
         &self,
         prefix: K,
@@ -53,22 +76,50 @@ pub trait StorageApi {
         S: AsRef<str> + Send;
 
     /// List index keys the prefix.
+    ///
+    /// # Parameters
+    /// - `prefix`: The prefix to query.
+    ///
+    /// # Returns
+    /// A `Result` containing a vector of keys, or a `StoreError`.
     async fn prefix_index<K>(&self, prefix: K) -> Result<Vec<String>, StoreError>
     where
         K: AsRef<[u8]> + Send;
 
     /// Deletes a value for a given key in the distributed store.
+    ///
+    /// # Parameters
+    /// - `key`: The key.
+    /// - `keyspace`: Optional keyspace name.
+    ///
+    /// # Returns
+    /// A `Result` containing the `Response`, or a `StoreError`.
     async fn remove<K, S>(&self, key: K, keyspace: Option<S>) -> Result<Response, StoreError>
     where
         K: Into<Vec<u8>> + Send,
         S: Into<String> + Send;
 
     /// Deletes index key in the distributed store.
+    ///
+    /// # Parameters
+    /// - `key`: The key.
+    ///
+    /// # Returns
+    /// A `Result` containing the `Response`, or a `StoreError`.
     async fn remove_index<K>(&self, key: K) -> Result<Response, StoreError>
     where
         K: Into<Vec<u8>> + Send;
 
     /// Sets a value for a given key in the distributed store.
+    ///
+    /// # Parameters
+    /// - `key`: The key.
+    /// - `value`: The value to set for the key.
+    /// - `keyspace`: Optional keyspace name.
+    /// - `expected_revision`: Expected revision.
+    ///
+    /// # Returns
+    /// A `Result` containing the `Response`, or a `StoreError`.
     async fn set_value<K, V, S>(
         &self,
         key: K,
@@ -82,18 +133,23 @@ pub trait StorageApi {
         S: Into<String> + Send;
 
     /// Sets an index key in the distributed store.
+    ///
+    /// # Parameters
+    /// - `key`: The key.
+    ///
+    /// # Returns
+    /// A `Result` containing the `Response`, or a `StoreError`.
     async fn set_index_key<K>(&self, key: K) -> Result<Response, StoreError>
     where
         K: Into<String> + Send;
 
-    /// Mutation transaction
+    /// Mutation transaction.
     ///
-    /// # Arguments
-    /// * `mutations` - List of mutations that must be applied as a single
+    /// # Parameters
+    /// - `mutations`: List of mutations that must be applied as a single
     ///   transaction.
     ///
     /// # Returns
-    /// * `Ok(Response)` - Success response after the value is deleted
-    /// * `Err(Status)` - Error status if the set operation fails
+    /// A `Result` containing the `Response`, or a `StoreError`.
     async fn transaction(&self, mutations: Vec<Mutation>) -> Result<Response, StoreError>;
 }

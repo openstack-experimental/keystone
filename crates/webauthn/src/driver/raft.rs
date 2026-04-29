@@ -36,6 +36,12 @@ pub struct RaftDriver {}
 impl RaftDriver {
     /// Generate the keyspace name for storing temporary states using the
     /// last_log_index.
+    ///
+    /// # Parameters
+    /// - `storage`: The storage instance.
+    ///
+    /// # Returns
+    /// The generated keyspace name.
     fn generate_state_keyspace_name(&self, storage: &Storage) -> String {
         if let Some(val) = storage.last_log_index() {
             format!("webauth_state_{}", val)
@@ -45,6 +51,12 @@ impl RaftDriver {
     }
 
     /// Get the name of the keyspace containing current (not expired) states.
+    ///
+    /// # Parameters
+    /// - `storage`: The storage instance.
+    ///
+    /// # Returns
+    /// A `Result` containing the keyspace name, or an `Error`.
     async fn get_current_state_keyspace_name(
         &self,
         storage: &Storage,
@@ -78,21 +90,46 @@ impl RaftDriver {
     }
 
     /// Get the key name for the credential registration.
+    ///
+    /// # Parameters
+    /// - `user_id`: The user ID.
+    ///
+    /// # Returns
+    /// The credential registration key name.
     fn get_user_cred_registration_state_key_name<S: AsRef<str>>(&self, user_id: S) -> String {
         format!("{}:registration", user_id.as_ref())
     }
 
     /// Get the key name for the credential authentication.
+    ///
+    /// # Parameters
+    /// - `user_id`: The user ID.
+    ///
+    /// # Returns
+    /// The credential authentication key name.
     fn get_user_cred_auth_state_key_name<S: AsRef<str>>(&self, user_id: S) -> String {
         format!("{}:auth", user_id.as_ref())
     }
 
     /// Get the key name for the credential.
+    ///
+    /// # Parameters
+    /// - `user_id`: The user ID.
+    /// - `credential_id`: The credential ID.
+    ///
+    /// # Returns
+    /// The credential key name.
     fn get_cred_key_name<S: AsRef<str>>(&self, user_id: S, credential_id: S) -> String {
         format!("{}:cred:{}", user_id.as_ref(), credential_id.as_ref())
     }
 
-    /// Get user credential listing prefix
+    /// Get user credential listing prefix.
+    ///
+    /// # Parameters
+    /// - `user_id`: The user ID.
+    ///
+    /// # Returns
+    /// The user credential listing prefix.
     fn get_user_cred_list_prefix<S: AsRef<str>>(&self, user_id: S) -> String {
         format!("{}:cred", user_id.as_ref())
     }
@@ -101,12 +138,25 @@ impl RaftDriver {
 #[async_trait]
 impl WebauthnApi for RaftDriver {
     /// Cleanup expired Webauthn states.
+    ///
+    /// # Parameters
+    /// - `_state`: The service state.
+    ///
+    /// # Returns
+    /// A `Result` indicating success or failure.
     #[tracing::instrument(level = "debug", skip_all())]
     async fn cleanup(&self, _state: &ServiceState) -> Result<(), WebauthnError> {
         Ok(())
     }
 
     /// Create webauthn credential for the user.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `credential`: The credential to create.
+    ///
+    /// # Returns
+    /// A `Result` containing the created credential, or an `Error`.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn create_user_webauthn_credential(
         &self,
@@ -131,6 +181,15 @@ impl WebauthnApi for RaftDriver {
     }
 
     /// Get webauthn credential of the user by the credential_id.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `user_id`: The user ID.
+    /// - `credential_id`: The credential ID.
+    ///
+    /// # Returns
+    /// A `Result` containing an `Option` with the WebauthnCredential if found,
+    /// or an `Error`.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn get_user_webauthn_credential<'a>(
         &self,
@@ -152,6 +211,14 @@ impl WebauthnApi for RaftDriver {
     }
 
     /// Delete credential for the user.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `user_id`: The user ID.
+    /// - `credential_id`: The credential ID.
+    ///
+    /// # Returns
+    /// A `Result` indicating success or failure.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn delete_user_webauthn_credential<'a>(
         &self,
@@ -172,6 +239,13 @@ impl WebauthnApi for RaftDriver {
     }
 
     /// Delete webauthn credential auth state for a user.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `user_id`: The user ID.
+    ///
+    /// # Returns
+    /// A `Result` indicating success or failure.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn delete_user_webauthn_credential_authentication_state<'a>(
         &self,
@@ -191,6 +265,13 @@ impl WebauthnApi for RaftDriver {
     }
 
     /// Delete webauthn credential registration state for the user.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `user_id`: The user ID.
+    ///
+    /// # Returns
+    /// A `Result` indicating success or failure.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn delete_user_webauthn_credential_registration_state<'a>(
         &self,
@@ -210,6 +291,14 @@ impl WebauthnApi for RaftDriver {
     }
 
     /// Get webauthn credential auth state.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `user_id`: The user ID.
+    ///
+    /// # Returns
+    /// A `Result` containing an `Option` with the PasskeyAuthentication if
+    /// found, or an `Error`.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn get_user_webauthn_credential_authentication_state<'a>(
         &self,
@@ -230,6 +319,14 @@ impl WebauthnApi for RaftDriver {
     }
 
     /// Get webauthn credential registration state.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `user_id`: The user ID.
+    ///
+    /// # Returns
+    /// A `Result` containing an `Option` with the PasskeyRegistration if found,
+    /// or an `Error`.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn get_user_webauthn_credential_registration_state<'a>(
         &self,
@@ -250,6 +347,13 @@ impl WebauthnApi for RaftDriver {
     }
 
     /// List user webauthn credentials.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `user_id`: The user ID.
+    ///
+    /// # Returns
+    /// A `Result` containing a list of credentials, or an `Error`.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn list_user_webauthn_credentials<'a>(
         &self,
@@ -269,6 +373,14 @@ impl WebauthnApi for RaftDriver {
     }
 
     /// Save webauthn credential auth state.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `user_id`: The user ID.
+    /// - `auth_state`: The authentication state to save.
+    ///
+    /// # Returns
+    /// A `Result` indicating success or failure.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn save_user_webauthn_credential_authentication_state<'a>(
         &self,
@@ -294,6 +406,14 @@ impl WebauthnApi for RaftDriver {
     }
 
     /// Save webauthn credential registration state.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `user_id`: The user ID.
+    /// - `reg_state`: The registration state to save.
+    ///
+    /// # Returns
+    /// A `Result` indicating success or failure.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn save_user_webauthn_credential_registration_state<'a>(
         &self,
@@ -319,6 +439,15 @@ impl WebauthnApi for RaftDriver {
     }
 
     /// Update credential data.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `user_id`: The user ID.
+    /// - `credential_id`: The credential ID.
+    /// - `credential`: The credential data to update.
+    ///
+    /// # Returns
+    /// A `Result` containing the updated credential, or an `Error`.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn update_user_webauthn_credential<'a>(
         &self,

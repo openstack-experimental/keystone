@@ -42,6 +42,13 @@ pub struct SqlBackend {}
 #[async_trait]
 impl K8sAuthBackend for SqlBackend {
     /// Register new K8s auth.
+    ///
+    /// # Parameters
+    /// - `state`: The service state containing the database connection.
+    /// - `config`: The configuration for creating a new K8s auth instance.
+    ///
+    /// # Returns
+    /// A `Result` containing the created `K8sAuthInstance`, or an `Error`.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn create_auth_instance(
         &self,
@@ -52,6 +59,13 @@ impl K8sAuthBackend for SqlBackend {
     }
 
     /// Register new K8s auth role.
+    ///
+    /// # Parameters
+    /// - `state`: The service state containing the database connection.
+    /// - `role`: The configuration for creating a new K8s auth role.
+    ///
+    /// # Returns
+    /// A `Result` containing the created `K8sAuthRole`, or an `Error`.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn create_auth_role(
         &self,
@@ -62,6 +76,13 @@ impl K8sAuthBackend for SqlBackend {
     }
 
     /// Delete K8s auth.
+    ///
+    /// # Parameters
+    /// - `state`: The service state containing the database connection.
+    /// - `id`: The ID of the K8s auth instance to delete.
+    ///
+    /// # Returns
+    /// A `Result` indicating success or an `Error`.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn delete_auth_instance<'a>(
         &self,
@@ -72,6 +93,13 @@ impl K8sAuthBackend for SqlBackend {
     }
 
     /// Delete K8s auth role.
+    ///
+    /// # Parameters
+    /// - `state`: The service state containing the database connection.
+    /// - `id`: The ID of the K8s auth role to delete.
+    ///
+    /// # Returns
+    /// A `Result` indicating success or an `Error`.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn delete_auth_role<'a>(
         &self,
@@ -81,7 +109,15 @@ impl K8sAuthBackend for SqlBackend {
         Ok(role::delete(&state.db, id).await?)
     }
 
-    /// Register new K8s auth.
+    /// Get K8s auth instance.
+    ///
+    /// # Parameters
+    /// - `state`: The service state containing the database connection.
+    /// - `id`: The ID of the K8s auth instance to retrieve.
+    ///
+    /// # Returns
+    /// A `Result` containing an `Option` with the `K8sAuthInstance` if found,
+    /// or an `Error`.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn get_auth_instance<'a>(
         &self,
@@ -91,7 +127,15 @@ impl K8sAuthBackend for SqlBackend {
         Ok(instance::get(&state.db, id).await?)
     }
 
-    /// Register new K8s auth role.
+    /// Get K8s auth role.
+    ///
+    /// # Parameters
+    /// - `state`: The service state containing the database connection.
+    /// - `id`: The ID of the K8s auth role to retrieve.
+    ///
+    /// # Returns
+    /// A `Result` containing an `Option` with the `K8sAuthRole` if found, or an
+    /// `Error`.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn get_auth_role<'a>(
         &self,
@@ -102,6 +146,13 @@ impl K8sAuthBackend for SqlBackend {
     }
 
     /// List K8s auth auth_instances.
+    ///
+    /// # Parameters
+    /// - `state`: The service state containing the database connection.
+    /// - `params`: The parameters for listing K8s auth instances.
+    ///
+    /// # Returns
+    /// A `Result` containing a vector of `K8sAuthInstance`s, or an `Error`.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn list_auth_instances(
         &self,
@@ -112,6 +163,13 @@ impl K8sAuthBackend for SqlBackend {
     }
 
     /// List K8s auth roles.
+    ///
+    /// # Parameters
+    /// - `state`: The service state containing the database connection.
+    /// - `params`: The parameters for listing K8s auth roles.
+    ///
+    /// # Returns
+    /// A `Result` containing a vector of `K8sAuthRole`s, or an `Error`.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn list_auth_roles(
         &self,
@@ -121,7 +179,15 @@ impl K8sAuthBackend for SqlBackend {
         Ok(role::list(&state.db, params).await?)
     }
 
-    /// Update K8s auth.
+    /// Update K8s auth instance.
+    ///
+    /// # Parameters
+    /// - `state`: The service state containing the database connection.
+    /// - `id`: The ID of the K8s auth instance to update.
+    /// - `data`: The updated data for the K8s auth instance.
+    ///
+    /// # Returns
+    /// A `Result` containing the updated `K8sAuthInstance`, or an `Error`.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn update_auth_instance<'a>(
         &self,
@@ -133,6 +199,14 @@ impl K8sAuthBackend for SqlBackend {
     }
 
     /// Update K8s auth role.
+    ///
+    /// # Parameters
+    /// - `state`: The service state containing the database connection.
+    /// - `id`: The ID of the K8s auth role to update.
+    /// - `data`: The updated data for the K8s auth role.
+    ///
+    /// # Returns
+    /// A `Result` containing the updated `K8sAuthRole`, or an `Error`.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn update_auth_role<'a>(
         &self,

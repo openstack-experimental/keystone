@@ -71,6 +71,10 @@ impl Default for Metadata {
 }
 
 impl Metadata {
+    /// Create a new instance of `Metadata`.
+    ///
+    /// # Returns
+    /// A new `Metadata` instance.
     pub fn new() -> Self {
         Self {
             revision: 0,
@@ -78,6 +82,10 @@ impl Metadata {
         }
     }
 
+    /// Create a new `Metadata` instance with an incremented revision.
+    ///
+    /// # Returns
+    /// A new `Metadata` instance.
     pub fn new_revision(&self) -> Self {
         Self {
             revision: self.revision + 1,
@@ -90,23 +98,20 @@ impl Metadata {
     /// Serialize the metadata into the bytes using the MsgPack format.
     ///
     /// # Returns
-    /// * `Ok(Vec<u8>)` - Bytes vector.
-    /// * `Err(StoreError)` - Error.
+    /// A `Result` containing the serialized bytes, or a `StoreError`.
     pub(crate) fn pack(&self) -> Result<Vec<u8>, StoreError> {
         Ok(rmp_serde::to_vec(self)?)
     }
 
     /// Unpack the metadata stored in the storage.
     ///
-    /// Unpack the data from the bytes array with the metadata
+    /// Unpack the data from the bytes array with the metadata.
     ///
-    /// # Arguments
-    /// * `value` - The binary data.
+    /// # Parameters
+    /// - `value`: The binary data.
     ///
     /// # Returns
-    /// * `Ok(StoreDataResponse)` - Success response with the deserialized
-    ///   metadata.
-    /// * `Err(StoreError)` - Error if the operation fails.
+    /// A `Result` containing the unpacked `Metadata`, or a `StoreError`.
     pub(crate) fn unpack(value: &[u8]) -> Result<Self, StoreError> {
         Ok(rmp_serde::from_slice(value)?)
     }
@@ -117,6 +122,14 @@ impl Metadata {
 pub struct Nonce(u64, u64);
 
 impl Nonce {
+    /// Create a new `Nonce`.
+    ///
+    /// # Parameters
+    /// - `term`: The Raft term.
+    /// - `last_applied_index`: The last applied index.
+    ///
+    /// # Returns
+    /// A new `Nonce` instance.
     pub fn new(term: u64, last_applied_index: u64) -> Self {
         Self(term, last_applied_index)
     }
@@ -142,8 +155,7 @@ impl StoreDataInnerEnvelope {
     /// Serialize the data into the bytes using the MsgPack format.
     ///
     /// # Returns
-    /// * `Ok(Vec<u8>)` - Bytes vector.
-    /// * `Err(StoreError)` - Error.
+    /// A `Result` containing the serialized bytes, or a `StoreError`.
     pub(crate) fn pack(&self) -> Result<Vec<u8>, StoreError> {
         // TODO: data should be encrypted here before packaging
         Ok(rmp_serde::to_vec(self)?)
@@ -151,15 +163,13 @@ impl StoreDataInnerEnvelope {
 
     /// Unpack the data stored in the storage.
     ///
-    /// Unpack the data from the bytes array with the metadata
+    /// Unpack the data from the bytes array with the metadata.
     ///
-    /// # Arguments
-    /// * `value` - The binary data.
+    /// # Parameters
+    /// - `value`: The binary data.
     ///
     /// # Returns
-    /// * `Ok(StoreDataResponse)` - Success response with the deserialized data
-    ///   and the associated metadata.
-    /// * `Err(StoreError)` - Error if the operation fails.
+    /// A `Result` containing the unpacked value of type `T`, or a `StoreError`.
     pub(crate) fn unpack<T: DeserializeOwned>(value: &[u8]) -> Result<T, StoreError> {
         let raw_envelope: StoreDataInnerEnvelope = rmp_serde::from_slice(value)?;
         // TODO: decrypt the data.
@@ -168,6 +178,13 @@ impl StoreDataInnerEnvelope {
     }
 }
 
+/// Benchmark packing of data.
+///
+/// # Parameters
+/// - `payload`: The payload to pack.
+///
+/// # Returns
+/// A `Result` containing the packed bytes, or a `StoreError`.
 #[cfg(feature = "bench_internals")]
 pub fn bench_pack(payload: &[u8]) -> Result<Vec<u8>, StoreError> {
     StoreDataInnerEnvelope {
@@ -177,6 +194,14 @@ pub fn bench_pack(payload: &[u8]) -> Result<Vec<u8>, StoreError> {
     .pack()
 }
 
+/// Benchmark unpacking of data.
+///
+/// # Parameters
+/// - `payload`: The payload to unpack.
+///
+/// # Returns
+/// A `Result` containing the unpacked `StoreDataEnvelope<String>`, or a
+/// `StoreError`.
 #[cfg(feature = "bench_internals")]
 pub fn bench_unpack(payload: &[u8]) -> Result<StoreDataEnvelope<String>, StoreError> {
     StoreDataInnerEnvelope::unpack(payload)

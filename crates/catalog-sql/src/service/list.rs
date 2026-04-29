@@ -22,6 +22,14 @@ use openstack_keystone_core_types::catalog::*;
 
 use crate::entity::{prelude::Service as DbService, service as db_service};
 
+/// Lists services.
+///
+/// # Parameters
+/// - `db`: The database connection.
+/// - `params`: The parameters for listing services.
+///
+/// # Returns
+/// A `Result` containing a vector of `Service`s, or a `CatalogProviderError`.
 pub async fn list(
     db: &DatabaseConnection,
     params: &ServiceListParameters,

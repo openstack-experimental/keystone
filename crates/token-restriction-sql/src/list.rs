@@ -31,6 +31,14 @@ use crate::entity::{
 };
 
 /// List existing token restrictions.
+///
+/// # Parameters
+/// - `db`: The database connection.
+/// - `params`: The list parameters.
+///
+/// # Returns
+/// A `Result` containing a list of `TokenRestriction`s, or a
+/// `TokenProviderError`.
 pub async fn list(
     db: &DatabaseConnection,
     params: &TokenRestrictionListParameters,
