@@ -45,6 +45,15 @@ pub enum IdentityMappingProvider {
 }
 
 impl IdentityMappingProvider {
+    /// Create a new `IdentityMappingProvider`.
+    ///
+    /// # Parameters
+    /// - `config`: The configuration.
+    /// - `plugin_manager`: The plugin manager.
+    ///
+    /// # Returns
+    /// - `Result<Self, IdentityMappingProviderError>` - The new provider or an
+    ///   error.
     pub fn new<P: PluginManagerApi>(
         config: &Config,
         plugin_manager: &P,
@@ -59,6 +68,16 @@ impl IdentityMappingProvider {
 #[async_trait]
 impl IdentityMappingApi for IdentityMappingProvider {
     /// Get the `IdMapping` by the local data.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `local_id`: The local identifier.
+    /// - `domain_id`: The domain identifier.
+    /// - `entity_type`: The entity type.
+    ///
+    /// # Returns
+    /// - `Result<Option<IdMapping>, IdentityMappingProviderError>` - A `Result`
+    ///   containing an `Option` with the `IdMapping` if found, or an `Error`.
     async fn get_by_local_id<'a>(
         &self,
         state: &ServiceState,
@@ -81,7 +100,15 @@ impl IdentityMappingApi for IdentityMappingProvider {
         }
     }
 
-    /// Get the IdMapping by the public_id.
+    /// Get the `IdMapping` by the public identifier.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `public_id`: The public identifier.
+    ///
+    /// # Returns
+    /// - `Result<Option<IdMapping>, IdentityMappingProviderError>` - A `Result`
+    ///   containing an `Option` with the `IdMapping` if found, or an `Error`.
     #[tracing::instrument(level = "info", skip(self, state))]
     async fn get_by_public_id<'a>(
         &self,

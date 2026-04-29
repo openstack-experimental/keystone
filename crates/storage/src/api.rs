@@ -23,7 +23,8 @@ use crate::types::*;
 
 #[async_trait]
 pub trait StorageApi {
-    /// Checks whether a given key is present in the keyspace of the distributed store.
+    /// Checks whether a given key is present in the keyspace of the distributed
+    /// store.
     async fn contains_key<K, S>(&self, key: K, keyspace: Option<S>) -> Result<bool, StoreError>
     where
         K: AsRef<[u8]> + Send,
@@ -88,7 +89,8 @@ pub trait StorageApi {
     /// Mutation transaction
     ///
     /// # Arguments
-    /// * `mutations` - List of mutations that must be applied as a single transaction.
+    /// * `mutations` - List of mutations that must be applied as a single
+    ///   transaction.
     ///
     /// # Returns
     /// * `Ok(Response)` - Success response after the value is deleted

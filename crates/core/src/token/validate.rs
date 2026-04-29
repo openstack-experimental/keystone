@@ -28,6 +28,13 @@ use crate::trust::TrustApi;
 /// Validate the scope validity of the token scope. For a project scoped
 /// tokens this will raise an error when the project is disabled. For
 /// domain scoped token the domain must be active.
+///
+/// # Parameters
+/// - `token`: The token to validate.
+/// - `_state`: The current service state.
+///
+/// # Returns
+/// - `Result<(), TokenProviderError>` - Ok on success, or an error.
 pub async fn validate_token_scope(
     token: &Token,
     _state: &ServiceState,
@@ -124,6 +131,13 @@ pub async fn validate_token_scope(
 /// - user is enabled
 /// - user domain is enabled
 /// - application credential is not expired
+///
+/// # Parameters
+/// - `token`: The token to validate.
+/// - `state`: The current service state.
+///
+/// # Returns
+/// - `Result<(), TokenProviderError>` - Ok on success, or an error.
 pub async fn validate_token_subject(
     token: &Token,
     state: &ServiceState,

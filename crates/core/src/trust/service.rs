@@ -37,6 +37,15 @@ pub struct TrustService {
 }
 
 impl TrustService {
+    /// Creates a new TrustService instance.
+    ///
+    /// # Parameters
+    /// - `config`: The service configuration.
+    /// - `plugin_manager`: The plugin manager to resolve the backend driver.
+    ///
+    /// # Returns
+    /// - `Ok(Self)` if the service was initialized successfully.
+    /// - `Err(TrustProviderError)` if the backend driver could not be found.
     pub fn new<P: PluginManagerApi>(
         config: &Config,
         plugin_manager: &P,
@@ -51,6 +60,14 @@ impl TrustService {
 #[async_trait]
 impl TrustApi for TrustService {
     /// Get trust by ID.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `id`: The ID of the trust to retrieve.
+    ///
+    /// # Returns
+    /// - `Result<Option<Trust>, TrustProviderError>` - A `Result` containing an
+    ///   `Option` with the trust if found, or an `Error`.
     async fn get_trust<'a>(
         &self,
         state: &ServiceState,
@@ -89,6 +106,15 @@ impl TrustApi for TrustService {
     }
 
     /// Resolve trust delegation chain by the trust ID.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `id`: The ID of the trust to resolve the chain for.
+    ///
+    /// # Returns
+    /// - `Result<Option<Vec<Trust>>, TrustProviderError>` - A `Result`
+    ///   containing an `Option` with the trust delegation chain if found, or an
+    ///   `Error`.
     async fn get_trust_delegation_chain<'a>(
         &self,
         state: &ServiceState,
@@ -100,6 +126,14 @@ impl TrustApi for TrustService {
     }
 
     /// List trusts.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `params`: The parameters for listing trusts.
+    ///
+    /// # Returns
+    /// - `Result<Vec<Trust>, TrustProviderError>` - A list of trusts or an
+    ///   error.
     async fn list_trusts(
         &self,
         state: &ServiceState,
@@ -146,6 +180,14 @@ impl TrustApi for TrustService {
     /// - validate redelegated trust expiration is not later than of the
     ///   original.
     /// - redelegated trust must not add new roles.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `trust`: The trust to validate.
+    ///
+    /// # Returns
+    /// - `Result<bool, TrustProviderError>` - Ok(true) if the chain is valid,
+    ///   or an error.
     async fn validate_trust_delegation_chain(
         &self,
         state: &ServiceState,

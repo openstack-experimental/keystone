@@ -25,6 +25,14 @@ use crate::keystone::ServiceState;
 use crate::resource::ResourceApi;
 use crate::trust::TrustApi;
 
+/// Build a v4 API token from a provider token.
+///
+/// # Arguments
+/// * `token` - The provider token to convert
+/// * `state` - The service state
+///
+/// # Returns
+/// * `Result<ApiToken, KeystoneApiError>` - The constructed API token
 pub async fn build_api_token_v4(
     token: &ProviderToken,
     state: &ServiceState,

@@ -15,6 +15,13 @@
 pub use openstack_keystone_core_types::trust::TrustProviderError;
 
 impl From<crate::error::DatabaseError> for TrustProviderError {
+    /// Convert a database error into a trust provider error.
+    ///
+    /// # Parameters
+    /// - `source`: The database error to convert.
+    ///
+    /// # Returns
+    /// - `Self` - The converted `TrustProviderError`.
     fn from(source: crate::error::DatabaseError) -> Self {
         match source {
             cfl @ crate::error::DatabaseError::Conflict { .. } => Self::Conflict(cfl.to_string()),

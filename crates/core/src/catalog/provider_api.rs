@@ -21,30 +21,75 @@ use crate::keystone::ServiceState;
 
 #[async_trait]
 pub trait CatalogApi: Send + Sync {
+    /// List services.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `params`: Parameters for filtering the service list.
+    ///
+    /// # Returns
+    /// A `Result` containing a vector of `Service` objects or a
+    /// `CatalogProviderError`.
     async fn list_services(
         &self,
         state: &ServiceState,
         params: &ServiceListParameters,
     ) -> Result<Vec<Service>, CatalogProviderError>;
 
+    /// Get single service by ID.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `id`: The unique identifier of the service.
+    ///
+    /// # Returns
+    /// A `Result` containing an `Option` with the `Service` if found, or a
+    /// `CatalogProviderError`.
     async fn get_service<'a>(
         &self,
         state: &ServiceState,
         id: &'a str,
     ) -> Result<Option<Service>, CatalogProviderError>;
 
+    /// List Endpoints.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `params`: Parameters for filtering the endpoint list.
+    ///
+    /// # Returns
+    /// A `Result` containing a vector of `Endpoint` objects or a
+    /// `CatalogProviderError`.
     async fn list_endpoints(
         &self,
         state: &ServiceState,
         params: &EndpointListParameters,
     ) -> Result<Vec<Endpoint>, CatalogProviderError>;
 
+    /// Get single endpoint by ID.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `id`: The unique identifier of the endpoint.
+    ///
+    /// # Returns
+    /// A `Result` containing an `Option` with the `Endpoint` if found, or a
+    /// `CatalogProviderError`.
     async fn get_endpoint<'a>(
         &self,
         state: &ServiceState,
         id: &'a str,
     ) -> Result<Option<Endpoint>, CatalogProviderError>;
 
+    /// Get catalog.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `enabled`: Whether to return only enabled services.
+    ///
+    /// # Returns
+    /// A `Result` containing a vector of tuples of `Service` and its associated
+    /// `Endpoint`s, or a `CatalogProviderError`.
     async fn get_catalog(
         &self,
         state: &ServiceState,

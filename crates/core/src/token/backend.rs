@@ -24,12 +24,27 @@ use crate::token::TokenProviderError;
 #[cfg_attr(test, mockall::automock)]
 pub trait TokenBackend: Send + Sync {
     /// Set config.
+    ///
+    /// # Parameters
+    /// - `g`: The configuration to set.
     fn set_config(&mut self, g: Config);
 
     /// Extract the token from string.
+    ///
+    /// # Parameters
+    /// - `credential`: The credential string.
+    ///
+    /// # Returns
+    /// - `Result<Token, TokenProviderError>` - The decoded token or an error.
     fn decode(&self, credential: &str) -> Result<Token, TokenProviderError>;
 
-    /// Extract the token from string.
+    /// Encode the token into a string.
+    ///
+    /// # Parameters
+    /// - `token`: The token to encode.
+    ///
+    /// # Returns
+    /// - `Result<String, TokenProviderError>` - The encoded string or an error.
     fn encode(&self, token: &Token) -> Result<String, TokenProviderError>;
 }
 
@@ -38,6 +53,15 @@ pub trait TokenBackend: Send + Sync {
 #[async_trait::async_trait]
 pub trait TokenRestrictionBackend: Send + Sync {
     /// Get the token restriction by the ID.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `id`: The restriction ID.
+    ///
+    /// # Returns
+    /// - `Result<Option<TokenRestriction>, TokenProviderError>` - A `Result`
+    ///   containing an `Option` with the token restriction if found, or an
+    ///   `Error`.
     async fn get_token_restriction<'a>(
         &self,
         state: &ServiceState,
@@ -45,6 +69,14 @@ pub trait TokenRestrictionBackend: Send + Sync {
     ) -> Result<Option<TokenRestriction>, TokenProviderError>;
 
     /// Create new token restriction.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `restriction`: The restriction data to create.
+    ///
+    /// # Returns
+    /// - `Result<TokenRestriction, TokenProviderError>` - The created token
+    ///   restriction or an error.
     async fn create_token_restriction<'a>(
         &self,
         state: &ServiceState,
@@ -52,6 +84,14 @@ pub trait TokenRestrictionBackend: Send + Sync {
     ) -> Result<TokenRestriction, TokenProviderError>;
 
     /// List token restrictions.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `params`: Parameters for listing restrictions.
+    ///
+    /// # Returns
+    /// - `Result<Vec<TokenRestriction>, TokenProviderError>` - A list of token
+    ///   restrictions or an error.
     async fn list_token_restrictions<'a>(
         &self,
         state: &ServiceState,
@@ -59,6 +99,15 @@ pub trait TokenRestrictionBackend: Send + Sync {
     ) -> Result<Vec<TokenRestriction>, TokenProviderError>;
 
     /// Update token restriction by the ID.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `id`: The restriction ID.
+    /// - `restriction`: The update data.
+    ///
+    /// # Returns
+    /// - `Result<TokenRestriction, TokenProviderError>` - The updated token
+    ///   restriction or an error.
     async fn update_token_restriction<'a>(
         &self,
         state: &ServiceState,
@@ -67,6 +116,13 @@ pub trait TokenRestrictionBackend: Send + Sync {
     ) -> Result<TokenRestriction, TokenProviderError>;
 
     /// Delete token restriction by the ID.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `id`: The restriction ID.
+    ///
+    /// # Returns
+    /// - `Result<(), TokenProviderError>` - Ok on success, or an error.
     async fn delete_token_restriction<'a>(
         &self,
         state: &ServiceState,

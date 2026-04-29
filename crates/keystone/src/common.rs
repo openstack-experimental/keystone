@@ -21,7 +21,8 @@ use tower_http::classify::{
 
 pub use openstack_keystone_core::common::*;
 
-/// Custom Response classifier to silent the 503 errors which are "normal" logic.
+/// Custom Response classifier to silent the 503 errors which are "normal"
+/// logic.
 #[derive(Clone)]
 pub struct KeystoneResponseClassifier;
 
@@ -29,6 +30,11 @@ impl ClassifyResponse for KeystoneResponseClassifier {
     type FailureClass = String;
     type ClassifyEos = NeverClassifyEos<Self::FailureClass>;
 
+    /// Classifies the response to determine if it is a failure.
+    ///
+    /// # Parameters
+    /// - `self`: The classifier instance.
+    /// - `res`: The response to classify.
     fn classify_response<B>(
         self,
         res: &Response<B>,
@@ -51,6 +57,11 @@ impl ClassifyResponse for KeystoneResponseClassifier {
         }
     }
 
+    /// Classifies the error into a failure class.
+    ///
+    /// # Parameters
+    /// - `self`: The classifier instance.
+    /// - `error`: The error to classify.
     fn classify_error<E>(self, error: &E) -> Self::FailureClass
     where
         E: fmt::Display,
@@ -65,6 +76,11 @@ impl MakeClassifier for KeystoneResponseClassifier {
     type FailureClass = String;
     type ClassifyEos = NeverClassifyEos<Self::FailureClass>;
 
+    /// Creates a new classifier instance.
+    ///
+    /// # Parameters
+    /// - `self`: The factory instance.
+    /// - `_request`: The request being processed.
     fn make_classifier<B>(&self, _request: &Request<B>) -> Self::Classifier {
         self.clone()
     }

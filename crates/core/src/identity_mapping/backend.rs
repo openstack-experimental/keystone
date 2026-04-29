@@ -23,6 +23,16 @@ use crate::keystone::ServiceState;
 #[async_trait]
 pub trait IdentityMappingBackend: Send + Sync {
     /// Get the `IdMapping` by the local data.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `local_id`: The local identifier.
+    /// - `domain_id`: The domain identifier.
+    /// - `entity_type`: The entity type.
+    ///
+    /// # Returns
+    /// - `Result<Option<IdMapping>, IdentityMappingProviderError>` - A `Result`
+    ///   containing an `Option` with the `IdMapping` if found, or an `Error`.
     async fn get_by_local_id<'a>(
         &self,
         state: &ServiceState,
@@ -31,7 +41,15 @@ pub trait IdentityMappingBackend: Send + Sync {
         entity_type: IdMappingEntityType,
     ) -> Result<Option<IdMapping>, IdentityMappingProviderError>;
 
-    /// Get the IdMapping by the public_id.
+    /// Get the `IdMapping` by the public identifier.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `public_id`: The public identifier.
+    ///
+    /// # Returns
+    /// - `Result<Option<IdMapping>, IdentityMappingProviderError>` - A `Result`
+    ///   containing an `Option` with the `IdMapping` if found, or an `Error`.
     async fn get_by_public_id<'a>(
         &self,
         state: &ServiceState,

@@ -26,6 +26,14 @@ use crate::keystone::ServiceState;
 #[async_trait]
 pub trait K8sAuthApi: Send + Sync {
     /// Authenticate (exchange) the K8s Service account token.
+    ///
+    /// # Arguments
+    /// * `state` - Service state.
+    /// * `req` - A reference to the [`K8sAuthRequest`] to authenticate.
+    ///
+    /// # Returns
+    /// * Success with the [`AuthenticatedInfo`] and [`TokenRestriction`].
+    /// * Error if authentication fails.
     async fn authenticate_by_k8s_sa_token(
         &self,
         state: &ServiceState,
@@ -33,6 +41,14 @@ pub trait K8sAuthApi: Send + Sync {
     ) -> Result<(AuthenticatedInfo, TokenRestriction), K8sAuthProviderError>;
 
     /// Register new K8s auth instance.
+    ///
+    /// # Arguments
+    /// * `state` - Service state.
+    /// * `config` - [`K8sAuthInstanceCreate`] data for the new instance.
+    ///
+    /// # Returns
+    /// * Success with the created [`K8sAuthInstance`].
+    /// * Error if the instance could not be created.
     async fn create_auth_instance(
         &self,
         state: &ServiceState,
@@ -40,6 +56,14 @@ pub trait K8sAuthApi: Send + Sync {
     ) -> Result<K8sAuthInstance, K8sAuthProviderError>;
 
     /// Register new K8s auth role.
+    ///
+    /// # Arguments
+    /// * `state` - Service state.
+    /// * `role` - [`K8sAuthRoleCreate`] data for the new role.
+    ///
+    /// # Returns
+    /// * Success with the created [`K8sAuthRole`].
+    /// * Error if the role could not be created.
     async fn create_auth_role(
         &self,
         state: &ServiceState,
@@ -47,6 +71,14 @@ pub trait K8sAuthApi: Send + Sync {
     ) -> Result<K8sAuthRole, K8sAuthProviderError>;
 
     /// Delete K8s auth instance.
+    ///
+    /// # Arguments
+    /// * `state` - Service state.
+    /// * `id` - The identifier of the instance to delete.
+    ///
+    /// # Returns
+    /// * Success if the instance was deleted.
+    /// * Error if the deletion failed.
     async fn delete_auth_instance<'a>(
         &self,
         state: &ServiceState,
@@ -54,13 +86,29 @@ pub trait K8sAuthApi: Send + Sync {
     ) -> Result<(), K8sAuthProviderError>;
 
     /// Delete K8s auth role.
+    ///
+    /// # Arguments
+    /// * `state` - Service state.
+    /// * `id` - The identifier of the role to delete.
+    ///
+    /// # Returns
+    /// * Success if the role was deleted.
+    /// * Error if the deletion failed.
     async fn delete_auth_role<'a>(
         &self,
         state: &ServiceState,
         id: &'a str,
     ) -> Result<(), K8sAuthProviderError>;
 
-    /// Fetch auth instance
+    /// Fetch auth instance.
+    ///
+    /// # Arguments
+    /// * `state` - Service state.
+    /// * `id` - The identifier of the instance to fetch.
+    ///
+    /// # Returns
+    /// A `Result` containing an `Option` with the [`K8sAuthInstance`] if found,
+    /// or an `Error`.
     async fn get_auth_instance<'a>(
         &self,
         state: &ServiceState,
@@ -68,6 +116,14 @@ pub trait K8sAuthApi: Send + Sync {
     ) -> Result<Option<K8sAuthInstance>, K8sAuthProviderError>;
 
     /// Fetch auth role.
+    ///
+    /// # Arguments
+    /// * `state` - Service state.
+    /// * `id` - The identifier of the role to fetch.
+    ///
+    /// # Returns
+    /// A `Result` containing an `Option` with the [`K8sAuthRole`] if found, or
+    /// an `Error`.
     async fn get_auth_role<'a>(
         &self,
         state: &ServiceState,
@@ -75,6 +131,14 @@ pub trait K8sAuthApi: Send + Sync {
     ) -> Result<Option<K8sAuthRole>, K8sAuthProviderError>;
 
     /// List K8s auth instances.
+    ///
+    /// # Arguments
+    /// * `state` - Service state.
+    /// * `params` - [`K8sAuthInstanceListParameters`] for filtering the list.
+    ///
+    /// # Returns
+    /// * Success with a list of [`K8sAuthInstance`].
+    /// * Error if the listing failed.
     async fn list_auth_instances(
         &self,
         state: &ServiceState,
@@ -82,6 +146,14 @@ pub trait K8sAuthApi: Send + Sync {
     ) -> Result<Vec<K8sAuthInstance>, K8sAuthProviderError>;
 
     /// List K8s auth roles.
+    ///
+    /// # Arguments
+    /// * `state` - Service state.
+    /// * `params` - [`K8sAuthRoleListParameters`] for filtering the list.
+    ///
+    /// # Returns
+    /// * Success with a list of [`K8sAuthRole`].
+    /// * Error if the listing failed.
     async fn list_auth_roles(
         &self,
         state: &ServiceState,
@@ -89,6 +161,15 @@ pub trait K8sAuthApi: Send + Sync {
     ) -> Result<Vec<K8sAuthRole>, K8sAuthProviderError>;
 
     /// Update K8s auth instance.
+    ///
+    /// # Arguments
+    /// * `state` - Service state.
+    /// * `id` - The identifier of the instance to update.
+    /// * `data` - [`K8sAuthInstanceUpdate`] data to apply.
+    ///
+    /// # Returns
+    /// * Success with the updated [`K8sAuthInstance`].
+    /// * Error if the update failed.
     async fn update_auth_instance<'a>(
         &self,
         state: &ServiceState,
@@ -97,6 +178,15 @@ pub trait K8sAuthApi: Send + Sync {
     ) -> Result<K8sAuthInstance, K8sAuthProviderError>;
 
     /// Update K8s auth role.
+    ///
+    /// # Arguments
+    /// * `state` - Service state.
+    /// * `id` - The identifier of the role to update.
+    /// * `data` - [`K8sAuthRoleUpdate`] data to apply.
+    ///
+    /// # Returns
+    /// * Success with the updated [`K8sAuthRole`].
+    /// * Error if the update failed.
     async fn update_auth_role<'a>(
         &self,
         state: &ServiceState,

@@ -41,16 +41,16 @@ static SERVICE_ACCOUNT_CERT_PATH: OnceLock<PathBuf> = OnceLock::new();
 //&str = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt";
 
 impl K8sAuthService {
-    /// Get the [`Client`] for communication with the K8.
+    /// Get the [`Client`] for communication with the K8s.
     ///
     /// # Arguments
-    /// * `provider` - reference to the [`K8sAuthInstance`].
+    /// * `instance` - reference to the [`K8sAuthInstance`].
     /// * `ca_path` - optional reference to the CA_CERT location.
     ///
     /// # Returns
     /// * Success `Client` with the injected root CA certificate.
-    /// * `K8sAuthProviderError::CaCertificateUnknown` when neither `ca_cert`,
-    ///   nor the `ca_path` (or the default certificate location
+    /// * `K8sAuthProviderError` when neither `ca_cert`, nor the `ca_path` (or
+    ///   the default certificate location
     ///   (`/var/run/secrets/kubernetes.io/serviceaccount/ca.crt`) contain the
     ///   certificate content while the `disable_local_ca_jwt` of the
     ///   `AuthProvider` is not `true`.
@@ -105,13 +105,13 @@ impl K8sAuthService {
     ///
     /// # Arguments
     /// * `token` - [`SecretString`] with the JWT token.
-    /// * `provider` - reference to the [`K8sAuthInstance`].
+    /// * `instance` - reference to the [`K8sAuthInstance`].
     /// * `role` - reference to the [`K8sAuthRole`].
     ///
     /// # Returns
     /// * Success with the TokenReview response as `Value`.
-    /// * Error if the token is invalid (expired, audience mismatch, kubernetes
-    ///   rejects the token).
+    /// * `K8sAuthProviderError` if the token is invalid (expired, audience
+    ///   mismatch, kubernetes rejects the token).
     pub(super) async fn query_k8s_token_review(
         &self,
         token: &SecretString,
@@ -171,16 +171,9 @@ impl K8sAuthService {
     ///
     /// # Returns
     /// * Success when the token data mapping is successful.
-    /// * `K8sAuthProviderError::InvalidToken` when the kubernetes rejected the
-    ///   token.
-    /// * `K8sAuthProviderError::InvalidTokenReviewResponse` when the necessary
-    ///   information cannot be retrieved from the `token_review_data`.
-    /// * `K8sAuthProviderError::FailedBoundServiceAccountName` when the token
-    ///   serviceaccount name does not match the `bound_service_account_names`
-    ///   of the role.
-    /// * `K8sAuthProviderError::FailedBoundServiceAccountNamespace` when the
-    ///   token namespace does not match the `bound_service_account_namespace`
-    ///   specified in the role.
+    /// * `K8sAuthProviderError` when the kubernetes rejected the token, or when
+    ///   the necessary information cannot be retrieved, or when the
+    ///   serviceaccount name or namespace does not match.
     pub(super) fn check_k8s_token_review_response(
         &self,
         token_review_data: Value,
@@ -237,6 +230,10 @@ impl K8sAuthService {
     /// # Arguments
     /// * `state` - Service state.
     /// * `req` - A reference to the [`K8sAuthRequest`] to authenticate.
+    ///
+    /// # Returns
+    /// * Success with the [`AuthenticatedInfo`] and [`TokenRestriction`].
+    /// * `K8sAuthProviderError` if authentication fails.
     pub(super) async fn authenticate(
         &self,
         state: &ServiceState,
@@ -305,6 +302,15 @@ impl K8sAuthService {
     }
 }
 
+/// Validate the K8s instance and role.
+///
+/// # Arguments
+/// * `instance` - reference to the [`K8sAuthInstance`].
+/// * `role` - reference to the [`K8sAuthRole`].
+///
+/// # Returns
+/// * Success if the instance and role are valid.
+/// * `K8sAuthProviderError` if validation fails.
 fn validate_instance_and_role(
     instance: &K8sAuthInstance,
     role: &K8sAuthRole,

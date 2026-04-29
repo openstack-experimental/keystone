@@ -14,6 +14,13 @@
 pub use openstack_keystone_core_types::identity::IdentityProviderError;
 
 impl From<crate::error::DatabaseError> for IdentityProviderError {
+    /// Convert a database error into an identity provider error.
+    ///
+    /// # Parameters
+    /// - `source`: The database error to convert.
+    ///
+    /// # Returns
+    /// - `Self` - The converted `IdentityProviderError`.
     fn from(source: crate::error::DatabaseError) -> Self {
         match source {
             cfl @ crate::error::DatabaseError::Conflict { .. } => Self::Conflict(cfl.to_string()),

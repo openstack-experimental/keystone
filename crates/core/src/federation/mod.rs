@@ -43,6 +43,16 @@ pub enum FederationProvider {
 }
 
 impl FederationProvider {
+    /// Create a new FederationProvider.
+    ///
+    /// # Parameters
+    /// - `config`: The configuration for the federation provider.
+    /// - `plugin_manager`: The plugin manager to resolve the federation
+    ///   backend.
+    ///
+    /// # Returns
+    /// - `Result<Self, FederationProviderError>` - The newly created
+    ///   `FederationProvider` or an error.
     pub fn new<P: PluginManagerApi>(
         config: &Config,
         plugin_manager: &P,
@@ -57,6 +67,13 @@ impl FederationProvider {
 #[async_trait]
 impl FederationApi for FederationProvider {
     /// Cleanup expired resources.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    ///
+    /// # Returns
+    /// - `Result<(), FederationProviderError>` - Ok if successful, or a
+    ///   federation provider error.
     #[tracing::instrument(level = "info", skip(self, state))]
     async fn cleanup(&self, state: &ServiceState) -> Result<(), FederationProviderError> {
         match self {
@@ -67,6 +84,14 @@ impl FederationApi for FederationProvider {
     }
 
     /// Create new auth state.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `auth_state`: The authentication state to create.
+    ///
+    /// # Returns
+    /// - `Result<AuthState, FederationProviderError>` - The created `AuthState`
+    ///   or an error.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn create_auth_state(
         &self,
@@ -81,6 +106,14 @@ impl FederationApi for FederationProvider {
     }
 
     /// Create Identity provider.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `idp`: The identity provider details to create.
+    ///
+    /// # Returns
+    /// - `Result<IdentityProvider, FederationProviderError>` - The created
+    ///   `IdentityProvider` or an error.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn create_identity_provider(
         &self,
@@ -95,6 +128,14 @@ impl FederationApi for FederationProvider {
     }
 
     /// Create mapping.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `mapping`: The mapping to create.
+    ///
+    /// # Returns
+    /// - `Result<Mapping, FederationProviderError>` - The created `Mapping` or
+    ///   an error.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn create_mapping(
         &self,
@@ -109,6 +150,13 @@ impl FederationApi for FederationProvider {
     }
 
     /// Delete auth state.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `id`: The ID of the auth state to delete.
+    ///
+    /// # Returns
+    /// - `Result<(), FederationProviderError>` - Ok if successful, or an error.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn delete_auth_state<'a>(
         &self,
@@ -123,6 +171,13 @@ impl FederationApi for FederationProvider {
     }
 
     /// Delete identity provider.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `id`: The ID of the identity provider to delete.
+    ///
+    /// # Returns
+    /// - `Result<(), FederationProviderError>` - Ok if successful, or an error.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn delete_identity_provider<'a>(
         &self,
@@ -136,7 +191,14 @@ impl FederationApi for FederationProvider {
         }
     }
 
-    /// Delete identity provider.
+    /// Delete mapping.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `id`: The ID of the mapping to delete.
+    ///
+    /// # Returns
+    /// - `Result<(), FederationProviderError>` - Ok if successful, or an error.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn delete_mapping<'a>(
         &self,
@@ -151,6 +213,14 @@ impl FederationApi for FederationProvider {
     }
 
     /// Get auth state by ID.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `id`: The ID of the auth state to retrieve.
+    ///
+    /// # Returns
+    /// - `Result<Option<AuthState>, FederationProviderError>` - A `Result`
+    ///   containing an `Option` with the auth state if found, or an `Error`.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn get_auth_state<'a>(
         &self,
@@ -165,6 +235,15 @@ impl FederationApi for FederationProvider {
     }
 
     /// Get single IDP by ID.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `id`: The ID of the identity provider to retrieve.
+    ///
+    /// # Returns
+    /// - `Result<Option<IdentityProvider>, FederationProviderError>` - A
+    ///   `Result` containing an `Option` with the identity provider if found,
+    ///   or an `Error`.
     #[tracing::instrument(level = "info", skip(self, state))]
     async fn get_identity_provider<'a>(
         &self,
@@ -179,6 +258,14 @@ impl FederationApi for FederationProvider {
     }
 
     /// Get single mapping by ID.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `id`: The ID of the mapping to retrieve.
+    ///
+    /// # Returns
+    /// - `Result<Option<Mapping>, FederationProviderError>` - A `Result`
+    ///   containing an `Option` with the mapping if found, or an `Error`.
     #[tracing::instrument(level = "info", skip(self, state))]
     async fn get_mapping<'a>(
         &self,
@@ -193,6 +280,14 @@ impl FederationApi for FederationProvider {
     }
 
     /// List IDP.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `params`: The list parameters for identity providers.
+    ///
+    /// # Returns
+    /// - `Result<Vec<IdentityProvider>, FederationProviderError>` - A list of
+    ///   identity providers or an error.
     #[tracing::instrument(level = "info", skip(self, state))]
     async fn list_identity_providers(
         &self,
@@ -207,6 +302,14 @@ impl FederationApi for FederationProvider {
     }
 
     /// List mappings.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `params`: The list parameters for mappings.
+    ///
+    /// # Returns
+    /// - `Result<Vec<Mapping>, FederationProviderError>` - A list of mappings
+    ///   or an error.
     #[tracing::instrument(level = "info", skip(self, state))]
     async fn list_mappings(
         &self,
@@ -221,6 +324,15 @@ impl FederationApi for FederationProvider {
     }
 
     /// Update Identity provider.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `id`: The ID of the identity provider to update.
+    /// - `idp`: The update details for the identity provider.
+    ///
+    /// # Returns
+    /// - `Result<IdentityProvider, FederationProviderError>` - The updated
+    ///   `IdentityProvider` or an error.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn update_identity_provider<'a>(
         &self,
@@ -236,6 +348,15 @@ impl FederationApi for FederationProvider {
     }
 
     /// Update mapping
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `id`: The ID of the mapping to update.
+    /// - `mapping`: The update details for the mapping.
+    ///
+    /// # Returns
+    /// - `Result<Mapping, FederationProviderError>` - The updated `Mapping` or
+    ///   an error.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn update_mapping<'a>(
         &self,

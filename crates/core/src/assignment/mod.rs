@@ -63,6 +63,16 @@ pub enum AssignmentProvider {
 }
 
 impl AssignmentProvider {
+    /// Create a new instance of `AssignmentProvider`.
+    ///
+    /// # Parameters
+    /// - `config`: The system configuration.
+    /// - `plugin_manager`: The plugin manager used to resolve the assignment
+    ///   backend.
+    ///
+    /// # Returns
+    /// - `Result<Self, AssignmentProviderError>` - The new provider instance or
+    ///   an error.
     pub fn new<P: PluginManagerApi>(
         config: &Config,
         plugin_manager: &P,
@@ -77,6 +87,14 @@ impl AssignmentProvider {
 #[async_trait]
 impl AssignmentApi for AssignmentProvider {
     /// Create assignment grant.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `grant`: The assignment creation parameters.
+    ///
+    /// # Returns
+    /// - `Result<Assignment, AssignmentProviderError>` - The created assignment
+    ///   or an error.
     #[tracing::instrument(level = "info", skip(self, state))]
     async fn create_grant(
         &self,
@@ -90,7 +108,15 @@ impl AssignmentApi for AssignmentProvider {
         }
     }
 
-    /// List role assignments
+    /// List role assignments.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `params`: The parameters for listing assignments.
+    ///
+    /// # Returns
+    /// - `Result<Vec<Assignment>, AssignmentProviderError>` - A list of
+    ///   assignments or an error.
     #[tracing::instrument(level = "info", skip(self, state))]
     async fn list_role_assignments(
         &self,
@@ -104,7 +130,14 @@ impl AssignmentApi for AssignmentProvider {
         }
     }
 
-    /// Revoke grant
+    /// Revoke grant.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `grant`: The assignment to revoke.
+    ///
+    /// # Returns
+    /// - `Result<(), AssignmentProviderError>` - Ok on success, or an error.
     #[tracing::instrument(level = "info", skip(self, state))]
     async fn revoke_grant(
         &self,

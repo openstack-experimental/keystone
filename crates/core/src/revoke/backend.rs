@@ -30,6 +30,10 @@ use crate::revoke::RevokeProviderError;
 #[async_trait]
 pub trait RevokeBackend: Send + Sync {
     /// Create revocation event.
+    ///
+    /// # Arguments
+    /// * `state` - The current service state.
+    /// * `event` - The revocation event to create.
     async fn create_revocation_event(
         &self,
         state: &ServiceState,
@@ -40,6 +44,10 @@ pub trait RevokeBackend: Send + Sync {
     ///
     /// Check whether there are existing revocation records that invalidate the
     /// token.
+    ///
+    /// # Arguments
+    /// * `state` - The current service state.
+    /// * `token` - The token to check.
     async fn is_token_revoked(
         &self,
         state: &ServiceState,
@@ -50,6 +58,10 @@ pub trait RevokeBackend: Send + Sync {
     ///
     /// Mark the token as revoked to prohibit from being used even while not
     /// expired.
+    ///
+    /// # Arguments
+    /// * `state` - The current service state.
+    /// * `token` - The token to revoke.
     async fn revoke_token(
         &self,
         state: &ServiceState,

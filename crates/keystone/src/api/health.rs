@@ -44,6 +44,13 @@ struct RaftStatus {
 }
 
 impl RaftStatus {
+    /// Creates a successful Raft status.
+    ///
+    /// # Parameters
+    /// None
+    ///
+    /// # Returns
+    /// A `RaftStatus` indicating the check was successful.
     pub fn ok() -> Self {
         Self {
             message: None,
@@ -148,8 +155,8 @@ struct HealthComponents {
 }
 
 impl HealthComponents {
-    /// Return the overall health status of the system taking the highest status among all
-    /// components.
+    /// Return the overall health status of the system taking the highest status
+    /// among all components.
     pub fn overall_status(&self) -> HealthStatus {
         self.raft
             .status
@@ -176,8 +183,9 @@ pub fn openapi_router() -> OpenApiRouter<ServiceState> {
 
 /// Readiness health check endpoint.
 ///
-/// Perform relevant checks only returning `OK` when all of them are ok. Any check in the
-/// degraded/warn state would result in `SERVICE_UNAVAILABLE` response.
+/// Perform relevant checks only returning `OK` when all of them are ok. Any
+/// check in the degraded/warn state would result in `SERVICE_UNAVAILABLE`
+/// response.
 #[utoipa::path(
     get,
     path = "/ready",
@@ -207,10 +215,10 @@ async fn ready(State(state): State<ServiceState>) -> impl IntoResponse {
 
 /// Health check endpoint.
 ///
-/// Perform diverse checks to identify the overall status of the system. It can be `OK`,
-/// `SERVICE_UNAVAILABLE`. In difference to the `/ready` check this does not return
-/// `SERVICE_UNAVAILABLE` when components are in the degraded state to prevent from the restart. It
-/// is similar to the `/live` check.
+/// Perform diverse checks to identify the overall status of the system. It can
+/// be `OK`, `SERVICE_UNAVAILABLE`. In difference to the `/ready` check this
+/// does not return `SERVICE_UNAVAILABLE` when components are in the degraded
+/// state to prevent from the restart. It is similar to the `/live` check.
 #[utoipa::path(
     get,
     path = "/health",

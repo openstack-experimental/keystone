@@ -140,6 +140,15 @@ pub enum ApplicationCredentialProvider {
 }
 
 impl ApplicationCredentialProvider {
+    /// Create a new application credential provider.
+    ///
+    /// # Parameters
+    /// - `config`: The service configuration.
+    /// - `plugin_manager`: The plugin manager to retrieve the backend driver.
+    ///
+    /// # Returns
+    /// - `Result<Self, ApplicationCredentialProviderError>` - The created
+    ///   provider or an error.
     pub fn new<P: PluginManagerApi>(
         config: &Config,
         plugin_manager: &P,
@@ -154,6 +163,15 @@ impl ApplicationCredentialProvider {
 #[async_trait]
 impl ApplicationCredentialApi for ApplicationCredentialProvider {
     /// Create a new application credential.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `rec`: The application credential creation request.
+    ///
+    /// # Returns
+    /// - `Result<ApplicationCredentialCreateResponse,
+    ///   ApplicationCredentialProviderError>` - The creation response or an
+    ///   error.
     #[tracing::instrument(level = "info", skip(self, state))]
     async fn create_application_credential(
         &self,
@@ -168,6 +186,15 @@ impl ApplicationCredentialApi for ApplicationCredentialProvider {
     }
 
     /// Get a single application credential by ID.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `id`: The ID of the application credential.
+    ///
+    /// # Returns
+    /// - `Result<Option<ApplicationCredential>,
+    ///   ApplicationCredentialProviderError>` - A `Result` containing an
+    ///   `Option` with the application credential if found, or an `Error`.
     #[tracing::instrument(level = "info", skip(self, state))]
     async fn get_application_credential<'a>(
         &self,
@@ -182,6 +209,15 @@ impl ApplicationCredentialApi for ApplicationCredentialProvider {
     }
 
     /// List application credentials.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `params`: Parameters for filtering the list of credentials.
+    ///
+    /// # Returns
+    /// - `Result<Vec<ApplicationCredential>,
+    ///   ApplicationCredentialProviderError>` - A list of application
+    ///   credentials or an error.
     #[tracing::instrument(level = "info", skip(self, state))]
     async fn list_application_credentials(
         &self,

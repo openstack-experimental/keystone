@@ -46,6 +46,15 @@ pub enum K8sAuthProvider {
 }
 
 impl K8sAuthProvider {
+    /// Create a new `K8sAuthProvider`.
+    ///
+    /// # Arguments
+    /// * `config` - Reference to the [`Config`].
+    /// * `plugin_manager` - Reference to the [`PluginManagerApi`].
+    ///
+    /// # Returns
+    /// * Success with a new `K8sAuthProvider` instance.
+    /// * `K8sAuthProviderError` if the service could not be initialized.
     pub fn new<P: PluginManagerApi>(
         config: &Config,
         plugin_manager: &P,
@@ -57,6 +66,14 @@ impl K8sAuthProvider {
 #[async_trait]
 impl K8sAuthApi for K8sAuthProvider {
     /// Authenticate (exchange) the K8s Service account token.
+    ///
+    /// # Arguments
+    /// * `state` - Service state.
+    /// * `req` - A reference to the [`K8sAuthRequest`] to authenticate.
+    ///
+    /// # Returns
+    /// * Success with the [`AuthenticatedInfo`] and [`TokenRestriction`].
+    /// * `K8sAuthProviderError` if authentication fails.
     async fn authenticate_by_k8s_sa_token(
         &self,
         state: &ServiceState,
@@ -70,6 +87,14 @@ impl K8sAuthApi for K8sAuthProvider {
     }
 
     /// Register new K8s auth instance.
+    ///
+    /// # Arguments
+    /// * `state` - Service state.
+    /// * `instance` - [`K8sAuthInstanceCreate`] data for the new instance.
+    ///
+    /// # Returns
+    /// * Success with the created [`K8sAuthInstance`].
+    /// * `K8sAuthProviderError` if the instance could not be created.
     #[tracing::instrument(skip(self, state))]
     async fn create_auth_instance(
         &self,
@@ -84,6 +109,14 @@ impl K8sAuthApi for K8sAuthProvider {
     }
 
     /// Register new K8s auth role.
+    ///
+    /// # Arguments
+    /// * `state` - Service state.
+    /// * `role` - [`K8sAuthRoleCreate`] data for the new role.
+    ///
+    /// # Returns
+    /// * Success with the created [`K8sAuthRole`].
+    /// * `K8sAuthProviderError` if the role could not be created.
     #[tracing::instrument(skip(self, state))]
     async fn create_auth_role(
         &self,
@@ -98,6 +131,14 @@ impl K8sAuthApi for K8sAuthProvider {
     }
 
     /// Delete K8s auth provider.
+    ///
+    /// # Arguments
+    /// * `state` - Service state.
+    /// * `id` - The identifier of the instance to delete.
+    ///
+    /// # Returns
+    /// * Success if the instance was deleted.
+    /// * `K8sAuthProviderError` if the deletion failed.
     #[tracing::instrument(skip(self, state))]
     async fn delete_auth_instance<'a>(
         &self,
@@ -112,6 +153,14 @@ impl K8sAuthApi for K8sAuthProvider {
     }
 
     /// Delete K8s auth role.
+    ///
+    /// # Arguments
+    /// * `state` - Service state.
+    /// * `id` - The identifier of the role to delete.
+    ///
+    /// # Returns
+    /// * Success if the role was deleted.
+    /// * `K8sAuthProviderError` if the deletion failed.
     #[tracing::instrument(skip(self, state))]
     async fn delete_auth_role<'a>(
         &self,
@@ -125,7 +174,15 @@ impl K8sAuthApi for K8sAuthProvider {
         }
     }
 
-    /// Register new K8s auth instance.
+    /// Get K8s auth instance.
+    ///
+    /// # Arguments
+    /// * `state` - Service state.
+    /// * `id` - The identifier of the instance to fetch.
+    ///
+    /// # Returns
+    /// A `Result` containing an `Option` with the [`K8sAuthInstance`] if found,
+    /// or an `Error`.
     #[tracing::instrument(skip(self, state))]
     async fn get_auth_instance<'a>(
         &self,
@@ -139,7 +196,15 @@ impl K8sAuthApi for K8sAuthProvider {
         }
     }
 
-    /// Register new K8s auth role.
+    /// Get K8s auth role.
+    ///
+    /// # Arguments
+    /// * `state` - Service state.
+    /// * `id` - The identifier of the role to fetch.
+    ///
+    /// # Returns
+    /// A `Result` containing an `Option` with the [`K8sAuthRole`] if found, or
+    /// an `Error`.
     #[tracing::instrument(skip(self, state))]
     async fn get_auth_role<'a>(
         &self,
@@ -154,6 +219,14 @@ impl K8sAuthApi for K8sAuthProvider {
     }
 
     /// List K8s auth instances.
+    ///
+    /// # Arguments
+    /// * `state` - Service state.
+    /// * `params` - [`K8sAuthInstanceListParameters`] for filtering the list.
+    ///
+    /// # Returns
+    /// * Success with a list of [`K8sAuthInstance`].
+    /// * `K8sAuthProviderError` if the listing failed.
     #[tracing::instrument(skip(self, state))]
     async fn list_auth_instances(
         &self,
@@ -168,6 +241,14 @@ impl K8sAuthApi for K8sAuthProvider {
     }
 
     /// List K8s auth roles.
+    ///
+    /// # Arguments
+    /// * `state` - Service state.
+    /// * `params` - [`K8sAuthRoleListParameters`] for filtering the list.
+    ///
+    /// # Returns
+    /// * Success with a list of [`K8sAuthRole`].
+    /// * `K8sAuthProviderError` if the listing failed.
     #[tracing::instrument(skip(self, state))]
     async fn list_auth_roles(
         &self,
@@ -182,6 +263,15 @@ impl K8sAuthApi for K8sAuthProvider {
     }
 
     /// Update K8s auth instance.
+    ///
+    /// # Arguments
+    /// * `state` - Service state.
+    /// * `id` - The identifier of the instance to update.
+    /// * `data` - [`K8sAuthInstanceUpdate`] data to apply.
+    ///
+    /// # Returns
+    /// * Success with the updated [`K8sAuthInstance`].
+    /// * `K8sAuthProviderError` if the update failed.
     #[tracing::instrument(skip(self, state))]
     async fn update_auth_instance<'a>(
         &self,
@@ -197,6 +287,15 @@ impl K8sAuthApi for K8sAuthProvider {
     }
 
     /// Update K8s auth role.
+    ///
+    /// # Arguments
+    /// * `state` - Service state.
+    /// * `id` - The identifier of the role to update.
+    /// * `data` - [`K8sAuthRoleUpdate`] data to apply.
+    ///
+    /// # Returns
+    /// * Success with the updated [`K8sAuthRole`].
+    /// * `K8sAuthProviderError` if the update failed.
     #[tracing::instrument(skip(self, state))]
     async fn update_auth_role<'a>(
         &self,

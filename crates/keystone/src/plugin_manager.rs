@@ -86,6 +86,13 @@ pub struct PluginManager {
 
 impl PluginManagerApi for PluginManager {
     /// Get registered application credential backend.
+    ///
+    /// # Parameters
+    /// * `name` - The name of the backend to retrieve.
+    ///
+    /// # Returns
+    /// A `Result` containing a reference to the `ApplicationCredentialBackend`
+    /// if found, or an `ApplicationCredentialProviderError`.
     #[allow(clippy::borrowed_box)]
     fn get_application_credential_backend<S: AsRef<str>>(
         &self,
@@ -99,6 +106,13 @@ impl PluginManagerApi for PluginManager {
     }
 
     /// Get registered assignment backend.
+    ///
+    /// # Parameters
+    /// * `name` - The name of the backend to retrieve.
+    ///
+    /// # Returns
+    /// A `Result` containing a reference to the `AssignmentBackend` if found,
+    /// or an `AssignmentProviderError`.
     #[allow(clippy::borrowed_box)]
     fn get_assignment_backend<S: AsRef<str>>(
         &self,
@@ -110,6 +124,13 @@ impl PluginManagerApi for PluginManager {
     }
 
     /// Get registered catalog backend.
+    ///
+    /// # Parameters
+    /// * `name` - The name of the backend to retrieve.
+    ///
+    /// # Returns
+    /// A `Result` containing a reference to the `CatalogBackend` if found, or a
+    /// `CatalogProviderError`.
     #[allow(clippy::borrowed_box)]
     fn get_catalog_backend<S: AsRef<str>>(
         &self,
@@ -123,6 +144,13 @@ impl PluginManagerApi for PluginManager {
     }
 
     /// Get registered federation backend.
+    ///
+    /// # Parameters
+    /// * `name` - The name of the backend to retrieve.
+    ///
+    /// # Returns
+    /// A `Result` containing a reference to the `FederationBackend` if found,
+    /// or a `FederationProviderError`.
     #[allow(clippy::borrowed_box)]
     fn get_federation_backend<S: AsRef<str>>(
         &self,
@@ -134,6 +162,13 @@ impl PluginManagerApi for PluginManager {
     }
 
     /// Get registered identity backend.
+    ///
+    /// # Parameters
+    /// * `name` - The name of the backend to retrieve.
+    ///
+    /// # Returns
+    /// A `Result` containing a reference to the `IdentityBackend` if found, or
+    /// an `IdentityProviderError`.
     #[allow(clippy::borrowed_box)]
     fn get_identity_backend<S: AsRef<str>>(
         &self,
@@ -147,6 +182,13 @@ impl PluginManagerApi for PluginManager {
     }
 
     /// Get registered identity mapping backend.
+    ///
+    /// # Parameters
+    /// * `name` - The name of the backend to retrieve.
+    ///
+    /// # Returns
+    /// A `Result` containing a reference to the `IdentityMappingBackend` if
+    /// found, or an `IdentityMappingProviderError`.
     #[allow(clippy::borrowed_box)]
     fn get_identity_mapping_backend<S: AsRef<str>>(
         &self,
@@ -158,6 +200,13 @@ impl PluginManagerApi for PluginManager {
     }
 
     /// Get registered k8s auth backend.
+    ///
+    /// # Parameters
+    /// * `name` - The name of the backend to retrieve.
+    ///
+    /// # Returns
+    /// A `Result` containing a reference to the `K8sAuthBackend` if found, or a
+    /// `K8sAuthProviderError`.
     #[allow(clippy::borrowed_box)]
     fn get_k8s_auth_backend<S: AsRef<str>>(
         &self,
@@ -171,6 +220,13 @@ impl PluginManagerApi for PluginManager {
     }
 
     /// Get registered resource backend.
+    ///
+    /// # Parameters
+    /// * `name` - The name of the backend to retrieve.
+    ///
+    /// # Returns
+    /// A `Result` containing a reference to the `ResourceBackend` if found, or
+    /// a `ResourceProviderError`.
     #[allow(clippy::borrowed_box)]
     fn get_resource_backend<S: AsRef<str>>(
         &self,
@@ -184,6 +240,13 @@ impl PluginManagerApi for PluginManager {
     }
 
     /// Get registered revoke backend.
+    ///
+    /// # Parameters
+    /// * `name` - The name of the backend to retrieve.
+    ///
+    /// # Returns
+    /// A `Result` containing a reference to the `RevokeBackend` if found, or a
+    /// `RevokeProviderError`.
     #[allow(clippy::borrowed_box)]
     fn get_revoke_backend<S: AsRef<str>>(
         &self,
@@ -197,6 +260,13 @@ impl PluginManagerApi for PluginManager {
     }
 
     /// Get role resource backend.
+    ///
+    /// # Parameters
+    /// * `name` - The name of the backend to retrieve.
+    ///
+    /// # Returns
+    /// A `Result` containing a reference to the `RoleBackend` if found, or a
+    /// `RoleProviderError`.
     #[allow(clippy::borrowed_box)]
     fn get_role_backend<S: AsRef<str>>(
         &self,
@@ -210,6 +280,13 @@ impl PluginManagerApi for PluginManager {
     }
 
     /// Get registered token backend.
+    ///
+    /// # Parameters
+    /// * `name` - The name of the backend to retrieve.
+    ///
+    /// # Returns
+    /// A `Result` containing a reference to the `TokenBackend` if found, or a
+    /// `TokenProviderError`.
     #[allow(clippy::borrowed_box)]
     fn get_token_backend<S: AsRef<str>>(
         &self,
@@ -223,6 +300,13 @@ impl PluginManagerApi for PluginManager {
     }
 
     /// Get registered token restriction backend.
+    ///
+    /// # Parameters
+    /// * `name` - The name of the backend to retrieve.
+    ///
+    /// # Returns
+    /// A `Result` containing a reference to the `TokenRestrictionBackend` if
+    /// found, or a `TokenProviderError`.
     #[allow(clippy::borrowed_box)]
     fn get_token_restriction_backend<S: AsRef<str>>(
         &self,
@@ -234,6 +318,13 @@ impl PluginManagerApi for PluginManager {
     }
 
     /// Get registered trust backend.
+    ///
+    /// # Parameters
+    /// * `name` - The name of the backend to retrieve.
+    ///
+    /// # Returns
+    /// A `Result` containing a reference to the `TrustBackend` if found, or a
+    /// `TrustProviderError`.
     #[allow(clippy::borrowed_box)]
     fn get_trust_backend<S: AsRef<str>>(
         &self,
@@ -247,6 +338,10 @@ impl PluginManagerApi for PluginManager {
     }
 
     /// Register application credential backend.
+    ///
+    /// # Parameters
+    /// * `name` - The name of the backend to register.
+    /// * `plugin` - The backend implementation to register.
     fn register_application_credential_backend<S: AsRef<str>>(
         &mut self,
         name: S,
@@ -257,6 +352,10 @@ impl PluginManagerApi for PluginManager {
     }
 
     /// Register assignment backend.
+    ///
+    /// # Parameters
+    /// * `name` - The name of the backend to register.
+    /// * `plugin` - The backend implementation to register.
     fn register_assignment_backend<S: AsRef<str>>(
         &mut self,
         name: S,
@@ -267,6 +366,10 @@ impl PluginManagerApi for PluginManager {
     }
 
     /// Register catalog backend.
+    ///
+    /// # Parameters
+    /// * `name` - The name of the backend to register.
+    /// * `plugin` - The backend implementation to register.
     fn register_catalog_backend<S: AsRef<str>>(
         &mut self,
         name: S,
@@ -277,6 +380,10 @@ impl PluginManagerApi for PluginManager {
     }
 
     /// Register federation backend.
+    ///
+    /// # Parameters
+    /// * `name` - The name of the backend to register.
+    /// * `plugin` - The backend implementation to register.
     fn register_federation_backend<S: AsRef<str>>(
         &mut self,
         name: S,
@@ -287,6 +394,10 @@ impl PluginManagerApi for PluginManager {
     }
 
     /// Register identity backend.
+    ///
+    /// # Parameters
+    /// * `name` - The name of the backend to register.
+    /// * `plugin` - The backend implementation to register.
     fn register_identity_backend<S: AsRef<str>>(
         &mut self,
         name: S,
@@ -297,6 +408,10 @@ impl PluginManagerApi for PluginManager {
     }
 
     /// Register identity mapping backend.
+    ///
+    /// # Parameters
+    /// * `name` - The name of the backend to register.
+    /// * `plugin` - The backend implementation to register.
     fn register_identity_mapping_backend<S: AsRef<str>>(
         &mut self,
         name: S,
@@ -307,6 +422,10 @@ impl PluginManagerApi for PluginManager {
     }
 
     /// Register k8s_auth backend.
+    ///
+    /// # Parameters
+    /// * `name` - The name of the backend to register.
+    /// * `plugin` - The backend implementation to register.
     fn register_k8s_auth_backend<S: AsRef<str>>(
         &mut self,
         name: S,
@@ -317,6 +436,10 @@ impl PluginManagerApi for PluginManager {
     }
 
     /// Register resource backend.
+    ///
+    /// # Parameters
+    /// * `name` - The name of the backend to register.
+    /// * `plugin` - The backend implementation to register.
     fn register_resource_backend<S: AsRef<str>>(
         &mut self,
         name: S,
@@ -327,23 +450,39 @@ impl PluginManagerApi for PluginManager {
     }
 
     /// Register revoke backend.
+    ///
+    /// # Parameters
+    /// * `name` - The name of the backend to register.
+    /// * `plugin` - The backend implementation to register.
     fn register_revoke_backend<S: AsRef<str>>(&mut self, name: S, plugin: Arc<dyn RevokeBackend>) {
         self.revoke_backends
             .insert(name.as_ref().to_string(), plugin);
     }
 
     /// Register role backend.
+    ///
+    /// # Parameters
+    /// * `name` - The name of the backend to register.
+    /// * `plugin` - The backend implementation to register.
     fn register_role_backend<S: AsRef<str>>(&mut self, name: S, plugin: Arc<dyn RoleBackend>) {
         self.role_backends.insert(name.as_ref().to_string(), plugin);
     }
 
-    /// Register token restriction backend.
+    /// Register token backend.
+    ///
+    /// # Parameters
+    /// * `name` - The name of the backend to register.
+    /// * `plugin` - The backend implementation to register.
     fn register_token_backend<S: AsRef<str>>(&mut self, name: S, plugin: Arc<dyn TokenBackend>) {
         self.token_backends
             .insert(name.as_ref().to_string(), plugin);
     }
 
     /// Register token restriction backend.
+    ///
+    /// # Parameters
+    /// * `name` - The name of the backend to register.
+    /// * `plugin` - The backend implementation to register.
     fn register_token_restriction_backend<S: AsRef<str>>(
         &mut self,
         name: S,
@@ -354,6 +493,10 @@ impl PluginManagerApi for PluginManager {
     }
 
     /// Register trust backend.
+    ///
+    /// # Parameters
+    /// * `name` - The name of the backend to register.
+    /// * `plugin` - The backend implementation to register.
     fn register_trust_backend<S: AsRef<str>>(&mut self, name: S, plugin: Arc<dyn TrustBackend>) {
         self.trust_backends
             .insert(name.as_ref().to_string(), plugin);
@@ -414,6 +557,12 @@ impl PluginManager {
     }
 
     /// Initialize the [PluginManager] with the initialized [Config].
+    ///
+    /// # Parameters
+    /// * `config` - The configuration to use for initialization.
+    ///
+    /// # Returns
+    /// A new instance of `PluginManager`.
     pub fn with_config(config: &Config) -> Self {
         let mut slf = Self {
             application_credential_backends: HashMap::new(),
@@ -446,6 +595,10 @@ impl PluginManager {
 }
 
 impl Default for PluginManager {
+    /// Returns the default instance of the [PluginManager].
+    ///
+    /// # Returns
+    /// A `PluginManager` instance initialized with default configuration.
     fn default() -> Self {
         Self::with_config(&Config::default())
     }

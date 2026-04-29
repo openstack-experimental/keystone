@@ -60,6 +60,11 @@ pub enum RoleProvider {
 }
 
 impl RoleProvider {
+    /// Create a new RoleProvider.
+    ///
+    /// # Arguments
+    /// * `config` - The configuration for the provider.
+    /// * `plugin_manager` - The plugin manager used to load the backend driver.
     pub fn new<P: PluginManagerApi>(
         config: &Config,
         plugin_manager: &P,
@@ -71,6 +76,10 @@ impl RoleProvider {
 #[async_trait]
 impl RoleApi for RoleProvider {
     /// Create role.
+    ///
+    /// # Arguments
+    /// * `state` - The current service state.
+    /// * `params` - The parameters for creating a role.
     #[tracing::instrument(level = "info", skip(self, state))]
     async fn create_role(
         &self,
@@ -85,6 +94,10 @@ impl RoleApi for RoleProvider {
     }
 
     /// Delete a role by the ID.
+    ///
+    /// # Arguments
+    /// * `state` - The current service state.
+    /// * `id` - The ID of the role to delete.
     #[tracing::instrument(level = "info", skip(self, state))]
     async fn delete_role<'a>(
         &self,
@@ -99,6 +112,12 @@ impl RoleApi for RoleProvider {
     }
 
     /// Get single role.
+    ///
+    /// * `state` - The current service state.
+    /// * `id` - The ID of the role to retrieve.
+    ///
+    /// A `Result` containing an `Option` with the `Role` if found, or an
+    /// `Error`.
     async fn get_role<'a>(
         &self,
         state: &ServiceState,
@@ -114,6 +133,10 @@ impl RoleApi for RoleProvider {
     /// Expand implied roles.
     ///
     /// Return list of the roles with the imply rules being considered.
+    ///
+    /// # Arguments
+    /// * `state` - The current service state.
+    /// * `roles` - The list of roles to expand.
     async fn expand_implied_roles(
         &self,
         state: &ServiceState,
@@ -127,6 +150,10 @@ impl RoleApi for RoleProvider {
     }
 
     /// List role imply rules.
+    ///
+    /// # Arguments
+    /// * `state` - The current service state.
+    /// * `resolve` - Whether to resolve the imply rules.
     async fn list_imply_rules(
         &self,
         state: &ServiceState,
@@ -140,6 +167,10 @@ impl RoleApi for RoleProvider {
     }
 
     /// List roles.
+    ///
+    /// # Arguments
+    /// * `state` - The current service state.
+    /// * `params` - The parameters for listing roles.
     async fn list_roles(
         &self,
         state: &ServiceState,

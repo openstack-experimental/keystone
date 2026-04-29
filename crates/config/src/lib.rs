@@ -15,13 +15,14 @@
 //!
 //! Parse of the Keystone configuration file with the following features:
 //!
-//! - File is parsed as the INI file keeping full compatibility with the legacy OpenStack
-//!   config format
-//! - Additional file is loaded overloading the initial config with the file name coming from the
-//!   `KEYSTONE_SITE_VARS_FILE` environment variable. When it is not set no additional file is
-//!   loaded.
-//! - Environment variables take final precedence. They use the traditional OpenStack style and
-//!   look like `OS_API_POLICY__OPA_BASE_URL` for setting `[api_policy].opa_base_url` variable.
+//! - File is parsed as the INI file keeping full compatibility with the legacy
+//!   OpenStack config format
+//! - Additional file is loaded overloading the initial config with the file
+//!   name coming from the `KEYSTONE_SITE_VARS_FILE` environment variable. When
+//!   it is not set no additional file is loaded.
+//! - Environment variables take final precedence. They use the traditional
+//!   OpenStack style and look like `OS_API_POLICY__OPA_BASE_URL` for setting
+//!   `[api_policy].opa_base_url` variable.
 //!
 //! # Example
 //!
@@ -30,7 +31,6 @@
 //!
 //! let cfg = Config::new("/etc/keystone/keystone.conf".into()).unwrap();
 //! ```
-//!
 use std::env;
 use std::path::PathBuf;
 

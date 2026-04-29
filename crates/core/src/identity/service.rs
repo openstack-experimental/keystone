@@ -44,6 +44,11 @@ pub struct IdentityService {
 }
 
 impl IdentityService {
+    /// Create a new IdentityService.
+    ///
+    /// # Parameters
+    /// - `config`: The service configuration.
+    /// - `plugin_manager`: The plugin manager.
     pub fn new<P: PluginManagerApi>(
         config: &Config,
         plugin_manager: &P,
@@ -58,6 +63,10 @@ impl IdentityService {
         })
     }
 
+    /// Create an IdentityService from a backend driver.
+    ///
+    /// # Parameters
+    /// - `driver`: The backend driver.
     pub fn from_driver<I: IdentityBackend + 'static>(driver: I) -> Self {
         Self {
             backend_driver: Arc::new(driver),
@@ -69,6 +78,12 @@ impl IdentityService {
 
 #[async_trait]
 impl IdentityApi for IdentityService {
+    /// Add the user to the group.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `user_id`: The ID of the user.
+    /// - `group_id`: The ID of the group.
     async fn add_user_to_group<'a>(
         &self,
         state: &ServiceState,
@@ -80,6 +95,13 @@ impl IdentityApi for IdentityService {
             .await
     }
 
+    /// Add the user to the group with expiration.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `user_id`: The ID of the user.
+    /// - `group_id`: The ID of the group.
+    /// - `idp_id`: The ID of the identity provider.
     async fn add_user_to_group_expiring<'a>(
         &self,
         state: &ServiceState,
@@ -92,6 +114,11 @@ impl IdentityApi for IdentityService {
             .await
     }
 
+    /// Add user group membership relations.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `memberships`: A list of (user ID, group ID) tuples.
     async fn add_users_to_groups<'a>(
         &self,
         state: &ServiceState,
@@ -102,6 +129,12 @@ impl IdentityApi for IdentityService {
             .await
     }
 
+    /// Add expiring user group membership relations.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `memberships`: A list of (user ID, group ID) tuples.
+    /// - `idp_id`: The ID of the identity provider.
     async fn add_users_to_groups_expiring<'a>(
         &self,
         state: &ServiceState,
@@ -114,6 +147,10 @@ impl IdentityApi for IdentityService {
     }
 
     /// Authenticate user with the password auth method.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `auth`: The password authentication request.
     async fn authenticate_by_password(
         &self,
         state: &ServiceState,
@@ -148,6 +185,10 @@ impl IdentityApi for IdentityService {
     }
 
     /// Create group.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `group`: The group details to create.
     async fn create_group(
         &self,
         state: &ServiceState,
@@ -161,6 +202,10 @@ impl IdentityApi for IdentityService {
     }
 
     /// Create service account.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `sa`: The service account details to create.
     async fn create_service_account(
         &self,
         state: &ServiceState,
@@ -180,6 +225,10 @@ impl IdentityApi for IdentityService {
     }
 
     /// Create user.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `user`: The user details to create.
     async fn create_user(
         &self,
         state: &ServiceState,
@@ -197,6 +246,10 @@ impl IdentityApi for IdentityService {
     }
 
     /// Delete group.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `group_id`: The ID of the group to delete.
     async fn delete_group<'a>(
         &self,
         state: &ServiceState,
@@ -206,6 +259,10 @@ impl IdentityApi for IdentityService {
     }
 
     /// Delete user.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `user_id`: The ID of the user to delete.
     async fn delete_user<'a>(
         &self,
         state: &ServiceState,
@@ -219,6 +276,15 @@ impl IdentityApi for IdentityService {
     }
 
     /// Get a service account by ID.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `user_id`: The ID of the service account to retrieve.
+    ///
+    /// # Returns
+    /// - `Result<Option<ServiceAccount>, IdentityProviderError>` - A `Result`
+    ///   containing an `Option` with the service account if found, or an
+    ///   `Error`.
     async fn get_service_account<'a>(
         &self,
         state: &ServiceState,
@@ -230,6 +296,14 @@ impl IdentityApi for IdentityService {
     }
 
     /// Get single user.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `user_id`: The ID of the user to retrieve.
+    ///
+    /// # Returns
+    /// - `Result<Option<UserResponse>, IdentityProviderError>` - A `Result`
+    ///   containing an `Option` with the user if found, or an `Error`.
     async fn get_user<'a>(
         &self,
         state: &ServiceState,
@@ -248,6 +322,10 @@ impl IdentityApi for IdentityService {
     }
 
     /// Get `domain_id` of a user.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `user_id`: The ID of the user.
     ///
     /// When the caching is enabled check for the cached value there. When no
     /// data is present for the key - invoke the backend driver and place
@@ -282,6 +360,15 @@ impl IdentityApi for IdentityService {
     }
 
     /// Find federated user by `idp_id` and `unique_id`.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `idp_id`: The ID of the identity provider.
+    /// - `unique_id`: The unique ID of the federated user.
+    ///
+    /// # Returns
+    /// - `Result<Option<UserResponse>, IdentityProviderError>` - A `Result`
+    ///   containing an `Option` with the user if found, or an `Error`.
     async fn find_federated_user<'a>(
         &self,
         state: &ServiceState,
@@ -294,6 +381,10 @@ impl IdentityApi for IdentityService {
     }
 
     /// List users.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `params`: The parameters for listing users.
     async fn list_users(
         &self,
         state: &ServiceState,
@@ -303,6 +394,10 @@ impl IdentityApi for IdentityService {
     }
 
     /// List groups.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `params`: The parameters for listing groups.
     async fn list_groups(
         &self,
         state: &ServiceState,
@@ -312,6 +407,14 @@ impl IdentityApi for IdentityService {
     }
 
     /// Get single group.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `group_id`: The ID of the group to retrieve.
+    ///
+    /// # Returns
+    /// - `Result<Option<Group>, IdentityProviderError>` - A `Result` containing
+    ///   an `Option` with the group if found, or an `Error`.
     async fn get_group<'a>(
         &self,
         state: &ServiceState,
@@ -321,6 +424,10 @@ impl IdentityApi for IdentityService {
     }
 
     /// List groups a user is a member of.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `user_id`: The ID of the user.
     async fn list_groups_of_user<'a>(
         &self,
         state: &ServiceState,
@@ -331,6 +438,12 @@ impl IdentityApi for IdentityService {
             .await
     }
 
+    /// Remove the user from the group.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `user_id`: The ID of the user.
+    /// - `group_id`: The ID of the group.
     async fn remove_user_from_group<'a>(
         &self,
         state: &ServiceState,
@@ -342,6 +455,13 @@ impl IdentityApi for IdentityService {
             .await
     }
 
+    /// Remove the user from the group with expiration.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `user_id`: The ID of the user.
+    /// - `group_id`: The ID of the group.
+    /// - `idp_id`: The ID of the identity provider.
     async fn remove_user_from_group_expiring<'a>(
         &self,
         state: &ServiceState,
@@ -354,6 +474,12 @@ impl IdentityApi for IdentityService {
             .await
     }
 
+    /// Remove the user from multiple groups.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `user_id`: The ID of the user.
+    /// - `group_ids`: A set of group IDs.
     async fn remove_user_from_groups<'a>(
         &self,
         state: &ServiceState,
@@ -365,6 +491,13 @@ impl IdentityApi for IdentityService {
             .await
     }
 
+    /// Remove the user from multiple expiring groups.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `user_id`: The ID of the user.
+    /// - `group_ids`: A set of group IDs.
+    /// - `idp_id`: The ID of the identity provider.
     async fn remove_user_from_groups_expiring<'a>(
         &self,
         state: &ServiceState,
@@ -377,6 +510,12 @@ impl IdentityApi for IdentityService {
             .await
     }
 
+    /// Set group memberships for the user.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `user_id`: The ID of the user.
+    /// - `group_ids`: A set of group IDs.
     async fn set_user_groups<'a>(
         &self,
         state: &ServiceState,
@@ -388,6 +527,14 @@ impl IdentityApi for IdentityService {
             .await
     }
 
+    /// Set expiring group memberships for the user.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `user_id`: The ID of the user.
+    /// - `group_ids`: A set of group IDs.
+    /// - `idp_id`: The ID of the identity provider.
+    /// - `last_verified`: The last verified date, if any.
     async fn set_user_groups_expiring<'a>(
         &self,
         state: &ServiceState,

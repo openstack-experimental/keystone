@@ -163,6 +163,7 @@ impl ProviderBuilder {
 }
 
 impl Provider {
+    /// Create a new Provider manager.
     pub fn new<P: PluginManagerApi>(
         cfg: Config,
         plugin_manager: &P,
@@ -198,6 +199,7 @@ impl Provider {
         })
     }
 
+    /// Create a mocked Provider builder.
     #[cfg(any(test, feature = "mock"))]
     pub fn mocked_builder() -> ProviderBuilder {
         let config = Config::default();
@@ -261,7 +263,7 @@ impl Provider {
         &self.identity_mapping
     }
 
-    /// Get the resource provider.
+    /// Get the K8s auth provider.
     pub fn get_k8s_auth_provider(&self) -> &K8sAuthProvider {
         &self.k8s_auth
     }

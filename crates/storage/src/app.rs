@@ -46,8 +46,9 @@ use crate::types::*;
 
 /// gRPC metadata header used to communicate the leader's endpoint to clients.
 ///
-/// When a non-leader node receives a write request, it returns `Status::unavailable`
-/// with this header set to the leader's address, so clients can retry against the leader.
+/// When a non-leader node receives a write request, it returns
+/// `Status::unavailable` with this header set to the leader's address, so
+/// clients can retry against the leader.
 pub const LEADER_ENDPOINT_HEADER: &str = "x-openraft-leader-endpoint";
 pub const LEADER_ID_HEADER: &str = "x-openraft-leader-id";
 
@@ -119,7 +120,8 @@ pub struct Storage {
 
 #[async_trait]
 impl StorageApi for Storage {
-    /// Checks whether a given key is present in the keyspace of the distributed store.
+    /// Checks whether a given key is present in the keyspace of the distributed
+    /// store.
     ///
     /// # Arguments
     /// * `key` - Contains the key to retrieve.
@@ -169,7 +171,8 @@ impl StorageApi for Storage {
             None => self.state_machine_store.data(),
             Some(name) => &self.state_machine_store.keyspace(name)?,
         };
-        // NOTE: running lookup in separate tasks makes huge negative performance impact (+1000%).
+        // NOTE: running lookup in separate tasks makes huge negative performance impact
+        // (+1000%).
         if let Some(data) = ks
             .get(&key)?
             .map(|x| StoreDataInnerEnvelope::unpack(x.as_ref()))
@@ -192,8 +195,8 @@ impl StorageApi for Storage {
 
     /// List key value pairs by the prefix.
     ///
-    /// Return key value pairs matching the specified prefix deserializing the data back to the
-    /// requested type.
+    /// Return key value pairs matching the specified prefix deserializing the
+    /// data back to the requested type.
     ///
     /// # Arguments
     /// * `prefix` - The prefix to query.
@@ -370,7 +373,8 @@ impl StorageApi for Storage {
     /// Mutation transaction
     ///
     /// # Arguments
-    /// * `mutations` - List of mutations that must be applied as a single transaction.
+    /// * `mutations` - List of mutations that must be applied as a single
+    ///   transaction.
     ///
     /// # Returns
     /// * `Ok(Response)` - Success response after the value is deleted
@@ -397,8 +401,8 @@ impl Storage {
 
     /// Get the channel to the given node.
     ///
-    /// Get the channel to the node if it is already established or create a new one. This method uses
-    /// the connection pool.
+    /// Get the channel to the node if it is already established or create a new
+    /// one. This method uses the connection pool.
     ///
     /// # Arguments
     /// * `target` - Node Id.
@@ -426,8 +430,8 @@ impl Storage {
 
     /// Try to commit the command to the raft cluster.
     ///
-    /// Attempt to commit command to the current node forwarding the request with a retry mechanism
-    /// to the leader node.
+    /// Attempt to commit command to the current node forwarding the request
+    /// with a retry mechanism to the leader node.
     ///
     /// # Arguments
     ///
@@ -453,10 +457,12 @@ impl Storage {
         }
     }
 
-    /// Generic retry loop: on `Unavailable` with leader metadata, switch endpoint and retry.
+    /// Generic retry loop: on `Unavailable` with leader metadata, switch
+    /// endpoint and retry.
     ///
-    /// Apply the command to the cluster node by the ID and ADDR forwarding it to the "new" leader
-    /// if the switch happens and a generic retry mechanism.
+    /// Apply the command to the cluster node by the ID and ADDR forwarding it
+    /// to the "new" leader if the switch happens and a generic retry
+    /// mechanism.
     ///
     /// # Arguments
     /// * `command` - A command to apply.

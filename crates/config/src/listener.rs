@@ -20,7 +20,8 @@ pub struct Listener {
     /// Default address to use for the Rest API. Defaults to `0.0.0.0:8080`.
     #[serde(default = "default_tcp_address")]
     pub tcp_address: SocketAddr,
-    /// Default address to use for the server to server communication. This defaults to one port higher than the value of address.
+    /// Default address to use for the server to server communication. This
+    /// defaults to one port higher than the value of address.
     #[serde(default)]
     pub cluster_address: Option<SocketAddr>,
 }
@@ -37,7 +38,8 @@ impl Default for Listener {
 impl Listener {
     /// Get cluster address.
     ///
-    /// Obtain the address to use for the server to server communication. This defaults to one port higher than the value of address.
+    /// Obtain the address to use for the server to server communication. This
+    /// defaults to one port higher than the value of address.
     pub fn get_cluster_address(&self) -> SocketAddr {
         match self.cluster_address {
             Some(addr) => addr,

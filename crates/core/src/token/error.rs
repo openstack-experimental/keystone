@@ -15,6 +15,13 @@
 pub use openstack_keystone_core_types::token::TokenProviderError;
 
 impl From<crate::error::DatabaseError> for TokenProviderError {
+    /// Convert a database error into a token provider error.
+    ///
+    /// # Parameters
+    /// - `source`: The database error to convert.
+    ///
+    /// # Returns
+    /// - `Self` - The converted `TokenProviderError`.
     fn from(source: crate::error::DatabaseError) -> Self {
         match source {
             cfl @ crate::error::DatabaseError::Conflict { .. } => Self::Conflict {

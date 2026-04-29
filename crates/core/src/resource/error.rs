@@ -14,6 +14,13 @@
 pub use openstack_keystone_core_types::resource::ResourceProviderError;
 
 impl From<crate::error::DatabaseError> for ResourceProviderError {
+    /// Convert a database error into a resource provider error.
+    ///
+    /// # Parameters
+    /// - `source`: The database error to convert.
+    ///
+    /// # Returns
+    /// - `Self` - The converted `ResourceProviderError`.
     fn from(source: crate::error::DatabaseError) -> Self {
         match source {
             cfl @ crate::error::DatabaseError::Conflict { .. } => Self::Conflict(cfl.to_string()),

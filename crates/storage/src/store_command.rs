@@ -20,16 +20,16 @@ use crate::types::{Metadata, Nonce};
 
 /// Store command.
 ///
-/// An operation to be performed on the storage. The data is transferred encrypted over the wire
-/// since it is stored in the raft log files.
+/// An operation to be performed on the storage. The data is transferred
+/// encrypted over the wire since it is stored in the raft log files.
 #[derive(Debug, Deserialize, PartialEq, Serialize)]
 pub enum StoreCommand {
     /// Store mutation transaction.
     Transaction(Vec<MutationInner>),
 }
 
-/// Inner representation of the store modification operation encrypting the data for at-rest
-/// storage.
+/// Inner representation of the store modification operation encrypting the data
+/// for at-rest storage.
 #[derive(Debug, Deserialize, PartialEq, Serialize)]
 pub enum MutationInner {
     /// Delete the entry from the store.
@@ -79,8 +79,8 @@ pub enum MutationInner {
 impl MutationInner {
     /// Convert the mutation operation into the Raft operation.
     ///
-    /// Convert the mutation command into the raft operation encrypting the data for the at-rest
-    /// encryption.
+    /// Convert the mutation command into the raft operation encrypting the data
+    /// for the at-rest encryption.
     pub fn convert(value: Mutation, nonce: Nonce) -> Result<MutationInner, StoreError> {
         Ok(match value {
             Mutation::Remove { key, keyspace } => MutationInner::Remove { key, keyspace },

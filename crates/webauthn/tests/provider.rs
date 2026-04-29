@@ -122,9 +122,9 @@ async fn test_webauthn_auth() -> Result<()> {
 fn compare_credential(left: &WebauthnCredential, right: &WebauthnCredential) {
     assert_eq!(left.counter, right.counter);
     assert_eq!(left.credential_id, right.credential_id);
-    // Mysql is rounding the DateTime type to seconds loosing the precision and eventually even
-    // altering the second. Do not compare the created_at at all.
-    //assert_eq!(
+    // Mysql is rounding the DateTime type to seconds loosing the precision and
+    // eventually even altering the second. Do not compare the created_at at
+    // all. assert_eq!(
     //    left.created_at.trunc_subsecs(0),
     //    right.created_at.trunc_subsecs(0)
     //);

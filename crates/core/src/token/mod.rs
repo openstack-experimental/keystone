@@ -49,6 +49,15 @@ pub enum TokenProvider {
 }
 
 impl TokenProvider {
+    /// Creates a new `TokenProvider` instance.
+    ///
+    /// # Parameters
+    /// - `config`: The system configuration.
+    /// - `plugin_manager`: The plugin manager to resolve backends.
+    ///
+    /// # Returns
+    /// - `Result<Self, TokenProviderError>` - The new provider instance or an
+    ///   error.
     pub fn new<P: PluginManagerApi>(
         config: &Config,
         plugin_manager: &P,
@@ -60,6 +69,16 @@ impl TokenProvider {
 #[async_trait]
 impl TokenApi for TokenProvider {
     /// Authenticate by token.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `credential`: The token credential string.
+    /// - `allow_expired`: Whether to allow expired tokens.
+    /// - `window_seconds`: Expiration buffer in seconds.
+    ///
+    /// # Returns
+    /// - `Result<AuthenticatedInfo, TokenProviderError>` - Authenticated
+    ///   information or an error.
     #[tracing::instrument(level = "info", skip(self, state, credential))]
     async fn authenticate_by_token<'a>(
         &self,
@@ -84,6 +103,15 @@ impl TokenApi for TokenProvider {
     }
 
     /// Validate token.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `credential`: The token credential string.
+    /// - `allow_expired`: Whether to allow expired tokens.
+    /// - `window_seconds`: Expiration buffer in seconds.
+    ///
+    /// # Returns
+    /// - `Result<Token, TokenProviderError>` - The decoded token or an error.
     #[tracing::instrument(level = "info", skip(self, state, credential))]
     async fn validate_token<'a>(
         &self,
@@ -108,6 +136,14 @@ impl TokenApi for TokenProvider {
     }
 
     /// Issue the Keystone token.
+    ///
+    /// # Parameters
+    /// - `authentication_info`: Information about the authenticated user.
+    /// - `authz_info`: Authorization scope.
+    /// - `token_restrictions`: Optional restrictions for the token.
+    ///
+    /// # Returns
+    /// - `Result<Token, TokenProviderError>` - The issued token or an error.
     #[tracing::instrument(level = "debug", skip(self))]
     fn issue_token(
         &self,
@@ -128,7 +164,11 @@ impl TokenApi for TokenProvider {
 
     /// Encode the token into a `String` representation.
     ///
-    /// Encode the [`Token`] into the `String` to be used as a http header.
+    /// # Parameters
+    /// - `token`: The token to encode.
+    ///
+    /// # Returns
+    /// - `Result<String, TokenProviderError>` - The encoded string or an error.
     fn encode_token(&self, token: &Token) -> Result<String, TokenProviderError> {
         match self {
             Self::Service(provider) => provider.encode_token(token),
@@ -138,6 +178,13 @@ impl TokenApi for TokenProvider {
     }
 
     /// Populate role assignments in the token that support that information.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `token`: The token to populate.
+    ///
+    /// # Returns
+    /// - `Result<(), TokenProviderError>` - Ok on success, or an error.
     async fn populate_role_assignments(
         &self,
         state: &ServiceState,
@@ -154,6 +201,13 @@ impl TokenApi for TokenProvider {
     ///
     /// Query and expand information about the user, scope and the role
     /// assignments into the token.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `token`: The token to expand.
+    ///
+    /// # Returns
+    /// - `Result<Token, TokenProviderError>` - The expanded token or an error.
     async fn expand_token_information(
         &self,
         state: &ServiceState,
@@ -167,6 +221,16 @@ impl TokenApi for TokenProvider {
     }
 
     /// Get the token restriction by the ID.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `id`: The restriction ID.
+    /// - `expand_roles`: Whether to expand roles.
+    ///
+    /// # Returns
+    /// - `Result<Option<TokenRestriction>, TokenProviderError>` - A `Result`
+    ///   containing an `Option` with the token restriction if found, or an
+    ///   `Error`.
     async fn get_token_restriction<'a>(
         &self,
         state: &ServiceState,
@@ -189,6 +253,14 @@ impl TokenApi for TokenProvider {
     }
 
     /// Create new token restriction.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `restriction`: The restriction data to create.
+    ///
+    /// # Returns
+    /// - `Result<TokenRestriction, TokenProviderError>` - The created token
+    ///   restriction or an error.
     async fn create_token_restriction<'a>(
         &self,
         state: &ServiceState,
@@ -202,6 +274,14 @@ impl TokenApi for TokenProvider {
     }
 
     /// List token restrictions.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `params`: Parameters for listing restrictions.
+    ///
+    /// # Returns
+    /// - `Result<Vec<TokenRestriction>, TokenProviderError>` - A list of token
+    ///   restrictions or an error.
     async fn list_token_restrictions<'a>(
         &self,
         state: &ServiceState,
@@ -215,6 +295,15 @@ impl TokenApi for TokenProvider {
     }
 
     /// Update existing token restriction.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `id`: The restriction ID.
+    /// - `restriction`: The update data.
+    ///
+    /// # Returns
+    /// - `Result<TokenRestriction, TokenProviderError>` - The updated token
+    ///   restriction or an error.
     async fn update_token_restriction<'a>(
         &self,
         state: &ServiceState,
@@ -237,6 +326,13 @@ impl TokenApi for TokenProvider {
     }
 
     /// Delete token restriction by the ID.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `id`: The restriction ID.
+    ///
+    /// # Returns
+    /// - `Result<(), TokenProviderError>` - Ok on success, or an error.
     async fn delete_token_restriction<'a>(
         &self,
         state: &ServiceState,

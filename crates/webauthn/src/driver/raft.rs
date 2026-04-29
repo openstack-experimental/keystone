@@ -34,7 +34,8 @@ static KEY_CURRENT_STATE: &str = "webauthn:state:current";
 pub struct RaftDriver {}
 
 impl RaftDriver {
-    /// Generate the keyspace name for storing temporary states using the last_log_index.
+    /// Generate the keyspace name for storing temporary states using the
+    /// last_log_index.
     fn generate_state_keyspace_name(&self, storage: &Storage) -> String {
         if let Some(val) = storage.last_log_index() {
             format!("webauth_state_{}", val)

@@ -40,6 +40,15 @@ pub struct ApplicationCredentialService {
 }
 
 impl ApplicationCredentialService {
+    /// Create a new application credential service.
+    ///
+    /// # Parameters
+    /// - `config`: The service configuration.
+    /// - `plugin_manager`: The plugin manager to retrieve the backend driver.
+    ///
+    /// # Returns
+    /// - `Result<Self, ApplicationCredentialProviderError>` - The created
+    ///   service or an error.
     pub fn new<P: PluginManagerApi>(
         config: &Config,
         plugin_manager: &P,
@@ -54,6 +63,15 @@ impl ApplicationCredentialService {
 #[async_trait]
 impl ApplicationCredentialApi for ApplicationCredentialService {
     /// Create a new application credential.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `rec`: The application credential creation request.
+    ///
+    /// # Returns
+    /// - `Result<ApplicationCredentialCreateResponse,
+    ///   ApplicationCredentialProviderError>` - The creation response or an
+    ///   error.
     async fn create_application_credential(
         &self,
         state: &ServiceState,
@@ -97,6 +115,15 @@ impl ApplicationCredentialApi for ApplicationCredentialService {
     }
 
     /// Get a single application credential by ID.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `id`: The ID of the application credential.
+    ///
+    /// # Returns
+    /// - `Result<Option<ApplicationCredential>,
+    ///   ApplicationCredentialProviderError>` - The credential if found, or an
+    ///   error.
     async fn get_application_credential<'a>(
         &self,
         state: &ServiceState,
@@ -128,6 +155,15 @@ impl ApplicationCredentialApi for ApplicationCredentialService {
     }
 
     /// List application credentials.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `params`: Parameters for filtering the list of credentials.
+    ///
+    /// # Returns
+    /// - `Result<Vec<ApplicationCredential>,
+    ///   ApplicationCredentialProviderError>` - A list of application
+    ///   credentials or an error.
     async fn list_application_credentials(
         &self,
         state: &ServiceState,
@@ -165,6 +201,9 @@ impl ApplicationCredentialApi for ApplicationCredentialService {
 ///
 ///  - use random 64 bytes
 ///  - apply base64 encoding with no padding
+///
+/// # Returns
+/// - `SecretString` - The generated secret.
 pub fn generate_secret() -> SecretString {
     const LENGTH: usize = 64;
 

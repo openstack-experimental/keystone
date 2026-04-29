@@ -104,7 +104,8 @@ impl Metadata {
     /// * `value` - The binary data.
     ///
     /// # Returns
-    /// * `Ok(StoreDataResponse)` - Success response with the deserialized metadata.
+    /// * `Ok(StoreDataResponse)` - Success response with the deserialized
+    ///   metadata.
     /// * `Err(StoreError)` - Error if the operation fails.
     pub(crate) fn unpack(value: &[u8]) -> Result<Self, StoreError> {
         Ok(rmp_serde::from_slice(value)?)
@@ -123,7 +124,8 @@ impl Nonce {
 
 /// The envelope of the storage data.
 ///
-/// The data wrapped in the envelope for storing encrypted at-rest in the database.
+/// The data wrapped in the envelope for storing encrypted at-rest in the
+/// database.
 #[derive(Debug, Deserialize, Serialize)]
 pub(crate) struct StoreDataInnerEnvelope {
     /// The resource itself.
@@ -134,7 +136,8 @@ pub(crate) struct StoreDataInnerEnvelope {
 }
 
 impl StoreDataInnerEnvelope {
-    /// Pack the data together with the associated metadata for storing in the db.
+    /// Pack the data together with the associated metadata for storing in the
+    /// db.
     ///
     /// Serialize the data into the bytes using the MsgPack format.
     ///
@@ -154,8 +157,8 @@ impl StoreDataInnerEnvelope {
     /// * `value` - The binary data.
     ///
     /// # Returns
-    /// * `Ok(StoreDataResponse)` - Success response with the deserialized data and the associated
-    ///   metadata.
+    /// * `Ok(StoreDataResponse)` - Success response with the deserialized data
+    ///   and the associated metadata.
     /// * `Err(StoreError)` - Error if the operation fails.
     pub(crate) fn unpack<T: DeserializeOwned>(value: &[u8]) -> Result<T, StoreError> {
         let raw_envelope: StoreDataInnerEnvelope = rmp_serde::from_slice(value)?;
@@ -181,7 +184,8 @@ pub fn bench_unpack(payload: &[u8]) -> Result<StoreDataEnvelope<String>, StoreEr
 
 /// The store data object with the associated metadata.
 ///
-/// An envelope for transferring the store data with the associated metadata unencrypted over the wire.
+/// An envelope for transferring the store data with the associated metadata
+/// unencrypted over the wire.
 #[derive(Debug, Deserialize, PartialEq)]
 pub struct StoreDataEnvelope<T> {
     /// The resource metadata.

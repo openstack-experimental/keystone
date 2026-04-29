@@ -52,84 +52,179 @@ use crate::trust::backend::TrustBackend;
 /// Plugin manager trait.
 pub trait PluginManagerApi {
     /// Get registered application credential backend.
+    ///
+    /// # Parameters
+    /// - `name`: The name of the backend to retrieve.
+    ///
+    /// # Returns
+    /// - `Ok(&Arc<dyn ApplicationCredentialBackend>)` if found, otherwise
+    ///   `Err(ApplicationCredentialProviderError)`.
     fn get_application_credential_backend<S: AsRef<str>>(
         &self,
         name: S,
     ) -> Result<&Arc<dyn ApplicationCredentialBackend>, ApplicationCredentialProviderError>;
 
     /// Get registered assignment backend.
+    ///
+    /// # Parameters
+    /// - `name`: The name of the backend to retrieve.
+    ///
+    /// # Returns
+    /// - `Ok(&Arc<dyn AssignmentBackend>)` if found, otherwise
+    ///   `Err(AssignmentProviderError)`.
     fn get_assignment_backend<S: AsRef<str>>(
         &self,
         name: S,
     ) -> Result<&Arc<dyn AssignmentBackend>, AssignmentProviderError>;
 
     /// Get registered catalog backend.
+    ///
+    /// # Parameters
+    /// - `name`: The name of the backend to retrieve.
+    ///
+    /// # Returns
+    /// - `Ok(&Arc<dyn CatalogBackend>)` if found, otherwise
+    ///   `Err(CatalogProviderError)`.
     fn get_catalog_backend<S: AsRef<str>>(
         &self,
         name: S,
     ) -> Result<&Arc<dyn CatalogBackend>, CatalogProviderError>;
 
     /// Get registered federation backend.
+    ///
+    /// # Parameters
+    /// - `name`: The name of the backend to retrieve.
+    ///
+    /// # Returns
+    /// - `Ok(&Arc<dyn FederationBackend>)` if found, otherwise
+    ///   `Err(FederationProviderError)`.
     fn get_federation_backend<S: AsRef<str>>(
         &self,
         name: S,
     ) -> Result<&Arc<dyn FederationBackend>, FederationProviderError>;
 
     /// Get registered identity backend.
+    ///
+    /// # Parameters
+    /// - `name`: The name of the backend to retrieve.
+    ///
+    /// # Returns
+    /// - `Ok(&Arc<dyn IdentityBackend>)` if found, otherwise
+    ///   `Err(IdentityProviderError)`.
     fn get_identity_backend<S: AsRef<str>>(
         &self,
         name: S,
     ) -> Result<&Arc<dyn IdentityBackend>, IdentityProviderError>;
 
     /// Get registered identity mapping backend.
+    ///
+    /// # Parameters
+    /// - `name`: The name of the backend to retrieve.
+    ///
+    /// # Returns
+    /// - `Ok(&Arc<dyn IdentityMappingBackend>)` if found, otherwise
+    ///   `Err(IdentityMappingProviderError)`.
     fn get_identity_mapping_backend<S: AsRef<str>>(
         &self,
         name: S,
     ) -> Result<&Arc<dyn IdentityMappingBackend>, IdentityMappingProviderError>;
 
     /// Get registered k8s auth backend.
+    ///
+    /// # Parameters
+    /// - `name`: The name of the backend to retrieve.
+    ///
+    /// # Returns
+    /// - `Ok(&Arc<dyn K8sAuthBackend>)` if found, otherwise
+    ///   `Err(K8sAuthProviderError)`.
     fn get_k8s_auth_backend<S: AsRef<str>>(
         &self,
         name: S,
     ) -> Result<&Arc<dyn K8sAuthBackend>, K8sAuthProviderError>;
 
     /// Get registered resource backend.
+    ///
+    /// # Parameters
+    /// - `name`: The name of the backend to retrieve.
+    ///
+    /// # Returns
+    /// - `Ok(&Arc<dyn ResourceBackend>)` if found, otherwise
+    ///   `Err(ResourceProviderError)`.
     fn get_resource_backend<S: AsRef<str>>(
         &self,
         name: S,
     ) -> Result<&Arc<dyn ResourceBackend>, ResourceProviderError>;
 
     /// Get registered revoke backend.
+    ///
+    /// # Parameters
+    /// - `name`: The name of the backend to retrieve.
+    ///
+    /// # Returns
+    /// - `Ok(&Arc<dyn RevokeBackend>)` if found, otherwise
+    ///   `Err(RevokeProviderError)`.
     fn get_revoke_backend<S: AsRef<str>>(
         &self,
         name: S,
     ) -> Result<&Arc<dyn RevokeBackend>, RevokeProviderError>;
 
     /// Get role resource backend.
+    ///
+    /// # Parameters
+    /// - `name`: The name of the backend to retrieve.
+    ///
+    /// # Returns
+    /// - `Ok(&Arc<dyn RoleBackend>)` if found, otherwise
+    ///   `Err(RoleProviderError)`.
     fn get_role_backend<S: AsRef<str>>(
         &self,
         name: S,
     ) -> Result<&Arc<dyn RoleBackend>, RoleProviderError>;
 
-    /// Get registered token restriction backend.
+    /// Get registered token backend.
+    ///
+    /// # Parameters
+    /// - `name`: The name of the backend to retrieve.
+    ///
+    /// # Returns
+    /// - `Ok(&Arc<dyn TokenBackend>)` if found, otherwise
+    ///   `Err(TokenProviderError)`.
     fn get_token_backend<S: AsRef<str>>(
         &self,
         name: S,
     ) -> Result<&Arc<dyn TokenBackend>, TokenProviderError>;
 
     /// Get registered token restriction backend.
+    ///
+    /// # Parameters
+    /// - `name`: The name of the backend to retrieve.
+    ///
+    /// # Returns
+    /// - `Ok(&Arc<dyn TokenRestrictionBackend>)` if found, otherwise
+    ///   `Err(TokenProviderError)`.
     fn get_token_restriction_backend<S: AsRef<str>>(
         &self,
         name: S,
     ) -> Result<&Arc<dyn TokenRestrictionBackend>, TokenProviderError>;
 
     /// Get registered trust backend.
+    ///
+    /// # Parameters
+    /// - `name`: The name of the backend to retrieve.
+    ///
+    /// # Returns
+    /// - `Ok(&Arc<dyn TrustBackend>)` if found, otherwise
+    ///   `Err(TrustProviderError)`.
     fn get_trust_backend<S: AsRef<str>>(
         &self,
         name: S,
     ) -> Result<&Arc<dyn TrustBackend>, TrustProviderError>;
 
     /// Register application credential backend.
+    ///
+    /// # Parameters
+    /// - `name`: The name to register the backend under.
+    /// - `plugin`: The backend implementation.
     fn register_application_credential_backend<S: AsRef<str>>(
         &mut self,
         name: S,
@@ -137,6 +232,10 @@ pub trait PluginManagerApi {
     );
 
     /// Register assignment backend.
+    ///
+    /// # Parameters
+    /// - `name`: The name to register the backend under.
+    /// - `plugin`: The backend implementation.
     fn register_assignment_backend<S: AsRef<str>>(
         &mut self,
         name: S,
@@ -144,9 +243,17 @@ pub trait PluginManagerApi {
     );
 
     /// Register catalog backend.
+    ///
+    /// # Parameters
+    /// - `name`: The name to register the backend under.
+    /// - `plugin`: The backend implementation.
     fn register_catalog_backend<S: AsRef<str>>(&mut self, name: S, plugin: Arc<dyn CatalogBackend>);
 
     /// Register federation backend.
+    ///
+    /// # Parameters
+    /// - `name`: The name to register the backend under.
+    /// - `plugin`: The backend implementation.
     fn register_federation_backend<S: AsRef<str>>(
         &mut self,
         name: S,
@@ -154,6 +261,10 @@ pub trait PluginManagerApi {
     );
 
     /// Register identity backend.
+    ///
+    /// # Parameters
+    /// - `name`: The name to register the backend under.
+    /// - `plugin`: The backend implementation.
     fn register_identity_backend<S: AsRef<str>>(
         &mut self,
         name: S,
@@ -161,6 +272,10 @@ pub trait PluginManagerApi {
     );
 
     /// Register identity mapping backend.
+    ///
+    /// # Parameters
+    /// - `name`: The name to register the backend under.
+    /// - `plugin`: The backend implementation.
     fn register_identity_mapping_backend<S: AsRef<str>>(
         &mut self,
         name: S,
@@ -168,6 +283,10 @@ pub trait PluginManagerApi {
     );
 
     /// Register k8s_auth backend.
+    ///
+    /// # Parameters
+    /// - `name`: The name to register the backend under.
+    /// - `plugin`: The backend implementation.
     fn register_k8s_auth_backend<S: AsRef<str>>(
         &mut self,
         name: S,
@@ -175,6 +294,10 @@ pub trait PluginManagerApi {
     );
 
     /// Register resource backend.
+    ///
+    /// # Parameters
+    /// - `name`: The name to register the backend under.
+    /// - `plugin`: The backend implementation.
     fn register_resource_backend<S: AsRef<str>>(
         &mut self,
         name: S,
@@ -182,15 +305,31 @@ pub trait PluginManagerApi {
     );
 
     /// Register revoke backend.
+    ///
+    /// # Parameters
+    /// - `name`: The name to register the backend under.
+    /// - `plugin`: The backend implementation.
     fn register_revoke_backend<S: AsRef<str>>(&mut self, name: S, plugin: Arc<dyn RevokeBackend>);
 
     /// Register role backend.
+    ///
+    /// # Parameters
+    /// - `name`: The name to register the backend under.
+    /// - `plugin`: The backend implementation.
     fn register_role_backend<S: AsRef<str>>(&mut self, name: S, plugin: Arc<dyn RoleBackend>);
 
     /// Register token backend.
+    ///
+    /// # Parameters
+    /// - `name`: The name to register the backend under.
+    /// - `plugin`: The backend implementation.
     fn register_token_backend<S: AsRef<str>>(&mut self, name: S, plugin: Arc<dyn TokenBackend>);
 
     /// Register token restriction backend.
+    ///
+    /// # Parameters
+    /// - `name`: The name to register the backend under.
+    /// - `plugin`: The backend implementation.
     fn register_token_restriction_backend<S: AsRef<str>>(
         &mut self,
         name: S,
@@ -198,5 +337,9 @@ pub trait PluginManagerApi {
     );
 
     /// Register trust backend.
+    ///
+    /// # Parameters
+    /// - `name`: The name to register the backend under.
+    /// - `plugin`: The backend implementation.
     fn register_trust_backend<S: AsRef<str>>(&mut self, name: S, plugin: Arc<dyn TrustBackend>);
 }

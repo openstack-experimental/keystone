@@ -26,6 +26,16 @@ use crate::identity::IdentityApi;
 use crate::keystone::ServiceState;
 
 /// List groups a user is member of
+///
+/// # Parameters
+/// - `user_auth`: The authentication context of the requester.
+/// - `user_id`: The ID of the user whose groups are being listed.
+/// - `state`: The shared service state.
+///
+/// # Returns
+/// - `Ok` with a JSON list of groups if successful.
+/// - `Err` with a `KeystoneApiError` if the user is not found or an error
+///   occurs.
 #[utoipa::path(
     get,
     path = "/{user_id}/groups",
