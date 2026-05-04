@@ -69,7 +69,9 @@ impl RestEndpoint for RoleCreateRequest {
 
     fn body(&self) -> Result<Option<(&'static str, Vec<u8>)>, BodyError> {
         let mut params = JsonBodyParams::default();
+
         params.push("role", serde_json::to_value(&self.role)?);
+
         params.into_body()
     }
 
@@ -87,16 +89,8 @@ impl RestEndpoint for RoleCreateRequest {
 }
 
 /// Create role.
-pub async fn create_role(tc: &TestClient, role: RoleCreate) -> Result<Role> {
-    Ok(tc
-        .client
-        .post(tc.base_url.join("v3/roles")?)
-        .json(&serde_json::to_value(role)?)
-        .send()
-        .await?
-        .json::<RoleResponse>()
-        .await?
-        .role)
+pub async fn create_role(tc: &Arc<AsyncOpenStack>, role: RoleCreate) -> Result<Role> {
+    Ok(RoleCreateRequest { role }.query_async(tc.as_ref()).await?)
 }
 
 /// List roles.

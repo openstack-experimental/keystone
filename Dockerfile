@@ -28,7 +28,11 @@ COPY --from=planner /app/recipe.json recipe.json
 RUN cargo chef cook --release --recipe-path recipe.json
 
 # Copy the actual sources
-COPY . .
+#COPY . .
+COPY crates crates
+COPY tests tests
+COPY Cargo.toml Cargo.toml
+COPY Cargo.lock Cargo.lock
 
 # This is the actual application build.
 RUN cargo build --release --bins
