@@ -19,18 +19,16 @@ use axum::{
 };
 use validator::Validate;
 
-use super::types::{RoleCreate, RoleResponse};
+use super::types::{RoleCreateRequest, RoleResponse};
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
 use crate::role::RoleApi;
 
-/// Create Role
+/// Create a new Role.
 #[utoipa::path(
     post,
     path = "/",
-    request_body = RoleCreate,
-    description = "Create a new role",
     responses(
         (status = CREATED, description = "Role created", body = RoleResponse),
         (status = 400, description = "Invalid input"),
@@ -42,11 +40,20 @@ use crate::role::RoleApi;
 pub(super) async fn create(
     Auth(user_auth): Auth,
     State(state): State<ServiceState>,
-    Json(payload): Json<RoleCreate>,
+    Json(payload): Json<RoleCreateRequest>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
     // Validate the request
     payload.validate()?;
 
+    state
+        .policy_enforcer
+        .enforce(
+            "identity/role/create",
+            &user_auth,
+            serde_json::to_value(&payload.role)?,
+            None,
+        )
+        .await?;
     // Create the role
     let created_role = state
         .provider
@@ -71,7 +78,6 @@ mod tests {
         http::{Request, StatusCode},
     };
     use http_body_util::BodyExt; // for `collect`
-    use serde_json::json;
     use tower::ServiceExt; // for `call`, `oneshot`, and `ready`
     use tower_http::trace::TraceLayer;
 
@@ -116,12 +122,14 @@ mod tests {
             .layer(TraceLayer::new_for_http())
             .with_state(state.clone());
 
-        let payload = json!({
-            "name": "new_role",
-            "domain_id": "domain1",
-            "description": "A new role",
-            "extra": {}
-        });
+        let req = crate::api::v3::role::types::RoleCreateRequest {
+            role: crate::api::v3::role::types::RoleCreateBuilder::default()
+                .name("new_role")
+                .domain_id("domain1")
+                .description("A new role")
+                .build()
+                .unwrap(),
+        };
 
         let response = api
             .as_service()
@@ -131,7 +139,7 @@ mod tests {
                     .header("x-auth-token", "foo")
                     .header("Content-Type", "application/json")
                     .method("POST")
-                    .body(Body::from(payload.to_string()))
+                    .body(Body::from(serde_json::to_string(&req).unwrap()))
                     .unwrap(),
             )
             .await

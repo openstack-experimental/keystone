@@ -1,3 +1,5 @@
+# METADATA
+# description: Policy for deleting k8s auth roles
 package identity.k8s_auth.role.delete
 
 import data.identity

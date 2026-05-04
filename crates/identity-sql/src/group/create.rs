@@ -21,6 +21,14 @@ use openstack_keystone_core_types::identity::{Group, GroupCreate};
 
 use crate::entity::group;
 
+/// Creates a new group.
+///
+/// # Parameters
+/// - `db`: The database connection.
+/// - `group`: The group data to create.
+///
+/// # Returns
+/// A `Result` containing the created group, or an `Error`.
 #[tracing::instrument(skip_all)]
 pub async fn create(
     db: &DatabaseConnection,

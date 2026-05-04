@@ -111,6 +111,15 @@ impl TryFrom<&AssignmentType> for DbAssignmentType {
 pub mod tests {
     use crate::entity::{assignment, sea_orm_active_enums, system_assignment};
 
+    /// Create a mock role assignment.
+    ///
+    /// # Parameters
+    ///
+    /// * `role_id` - The role ID.
+    ///
+    /// # Returns
+    ///
+    /// A mock `assignment::Model`.
     pub fn get_role_assignment_mock<S: Into<String>>(role_id: S) -> assignment::Model {
         assignment::Model {
             role_id: role_id.into(),
@@ -121,6 +130,15 @@ pub mod tests {
         }
     }
 
+    /// Create a mock system role assignment.
+    ///
+    /// # Parameters
+    ///
+    /// * `role_id` - The role ID.
+    ///
+    /// # Returns
+    ///
+    /// A mock `system_assignment::Model`.
     pub fn get_role_system_assignment_mock<S: Into<String>>(
         role_id: S,
     ) -> system_assignment::Model {

@@ -21,6 +21,14 @@ use openstack_keystone_core_types::role::Role;
 
 use crate::entity::{prelude::Role as DbRole, role as db_role};
 
+/// Get a role by ID.
+///
+/// # Parameters
+/// - `db`: The database connection.
+/// - `id`: The role ID.
+///
+/// # Returns
+/// A `Result` containing an `Option` with the `Role` if found, or an `Error`.
 pub async fn get<I: AsRef<str>>(
     db: &DatabaseConnection,
     id: I,

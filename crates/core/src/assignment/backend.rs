@@ -23,6 +23,14 @@ use crate::keystone::ServiceState;
 #[async_trait]
 pub trait AssignmentBackend: Send + Sync {
     /// Check assignment grant.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `params`: The assignment to check.
+    ///
+    /// # Returns
+    /// - `Result<bool, AssignmentProviderError>` - True if grant exists, false
+    ///   otherwise, or an error.
     async fn check_grant(
         &self,
         state: &ServiceState,
@@ -30,6 +38,14 @@ pub trait AssignmentBackend: Send + Sync {
     ) -> Result<bool, AssignmentProviderError>;
 
     /// Create assignment grant.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `params`: The assignment creation parameters.
+    ///
+    /// # Returns
+    /// - `Result<Assignment, AssignmentProviderError>` - The created assignment
+    ///   or an error.
     async fn create_grant(
         &self,
         state: &ServiceState,
@@ -44,6 +60,14 @@ pub trait AssignmentBackend: Send + Sync {
     /// When listing in effective mode, since the group assignments have been
     /// effectively expanded out into assignments for each user, the group role
     /// assignment entities themselves are not returned in the collection.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `params`: The parameters for listing assignments.
+    ///
+    /// # Returns
+    /// - `Result<Vec<Assignment>, AssignmentProviderError>` - A list of
+    ///   assignments or an error.
     async fn list_assignments(
         &self,
         state: &ServiceState,
@@ -51,6 +75,13 @@ pub trait AssignmentBackend: Send + Sync {
     ) -> Result<Vec<Assignment>, AssignmentProviderError>;
 
     /// Revoke assignment grant.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `params`: The assignment to revoke.
+    ///
+    /// # Returns
+    /// - `Result<(), AssignmentProviderError>` - Ok on success, or an error.
     async fn revoke_grant(
         &self,
         state: &ServiceState,

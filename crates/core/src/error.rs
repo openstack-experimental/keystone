@@ -52,10 +52,26 @@ pub enum DatabaseError {
 
 /// The trait wrapping the SQL error with the context information.
 pub trait DbContextExt<T> {
+    /// Adds context to a database error.
+    ///
+    /// # Parameters
+    /// - `msg`: The context message to add to the error.
+    ///
+    /// # Returns
+    /// - `Result<T, DatabaseError>` - The original result or a wrapped
+    ///   `DatabaseError`.
     fn context(self, msg: impl Into<String>) -> Result<T, DatabaseError>;
 }
 
 impl<T> DbContextExt<T> for Result<T, sea_orm::DbErr> {
+    /// Adds context to a database error.
+    ///
+    /// # Parameters
+    /// - `context`: The context message to add to the error.
+    ///
+    /// # Returns
+    /// - `Result<T, DatabaseError>` - The original result or a wrapped
+    ///   `DatabaseError`.
     fn context(self, context: impl Into<String>) -> Result<T, DatabaseError> {
         self.map_err(|err| match err.sql_err() {
             Some(sea_orm::SqlErr::UniqueConstraintViolation(descr)) => DatabaseError::Conflict {

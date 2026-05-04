@@ -21,6 +21,15 @@ use openstack_keystone_core_types::catalog::*;
 
 use crate::entity::prelude::Endpoint as DbEndpoint;
 
+/// Gets an endpoint by ID.
+///
+/// # Parameters
+/// - `db`: The database connection.
+/// - `id`: The ID of the endpoint to retrieve.
+///
+/// # Returns
+/// A `Result` containing an `Option` with the `Endpoint` if found, or an
+/// `Error`.
 pub async fn get<I: AsRef<str>>(
     db: &DatabaseConnection,
     id: I,

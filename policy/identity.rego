@@ -1,3 +1,5 @@
+# METADATA
+# description: Core identity predicates and helper rules for Keystone4 policies
 package identity
 
 token_subject if {

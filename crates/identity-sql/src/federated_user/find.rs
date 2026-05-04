@@ -22,6 +22,15 @@ use openstack_keystone_core::identity::IdentityProviderError;
 use crate::entity::{federated_user, prelude::FederatedUser};
 
 /// Get federated user entry by the idp_id and the unique_id.
+///
+/// # Parameters
+/// - `db`: Database connection.
+/// - `idp_id`: Identity provider ID.
+/// - `unique_id`: Unique ID of the user in the identity provider.
+///
+/// # Returns
+/// A `Result` containing an `Option` with the federated user if found, or an
+/// `Error`.
 #[tracing::instrument(skip_all)]
 pub async fn find_by_idp_and_unique_id<I: AsRef<str>, U: AsRef<str>>(
     db: &DatabaseConnection,

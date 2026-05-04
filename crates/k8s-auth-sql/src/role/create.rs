@@ -23,6 +23,13 @@ use openstack_keystone_core_types::k8s_auth::{K8sAuthRole, K8sAuthRoleCreate};
 use crate::entity::kubernetes_auth_role;
 
 /// Create new k8s auth role.
+///
+/// # Parameters
+/// - `db`: The database connection.
+/// - `data`: The data for creating a new K8s auth role.
+///
+/// # Returns
+/// A `Result` containing the created `K8sAuthRole`, or an `Error`.
 pub async fn create(
     db: &DatabaseConnection,
     data: K8sAuthRoleCreate,

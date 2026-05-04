@@ -39,6 +39,16 @@ inventory::submit! {
 #[async_trait]
 impl IdentityMappingBackend for SqlBackend {
     /// Get the `IdMapping` by the local data.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `local_id`: The local ID.
+    /// - `domain_id`: The domain ID.
+    /// - `entity_type`: The entity type.
+    ///
+    /// # Returns
+    /// A `Result` containing an `Option` with the `IdMapping` if found, or an
+    /// `Error`.
     async fn get_by_local_id<'a>(
         &self,
         state: &ServiceState,
@@ -50,6 +60,14 @@ impl IdentityMappingBackend for SqlBackend {
     }
 
     /// Get the IdMapping by the public_id.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `public_id`: The public ID.
+    ///
+    /// # Returns
+    /// A `Result` containing an `Option` with the `IdMapping` if found, or an
+    /// `Error`.
     async fn get_by_public_id<'a>(
         &self,
         state: &ServiceState,
@@ -61,6 +79,14 @@ impl IdentityMappingBackend for SqlBackend {
 
 #[async_trait]
 impl SqlDriver for SqlBackend {
+    /// Set up the database.
+    ///
+    /// # Parameters
+    /// - `connection`: The database connection.
+    /// - `schema`: The database schema.
+    ///
+    /// # Returns
+    /// A `Result` indicating success or failure.
     async fn setup(
         &self,
         connection: &DatabaseConnection,

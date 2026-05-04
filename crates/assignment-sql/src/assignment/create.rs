@@ -25,6 +25,15 @@ use crate::entity::{
 };
 
 /// Create assignment grant.
+///
+/// # Parameters
+///
+/// * `db` - The database connection.
+/// * `assignment` - The assignment to create.
+///
+/// # Returns
+///
+/// A `Result` containing the created `Assignment` if successful, or an `Error`.
 pub async fn create(
     db: &DatabaseConnection,
     assignment: AssignmentCreate,

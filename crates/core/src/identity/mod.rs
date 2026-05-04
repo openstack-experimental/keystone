@@ -65,6 +65,11 @@ pub enum IdentityProvider {
 }
 
 impl IdentityProvider {
+    /// Create a new IdentityProvider.
+    ///
+    /// # Parameters
+    /// - `config`: The service configuration.
+    /// - `plugin_manager`: The plugin manager.
     pub fn new<P: PluginManagerApi>(
         config: &Config,
         plugin_manager: &P,
@@ -75,6 +80,12 @@ impl IdentityProvider {
 
 #[async_trait]
 impl IdentityApi for IdentityProvider {
+    /// Add the user to the single group.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `user_id`: The ID of the user.
+    /// - `group_id`: The ID of the group.
     #[tracing::instrument(skip(self, state))]
     async fn add_user_to_group<'a>(
         &self,
@@ -89,6 +100,13 @@ impl IdentityApi for IdentityProvider {
         }
     }
 
+    /// Add the user to the single group with expiration.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `user_id`: The ID of the user.
+    /// - `group_id`: The ID of the group.
+    /// - `idp_id`: The ID of the identity provider.
     #[tracing::instrument(skip(self, state))]
     async fn add_user_to_group_expiring<'a>(
         &self,
@@ -112,6 +130,11 @@ impl IdentityApi for IdentityProvider {
         }
     }
 
+    /// Add user group memberships as specified by (uid, gid) tuples.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `memberships`: A list of (user ID, group ID) tuples.
     #[tracing::instrument(skip(self, state))]
     async fn add_users_to_groups<'a>(
         &self,
@@ -125,6 +148,12 @@ impl IdentityApi for IdentityProvider {
         }
     }
 
+    /// Add expiring user group memberships as specified by (uid, gid) tuples.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `memberships`: A list of (user ID, group ID) tuples.
+    /// - `idp_id`: The ID of the identity provider.
     #[tracing::instrument(skip(self, state))]
     async fn add_users_to_groups_expiring<'a>(
         &self,
@@ -148,6 +177,10 @@ impl IdentityApi for IdentityProvider {
     }
 
     /// Authenticate user with the password auth method.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `auth`: The password authentication request.
     #[tracing::instrument(skip(self, state, auth))]
     async fn authenticate_by_password(
         &self,
@@ -162,6 +195,10 @@ impl IdentityApi for IdentityProvider {
     }
 
     /// Create group.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `group`: The group details to create.
     #[tracing::instrument(skip(self, state))]
     async fn create_group(
         &self,
@@ -176,6 +213,10 @@ impl IdentityApi for IdentityProvider {
     }
 
     /// Create service account.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `sa`: The service account details to create.
     #[tracing::instrument(skip(self, state))]
     async fn create_service_account(
         &self,
@@ -190,6 +231,10 @@ impl IdentityApi for IdentityProvider {
     }
 
     /// Create user.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `user`: The user details to create.
     #[tracing::instrument(skip(self, state))]
     async fn create_user(
         &self,
@@ -204,6 +249,10 @@ impl IdentityApi for IdentityProvider {
     }
 
     /// Delete group.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `group_id`: The ID of the group to delete.
     #[tracing::instrument(skip(self, state))]
     async fn delete_group<'a>(
         &self,
@@ -218,6 +267,10 @@ impl IdentityApi for IdentityProvider {
     }
 
     /// Delete user.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `user_id`: The ID of the user to delete.
     #[tracing::instrument(skip(self, state))]
     async fn delete_user<'a>(
         &self,
@@ -232,6 +285,15 @@ impl IdentityApi for IdentityProvider {
     }
 
     /// Get a service account by ID.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `user_id`: The ID of the service account to retrieve.
+    ///
+    /// # Returns
+    /// - `Result<Option<ServiceAccount>, IdentityProviderError>` - A `Result`
+    ///   containing an `Option` with the service account if found, or an
+    ///   `Error`.
     #[tracing::instrument(skip(self, state))]
     async fn get_service_account<'a>(
         &self,
@@ -246,6 +308,14 @@ impl IdentityApi for IdentityProvider {
     }
 
     /// Get single user.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `user_id`: The ID of the user to retrieve.
+    ///
+    /// # Returns
+    /// - `Result<Option<UserResponse>, IdentityProviderError>` - A `Result`
+    ///   containing an `Option` with the user if found, or an `Error`.
     #[tracing::instrument(skip(self, state))]
     async fn get_user<'a>(
         &self,
@@ -260,6 +330,10 @@ impl IdentityApi for IdentityProvider {
     }
 
     /// Get `domain_id` of a user.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `user_id`: The ID of the user.
     ///
     /// When the caching is enabled check for the cached value there. When no
     /// data is present for the key - invoke the backend driver and place
@@ -279,6 +353,15 @@ impl IdentityApi for IdentityProvider {
     }
 
     /// Find federated user by `idp_id` and `unique_id`.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `idp_id`: The ID of the identity provider.
+    /// - `unique_id`: The unique ID of the federated user.
+    ///
+    /// # Returns
+    /// - `Result<Option<UserResponse>, IdentityProviderError>` - A `Result`
+    ///   containing an `Option` with the user if found, or an `Error`.
     #[tracing::instrument(skip(self, state))]
     async fn find_federated_user<'a>(
         &self,
@@ -294,6 +377,10 @@ impl IdentityApi for IdentityProvider {
     }
 
     /// List users.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `params`: The parameters for listing users.
     #[tracing::instrument(skip(self, state))]
     async fn list_users(
         &self,
@@ -308,6 +395,10 @@ impl IdentityApi for IdentityProvider {
     }
 
     /// List groups.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `params`: The parameters for listing groups.
     #[tracing::instrument(skip(self, state))]
     async fn list_groups(
         &self,
@@ -322,6 +413,14 @@ impl IdentityApi for IdentityProvider {
     }
 
     /// Get single group.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `group_id`: The ID of the group to retrieve.
+    ///
+    /// # Returns
+    /// - `Result<Option<Group>, IdentityProviderError>` - A `Result` containing
+    ///   an `Option` with the group if found, or an `Error`.
     #[tracing::instrument(skip(self, state))]
     async fn get_group<'a>(
         &self,
@@ -336,6 +435,10 @@ impl IdentityApi for IdentityProvider {
     }
 
     /// List groups a user is a member of.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `user_id`: The ID of the user.
     #[tracing::instrument(skip(self, state))]
     async fn list_groups_of_user<'a>(
         &self,
@@ -349,6 +452,12 @@ impl IdentityApi for IdentityProvider {
         }
     }
 
+    /// Remove the user from the single group.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `user_id`: The ID of the user.
+    /// - `group_id`: The ID of the group.
     #[tracing::instrument(skip(self, state))]
     async fn remove_user_from_group<'a>(
         &self,
@@ -371,6 +480,13 @@ impl IdentityApi for IdentityProvider {
         }
     }
 
+    /// Remove the user from the single group with expiration.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `user_id`: The ID of the user.
+    /// - `group_id`: The ID of the group.
+    /// - `idp_id`: The ID of the identity provider.
     #[tracing::instrument(skip(self, state))]
     async fn remove_user_from_group_expiring<'a>(
         &self,
@@ -394,6 +510,12 @@ impl IdentityApi for IdentityProvider {
         }
     }
 
+    /// Remove the user from specified groups.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `user_id`: The ID of the user.
+    /// - `group_ids`: A set of group IDs.
     #[tracing::instrument(skip(self, state))]
     async fn remove_user_from_groups<'a>(
         &self,
@@ -416,6 +538,13 @@ impl IdentityApi for IdentityProvider {
         }
     }
 
+    /// Remove the user from specified groups with expiration.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `user_id`: The ID of the user.
+    /// - `group_ids`: A set of group IDs.
+    /// - `idp_id`: The ID of the identity provider.
     #[tracing::instrument(skip(self, state))]
     async fn remove_user_from_groups_expiring<'a>(
         &self,
@@ -439,6 +568,12 @@ impl IdentityApi for IdentityProvider {
         }
     }
 
+    /// Set group memberships of the user.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `user_id`: The ID of the user.
+    /// - `group_ids`: A set of group IDs.
     #[tracing::instrument(skip(self, state))]
     async fn set_user_groups<'a>(
         &self,
@@ -453,6 +588,14 @@ impl IdentityApi for IdentityProvider {
         }
     }
 
+    /// Set expiring group memberships of the user.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `user_id`: The ID of the user.
+    /// - `group_ids`: A set of group IDs.
+    /// - `idp_id`: The ID of the identity provider.
+    /// - `last_verified`: The last verified date, if any.
     #[tracing::instrument(skip(self, state))]
     async fn set_user_groups_expiring<'a>(
         &self,
@@ -478,6 +621,11 @@ impl IdentityApi for IdentityProvider {
     }
 }
 /// Calculate the `last_active_at` for the user entry.
+///
+/// # Parameters
+/// - `conf`: The service configuration.
+/// - `enabled`: Whether the user is enabled.
+/// - `activity_date`: The date of last activity.
 pub fn get_user_last_active_at(
     conf: &Config,
     enabled: Option<bool>,

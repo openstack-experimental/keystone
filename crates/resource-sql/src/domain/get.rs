@@ -22,6 +22,14 @@ use openstack_keystone_core_types::resource::Domain;
 
 use crate::entity::{prelude::Project as DbProject, project as db_project};
 
+/// Get the enabled status of a domain.
+///
+/// # Parameters
+/// - `db`: Database connection.
+/// - `domain_id`: ID of the domain.
+///
+/// # Returns
+/// A `bool` indicating if the domain is enabled.
 pub async fn get_domain_enabled<I: AsRef<str>>(
     db: &DatabaseConnection,
     domain_id: I,
@@ -40,6 +48,14 @@ pub async fn get_domain_enabled<I: AsRef<str>>(
         ))
 }
 
+/// Get a domain by its ID.
+///
+/// # Parameters
+/// - `db`: Database connection.
+/// - `domain_id`: ID of the domain.
+///
+/// # Returns
+/// A `Result` containing an `Option` with the `Domain` if found, or an `Error`.
 pub async fn get_domain_by_id<I: AsRef<str>>(
     db: &DatabaseConnection,
     domain_id: I,
@@ -53,6 +69,14 @@ pub async fn get_domain_by_id<I: AsRef<str>>(
         .transpose()
 }
 
+/// Get a domain by its name.
+///
+/// # Parameters
+/// - `db`: Database connection.
+/// - `domain_name`: Name of the domain.
+///
+/// # Returns
+/// A `Result` containing an `Option` with the `Domain` if found, or an `Error`.
 pub async fn get_domain_by_name<N: AsRef<str>>(
     db: &DatabaseConnection,
     domain_name: N,

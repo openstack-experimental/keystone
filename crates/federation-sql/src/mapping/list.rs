@@ -27,6 +27,12 @@ use crate::entity::{
 };
 
 /// Prepare the paginated query for listing mappings.
+///
+/// # Parameters
+/// - `params`: The parameters for listing mappings.
+///
+/// # Returns
+/// A `Result` containing the paginated query cursor, or an `Error`.
 fn get_list_query(
     params: &MappingListParameters,
 ) -> Result<Cursor<SelectModel<db_federated_mapping::Model>>, FederationProviderError> {
@@ -58,6 +64,14 @@ fn get_list_query(
     Ok(cursor)
 }
 
+/// List federation mappings.
+///
+/// # Parameters
+/// - `db`: The database connection.
+/// - `params`: The parameters for listing mappings.
+///
+/// # Returns
+/// A `Result` containing a list of `Mapping` objects, or an `Error`.
 pub async fn list(
     db: &DatabaseConnection,
     params: &MappingListParameters,

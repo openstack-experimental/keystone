@@ -58,6 +58,14 @@ impl MergeUserData for UserResponseBuilder {
     ///    [`user.last_active_at`](field@db_user::Model::last_active_at) `>
     ///    last_activity_cutof_date`. Returns `true` when one or both are unset.
     ///  - Defaults to `false`
+    ///
+    /// # Parameters
+    /// - `user`: The user model.
+    /// - `options`: The user options.
+    /// - `last_activity_cutof_date`: The cutoff date for user inactivity.
+    ///
+    /// # Returns
+    /// A mutable reference to the builder.
     fn merge_user_data(
         &mut self,
         user: &db_user::Model,
@@ -101,6 +109,13 @@ pub mod tests {
     use super::*;
     use crate::entity::user as db_user;
 
+    /// Create a mock user for testing.
+    ///
+    /// # Parameters
+    /// - `user_id`: The ID of the user.
+    ///
+    /// # Returns
+    /// A `db_user::Model` instance.
     pub fn get_user_mock<U: AsRef<str>>(user_id: U) -> db_user::Model {
         db_user::Model {
             id: user_id.as_ref().into(),
@@ -110,6 +125,10 @@ pub mod tests {
         }
     }
 
+    /// Create a user builder for testing.
+    ///
+    /// # Returns
+    /// A `db_user::ModelBuilder` instance.
     fn get_user_builder() -> db_user::ModelBuilder {
         let mut builder = db_user::ModelBuilder::default();
         builder.id("user_id");

@@ -42,13 +42,22 @@ use crate::keystone::ServiceState;
 #[tracing::instrument(
     name = "api::role_assignment_list",
     level = "debug",
-    skip(state, _user_auth)
+    skip(state, user_auth)
 )]
 pub(super) async fn list(
-    Auth(_user_auth): Auth,
+    Auth(user_auth): Auth,
     Query(query): Query<RoleAssignmentListParameters>,
     State(state): State<ServiceState>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
+    state
+        .policy_enforcer
+        .enforce(
+            "identity/assignment/list",
+            &user_auth,
+            serde_json::to_value(&query)?,
+            None,
+        )
+        .await?;
     let assignments: Result<Vec<Assignment>, _> = state
         .provider
         .get_assignment_provider()

@@ -45,6 +45,10 @@ impl FernetUtils {
     /// Validate fernet key key_repository.
     ///
     /// Perform validation of the fernet keys repository.
+    ///
+    /// # Returns
+    /// A `Result` containing a boolean indicating if the repository exists, or
+    /// a `FernetDriverError`.
     fn validate_key_repository(&self) -> Result<bool, FernetDriverError> {
         Ok(self.key_repository.exists())
     }
@@ -53,6 +57,13 @@ impl FernetUtils {
     ///
     /// This created key is not effective until `become_valid_new_key` method is
     /// executed.
+    ///
+    /// # Parameters
+    /// - `user_id`: Optional user ID for file ownership.
+    /// - `group_id`: Optional group ID for file ownership.
+    ///
+    /// # Returns
+    /// A `Result` indicating success or a `FernetDriverError`.
     fn create_tmp_new_key(
         &self,
         user_id: Option<u32>,
@@ -105,7 +116,11 @@ impl FernetUtils {
     }
 
     /// Make the tmp new key a valid new key.
+    ///
     /// Renames '0.tmp' to '0' atomically.
+    ///
+    /// # Returns
+    /// A `Result` indicating success or a `FernetDriverError`.
     fn become_valid_new_key(&self) -> Result<(), FernetDriverError> {
         let tmp_key_file = self.key_repository.join("0.tmp");
         let valid_key_file = self.key_repository.join("0");
@@ -129,12 +144,21 @@ impl FernetUtils {
         Ok(())
     }
 
+    /// Initialize the key repository by creating and validating a new key.
+    ///
+    /// # Returns
+    /// A `Result` indicating success or a `FernetDriverError`.
     pub fn initialize_key_repository(&self) -> Result<(), FernetDriverError> {
         self.create_tmp_new_key(None, None)?;
         self.become_valid_new_key()?;
         Ok(())
     }
 
+    /// Load keys from the key repository.
+    ///
+    /// # Returns
+    /// A `Result` containing an iterator of `Fernet` keys if successful, or a
+    /// `FernetDriverError`.
     pub fn load_keys(&self) -> Result<impl IntoIterator<Item = Fernet>, FernetDriverError> {
         info!("loading keys from {:?}", self.key_repository);
         let mut keys: BTreeMap<i8, Fernet> = BTreeMap::new();
@@ -170,6 +194,11 @@ impl FernetUtils {
         Ok(keys.into_values().rev())
     }
 
+    /// Load keys from the key repository asynchronously.
+    ///
+    /// # Returns
+    /// A `Result` containing an iterator of `Fernet` keys if successful, or a
+    /// `FernetDriverError`.
     pub async fn load_keys_async(
         &self,
     ) -> Result<impl IntoIterator<Item = Fernet>, FernetDriverError> {
@@ -208,6 +237,13 @@ impl FernetUtils {
 }
 
 /// Read binary data from the payload.
+///
+/// # Parameters
+/// - `len`: The length of the data to read.
+/// - `rd`: The reader to read from.
+///
+/// # Returns
+/// A `Result` containing the read bytes if successful, or an `io::Error`.
 pub fn read_bin_data<R: Read>(len: u32, rd: &mut R) -> Result<Vec<u8>, io::Error> {
     let mut buf = Vec::with_capacity(len.min(1 << 16) as usize);
     let bytes_read = rd.take(u64::from(len)).read_to_end(&mut buf)?;
@@ -218,17 +254,38 @@ pub fn read_bin_data<R: Read>(len: u32, rd: &mut R) -> Result<Vec<u8>, io::Error
 }
 
 /// Read string data.
+///
+/// # Parameters
+/// - `len`: The length of the data to read.
+/// - `rd`: The reader to read from.
+///
+/// # Returns
+/// A `Result` containing the read string if successful, or an `io::Error`.
 pub fn read_str_data<R: Read>(len: u32, rd: &mut R) -> Result<String, io::Error> {
     Ok(String::from_utf8_lossy(&read_bin_data(len, rd)?).into_owned())
 }
 
 /// Write string.
+///
+/// # Parameters
+/// - `wd`: The writer to write to.
+/// - `data`: The string data to write.
+///
+/// # Returns
+/// A `Result` indicating success or a `FernetDriverError`.
 pub fn write_str<W: RmpWrite>(wd: &mut W, data: &str) -> Result<(), FernetDriverError> {
     encode::write_str(wd, data).map_err(|x| FernetDriverError::RmpEncode(x.to_string()))?;
     Ok(())
 }
 
 /// Read bytes as string.
+///
+/// # Parameters
+/// - `rd`: The reader to read from.
+///
+/// # Returns
+/// A `Result` containing the read string if successful, or a
+/// `FernetDriverError`.
 pub fn read_str<R: Read>(rd: &mut R) -> Result<String, FernetDriverError> {
     match read_marker(rd).map_err(ValueReadError::from)? {
         Marker::Bin8 => {
@@ -240,9 +297,17 @@ pub fn read_str<R: Read>(rd: &mut R) -> Result<String, FernetDriverError> {
 }
 
 /// Read the UUID from the payload.
+///
 /// It is represented as an Array[bool, bytes] where first bool indicates
 /// whether following bytes are UUID or just bytes that should be treated as a
 /// string (for cases where ID is not a valid UUID).
+///
+/// # Parameters
+/// - `rd`: The reader to read from.
+///
+/// # Returns
+/// A `Result` containing the UUID string if successful, or a
+/// `FernetDriverError`.
 pub fn read_uuid(rd: &mut &[u8]) -> Result<String, FernetDriverError> {
     match read_marker(rd).map_err(ValueReadError::from)? {
         Marker::FixArray(_) => {
@@ -291,9 +356,17 @@ pub fn read_uuid(rd: &mut &[u8]) -> Result<String, FernetDriverError> {
 }
 
 /// Write the UUID to the payload.
+///
 /// It is represented as an Array[bool, bytes] where first bool indicates
 /// whether following bytes are UUID or just bytes that should be treated as a
 /// string (for cases where ID is not a valid UUID).
+///
+/// # Parameters
+/// - `wd`: The writer to write to.
+/// - `uid`: The UUID string to write.
+///
+/// # Returns
+/// A `Result` indicating success or a `FernetDriverError`.
 pub fn write_uuid<W: RmpWrite>(wd: &mut W, uid: &str) -> Result<(), FernetDriverError> {
     match Uuid::parse_str(uid) {
         Ok(uuid) => {
@@ -313,11 +386,25 @@ pub fn write_uuid<W: RmpWrite>(wd: &mut W, uid: &str) -> Result<(), FernetDriver
 }
 
 /// Read the time represented as a f64 of the UTC seconds.
+///
+/// # Parameters
+/// - `rd`: The reader to read from.
+///
+/// # Returns
+/// A `Result` containing the `DateTime<Utc>` if successful, or a
+/// `FernetDriverError`.
 pub fn read_time(rd: &mut &[u8]) -> Result<DateTime<Utc>, FernetDriverError> {
     DateTime::from_timestamp(read_f64(rd)?.round() as i64, 0).ok_or(FernetDriverError::InvalidToken)
 }
 
 /// Write the time represented as a f64 of the UTC seconds.
+///
+/// # Parameters
+/// - `wd`: The writer to write to.
+/// - `time`: The time to write.
+///
+/// # Returns
+/// A `Result` indicating success or a `FernetDriverError`.
 pub fn write_time<W: RmpWrite>(wd: &mut W, time: DateTime<Utc>) -> Result<(), FernetDriverError> {
     write_f64(wd, time.timestamp() as f64)
         .map_err(|x| FernetDriverError::RmpEncode(x.to_string()))?;
@@ -325,6 +412,13 @@ pub fn write_time<W: RmpWrite>(wd: &mut W, time: DateTime<Utc>) -> Result<(), Fe
 }
 
 /// Decode array of audit ids from the payload.
+///
+/// # Parameters
+/// - `rd`: The reader to read from.
+///
+/// # Returns
+/// A `Result` containing an iterator of audit IDs if successful, or a
+/// `FernetDriverError`.
 pub fn read_audit_ids(
     rd: &mut &[u8],
 ) -> Result<impl IntoIterator<Item = String> + use<>, FernetDriverError> {
@@ -345,6 +439,13 @@ pub fn read_audit_ids(
 }
 
 /// Encode array of audit ids into the payload.
+///
+/// # Parameters
+/// - `wd`: The writer to write to.
+/// - `data`: The audit IDs to write.
+///
+/// # Returns
+/// A `Result` indicating success or a `FernetDriverError`.
 pub fn write_audit_ids<W: RmpWrite, I: IntoIterator<Item = String>>(
     wd: &mut W,
     data: I,
@@ -365,6 +466,13 @@ pub fn write_audit_ids<W: RmpWrite, I: IntoIterator<Item = String>>(
 }
 
 /// Decode array of strings ids from the payload.
+///
+/// # Parameters
+/// - `rd`: The reader to read from.
+///
+/// # Returns
+/// A `Result` containing an iterator of UUID strings if successful, or a
+/// `FernetDriverError`.
 pub fn read_list_of_uuids(
     rd: &mut &[u8],
 ) -> Result<impl IntoIterator<Item = String> + use<>, FernetDriverError> {
@@ -379,6 +487,13 @@ pub fn read_list_of_uuids(
 }
 
 /// Encode array of bytes into the payload.
+///
+/// # Parameters
+/// - `wd`: The writer to write to.
+/// - `data`: The UUIDs to write.
+///
+/// # Returns
+/// A `Result` indicating success or a `FernetDriverError`.
 pub fn write_list_of_uuids<W: RmpWrite, I: IntoIterator<Item = V>, V: AsRef<str>>(
     wd: &mut W,
     data: I,
@@ -393,11 +508,25 @@ pub fn write_list_of_uuids<W: RmpWrite, I: IntoIterator<Item = V>, V: AsRef<str>
 }
 
 /// Read boolean.
+///
+/// # Parameters
+/// - `rd`: The reader to read from.
+///
+/// # Returns
+/// A `Result` containing the boolean value if successful, or a
+/// `FernetDriverError`.
 pub fn read_bool<R: Read>(rd: &mut R) -> Result<bool, FernetDriverError> {
     Ok(decode::read_bool(rd)?)
 }
 
 /// Write boolean.
+///
+/// # Parameters
+/// - `wd`: The writer to write to.
+/// - `data`: The boolean value to write.
+///
+/// # Returns
+/// A `Result` indicating success or a `FernetDriverError`.
 pub fn write_bool<W: RmpWrite>(wd: &mut W, data: bool) -> Result<(), FernetDriverError> {
     encode::write_bool(wd, data).map_err(|x| FernetDriverError::RmpEncode(x.to_string()))?;
     Ok(())

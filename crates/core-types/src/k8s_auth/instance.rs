@@ -153,9 +153,11 @@ impl From<K8sAuthInstanceCreate> for K8sAuthInstance {
 }
 
 impl K8sAuthInstance {
-    /// Apply the [`K8sAuthInstanceUpdate`] to the [`K8sAuthInstance`] structure returning the new object.
+    /// Apply the [`K8sAuthInstanceUpdate`] to the [`K8sAuthInstance`] structure
+    /// returning the new object.
     ///
-    /// Construct a new version of the [`K8sAuthInstance`] for persisting in the storage.
+    /// Construct a new version of the [`K8sAuthInstance`] for persisting in the
+    /// storage.
     pub fn with_update(self, update: K8sAuthInstanceUpdate) -> Self {
         Self {
             ca_cert: update.ca_cert,

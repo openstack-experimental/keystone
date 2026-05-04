@@ -25,6 +25,15 @@ use crate::entity::{
     prelude::RevocationEvent as DbRevocationEvent, revocation_event as db_revocation_event,
 };
 
+/// Build the query filters for revocation events based on the provided
+/// parameters.
+///
+/// # Parameters
+/// - `params`: The parameters used to filter revocation events.
+///
+/// # Returns
+/// A `Result` containing the `Select` query for `DbRevocationEvent`, or a
+/// `RevokeProviderError`.
 fn build_query_filters(
     params: &RevocationEventListParameters,
 ) -> Result<Select<DbRevocationEvent>, RevokeProviderError> {
@@ -123,6 +132,14 @@ fn build_query_filters(
 /// Count token revocation events.
 ///
 /// Return not expired revocation records that invalidate the token.
+///
+/// # Parameters
+/// - `db`: The database connection.
+/// - `params`: The parameters used to filter revocation events.
+///
+/// # Returns
+/// A `Result` containing the count of revocation events, or a
+/// `RevokeProviderError`.
 pub async fn count(
     db: &DatabaseConnection,
     params: &RevocationEventListParameters,
@@ -136,6 +153,14 @@ pub async fn count(
 /// List token revocation events.
 ///
 /// Return not expired revocation records that invalidate the token.
+///
+/// # Parameters
+/// - `db`: The database connection.
+/// - `params`: The parameters used to filter revocation events.
+///
+/// # Returns
+/// A `Result` containing a vector of `RevocationEvent` objects, or a
+/// `RevokeProviderError`.
 #[allow(unused)]
 pub async fn list(
     db: &DatabaseConnection,

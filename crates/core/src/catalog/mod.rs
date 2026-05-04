@@ -58,6 +58,15 @@ pub enum CatalogProvider {
 }
 
 impl CatalogProvider {
+    /// Creates a new `CatalogProvider`.
+    ///
+    /// # Parameters
+    /// - `config`: The configuration for the catalog provider.
+    /// - `plugin_manager`: The plugin manager used to load the catalog backend.
+    ///
+    /// # Returns
+    /// A `Result` containing the `CatalogProvider` instance or a
+    /// `CatalogProviderError`.
     pub fn new<P: PluginManagerApi>(
         config: &Config,
         plugin_manager: &P,
@@ -68,7 +77,15 @@ impl CatalogProvider {
 
 #[async_trait]
 impl CatalogApi for CatalogProvider {
-    /// List services
+    /// List services.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `params`: Parameters for filtering the service list.
+    ///
+    /// # Returns
+    /// A `Result` containing a vector of `Service` objects or a
+    /// `CatalogProviderError`.
     #[tracing::instrument(level = "info", skip(self, state))]
     async fn list_services(
         &self,
@@ -82,7 +99,15 @@ impl CatalogApi for CatalogProvider {
         }
     }
 
-    /// Get single service by ID
+    /// Get single service by ID.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `id`: The unique identifier of the service.
+    ///
+    /// # Returns
+    /// A `Result` containing an `Option` with the service if found, or an
+    /// `Error`.
     #[tracing::instrument(level = "info", skip(self, state))]
     async fn get_service<'a>(
         &self,
@@ -96,7 +121,15 @@ impl CatalogApi for CatalogProvider {
         }
     }
 
-    /// List Endpoints
+    /// List Endpoints.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `params`: Parameters for filtering the endpoint list.
+    ///
+    /// # Returns
+    /// A `Result` containing a vector of `Endpoint` objects or a
+    /// `CatalogProviderError`.
     #[tracing::instrument(level = "info", skip(self, state))]
     async fn list_endpoints(
         &self,
@@ -110,7 +143,15 @@ impl CatalogApi for CatalogProvider {
         }
     }
 
-    /// Get single endpoint by ID
+    /// Get single endpoint by ID.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `id`: The unique identifier of the endpoint.
+    ///
+    /// # Returns
+    /// A `Result` containing an `Option` with the endpoint if found, or an
+    /// `Error`.
     #[tracing::instrument(level = "info", skip(self, state))]
     async fn get_endpoint<'a>(
         &self,
@@ -124,7 +165,15 @@ impl CatalogApi for CatalogProvider {
         }
     }
 
-    /// Get catalog
+    /// Get catalog.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `enabled`: Whether to return only enabled services.
+    ///
+    /// # Returns
+    /// A `Result` containing a vector of tuples of `Service` and its associated
+    /// `Endpoint`s, or a `CatalogProviderError`.
     #[tracing::instrument(level = "info", skip(self, state))]
     async fn get_catalog(
         &self,

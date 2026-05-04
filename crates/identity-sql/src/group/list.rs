@@ -22,6 +22,14 @@ use openstack_keystone_core_types::identity::{Group, GroupListParameters};
 
 use crate::entity::{group, prelude::Group as DbGroup};
 
+/// Lists groups based on the provided parameters.
+///
+/// # Parameters
+/// - `db`: The database connection.
+/// - `params`: The parameters to filter the group list.
+///
+/// # Returns
+/// A `Result` containing a vector of groups, or an `Error`.
 #[tracing::instrument(skip_all)]
 pub async fn list(
     db: &DatabaseConnection,

@@ -31,6 +31,16 @@ pub struct AssignmentService {
 }
 
 impl AssignmentService {
+    /// Create a new instance of `AssignmentService`.
+    ///
+    /// # Parameters
+    /// - `config`: The system configuration.
+    /// - `plugin_manager`: The plugin manager used to resolve the assignment
+    ///   backend.
+    ///
+    /// # Returns
+    /// - `Result<Self, AssignmentProviderError>` - The new service instance or
+    ///   an error.
     pub fn new<P: PluginManagerApi>(
         config: &Config,
         plugin_manager: &P,
@@ -45,6 +55,14 @@ impl AssignmentService {
 #[async_trait]
 impl AssignmentApi for AssignmentService {
     /// Create assignment grant.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `grant`: The assignment creation parameters.
+    ///
+    /// # Returns
+    /// - `Result<Assignment, AssignmentProviderError>` - The created assignment
+    ///   or an error.
     async fn create_grant(
         &self,
         state: &ServiceState,
@@ -53,7 +71,15 @@ impl AssignmentApi for AssignmentService {
         self.backend_driver.create_grant(state, grant).await
     }
 
-    /// List role assignments
+    /// List role assignments.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `params`: The parameters for listing assignments.
+    ///
+    /// # Returns
+    /// - `Result<Vec<Assignment>, AssignmentProviderError>` - A list of
+    ///   assignments or an error.
     async fn list_role_assignments(
         &self,
         state: &ServiceState,
@@ -77,7 +103,14 @@ impl AssignmentApi for AssignmentService {
         Ok(assignments)
     }
 
-    /// Revoke grant
+    /// Revoke grant.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `grant`: The assignment to revoke.
+    ///
+    /// # Returns
+    /// - `Result<(), AssignmentProviderError>` - Ok on success, or an error.
     async fn revoke_grant(
         &self,
         state: &ServiceState,

@@ -1,8 +1,8 @@
+# METADATA
+# description: Policy for creating identity providers
 package identity.identity_provider_create
 
 import data.identity
-
-# Create identity provider.
 
 default allow := false
 

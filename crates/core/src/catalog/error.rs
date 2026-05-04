@@ -14,6 +14,13 @@
 pub use openstack_keystone_core_types::catalog::CatalogProviderError;
 
 impl From<crate::error::DatabaseError> for CatalogProviderError {
+    /// Converts a `DatabaseError` into a `CatalogProviderError`.
+    ///
+    /// # Parameters
+    /// - `source`: The `DatabaseError` to convert.
+    ///
+    /// # Returns
+    /// A `CatalogProviderError` equivalent to the source database error.
     fn from(source: crate::error::DatabaseError) -> Self {
         match source {
             cfl @ crate::error::DatabaseError::Conflict { .. } => Self::Conflict(cfl.to_string()),

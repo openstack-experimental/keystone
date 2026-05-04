@@ -1,3 +1,5 @@
+# METADATA
+# description: Policy for viewing identity provider details
 package identity.identity_provider_show
 
 import data.identity

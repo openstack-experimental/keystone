@@ -1,3 +1,5 @@
+# METADATA
+# description: Policy for starting passkey registration
 package identity.user.passkey.register.start
 
 import data.identity

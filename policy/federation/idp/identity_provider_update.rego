@@ -1,3 +1,5 @@
+# METADATA
+# description: Policy for updating identity providers
 package identity.identity_provider_update
 
 import data.identity

@@ -21,6 +21,17 @@ use openstack_keystone_core::identity::IdentityProviderError;
 
 use crate::entity::password;
 
+/// Create a new password record.
+///
+/// # Parameters
+/// - `db`: The database connection.
+/// - `local_user_id`: The local user ID.
+/// - `password_hash`: The hashed password.
+/// - `expires_at`: The expiration date.
+///
+/// # Returns
+/// A `Result` containing the created `password::Model` if successful, or an
+/// `Error`.
 #[tracing::instrument(skip_all)]
 pub async fn create<C: ConnectionTrait, S: AsRef<str>>(
     db: &C,

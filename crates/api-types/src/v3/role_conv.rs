@@ -47,14 +47,14 @@ impl From<api_types::RoleListParameters> for provider_types::RoleListParameters 
     }
 }
 
-impl From<api_types::RoleCreate> for provider_types::RoleCreate {
-    fn from(value: api_types::RoleCreate) -> Self {
+impl From<api_types::RoleCreateRequest> for provider_types::RoleCreate {
+    fn from(value: api_types::RoleCreateRequest) -> Self {
         Self {
-            description: value.description,
-            domain_id: value.domain_id,
-            extra: value.extra,
+            description: value.role.description,
+            domain_id: value.role.domain_id,
+            extra: value.role.extra,
             id: None,
-            name: value.name,
+            name: value.role.name,
         }
     }
 }

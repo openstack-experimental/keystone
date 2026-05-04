@@ -21,6 +21,14 @@ use openstack_keystone_core::identity::IdentityProviderError;
 use crate::entity::{nonlocal_user, user};
 
 /// Persist nonlocal user entry.
+///
+/// # Parameters
+/// - `db`: The database connection.
+/// - `main_record`: The main user record.
+/// - `name`: The nonlocal user name.
+///
+/// # Returns
+/// A `Result` containing the created nonlocal user model, or an `Error`.
 #[tracing::instrument(skip_all)]
 pub async fn create<C, S>(
     db: &C,

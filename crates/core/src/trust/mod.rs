@@ -91,6 +91,14 @@ impl TrustProvider {
 #[async_trait]
 impl TrustApi for TrustProvider {
     /// Get trust by ID.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `id`: The ID of the trust to retrieve.
+    ///
+    /// # Returns
+    /// - `Result<Option<Trust>, TrustProviderError>` - A `Result` containing an
+    ///   `Option` with the trust if found, or an `Error`.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn get_trust<'a>(
         &self,
@@ -105,6 +113,15 @@ impl TrustApi for TrustProvider {
     }
 
     /// Resolve trust delegation chain by the trust ID.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `id`: The ID of the trust to resolve the chain for.
+    ///
+    /// # Returns
+    /// - `Result<Option<Vec<Trust>>, TrustProviderError>` - A `Result`
+    ///   containing an `Option` with the trust delegation chain if found, or an
+    ///   `Error`.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn get_trust_delegation_chain<'a>(
         &self,
@@ -119,6 +136,14 @@ impl TrustApi for TrustProvider {
     }
 
     /// List trusts.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `params`: Parameters for listing trusts.
+    ///
+    /// # Returns
+    /// - `Result<Vec<Trust>, TrustProviderError>` - A list of trusts or an
+    ///   error.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn list_trusts(
         &self,
@@ -139,6 +164,14 @@ impl TrustApi for TrustProvider {
     /// - validate redelegated trust expiration is not later than of the
     ///   original.
     /// - redelegated trust must not add new roles.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `trust`: The trust to validate.
+    ///
+    /// # Returns
+    /// - `Result<bool, TrustProviderError>` - Ok(true) if the chain is valid,
+    ///   or an error.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn validate_trust_delegation_chain(
         &self,

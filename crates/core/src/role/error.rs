@@ -15,6 +15,13 @@
 pub use openstack_keystone_core_types::role::RoleProviderError;
 
 impl From<crate::error::DatabaseError> for RoleProviderError {
+    /// Convert a database error into a role provider error.
+    ///
+    /// # Parameters
+    /// - `source`: The database error to convert.
+    ///
+    /// # Returns
+    /// - `Self` - The converted `RoleProviderError`.
     fn from(source: crate::error::DatabaseError) -> Self {
         match source {
             cfl @ crate::error::DatabaseError::Conflict { .. } => Self::Conflict(cfl.to_string()),

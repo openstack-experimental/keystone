@@ -1,3 +1,5 @@
+# METADATA
+# description: Policy for deleting identity groups
 package identity.group.delete
 
 import data.identity

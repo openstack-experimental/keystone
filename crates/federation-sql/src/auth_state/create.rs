@@ -21,6 +21,14 @@ use openstack_keystone_core_types::federation::AuthState;
 
 use crate::entity::federated_auth_state as db_federated_auth_state;
 
+/// Create a new authentication state.
+///
+/// # Parameters
+/// - `db`: The database connection.
+/// - `rec`: The authentication state to create.
+///
+/// # Returns
+/// A `Result` containing the created `AuthState`, or an `Error`.
 pub async fn create(
     db: &DatabaseConnection,
     rec: AuthState,

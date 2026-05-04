@@ -29,6 +29,13 @@ pub use list::list;
 impl TryFrom<db_endpoint::Model> for Endpoint {
     type Error = CatalogProviderError;
 
+    /// Tries to convert a database endpoint model into a domain endpoint.
+    ///
+    /// # Parameters
+    /// - `value`: The database endpoint model.
+    ///
+    /// # Returns
+    /// A `Result` containing the `Endpoint`, or a `CatalogProviderError`.
     fn try_from(value: db_endpoint::Model) -> Result<Self, Self::Error> {
         let mut builder = EndpointBuilder::default();
         builder.id(value.id);

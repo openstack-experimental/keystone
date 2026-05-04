@@ -25,6 +25,14 @@ use crate::entity::revocation_event as db_revocation_event;
 /// Create token revocation record.
 ///
 /// Invalidate the token before the regular expiration.
+///
+/// # Parameters
+/// - `db`: The database connection.
+/// - `revocation`: The revocation event details to create.
+///
+/// # Returns
+/// A `Result` containing the created `RevocationEvent`, or a
+/// `RevokeProviderError`.
 pub async fn create(
     db: &DatabaseConnection,
     revocation: RevocationEventCreate,

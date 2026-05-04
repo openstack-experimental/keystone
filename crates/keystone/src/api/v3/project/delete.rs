@@ -46,19 +46,29 @@ pub async fn remove(
         .get_project(&state, &id)
         .await?;
 
-    if current.is_some() {
-        state
-            .provider
-            .get_resource_provider()
-            .delete_project(&state, &id)
-            .await?;
-    } else {
-        return Err(KeystoneApiError::NotFound {
+    state
+        .policy_enforcer
+        .enforce(
+            "identity/project/delete",
+            &user_auth,
+            serde_json::to_value(&current)?,
+            None,
+        )
+        .await?;
+    match current {
+        Some(_) => {
+            state
+                .provider
+                .get_resource_provider()
+                .delete_project(&state, &id)
+                .await?;
+            Ok((StatusCode::NO_CONTENT).into_response())
+        }
+        _ => Err(KeystoneApiError::NotFound {
             resource: "project".to_string(),
             identifier: id.clone(),
-        });
+        }),
     }
-    Ok((StatusCode::NO_CONTENT).into_response())
 }
 
 #[cfg(test)]
@@ -135,5 +145,36 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    }
+
+    #[tokio::test]
+    async fn test_delete_not_found_not_allowed() {
+        let mut provider = Provider::mocked_builder();
+        let mut mock = MockResourceProvider::default();
+        mock.expect_get_project()
+            .withf(|_, id: &'_ str| id == "foo")
+            .returning(|_, _| Ok(None));
+
+        provider = provider.mock_resource(mock);
+        let state = get_mocked_state(provider, false, None, None).await;
+
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        let response = api
+            .as_service()
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri("/foo")
+                    .header("x-auth-token", "foo")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
     }
 }

@@ -8,6 +8,7 @@ WORKDIR app
 FROM base AS planner 
 
 COPY . .
+
 RUN cargo chef prepare --recipe-path recipe.json
 
 # Stage 3: Build
@@ -22,7 +23,11 @@ COPY --from=planner /app/recipe.json recipe.json
 # Build dependencies - this is the caching Docker layer!
 RUN cargo chef cook --release --recipe-path recipe.json
 
-COPY . .
+#COPY . .
+COPY crates crates
+COPY tests tests
+COPY Cargo.toml Cargo.toml
+COPY Cargo.lock Cargo.lock
 
 # Compile the specific functional test file
 RUN cargo test --test integration_api --no-run && \

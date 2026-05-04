@@ -23,6 +23,12 @@ use crate::resource::ResourceProviderError;
 #[async_trait]
 pub trait ResourceApi: Send + Sync {
     /// Check whether the domain is enabled.
+    ///
+    /// * `state` - The current service state.
+    /// * `domain_id` - The ID of the domain.
+    ///
+    /// A `Result` containing a `bool` indicating whether the domain is enabled,
+    /// or an `Error`.
     async fn get_domain_enabled<'a>(
         &self,
         state: &ServiceState,
@@ -30,6 +36,11 @@ pub trait ResourceApi: Send + Sync {
     ) -> Result<bool, ResourceProviderError>;
 
     /// Create a new domain.
+    ///
+    /// * `state` - The current service state.
+    /// * `domain` - The domain details to create.
+    ///
+    /// A `Result` containing the created `Domain`, or an `Error`.
     async fn create_domain(
         &self,
         state: &ServiceState,
@@ -37,6 +48,11 @@ pub trait ResourceApi: Send + Sync {
     ) -> Result<Domain, ResourceProviderError>;
 
     /// Create a new project.
+    ///
+    /// * `state` - The current service state.
+    /// * `project` - The project details to create.
+    ///
+    /// A `Result` containing the created `Project`, or an `Error`.
     async fn create_project(
         &self,
         state: &ServiceState,
@@ -44,6 +60,11 @@ pub trait ResourceApi: Send + Sync {
     ) -> Result<Project, ResourceProviderError>;
 
     /// Delete a domain by the ID.
+    ///
+    /// * `state` - The current service state.
+    /// * `id` - The ID of the domain to delete.
+    ///
+    /// A `Result` containing `()` if successful, or an `Error`.
     async fn delete_domain<'a>(
         &self,
         state: &ServiceState,
@@ -51,6 +72,11 @@ pub trait ResourceApi: Send + Sync {
     ) -> Result<(), ResourceProviderError>;
 
     /// Delete a project by the ID.
+    ///
+    /// * `state` - The current service state.
+    /// * `id` - The ID of the project to delete.
+    ///
+    /// A `Result` containing `()` if successful, or an `Error`.
     async fn delete_project<'a>(
         &self,
         state: &ServiceState,
@@ -58,6 +84,12 @@ pub trait ResourceApi: Send + Sync {
     ) -> Result<(), ResourceProviderError>;
 
     /// Get a domain by the `id`.
+    ///
+    /// * `state` - The current service state.
+    /// * `domain_id` - The ID of the domain.
+    ///
+    /// A `Result` containing an `Option` with the `Domain` if found, or an
+    /// `Error`.
     async fn get_domain<'a>(
         &self,
         state: &ServiceState,
@@ -65,6 +97,12 @@ pub trait ResourceApi: Send + Sync {
     ) -> Result<Option<Domain>, ResourceProviderError>;
 
     /// Get a project by the `id`.
+    ///
+    /// * `state` - The current service state.
+    /// * `project_id` - The ID of the project.
+    ///
+    /// A `Result` containing an `Option` with the `Project` if found, or an
+    /// `Error`.
     async fn get_project<'a>(
         &self,
         state: &ServiceState,
@@ -72,6 +110,13 @@ pub trait ResourceApi: Send + Sync {
     ) -> Result<Option<Project>, ResourceProviderError>;
 
     /// Get a project by the `name` and the `domain_id`.
+    ///
+    /// * `state` - The current service state.
+    /// * `name` - The name of the project.
+    /// * `domain_id` - The ID of the domain.
+    ///
+    /// A `Result` containing an `Option` with the `Project` if found, or an
+    /// `Error`.
     async fn get_project_by_name<'a>(
         &self,
         state: &ServiceState,
@@ -80,6 +125,12 @@ pub trait ResourceApi: Send + Sync {
     ) -> Result<Option<Project>, ResourceProviderError>;
 
     /// Get project parents.
+    ///
+    /// * `state` - The current service state.
+    /// * `project_id` - The ID of the project.
+    ///
+    /// A `Result` containing an `Option` with the `Vec<Project>` if found, or
+    /// an `Error`.
     async fn get_project_parents<'a>(
         &self,
         state: &ServiceState,
@@ -87,6 +138,12 @@ pub trait ResourceApi: Send + Sync {
     ) -> Result<Option<Vec<Project>>, ResourceProviderError>;
 
     /// Find domain by the `name`.
+    ///
+    /// * `state` - The current service state.
+    /// * `domain_name` - The name of the domain.
+    ///
+    /// A `Result` containing an `Option` with the `Domain` if found, or an
+    /// `Error`.
     async fn find_domain_by_name<'a>(
         &self,
         state: &ServiceState,
@@ -94,6 +151,11 @@ pub trait ResourceApi: Send + Sync {
     ) -> Result<Option<Domain>, ResourceProviderError>;
 
     /// List domains.
+    ///
+    /// * `state` - The current service state.
+    /// * `params` - The list parameters.
+    ///
+    /// A `Result` containing a `Vec<Domain>`, or an `Error`.
     async fn list_domains(
         &self,
         state: &ServiceState,
@@ -101,6 +163,11 @@ pub trait ResourceApi: Send + Sync {
     ) -> Result<Vec<Domain>, ResourceProviderError>;
 
     /// List projects.
+    ///
+    /// * `state` - The current service state.
+    /// * `params` - The list parameters.
+    ///
+    /// A `Result` containing a `Vec<Project>`, or an `Error`.
     async fn list_projects(
         &self,
         state: &ServiceState,

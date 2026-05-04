@@ -45,6 +45,14 @@ use crate::user_option;
 /// - Verifies the password is not expired.
 /// - Reads main user database entry.
 /// - Converts all responses into the [`UserResponse`] structure.
+///
+/// # Parameters
+/// - `config`: The system configuration.
+/// - `db`: The database connection.
+/// - `auth`: The authentication request containing user credentials.
+///
+/// # Returns
+/// A `Result` containing the `AuthenticatedInfo` if successful, or an `Error`.
 pub async fn authenticate_by_password(
     config: &Config,
     db: &DatabaseConnection,
@@ -138,6 +146,15 @@ pub async fn authenticate_by_password(
 /// Checks whether the account is locked temporarily due to the failed login
 /// attempts as described by
 /// [ADR-10](https://openstack-experimental.github.io/keystone/adr/0010-pci-dss-failed-auth-protection.html)
+///
+/// # Parameters
+/// - `config`: The system configuration.
+/// - `db`: The database connection.
+/// - `local_user`: The local user model to check.
+///
+/// # Returns
+/// A `Result` containing a boolean indicating if the user should be locked, or
+/// an `Error`.
 #[tracing::instrument(level = "debug", skip(config, db))]
 async fn should_lock(
     config: &Config,

@@ -43,6 +43,14 @@ use crate::user::MergeUserData;
 /// `federated_user`, `user_option` entries merging results to the proper entry.
 /// For the local users additionally passwords are being retrieved to identify
 /// the password expiration date.
+///
+/// # Parameters
+/// - `conf`: The system configuration.
+/// - `db`: The database connection.
+/// - `params`: The list parameters.
+///
+/// # Returns
+/// A `Result` containing a list of `UserResponse`s, or an `Error`.
 #[tracing::instrument(skip_all)]
 pub async fn list(
     conf: &Config,

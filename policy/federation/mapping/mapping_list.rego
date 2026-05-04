@@ -1,3 +1,5 @@
+# METADATA
+# description: Policy for listing federation mappings
 package identity.mapping_list
 
 import data.identity

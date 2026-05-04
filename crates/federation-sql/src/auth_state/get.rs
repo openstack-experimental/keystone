@@ -24,6 +24,15 @@ use crate::entity::{
     prelude::FederatedAuthState as DbFederatedAuthState,
 };
 
+/// Get an authentication state by its ID.
+///
+/// # Parameters
+/// - `db`: The database connection.
+/// - `state`: The ID of the authentication state.
+///
+/// # Returns
+/// A `Result` containing an `Option` with the `AuthState` if found, or an
+/// `Error`.
 pub async fn get<I: AsRef<str>>(
     db: &DatabaseConnection,
     state: I,

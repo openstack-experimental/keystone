@@ -23,6 +23,14 @@ use crate::entity::prelude::{
     IdentityProvider as DbIdentityProvider,
 };
 
+/// Delete an identity provider by its ID.
+///
+/// # Parameters
+/// - `db`: The database connection.
+/// - `id`: The ID of the identity provider to delete.
+///
+/// # Returns
+/// A `Result` indicating success, or an `Error`.
 pub async fn delete<S: AsRef<str>>(
     db: &DatabaseConnection,
     id: S,

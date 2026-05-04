@@ -32,6 +32,15 @@ pub struct IdentityMappingService {
 }
 
 impl IdentityMappingService {
+    /// Create a new `IdentityMappingService`.
+    ///
+    /// # Parameters
+    /// - `config`: The configuration.
+    /// - `plugin_manager`: The plugin manager.
+    ///
+    /// # Returns
+    /// - `Result<Self, IdentityMappingProviderError>` - The new service or an
+    ///   error.
     pub fn new<P: PluginManagerApi>(
         config: &Config,
         plugin_manager: &P,
@@ -46,6 +55,16 @@ impl IdentityMappingService {
 #[async_trait]
 impl IdentityMappingApi for IdentityMappingService {
     /// Get the `IdMapping` by the local data.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `local_id`: The local identifier.
+    /// - `domain_id`: The domain identifier.
+    /// - `entity_type`: The entity type.
+    ///
+    /// # Returns
+    /// - `Result<Option<IdMapping>, IdentityMappingProviderError>` - A `Result`
+    ///   containing an `Option` with the `IdMapping` if found, or an `Error`.
     async fn get_by_local_id<'a>(
         &self,
         state: &ServiceState,
@@ -58,7 +77,15 @@ impl IdentityMappingApi for IdentityMappingService {
             .await
     }
 
-    /// Get the IdMapping by the public_id.
+    /// Get the `IdMapping` by the public identifier.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `public_id`: The public identifier.
+    ///
+    /// # Returns
+    /// - `Result<Option<IdMapping>, IdentityMappingProviderError>` - A `Result`
+    ///   containing an `Option` with the `IdMapping` if found, or an `Error`.
     async fn get_by_public_id<'a>(
         &self,
         state: &ServiceState,

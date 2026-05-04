@@ -50,6 +50,17 @@ pub struct Service {
 pub type ServiceState = Arc<Service>;
 
 impl Service {
+    /// Creates a new Keystone service instance.
+    ///
+    /// # Parameters
+    /// - `cfg`: The configuration for the service.
+    /// - `db`: The database connection.
+    /// - `provider`: The provider for services/resources.
+    /// - `policy_enforcer`: The policy enforcer instance.
+    ///
+    /// # Returns
+    /// - `Ok(Self)` if the service was initialized successfully.
+    /// - `Err(KeystoneError)` if there was an error during initialization.
     pub async fn new(
         cfg: Config,
         db: DatabaseConnection,
@@ -79,10 +90,19 @@ impl Service {
         })
     }
 
+    /// Returns a reference to the distributed storage if available.
+    ///
+    /// # Returns
+    /// - `Some(&impl StorageApi)` if storage is configured, otherwise `None`.
     pub fn get_storage(&self) -> Option<&impl StorageApi> {
         self.storage.as_ref()
     }
 
+    /// Terminates the Keystone service.
+    ///
+    /// # Returns
+    /// - `Ok(())` upon successful termination.
+    /// - `Err(KeystoneError)` if an error occurred during termination.
     pub async fn terminate(&self) -> Result<(), KeystoneError> {
         info!("Terminating Keystone");
         Ok(())

@@ -35,6 +35,14 @@ use super::*;
 /// Add user to the groups it should be in and remove from the groups where the
 /// user is currently member of, but should not be. This is only incremental
 /// operation and is not deleting group membership where the user should stay.
+///
+/// # Parameters
+/// - `db`: Database connection.
+/// - `user_id`: User ID.
+/// - `group_ids`: Iterator of group IDs.
+///
+/// # Returns
+/// A `Result` indicating success or failure.
 #[tracing::instrument(skip_all)]
 pub async fn set_user_groups<I, U, G>(
     db: &DatabaseConnection,
@@ -92,6 +100,16 @@ where
 /// Add user to the groups it should be in and remove from the groups where the
 /// user is currently member of, but should not be. This is only incremental
 /// operation and is not deleting group membership where the user should stay.
+///
+/// # Parameters
+/// - `db`: Database connection.
+/// - `user_id`: User ID.
+/// - `group_ids`: Iterator of group IDs.
+/// - `idp_id`: Identity Provider ID.
+/// - `last_verified`: Optional last verification date.
+///
+/// # Returns
+/// A `Result` indicating success or failure.
 #[tracing::instrument(skip_all)]
 pub async fn set_user_groups_expiring<I, U, G, IDP>(
     db: &DatabaseConnection,

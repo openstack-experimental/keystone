@@ -20,6 +20,14 @@ use openstack_keystone_core::error::DbContextExt;
 use crate::WebauthnError;
 use crate::driver::sql::model::prelude::WebauthnCredential;
 
+/// Delete a webauthn credential.
+///
+/// # Parameters
+/// - `db`: The database connection.
+/// - `credential_id`: The ID of the credential to delete.
+///
+/// # Returns
+/// A `Result` containing `()` on success, or a `WebauthnError`.
 pub async fn delete<U: AsRef<str>>(
     db: &DatabaseConnection,
     credential_id: U,

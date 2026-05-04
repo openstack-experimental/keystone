@@ -65,6 +65,13 @@ pub enum PolicyError {
 
 #[cfg(feature = "api")]
 impl From<PolicyError> for openstack_keystone_api_types::error::KeystoneApiError {
+    /// Convert a policy error into a Keystone API error.
+    ///
+    /// # Parameters
+    /// - `error`: The policy error to convert.
+    ///
+    /// # Returns
+    /// - `Self` - The converted `KeystoneApiError`.
     fn from(error: PolicyError) -> Self {
         Self::forbidden(error)
     }
@@ -72,6 +79,17 @@ impl From<PolicyError> for openstack_keystone_api_types::error::KeystoneApiError
 
 #[async_trait]
 pub trait PolicyEnforcer: Send + Sync {
+    /// Enforces a policy for a given action and credentials.
+    ///
+    /// # Parameters
+    /// - `policy_name`: The name of the policy to enforce.
+    /// - `credentials`: The credentials of the user requesting the action.
+    /// - `target`: The target resource of the action.
+    /// - `update`: Optional update data for the resource.
+    ///
+    /// # Returns
+    /// - `Ok(PolicyEvaluationResult)` if the policy was evaluated successfully.
+    /// - `Err(PolicyError)` if an error occurred during enforcement.
     async fn enforce(
         &self,
         policy_name: &'static str,
@@ -80,6 +98,11 @@ pub trait PolicyEnforcer: Send + Sync {
         update: Option<Value>,
     ) -> Result<PolicyEvaluationResult, PolicyError>;
 
+    /// Performs a health check of the policy enforcer.
+    ///
+    /// # Returns
+    /// - `Ok(())` if the enforcer is healthy.
+    /// - `Err(PolicyError)` if the enforcer is unhealthy.
     async fn health_check(&self) -> Result<(), PolicyError> {
         Ok(())
     }
@@ -124,6 +147,13 @@ pub struct Credentials {
 }
 
 impl From<&Token> for Credentials {
+    /// Convert a token into credentials for policy evaluation.
+    ///
+    /// # Parameters
+    /// - `token`: The token to convert.
+    ///
+    /// # Returns
+    /// - `Self` - The constructed `Credentials` object.
     fn from(token: &Token) -> Self {
         Self {
             user_id: token.user_id().clone(),
@@ -169,6 +199,13 @@ pub struct PolicyEvaluationResult {
 }
 
 impl std::fmt::Display for PolicyEvaluationResult {
+    /// Format the policy evaluation result as a string.
+    ///
+    /// # Parameters
+    /// - `f`: The formatter to use.
+    ///
+    /// # Returns
+    /// - `std::fmt::Result` - The result of the formatting operation.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut first = true;
         if let Some(violations) = &self.violations {
@@ -186,12 +223,19 @@ impl std::fmt::Display for PolicyEvaluationResult {
 }
 
 impl PolicyEvaluationResult {
+    /// Returns whether the request is allowed.
+    ///
+    /// # Returns
+    /// - `bool` - True if allowed, false otherwise.
     #[must_use]
     pub fn allow(&self) -> bool {
         self.allow
     }
 
     /// Returns true if the policy evaluation was successful.
+    ///
+    /// # Returns
+    /// - `bool` - True if valid, false otherwise.
     #[must_use]
     pub fn valid(&self) -> bool {
         self.violations
@@ -200,6 +244,10 @@ impl PolicyEvaluationResult {
             .unwrap_or(false)
     }
 
+    /// Create an allowed evaluation result.
+    ///
+    /// # Returns
+    /// - `Self` - A result indicating the request is allowed.
     #[cfg(any(test, feature = "mock"))]
     pub fn allowed() -> Self {
         Self {
@@ -209,6 +257,10 @@ impl PolicyEvaluationResult {
         }
     }
 
+    /// Create an allowed admin evaluation result.
+    ///
+    /// # Returns
+    /// - `Self` - A result indicating the request is allowed for admins.
     #[cfg(any(test, feature = "mock"))]
     pub fn allowed_admin() -> Self {
         Self {
@@ -218,6 +270,10 @@ impl PolicyEvaluationResult {
         }
     }
 
+    /// Create a forbidden evaluation result.
+    ///
+    /// # Returns
+    /// - `Self` - A result indicating the request is forbidden.
     #[cfg(any(test, feature = "mock"))]
     pub fn forbidden() -> Self {
         Self {

@@ -43,6 +43,15 @@ pub(super) async fn list(
     Query(query): Query<RoleListParameters>,
     State(state): State<ServiceState>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
+    state
+        .policy_enforcer
+        .enforce(
+            "identity/role/list",
+            &user_auth,
+            serde_json::to_value(&query)?,
+            None,
+        )
+        .await?;
     let roles: Vec<Role> = state
         .provider
         .get_role_provider()

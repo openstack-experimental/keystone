@@ -46,7 +46,8 @@ pub enum StoreError {
         source: serde_json::Error,
     },
 
-    /// Key is already present in the store while the call expects it to be unset.
+    /// Key is already present in the store while the call expects it to be
+    /// unset.
     #[error("key is already set")]
     KeyPresent,
 

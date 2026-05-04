@@ -40,8 +40,11 @@ pub struct StorageServiceImpl {
 impl StorageServiceImpl {
     /// Creates a new instance of the internal service.
     ///
-    /// # Arguments
-    /// * `raft_node` - The Raft node instance this service will operate on.
+    /// # Parameters
+    /// - `raft_node`: The Raft node instance this service will operate on.
+    ///
+    /// # Returns
+    /// A new `StorageServiceImpl` instance.
     pub fn new(raft_node: Raft) -> Self {
         Self { raft_node }
     }
@@ -51,12 +54,12 @@ impl StorageServiceImpl {
 impl StorageService for StorageServiceImpl {
     /// Saves a storage modification command.
     ///
-    /// # Arguments
-    /// * `request` - Contains the key and value to set
+    /// # Parameters
+    /// - `request`: Contains the key and value to set.
     ///
     /// # Returns
-    /// * `Ok(Response)` - Success response after the value is set
-    /// * `Err(Status)` - Error status if the set operation fails
+    /// A `Result` containing a `Response` after the value is set, or a `Status`
+    /// error.
     #[tracing::instrument(level = "trace", skip(self))]
     async fn command(
         &self,

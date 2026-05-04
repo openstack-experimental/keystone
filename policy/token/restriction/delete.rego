@@ -1,3 +1,5 @@
+# METADATA
+# description: Policy for deleting token restrictions
 package identity.token_restriction.delete
 
 import data.identity

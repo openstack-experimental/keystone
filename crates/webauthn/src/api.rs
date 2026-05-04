@@ -43,6 +43,9 @@ use crate::{WebauthnApi, WebauthnError, driver::*};
 pub struct ApiDoc;
 
 /// OpenAPI router.
+///
+/// # Returns
+/// An `OpenApiRouter` instance.
 pub fn openapi_router() -> OpenApiRouter<CombinedExtensionState> {
     OpenApiRouter::with_openapi(ApiDoc::openapi())
         .nest("/auth/passkey", auth::openapi_router())
@@ -50,6 +53,14 @@ pub fn openapi_router() -> OpenApiRouter<CombinedExtensionState> {
 }
 
 /// Initialize the extension state.
+///
+/// # Parameters
+/// - `main_state`: The core service state.
+/// - `cancellation_token`: Token used to cancel background tasks.
+///
+/// # Returns
+/// A `Result` containing the `CombinedExtensionState` on success, or a
+/// `KeystoneError`.
 pub fn init_extension_state(
     main_state: ServiceState,
     cancellation_token: CancellationToken,
@@ -94,6 +105,13 @@ pub fn init_extension_state(
 }
 
 /// Initialize the extension.
+///
+/// # Parameters
+/// - `main_state`: The core service state.
+/// - `cancellation_token`: Token used to cancel background tasks.
+///
+/// # Returns
+/// A `Result` containing the `Router` on success, or a `KeystoneError`.
 pub fn init_extension(
     main_state: ServiceState,
     cancellation_token: CancellationToken,
@@ -107,6 +125,13 @@ pub fn init_extension(
 }
 
 /// Periodic cleanup job.
+///
+/// # Parameters
+/// - `cancel`: Token used to cancel the cleanup task.
+/// - `state`: The combined extension state.
+///
+/// # Returns
+/// `()`
 async fn cleanup(cancel: CancellationToken, state: CombinedExtensionState) {
     let mut interval = time::interval(Duration::from_secs(60));
     interval.tick().await;

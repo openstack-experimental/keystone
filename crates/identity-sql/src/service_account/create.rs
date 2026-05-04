@@ -29,6 +29,15 @@ use crate::nonlocal_user;
 use crate::user_option;
 
 impl db_user::ActiveModel {
+    /// Create a `db_user::ActiveModel` from a `ServiceAccountCreate` request.
+    ///
+    /// # Parameters
+    /// - `user`: The service account creation request.
+    /// - `conf`: The configuration.
+    /// - `created_at`: The creation timestamp.
+    ///
+    /// # Returns
+    /// A `Result` containing the `ActiveModel` or an `Error`.
     fn from_sa_create(
         user: &ServiceAccountCreate,
         conf: &Config,
@@ -61,6 +70,15 @@ impl db_user::ActiveModel {
 /// Comprise of:
 ///   - `user` table entry with no options.
 ///   - `nonlocal_user` table entry.
+///
+/// # Parameters
+/// - `conf`: The configuration.
+/// - `db`: The database connection.
+/// - `sa`: The service account creation request.
+/// - `created_at`: The creation timestamp.
+///
+/// # Returns
+/// A `Result` containing the created `ServiceAccount` or an `Error`.
 #[tracing::instrument(skip_all)]
 pub async fn create(
     conf: &Config,

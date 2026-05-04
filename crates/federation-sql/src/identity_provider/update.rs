@@ -24,6 +24,15 @@ use crate::entity::{
     prelude::FederatedIdentityProvider as DbFederatedIdentityProvider,
 };
 
+/// Update an existing identity provider.
+///
+/// # Parameters
+/// - `db`: The database connection.
+/// - `id`: The ID of the identity provider to update.
+/// - `idp`: The updates to apply to the identity provider.
+///
+/// # Returns
+/// A `Result` containing the updated `IdentityProvider`, or an `Error`.
 pub async fn update<S: AsRef<str>>(
     db: &DatabaseConnection,
     id: S,

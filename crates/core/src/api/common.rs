@@ -30,6 +30,14 @@ use crate::resource::{
 };
 
 /// Get the scope [ProjectBuilder] for the given Project.
+///
+/// # Arguments
+/// * `state` - The service state
+/// * `project` - The project to get info for
+/// * `user_domain` - The user's domain
+///
+/// # Returns
+/// * `Result<ProjectBuilder, KeystoneApiError>` - The project builder
 pub(super) async fn get_project_info_scope_builder(
     state: &ServiceState,
     project: &Project,
@@ -93,7 +101,8 @@ pub async fn get_domain<I: AsRef<str>, N: AsRef<str>>(
 /// * `scope` - The scope to find the project.
 ///
 /// # Returns
-/// The resolved project.
+/// * `Result<Option<Project>, KeystoneApiError>` - The resolved project or None
+///   if not found
 pub async fn find_project_from_scope(
     state: &ServiceState,
     scope: &ScopeProject,
@@ -181,6 +190,16 @@ pub async fn get_authz_info(
 }
 
 /// Prepare the links for the paginated resource collection.
+///
+/// # Arguments
+/// * `config` - The service configuration
+/// * `data` - The slice of resources to paginate
+/// * `query` - The pagination query parameters
+/// * `collection_url` - The URL of the collection
+///
+/// # Returns
+/// * `Result<Option<Vec<Link>>, KeystoneApiError>` - The pagination links if
+///   applicable
 pub fn build_pagination_links<T, Q>(
     config: &Config,
     data: &[T],
@@ -227,8 +246,17 @@ where
 /// Resource query parameters pagination extension trait.
 pub trait QueryParameterPagination {
     /// Get the page limit.
+    ///
+    /// # Returns
+    /// * `Option<u64>` - The page limit if set.
     fn get_limit(&self) -> Option<u64>;
     /// Set the pagination marker.
+    ///
+    /// # Arguments
+    /// * `marker` - The marker to set.
+    ///
+    /// # Returns
+    /// * `&mut Self` - A mutable reference to the trait implementor.
     fn set_marker(&mut self, marker: String) -> &mut Self;
 }
 
@@ -236,6 +264,9 @@ pub trait QueryParameterPagination {
 /// building the marker pagination.
 pub trait ResourceIdentifier {
     /// Get the unique resource identifier.
+    ///
+    /// # Returns
+    /// * `String` - The unique identifier of the resource.
     fn get_id(&self) -> String;
 }
 

@@ -15,6 +15,13 @@
 pub use openstack_keystone_core_types::application_credential::ApplicationCredentialProviderError;
 
 impl From<crate::error::DatabaseError> for ApplicationCredentialProviderError {
+    /// Convert a database error into an application credential provider error.
+    ///
+    /// # Parameters
+    /// - `source`: The database error to convert.
+    ///
+    /// # Returns
+    /// - `Self` - The converted `ApplicationCredentialProviderError`.
     fn from(source: crate::error::DatabaseError) -> Self {
         match source {
             cfl @ crate::error::DatabaseError::Conflict { .. } => Self::Conflict(cfl.to_string()),

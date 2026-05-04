@@ -26,6 +26,14 @@ use crate::entity::{
 };
 
 /// Remove the user from the group.
+///
+/// # Parameters
+/// - `db`: Database connection.
+/// - `user_id`: User ID.
+/// - `group_id`: Group ID.
+///
+/// # Returns
+/// A `Result` indicating success or failure.
 #[tracing::instrument(skip_all)]
 pub async fn remove_user_from_group<U: AsRef<str>, G: AsRef<str>>(
     db: &DatabaseConnection,
@@ -41,6 +49,14 @@ pub async fn remove_user_from_group<U: AsRef<str>, G: AsRef<str>>(
 }
 
 /// Remove the user from multiple groups.
+///
+/// # Parameters
+/// - `db`: Database connection.
+/// - `user_id`: User ID.
+/// - `group_ids`: Iterator of group IDs.
+///
+/// # Returns
+/// A `Result` indicating success or failure.
 #[tracing::instrument(skip_all)]
 pub async fn remove_user_from_groups<I, U, G>(
     db: &DatabaseConnection,
@@ -69,6 +85,15 @@ where
 }
 
 /// Remove the user from the group with expiration.
+///
+/// # Parameters
+/// - `db`: Database connection.
+/// - `user_id`: User ID.
+/// - `group_id`: Group ID.
+/// - `idp_id`: Identity Provider ID.
+///
+/// # Returns
+/// A `Result` indicating success or failure.
 #[tracing::instrument(skip_all)]
 pub async fn remove_user_from_group_expiring<U: AsRef<str>, G: AsRef<str>, IDP: AsRef<str>>(
     db: &DatabaseConnection,
@@ -89,6 +114,15 @@ pub async fn remove_user_from_group_expiring<U: AsRef<str>, G: AsRef<str>, IDP: 
 }
 
 /// Remove the user from multiple groups.
+///
+/// # Parameters
+/// - `db`: Database connection.
+/// - `user_id`: User ID.
+/// - `group_ids`: Iterator of group IDs.
+/// - `idp_id`: Identity Provider ID.
+///
+/// # Returns
+/// A `Result` indicating success or failure.
 #[tracing::instrument(skip_all)]
 pub async fn remove_user_from_groups_expiring<I, U, G, IDP>(
     db: &DatabaseConnection,

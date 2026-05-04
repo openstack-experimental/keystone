@@ -23,6 +23,14 @@ use openstack_keystone_core_types::role::{Role, RoleListParameters};
 use crate::entity::{prelude::Role as DbRole, role as db_role};
 use crate::role::NULL_DOMAIN_ID;
 
+/// List roles.
+///
+/// # Parameters
+/// - `db`: The database connection.
+/// - `params`: The list parameters.
+///
+/// # Returns
+/// A `Result` containing a list of `Role`s, or an `Error`.
 pub async fn list(
     db: &DatabaseConnection,
     params: &RoleListParameters,

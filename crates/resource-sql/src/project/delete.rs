@@ -21,7 +21,11 @@ use openstack_keystone_core::resource::ResourceProviderError;
 
 use crate::entity::prelude::Project;
 
-/// Delete existing project.
+/// Delete an existing project.
+///
+/// # Parameters
+/// - `db`: Database connection.
+/// - `id`: ID of the project to delete.
 pub async fn delete<S: AsRef<str>>(
     db: &DatabaseConnection,
     id: S,

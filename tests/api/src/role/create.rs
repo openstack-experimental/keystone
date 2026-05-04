@@ -16,6 +16,7 @@ use eyre::Result;
 use tracing_test::traced_test;
 
 use openstack_keystone_api_types::v3::role::*;
+use openstack_sdk_core::{AsyncOpenStack, config::CloudConfig};
 
 use crate::common::*;
 use crate::role::*;
@@ -23,8 +24,9 @@ use crate::role::*;
 #[tokio::test]
 #[traced_test]
 async fn test_create() -> Result<()> {
-    let mut test_client = TestClient::default()?;
-    test_client.auth_admin().await?;
+    //let mut test_client = TestClient::default()?;
+    let test_client = Arc::new(AsyncOpenStack::new(&CloudConfig::from_env()?).await?);
+    //test_client.auth_admin().await?;
     let name = uuid::Uuid::new_v4().to_string();
     let _role: Role = create_role(
         &test_client,

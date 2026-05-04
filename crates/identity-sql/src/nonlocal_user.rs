@@ -27,6 +27,13 @@ pub trait MergeNonlocalUserData {
 }
 
 impl MergeNonlocalUserData for UserResponseBuilder {
+    /// Merge nonlocal user data into the user response builder.
+    ///
+    /// # Parameters
+    /// - `data`: The nonlocal user model.
+    ///
+    /// # Returns
+    /// A mutable reference to the builder.
     fn merge_nonlocal_user_data(&mut self, data: &db_nonlocal_user::Model) -> &mut Self {
         self.name(data.name.clone());
         self
@@ -37,6 +44,13 @@ impl MergeNonlocalUserData for UserResponseBuilder {
 pub(crate) mod tests {
     use crate::entity::nonlocal_user as db_nonlocal_user;
 
+    /// Create a mock nonlocal user for testing.
+    ///
+    /// # Parameters
+    /// - `user_id`: The ID of the user.
+    ///
+    /// # Returns
+    /// A `db_nonlocal_user::Model` instance.
     pub fn get_nonlocal_user_mock<UID: Into<String>>(user_id: UID) -> db_nonlocal_user::Model {
         db_nonlocal_user::Model {
             user_id: user_id.into(),

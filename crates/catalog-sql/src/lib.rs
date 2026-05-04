@@ -48,7 +48,15 @@ inventory::submit! {
 
 #[async_trait]
 impl CatalogBackend for SqlBackend {
-    /// List Services
+    /// List services.
+    ///
+    /// # Parameters
+    /// - `state`: The service state containing the database connection.
+    /// - `params`: The parameters for listing services.
+    ///
+    /// # Returns
+    /// A `Result` containing a vector of `Service`s, or a
+    /// `CatalogProviderError`.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn list_services(
         &self,
@@ -58,7 +66,15 @@ impl CatalogBackend for SqlBackend {
         Ok(service::list(&state.db, params).await?)
     }
 
-    /// Get single service by ID
+    /// Get a single service by ID.
+    ///
+    /// # Parameters
+    /// - `state`: The service state containing the database connection.
+    /// - `id`: The ID of the service to retrieve.
+    ///
+    /// # Returns
+    /// A `Result` containing an `Option` with the `Service` if found, or an
+    /// `Error`.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn get_service<'a>(
         &self,
@@ -68,7 +84,15 @@ impl CatalogBackend for SqlBackend {
         Ok(service::get(&state.db, id).await?)
     }
 
-    /// List Endpoints
+    /// List endpoints.
+    ///
+    /// # Parameters
+    /// - `state`: The service state containing the database connection.
+    /// - `params`: The parameters for listing endpoints.
+    ///
+    /// # Returns
+    /// A `Result` containing a vector of `Endpoint`s, or a
+    /// `CatalogProviderError`.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn list_endpoints(
         &self,
@@ -78,7 +102,15 @@ impl CatalogBackend for SqlBackend {
         Ok(endpoint::list(&state.db, params).await?)
     }
 
-    /// Get single endpoint by ID
+    /// Get a single endpoint by ID.
+    ///
+    /// # Parameters
+    /// - `state`: The service state containing the database connection.
+    /// - `id`: The ID of the endpoint to retrieve.
+    ///
+    /// # Returns
+    /// A `Result` containing an `Option` with the `Endpoint` if found, or an
+    /// `Error`.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn get_endpoint<'a>(
         &self,
@@ -88,8 +120,25 @@ impl CatalogBackend for SqlBackend {
         Ok(endpoint::get(&state.db, id).await?)
     }
 
-    /// Get Catalog (Services with Endpoints)
+    /// Get the catalog (services with endpoints).
+    ///
+    /// # Parameters
+    /// - `state`: The service state containing the database connection.
+    /// - `enabled`: Whether to return only enabled entries.
+    ///
+    /// # Returns
+    /// A `Result` containing a vector of tuples of `Service` and its associated
+    /// `Endpoint`s, or a `CatalogProviderError`.
     #[tracing::instrument(level = "debug", skip(self, state))]
+    /// Get the catalog.
+    ///
+    /// # Parameters
+    /// - `db`: The database connection.
+    /// - `enabled`: Whether to return only enabled entries.
+    ///
+    /// # Returns
+    /// A `Result` containing a vector of tuples of `Service` and its associated
+    /// `Endpoint`s, or a `CatalogProviderError`.
     async fn get_catalog(
         &self,
         state: &ServiceState,
@@ -125,6 +174,14 @@ async fn get_catalog(
 
 #[async_trait]
 impl SqlDriver for SqlBackend {
+    /// Sets up the database tables for the catalog.
+    ///
+    /// # Parameters
+    /// - `connection`: The database connection.
+    /// - `schema`: The database schema.
+    ///
+    /// # Returns
+    /// A `Result` indicating success or a `DatabaseError`.
     async fn setup(
         &self,
         connection: &DatabaseConnection,

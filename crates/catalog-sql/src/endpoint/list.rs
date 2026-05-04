@@ -22,6 +22,14 @@ use openstack_keystone_core_types::catalog::*;
 
 use crate::entity::{endpoint as db_endpoint, prelude::Endpoint as DbEndpoint};
 
+/// Lists endpoints.
+///
+/// # Parameters
+/// - `db`: The database connection.
+/// - `params`: The parameters for listing endpoints.
+///
+/// # Returns
+/// A `Result` containing a vector of `Endpoint`s, or a `CatalogProviderError`.
 pub async fn list(
     db: &DatabaseConnection,
     params: &EndpointListParameters,

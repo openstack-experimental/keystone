@@ -1,3 +1,5 @@
+# METADATA
+# description: Policy for checking user roles in a project
 package identity.project.user.role.check
 
 import data.identity

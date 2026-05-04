@@ -55,12 +55,20 @@ pub async fn delete(
         )
         .await?;
 
-    state
-        .provider
-        .get_identity_provider()
-        .delete_group(&state, &group_id)
-        .await?;
-    Ok((StatusCode::NO_CONTENT).into_response())
+    match current {
+        Some(_) => {
+            state
+                .provider
+                .get_identity_provider()
+                .delete_group(&state, &group_id)
+                .await?;
+            Ok((StatusCode::NO_CONTENT).into_response())
+        }
+        _ => Err(KeystoneApiError::NotFound {
+            resource: "group".into(),
+            identifier: group_id,
+        }),
+    }
 }
 
 #[cfg(test)]
@@ -190,6 +198,42 @@ mod tests {
                     ..Default::default()
                 }))
             });
+
+        let state = get_mocked_state(
+            Provider::mocked_builder().mock_identity(identity_mock),
+            false,
+            None,
+            None,
+        )
+        .await;
+
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        let response = api
+            .as_service()
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri("/foo")
+                    .header("x-auth-token", "foo")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn test_delete_not_found_not_allowed() {
+        let mut identity_mock = MockIdentityProvider::default();
+        identity_mock
+            .expect_get_group()
+            .withf(|_, id: &'_ str| id == "foo")
+            .returning(|_, _| Ok(None));
 
         let state = get_mocked_state(
             Provider::mocked_builder().mock_identity(identity_mock),

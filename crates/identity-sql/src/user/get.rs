@@ -34,6 +34,14 @@ use crate::password::MergePasswordData;
 use crate::user::MergeUserData;
 
 /// Get the `user` table entry by the `user_id`.
+///
+/// # Parameters
+/// - `db`: The database connection.
+/// - `user_id`: The user ID.
+///
+/// # Returns
+/// A `Result` containing an `Option` with the `db_user::Model` if found, or an
+/// `Error`.
 #[tracing::instrument(skip_all)]
 pub async fn get_main_entry<U: AsRef<str>>(
     db: &DatabaseConnection,
@@ -45,6 +53,16 @@ pub async fn get_main_entry<U: AsRef<str>>(
         .context("fetching user by ID")?)
 }
 
+/// Get a user by its ID.
+///
+/// # Parameters
+/// - `conf`: The system configuration.
+/// - `db`: The database connection.
+/// - `user_id`: The user ID.
+///
+/// # Returns
+/// A `Result` containing an `Option` with the `UserResponse` if found, or an
+/// `Error`.
 #[tracing::instrument(skip_all)]
 pub async fn get(
     conf: &Config,
@@ -109,6 +127,13 @@ pub async fn get(
 }
 
 /// Get the `domain_id` of the user specified by the `user_id`.
+///
+/// # Parameters
+/// - `db`: The database connection.
+/// - `user_id`: The user ID.
+///
+/// # Returns
+/// A `Result` containing the domain ID, or an `Error`.
 #[tracing::instrument(skip_all)]
 pub async fn get_user_domain_id<U: AsRef<str>>(
     db: &DatabaseConnection,

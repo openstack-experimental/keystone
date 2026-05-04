@@ -62,6 +62,15 @@ pub struct TokenService {
 }
 
 impl TokenService {
+    /// Creates a new `TokenService` instance.
+    ///
+    /// # Parameters
+    /// - `config`: The system configuration.
+    /// - `plugin_manager`: The plugin manager to resolve backends.
+    ///
+    /// # Returns
+    /// - `Result<Self, TokenProviderError>` - The new `TokenService` instance
+    ///   or an error.
     pub fn new<P: PluginManagerApi>(
         config: &Config,
         plugin_manager: &P,
@@ -79,6 +88,14 @@ impl TokenService {
         })
     }
 
+    /// Calculates the expiration time for a new token.
+    ///
+    /// # Parameters
+    /// - `auth_expiration`: Optional expiration time from authentication.
+    ///
+    /// # Returns
+    /// - `Result<DateTime<Utc>, TokenProviderError>` - The calculated
+    ///   expiration time or an error.
     fn get_new_token_expiry(
         &self,
         auth_expiration: &Option<DateTime<Utc>>,
@@ -92,6 +109,12 @@ impl TokenService {
     }
 
     /// Create unscoped token.
+    ///
+    /// # Parameters
+    /// - `authentication_info`: Information about the authenticated user.
+    ///
+    /// # Returns
+    /// - `Result<Token, TokenProviderError>` - The issued `Token` or an error.
     fn create_unscoped_token(
         &self,
         authentication_info: &AuthenticatedInfo,
@@ -108,6 +131,13 @@ impl TokenService {
     }
 
     /// Create project scoped token.
+    ///
+    /// # Parameters
+    /// - `authentication_info`: Information about the authenticated user.
+    /// - `project`: The project to scope the token to.
+    ///
+    /// # Returns
+    /// - `Result<Token, TokenProviderError>` - The issued `Token` or an error.
     fn create_project_scope_token(
         &self,
         authentication_info: &AuthenticatedInfo,
@@ -151,6 +181,13 @@ impl TokenService {
     }
 
     /// Create domain scoped token.
+    ///
+    /// # Parameters
+    /// - `authentication_info`: Information about the authenticated user.
+    /// - `domain`: The domain to scope the token to.
+    ///
+    /// # Returns
+    /// - `Result<Token, TokenProviderError>` - The issued `Token` or an error.
     fn create_domain_scope_token(
         &self,
         authentication_info: &AuthenticatedInfo,
@@ -170,6 +207,12 @@ impl TokenService {
     }
 
     /// Create unscoped token with the identity provider bind.
+    ///
+    /// # Parameters
+    /// - `authentication_info`: Information about the authenticated user.
+    ///
+    /// # Returns
+    /// - `Result<Token, TokenProviderError>` - The issued `Token` or an error.
     fn create_federated_unscoped_token(
         &self,
         authentication_info: &AuthenticatedInfo,
@@ -196,6 +239,13 @@ impl TokenService {
     }
 
     /// Create project scoped token with the identity provider bind.
+    ///
+    /// # Parameters
+    /// - `authentication_info`: Information about the authenticated user.
+    /// - `project`: The project to scope the token to.
+    ///
+    /// # Returns
+    /// - `Result<Token, TokenProviderError>` - The issued `Token` or an error.
     fn create_federated_project_scope_token(
         &self,
         authentication_info: &AuthenticatedInfo,
@@ -232,6 +282,13 @@ impl TokenService {
     }
 
     /// Create domain scoped token with the identity provider bind.
+    ///
+    /// # Parameters
+    /// - `authentication_info`: Information about the authenticated user.
+    /// - `domain`: The domain to scope the token to.
+    ///
+    /// # Returns
+    /// - `Result<Token, TokenProviderError>` - The issued `Token` or an error.
     fn create_federated_domain_scope_token(
         &self,
         authentication_info: &AuthenticatedInfo,
@@ -268,6 +325,14 @@ impl TokenService {
     }
 
     /// Create token with the specified restrictions.
+    ///
+    /// # Parameters
+    /// - `authentication_info`: Information about the authenticated user.
+    /// - `authz_info`: Authorization information.
+    /// - `restriction`: The restrictions to apply to the token.
+    ///
+    /// # Returns
+    /// - `Result<Token, TokenProviderError>` - The issued `Token` or an error.
     fn create_restricted_token(
         &self,
         authentication_info: &AuthenticatedInfo,
@@ -305,6 +370,12 @@ impl TokenService {
     }
 
     /// Create system scoped token.
+    ///
+    /// # Parameters
+    /// - `authentication_info`: Information about the authenticated user.
+    ///
+    /// # Returns
+    /// - `Result<Token, TokenProviderError>` - The issued `Token` or an error.
     fn create_system_scoped_token(
         &self,
         authentication_info: &AuthenticatedInfo,
@@ -322,6 +393,13 @@ impl TokenService {
     }
 
     /// Create token based on the trust.
+    ///
+    /// # Parameters
+    /// - `authentication_info`: Information about the authenticated user.
+    /// - `trust`: The trust relationship to use.
+    ///
+    /// # Returns
+    /// - `Result<Token, TokenProviderError>` - The issued `Token` or an error.
     fn create_trust_token(
         &self,
         authentication_info: &AuthenticatedInfo,
@@ -354,6 +432,13 @@ impl TokenService {
     }
 
     /// Expand user information in the token.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `token`: The token to expand.
+    ///
+    /// # Returns
+    /// - `Result<(), TokenProviderError>` - Ok on success, or an error.
     async fn expand_user_information(
         &self,
         state: &ServiceState,
@@ -412,6 +497,13 @@ impl TokenService {
     }
 
     /// Expand the target scope information in the token.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `token`: The token to expand.
+    ///
+    /// # Returns
+    /// - `Result<(), TokenProviderError>` - Ok on success, or an error.
     async fn expand_scope_information(
         &self,
         state: &ServiceState,
@@ -522,6 +614,13 @@ impl TokenService {
     }
 
     /// Populate role assignments in the token that support that information.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `token`: The token to populate.
+    ///
+    /// # Returns
+    /// - `Result<(), TokenProviderError>` - Ok on success, or an error.
     async fn _populate_role_assignments(
         &self,
         state: &ServiceState,
@@ -781,6 +880,16 @@ impl TokenService {
 #[async_trait]
 impl TokenApi for TokenService {
     /// Authenticate by token.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `credential`: The token credential string.
+    /// - `allow_expired`: Whether to allow expired tokens.
+    /// - `window_seconds`: Expiration buffer in seconds.
+    ///
+    /// # Returns
+    /// - `Result<AuthenticatedInfo, TokenProviderError>` - Authenticated
+    ///   information or an error.
     async fn authenticate_by_token<'a>(
         &self,
         state: &ServiceState,
@@ -811,6 +920,15 @@ impl TokenApi for TokenService {
     }
 
     /// Validate token.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `credential`: The token credential string.
+    /// - `allow_expired`: Whether to allow expired tokens.
+    /// - `window_seconds`: Expiration buffer in seconds.
+    ///
+    /// # Returns
+    /// - `Result<Token, TokenProviderError>` - The decoded token or an error.
     async fn validate_token<'a>(
         &self,
         state: &ServiceState,
@@ -850,6 +968,14 @@ impl TokenApi for TokenService {
     }
 
     /// Issue the Keystone token.
+    ///
+    /// # Parameters
+    /// - `authentication_info`: Information about the authenticated user.
+    /// - `authz_info`: Authorization scope.
+    /// - `token_restrictions`: Optional restrictions for the token.
+    ///
+    /// # Returns
+    /// - `Result<Token, TokenProviderError>` - The issued token or an error.
     fn issue_token(
         &self,
         authentication_info: AuthenticatedInfo,
@@ -906,12 +1032,23 @@ impl TokenApi for TokenService {
 
     /// Encode the token into a `String` representation.
     ///
-    /// Encode the [`Token`] into the `String` to be used as a http header.
+    /// # Parameters
+    /// - `token`: The token to encode.
+    ///
+    /// # Returns
+    /// - `Result<String, TokenProviderError>` - The encoded string or an error.
     fn encode_token(&self, token: &Token) -> Result<String, TokenProviderError> {
         self.backend_driver.encode(token)
     }
 
     /// Populate role assignments in the token that support that information.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `token`: The token to populate.
+    ///
+    /// # Returns
+    /// - `Result<(), TokenProviderError>` - Ok on success, or an error.
     async fn populate_role_assignments(
         &self,
         state: &ServiceState,
@@ -924,6 +1061,13 @@ impl TokenApi for TokenService {
     ///
     /// Query and expand information about the user, scope and the role
     /// assignments into the token.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `token`: The token to expand.
+    ///
+    /// # Returns
+    /// - `Result<Token, TokenProviderError>` - The expanded token or an error.
     async fn expand_token_information(
         &self,
         state: &ServiceState,
@@ -938,6 +1082,16 @@ impl TokenApi for TokenService {
     }
 
     /// Get the token restriction by the ID.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `id`: The restriction ID.
+    /// - `_expand_roles`: Whether to expand roles.
+    ///
+    /// # Returns
+    /// - `Result<Option<TokenRestriction>, TokenProviderError>` - A `Result`
+    ///   containing an `Option` with the token restriction if found, or an
+    ///   `Error`.
     async fn get_token_restriction<'a>(
         &self,
         state: &ServiceState,
@@ -953,6 +1107,14 @@ impl TokenApi for TokenService {
     }
 
     /// Create new token restriction.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `restriction`: The restriction data to create.
+    ///
+    /// # Returns
+    /// - `Result<TokenRestriction, TokenProviderError>` - The created token
+    ///   restriction or an error.
     async fn create_token_restriction<'a>(
         &self,
         state: &ServiceState,
@@ -968,6 +1130,14 @@ impl TokenApi for TokenService {
     }
 
     /// List token restrictions.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `params`: Parameters for listing restrictions.
+    ///
+    /// # Returns
+    /// - `Result<Vec<TokenRestriction>, TokenProviderError>` - A list of token
+    ///   restrictions or an error.
     async fn list_token_restrictions<'a>(
         &self,
         state: &ServiceState,
@@ -979,6 +1149,15 @@ impl TokenApi for TokenService {
     }
 
     /// Update existing token restriction.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `id`: The restriction ID.
+    /// - `restriction`: The update data.
+    ///
+    /// # Returns
+    /// - `Result<TokenRestriction, TokenProviderError>` - The updated token
+    ///   restriction or an error.
     async fn update_token_restriction<'a>(
         &self,
         state: &ServiceState,
@@ -991,6 +1170,13 @@ impl TokenApi for TokenService {
     }
 
     /// Delete token restriction by the ID.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `id`: The restriction ID.
+    ///
+    /// # Returns
+    /// - `Result<(), TokenProviderError>` - Ok on success, or an error.
     async fn delete_token_restriction<'a>(
         &self,
         state: &ServiceState,

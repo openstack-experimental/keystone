@@ -24,6 +24,10 @@ use crate::role::RoleProviderError;
 #[async_trait]
 pub trait RoleBackend: Send + Sync {
     /// Create Role.
+    ///
+    /// # Arguments
+    /// * `state` - The current service state.
+    /// * `params` - The parameters for creating a role.
     async fn create_role(
         &self,
         state: &ServiceState,
@@ -31,13 +35,23 @@ pub trait RoleBackend: Send + Sync {
     ) -> Result<Role, RoleProviderError>;
 
     /// Delete a role by the ID.
+    ///
+    /// # Arguments
+    /// * `state` - The current service state.
+    /// * `id` - The ID of the role to delete.
     async fn delete_role<'a>(
         &self,
         state: &ServiceState,
         id: &'a str,
     ) -> Result<(), RoleProviderError>;
 
-    /// Get single role by ID
+    /// Get single role by ID.
+    ///
+    /// * `state` - The current service state.
+    /// * `id` - The ID of the role to retrieve.
+    ///
+    /// A `Result` containing an `Option` with the `Role` if found, or an
+    /// `Error`.
     async fn get_role<'a>(
         &self,
         state: &ServiceState,
@@ -45,6 +59,10 @@ pub trait RoleBackend: Send + Sync {
     ) -> Result<Option<Role>, RoleProviderError>;
 
     /// Expand implied roles.
+    ///
+    /// # Arguments
+    /// * `state` - The current service state.
+    /// * `roles` - The list of roles to expand.
     async fn expand_implied_roles(
         &self,
         state: &ServiceState,
@@ -52,6 +70,10 @@ pub trait RoleBackend: Send + Sync {
     ) -> Result<(), RoleProviderError>;
 
     /// List role imply rules.
+    ///
+    /// # Arguments
+    /// * `state` - The current service state.
+    /// * `resolve` - Whether to resolve the imply rules.
     async fn list_imply_rules(
         &self,
         state: &ServiceState,
@@ -59,6 +81,10 @@ pub trait RoleBackend: Send + Sync {
     ) -> Result<BTreeMap<String, BTreeSet<String>>, RoleProviderError>;
 
     /// List Roles.
+    ///
+    /// # Arguments
+    /// * `state` - The current service state.
+    /// * `params` - The parameters for listing roles.
     async fn list_roles(
         &self,
         state: &ServiceState,

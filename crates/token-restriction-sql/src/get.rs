@@ -28,6 +28,14 @@ use crate::entity::prelude::{
 use crate::entity::token_restriction_role_association;
 
 /// Get existing token restriction by the ID.
+///
+/// # Parameters
+/// - `db`: The database connection.
+/// - `token_restriction_id`: The token restriction ID.
+///
+/// # Returns
+/// A `Result` containing an `Option` with the `TokenRestriction` if found, or a
+/// `TokenProviderError`.
 pub async fn get<S: AsRef<str>>(
     db: &DatabaseConnection,
     token_restriction_id: S,

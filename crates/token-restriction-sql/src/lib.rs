@@ -44,6 +44,14 @@ inventory::submit! {
 #[async_trait]
 impl TokenRestrictionBackend for SqlBackend {
     /// Get the token restriction by the ID.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `id`: The token restriction ID.
+    ///
+    /// # Returns
+    /// A `Result` containing an `Option` with the `TokenRestriction` if found,
+    /// or an `Error`.
     async fn get_token_restriction<'a>(
         &self,
         state: &ServiceState,
@@ -53,6 +61,13 @@ impl TokenRestrictionBackend for SqlBackend {
     }
 
     /// Create new token restriction.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `restriction`: The token restriction to create.
+    ///
+    /// # Returns
+    /// A `Result` containing the created `TokenRestriction`, or an `Error`.
     async fn create_token_restriction<'a>(
         &self,
         state: &ServiceState,
@@ -62,6 +77,13 @@ impl TokenRestrictionBackend for SqlBackend {
     }
 
     /// List token restrictions.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `params`: The list parameters.
+    ///
+    /// # Returns
+    /// A `Result` containing a list of `TokenRestriction`s, or an `Error`.
     async fn list_token_restrictions<'a>(
         &self,
         state: &ServiceState,
@@ -71,6 +93,14 @@ impl TokenRestrictionBackend for SqlBackend {
     }
 
     /// Update token restriction by the ID.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `id`: The token restriction ID.
+    /// - `restriction`: The updates to apply.
+    ///
+    /// # Returns
+    /// A `Result` containing the updated `TokenRestriction`, or an `Error`.
     async fn update_token_restriction<'a>(
         &self,
         state: &ServiceState,
@@ -81,6 +111,13 @@ impl TokenRestrictionBackend for SqlBackend {
     }
 
     /// Delete token restriction by the ID.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `id`: The token restriction ID.
+    ///
+    /// # Returns
+    /// A `Result` indicating success or an `Error`.
     async fn delete_token_restriction<'a>(
         &self,
         state: &ServiceState,
@@ -92,6 +129,14 @@ impl TokenRestrictionBackend for SqlBackend {
 
 #[async_trait]
 impl SqlDriver for SqlBackend {
+    /// Set up the database tables.
+    ///
+    /// # Parameters
+    /// - `connection`: The database connection.
+    /// - `schema`: The database schema.
+    ///
+    /// # Returns
+    /// A `Result` indicating success or a `DatabaseError`.
     async fn setup(
         &self,
         connection: &DatabaseConnection,
@@ -109,6 +154,13 @@ impl SqlDriver for SqlBackend {
 }
 
 impl From<token_restriction::Model> for TokenRestriction {
+    /// Converts a `token_restriction::Model` into a `TokenRestriction`.
+    ///
+    /// # Parameters
+    /// - `value`: The database model.
+    ///
+    /// # Returns
+    /// The converted `TokenRestriction`.
     fn from(value: token_restriction::Model) -> Self {
         TokenRestriction {
             id: value.id,
@@ -142,6 +194,13 @@ pub trait FromModelWithRoleAssociation {
 }
 
 impl FromModelWithRoleAssociation for TokenRestriction {
+    /// Converts a model with role associations into a `TokenRestriction`.
+    ///
+    /// # Parameters
+    /// - `value`: A tuple containing the model and its role associations.
+    ///
+    /// # Returns
+    /// The converted `TokenRestriction`.
     fn from_model_with_ra(
         value: (
             token_restriction::Model,

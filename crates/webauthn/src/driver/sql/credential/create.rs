@@ -20,6 +20,15 @@ use openstack_keystone_core::error::DbContextExt;
 use crate::driver::sql::model::webauthn_credential;
 use crate::{WebauthnError, types::WebauthnCredential};
 
+/// Create a new webauthn credential.
+///
+/// # Parameters
+/// - `db`: The database connection.
+/// - `credential`: The credential to create.
+///
+/// # Returns
+/// A `Result` containing the created `WebauthnCredential`, or a
+/// `WebauthnError`.
 pub async fn create(
     db: &DatabaseConnection,
     credential: &WebauthnCredential,

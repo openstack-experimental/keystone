@@ -1,3 +1,5 @@
+# METADATA
+# description: Policy for creating identity groups
 package identity.group.create
 
 import data.identity

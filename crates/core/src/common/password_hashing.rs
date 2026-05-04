@@ -48,6 +48,14 @@ pub enum PasswordHashError {
     },
 }
 
+/// Verify the password length and truncate if necessary.
+///
+/// # Parameters
+/// - `password`: The password bytes.
+/// - `max_length`: The maximum allowed length.
+///
+/// # Returns
+/// - `&[u8]` - The password bytes, truncated if they exceeded `max_length`.
 fn verify_length_and_trunc_password(password: &[u8], max_length: usize) -> &[u8] {
     if password.len() > max_length {
         warn!("Truncating password to the specified value");
@@ -57,6 +65,14 @@ fn verify_length_and_trunc_password(password: &[u8], max_length: usize) -> &[u8]
 }
 
 /// Calculate password hash with the configuration defaults.
+///
+/// # Parameters
+/// - `conf`: The service configuration.
+/// - `password`: The password to hash.
+///
+/// # Returns
+/// - `Ok(String)` - The hashed password.
+/// - `Err(PasswordHashError)` - If hashing failed.
 pub async fn hash_password<S: AsRef<[u8]>>(
     conf: &Config,
     password: S,
@@ -79,6 +95,15 @@ pub async fn hash_password<S: AsRef<[u8]>>(
 }
 
 /// Verify the password matches the hashed value.
+///
+/// # Parameters
+/// - `conf`: The service configuration.
+/// - `password`: The password to verify.
+/// - `hash`: The hash to compare against.
+///
+/// # Returns
+/// - `Ok(bool)` - True if the password matches the hash, false otherwise.
+/// - `Err(PasswordHashError)` - If verification failed.
 pub async fn verify_password<P: AsRef<[u8]>, H: AsRef<str>>(
     conf: &Config,
     password: P,

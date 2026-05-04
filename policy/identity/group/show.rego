@@ -1,3 +1,5 @@
+# METADATA
+# description: Policy for viewing identity group details
 package identity.group.show
 
 import data.identity

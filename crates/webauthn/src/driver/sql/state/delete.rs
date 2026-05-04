@@ -24,6 +24,14 @@ use crate::driver::sql::model::{
     prelude::WebauthnState as DbPasskeyState, webauthn_state as db_webauthn_state,
 };
 
+/// Delete user state.
+///
+/// # Parameters
+/// - `db`: The database connection.
+/// - `user_id`: The user ID.
+///
+/// # Returns
+/// A `Result` containing `()` on success, or a `WebauthnError`.
 pub async fn delete<U: AsRef<str>>(
     db: &DatabaseConnection,
     user_id: U,
@@ -37,6 +45,12 @@ pub async fn delete<U: AsRef<str>>(
 }
 
 /// Delete expired states.
+///
+/// # Parameters
+/// - `db`: The database connection.
+///
+/// # Returns
+/// A `Result` containing `()` on success, or a `WebauthnError`.
 pub async fn delete_expired(db: &DatabaseConnection) -> Result<(), WebauthnError> {
     if let Some(oldest_date) = Utc::now().checked_sub_signed(TimeDelta::minutes(5)) {
         DbPasskeyState::delete_many()

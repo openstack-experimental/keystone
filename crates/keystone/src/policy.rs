@@ -35,6 +35,14 @@ pub struct HttpPolicyEnforcer {
 impl HttpPolicyEnforcer {
     #[allow(clippy::needless_update)]
     #[tracing::instrument(name = "policy.http", err)]
+    /// Creates a new `HttpPolicyEnforcer`.
+    ///
+    /// # Parameters
+    /// * `url` - The base URL of the OPA server.
+    ///
+    /// # Returns
+    /// A `Result` containing the `HttpPolicyEnforcer` instance, or a
+    /// `PolicyError`.
     pub async fn new(url: Url) -> Result<Self, PolicyError> {
         let client = Client::builder()
             .tcp_keepalive(std::time::Duration::from_secs(60))
@@ -63,6 +71,16 @@ impl PolicyEnforcer for HttpPolicyEnforcer {
     //    err,
     //    level = Level::DEBUG
     //)]
+    /// Enforces a policy decision using OPA.
+    ///
+    /// # Parameters
+    /// * `policy_name` - The name of the policy to evaluate.
+    /// * `credentials` - The token containing the requester's credentials.
+    /// * `target` - The target resource for the policy evaluation.
+    /// * `update` - Optional update data for the policy evaluation.
+    ///
+    /// # Returns
+    /// A `Result` containing the `PolicyEvaluationResult`, or a `PolicyError`.
     async fn enforce(
         &self,
         policy_name: &'static str,
@@ -101,6 +119,10 @@ impl PolicyEnforcer for HttpPolicyEnforcer {
         Ok(res)
     }
 
+    /// Performs a health check on the OPA server.
+    ///
+    /// # Returns
+    /// A `Result` indicating success, or a `PolicyError`.
     async fn health_check(&self) -> Result<(), PolicyError> {
         self.http_client
             .get(self.health_url.as_str())

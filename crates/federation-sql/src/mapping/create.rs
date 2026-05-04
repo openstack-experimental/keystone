@@ -21,6 +21,14 @@ use openstack_keystone_core_types::federation::*;
 
 use crate::entity::federated_mapping as db_federated_mapping;
 
+/// Create a new federation mapping.
+///
+/// # Parameters
+/// - `db`: The database connection.
+/// - `mapping`: The mapping details to create.
+///
+/// # Returns
+/// A `Result` containing the created `Mapping`, or an `Error`.
 pub async fn create(
     db: &DatabaseConnection,
     mapping: Mapping,

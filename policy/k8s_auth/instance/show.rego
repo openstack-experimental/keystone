@@ -1,3 +1,5 @@
+# METADATA
+# description: Policy for viewing k8s auth instance details
 package identity.k8s_auth.instance.show
 
 import data.identity

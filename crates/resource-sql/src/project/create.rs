@@ -21,6 +21,14 @@ use openstack_keystone_core_types::resource::{Project, ProjectCreate};
 
 use crate::entity::project as db_project;
 
+/// Create a new project.
+///
+/// # Parameters
+/// - `db`: Database connection.
+/// - `project`: Project creation parameters.
+///
+/// # Returns
+/// The created `Project`.
 pub async fn create<C>(db: &C, project: ProjectCreate) -> Result<Project, ResourceProviderError>
 where
     C: ConnectionTrait,

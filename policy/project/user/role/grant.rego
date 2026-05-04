@@ -1,3 +1,5 @@
+# METADATA
+# description: Policy for granting roles to users in a project
 package identity.project.user.role.grant
 
 import data.identity

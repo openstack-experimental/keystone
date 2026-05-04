@@ -49,6 +49,13 @@ pub struct NetworkManager {
 }
 
 impl NetworkManager {
+    /// Create a new `NetworkManager`.
+    ///
+    /// # Parameters
+    /// - `tls_config_watcher`: Tls client config watcher.
+    ///
+    /// # Returns
+    /// A `Result` containing the `NetworkManager`, or a `StoreError`.
     pub fn new(tls_config_watcher: watch::Receiver<ClientTlsConfig>) -> Result<Self, StoreError> {
         Ok(Self { tls_config_watcher })
     }
@@ -76,7 +83,14 @@ pub struct NetworkConnection {
 }
 
 impl NetworkConnection {
-    /// Creates a new NetworkConnection with the provided gRPC client.
+    /// Creates a new `NetworkConnection` with the provided gRPC client.
+    ///
+    /// # Parameters
+    /// - `target_node`: Target node.
+    /// - `tls_config_watcher`: Watcher of the ClientTlsConfig.
+    ///
+    /// # Returns
+    /// A new `NetworkConnection` instance.
     pub fn new(target_node: Node, tls_config_watcher: watch::Receiver<ClientTlsConfig>) -> Self {
         NetworkConnection {
             target_node,
@@ -85,6 +99,9 @@ impl NetworkConnection {
     }
 
     /// Creates a gRPC client to the target node.
+    ///
+    /// # Returns
+    /// A `Result` containing the `RaftServiceClient`, or an `RPCError`.
     pub async fn make_client(&self) -> Result<RaftServiceClient<Channel>, RPCError> {
         let server_addr = &self.target_node.rpc_addr;
 
@@ -103,10 +120,16 @@ impl NetworkConnection {
         Ok(RaftServiceClient::new(channel))
     }
 
-    /// Convert pb::AppendEntriesResponse to StreamAppendResult.
+    /// Convert `pb::AppendEntriesResponse` to `StreamAppendResult`.
     ///
     /// For `StreamAppend`, conflict is encoded as `conflict = true` plus a
     /// required `last_log_id` carrying the conflict log id.
+    ///
+    /// # Parameters
+    /// - `resp`: The append entries response.
+    ///
+    /// # Returns
+    /// A `Result` containing the `StreamAppendResult`, or an `RPCError`.
     fn pb_to_stream_result(
         resp: pb::raft::AppendEntriesResponse,
     ) -> Result<StreamAppendResult<TypeConfig>, RPCError> {
@@ -127,6 +150,13 @@ impl NetworkConnection {
     }
 
     /// Sends snapshot data in chunks through the provided channel.
+    ///
+    /// # Parameters
+    /// - `tx`: The sender channel.
+    /// - `snapshot_data`: The snapshot data.
+    ///
+    /// # Returns
+    /// A `Result` indicating success, or a `NetworkError`.
     async fn send_snapshot_chunks(
         tx: &mut mpsc::Sender<pb::raft::SnapshotRequest>,
         snapshot_data: &[u8],
@@ -272,6 +302,12 @@ impl NetTransferLeader<TypeConfig> for NetworkConnection {
 }
 
 /// Parse the [TlsConfiguration] into the [ClientTlsConfig].
+///
+/// # Parameters
+/// - `tls_config`: The TLS configuration.
+///
+/// # Returns
+/// A `Result` containing the `ClientTlsConfig`, or a `StoreError`.
 pub fn load_tls_client_config(
     tls_config: &TlsConfiguration,
 ) -> Result<ClientTlsConfig, StoreError> {
@@ -289,6 +325,13 @@ pub fn load_tls_client_config(
 }
 
 /// Initialize the [ClientTlsConfig] configuration watcher.
+///
+/// # Parameters
+/// - `ks_config`: The distributed storage configuration.
+///
+/// # Returns
+/// A `Result` containing the `watch::Receiver<ClientTlsConfig>`, or a
+/// `StoreError`.
 pub fn init_tls_watcher(
     ks_config: &DistributedStorageConfiguration,
 ) -> Result<watch::Receiver<ClientTlsConfig>, StoreError> {

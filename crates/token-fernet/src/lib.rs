@@ -76,6 +76,13 @@ pub trait MsgPackToken {
     type Token;
 
     /// Construct MsgPack payload for the Token.
+    ///
+    /// # Parameters
+    /// - `_wd`: The writer to write the payload to.
+    /// - `_fernet_provider`: The Fernet token provider.
+    ///
+    /// # Returns
+    /// A `Result` indicating success or a `FernetDriverError`.
     fn assemble<W: Write>(
         &self,
         _wd: &mut W,
@@ -85,6 +92,14 @@ pub trait MsgPackToken {
     }
 
     /// Parse MsgPack payload into the Token.
+    ///
+    /// # Parameters
+    /// - `rd`: The reader to read the payload from.
+    /// - `fernet_provider`: The Fernet token provider.
+    ///
+    /// # Returns
+    /// A `Result` containing the `Token` if successful, or a
+    /// `FernetDriverError`.
     fn disassemble(
         rd: &mut &[u8],
         fernet_provider: &FernetTokenProvider,
@@ -98,6 +113,13 @@ impl fmt::Debug for FernetTokenProvider {
 }
 
 /// Read the payload version.
+///
+/// # Parameters
+/// - `rd`: The reader to read the payload version from.
+///
+/// # Returns
+/// A `Result` containing the payload version if successful, or a
+/// `FernetDriverError`.
 fn read_payload_token_type(rd: &mut &[u8]) -> Result<u8, FernetDriverError> {
     match read_marker(rd).map_err(ValueReadError::from)? {
         Marker::FixPos(dt) => Ok(dt),
@@ -107,6 +129,12 @@ fn read_payload_token_type(rd: &mut &[u8]) -> Result<u8, FernetDriverError> {
 }
 
 /// Calculate possible combinations of the vector string elements.
+///
+/// # Parameters
+/// - `iter`: An iterator over string elements.
+///
+/// # Returns
+/// An iterator over hash sets of string combinations.
 fn all_combinations<I>(iter: I) -> impl IntoIterator<Item = HashSet<String>>
 where
     I: IntoIterator<Item = String>,
@@ -130,6 +158,12 @@ where
 
 impl FernetTokenProvider {
     /// Construct new FernetTokenProvider.
+    ///
+    /// # Parameters
+    /// - `config`: The configuration for the provider.
+    ///
+    /// # Returns
+    /// A new `FernetTokenProvider` instance.
     pub fn new(config: Config) -> Self {
         let mut slf = Self {
             utils: FernetUtils {
@@ -145,6 +179,7 @@ impl FernetTokenProvider {
         slf
     }
 
+    /// Reload the provider configuration.
     pub fn reload_config(&mut self) {
         self.auth_map = BTreeMap::from_iter(
             self.config
@@ -157,6 +192,7 @@ impl FernetTokenProvider {
         self.set_auth_methods_cache_combinations();
     }
 
+    /// Set the cache for authentication method combinations.
     fn set_auth_methods_cache_combinations(&mut self) {
         self.auth_methods_code_cache.clear();
         for auth_pairs in all_combinations(self.auth_map.values().cloned()) {
@@ -167,7 +203,14 @@ impl FernetTokenProvider {
         }
     }
 
-    /// Encode the list of auth_methods into a single integer
+    /// Encode the list of auth_methods into a single integer.
+    ///
+    /// # Parameters
+    /// - `methods`: An iterator over the authentication methods.
+    ///
+    /// # Returns
+    /// A `Result` containing the encoded integer if successful, or a
+    /// `FernetDriverError`.
     #[tracing::instrument(level = "trace", skip(self, methods))]
     pub(crate) fn encode_auth_methods<I>(&self, methods: I) -> Result<u8, FernetDriverError>
     where
@@ -189,7 +232,14 @@ impl FernetTokenProvider {
         Ok(res)
     }
 
-    /// Decode the integer into the list of auth_methods
+    /// Decode the integer into the list of auth_methods.
+    ///
+    /// # Parameters
+    /// - `value`: The encoded authentication methods integer.
+    ///
+    /// # Returns
+    /// A `Result` containing a vector of authentication methods if successful,
+    /// or a `FernetDriverError`.
     #[tracing::instrument(level = "trace", skip(self))]
     pub(crate) fn decode_auth_methods(&self, value: u8) -> Result<Vec<String>, FernetDriverError> {
         if let Some(res) = self.auth_methods_code_cache.get(&value) {
@@ -219,6 +269,14 @@ impl FernetTokenProvider {
     }
 
     /// Parse binary blob as MessagePack after encrypting it with Fernet.
+    ///
+    /// # Parameters
+    /// - `rd`: The reader to read the payload from.
+    /// - `timestamp`: The creation timestamp of the payload.
+    ///
+    /// # Returns
+    /// A `Result` containing the decrypted `Token` if successful, or a
+    /// `FernetDriverError`.
     fn decode(&self, rd: &mut &[u8], timestamp: DateTime<Utc>) -> Result<Token, FernetDriverError> {
         if let Marker::FixArray(_) = read_marker(rd).map_err(ValueReadError::from)? {
             let mut token: Token = match read_payload_token_type(rd)? {
@@ -242,6 +300,13 @@ impl FernetTokenProvider {
     }
 
     /// Encode Token as binary blob as MessagePack.
+    ///
+    /// # Parameters
+    /// - `token`: The token to encode.
+    ///
+    /// # Returns
+    /// A `Result` containing the encoded bytes if successful, or a
+    /// `FernetDriverError`.
     fn encode(&self, token: &Token) -> Result<Bytes, FernetDriverError> {
         token.validate()?;
         let mut buf = vec![];
@@ -312,6 +377,10 @@ impl FernetTokenProvider {
     }
 
     /// Get MultiFernet initialized with repository keys.
+    ///
+    /// # Returns
+    /// A `Result` containing the initialized `MultiFernet` if successful, or a
+    /// `FernetDriverError`.
     #[tracing::instrument(level = "trace", skip(self))]
     pub fn get_fernet(&self) -> Result<MultiFernet, FernetDriverError> {
         Ok(MultiFernet::new(
@@ -320,6 +389,9 @@ impl FernetTokenProvider {
     }
 
     /// Load fernet keys from FS.
+    ///
+    /// # Returns
+    /// A `Result` indicating success or a `FernetDriverError`.
     #[tracing::instrument(level = "trace", skip(self))]
     pub fn load_keys(&mut self) -> Result<(), FernetDriverError> {
         self.fernet = Some(self.get_fernet()?);
@@ -330,6 +402,13 @@ impl FernetTokenProvider {
     ///
     /// 1. Decrypt as Fernet.
     /// 2. Unpack MessagePack payload.
+    ///
+    /// # Parameters
+    /// - `credential`: The encrypted token credential.
+    ///
+    /// # Returns
+    /// A `Result` containing the decrypted `Token` if successful, or a
+    /// `FernetDriverError`.
     pub fn decrypt(&self, credential: &str) -> Result<Token, FernetDriverError> {
         // TODO: Implement fernet keys change watching. Keystone loads them from FS on
         // every request and in the best case it costs 15µs.
@@ -343,6 +422,13 @@ impl FernetTokenProvider {
     }
 
     /// Encrypt the token.
+    ///
+    /// # Parameters
+    /// - `token`: The token to encrypt.
+    ///
+    /// # Returns
+    /// A `Result` containing the encrypted token string if successful, or a
+    /// `FernetDriverError`.
     pub fn encrypt(&self, token: &Token) -> Result<String, FernetDriverError> {
         let payload = self.encode(token)?;
         let res = match &self.fernet {
@@ -354,19 +440,36 @@ impl FernetTokenProvider {
 }
 
 impl TokenBackend for FernetTokenProvider {
-    /// Set config.
+    /// Set configuration.
+    ///
+    /// # Parameters
+    /// - `config`: The new configuration.
     fn set_config(&mut self, config: Config) {
         self.config = config;
         self.reload_config();
     }
 
     /// Decrypt the token.
+    ///
+    /// # Parameters
+    /// - `credential`: The encrypted token credential.
+    ///
+    /// # Returns
+    /// A `Result` containing the decrypted `Token` if successful, or a
+    /// `TokenProviderError`.
     #[tracing::instrument(level = "trace", skip(self, credential))]
     fn decode(&self, credential: &str) -> Result<Token, TokenProviderError> {
         Ok(self.decrypt(credential)?)
     }
 
     /// Encrypt the token.
+    ///
+    /// # Parameters
+    /// - `token`: The token to encrypt.
+    ///
+    /// # Returns
+    /// A `Result` containing the encrypted token string if successful, or a
+    /// `TokenProviderError`.
     #[tracing::instrument(level = "trace", skip(self, token))]
     fn encode(&self, token: &Token) -> Result<String, TokenProviderError> {
         Ok(self.encrypt(token)?)
@@ -374,6 +477,13 @@ impl TokenBackend for FernetTokenProvider {
 }
 
 /// Decode the fernet payload as Base64_urlsafe.
+///
+/// # Parameters
+/// - `input`: The Base64 encoded input string.
+///
+/// # Returns
+/// A `Result` containing the decoded bytes if successful, or a
+/// `base64::DecodeError`.
 fn b64_decode_url(input: &str) -> std::result::Result<Vec<u8>, base64::DecodeError> {
     base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(input.trim_end_matches('='))
 }
@@ -381,6 +491,13 @@ fn b64_decode_url(input: &str) -> std::result::Result<Vec<u8>, base64::DecodeErr
 /// Get the fernet payload creation timestamp.
 ///
 /// Extract the payload creation timestamp in the UTC.
+///
+/// # Parameters
+/// - `payload`: The fernet token payload.
+///
+/// # Returns
+/// A `Result` containing the `DateTime<Utc>` if successful, or a
+/// `FernetDriverError`.
 fn get_fernet_timestamp(payload: &str) -> Result<DateTime<Utc>, FernetDriverError> {
     let data = match b64_decode_url(payload) {
         Ok(data) => data,
@@ -411,7 +528,14 @@ fn get_fernet_timestamp(payload: &str) -> Result<DateTime<Utc>, FernetDriverErro
 
 #[cfg(feature = "bench_internals")]
 /// Conditionally expose the function when the 'bench_internals' feature is
-/// enabled
+/// enabled.
+///
+/// # Parameters
+/// - `payload`: The fernet token payload.
+///
+/// # Returns
+/// A `Result` containing the `DateTime<Utc>` if successful, or a
+/// `FernetDriverError`.
 pub fn bench_get_fernet_timestamp(payload: &str) -> Result<DateTime<Utc>, FernetDriverError> {
     get_fernet_timestamp(payload)
 }

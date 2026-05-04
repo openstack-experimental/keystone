@@ -21,6 +21,14 @@ use openstack_keystone_core_types::identity::Group;
 
 use crate::entity::prelude::Group as DbGroup;
 
+/// Fetches a group by its ID.
+///
+/// # Parameters
+/// - `db`: The database connection.
+/// - `group_id`: The ID of the group to fetch.
+///
+/// # Returns
+/// A `Result` containing an `Option` with the Group if found, or an `Error`.
 #[tracing::instrument(skip_all)]
 pub async fn get<S: AsRef<str>>(
     db: &DatabaseConnection,

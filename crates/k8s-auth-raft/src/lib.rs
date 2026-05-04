@@ -30,16 +30,32 @@ pub struct RaftBackend {}
 
 impl RaftBackend {
     /// Get the storage key for auth instance - direct entry.
+    ///
+    /// # Parameters
+    /// - `id`: The auth instance ID.
+    ///
+    /// # Returns
+    /// The storage key.
     fn get_auth_instance_id_key_name<I: AsRef<str>>(&self, id: I) -> String {
         format!("k8s_auth:instance:id:{}", id.as_ref())
     }
 
     /// Get the prefix key for listing all auth instances.
+    ///
+    /// # Returns
+    /// The prefix key.
     fn get_auth_instance_prefix(&self) -> String {
         format!("k8s_auth:instance:id:")
     }
 
     /// Get the storage key for auth instance - domain based index.
+    ///
+    /// # Parameters
+    /// - `id`: The auth instance ID.
+    /// - `domain_id`: The domain ID.
+    ///
+    /// # Returns
+    /// The storage key.
     fn get_auth_instance_domain_id_idx_key_name<I: AsRef<str>, D: AsRef<str>>(
         &self,
         id: I,
@@ -53,21 +69,43 @@ impl RaftBackend {
     }
 
     /// Get the prefix for listing auth instances by the domain_id.
+    ///
+    /// # Parameters
+    /// - `domain_id`: The domain ID.
+    ///
+    /// # Returns
+    /// The prefix key.
     fn get_auth_instance_by_domain_id_prefix<D: AsRef<str>>(&self, domain_id: D) -> String {
         format!("k8s_auth:instance:domain:{}:", domain_id.as_ref(),)
     }
 
     /// Get the storage key for auth role - direct entry.
+    ///
+    /// # Parameters
+    /// - `id`: The auth role ID.
+    ///
+    /// # Returns
+    /// The storage key.
     fn get_auth_role_id_key_name<I: AsRef<str>>(&self, id: I) -> String {
         format!("k8s_auth:role:id:{}", id.as_ref())
     }
 
     /// Get the prefix key for listing all auth roles.
+    ///
+    /// # Returns
+    /// The prefix key.
     fn get_auth_role_prefix(&self) -> String {
         format!("k8s_auth:role:id:")
     }
 
     /// Get the storage key for auth role - domain based index.
+    ///
+    /// # Parameters
+    /// - `id`: The auth role ID.
+    /// - `domain_id`: The domain ID.
+    ///
+    /// # Returns
+    /// The storage key.
     fn get_auth_role_domain_id_idx_key_name<I: AsRef<str>, D: AsRef<str>>(
         &self,
         id: I,
@@ -81,11 +119,24 @@ impl RaftBackend {
     }
 
     /// Get the prefix for listing auth roles by the domain_id.
+    ///
+    /// # Parameters
+    /// - `domain_id`: The domain ID.
+    ///
+    /// # Returns
+    /// The prefix key.
     fn get_auth_role_by_domain_id_prefix<D: AsRef<str>>(&self, domain_id: D) -> String {
         format!("k8s_auth:role:domain:{}:", domain_id.as_ref(),)
     }
 
     /// Get the storage key for auth role - domain based index.
+    ///
+    /// # Parameters
+    /// - `id`: The auth role ID.
+    /// - `instance_id`: The auth instance ID.
+    ///
+    /// # Returns
+    /// The storage key.
     fn get_auth_role_instance_id_idx_key_name<I: AsRef<str>, D: AsRef<str>>(
         &self,
         id: I,
@@ -99,6 +150,12 @@ impl RaftBackend {
     }
 
     /// Get the prefix for listing auth roles by the auth_instance_id.
+    ///
+    /// # Parameters
+    /// - `instance_id`: The auth instance ID.
+    ///
+    /// # Returns
+    /// The prefix key.
     fn get_auth_role_by_instance_id_prefix<D: AsRef<str>>(&self, instance_id: D) -> String {
         format!("k8s_auth:role:instance:{}:", instance_id.as_ref(),)
     }
@@ -107,6 +164,13 @@ impl RaftBackend {
 #[async_trait]
 impl K8sAuthBackend for RaftBackend {
     /// Register new K8s auth.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `instance`: The K8s auth instance to create.
+    ///
+    /// # Returns
+    /// The created K8s auth instance.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn create_auth_instance(
         &self,
@@ -138,6 +202,13 @@ impl K8sAuthBackend for RaftBackend {
     }
 
     /// Register new K8s auth role.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `role`: The K8s auth role to create.
+    ///
+    /// # Returns
+    /// The created K8s auth role.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn create_auth_role(
         &self,
@@ -172,6 +243,13 @@ impl K8sAuthBackend for RaftBackend {
     }
 
     /// Delete K8s auth.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `id`: The auth instance ID.
+    ///
+    /// # Returns
+    /// An empty result on success.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn delete_auth_instance<'a>(
         &self,
@@ -205,6 +283,13 @@ impl K8sAuthBackend for RaftBackend {
     }
 
     /// Delete K8s auth role.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `id`: The auth role ID.
+    ///
+    /// # Returns
+    /// An empty result on success.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn delete_auth_role<'a>(
         &self,
@@ -241,7 +326,15 @@ impl K8sAuthBackend for RaftBackend {
         Ok(())
     }
 
-    /// Register new K8s auth.
+    /// Get K8s auth instance.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `id`: The auth instance ID.
+    ///
+    /// # Returns
+    /// A `Result` containing an `Option` with the K8sAuthInstance if found, or
+    /// an `Error`.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn get_auth_instance<'a>(
         &self,
@@ -259,7 +352,15 @@ impl K8sAuthBackend for RaftBackend {
             .map(|x| x.data))
     }
 
-    /// Register new K8s auth role.
+    /// Get K8s auth role.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `id`: The auth role ID.
+    ///
+    /// # Returns
+    /// A `Result` containing an `Option` with the K8sAuthRole if found, or an
+    /// `Error`.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn get_auth_role<'a>(
         &self,
@@ -278,6 +379,13 @@ impl K8sAuthBackend for RaftBackend {
     }
 
     /// List K8s auth auth_instances.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `params`: The list parameters.
+    ///
+    /// # Returns
+    /// A list of K8s auth instances.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn list_auth_instances(
         &self,
@@ -349,6 +457,13 @@ impl K8sAuthBackend for RaftBackend {
     }
 
     /// List K8s auth roles.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `params`: The list parameters.
+    ///
+    /// # Returns
+    /// A list of K8s auth roles.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn list_auth_roles(
         &self,
@@ -440,6 +555,14 @@ impl K8sAuthBackend for RaftBackend {
     }
 
     /// Update K8s auth.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `id`: The auth instance ID.
+    /// - `data`: The update data.
+    ///
+    /// # Returns
+    /// The updated K8s auth instance.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn update_auth_instance<'a>(
         &self,
@@ -473,6 +596,14 @@ impl K8sAuthBackend for RaftBackend {
     }
 
     /// Update K8s auth role.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `id`: The auth role ID.
+    /// - `data`: The update data.
+    ///
+    /// # Returns
+    /// The updated K8s auth role.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn update_auth_role<'a>(
         &self,

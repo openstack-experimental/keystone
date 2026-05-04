@@ -66,6 +66,11 @@ pub enum RevokeProvider {
 }
 
 impl RevokeProvider {
+    /// Create a new RevokeProvider.
+    ///
+    /// # Arguments
+    /// * `config` - The configuration for the provider.
+    /// * `plugin_manager` - The plugin manager used to load the backend driver.
     pub fn new<P: PluginManagerApi>(
         config: &Config,
         plugin_manager: &P,
@@ -77,6 +82,10 @@ impl RevokeProvider {
 #[async_trait]
 impl RevokeApi for RevokeProvider {
     /// Create revocation event.
+    ///
+    /// # Arguments
+    /// * `state` - The current service state.
+    /// * `event` - The revocation event to create.
     async fn create_revocation_event(
         &self,
         state: &ServiceState,
@@ -93,6 +102,10 @@ impl RevokeApi for RevokeProvider {
     ///
     /// Checks revocation events matching the token parameters and return
     /// `false` if their count is more than `0`.
+    ///
+    /// # Arguments
+    /// * `state` - The current service state.
+    /// * `token` - The token to check.
     async fn is_token_revoked(
         &self,
         state: &ServiceState,
@@ -109,6 +122,10 @@ impl RevokeApi for RevokeProvider {
     ///
     /// Mark the token as revoked to prohibit from being used even while not
     /// expired.
+    ///
+    /// # Arguments
+    /// * `state` - The current service state.
+    /// * `token` - The token to revoke.
     async fn revoke_token(
         &self,
         state: &ServiceState,

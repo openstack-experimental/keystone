@@ -25,8 +25,20 @@ pub mod password_hashing;
 #[async_trait]
 pub trait HttpClientProvider: Send + Sync {
     /// Get established [Client] by the name.
+    ///
+    /// # Parameters
+    /// - `name`: The name of the client to retrieve.
+    ///
+    /// # Returns
+    /// - `Some(Arc<Client>)` if a client with the given name exists, otherwise
+    ///   `None`.
     async fn get_client(&self, name: &str) -> Option<Arc<Client>>;
+
     /// Pub established [Client] into the connection pool.
+    ///
+    /// # Parameters
+    /// - `name`: The name to associate with the client.
+    /// - `client`: The client to add to the pool.
     async fn put_client(&self, name: &str, client: Arc<Client>);
 }
 
@@ -42,11 +54,13 @@ pub struct HttpClientPool {
 
 #[async_trait]
 impl HttpClientProvider for HttpClientPool {
+    /// Get established [Client] by the name.
     async fn get_client(&self, name: &str) -> Option<Arc<Client>> {
         let read_guard = self.inner.read().await;
         read_guard.get(name).cloned()
     }
 
+    /// Pub established [Client] into the connection pool.
     async fn put_client(&self, name: &str, client: Arc<Client>) {
         let mut write_guard = self.inner.write().await;
         write_guard.insert(name.to_string(), client);

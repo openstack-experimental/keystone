@@ -24,6 +24,12 @@ use crate::trust::TrustProviderError;
 #[async_trait]
 pub trait TrustApi: Send + Sync {
     /// Get trust by ID.
+    ///
+    /// * `state` - The current service state.
+    /// * `id` - The ID of the trust to retrieve.
+    ///
+    /// A `Result` containing an `Option` with the `Trust` if found, or an
+    /// `Error`.
     async fn get_trust<'a>(
         &self,
         state: &ServiceState,
@@ -31,6 +37,12 @@ pub trait TrustApi: Send + Sync {
     ) -> Result<Option<Trust>, TrustProviderError>;
 
     /// Resolve trust chain by the trust ID.
+    ///
+    /// * `state` - The current service state.
+    /// * `id` - The ID of the trust to resolve the chain for.
+    ///
+    /// A `Result` containing an `Option` with the `Vec<Trust>` if found, or an
+    /// `Error`.
     async fn get_trust_delegation_chain<'a>(
         &self,
         state: &ServiceState,
@@ -38,6 +50,14 @@ pub trait TrustApi: Send + Sync {
     ) -> Result<Option<Vec<Trust>>, TrustProviderError>;
 
     /// List trusts.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `params`: The parameters for listing trusts.
+    ///
+    /// # Returns
+    /// - `Result<Vec<Trust>, TrustProviderError>` - A list of trusts or an
+    ///   error.
     async fn list_trusts(
         &self,
         state: &ServiceState,
@@ -45,6 +65,14 @@ pub trait TrustApi: Send + Sync {
     ) -> Result<Vec<Trust>, TrustProviderError>;
 
     /// Validate trust delegation chain.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `trust`: The trust to validate.
+    ///
+    /// # Returns
+    /// - `Result<bool, TrustProviderError>` - Ok(true) if the chain is valid,
+    ///   or an error.
     async fn validate_trust_delegation_chain(
         &self,
         state: &ServiceState,

@@ -54,6 +54,14 @@ pub trait DbContextExt<T> {
 }
 
 impl<T> DbContextExt<T> for Result<T, sea_orm::DbErr> {
+    /// Adds context information to a database error.
+    ///
+    /// # Parameters
+    /// * `context` - The context message to add.
+    ///
+    /// # Returns
+    /// A `Result` containing the original value if successful, or a
+    /// `DatabaseError` with added context.
     fn context(self, context: impl Into<String>) -> Result<T, DatabaseError> {
         self.map_err(|err| match err.sql_err() {
             Some(sea_orm::SqlErr::UniqueConstraintViolation(descr)) => DatabaseError::Conflict {

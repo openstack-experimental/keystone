@@ -15,6 +15,10 @@
 pub use openstack_keystone_core_types::revoke::RevokeProviderError;
 
 impl From<crate::error::DatabaseError> for RevokeProviderError {
+    /// Convert a DatabaseError to a RevokeProviderError.
+    ///
+    /// # Arguments
+    /// * `source` - The database error to convert.
     fn from(source: crate::error::DatabaseError) -> Self {
         match source {
             cfl @ crate::error::DatabaseError::Conflict { .. } => Self::Conflict(cfl.to_string()),

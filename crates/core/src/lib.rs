@@ -102,6 +102,14 @@ pub mod tests;
 
 #[async_trait]
 pub trait SqlDriver: Send + Sync {
+    /// Sets up the database for the given driver.
+    ///
+    /// # Parameters
+    /// - `connection`: The database connection to use.
+    /// - `schema`: The schema to apply.
+    ///
+    /// # Returns
+    /// - `Ok(())` if setup was successful, or a `DatabaseError` otherwise.
     async fn setup(
         &self,
         connection: &DatabaseConnection,

@@ -49,8 +49,11 @@ pub struct RaftServiceImpl {
 impl RaftServiceImpl {
     /// Creates a new instance of the internal service.
     ///
-    /// # Arguments
-    /// * `raft_node` - The Raft node instance this service will operate on
+    /// # Parameters
+    /// - `raft_node`: The Raft node instance this service will operate on.
+    ///
+    /// # Returns
+    /// A new `RaftServiceImpl` instance.
     pub fn new(raft_node: Raft) -> Self {
         Self { raft_node }
     }
@@ -60,12 +63,12 @@ impl RaftServiceImpl {
 impl RaftService for RaftServiceImpl {
     /// Handles vote requests during leader election.
     ///
-    /// # Arguments
-    /// * `request` - The vote request containing candidate information
+    /// # Parameters
+    /// - `request`: The vote request containing candidate information.
     ///
     /// # Returns
-    /// * `Ok(Response)` - Vote response indicating whether the vote was granted
-    /// * `Err(Status)` - Error status if the vote operation fails
+    /// A `Result` containing a `Response` with the vote response, or a `Status`
+    /// error.
     ///
     /// # Protocol Details
     /// This implements the RequestVote RPC from the Raft protocol.
@@ -89,14 +92,13 @@ impl RaftService for RaftServiceImpl {
 
     /// Handles append entries requests for log replication.
     ///
-    /// # Arguments
-    /// * `request` - The append entries request containing log entries to
-    ///   replicate
+    /// # Parameters
+    /// - `request`: The append entries request containing log entries to
+    ///   replicate.
     ///
     /// # Returns
-    /// * `Ok(Response)` - Response indicating success/failure of the append
-    ///   operation
-    /// * `Err(Status)` - Error status if the append operation fails
+    /// A `Result` containing a `Response` indicating success/failure of the
+    /// append operation, or a `Status` error.
     ///
     /// # Protocol Details
     /// This implements the AppendEntries RPC from the Raft protocol.
@@ -121,13 +123,12 @@ impl RaftService for RaftServiceImpl {
     /// Handles snapshot installation requests for state transfer using
     /// streaming.
     ///
-    /// # Arguments
-    /// * `request` - Stream of snapshot chunks with metadata
+    /// # Parameters
+    /// - `request`: Stream of snapshot chunks with metadata.
     ///
     /// # Returns
-    /// * `Ok(Response)` - Response indicating success/failure of snapshot
-    ///   installation
-    /// * `Err(Status)` - Error status if the snapshot operation fails
+    /// A `Result` containing a `Response` indicating success/failure of
+    /// snapshot installation, or a `Status` error.
     #[tracing::instrument(level = "trace", skip(self))]
     async fn snapshot(
         &self,
@@ -204,6 +205,13 @@ impl RaftService for RaftServiceImpl {
     ///
     /// This enables efficient pipelining of log replication where multiple
     /// AppendEntries requests can be in-flight simultaneously.
+    ///
+    /// # Parameters
+    /// - `request`: Streaming append entries requests.
+    ///
+    /// # Returns
+    /// A `Result` containing a `Response` with the output stream, or a `Status`
+    /// error.
     #[tracing::instrument(level = "trace", skip(self))]
     async fn stream_append(
         &self,

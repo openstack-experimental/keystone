@@ -1,3 +1,5 @@
+# METADATA
+# description: Policy for updating federation mappings
 package identity.mapping_update
 
 import data.identity

@@ -1,3 +1,5 @@
+# METADATA
+# description: Policy for updating k8s auth instances
 package identity.k8s_auth.instance.update
 
 import data.identity

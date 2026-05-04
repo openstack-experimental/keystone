@@ -194,8 +194,8 @@ async fn test_cluster_inner() -> Result<()> {
 
     println!("=== write `foo=bar`");
     {
-        // Need to try to write to different nodes ensuring the write operation distributes across
-        // the cluster
+        // Need to try to write to different nodes ensuring the write operation
+        // distributes across the cluster
         instance1
             .storage
             .set_value("foo", StoreDataEnvelope::from("bar"), None::<String>, None)

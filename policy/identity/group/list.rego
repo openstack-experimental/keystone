@@ -1,3 +1,5 @@
+# METADATA
+# description: Policy for listing identity groups
 package identity.group.list
 
 import data.identity

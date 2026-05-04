@@ -1,3 +1,5 @@
+# METADATA
+# description: Policy for updating k8s auth roles
 package identity.k8s_auth.role.update
 
 import data.identity

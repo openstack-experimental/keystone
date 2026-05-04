@@ -21,6 +21,16 @@ use openstack_keystone_core::error::DbContextExt;
 use crate::driver::sql::model::{prelude::WebauthnCredential as DbCred, webauthn_credential};
 use crate::{WebauthnCredential, WebauthnError};
 
+/// Find a webauthn credential.
+///
+/// # Parameters
+/// - `db`: The database connection.
+/// - `user_id`: The user ID.
+/// - `credential_id`: The credential ID.
+///
+/// # Returns
+/// A `Result` containing an `Option` with the `WebauthnCredential` if found, or
+/// an `Error`.
 pub async fn find<U: AsRef<str>, C: AsRef<str>>(
     db: &DatabaseConnection,
     user_id: U,

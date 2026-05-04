@@ -22,6 +22,17 @@ use openstack_keystone_core_types::identity::UserCreate;
 
 use crate::entity::{local_user, user};
 
+/// Create a local user record.
+///
+/// # Parameters
+/// - `conf`: The system configuration.
+/// - `db`: The database connection.
+/// - `main_record`: The main user record.
+/// - `user`: The user creation request.
+///
+/// # Returns
+/// A `Result` containing the created `local_user::Model` if successful, or an
+/// `Error`.
 #[tracing::instrument(skip_all)]
 pub async fn create<C>(
     conf: &Config,

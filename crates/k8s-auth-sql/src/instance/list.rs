@@ -25,6 +25,12 @@ use openstack_keystone_core_types::k8s_auth::{K8sAuthInstance, K8sAuthInstanceLi
 use crate::entity::{kubernetes_auth_instance, prelude::KubernetesAuthInstance};
 
 /// Prepare the query for listing k8s auth instances.
+///
+/// # Parameters
+/// - `params`: The parameters for listing K8s auth instances.
+///
+/// # Returns
+/// A `Result` containing a `Cursor` for the select model, or an `Error`.
 fn get_list_query(
     params: &K8sAuthInstanceListParameters,
 ) -> Result<Cursor<SelectModel<kubernetes_auth_instance::Model>>, K8sAuthProviderError> {
@@ -40,6 +46,13 @@ fn get_list_query(
 }
 
 /// List K8s auth instances.
+///
+/// # Parameters
+/// - `db`: The database connection.
+/// - `params`: The parameters for listing K8s auth instances.
+///
+/// # Returns
+/// A `Result` containing a vector of `K8sAuthInstance`s, or an `Error`.
 pub async fn list(
     db: &DatabaseConnection,
     params: &K8sAuthInstanceListParameters,

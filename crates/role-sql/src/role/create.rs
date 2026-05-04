@@ -22,6 +22,13 @@ use openstack_keystone_core_types::role::{Role, RoleCreate};
 use crate::entity::role as db_role;
 
 /// Create a new role.
+///
+/// # Parameters
+/// - `db`: The database connection.
+/// - `role`: The role creation parameters.
+///
+/// # Returns
+/// A `Result` containing the created `Role`, or an `Error`.
 pub async fn create(db: &DatabaseConnection, role: RoleCreate) -> Result<Role, RoleProviderError> {
     TryInto::<db_role::ActiveModel>::try_into(role)?
         .insert(db)

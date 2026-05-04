@@ -23,6 +23,15 @@ use crate::entity::{
 };
 
 /// Delete assignment grant.
+///
+/// # Parameters
+///
+/// * `db` - The database connection.
+/// * `grant` - The assignment to delete.
+///
+/// # Returns
+///
+/// A `Result` indicating success or an `Error`.
 pub async fn delete(
     db: &DatabaseConnection,
     grant: &Assignment,

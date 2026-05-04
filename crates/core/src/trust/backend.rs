@@ -26,6 +26,14 @@ use crate::trust::TrustProviderError;
 #[async_trait]
 pub trait TrustBackend: Send + Sync {
     /// Get trust by ID.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `id`: The ID of the trust to retrieve.
+    ///
+    /// # Returns
+    /// - `Result<Option<Trust>, TrustProviderError>` - A `Result` containing an
+    ///   `Option` with the trust if found, or an `Error`.
     async fn get_trust<'a>(
         &self,
         state: &ServiceState,
@@ -33,6 +41,15 @@ pub trait TrustBackend: Send + Sync {
     ) -> Result<Option<Trust>, TrustProviderError>;
 
     /// Resolve trust chain by the trust ID.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `id`: The ID of the trust to resolve the chain for.
+    ///
+    /// # Returns
+    /// - `Result<Option<Vec<Trust>>, TrustProviderError>` - A `Result`
+    ///   containing an `Option` with the trust delegation chain if found, or an
+    ///   `Error`.
     async fn get_trust_delegation_chain<'a>(
         &self,
         state: &ServiceState,
@@ -40,6 +57,14 @@ pub trait TrustBackend: Send + Sync {
     ) -> Result<Option<Vec<Trust>>, TrustProviderError>;
 
     /// List trusts.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `params`: Parameters for listing trusts.
+    ///
+    /// # Returns
+    /// - `Result<Vec<Trust>, TrustProviderError>` - A list of trusts or an
+    ///   error.
     async fn list_trusts(
         &self,
         state: &ServiceState,

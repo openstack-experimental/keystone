@@ -22,6 +22,15 @@ use openstack_keystone_core_types::resource::Project;
 
 use crate::entity::{prelude::Project as DbProject, project as db_project};
 
+/// Get a project by its ID.
+///
+/// # Parameters
+/// - `db`: Database connection.
+/// - `id`: ID of the project.
+///
+/// # Returns
+/// A `Result` containing an `Option` with the `Project` if found, or an
+/// `Error`.
 pub async fn get_project<I: AsRef<str>>(
     db: &DatabaseConnection,
     id: I,
@@ -36,6 +45,16 @@ pub async fn get_project<I: AsRef<str>>(
     project_entry.map(TryInto::try_into).transpose()
 }
 
+/// Get a project by its name and domain ID.
+///
+/// # Parameters
+/// - `db`: Database connection.
+/// - `name`: Name of the project.
+/// - `domain_id`: ID of the domain.
+///
+/// # Returns
+/// A `Result` containing an `Option` with the `Project` if found, or an
+/// `Error`.
 pub async fn get_project_by_name<N: AsRef<str>, D: AsRef<str>>(
     db: &DatabaseConnection,
     name: N,

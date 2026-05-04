@@ -38,6 +38,15 @@ use crate::password;
 use crate::user_option;
 
 impl db_user::ActiveModel {
+    /// Create an active model for the user.
+    ///
+    /// # Parameters
+    /// - `user`: The user creation request.
+    /// - `config`: The system configuration.
+    /// - `created_at`: The creation date.
+    ///
+    /// # Returns
+    /// A `Result` containing the active model, or an `Error`.
     fn from_user_create(
         user: &UserCreate,
         config: &Config,
@@ -69,6 +78,17 @@ impl db_user::ActiveModel {
     }
 }
 
+/// Create the main user record.
+///
+/// # Parameters
+/// - `conf`: The system configuration.
+/// - `db`: The database connection.
+/// - `user`: The user creation request.
+/// - `created_at`: The creation date.
+///
+/// # Returns
+/// A `Result` containing the created `db_user::Model` if successful, or an
+/// `Error`.
 #[tracing::instrument(skip_all)]
 pub async fn create_main<C>(
     conf: &Config,
@@ -89,6 +109,15 @@ where
     )
 }
 
+/// Create a new user.
+///
+/// # Parameters
+/// - `conf`: The system configuration.
+/// - `db`: The database connection.
+/// - `user`: The user creation request.
+///
+/// # Returns
+/// A `Result` containing the `UserResponse` if successful, or an `Error`.
 #[tracing::instrument(skip(conf, db))]
 pub async fn create(
     conf: &Config,

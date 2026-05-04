@@ -42,6 +42,14 @@ inventory::submit! {
 #[async_trait]
 impl ApplicationCredentialBackend for SqlBackend {
     /// Create a new application credential.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `rec`: The application credential to create.
+    ///
+    /// # Returns
+    /// A `Result` containing the `ApplicationCredentialCreateResponse` or an
+    /// `Error`.
     async fn create_application_credential(
         &self,
         state: &ServiceState,
@@ -51,6 +59,14 @@ impl ApplicationCredentialBackend for SqlBackend {
     }
 
     /// Get a single application credential by ID.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `id`: The ID of the application credential.
+    ///
+    /// # Returns
+    /// A `Result` containing an `Option` with the `ApplicationCredential` if
+    /// found, or an `Error`.
     async fn get_application_credential<'a>(
         &self,
         state: &ServiceState,
@@ -60,6 +76,13 @@ impl ApplicationCredentialBackend for SqlBackend {
     }
 
     /// List application credentials.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `params`: The parameters for listing application credentials.
+    ///
+    /// # Returns
+    /// A `Result` containing a `Vec` of `ApplicationCredential` or an `Error`.
     async fn list_application_credentials(
         &self,
         state: &ServiceState,
@@ -71,6 +94,14 @@ impl ApplicationCredentialBackend for SqlBackend {
 
 #[async_trait]
 impl SqlDriver for SqlBackend {
+    /// Setup the database tables.
+    ///
+    /// # Parameters
+    /// - `connection`: The database connection.
+    /// - `schema`: The database schema.
+    ///
+    /// # Returns
+    /// A `Result` containing `()` or a `DatabaseError`.
     async fn setup(
         &self,
         connection: &DatabaseConnection,

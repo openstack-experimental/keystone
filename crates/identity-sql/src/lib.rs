@@ -53,6 +53,14 @@ inventory::submit! {
 #[async_trait]
 impl IdentityBackend for SqlBackend {
     /// Add the user into the group.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `user_id`: The ID of the user.
+    /// - `group_id`: The ID of the group.
+    ///
+    /// # Returns
+    /// A `Result` containing `()` if successful, or an `Error`.
     #[tracing::instrument(skip(self, state))]
     async fn add_user_to_group<'a>(
         &self,
@@ -64,6 +72,15 @@ impl IdentityBackend for SqlBackend {
     }
 
     /// Add the user to the group with expiration.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `user_id`: The ID of the user.
+    /// - `group_id`: The ID of the group.
+    /// - `idp_id`: The ID of the identity provider.
+    ///
+    /// # Returns
+    /// A `Result` containing `()` if successful, or an `Error`.
     #[tracing::instrument(skip(self, state))]
     async fn add_user_to_group_expiring<'a>(
         &self,
@@ -79,6 +96,13 @@ impl IdentityBackend for SqlBackend {
     }
 
     /// Add user group membership relations.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `memberships`: A list of user and group ID pairs.
+    ///
+    /// # Returns
+    /// A `Result` containing `()` if successful, or an `Error`.
     #[tracing::instrument(skip(self, state))]
     async fn add_users_to_groups<'a>(
         &self,
@@ -89,6 +113,14 @@ impl IdentityBackend for SqlBackend {
     }
 
     /// Add expiring user group membership relations.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `memberships`: A list of user and group ID pairs.
+    /// - `idp_id`: The ID of the identity provider.
+    ///
+    /// # Returns
+    /// A `Result` containing `()` if successful, or an `Error`.
     #[tracing::instrument(skip(self, state))]
     async fn add_users_to_groups_expiring<'a>(
         &self,
@@ -100,6 +132,13 @@ impl IdentityBackend for SqlBackend {
     }
 
     /// Authenticate a user by a password.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `auth`: The authentication request.
+    ///
+    /// # Returns
+    /// A `Result` containing `AuthenticatedInfo` if successful, or an `Error`.
     async fn authenticate_by_password(
         &self,
         state: &ServiceState,
@@ -109,6 +148,13 @@ impl IdentityBackend for SqlBackend {
     }
 
     /// Create group.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `group`: The group creation parameters.
+    ///
+    /// # Returns
+    /// A `Result` containing the created `Group` if successful, or an `Error`.
     #[tracing::instrument(skip(self, state))]
     async fn create_group(
         &self,
@@ -119,6 +165,14 @@ impl IdentityBackend for SqlBackend {
     }
 
     /// Create service account.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `sa`: The service account creation parameters.
+    ///
+    /// # Returns
+    /// A `Result` containing the created `ServiceAccount` if successful, or an
+    /// `Error`.
     #[tracing::instrument(skip(self, state))]
     async fn create_service_account(
         &self,
@@ -129,6 +183,13 @@ impl IdentityBackend for SqlBackend {
     }
 
     /// Create user.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `user`: The user creation parameters.
+    ///
+    /// # Returns
+    /// A `Result` containing the `UserResponse` if successful, or an `Error`.
     #[tracing::instrument(skip(self, state))]
     async fn create_user(
         &self,
@@ -139,6 +200,13 @@ impl IdentityBackend for SqlBackend {
     }
 
     /// Delete group.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `group_id`: The ID of the group to delete.
+    ///
+    /// # Returns
+    /// A `Result` containing `()` if successful, or an `Error`.
     #[tracing::instrument(skip(self, state))]
     async fn delete_group<'a>(
         &self,
@@ -149,6 +217,13 @@ impl IdentityBackend for SqlBackend {
     }
 
     /// Delete user.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `user_id`: The ID of the user to delete.
+    ///
+    /// # Returns
+    /// A `Result` containing `()` if successful, or an `Error`.
     #[tracing::instrument(skip(self, state))]
     async fn delete_user<'a>(
         &self,
@@ -159,6 +234,14 @@ impl IdentityBackend for SqlBackend {
     }
 
     /// Get single group by ID.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `group_id`: The ID of the group to retrieve.
+    ///
+    /// # Returns
+    /// A `Result` containing an `Option` with the `Group` if found, or an
+    /// `Error`.
     #[tracing::instrument(skip(self, state))]
     async fn get_group<'a>(
         &self,
@@ -169,6 +252,14 @@ impl IdentityBackend for SqlBackend {
     }
 
     /// Get single service account by ID.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `user_id`: The ID of the user.
+    ///
+    /// # Returns
+    /// A `Result` containing an `Option` with the `ServiceAccount` if found, or
+    /// an `Error`.
     #[tracing::instrument(skip(self, state))]
     async fn get_service_account<'a>(
         &self,
@@ -179,6 +270,14 @@ impl IdentityBackend for SqlBackend {
     }
 
     /// Get single user by ID.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `user_id`: The ID of the user to retrieve.
+    ///
+    /// # Returns
+    /// A `Result` containing an `Option` with the `UserResponse` if found, or
+    /// an `Error`.
     #[tracing::instrument(skip(self, state))]
     async fn get_user<'a>(
         &self,
@@ -189,6 +288,13 @@ impl IdentityBackend for SqlBackend {
     }
 
     /// Get single user by ID.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `user_id`: The ID of the user.
+    ///
+    /// # Returns
+    /// A `Result` containing the domain ID of the user, or an `Error`.
     async fn get_user_domain_id<'a>(
         &self,
         state: &ServiceState,
@@ -198,6 +304,15 @@ impl IdentityBackend for SqlBackend {
     }
 
     /// Find federated user by IDP and Unique ID
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `idp_id`: The ID of the identity provider.
+    /// - `unique_id`: The unique ID of the federated user.
+    ///
+    /// # Returns
+    /// A `Result` containing an `Option` with the `UserResponse` if found, or
+    /// an `Error`.
     #[tracing::instrument(skip(self, state))]
     async fn find_federated_user<'a>(
         &self,
@@ -214,6 +329,13 @@ impl IdentityBackend for SqlBackend {
     }
 
     /// List groups
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `params`: The parameters for listing groups.
+    ///
+    /// # Returns
+    /// A `Result` containing a list of `Group`s, or an `Error`.
     #[tracing::instrument(skip(self, state))]
     async fn list_groups(
         &self,
@@ -224,6 +346,13 @@ impl IdentityBackend for SqlBackend {
     }
 
     /// List groups a user is member of.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `user_id`: The ID of the user.
+    ///
+    /// # Returns
+    /// A `Result` containing a list of `Group`s, or an `Error`.
     #[tracing::instrument(skip(self, state))]
     async fn list_groups_of_user<'a>(
         &self,
@@ -242,6 +371,13 @@ impl IdentityBackend for SqlBackend {
     }
 
     /// Fetch users from the database.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `params`: The parameters for listing users.
+    ///
+    /// # Returns
+    /// A `Result` containing a list of `UserResponse`s, or an `Error`.
     #[tracing::instrument(skip(self, state))]
     async fn list_users(
         &self,
@@ -252,6 +388,14 @@ impl IdentityBackend for SqlBackend {
     }
 
     /// Remove the user from the group.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `user_id`: The ID of the user.
+    /// - `group_id`: The ID of the group.
+    ///
+    /// # Returns
+    /// A `Result` containing `()` if successful, or an `Error`.
     #[tracing::instrument(skip(self, state))]
     async fn remove_user_from_group<'a>(
         &self,
@@ -263,6 +407,15 @@ impl IdentityBackend for SqlBackend {
     }
 
     /// Remove the user from the group with expiration.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `user_id`: The ID of the user.
+    /// - `group_id`: The ID of the group.
+    /// - `idp_id`: The ID of the identity provider.
+    ///
+    /// # Returns
+    /// A `Result` containing `()` if successful, or an `Error`.
     #[tracing::instrument(skip(self, state))]
     async fn remove_user_from_group_expiring<'a>(
         &self,
@@ -278,6 +431,14 @@ impl IdentityBackend for SqlBackend {
     }
 
     /// Remove the user from multiple groups.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `user_id`: The ID of the user.
+    /// - `group_ids`: A set of group IDs to remove.
+    ///
+    /// # Returns
+    /// A `Result` containing `()` if successful, or an `Error`.
     #[tracing::instrument(skip(self, state))]
     async fn remove_user_from_groups<'a>(
         &self,
@@ -289,6 +450,15 @@ impl IdentityBackend for SqlBackend {
     }
 
     /// Remove the user from multiple expiring groups.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `user_id`: The ID of the user.
+    /// - `group_ids`: A set of group IDs to remove.
+    /// - `idp_id`: The ID of the identity provider.
+    ///
+    /// # Returns
+    /// A `Result` containing `()` if successful, or an `Error`.
     #[tracing::instrument(skip(self, state))]
     async fn remove_user_from_groups_expiring<'a>(
         &self,
@@ -304,6 +474,14 @@ impl IdentityBackend for SqlBackend {
     }
 
     /// Set group memberships of the user.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `user_id`: The ID of the user.
+    /// - `group_ids`: A set of group IDs to set.
+    ///
+    /// # Returns
+    /// A `Result` containing `()` if successful, or an `Error`.
     #[tracing::instrument(skip(self, state))]
     async fn set_user_groups<'a>(
         &self,
@@ -315,6 +493,16 @@ impl IdentityBackend for SqlBackend {
     }
 
     /// Set expiring group memberships for the user.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `user_id`: The ID of the user.
+    /// - `group_ids`: A set of group IDs to set.
+    /// - `idp_id`: The ID of the identity provider.
+    /// - `last_verified`: The last verification datetime.
+    ///
+    /// # Returns
+    /// A `Result` containing `()` if successful, or an `Error`.
     #[tracing::instrument(skip(self, state))]
     async fn set_user_groups_expiring<'a>(
         &self,
@@ -337,6 +525,14 @@ impl IdentityBackend for SqlBackend {
 
 #[async_trait]
 impl SqlDriver for SqlBackend {
+    /// Set up the database tables and indices.
+    ///
+    /// # Parameters
+    /// - `connection`: The database connection.
+    /// - `schema`: The database schema.
+    ///
+    /// # Returns
+    /// A `Result` containing `()` if successful, or an `Error`.
     async fn setup(
         &self,
         connection: &DatabaseConnection,

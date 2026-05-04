@@ -58,6 +58,13 @@ pub enum ResourceProvider {
 }
 
 impl ResourceProvider {
+    /// Create a new `ResourceProvider`.
+    ///
+    /// * `config` - The service configuration.
+    /// * `plugin_manager` - The plugin manager used to resolve the backend
+    ///   driver.
+    ///
+    /// A `Result` containing the initialized `ResourceProvider`, or an `Error`.
     pub fn new<P: PluginManagerApi>(
         config: &Config,
         plugin_manager: &P,
@@ -69,6 +76,12 @@ impl ResourceProvider {
 #[async_trait]
 impl ResourceApi for ResourceProvider {
     /// Check whether the domain is enabled.
+    ///
+    /// * `state` - The current service state.
+    /// * `domain_id` - The ID of the domain.
+    ///
+    /// A `Result` containing a `bool` indicating whether the domain is enabled,
+    /// or an `Error`.
     async fn get_domain_enabled<'a>(
         &self,
         state: &ServiceState,
@@ -81,7 +94,12 @@ impl ResourceApi for ResourceProvider {
         }
     }
 
-    /// Create new domain.
+    /// Create a new domain.
+    ///
+    /// * `state` - The current service state.
+    /// * `domain` - The domain details to create.
+    ///
+    /// A `Result` containing the created `Domain`, or an `Error`.
     async fn create_domain(
         &self,
         state: &ServiceState,
@@ -94,7 +112,12 @@ impl ResourceApi for ResourceProvider {
         }
     }
 
-    /// Create new project.
+    /// Create a new project.
+    ///
+    /// * `state` - The current service state.
+    /// * `project` - The project details to create.
+    ///
+    /// A `Result` containing the created `Project`, or an `Error`.
     async fn create_project(
         &self,
         state: &ServiceState,
@@ -108,6 +131,11 @@ impl ResourceApi for ResourceProvider {
     }
 
     /// Delete a domain by the ID.
+    ///
+    /// * `state` - The current service state.
+    /// * `id` - The ID of the domain to delete.
+    ///
+    /// A `Result` containing `()` if successful, or an `Error`.
     async fn delete_domain<'a>(
         &self,
         state: &ServiceState,
@@ -121,6 +149,11 @@ impl ResourceApi for ResourceProvider {
     }
 
     /// Delete a project by the ID.
+    ///
+    /// * `state` - The current service state.
+    /// * `id` - The ID of the project to delete.
+    ///
+    /// A `Result` containing `()` if successful, or an `Error`.
     async fn delete_project<'a>(
         &self,
         state: &ServiceState,
@@ -133,7 +166,13 @@ impl ResourceApi for ResourceProvider {
         }
     }
 
-    /// Get single domain.
+    /// Get a single domain.
+    ///
+    /// * `state` - The current service state.
+    /// * `domain_id` - The ID of the domain.
+    ///
+    /// A `Result` containing an `Option` with the `Domain` if found, or an
+    /// `Error`.
     async fn get_domain<'a>(
         &self,
         state: &ServiceState,
@@ -146,7 +185,13 @@ impl ResourceApi for ResourceProvider {
         }
     }
 
-    /// Get single project.
+    /// Get a single project.
+    ///
+    /// * `state` - The current service state.
+    /// * `project_id` - The ID of the project.
+    ///
+    /// A `Result` containing an `Option` with the `Project` if found, or an
+    /// `Error`.
     async fn get_project<'a>(
         &self,
         state: &ServiceState,
@@ -159,7 +204,14 @@ impl ResourceApi for ResourceProvider {
         }
     }
 
-    /// Get single project by Name and Domain ID.
+    /// Get a single project by name and domain ID.
+    ///
+    /// * `state` - The current service state.
+    /// * `name` - The name of the project.
+    /// * `domain_id` - The ID of the domain.
+    ///
+    /// A `Result` containing an `Option` with the `Project` if found, or an
+    /// `Error`.
     async fn get_project_by_name<'a>(
         &self,
         state: &ServiceState,
@@ -174,6 +226,12 @@ impl ResourceApi for ResourceProvider {
     }
 
     /// Get project parents.
+    ///
+    /// * `state` - The current service state.
+    /// * `project_id` - The ID of the project.
+    ///
+    /// A `Result` containing an `Option` with the `Vec<Project>` if found, or
+    /// an `Error`.
     async fn get_project_parents<'a>(
         &self,
         state: &ServiceState,
@@ -186,7 +244,13 @@ impl ResourceApi for ResourceProvider {
         }
     }
 
-    /// Get single domain by its name.
+    /// Find a single domain by its name.
+    ///
+    /// * `state` - The current service state.
+    /// * `domain_name` - The name of the domain.
+    ///
+    /// A `Result` containing an `Option` with the `Domain` if found, or an
+    /// `Error`.
     async fn find_domain_by_name<'a>(
         &self,
         state: &ServiceState,
@@ -200,6 +264,11 @@ impl ResourceApi for ResourceProvider {
     }
 
     /// List domains.
+    ///
+    /// * `state` - The current service state.
+    /// * `params` - The list parameters.
+    ///
+    /// A `Result` containing a `Vec<Domain>`, or an `Error`.
     async fn list_domains(
         &self,
         state: &ServiceState,
@@ -213,6 +282,11 @@ impl ResourceApi for ResourceProvider {
     }
 
     /// List projects.
+    ///
+    /// * `state` - The current service state.
+    /// * `params` - The list parameters.
+    ///
+    /// A `Result` containing a `Vec<Project>`, or an `Error`.
     async fn list_projects(
         &self,
         state: &ServiceState,

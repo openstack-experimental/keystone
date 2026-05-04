@@ -15,6 +15,13 @@
 pub use openstack_keystone_core_types::assignment::AssignmentProviderError;
 
 impl From<crate::error::DatabaseError> for AssignmentProviderError {
+    /// Convert a database error into an assignment provider error.
+    ///
+    /// # Parameters
+    /// - `source`: The database error to convert.
+    ///
+    /// # Returns
+    /// - `Self` - The converted `AssignmentProviderError`.
     fn from(source: crate::error::DatabaseError) -> Self {
         match source {
             cfl @ crate::error::DatabaseError::Conflict { .. } => Self::Conflict(cfl.to_string()),

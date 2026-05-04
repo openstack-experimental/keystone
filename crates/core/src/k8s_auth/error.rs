@@ -39,6 +39,13 @@ pub use openstack_keystone_core_types::k8s_auth::K8sAuthProviderError;
 //}
 
 impl From<crate::error::DatabaseError> for K8sAuthProviderError {
+    /// Convert a database error into a K8s auth provider error.
+    ///
+    /// # Arguments
+    /// * `source` - The database error to convert.
+    ///
+    /// # Returns
+    /// * Success with the converted `K8sAuthProviderError`.
     fn from(source: crate::error::DatabaseError) -> Self {
         match source {
             cfl @ crate::error::DatabaseError::Conflict { .. } => Self::Conflict(cfl.to_string()),

@@ -167,9 +167,11 @@ impl From<K8sAuthRoleCreate> for K8sAuthRole {
 }
 
 impl K8sAuthRole {
-    /// Apply the [`K8sAuthRoleUpdate`] to the [`K8sAuthRole`] structure returning the new object.
+    /// Apply the [`K8sAuthRoleUpdate`] to the [`K8sAuthRole`] structure
+    /// returning the new object.
     ///
-    /// Construct a new version of the [`K8sAuthInstance`] for persisting in the storage.
+    /// Construct a new version of the [`K8sAuthInstance`] for persisting in the
+    /// storage.
     pub fn with_update(self, update: K8sAuthRoleUpdate) -> Self {
         Self {
             auth_instance_id: self.auth_instance_id,

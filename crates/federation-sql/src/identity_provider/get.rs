@@ -24,6 +24,15 @@ use crate::entity::{
     prelude::FederatedIdentityProvider as DbFederatedIdentityProvider,
 };
 
+/// Get an identity provider by its ID.
+///
+/// # Parameters
+/// - `db`: The database connection.
+/// - `id`: The ID of the identity provider.
+///
+/// # Returns
+/// A `Result` containing an `Option` with the `IdentityProvider` if found, or
+/// an `Error`.
 pub async fn get<I: AsRef<str>>(
     db: &DatabaseConnection,
     id: I,

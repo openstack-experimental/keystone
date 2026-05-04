@@ -23,6 +23,14 @@ use openstack_keystone_core_types::assignment::*;
 #[async_trait]
 pub trait AssignmentApi: Send + Sync {
     /// Create assignment grant.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `params`: The assignment creation parameters.
+    ///
+    /// # Returns
+    /// - `Result<Assignment, AssignmentProviderError>` - The created assignment
+    ///   or an error.
     async fn create_grant(
         &self,
         state: &ServiceState,
@@ -37,6 +45,14 @@ pub trait AssignmentApi: Send + Sync {
     /// When listing in effective mode, since the group assignments have been
     /// effectively expanded out into assignments for each user, the group role
     /// assignment entities themselves are not returned in the collection.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `params`: The parameters for listing assignments.
+    ///
+    /// # Returns
+    /// - `Result<Vec<Assignment>, AssignmentProviderError>` - A list of
+    ///   assignments or an error.
     async fn list_role_assignments(
         &self,
         state: &ServiceState,
@@ -44,6 +60,13 @@ pub trait AssignmentApi: Send + Sync {
     ) -> Result<Vec<Assignment>, AssignmentProviderError>;
 
     /// Revoke role assignment grant.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `params`: The assignment to revoke.
+    ///
+    /// # Returns
+    /// - `Result<(), AssignmentProviderError>` - Ok on success, or an error.
     async fn revoke_grant(
         &self,
         state: &ServiceState,
