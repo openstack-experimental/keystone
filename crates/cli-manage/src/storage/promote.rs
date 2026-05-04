@@ -38,8 +38,8 @@ pub(super) struct PromoteCommand {
 #[async_trait]
 impl PerformAction for PromoteCommand {
     async fn take_action(self, config: &Config) -> Result<(), Report> {
-        if let Some(cfg) = &config.distributed_storage {
-            let mut client = get_grpc_client(cfg, None).await?;
+        if config.distributed_storage.is_some() {
+            let mut client = get_grpc_client(config, None).await?;
 
             let membership = client
                 .metrics(())

@@ -167,7 +167,9 @@ async fn test_webauthn_roundtrip() -> Result<()> {
             .on_request(DefaultOnRequest::new().level(Level::INFO))
             .on_response(DefaultOnResponse::new().level(Level::INFO)),
     );
-    let app = init_extension(state.core.clone(), cancel_token)?.layer(middleware);
+    let app = init_extension(state.core.clone(), cancel_token)
+        .await?
+        .layer(middleware);
     handles.spawn(async move {
         axum::serve(listener, app.into_make_service())
             .await

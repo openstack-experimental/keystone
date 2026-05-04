@@ -27,7 +27,7 @@ use tonic::service::Routes;
 use tonic::transport::{Channel, ClientTlsConfig, Endpoint};
 use tracing::debug;
 
-use openstack_keystone_config::DistributedStorageConfiguration;
+use openstack_keystone_config::ConfigManager;
 
 use crate::StoreError;
 use crate::api::StorageApi;
@@ -55,13 +55,11 @@ pub const LEADER_ID_HEADER: &str = "x-openraft-leader-id";
 /// Initialize storage services backed by the raft.
 ///
 /// # Parameters
-/// - `ks_config`: Distributed storage configuration.
+/// - `config_manager`: Configuration manager.
 ///
 /// # Returns
 /// A `Result` containing the `Storage` instance, or a `StoreError`.
-pub async fn init_storage(
-    ks_config: &DistributedStorageConfiguration,
-) -> Result<Storage, StoreError> {
+pub async fn init_storage(config_manager: &Arc<ConfigManager>) -> Result<Storage, StoreError> {
     // Create a configuration for the raft instance.
     let raft_config = Arc::new(
         Config {
@@ -73,15 +71,24 @@ pub async fn init_storage(
         .validate()?,
     );
 
+    let ds_config = config_manager
+        .config
+        .read()
+        .await
+        .distributed_storage
+        .as_ref()
+        .ok_or(StoreError::ConfigMissing)?
+        .clone();
+
     // Create stores and network
-    let (log_store, sm) = crate::new::<crate::TypeConfig, _>(ks_config.path.clone()).await?;
+    let (log_store, sm) = crate::new::<crate::TypeConfig, _>(ds_config.path).await?;
     let state_machine_store = Arc::new(sm);
-    let tls_watcher = init_tls_watcher(ks_config)?;
+    let tls_watcher = init_tls_watcher(&config_manager).await?;
     let network = Arc::new(NetworkManager::new(tls_watcher.clone())?);
 
     // Create Raft instance
     let raft = Raft::new(
-        ks_config.node_id,
+        ds_config.node_id,
         raft_config.clone(),
         network.clone(),
         log_store,

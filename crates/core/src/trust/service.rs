@@ -196,10 +196,11 @@ impl TrustApi for TrustService {
         if trust.redelegated_trust_id.is_some()
             && let Some(chain) = self.get_trust_delegation_chain(state, &trust.id).await?
         {
-            if chain.len() > state.config.trust.max_redelegation_count {
+            let config = state.config_manager.config.read().await;
+            if chain.len() > config.trust.max_redelegation_count {
                 return Err(TrustProviderError::RedelegationDeepnessExceed {
                     length: chain.len(),
-                    max_depth: state.config.trust.max_redelegation_count,
+                    max_depth: config.trust.max_redelegation_count,
                 });
             }
             let mut parent_trust: Option<Trust> = None;
@@ -208,11 +209,11 @@ impl TrustApi for TrustService {
                 // None of the trusts can specify the redelegation_count > delegation_count of
                 // the top level trust
                 if let Some(current_redelegation_count) = delegation.redelegation_count
-                    && current_redelegation_count > state.config.trust.max_redelegation_count as u32
+                    && current_redelegation_count > config.trust.max_redelegation_count as u32
                 {
                     return Err(TrustProviderError::RedelegationDeepnessExceed {
                         length: current_redelegation_count as usize,
-                        max_depth: state.config.trust.max_redelegation_count,
+                        max_depth: config.trust.max_redelegation_count,
                     });
                 }
                 if delegation.remaining_uses.is_some() {

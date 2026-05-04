@@ -66,8 +66,6 @@ use crate::trust::TrustProvider;
 // confuses mockall used in tests
 #[builder(pattern = "owned")]
 pub struct Provider {
-    /// Configuration.
-    pub config: Config,
     /// Application credential provider.
     application_credential: ApplicationCredentialProvider,
     /// Assignment provider.
@@ -165,7 +163,7 @@ impl ProviderBuilder {
 impl Provider {
     /// Create a new Provider manager.
     pub fn new<P: PluginManagerApi>(
-        cfg: Config,
+        cfg: &Config,
         plugin_manager: &P,
     ) -> Result<Self, KeystoneError> {
         let application_credential_provider =
@@ -183,7 +181,6 @@ impl Provider {
         let trust_provider = TrustProvider::new(&cfg, plugin_manager)?;
 
         Ok(Self {
-            config: cfg,
             application_credential: application_credential_provider,
             assignment: assignment_provider,
             catalog: catalog_provider,
@@ -202,7 +199,6 @@ impl Provider {
     /// Create a mocked Provider builder.
     #[cfg(any(test, feature = "mock"))]
     pub fn mocked_builder() -> ProviderBuilder {
-        let config = Config::default();
         let application_credential_mock =
             crate::application_credential::MockApplicationCredentialProvider::default();
         let assignment_mock = crate::assignment::MockAssignmentProvider::default();
@@ -218,7 +214,6 @@ impl Provider {
         let trust_mock = crate::trust::MockTrustProvider::default();
 
         ProviderBuilder::default()
-            .config(config.clone())
             .mock_application_credential(application_credential_mock)
             .mock_assignment(assignment_mock)
             .mock_catalog(catalog_mock)

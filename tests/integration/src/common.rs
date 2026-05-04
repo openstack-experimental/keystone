@@ -15,10 +15,8 @@
 
 use std::fs::create_dir;
 use std::future::Future;
-use std::io::Write;
 use std::net::IpAddr;
 use std::ops::Deref;
-use std::path::Path;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time;
@@ -35,7 +33,10 @@ use tempfile::TempDir;
 use uuid::Uuid;
 
 use openstack_keystone::plugin_manager::PluginManager;
-use openstack_keystone_config::{Config, DistributedStorageConfiguration, TlsConfiguration};
+use openstack_keystone_config::{
+    Config, ConfigManager, DistributedStorageConfiguration, TlsConfiguration,
+    TlsConfigurationBuilder,
+};
 use openstack_keystone_core::policy::MockPolicy;
 use openstack_keystone_core::provider::Provider;
 use openstack_keystone_core::resource::ResourceApi;
@@ -148,7 +149,7 @@ pub async fn get_state() -> Result<(Arc<Service>, TempDir)> {
     if std::env::var("USE_RAFT").is_ok() {
         let tmp_db_dir = tmp_dir.path().join("certs");
         create_dir(&tmp_db_dir)?;
-        let tls_configuration = make_certificates(&tmp_db_dir)?;
+        let tls_configuration = make_certificates()?;
         cfg.distributed_storage = Some(DistributedStorageConfiguration {
             cluster_addr: "http://127.0.0.1:12345".parse()?,
             node_id: 1,
@@ -159,9 +160,17 @@ pub async fn get_state() -> Result<(Arc<Service>, TempDir)> {
     }
 
     let plugin_manager = PluginManager::with_config(&cfg);
-    let provider = Provider::new(cfg.clone(), &plugin_manager)?;
+    let provider = Provider::new(&cfg, &plugin_manager)?;
 
-    let state = Arc::new(Service::new(cfg, db, provider, Arc::new(MockPolicy::default())).await?);
+    let state = Arc::new(
+        Service::new(
+            ConfigManager::not_watched(cfg),
+            db,
+            provider,
+            Arc::new(MockPolicy::default()),
+        )
+        .await?,
+    );
 
     state
         .provider
@@ -256,7 +265,7 @@ where
     }
 }
 
-fn make_certificates<P: AsRef<Path>>(certs_path: P) -> Result<TlsConfiguration> {
+fn make_certificates() -> Result<TlsConfiguration> {
     // 1. Generate CA private key and certificate
     let mut ca_params = CertificateParams::default();
     ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
@@ -273,9 +282,6 @@ fn make_certificates<P: AsRef<Path>>(certs_path: P) -> Result<TlsConfiguration> 
     let ca_key = KeyPair::generate()?;
     let ca_cert = ca_params.self_signed(&ca_key)?;
     let ca = Issuer::new(ca_params, ca_key);
-    let ca_cert_file_name = certs_path.as_ref().join("ca.crt");
-    let mut ca_cert_file = std::fs::File::create(&ca_cert_file_name)?;
-    ca_cert_file.write_all(ca_cert.pem().as_bytes())?;
 
     // 2. Generate peer certificate (signed by CA)
     let mut peer_cert_params = CertificateParams::default();
@@ -290,16 +296,9 @@ fn make_certificates<P: AsRef<Path>>(certs_path: P) -> Result<TlsConfiguration> 
     let peer_key = KeyPair::generate()?;
     let peer_cert = peer_cert_params.signed_by(&peer_key, &ca)?;
 
-    let peer_cert_file_name = certs_path.as_ref().join("peer.crt");
-    let mut peer_cert_file = std::fs::File::create(&peer_cert_file_name)?;
-    peer_cert_file.write_all(peer_cert.pem().as_bytes())?;
-    let peer_key_file_name = certs_path.as_ref().join("peer.key");
-    let mut peer_key_file = std::fs::File::create(&peer_key_file_name)?;
-    peer_key_file.write_all(peer_key.serialize_pem().as_bytes())?;
-
-    Ok(TlsConfiguration {
-        tls_client_ca_file: Some(ca_cert_file_name.to_path_buf()),
-        tls_cert_file: peer_cert_file_name.to_path_buf(),
-        tls_key_file: peer_key_file_name.to_path_buf(),
-    })
+    Ok(TlsConfigurationBuilder::default()
+        .tls_client_ca_content(ca_cert.pem().as_bytes().to_vec())
+        .tls_cert_content(peer_cert.pem().as_bytes().to_vec())
+        .tls_key_content(peer_key.serialize_pem().as_bytes().to_vec())
+        .build()?)
 }

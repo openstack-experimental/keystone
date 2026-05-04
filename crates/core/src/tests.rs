@@ -12,10 +12,11 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //! # Test related functionality
-use sea_orm::DatabaseConnection;
 use std::sync::Arc;
 
-use openstack_keystone_config::Config;
+use sea_orm::DatabaseConnection;
+
+use openstack_keystone_config::{Config, ConfigManager};
 
 use crate::keystone::{Service, ServiceState};
 use crate::policy::MockPolicy;
@@ -27,7 +28,7 @@ pub async fn get_mocked_state(
 ) -> ServiceState {
     Arc::new(
         Service::new(
-            config.unwrap_or_default(),
+            ConfigManager::not_watched(config.unwrap_or_default()),
             DatabaseConnection::Disconnected,
             provider_builder
                 .unwrap_or(Provider::mocked_builder())

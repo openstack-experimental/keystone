@@ -61,15 +61,20 @@ pub fn openapi_router() -> OpenApiRouter<CombinedExtensionState> {
 /// # Returns
 /// A `Result` containing the `CombinedExtensionState` on success, or a
 /// `KeystoneError`.
-pub fn init_extension_state(
+pub async fn init_extension_state(
     main_state: ServiceState,
     cancellation_token: CancellationToken,
 ) -> Result<CombinedExtensionState, KeystoneError> {
     // Url containing the effective domain name
     // MUST include the port number!
-    let rp = main_state
+    let config = main_state
+        .config_manager
         .config
+        .read()
+        .await
         .webauthn
+        .clone();
+    let rp = config
         .relying_party
         .as_ref()
         .ok_or(WebauthnError::RelyingPartyConfigurationUnset)?;
@@ -86,7 +91,7 @@ pub fn init_extension_state(
     // Consume the builder and create our webauthn instance.
     let webauthn = builder.build().map_err(WebauthnError::from)?;
 
-    let driver: Box<dyn WebauthnApi> = match main_state.config.webauthn.driver.as_str() {
+    let driver: Box<dyn WebauthnApi> = match config.driver.as_str() {
         "sql" => Box::new(SqlDriver::default()),
         "raft" => Box::new(RaftDriver::default()),
         other => return Err(WebauthnError::UnsupportedDriver(other.to_string()))?,
@@ -112,11 +117,11 @@ pub fn init_extension_state(
 ///
 /// # Returns
 /// A `Result` containing the `Router` on success, or a `KeystoneError`.
-pub fn init_extension(
+pub async fn init_extension(
     main_state: ServiceState,
     cancellation_token: CancellationToken,
 ) -> Result<Router, KeystoneError> {
-    let combined_state = init_extension_state(main_state, cancellation_token)?;
+    let combined_state = init_extension_state(main_state, cancellation_token).await?;
     let (router, _openapi) = OpenApiRouter::new()
         .merge(openapi_router())
         .with_state(combined_state)

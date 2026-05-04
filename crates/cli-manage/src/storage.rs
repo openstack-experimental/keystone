@@ -15,10 +15,11 @@
 
 use async_trait::async_trait;
 use clap::{Parser, Subcommand};
-use color_eyre::{Report, eyre::WrapErr};
+use color_eyre::{Report, eyre::OptionExt};
+use secrecy::ExposeSecret;
 use tonic::transport::{Certificate, Channel, ClientTlsConfig, Identity, Uri};
 
-use openstack_keystone_config::{Config, DistributedStorageConfiguration};
+use openstack_keystone_config::Config;
 use openstack_keystone_distributed_storage::protobuf::raft::cluster_admin_service_client::ClusterAdminServiceClient;
 
 mod demote;
@@ -70,29 +71,69 @@ enum StorageCommands {
     RemovePeer(RemovePeerCommand),
 }
 
-pub async fn get_grpc_client_tls_config(
-    cfg: &DistributedStorageConfiguration,
-) -> Result<ClientTlsConfig, Report> {
+/// Prepare the [ClientTlsConfig].
+///
+/// # Parameters
+/// - `config`: The Keystone [`Config`] instance.
+///
+/// # Returns
+/// A `Result` containing the `ClientTlsConfig`.
+pub async fn get_grpc_client_tls_config(config: &Config) -> Result<ClientTlsConfig, Report> {
     let identity = Identity::from_pem(
-        std::fs::read_to_string(&cfg.tls_configuration.tls_cert_file)
-            .wrap_err("reading client cert file")?,
-        std::fs::read_to_string(&cfg.tls_configuration.tls_key_file)
-            .wrap_err("reading client cert key file")?,
+        config
+            .distributed_storage
+            .as_ref()
+            .and_then(|x| x.tls_configuration.tls_cert_content.as_ref())
+            .or(config
+                .listener
+                .tls_configuration
+                .as_ref()
+                .and_then(|x| x.tls_cert_content.as_ref()))
+            .ok_or_eyre("TLS cert file missing")?
+            .expose_secret(),
+        config
+            .distributed_storage
+            .as_ref()
+            .and_then(|x| x.tls_configuration.tls_key_content.as_ref())
+            .or(config
+                .listener
+                .tls_configuration
+                .as_ref()
+                .and_then(|x| x.tls_key_content.as_ref()))
+            .ok_or_eyre("TLS key file missing")?
+            .expose_secret(),
     );
-    let mut config = ClientTlsConfig::new().identity(identity);
-    if let Some(ca) = &cfg.tls_configuration.tls_client_ca_file {
-        // ca for validation of the "server"
-        config = config.ca_certificate(Certificate::from_pem(std::fs::read_to_string(&ca)?));
-    }
-    return Ok(config);
+    let mut tls_client_config = ClientTlsConfig::new().identity(identity);
+    if let Some(cert_ca) = config
+        .distributed_storage
+        .as_ref()
+        .and_then(|x| x.tls_configuration.tls_client_ca_content.as_ref())
+        .or(config
+            .listener
+            .tls_configuration
+            .as_ref()
+            .and_then(|x| x.tls_client_ca_content.as_ref()))
+    {
+        tls_client_config =
+            tls_client_config.ca_certificate(Certificate::from_pem(cert_ca.expose_secret()));
+    };
+    Ok(tls_client_config)
 }
 
 async fn get_grpc_client(
-    cfg: &DistributedStorageConfiguration,
+    cfg: &Config,
     addr: Option<Uri>,
 ) -> Result<ClusterAdminServiceClient<Channel>, Report> {
-    let ep = Channel::builder(addr.unwrap_or(cfg.cluster_addr.clone()))
-        .tls_config(get_grpc_client_tls_config(cfg).await?)?;
+    let ep = Channel::builder(
+        addr.unwrap_or(
+            cfg.distributed_storage
+                .as_ref()
+                .ok_or_eyre("distributed storage configuration missing")?
+                .cluster_addr
+                .clone(),
+        ),
+    )
+    .tls_config(get_grpc_client_tls_config(cfg).await?)?;
     let client = ClusterAdminServiceClient::new(ep.connect().await?);
     Ok(client)
 }

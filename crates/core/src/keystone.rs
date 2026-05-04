@@ -12,12 +12,13 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //! # Keystone state
+use std::sync::Arc;
+
 use openstack_keystone_distributed_storage::StorageApi;
 use sea_orm::DatabaseConnection;
-use std::sync::Arc;
 use tracing::info;
 
-use openstack_keystone_config::Config;
+use openstack_keystone_config::ConfigManager;
 use openstack_keystone_distributed_storage::app::{Storage, init_storage};
 
 use crate::error::KeystoneError;
@@ -29,7 +30,7 @@ use crate::provider::Provider;
 //#[derive(Clone)]
 pub struct Service {
     /// Config file.
-    pub config: Config,
+    pub config_manager: Arc<ConfigManager>,
 
     /// Database connection.
     pub db: DatabaseConnection,
@@ -53,7 +54,7 @@ impl Service {
     /// Creates a new Keystone service instance.
     ///
     /// # Parameters
-    /// - `cfg`: The configuration for the service.
+    /// - `cfg`: The configuration manager for the service.
     /// - `db`: The database connection.
     /// - `provider`: The provider for services/resources.
     /// - `policy_enforcer`: The policy enforcer instance.
@@ -62,15 +63,15 @@ impl Service {
     /// - `Ok(Self)` if the service was initialized successfully.
     /// - `Err(KeystoneError)` if there was an error during initialization.
     pub async fn new(
-        cfg: Config,
+        cfg: Arc<ConfigManager>,
         db: DatabaseConnection,
         provider: Provider,
         policy_enforcer: Arc<dyn PolicyEnforcer>,
     ) -> Result<Self, KeystoneError> {
-        let storage = if let Some(ds) = &cfg.distributed_storage {
+        let storage = if cfg.config.read().await.distributed_storage.is_some() {
             // Initialize the raft backed storage.
             Some(
-                init_storage(ds)
+                init_storage(&cfg)
                     .await
                     .map_err(|e| KeystoneError::Provider {
                         source: Box::new(e),
@@ -81,7 +82,7 @@ impl Service {
         };
 
         Ok(Self {
-            config: cfg.clone(),
+            config_manager: cfg,
             provider,
             db,
             policy_enforcer,

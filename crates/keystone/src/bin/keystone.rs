@@ -49,7 +49,7 @@ use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 use uuid::Uuid;
 
-use openstack_keystone::config::Config;
+use openstack_keystone::config::ConfigManager;
 use openstack_keystone::federation::FederationApi;
 use openstack_keystone::keystone::{Service, ServiceState};
 use openstack_keystone::plugin_manager::PluginManager;
@@ -162,7 +162,8 @@ async fn main() -> Result<(), Report> {
         return Ok(());
     }
 
-    let cfg = Config::new(args.config)?;
+    let cfg_mgr = ConfigManager::watched(args.config).await?;
+    let cfg = cfg_mgr.config.read().await.clone();
 
     let mut log_layers = Vec::new();
 
@@ -212,11 +213,10 @@ async fn main() -> Result<(), Report> {
         .wrap_err("Database connection failed")?;
 
     let plugin_manager = PluginManager::with_config(&cfg);
-    let provider = Provider::new(cfg.clone(), &plugin_manager)?;
-
+    let provider = Provider::new(&cfg, &plugin_manager)?;
     let policy = HttpPolicyEnforcer::new(cfg.api_policy.opa_base_url.clone()).await?;
 
-    let shared_state = Arc::new(Service::new(cfg.clone(), conn, provider, Arc::new(policy)).await?);
+    let shared_state = Arc::new(Service::new(cfg_mgr, conn, provider, Arc::new(policy)).await?);
 
     spawn(cleanup(cloned_token, shared_state.clone()));
 
@@ -265,10 +265,17 @@ async fn main() -> Result<(), Report> {
 
     let mut app = Router::new().merge(main_router.with_state(shared_state.clone()));
 
-    if shared_state.config.webauthn.enabled {
+    if shared_state
+        .config_manager
+        .config
+        .read()
+        .await
+        .webauthn
+        .enabled
+    {
         let webauthn_cloned_token = token.clone();
         let webauthn_extension =
-            webauthn::api::init_extension(shared_state.clone(), webauthn_cloned_token)?;
+            webauthn::api::init_extension(shared_state.clone(), webauthn_cloned_token).await?;
         app = app.nest("/v4", webauthn_extension);
     } else {
         info!("Not enabling the WebAuthN extension due to the `config.webauthn.enabled` flag.");
@@ -295,20 +302,47 @@ async fn main() -> Result<(), Report> {
 
         // CA is used to validate client and peer connections
         let identity = Identity::from_pem(
-            std::fs::read_to_string(&ds.tls_configuration.tls_cert_file)
-                .wrap_err("reading server cert file")?,
-            std::fs::read_to_string(&ds.tls_configuration.tls_key_file)
-                .wrap_err("reading server cert key file")?,
+            ds.tls_configuration
+                .tls_cert_content
+                .as_ref()
+                .or(cfg
+                    .listener
+                    .tls_configuration
+                    .as_ref()
+                    .and_then(|x| x.tls_cert_content.as_ref()))
+                .expect("TLS cert missing")
+                .expose_secret(),
+            ds.tls_configuration
+                .tls_key_content
+                .as_ref()
+                .or(cfg
+                    .listener
+                    .tls_configuration
+                    .as_ref()
+                    .and_then(|x| x.tls_key_content.as_ref()))
+                .expect("TLS key missing")
+                .expose_secret(),
         );
         let mut server_tls_config = ServerTlsConfig::new().identity(identity);
-        if let Some(ca) = &ds.tls_configuration.tls_client_ca_file {
-            server_tls_config = server_tls_config
-                .client_ca_root(Certificate::from_pem(std::fs::read_to_string(ca)?));
+        if let Some(ca) = &ds.tls_configuration.tls_client_ca_content.as_ref().or(cfg
+            .listener
+            .tls_configuration
+            .as_ref()
+            .and_then(|x| x.tls_client_ca_content.as_ref()))
+        {
+            server_tls_config =
+                server_tls_config.client_ca_root(Certificate::from_pem(ca.expose_secret()));
         }
         server = server.tls_config(server_tls_config)?;
         let tonic_router = server.add_routes(storage_app);
 
-        let grpc_addr = cfg.listener.get_cluster_address();
+        let grpc_addr = shared_state
+            .config_manager
+            .config
+            .read()
+            .await
+            .listener
+            .get_cluster_address();
         info!("Starting distributed storage at {:?}", grpc_addr);
         handles.spawn(async move {
             tonic_router
@@ -335,7 +369,16 @@ async fn main() -> Result<(), Report> {
         }
     }
 
-    let listener = TcpListener::bind(&cfg.listener.tcp_address).await?;
+    let listener = TcpListener::bind(
+        &shared_state
+            .config_manager
+            .config
+            .read()
+            .await
+            .listener
+            .tcp_address,
+    )
+    .await?;
     info!("Starting Rest API at {:?}", listener.local_addr());
     handles.spawn(async move {
         axum::serve(listener, app.into_make_service())

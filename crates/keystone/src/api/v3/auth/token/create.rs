@@ -122,7 +122,7 @@ mod tests {
     use tower_http::trace::TraceLayer;
     use tracing_test::traced_test;
 
-    use openstack_keystone_config::Config;
+    use openstack_keystone_config::{Config, ConfigManager};
     use openstack_keystone_core_types::identity::{UserPasswordAuthRequest, UserResponseBuilder};
     use openstack_keystone_core_types::resource::{Domain, Project};
     use openstack_keystone_core_types::token::{ProjectScopePayload, Token as ProviderToken};
@@ -257,7 +257,6 @@ mod tests {
             .returning(|_, _| Ok(Vec::new()));
 
         let provider = Provider::mocked_builder()
-            .config(config.clone())
             .mock_assignment(assignment_mock)
             .mock_catalog(catalog_mock)
             .mock_identity(identity_mock)
@@ -268,7 +267,7 @@ mod tests {
 
         let state = Arc::new(
             Service::new(
-                config,
+                ConfigManager::not_watched(config),
                 DatabaseConnection::Disconnected,
                 provider,
                 Arc::new(MockPolicy::default()),
@@ -367,7 +366,6 @@ mod tests {
             });
 
         let provider = Provider::mocked_builder()
-            .config(config.clone())
             .mock_identity(identity_mock)
             .mock_resource(resource_mock)
             .build()
@@ -375,7 +373,7 @@ mod tests {
 
         let state = Arc::new(
             Service::new(
-                config,
+                ConfigManager::not_watched(config),
                 DatabaseConnection::Disconnected,
                 provider,
                 Arc::new(MockPolicy::default()),

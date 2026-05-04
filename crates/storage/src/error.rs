@@ -20,6 +20,10 @@ use crate::types::*;
 /// Keystone Store error.
 #[derive(Error, Debug)]
 pub enum StoreError {
+    /// DistributedStorage configuration is unset.
+    #[error("missing storage configuration")]
+    ConfigMissing,
+
     /// Database error.
     #[error(transparent)]
     Fjall {
@@ -51,6 +55,7 @@ pub enum StoreError {
     #[error("key is already set")]
     KeyPresent,
 
+    /// Tls configuration is unset.
     #[error("missing mTLS configuration")]
     TlsConfigMissing,
 

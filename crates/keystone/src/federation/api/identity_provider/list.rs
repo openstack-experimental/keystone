@@ -100,8 +100,9 @@ pub(super) async fn list(
         .map(Into::into)
         .collect();
 
+    let config = state.config_manager.config.read().await;
     let links = build_pagination_links(
-        &state.config,
+        &config,
         identity_providers.as_slice(),
         &query,
         original_url.path(),

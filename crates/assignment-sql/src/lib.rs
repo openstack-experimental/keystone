@@ -272,7 +272,7 @@ mod tests {
     use std::collections::{BTreeMap, BTreeSet};
     use std::sync::Arc;
 
-    use openstack_keystone_config::Config;
+    use openstack_keystone_config::{Config, ConfigManager};
     use openstack_keystone_core::keystone::Service;
     use openstack_keystone_core::policy::MockPolicy;
     use openstack_keystone_core::provider::Provider;
@@ -285,7 +285,7 @@ mod tests {
     async fn get_mock_state(db: DatabaseConnection, provider: Provider) -> Arc<Service> {
         Arc::new(
             Service::new(
-                Config::default(),
+                ConfigManager::not_watched(Config::default()),
                 db,
                 provider,
                 Arc::new(MockPolicy::default()),
