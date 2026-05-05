@@ -108,7 +108,7 @@ tracing-subscriber = { version = "0.3" }
 tracing-test = { version = "0.2" }
 url = { version = "2.5" }
 url-macro = { version = "0.2" }
-utoipa = { version = "5.4" }
+utoipa = { version = "5.5" }
 utoipa-axum = { version = "0.2" }
 utoipa-swagger-ui = { version = "9.0", default-features = false }
 uuid = { version = "1.23" }
