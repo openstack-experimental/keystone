@@ -13,9 +13,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #![allow(dead_code)]
-use std::io::Write;
 use std::net::IpAddr;
-use std::path::Path;
 use std::sync::Arc;
 use std::time;
 
@@ -34,7 +32,8 @@ use uuid::Uuid;
 use webauthn_authenticator_rs::{AuthenticatorBackend, WebauthnAuthenticator};
 
 use openstack_keystone_config::{
-    Config, DistributedStorageConfiguration, RelyingParty, TlsConfiguration,
+    Config, ConfigManager, DistributedStorageConfiguration, RelyingParty, TlsConfiguration,
+    TlsConfigurationBuilder,
 };
 use openstack_keystone_core::SqlDriverRegistration;
 use openstack_keystone_core::keystone::Service;
@@ -144,7 +143,7 @@ pub async fn get_state(
     });
     cfg.auth.methods = vec!["application_credential".into(), "password".into()];
     if std::env::var("DATABASE_URL").is_err() {
-        let tls_configuration = make_certificates(&tmp_db_dir)?;
+        let tls_configuration = make_certificates()?;
         cfg.distributed_storage = Some(DistributedStorageConfiguration {
             cluster_addr: "http://127.0.0.1:12345".parse()?,
             node_id: 1,
@@ -167,7 +166,7 @@ pub async fn get_state(
     };
     let main_state = Arc::new(
         Service::new(
-            cfg,
+            ConfigManager::not_watched(cfg),
             db,
             provider_builder
                 .unwrap_or(Provider::mocked_builder())
@@ -193,7 +192,8 @@ pub async fn get_state(
     std::thread::sleep(time::Duration::from_millis(200));
 
     let cancellation_token = CancellationToken::new();
-    let extension_state = init_extension_state(main_state.clone(), cancellation_token.clone())?;
+    let extension_state =
+        init_extension_state(main_state.clone(), cancellation_token.clone()).await?;
     Ok((extension_state, tmp_db_dir))
 }
 
@@ -223,7 +223,7 @@ pub fn generate_webauthn_credential<T: AuthenticatorBackend>(
     Ok(cred)
 }
 
-fn make_certificates<P: AsRef<Path>>(certs_path: P) -> Result<TlsConfiguration> {
+fn make_certificates() -> Result<TlsConfiguration> {
     // 1. Generate CA private key and certificate
     let mut ca_params = CertificateParams::default();
     ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
@@ -240,9 +240,6 @@ fn make_certificates<P: AsRef<Path>>(certs_path: P) -> Result<TlsConfiguration> 
     let ca_key = KeyPair::generate()?;
     let ca_cert = ca_params.self_signed(&ca_key)?;
     let ca = Issuer::new(ca_params, ca_key);
-    let ca_cert_file_name = certs_path.as_ref().join("ca.crt");
-    let mut ca_cert_file = std::fs::File::create(&ca_cert_file_name)?;
-    ca_cert_file.write_all(ca_cert.pem().as_bytes())?;
 
     // 2. Generate peer certificate (signed by CA)
     let mut peer_cert_params = CertificateParams::default();
@@ -257,16 +254,9 @@ fn make_certificates<P: AsRef<Path>>(certs_path: P) -> Result<TlsConfiguration> 
     let peer_key = KeyPair::generate()?;
     let peer_cert = peer_cert_params.signed_by(&peer_key, &ca)?;
 
-    let peer_cert_file_name = certs_path.as_ref().join("peer.crt");
-    let mut peer_cert_file = std::fs::File::create(&peer_cert_file_name)?;
-    peer_cert_file.write_all(peer_cert.pem().as_bytes())?;
-    let peer_key_file_name = certs_path.as_ref().join("peer.key");
-    let mut peer_key_file = std::fs::File::create(&peer_key_file_name)?;
-    peer_key_file.write_all(peer_key.serialize_pem().as_bytes())?;
-
-    Ok(TlsConfiguration {
-        tls_client_ca_file: Some(ca_cert_file_name.to_path_buf()),
-        tls_cert_file: peer_cert_file_name.to_path_buf(),
-        tls_key_file: peer_key_file_name.to_path_buf(),
-    })
+    Ok(TlsConfigurationBuilder::default()
+        .tls_client_ca_content(ca_cert.pem().as_bytes().to_vec())
+        .tls_cert_content(peer_cert.pem().as_bytes().to_vec())
+        .tls_key_content(peer_key.serialize_pem().as_bytes().to_vec())
+        .build()?)
 }

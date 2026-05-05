@@ -144,7 +144,8 @@ impl IdentityBackend for SqlBackend {
         state: &ServiceState,
         auth: &UserPasswordAuthRequest,
     ) -> Result<AuthenticatedInfo, IdentityProviderError> {
-        Ok(authenticate::authenticate_by_password(&state.config, &state.db, auth).await?)
+        let config = state.config_manager.config.read().await;
+        Ok(authenticate::authenticate_by_password(&config, &state.db, auth).await?)
     }
 
     /// Create group.
@@ -179,7 +180,8 @@ impl IdentityBackend for SqlBackend {
         state: &ServiceState,
         sa: ServiceAccountCreate,
     ) -> Result<ServiceAccount, IdentityProviderError> {
-        Ok(service_account::create(&state.config, &state.db, sa, None).await?)
+        let config = state.config_manager.config.read().await;
+        Ok(service_account::create(&config, &state.db, sa, None).await?)
     }
 
     /// Create user.
@@ -196,7 +198,8 @@ impl IdentityBackend for SqlBackend {
         state: &ServiceState,
         user: UserCreate,
     ) -> Result<UserResponse, IdentityProviderError> {
-        Ok(user::create(&state.config, &state.db, user).await?)
+        let config = state.config_manager.config.read().await;
+        Ok(user::create(&config, &state.db, user).await?)
     }
 
     /// Delete group.
@@ -266,7 +269,8 @@ impl IdentityBackend for SqlBackend {
         state: &ServiceState,
         user_id: &'a str,
     ) -> Result<Option<ServiceAccount>, IdentityProviderError> {
-        Ok(service_account::get(&state.config, &state.db, user_id).await?)
+        let config = state.config_manager.config.read().await;
+        Ok(service_account::get(&config, &state.db, user_id).await?)
     }
 
     /// Get single user by ID.
@@ -284,7 +288,8 @@ impl IdentityBackend for SqlBackend {
         state: &ServiceState,
         user_id: &'a str,
     ) -> Result<Option<UserResponse>, IdentityProviderError> {
-        Ok(user::get(&state.config, &state.db, user_id).await?)
+        let config = state.config_manager.config.read().await;
+        Ok(user::get(&config, &state.db, user_id).await?)
     }
 
     /// Get single user by ID.
@@ -323,7 +328,8 @@ impl IdentityBackend for SqlBackend {
         if let Some(federated_user) =
             federated_user::find_by_idp_and_unique_id(&state.db, idp_id, unique_id).await?
         {
-            return user::get(&state.config, &state.db, &federated_user.user_id).await;
+            let config = state.config_manager.config.read().await;
+            return user::get(&config, &state.db, &federated_user.user_id).await;
         }
         Ok(None)
     }
@@ -359,15 +365,14 @@ impl IdentityBackend for SqlBackend {
         state: &ServiceState,
         user_id: &'a str,
     ) -> Result<Vec<Group>, IdentityProviderError> {
-        Ok(user_group::list_user_groups(
-            &state.db,
-            user_id,
-            &state
-                .config
-                .federation
-                .get_expiring_user_group_membership_cutof_datetime(),
-        )
-        .await?)
+        let cutoff_time = state
+            .config_manager
+            .config
+            .read()
+            .await
+            .federation
+            .get_expiring_user_group_membership_cutof_datetime();
+        Ok(user_group::list_user_groups(&state.db, user_id, &cutoff_time).await?)
     }
 
     /// Fetch users from the database.
@@ -384,7 +389,8 @@ impl IdentityBackend for SqlBackend {
         state: &ServiceState,
         params: &UserListParameters,
     ) -> Result<Vec<UserResponse>, IdentityProviderError> {
-        Ok(user::list(&state.config, &state.db, params).await?)
+        let config = state.config_manager.config.read().await;
+        Ok(user::list(&config, &state.db, params).await?)
     }
 
     /// Remove the user from the group.

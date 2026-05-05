@@ -11,26 +11,36 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-use serde::Deserialize;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+
+use serde::Deserialize;
+
+use crate::common::TlsConfiguration;
 
 /// Server listener section.
 #[derive(Debug, Deserialize, Clone)]
 pub struct Listener {
-    /// Default address to use for the Rest API. Defaults to `0.0.0.0:8080`.
-    #[serde(default = "default_tcp_address")]
-    pub tcp_address: SocketAddr,
     /// Default address to use for the server to server communication. This
     /// defaults to one port higher than the value of address.
     #[serde(default)]
     pub cluster_address: Option<SocketAddr>,
+
+    /// Default address to use for the Rest API. Defaults to `0.0.0.0:8080`.
+    #[serde(default = "default_tcp_address")]
+    pub tcp_address: SocketAddr,
+
+    /// TLS configuration for the server listener.
+    #[serde(default)]
+    #[serde(flatten)]
+    pub tls_configuration: Option<TlsConfiguration>,
 }
 
 impl Default for Listener {
     fn default() -> Self {
         Self {
-            tcp_address: default_tcp_address(),
             cluster_address: None,
+            tcp_address: default_tcp_address(),
+            tls_configuration: None,
         }
     }
 }

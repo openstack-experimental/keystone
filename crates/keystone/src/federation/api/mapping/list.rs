@@ -71,12 +71,8 @@ pub(super) async fn list(
         .map(Into::into)
         .collect();
 
-    let links = build_pagination_links(
-        &state.config,
-        mappings.as_slice(),
-        &query,
-        original_url.path(),
-    )?;
+    let config = state.config_manager.config.read().await;
+    let links = build_pagination_links(&config, mappings.as_slice(), &query, original_url.path())?;
     Ok((StatusCode::OK, Json(MappingList { mappings, links })).into_response())
 }
 

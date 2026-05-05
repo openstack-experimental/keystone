@@ -4,7 +4,7 @@ use std::hint::black_box;
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 
 use openstack_keystone_distributed_storage::{
-    Metadata, Nonce, StorageApi, bench_pack, bench_unpack, store_command::*,
+    Metadata, Nonce, bench_pack, bench_unpack, store_command::*,
 };
 
 fn bench_encryption(c: &mut Criterion) {

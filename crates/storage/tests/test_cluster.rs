@@ -13,14 +13,13 @@
 // SPDX-License-Identifier: Apache-2.0
 #![allow(clippy::uninlined_format_args)]
 use std::collections::BTreeMap;
-use std::io::Write;
 use std::net::{IpAddr, SocketAddr};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
-use eyre::{Result, WrapErr};
+use eyre::Result;
 use openraft::async_runtime::AsyncRuntime;
 use openraft::type_config::TypeConfigExt;
 use openraft::type_config::alias::AsyncRuntimeOf;
@@ -28,10 +27,14 @@ use rcgen::{
     BasicConstraints, CertificateParams, DistinguishedName, DnType, ExtendedKeyUsagePurpose, IsCa,
     Issuer, KeyPair, KeyUsagePurpose, SanType,
 };
+use secrecy::ExposeSecret;
 use tempfile::TempDir;
 use tonic::transport::{Channel, ClientTlsConfig, Identity, ServerTlsConfig, Uri};
 
-use openstack_keystone_config::{Config, DistributedStorageConfiguration, TlsConfiguration};
+use openstack_keystone_config::{
+    Config, ConfigManager, DistributedStorageConfiguration, TlsConfiguration,
+    TlsConfigurationBuilder,
+};
 use openstack_keystone_distributed_storage::app::{Storage, get_app_server, init_storage};
 use openstack_keystone_distributed_storage::network::load_tls_client_config;
 use openstack_keystone_distributed_storage::protobuf as pb;
@@ -61,10 +64,10 @@ impl InstanceHolder {
         let storage_dir = tempfile::TempDir::new().unwrap();
         let addr = get_addr(node_id);
         let ds_config = get_ds_config(node_id, storage_dir.path().to_path_buf(), tls_config);
-        let storage = init_storage(&ds_config).await?;
         let mut config = Config::default();
         config.listener.cluster_address = Some(addr);
         config.distributed_storage = Some(ds_config);
+        let storage = init_storage(&ConfigManager::not_watched(config.clone())).await?;
         Ok(Self {
             node_id,
             config,
@@ -78,9 +81,10 @@ async fn test_cluster_inner() -> Result<()> {
     let provider = rustls::crypto::aws_lc_rs::default_provider();
     rustls::crypto::CryptoProvider::install_default(provider).unwrap();
 
-    let certs_dir = TempDir::new()?;
-    let tls_configuration = make_certificates(&certs_dir)?;
-    let tls_client_config = load_tls_client_config(&tls_configuration)?;
+    let tls_configuration = make_certificates()?;
+    let mut config = Config::default();
+    config.listener.tls_configuration = Some(tls_configuration.clone());
+    let tls_client_config = load_tls_client_config(&config)?;
 
     // --- Start 3 raft node in 3 threads.
     let instance1 = Arc::new(InstanceHolder::new(1, tls_configuration.clone()).await?);
@@ -385,18 +389,27 @@ pub async fn start_raft_app(
     let node_id = ds_config.node_id;
 
     let mut server = tonic::transport::Server::builder();
-    let ca = tonic::transport::Certificate::from_pem(std::fs::read_to_string(
+    let ca = tonic::transport::Certificate::from_pem(
         &ds_config
             .tls_configuration
-            .tls_client_ca_file
+            .tls_client_ca_content
             .as_ref()
-            .expect("ca cert must be present"),
-    )?);
+            .expect("ca cert must be present")
+            .expose_secret(),
+    );
     let identity = Identity::from_pem(
-        std::fs::read_to_string(&ds_config.tls_configuration.tls_cert_file)
-            .wrap_err("reading server cert file")?,
-        std::fs::read_to_string(&ds_config.tls_configuration.tls_key_file)
-            .wrap_err("reading server cert key file")?,
+        &ds_config
+            .tls_configuration
+            .tls_cert_content
+            .as_ref()
+            .expect("cert file must be present")
+            .expose_secret(),
+        &ds_config
+            .tls_configuration
+            .tls_key_content
+            .as_ref()
+            .expect("key file must be present")
+            .expose_secret(),
     );
     let tls_config = ServerTlsConfig::new().client_ca_root(ca).identity(identity);
     server = server.tls_config(tls_config)?;
@@ -411,7 +424,7 @@ pub async fn start_raft_app(
     Ok(())
 }
 
-fn make_certificates<P: AsRef<Path>>(certs_path: P) -> Result<TlsConfiguration> {
+fn make_certificates() -> Result<TlsConfiguration> {
     // 1. Generate CA private key and certificate
     let mut ca_params = CertificateParams::default();
     ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
@@ -428,9 +441,6 @@ fn make_certificates<P: AsRef<Path>>(certs_path: P) -> Result<TlsConfiguration> 
     let ca_key = KeyPair::generate()?;
     let ca_cert = ca_params.self_signed(&ca_key)?;
     let ca = Issuer::new(ca_params, ca_key);
-    let ca_cert_file_name = certs_path.as_ref().join("ca.crt");
-    let mut ca_cert_file = std::fs::File::create(&ca_cert_file_name)?;
-    ca_cert_file.write_all(ca_cert.pem().as_bytes())?;
 
     // 2. Generate peer certificate (signed by CA)
     let mut peer_cert_params = CertificateParams::default();
@@ -445,18 +455,11 @@ fn make_certificates<P: AsRef<Path>>(certs_path: P) -> Result<TlsConfiguration> 
     let peer_key = KeyPair::generate()?;
     let peer_cert = peer_cert_params.signed_by(&peer_key, &ca)?;
 
-    let peer_cert_file_name = certs_path.as_ref().join("peer.crt");
-    let mut peer_cert_file = std::fs::File::create(&peer_cert_file_name)?;
-    peer_cert_file.write_all(peer_cert.pem().as_bytes())?;
-    let peer_key_file_name = certs_path.as_ref().join("peer.key");
-    let mut peer_key_file = std::fs::File::create(&peer_key_file_name)?;
-    peer_key_file.write_all(peer_key.serialize_pem().as_bytes())?;
-
-    Ok(TlsConfiguration {
-        tls_client_ca_file: Some(ca_cert_file_name.to_path_buf()),
-        tls_cert_file: peer_cert_file_name.to_path_buf(),
-        tls_key_file: peer_key_file_name.to_path_buf(),
-    })
+    Ok(TlsConfigurationBuilder::default()
+        .tls_client_ca_content(ca_cert.pem().as_bytes().to_vec())
+        .tls_cert_content(peer_cert.pem().as_bytes().to_vec())
+        .tls_key_content(peer_key.serialize_pem().as_bytes().to_vec())
+        .build()?)
 }
 
 fn get_ds_config(

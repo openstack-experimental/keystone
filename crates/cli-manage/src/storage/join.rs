@@ -40,7 +40,7 @@ impl PerformAction for JoinCommand {
     async fn take_action(self, config: &Config) -> Result<(), Report> {
         if let Some(cfg) = &config.distributed_storage {
             if let (Some(host), Some(port)) = (cfg.cluster_addr.host(), cfg.cluster_addr.port()) {
-                let mut client = get_grpc_client(cfg, Some(self.cluster_addr)).await?;
+                let mut client = get_grpc_client(config, Some(self.cluster_addr)).await?;
 
                 client
                     .add_learner(pb::raft::AddLearnerRequest {

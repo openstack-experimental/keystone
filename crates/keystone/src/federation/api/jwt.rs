@@ -112,7 +112,10 @@ pub async fn login(
     Path(idp_id): Path<String>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
     state
+        .config_manager
         .config
+        .read()
+        .await
         .auth
         .methods
         .iter()

@@ -72,7 +72,10 @@ async fn version(
     _req: Request,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
     let host = state
+        .config_manager
         .config
+        .read()
+        .await
         .default
         .public_endpoint
         .clone()

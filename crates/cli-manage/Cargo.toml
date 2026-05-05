@@ -22,6 +22,7 @@ comfy-table = "7.2"
 openstack-keystone = { version = "0.1", path = "../keystone" }
 openstack-keystone-config = { version = "0.1", path = "../config" }
 openstack-keystone-distributed-storage = { version = "0.1", path = "../storage/"}
+secrecy.workspace = true
 tokio = { workspace = true, features = ["fs", "macros"] }
 tonic = { workspace = true, features = ["tls-aws-lc" ] }
 

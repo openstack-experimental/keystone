@@ -84,7 +84,10 @@ pub async fn post(
 ) -> Result<impl IntoResponse, KeystoneApiError> {
     req.validate()?;
     state
+        .config_manager
         .config
+        .read()
+        .await
         .auth
         .methods
         .iter()

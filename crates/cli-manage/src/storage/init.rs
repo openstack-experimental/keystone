@@ -34,7 +34,7 @@ impl PerformAction for InitCommand {
     async fn take_action(self, config: &Config) -> Result<(), Report> {
         if let Some(cfg) = &config.distributed_storage {
             if let (Some(host), Some(port)) = (cfg.cluster_addr.host(), cfg.cluster_addr.port()) {
-                let mut client = get_grpc_client(cfg, None).await?;
+                let mut client = get_grpc_client(config, None).await?;
 
                 client
                     .init(pb::raft::InitRequest {

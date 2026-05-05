@@ -15,7 +15,6 @@ use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 
-use eyre::WrapErr;
 use futures::SinkExt;
 use futures::Stream;
 use futures::StreamExt;
@@ -27,11 +26,12 @@ use openraft::network::{
 };
 use openraft::raft::{StreamAppendError, StreamAppendResult, TransferLeaderRequest};
 use openraft::{AnyError, OptionalSend, RaftNetworkFactory};
-use openstack_keystone_config::DistributedStorageConfiguration;
-use openstack_keystone_config::TlsConfiguration;
+use secrecy::ExposeSecret;
 use tokio::sync::watch;
 use tonic::transport::{Certificate, Channel, ClientTlsConfig, Identity};
 use tracing::error;
+
+use openstack_keystone_config::{Config, ConfigManager};
 
 use crate::StoreError;
 use crate::protobuf as pb;
@@ -46,13 +46,14 @@ use crate::types::*;
 pub struct NetworkManager {
     /// Tls client config watcher.
     tls_config_watcher: watch::Receiver<ClientTlsConfig>,
+    //config_manager: Arc<ConfigManager>,
 }
 
 impl NetworkManager {
     /// Create a new `NetworkManager`.
     ///
     /// # Parameters
-    /// - `tls_config_watcher`: Tls client config watcher.
+    /// - `config_manager`: The Keystone [`ConfigManager`] instance.
     ///
     /// # Returns
     /// A `Result` containing the `NetworkManager`, or a `StoreError`.
@@ -303,23 +304,58 @@ impl NetTransferLeader<TypeConfig> for NetworkConnection {
 
 /// Parse the [TlsConfiguration] into the [ClientTlsConfig].
 ///
+/// Initialize the [`ClientTlsConfig`] from the distributed_storage or the
+/// listener configuration of the Keystone [`Config`].
+///
+/// For all of the [`tls_client_ca`, `tls_cert`, `tls_key`] the corresponding
+/// value is searched in the distributed_storage configuration followed by the
+/// listener lookup if not present independently. This way it is possible to
+/// have a dedicated TLS configuration for the Raft cluster while by default the
+/// listener configuration is used.
+///
 /// # Parameters
-/// - `tls_config`: The TLS configuration.
+/// - `config`: The Keystone [`Config`] instance.
 ///
 /// # Returns
 /// A `Result` containing the `ClientTlsConfig`, or a `StoreError`.
-pub fn load_tls_client_config(
-    tls_config: &TlsConfiguration,
-) -> Result<ClientTlsConfig, StoreError> {
+pub fn load_tls_client_config(config: &Config) -> Result<ClientTlsConfig, StoreError> {
     let identity = Identity::from_pem(
-        std::fs::read_to_string(&tls_config.tls_cert_file).wrap_err("reading server cert file")?,
-        std::fs::read_to_string(&tls_config.tls_key_file)
-            .wrap_err("reading server cert key file")?,
+        config
+            .distributed_storage
+            .as_ref()
+            .and_then(|x| x.tls_configuration.tls_cert_content.as_ref())
+            .or(config
+                .listener
+                .tls_configuration
+                .as_ref()
+                .and_then(|x| x.tls_cert_content.as_ref()))
+            .ok_or(StoreError::TlsConfigMissing)?
+            .expose_secret(),
+        config
+            .distributed_storage
+            .as_ref()
+            .and_then(|x| x.tls_configuration.tls_key_content.as_ref())
+            .or(config
+                .listener
+                .tls_configuration
+                .as_ref()
+                .and_then(|x| x.tls_key_content.as_ref()))
+            .ok_or(StoreError::TlsConfigMissing)?
+            .expose_secret(),
     );
     let mut tls_client_config = ClientTlsConfig::new().identity(identity);
-    if let Some(cert_ca) = &tls_config.tls_client_ca_file {
-        tls_client_config = tls_client_config
-            .ca_certificate(Certificate::from_pem(std::fs::read_to_string(cert_ca)?));
+    if let Some(cert_ca) = config
+        .distributed_storage
+        .as_ref()
+        .and_then(|x| x.tls_configuration.tls_client_ca_content.as_ref())
+        .or(config
+            .listener
+            .tls_configuration
+            .as_ref()
+            .and_then(|x| x.tls_client_ca_content.as_ref()))
+    {
+        tls_client_config =
+            tls_client_config.ca_certificate(Certificate::from_pem(cert_ca.expose_secret()));
     };
     Ok(tls_client_config)
 }
@@ -327,30 +363,28 @@ pub fn load_tls_client_config(
 /// Initialize the [ClientTlsConfig] configuration watcher.
 ///
 /// # Parameters
-/// - `ks_config`: The distributed storage configuration.
+/// - `config_manager`: The Keystone [`ConfigManager`].
 ///
 /// # Returns
 /// A `Result` containing the `watch::Receiver<ClientTlsConfig>`, or a
 /// `StoreError`.
-pub fn init_tls_watcher(
-    ks_config: &DistributedStorageConfiguration,
+pub async fn init_tls_watcher(
+    config_manager: &Arc<ConfigManager>,
 ) -> Result<watch::Receiver<ClientTlsConfig>, StoreError> {
     // 1. Initial Load: Try to load the certs once to start with a valid state
-    let initial_config = load_tls_client_config(&ks_config.tls_configuration)?;
+    let cfg = config_manager.config.read().await;
+    let initial_config = load_tls_client_config(&cfg)?;
 
     // 2. Create the channel
     let (tx, rx) = watch::channel(initial_config);
 
     // 3. Spawn the File Watcher Task
-    let config_clone = ks_config.clone();
+    let cm_clone = config_manager.clone();
+    let mut reload_rx = config_manager.notify_tx.subscribe();
     tokio::spawn(async move {
-        let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
-
-        loop {
-            interval.tick().await;
-
-            // Reload from disk
-            match load_tls_client_config(&config_clone.tls_configuration) {
+        while let Ok(_) = reload_rx.recv().await {
+            let cfg = cm_clone.config.read().await;
+            match load_tls_client_config(&cfg) {
                 Ok(new_config) => {
                     // If the cert changed, broadcast to all receivers
                     let _ = tx.send(new_config);

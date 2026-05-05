@@ -11,10 +11,12 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-use serde::Deserialize;
 use std::path::PathBuf;
 
 use http::Uri;
+use serde::Deserialize;
+
+use crate::common::TlsConfiguration;
 
 /// Raft cluster configuration.
 #[derive(Debug, Deserialize, Clone)]
@@ -41,23 +43,6 @@ pub struct ClusterNode {
     pub addr: String,
     /// Node ID.
     pub id: u64,
-}
-
-/// mTLS configuration for the Raft cluster.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
-pub struct TlsConfiguration {
-    /// Path to the CA certificate to validate connections from clients or
-    /// peers.
-    #[serde(default)]
-    pub tls_client_ca_file: Option<PathBuf>,
-
-    /// Path to the mTLS client certificate file.
-    #[serde(default)]
-    pub tls_cert_file: PathBuf,
-
-    /// Path to the mTLS certificate key file.
-    #[serde(default)]
-    pub tls_key_file: PathBuf,
 }
 
 #[cfg(test)]
@@ -103,12 +88,16 @@ tls_client_ca_file = /baz
         assert_eq!(1, cfg.node_id);
         assert_eq!("/keystone/storage", cfg.path.to_str().unwrap());
         assert_eq!(
-            TlsConfiguration {
-                tls_key_file: "/foo".into(),
-                tls_cert_file: "/bar".into(),
-                tls_client_ca_file: Some("/baz".into())
-            },
-            cfg.tls_configuration
+            cfg.tls_configuration.tls_key_file,
+            Some(PathBuf::from("/foo"))
+        );
+        assert_eq!(
+            cfg.tls_configuration.tls_cert_file,
+            Some(PathBuf::from("/bar"))
+        );
+        assert_eq!(
+            cfg.tls_configuration.tls_client_ca_file,
+            Some(PathBuf::from("/baz"))
         );
     }
 

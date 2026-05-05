@@ -89,7 +89,10 @@ async fn version(
     State(state): State<ServiceState>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
     let host = state
+        .config_manager
         .config
+        .read()
+        .await
         .default
         .public_endpoint
         .clone()
@@ -128,7 +131,7 @@ pub(crate) mod tests {
     use sea_orm::DatabaseConnection;
     use std::sync::Arc;
 
-    use openstack_keystone_config::Config;
+    use openstack_keystone_config::{Config, ConfigManager};
     use openstack_keystone_core_types::identity::UserResponseBuilder;
 
     use crate::keystone::{Service, ServiceState};
@@ -207,7 +210,7 @@ pub(crate) mod tests {
 
         Arc::new(
             Service::new(
-                Config::default(),
+                ConfigManager::not_watched(Config::default()),
                 DatabaseConnection::Disconnected,
                 provider,
                 Arc::new(policy_enforcer_mock),

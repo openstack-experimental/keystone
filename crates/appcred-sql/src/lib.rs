@@ -55,7 +55,8 @@ impl ApplicationCredentialBackend for SqlBackend {
         state: &ServiceState,
         rec: ApplicationCredentialCreate,
     ) -> Result<ApplicationCredentialCreateResponse, ApplicationCredentialProviderError> {
-        Ok(application_credential::create(&state.config, &state.db, rec).await?)
+        let config = state.config_manager.config.read().await;
+        Ok(application_credential::create(&config, &state.db, rec).await?)
     }
 
     /// Get a single application credential by ID.
