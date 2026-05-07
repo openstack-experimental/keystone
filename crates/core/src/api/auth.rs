@@ -16,8 +16,11 @@ use axum::{
     extract::{FromRef, FromRequestParts},
     http::request::Parts,
 };
+use spiffe::SpiffeId;
 use std::sync::Arc;
 use tracing::{debug, error};
+
+use openstack_keystone_config::Interface;
 
 use crate::api::KeystoneApiError;
 use crate::keystone::ServiceState;
@@ -35,6 +38,17 @@ where
 
     #[tracing::instrument(skip(state), err)]
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        if let Some(svid) = parts.extensions.get::<SpiffeId>() {
+            tracing::info!("the svid is {:?}", svid);
+        }
+        // Extract the interface on which the connection is being served
+        let interface = parts
+            .extensions
+            .get::<Interface>()
+            .cloned()
+            .unwrap_or(Interface::Public);
+        tracing::info!("the interface is {:?}", interface);
+
         let auth_header = parts
             .headers
             .get("X-Auth-Token")

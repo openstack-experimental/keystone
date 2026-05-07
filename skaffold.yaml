@@ -45,7 +45,6 @@ profiles:
         useDockerCLI: true
         concurrency: 0
         push: true
-        #tryImportMissing: true
 manifests:
   kustomize:
     paths:
@@ -85,6 +84,16 @@ deploy:
         namespace: cert-manager
         setValues:
           crds.enabled: true
+      - name: spire-crds
+        repo: https://spiffe.github.io/helm-charts-hardened
+        remoteChart: spire-crds
+        namespace: spire
+        createNamespace: true
+      - name: spire
+        repo: https://spiffe.github.io/helm-charts-hardened
+        remoteChart: spire
+        namespace: spire
+
 verify:
   - name: "api-test"
     container:

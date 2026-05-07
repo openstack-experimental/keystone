@@ -25,6 +25,10 @@ spec:
       port: 8080
       protocol: TCP
       targetPort: 8080
+    - name: https-rs
+      port: 8215
+      protocol: TCP
+      targetPort: 8215
   selector:
     app.kubernetes.io/name: keystone-rs
 

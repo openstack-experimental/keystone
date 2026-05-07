@@ -22,5 +22,6 @@ resources:
   - deployment-py.yaml
   - statefulset-rs.yaml
   - db.yaml
+  - sa.yaml
   - service.yaml
   - ingress.yaml

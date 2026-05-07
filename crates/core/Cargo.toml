@@ -11,6 +11,7 @@ repository.workspace = true
 [dependencies]
 async-trait.workspace = true
 axum = { workspace = true, default-features = false, features = ["json"], optional = true }
+#axum-server.workspace = true
 base64.workspace = true
 bcrypt = { workspace = true, features = ["alloc"] }
 chrono = { workspace = true, default-features = false }
@@ -25,11 +26,13 @@ openstack-keystone-distributed-storage = { version = "0.1", path = "../storage/"
 mockall = { workspace = true, optional = true }
 rand.workspace = true
 reqwest = { workspace = true, features = ["json", "http2", "gzip", "deflate"] }
+#rustls.workspace = true
 sea-orm.workspace = true
 secrecy = { workspace = true, features = ["serde"] }
 serde.workspace = true
 serde_json.workspace = true
 serde_urlencoded.workspace = true
+spiffe.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["fs"] }

@@ -15,7 +15,6 @@
 //!
 //! This is the entry point of the `keystone` binary.
 
-use std::collections::HashMap;
 use std::io;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -30,9 +29,9 @@ use clap::{Parser, ValueEnum};
 use color_eyre::eyre::{Report, Result, WrapErr};
 use sea_orm::{ConnectOptions, Database};
 use secrecy::ExposeSecret;
-use tokio::{net::TcpListener, signal, spawn, time};
+use tokio::net::TcpListener;
+use tokio::{signal, spawn, time};
 use tokio_util::sync::CancellationToken;
-use tonic::transport::{Certificate, Identity, ServerTlsConfig};
 use tower::ServiceBuilder;
 use tower_http::{
     LatencyUnit, ServiceBuilderExt,
@@ -49,15 +48,16 @@ use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 use uuid::Uuid;
 
-use openstack_keystone::config::ConfigManager;
+use openstack_keystone::config::{ConfigManager, Interface, ListenerConfig};
 use openstack_keystone::federation::FederationApi;
-use openstack_keystone::keystone::{Service, ServiceState};
+use openstack_keystone::keystone::Service as KeystoneServiceState;
+use openstack_keystone::keystone::ServiceState;
 use openstack_keystone::plugin_manager::PluginManager;
 use openstack_keystone::policy::HttpPolicyEnforcer;
 use openstack_keystone::provider::Provider;
+use openstack_keystone::server::listener::{raft_grpc, spiffe_tls};
 use openstack_keystone::webauthn;
 use openstack_keystone::{api, common};
-use openstack_keystone_distributed_storage::app::get_app_server;
 
 // Default body limit 256kB
 const DEFAULT_BODY_LIMIT: usize = 1024 * 256;
@@ -216,7 +216,8 @@ async fn main() -> Result<(), Report> {
     let provider = Provider::new(&cfg, &plugin_manager)?;
     let policy = HttpPolicyEnforcer::new(cfg.api_policy.opa_base_url.clone()).await?;
 
-    let shared_state = Arc::new(Service::new(cfg_mgr, conn, provider, Arc::new(policy)).await?);
+    let shared_state =
+        Arc::new(KeystoneServiceState::new(cfg_mgr, conn, provider, Arc::new(policy)).await?);
 
     spawn(cleanup(cloned_token, shared_state.clone()));
 
@@ -262,6 +263,7 @@ async fn main() -> Result<(), Report> {
         .sensitive_response_headers(sensitive_headers)
         // propagate the header to the response before the response reaches `TraceLayer`
         .layer(PropagateRequestIdLayer::new(x_request_id));
+    //.layer(middleware::from_fn(cert_extension_middleware));
 
     let mut app = Router::new().merge(main_router.with_state(shared_state.clone()));
 
@@ -285,107 +287,84 @@ async fn main() -> Result<(), Report> {
         .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", openapi))
         .layer(middleware);
 
+    // Shutdown watcher
+    let global_shutdown_token = token.clone();
+    let signal_state = shared_state.clone();
+    tokio::spawn(async move {
+        // Your existing handler that takes Arc<AppState>
+        // Instead of calling handle.graceful_shutdown, just cancel the token
+        shutdown_signal(signal_state).await;
+        global_shutdown_token.cancel();
+    });
+
     let mut handles = tokio::task::JoinSet::new();
-    if let Some(ds) = &cfg.distributed_storage
-        && let Some(storage) = &shared_state.storage
-    {
-        let storage_app = get_app_server(storage).await?;
 
-        let state_clone = shared_state.clone();
-
-        let mut server = tonic::transport::Server::builder();
-        // Without an explicit select of the default provider the initialization fails
-        // since some of the dependencies cause rustls to have `ring` and
-        // `aws_lc_rs` enabled.
-        let provider = rustls::crypto::aws_lc_rs::default_provider();
-        rustls::crypto::CryptoProvider::install_default(provider).unwrap();
-
-        // CA is used to validate client and peer connections
-        let identity = Identity::from_pem(
-            ds.tls_configuration
-                .tls_cert_content
-                .as_ref()
-                .or(cfg
-                    .listener
-                    .tls_configuration
-                    .as_ref()
-                    .and_then(|x| x.tls_cert_content.as_ref()))
-                .expect("TLS cert missing")
-                .expose_secret(),
-            ds.tls_configuration
-                .tls_key_content
-                .as_ref()
-                .or(cfg
-                    .listener
-                    .tls_configuration
-                    .as_ref()
-                    .and_then(|x| x.tls_key_content.as_ref()))
-                .expect("TLS key missing")
-                .expose_secret(),
-        );
-        let mut server_tls_config = ServerTlsConfig::new().identity(identity);
-        if let Some(ca) = &ds.tls_configuration.tls_client_ca_content.as_ref().or(cfg
-            .listener
-            .tls_configuration
-            .as_ref()
-            .and_then(|x| x.tls_client_ca_content.as_ref()))
-        {
-            server_tls_config =
-                server_tls_config.client_ca_root(Certificate::from_pem(ca.expose_secret()));
-        }
-        server = server.tls_config(server_tls_config)?;
-        let tonic_router = server.add_routes(storage_app);
-
-        let grpc_addr = shared_state
-            .config_manager
-            .config
-            .read()
-            .await
-            .listener
-            .get_cluster_address();
-        info!("Starting distributed storage at {:?}", grpc_addr);
+    // Raft
+    if cfg.distributed_storage.is_some() {
+        let raft_cancel_token = token.clone();
+        let raft_state = shared_state.clone();
+        let raft_config = cfg.clone();
         handles.spawn(async move {
-            tonic_router
-                .serve_with_shutdown(grpc_addr, shutdown_signal(state_clone))
+            raft_grpc::start_raft_app(raft_state, raft_config, raft_cancel_token)
                 .await
-                .unwrap();
+                .unwrap()
         });
+        raft_grpc::ensure_raft_initialized(shared_state.clone(), cfg.clone()).await?;
+    }
 
-        if !storage.raft.is_initialized().await?
-            && ds.node_id == 0
-            && let (Some(host), Some(port)) = (ds.cluster_addr.host(), ds.cluster_addr.port())
-        {
-            info!("Initializing the integrated storage since it is not initialized.");
-            storage
-                .raft
-                .initialize(HashMap::from([(
-                    0,
-                    openstack_keystone_distributed_storage::pb::raft::Node {
-                        node_id: 0,
-                        rpc_addr: format!("{host}:{port}"),
-                    },
-                )]))
-                .await?;
+    // Start the public interface listener
+    match cfg.interface_public.listener {
+        ListenerConfig::Http => {
+            info!("Starting Rest API at {}", cfg.interface_public.tcp_address);
+            let listener = TcpListener::bind(&cfg.interface_public.tcp_address).await?;
+            let rest_cancel_token = token.clone();
+            let rest_app = app.clone();
+            handles.spawn(async move {
+                axum::serve(listener, rest_app.into_make_service())
+                    .with_graceful_shutdown(async move {
+                        rest_cancel_token.cancelled().await;
+                    })
+                    .await
+                    .unwrap();
+            });
+        }
+        _ => {
+            // TODO: implement spiffe listener for public IF
+            error!("only HTTP is supported for public interface");
         }
     }
 
-    let listener = TcpListener::bind(
-        &shared_state
-            .config_manager
-            .config
-            .read()
-            .await
-            .listener
-            .tcp_address,
-    )
-    .await?;
-    info!("Starting Rest API at {:?}", listener.local_addr());
-    handles.spawn(async move {
-        axum::serve(listener, app.into_make_service())
-            .with_graceful_shutdown(shutdown_signal(shared_state))
-            .await
-            .unwrap();
-    });
+    // Start listener on the internal interface when necessary
+    if let Some(internal_if) = &cfg.interface_internal {
+        match &internal_if.listener {
+            ListenerConfig::Spiffe(spiffe) => {
+                // Spiffe listener
+                let rest_addr = internal_if.tcp_address.clone();
+                let rest_app = app.clone();
+                let rest_cancel_token = token.clone();
+                let rest_spiffe_trust_domains = spiffe.trust_domains.clone();
+
+                handles.spawn(async move {
+                    let cancel_token = rest_cancel_token.clone();
+                    if let Err(e) = spiffe_tls::start_axum_app(
+                        rest_addr,
+                        rest_app,
+                        rest_cancel_token,
+                        rest_spiffe_trust_domains,
+                        Interface::Internal,
+                    )
+                    .await
+                    {
+                        error!("REST API server error: {e}");
+                        cancel_token.cancel();
+                    }
+                });
+            }
+            _ => {
+                error!("only SPIFFE is supported for internal interface");
+            }
+        }
+    }
 
     // Wait for both (or handle errors)
     handles.join_all().await;
@@ -393,7 +372,6 @@ async fn main() -> Result<(), Report> {
     Ok(())
 }
 
-/// Periodic cleanup job.
 async fn cleanup(cancel: CancellationToken, state: ServiceState) {
     let mut interval = time::interval(Duration::from_secs(60));
     interval.tick().await;

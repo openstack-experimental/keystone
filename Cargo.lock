@@ -3576,7 +3576,10 @@ dependencies = [
  "color-eyre",
  "derive_builder",
  "eyre",
+ "futures-util",
  "http-body-util",
+ "hyper",
+ "hyper-util",
  "openidconnect",
  "openstack-keystone-api-types",
  "openstack-keystone-appcred-sql",
@@ -3607,8 +3610,12 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_urlencoded",
+ "spiffe",
+ "spiffe-rustls",
+ "spiffe-rustls-tokio",
  "thiserror 2.0.18",
  "tokio",
+ "tokio-rustls",
  "tokio-util",
  "tonic",
  "tower",
@@ -3760,6 +3767,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_urlencoded",
+ "spiffe",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
@@ -5968,6 +5976,62 @@ checksum = "3a766e1110788c36f4fa1c2b71b387a7815aa65f88ce0229841826633d93723e"
 dependencies = [
  "libc",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "spiffe"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "929880b6a86a7f4456d35482330957d6f64a6fd99fcb88302d039526e085f84a"
+dependencies = [
+ "arc-swap",
+ "base64ct",
+ "fastrand",
+ "futures",
+ "hyper-util",
+ "pkcs8",
+ "prost",
+ "prost-types",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "time",
+ "tokio",
+ "tokio-util",
+ "tonic",
+ "tonic-prost",
+ "tower",
+ "url",
+ "x509-parser 0.18.1",
+ "zeroize",
+]
+
+[[package]]
+name = "spiffe-rustls"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6aaefd19f26d525058a995d7fde5bfb17d4345a86727b8ecd1860008e2986868"
+dependencies = [
+ "oid-registry 0.8.1",
+ "rustls",
+ "spiffe",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-util",
+ "x509-parser 0.18.1",
+]
+
+[[package]]
+name = "spiffe-rustls-tokio"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f49cdf9f3b807b61ae131b6d829139333c932b376f027f6d101f04fa7265c278"
+dependencies = [
+ "rustls",
+ "spiffe",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-rustls",
 ]
 
 [[package]]

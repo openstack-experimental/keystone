@@ -216,7 +216,6 @@ mod tests {
     use super::*;
     #[cfg(feature = "builder")]
     use crate::error::BuilderError;
-    use serde_json::json;
 
     #[cfg(feature = "builder")]
     #[test]
@@ -248,7 +247,7 @@ mod tests {
     #[test]
     fn test_project_serialize_extra() {
         assert_eq!(
-            json!({"name": "name", "domain_id": "did", "enabled": true, "is_domain": false}),
+            serde_json::json!({"name": "name", "domain_id": "did", "enabled": true, "is_domain": false}),
             serde_json::to_value(
                 &ProjectCreateBuilder::default()
                     .name("name")
@@ -259,14 +258,14 @@ mod tests {
             .unwrap()
         );
         assert_eq!(
-            json!({"name": "name", "domain_id": "did", "enabled": true, "is_domain": false, "unknown": "bar"}),
+            serde_json::json!({"name": "name", "domain_id": "did", "enabled": true, "is_domain": false, "unknown": "bar"}),
             serde_json::to_value(
                 &ProjectCreateBuilder::default()
                     .name("name")
                     .domain_id("did")
                     .extra(std::collections::HashMap::from([(
                         "unknown".into(),
-                        json!("bar")
+                        serde_json::json!("bar")
                     )]))
                     .build()
                     .unwrap()

@@ -28,6 +28,9 @@ clap = { workspace = true, features = ["derive"] }
 color-eyre.workspace = true
 derive_builder.workspace = true
 eyre.workspace = true
+futures-util.workspace = true
+hyper-util.workspace = true
+hyper.workspace = true
 openstack-keystone-api-types = { version = "0.1", features = ["openapi", "validate", "conv"], path = "../api-types/"}
 openstack-keystone-appcred-sql = { version = "0.1", path = "../appcred-sql/" }
 openstack-keystone-assignment-sql = { version = "0.1", path = "../assignment-sql/" }
@@ -57,8 +60,12 @@ secrecy = { workspace = true, features = ["serde"] }
 serde.workspace = true
 serde_json.workspace = true
 serde_urlencoded.workspace = true
+spiffe = { workspace = true, features = ["x509-source"] }
+spiffe-rustls = "0.5.0"
+spiffe-rustls-tokio = "0.2"
 thiserror.workspace = true
 tokio = { workspace = true, features = ["fs", "macros", "signal", "rt-multi-thread"] }
+tokio-rustls.workspace = true
 tokio-util.workspace = true
 tonic = { workspace = true, features = ["server", "tls-aws-lc" ] }
 tower.workspace = true

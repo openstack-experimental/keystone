@@ -15,6 +15,7 @@ spec:
       labels:
         app.kubernetes.io/name: keystone-rs
     spec:
+      serviceAccountName: keystone
       initContainers:
         - name: db-waiter
           image: busybox
@@ -45,7 +46,8 @@ spec:
               cat <<EOF > /etc/keystone/site.toml
               [distributed_storage]
               node_id = $NODE_ID
-              cluster_addr = "https://$POD_NAME.keystone-rs-internal.default.svc.cluster.local:8300"
+              node_cluster_addr = "https://$POD_NAME.keystone-rs-internal.default.svc.cluster.local:8300"
+              node_listener_addr = "0.0.0.0:8300"
               path = "/storage"
               tls_client_ca_file = "/certs/ca.crt"
               tls_cert_file = "/certs/tls.crt"
@@ -53,13 +55,15 @@ spec:
               EOF
       containers:
         - env:
-            - name: OS_DATABASE__CONNECTION
+            - name: "OS_DATABASE__CONNECTION"
               valueFrom:
                 secretKeyRef:
-                  key: fqdn-uri
-                  name: keystone-db-app
-            - name: KEYSTONE_SITE_VARS_FILE
+                  key: "fqdn-uri"
+                  name: "keystone-db-app"
+            - name: "KEYSTONE_SITE_VARS_FILE"
               value: "/etc/keystone/site.toml"
+            - name: "SPIFFE_ENDPOINT_SOCKET"
+              value: "unix:///run/spire/sockets/spire-agent.sock"
           command: ["keystone", "-vv"]
 
           image: keystone-rs
@@ -67,6 +71,9 @@ spec:
           ports:
             - containerPort: 8080
               name: keystone-rs
+              protocol: TCP
+            - containerPort: 8215
+              name: spiffe
               protocol: TCP
             - containerPort: 8300
               name: keystone-raft
@@ -111,6 +118,9 @@ spec:
               name: config
               subPath: keystone.conf
               readOnly: true
+            - mountPath: /run/spire/sockets
+              name: spiffe-workload-api
+              readOnly: true
 
         - command: ["opa", "run", "--server", "/policy", "--addr", ":8181", "--log-level", "debug"]
           image: opa
@@ -145,3 +155,7 @@ spec:
           emptyDir: {}
         - name: raft-config-shared
           emptyDir: {}
+        - name: "spiffe-workload-api"
+          csi:
+            driver: "csi.spiffe.io"
+            readOnly: true

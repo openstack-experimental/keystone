@@ -26,9 +26,10 @@ use openraft::network::{
 };
 use openraft::raft::{StreamAppendError, StreamAppendResult, TransferLeaderRequest};
 use openraft::{AnyError, OptionalSend, RaftNetworkFactory};
+use openstack_keystone_config::RaftTlsConfiguration;
 use secrecy::ExposeSecret;
 use tokio::sync::watch;
-use tonic::transport::{Certificate, Channel, ClientTlsConfig, Identity};
+use tonic::transport::{Certificate, Channel, ClientTlsConfig, Identity, ServerTlsConfig};
 use tracing::error;
 
 use openstack_keystone_config::{Config, ConfigManager};
@@ -302,62 +303,80 @@ impl NetTransferLeader<TypeConfig> for NetworkConnection {
     }
 }
 
-/// Parse the [TlsConfiguration] into the [ClientTlsConfig].
+/// Build the tonic [`ClientTlsConfig`] from the Keystone [`Config`].
 ///
 /// Initialize the [`ClientTlsConfig`] from the distributed_storage or the
 /// listener configuration of the Keystone [`Config`].
 ///
 /// For all of the [`tls_client_ca`, `tls_cert`, `tls_key`] the corresponding
-/// value is searched in the distributed_storage configuration followed by the
-/// listener lookup if not present independently. This way it is possible to
-/// have a dedicated TLS configuration for the Raft cluster while by default the
-/// listener configuration is used.
+/// value is searched in the distributed_storage configuration.
 ///
 /// # Parameters
 /// - `config`: The Keystone [`Config`] instance.
 ///
 /// # Returns
 /// A `Result` containing the `ClientTlsConfig`, or a `StoreError`.
-pub fn load_tls_client_config(config: &Config) -> Result<ClientTlsConfig, StoreError> {
-    let identity = Identity::from_pem(
-        config
-            .distributed_storage
-            .as_ref()
-            .and_then(|x| x.tls_configuration.tls_cert_content.as_ref())
-            .or(config
-                .listener
-                .tls_configuration
-                .as_ref()
-                .and_then(|x| x.tls_cert_content.as_ref()))
-            .ok_or(StoreError::TlsConfigMissing)?
-            .expose_secret(),
-        config
-            .distributed_storage
-            .as_ref()
-            .and_then(|x| x.tls_configuration.tls_key_content.as_ref())
-            .or(config
-                .listener
-                .tls_configuration
-                .as_ref()
-                .and_then(|x| x.tls_key_content.as_ref()))
-            .ok_or(StoreError::TlsConfigMissing)?
-            .expose_secret(),
-    );
-    let mut tls_client_config = ClientTlsConfig::new().identity(identity);
-    if let Some(cert_ca) = config
-        .distributed_storage
-        .as_ref()
-        .and_then(|x| x.tls_configuration.tls_client_ca_content.as_ref())
-        .or(config
-            .listener
-            .tls_configuration
-            .as_ref()
-            .and_then(|x| x.tls_client_ca_content.as_ref()))
+pub fn get_client_tls_config(config: &Config) -> Result<ClientTlsConfig, StoreError> {
+    if let Some(ds) = &config.distributed_storage
+        && let RaftTlsConfiguration::Tls(tls) = &ds.tls_configuration
     {
-        tls_client_config =
-            tls_client_config.ca_certificate(Certificate::from_pem(cert_ca.expose_secret()));
-    };
-    Ok(tls_client_config)
+        let identity = Identity::from_pem(
+            tls.tls_cert_content
+                .as_ref()
+                .ok_or(StoreError::TlsConfigMissing)?
+                .expose_secret(),
+            tls.tls_key_content
+                .as_ref()
+                .ok_or(StoreError::TlsConfigMissing)?
+                .expose_secret(),
+        );
+        let mut tls_client_config = ClientTlsConfig::new().identity(identity);
+        if let Some(cert_ca) = tls.tls_client_ca_content.as_ref() {
+            tls_client_config =
+                tls_client_config.ca_certificate(Certificate::from_pem(cert_ca.expose_secret()));
+        };
+        Ok(tls_client_config)
+    } else {
+        Err(StoreError::TlsConfigMissing)
+    }
+}
+
+/// Build tonic [`ServerTlsConfig`] from the Keystone [`Config`].
+///
+/// Initialize the [`ServerTlsConfig`] from the distributed_storage or the
+/// listener configuration of the Keystone [`Config`].
+///
+/// For all of the [`tls_client_ca`, `tls_cert`, `tls_key`] the corresponding
+/// value is searched in the distributed_storage configuration.
+///
+/// # Parameters
+/// - `config`: The Keystone [`Config`] instance.
+///
+/// # Returns
+/// A `Result` containing the `ServerTlsConfig`, or a `StoreError`.
+pub fn get_server_tls_config(config: &Config) -> Result<ServerTlsConfig, StoreError> {
+    if let Some(ds) = &config.distributed_storage
+        && let RaftTlsConfiguration::Tls(tls) = &ds.tls_configuration
+    {
+        let identity = Identity::from_pem(
+            tls.tls_cert_content
+                .as_ref()
+                .ok_or(StoreError::TlsConfigMissing)?
+                .expose_secret(),
+            tls.tls_key_content
+                .as_ref()
+                .ok_or(StoreError::TlsConfigMissing)?
+                .expose_secret(),
+        );
+        let mut tls_server_config = ServerTlsConfig::new().identity(identity);
+        if let Some(cert_ca) = tls.tls_client_ca_content.as_ref() {
+            tls_server_config =
+                tls_server_config.client_ca_root(Certificate::from_pem(cert_ca.expose_secret()));
+        };
+        Ok(tls_server_config)
+    } else {
+        Err(StoreError::TlsConfigMissing)
+    }
 }
 
 /// Initialize the [ClientTlsConfig] configuration watcher.
@@ -373,7 +392,7 @@ pub async fn init_tls_watcher(
 ) -> Result<watch::Receiver<ClientTlsConfig>, StoreError> {
     // 1. Initial Load: Try to load the certs once to start with a valid state
     let cfg = config_manager.config.read().await;
-    let initial_config = load_tls_client_config(&cfg)?;
+    let initial_config = get_client_tls_config(&cfg)?;
 
     // 2. Create the channel
     let (tx, rx) = watch::channel(initial_config);
@@ -384,7 +403,7 @@ pub async fn init_tls_watcher(
     tokio::spawn(async move {
         while let Ok(_) = reload_rx.recv().await {
             let cfg = cm_clone.config.read().await;
-            match load_tls_client_config(&cfg) {
+            match get_client_tls_config(&cfg) {
                 Ok(new_config) => {
                     // If the cert changed, broadcast to all receivers
                     let _ = tx.send(new_config);

@@ -32,8 +32,8 @@ use uuid::Uuid;
 use webauthn_authenticator_rs::{AuthenticatorBackend, WebauthnAuthenticator};
 
 use openstack_keystone_config::{
-    Config, ConfigManager, DistributedStorageConfiguration, RelyingParty, TlsConfiguration,
-    TlsConfigurationBuilder,
+    Config, ConfigManager, DistributedStorageConfiguration, RaftTlsConfiguration, RelyingParty,
+    TlsConfiguration, TlsConfigurationBuilder,
 };
 use openstack_keystone_core::SqlDriverRegistration;
 use openstack_keystone_core::keystone::Service;
@@ -145,10 +145,11 @@ pub async fn get_state(
     if std::env::var("DATABASE_URL").is_err() {
         let tls_configuration = make_certificates()?;
         cfg.distributed_storage = Some(DistributedStorageConfiguration {
-            cluster_addr: "http://127.0.0.1:12345".parse()?,
+            node_cluster_addr: "http://127.0.0.1:12345".parse()?,
+            node_listener_addr: "127.0.0.1:1234".parse()?,
             node_id: 1,
             path: tmp_db_dir.path().to_path_buf(),
-            tls_configuration,
+            tls_configuration: RaftTlsConfiguration::Tls(tls_configuration),
         });
     }
     let mut policy_enforcer_mock = MockPolicy::default();
