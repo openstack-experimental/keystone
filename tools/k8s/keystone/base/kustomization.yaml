@@ -2,6 +2,9 @@ configMapGenerator:
   - name: keystone
     files:
       - conf/keystone.conf
+  - name: spiffe-helper-cfg
+    files:
+      - conf/helper.conf
 images:
   - name: py-keystone
     newName: ghcr.io/openstack-experimental/keystone/py-keystone

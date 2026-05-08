@@ -47,6 +47,7 @@ openstack-keystone-idmapping-sql = { version = "0.1", path = "../idmapping-sql" 
 openstack-keystone-resource-sql = { version = "0.1", path = "../resource-sql/" }
 openstack-keystone-revoke-sql = { version = "0.1", path = "../revoke-sql/" }
 openstack-keystone-role-sql = { version = "0.1", path = "../role-sql/" }
+openstack-keystone-spiffe-raft = { version = "0.1", path = "../spiffe-raft/" }
 openstack-keystone-token-fernet = { version = "0.1", path = "../token-fernet/" }
 openstack-keystone-token-restriction-sql = { version = "0.1", path = "../token-restriction-sql/" }
 openstack-keystone-trust-sql = { version = "0.1", path = "../trust-sql/" }

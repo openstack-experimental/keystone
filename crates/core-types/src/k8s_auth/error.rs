@@ -105,7 +105,7 @@ pub enum K8sAuthProviderError {
     #[error("raft storage is not available in the k8s_auth provider")]
     RaftNotAvailable,
 
-    /// Raft storage is not available.
+    /// Raft storage error.
     #[error("raft storage error in the k8s_auth provider")]
     RaftStoreError {
         /// The source of the error.

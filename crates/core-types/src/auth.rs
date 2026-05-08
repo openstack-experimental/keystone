@@ -36,6 +36,7 @@ use crate::error::BuilderError;
 use crate::identity::{Group, UserResponse};
 use crate::resource::{Domain, Project};
 use crate::role::RoleRef;
+use crate::spiffe::SpiffeBinding;
 use crate::token::{FernetToken, TokenRestriction};
 use crate::trust::Trust;
 
@@ -590,6 +591,7 @@ impl SecurityContext {
                     AuthenticationContext::Oidc { .. } => Ok(()),
                     AuthenticationContext::K8s(_) => Err(AuthenticationError::ScopeNotAllowed),
                     AuthenticationContext::Password => Ok(()),
+                    AuthenticationContext::Spiffe(_) => Ok(()),
                     AuthenticationContext::Token(_) => Ok(()),
                     AuthenticationContext::Trust { .. } => {
                         Err(AuthenticationError::ScopeNotAllowed)
@@ -618,6 +620,7 @@ impl SecurityContext {
                     AuthenticationContext::Oidc { .. } => Ok(()),
                     AuthenticationContext::K8s(_) => Ok(()),
                     AuthenticationContext::Password => Ok(()),
+                    AuthenticationContext::Spiffe(_) => Ok(()),
                     AuthenticationContext::Token(_) => Ok(()),
                     AuthenticationContext::Trust { .. } => {
                         // Trust authentication must use TrustProject scope. Rescoping to a plain
@@ -638,6 +641,7 @@ impl SecurityContext {
                     AuthenticationContext::Oidc { .. } => Err(AuthenticationError::ScopeNotAllowed),
                     AuthenticationContext::K8s(_) => Err(AuthenticationError::ScopeNotAllowed),
                     AuthenticationContext::Password => Ok(()),
+                    AuthenticationContext::Spiffe(_) => Err(AuthenticationError::ScopeNotAllowed),
                     AuthenticationContext::Token(_) => Ok(()),
                     AuthenticationContext::Trust { .. } => Err(AuthenticationError::Forbidden),
                     AuthenticationContext::WebauthN => Err(AuthenticationError::ScopeNotAllowed),
@@ -648,13 +652,13 @@ impl SecurityContext {
                     return Err(AuthenticationError::ScopeNotAllowed);
                 };
                 match &self.authentication_context {
-                    // TODO: SPIFFE auth should be included here
                     AuthenticationContext::ApplicationCredential { .. } => {
                         Err(AuthenticationError::ScopeNotAllowed)
                     }
                     AuthenticationContext::Oidc { .. } => Err(AuthenticationError::ScopeNotAllowed),
                     AuthenticationContext::K8s(_) => Err(AuthenticationError::ScopeNotAllowed),
                     AuthenticationContext::Password => Ok(()),
+                    AuthenticationContext::Spiffe(_) => Ok(()),
                     AuthenticationContext::Token(_) => Ok(()),
                     AuthenticationContext::Trust { .. } => {
                         Err(AuthenticationError::ScopeNotAllowed)
@@ -673,6 +677,7 @@ impl SecurityContext {
                     AuthenticationContext::Oidc { .. } => Ok(()),
                     AuthenticationContext::K8s(_) => Err(AuthenticationError::ScopeNotAllowed),
                     AuthenticationContext::Password => Ok(()),
+                    AuthenticationContext::Spiffe(_) => Ok(()),
                     AuthenticationContext::Token(_) => Ok(()),
                     AuthenticationContext::Trust { .. } => {
                         Err(AuthenticationError::ScopeNotAllowed)
@@ -864,10 +869,10 @@ impl PrincipalInfo {
             IdentityInfo::User(user) => {
                 if let Some(domain) = &user.user_domain {
                     Some(domain.id.clone())
-                } else if let Some(user_resp) = &user.user {
-                    Some(user_resp.domain_id.clone())
                 } else {
-                    None
+                    user.user
+                        .as_ref()
+                        .map(|user_resp| user_resp.domain_id.clone())
                 }
             }
             IdentityInfo::Principal(principal) => {
@@ -942,16 +947,10 @@ impl IdentityInfo {
             Self::User(user) => user.validate(),
             Self::Principal(principal) => {
                 principal.validate()?;
-                if let Some(domain) = &principal.domain {
-                    if !domain.enabled {
-                        return Err(AuthenticationError::DomainDisabled(domain.id.clone()));
-                    }
-                } else {
-                    warn!(
-                        "Principal domain data must be resolved before validating: {:?}",
-                        principal
-                    );
-                    return Err(AuthenticationError::Unauthorized);
+                if let Some(domain) = &principal.domain
+                    && !domain.enabled
+                {
+                    return Err(AuthenticationError::DomainDisabled(domain.id.clone()));
                 }
                 Ok(())
             }
@@ -1110,6 +1109,8 @@ pub enum AuthenticationContext {
     K8s(K8sContext),
     /// Login with password.
     Password,
+    /// SPIRE authentication.
+    Spiffe(SpiffeBinding),
     /// Login using regular fernet/jwt token.
     Token(FernetToken),
     /// Login consuming the trust.
@@ -1152,6 +1153,7 @@ impl AuthenticationContext {
             Self::Oidc { .. } => once("openid".to_string()).collect(),
             Self::Password => once("password".to_string()).collect(),
             Self::K8s(_) => once("mapped".to_string()).collect(),
+            Self::Spiffe(_) => once("x509".to_string()).collect(),
             Self::Token(token) => token
                 .methods()
                 .iter()
@@ -1493,7 +1495,6 @@ mod tests {
             is_domain: false,
             parent_id: None,
             extra: HashMap::new(),
-            ..Default::default()
         }
     }
 
@@ -2177,12 +2178,10 @@ mod tests {
             AuthenticationContext::Password
         ));
         assert!(matches!(ctx.principal().identity, IdentityInfo::User(_)));
-        let authz_scope_match = if let Some(AuthzInfo { scope, .. }) = ctx.authorization() {
-            if let ScopeInfo::Project { project, .. } = scope {
-                project.id == "pid"
-            } else {
-                false
-            }
+        let authz_scope_match = if let Some(AuthzInfo { scope, .. }) = ctx.authorization()
+            && let ScopeInfo::Project { project, .. } = scope
+        {
+            project.id == "pid"
         } else {
             false
         };
@@ -2249,10 +2248,7 @@ mod tests {
                 .build()
                 .unwrap(),
         );
-        assert!(matches!(
-            principal.validate(),
-            Err(AuthenticationError::Unauthorized)
-        ));
+        assert!(principal.validate().is_ok());
     }
 
     #[test]

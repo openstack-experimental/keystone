@@ -23,7 +23,7 @@ members = [
   "crates/cli-manage",
   "tests/api",
   "tests/integration",
-  "tests/federation", "crates/k8s-auth-raft",
+  "tests/federation", "crates/k8s-auth-raft", "crates/spiffe-raft",
 ]
 exclude = [
   "tests/loadtest"
@@ -114,7 +114,7 @@ url-macro = { version = "0.2" }
 utoipa = { version = "5.5" }
 utoipa-axum = { version = "0.2" }
 utoipa-swagger-ui = { version = "9.0", default-features = false }
-uuid = { version = "1.23" }
+uuid = { version = "1.23", features = ["v4"] }
 validator = { version = "0.20" }
 webauthn-authenticator-rs = { version = "0.5" }
 webauthn-rs = { version = "0.5" }

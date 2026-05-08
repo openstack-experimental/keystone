@@ -517,7 +517,7 @@ impl TokenApi for TokenService {
             let roles: HashMap<String, Role> = state
                 .provider
                 .get_role_provider()
-                .list_roles(&state, &RoleListParameters::default())
+                .list_roles(state, &RoleListParameters::default())
                 .await?
                 .into_iter()
                 .map(|role| (role.id.clone(), role))
@@ -531,7 +531,7 @@ impl TokenApi for TokenService {
             state
                 .provider
                 .get_role_provider()
-                .expand_implied_roles(&state, &mut filtered_roles)
+                .expand_implied_roles(state, &mut filtered_roles)
                 .await?;
             tr.roles.get_or_insert_default().extend(filtered_roles);
         }

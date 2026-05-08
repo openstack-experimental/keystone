@@ -23,10 +23,12 @@ use spiffe::SpiffeId;
 use tracing::{debug, error};
 
 use openstack_keystone_config::Interface;
+use openstack_keystone_core_types::auth::*;
 
 use crate::api::KeystoneApiError;
 use crate::auth::ValidatedSecurityContext;
 use crate::keystone::ServiceState;
+use crate::spiffe::SpiffeApi;
 use crate::token::TokenApi;
 
 #[derive(Debug, Clone)]
@@ -47,6 +49,21 @@ where
     type Rejection = KeystoneApiError;
 
     #[tracing::instrument(skip(state), err)]
+    /// Try to authenticate the request
+    ///
+    /// Authenticate the request creating the `ValidatedSecurityContext` using
+    /// the following information:
+    ///
+    /// * `mTLS` - SPIFFE issued x509 certificate that is passed as an extension
+    ///   by the mtls
+    /// connection handler. For the SVID a corresponding binding is looked up.
+    /// When present the `ValidatedSecurityContext` is attempted to be
+    /// instantiated as `ScopeInfo::Unscoped` scope.
+    /// * `X-Auth-Token` - HTTP header is used as encoded `FernetToken` which is
+    ///   decoded and used
+    /// to instantiate the `ValidatedSecurityContext`. The `FernetToken` always
+    /// contains the scope information (whether it is scoped or explicitly
+    /// Unscoped).
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
         #[cfg(any(test, feature = "mock"))]
         {
@@ -56,41 +73,76 @@ where
             }
         }
 
-        if let Some(svid) = parts.extensions.get::<SpiffeId>() {
-            tracing::debug!("spiffe svid present: {}", svid);
-        }
         // Extract the interface on which the connection is being served
-        let interface = parts
+        // TODO: Insert interface info into the Context
+        let _interface = parts
             .extensions
             .get::<Interface>()
             .cloned()
             .unwrap_or(Interface::Public);
-        tracing::info!("the interface is {:?}", interface);
-
-        let auth_header = parts
-            .headers
-            .get("X-Auth-Token")
-            .and_then(|header| header.to_str().ok());
-
-        let auth_header = if let Some(auth_header) = auth_header {
-            auth_header
-        } else {
-            debug!("No supported information has been provided.");
-            return Err(KeystoneApiError::UnauthorizedNoContext);
-        };
 
         let state = Arc::from_ref(state);
 
-        let vsc = state
-            .provider
-            .get_token_provider()
-            .authorize_by_token(&state, auth_header, Some(false), None)
-            .await
-            .inspect_err(|e| error!("{:#?}", e))
-            .map_err(|_| KeystoneApiError::UnauthorizedNoContext)?;
+        // Check the SPIFFE svid first as the primary identity source
+        if let Some(svid) = parts.extensions.get::<SpiffeId>() {
+            tracing::debug!("authenticating the spiffe svid {}", svid);
 
-        vsc.fully_resolved()?;
+            if let Some(binding) = state
+                .provider
+                .get_spiffe_provider()
+                .get_binding(&state, &svid.to_string())
+                .await?
+            {
+                let auth_result: AuthenticationResult = AuthenticationResultBuilder::default()
+                    .context(AuthenticationContext::Spiffe(binding.clone()))
+                    .principal(
+                        PrincipalInfoBuilder::default()
+                            .identity(IdentityInfo::Principal(
+                                PrincipalIdentityInfoBuilder::default()
+                                    .id(binding.svid.clone())
+                                    .issuer(svid.trust_domain_name())
+                                    .build()?,
+                            ))
+                            .build()?,
+                    )
+                    .build()?;
+                let ctx = SecurityContext::try_from(auth_result)?;
+                let vsc = ValidatedSecurityContext::new_for_scope(
+                    ctx,
+                    if binding.is_system {
+                        // For the "system" binding explicitly scope as system
+                        ScopeInfo::System("all".into())
+                    } else {
+                        ScopeInfo::Unscoped
+                    },
+                    &state,
+                )
+                .await?;
+                return Ok(Auth(vsc));
+            } else {
+                tracing::debug!("no binding for the svid present: {}", svid);
+            }
+        }
+        // Now headers can be checked
+        if let Some(auth_header) = parts
+            .headers
+            .get("X-Auth-Token")
+            .and_then(|header| header.to_str().ok())
+        {
+            tracing::debug!("authenticating request with the x-auth-token");
+            let vsc = state
+                .provider
+                .get_token_provider()
+                .authorize_by_token(&state, auth_header, Some(false), None)
+                .await
+                .inspect_err(|e| error!("{:#?}", e))
+                .map_err(|_| KeystoneApiError::UnauthorizedNoContext)?;
 
-        Ok(Auth(vsc))
+            vsc.fully_resolved()?;
+            return Ok(Auth(vsc));
+        }
+
+        debug!("No supported information has been provided.");
+        Err(KeystoneApiError::UnauthorizedNoContext)
     }
 }

@@ -1,6 +1,8 @@
 experimental = ["setup-scripts"]
 
 [profile.default]
+# exclude raft-only tests
+default-filter = 'not test(/spiffe/)'
 # Global default settings
 #
 [scripts.setup.setup-pg]
@@ -17,6 +19,7 @@ command = { command-line = [ "tools/raft-env.sh" ] }
 
 # --- POSTGRES PROFILE ---
 [profile.postgres]
+
 [[profile.postgres.scripts]]
 filter = "binary(api)"
 setup = "setup-pg"
@@ -29,6 +32,7 @@ setup = "setup-pg"
 
 # --- MYSQL PROFILE ---
 [profile.mysql]
+
 [[profile.mysql.scripts]]
 filter = "binary(api)"
 setup = "setup-mysql"
@@ -40,6 +44,8 @@ filter = "binary(provider)"
 setup = "setup-mysql"
 
 [profile.raft]
+default-filter = "all()"
+
 [[profile.raft.scripts]]
 filter = "binary(integration)"
 setup = "raft-env"

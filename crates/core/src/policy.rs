@@ -129,6 +129,28 @@ pub trait PolicyEnforcer: Send + Sync {
     }
 }
 
+//#[async_trait]
+//pub trait PolicyEnforcerExt: Send + Sync {
+//    /// Enforces a policy for a given action and credentials.
+//    ///
+//    /// # Parameters
+//    /// - `policy_name`: The name of the policy to enforce.
+//    /// - `credentials`: The credentials of the user requesting the action.
+//    /// - `target`: The target resource of the action.
+//    /// - `update`: Optional update data for the resource.
+//    ///
+//    /// # Returns
+//    /// - `Ok(PolicyEvaluationResult)` if the policy was evaluated
+// successfully.    /// - `Err(PolicyError)` if an error occurred during
+// enforcement.    async fn enforce<C: Into<Credentials>>(
+//        &self,
+//        policy_name: &'static str,
+//        credentials: &C,
+//        target: Value,
+//        update: Option<Value>,
+//    ) -> Result<PolicyEvaluationResult, PolicyError>;
+//}
+
 #[cfg(any(test, feature = "mock"))]
 mock! {
     pub Policy {}
@@ -175,6 +197,7 @@ pub struct Credentials {
     #[serde(default)]
     pub domain_id: Option<String>,
 
+    /// System scope information.
     #[builder(default)]
     #[serde(default)]
     pub system: Option<String>,
@@ -227,7 +250,6 @@ impl TryFrom<&ValidatedSecurityContext> for Credentials {
             }
         }
         let cred = builder.build()?;
-        tracing::info!("Converted {:?} into {:?}", sc, cred);
         Ok(cred)
     }
 }

@@ -124,7 +124,7 @@ spec:
             - mountPath: "/var/opa"
               name: "opa-socket"
 
-        - command: ["opa", "run", "--server", "/policy", "--addr", "unix:///var/opa/opa.sock", "--log-level", "debug"]
+        - command: ["opa", "run", "--server", "/policy", "--addr", "unix:///var/opa/opa.sock", "--log-level", "debug", "--watch", "/etc/certs"]
           image: opa
           name: opa
           ports:
@@ -133,6 +133,24 @@ spec:
           volumeMounts:
             - mountPath: /var/opa
               name: opa-socket
+            - name: "certs"
+              mountPath: "/etc/certs"
+              readOnly: true
+
+        # --- SPIFFE-Helper Container ---
+        - name: spiffe-helper
+          image: ghcr.io/spiffe/spiffe-helper:0.11.0
+          args: ["-config", "/etc/spiffe-helper/helper.conf"]
+          securityContext:
+            runAsUser: 1000
+          volumeMounts:
+            - name: certs
+              mountPath: /etc/certs
+            - mountPath: /run/spire/sockets
+              name: spiffe-workload-api
+              readOnly: true
+            - name: helper-config
+              mountPath: /etc/spiffe-helper
 
       volumes:
         - name: config
@@ -166,3 +184,8 @@ spec:
           csi:
             driver: "csi.spiffe.io"
             readOnly: true
+        - name: "certs"
+          emptyDir: {}
+        - name: "helper-config"
+          configMap:
+            name: spiffe-helper-cfg

@@ -23,6 +23,7 @@ mod k8s_auth;
 mod resource;
 mod revoke;
 mod role;
+mod spiffe;
 mod token;
 
 #[macro_use]

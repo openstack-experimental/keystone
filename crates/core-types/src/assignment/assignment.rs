@@ -183,6 +183,22 @@ impl AssignmentCreate {
             inherited,
         )
     }
+
+    /// Instantiate UserSystem assignment.
+    pub fn user_system<A, T, R>(actor_id: A, target_id: T, role_id: R, inherited: bool) -> Self
+    where
+        A: Into<String>,
+        T: Into<String>,
+        R: Into<String>,
+    {
+        Self::new(
+            actor_id,
+            target_id,
+            role_id,
+            AssignmentType::UserSystem,
+            inherited,
+        )
+    }
 }
 
 /// Role assignment type.

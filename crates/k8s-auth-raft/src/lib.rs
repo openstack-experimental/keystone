@@ -11,7 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-//! # OpenStack Keystone SQL driver for the K8s auth provider
+//! # OpenStack Keystone Raft driver for the K8s auth provider
 use std::collections::BTreeSet;
 
 use async_trait::async_trait;
@@ -24,7 +24,7 @@ use openstack_keystone_distributed_storage::{
     Metadata, StorageApi, StoreDataEnvelope, store_command::Mutation,
 };
 
-/// Raft  Database K8s auth backend.
+/// Raft Database K8s auth backend.
 #[derive(Default)]
 pub struct RaftBackend {}
 
@@ -268,10 +268,10 @@ impl K8sAuthBackend for RaftBackend {
             .map(|x| x.data);
         if let Some(obj) = curr {
             let mutations = vec![
-                Mutation::remove(self.get_auth_instance_id_key_name(&obj.id), None::<&str>)
+                Mutation::remove(self.get_auth_instance_id_key_name(&id), None::<&str>)
                     .map_err(K8sAuthProviderError::raft)?,
                 Mutation::remove_index(
-                    self.get_auth_instance_domain_id_idx_key_name(&obj.id, &obj.domain_id),
+                    self.get_auth_instance_domain_id_idx_key_name(&id, &obj.domain_id),
                 )
                 .map_err(K8sAuthProviderError::raft)?,
             ];

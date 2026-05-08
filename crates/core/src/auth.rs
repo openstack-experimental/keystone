@@ -23,6 +23,7 @@ use openstack_keystone_core_types::assignment::{
 use openstack_keystone_core_types::identity::IdentityProviderError;
 use openstack_keystone_core_types::resource::ResourceProviderError;
 use openstack_keystone_core_types::role::*;
+use openstack_keystone_core_types::spiffe::*;
 use openstack_keystone_core_types::token::FernetToken;
 
 use crate::assignment::AssignmentApi;
@@ -79,6 +80,7 @@ impl ValidatedSecurityContext {
     /// context, [`SecurityContext::validate_scope_boundaries`] is enforced to
     /// guard the override. Scope-setting, validation, and role resolution
     /// happen as a single atomic step.
+    #[tracing::instrument(skip(state), err(Debug))]
     pub async fn new_for_scope(
         mut ctx: SecurityContext,
         scope: ScopeInfo,
@@ -103,7 +105,7 @@ impl ValidatedSecurityContext {
             let user_domain = state
                 .provider
                 .get_resource_provider()
-                .get_domain(state, &domain_id)
+                .get_domain(state, domain_id)
                 .await
                 .auth_context("fetching user domain")?
                 .ok_or(ResourceProviderError::DomainNotFound(domain_id.clone()))
@@ -136,6 +138,7 @@ impl ValidatedSecurityContext {
             AuthenticationContext::Oidc { .. } => {}
             AuthenticationContext::K8s(..) => {}
             AuthenticationContext::Password => {}
+            AuthenticationContext::Spiffe(..) => {}
             AuthenticationContext::Trust { trust, .. } => {
                 // Validate the trust chain
                 state
@@ -251,178 +254,14 @@ async fn calculate_effective_roles(
     scope: &ScopeInfo,
 ) -> Result<Vec<RoleRef>, AuthenticationError> {
     scope.validate()?;
-    let user_id = ctx.principal().get_user_id();
-    let roles = match &scope {
-        ScopeInfo::Domain(domain) => state
-            .provider
-            .get_assignment_provider()
-            .list_role_assignments(
-                state,
-                &RoleAssignmentListParametersBuilder::default()
-                    .user_id(&user_id)
-                    .domain_id(&domain.id)
-                    .include_names(true)
-                    .effective(true)
-                    .build()
-                    .map_err(AssignmentProviderError::from)?,
-            )
-            .await
-            .auth_context("resolving role assignments")?
-            .into_iter()
-            .map(|a| {
-                a.try_into()
-                    .map_err(|_| AuthenticationError::RoleConversionFailed)
-            })
-            .collect::<Result<Vec<_>, _>>()?,
+
+    let roles = match scope {
+        ScopeInfo::Domain(domain) => resolve_domain_roles(state, ctx, &domain.id).await?,
         ScopeInfo::Project { project, .. } => {
-            if let Some(token_restriction) = &ctx.token_restriction()
-                && !token_restriction.role_ids.is_empty()
-            {
-                // When the context has a token restriction bound use the roles tied to the
-                // token restriction otherwise use the normal role resolution
-                if let Some(roles) = &token_restriction.roles {
-                    roles.clone()
-                } else {
-                    let roles: std::collections::HashMap<String, Role> = state
-                        .provider
-                        .get_role_provider()
-                        .list_roles(&state, &RoleListParameters::default())
-                        .await
-                        .auth_context("reading roles to expand token restrictions")?
-                        .into_iter()
-                        .map(|role| (role.id.clone(), role))
-                        .collect();
-                    let mut filtered_roles: Vec<RoleRef> = token_restriction
-                        .role_ids
-                        .iter()
-                        .filter_map(|rid| roles.get(rid).map(|role| role.into()))
-                        .collect();
-                    state
-                        .provider
-                        .get_role_provider()
-                        .expand_implied_roles(&state, &mut filtered_roles)
-                        .await
-                        .auth_context("expanding token restriction roles")?;
-                    filtered_roles
-                }
-            } else {
-                let user_assignments = state
-                    .provider
-                    .get_assignment_provider()
-                    .list_role_assignments(
-                        state,
-                        &RoleAssignmentListParametersBuilder::default()
-                            .user_id(&user_id)
-                            .project_id(&project.id)
-                            .include_names(false)
-                            .effective(true)
-                            .build()
-                            .map_err(AssignmentProviderError::from)?,
-                    )
-                    .await
-                    .auth_context("resolving role assignments")?;
-                match &ctx.authentication_context() {
-                    AuthenticationContext::ApplicationCredential {
-                        application_credential,
-                        ..
-                    } => {
-                        let user_role_ids: HashSet<String> = user_assignments
-                            .into_iter()
-                            .map(|x| x.role_id.clone())
-                            .collect();
-                        application_credential
-                            .roles
-                            .iter()
-                            .filter(|role| user_role_ids.contains(&role.id))
-                            .cloned()
-                            .collect()
-                    }
-                    _ => user_assignments
-                        .into_iter()
-                        .map(|a| {
-                            a.try_into()
-                                .map_err(|_| AuthenticationError::RoleConversionFailed)
-                        })
-                        .collect::<Result<Vec<_>, _>>()?,
-                }
-            }
+            resolve_project_roles(state, ctx, &project.id).await?
         }
-        ScopeInfo::System(system_id) => state
-            .provider
-            .get_assignment_provider()
-            .list_role_assignments(
-                state,
-                &RoleAssignmentListParametersBuilder::default()
-                    .user_id(&user_id)
-                    .system_id(system_id)
-                    .include_names(true)
-                    .effective(true)
-                    .build()
-                    .map_err(AssignmentProviderError::from)?,
-            )
-            .await
-            .auth_context("resolving role assignments")?
-            .into_iter()
-            .map(|a| {
-                a.try_into()
-                    .map_err(|_| AuthenticationError::RoleConversionFailed)
-            })
-            .collect::<Result<Vec<_>, _>>()?,
-        ScopeInfo::TrustProject(tpi) => {
-            // Get all trustor roles
-            let trustor_assignments = state
-                .provider
-                .get_assignment_provider()
-                .list_role_assignments(
-                    state,
-                    &RoleAssignmentListParameters {
-                        user_id: Some(tpi.trust.trustor_user_id.clone()),
-                        project_id: Some(tpi.project.id.clone()),
-                        effective: Some(true),
-                        ..Default::default()
-                    },
-                )
-                .await
-                .auth_context("resolving trust role assignments")?;
-            if let Some(trust_roles) = &tpi.trust.roles {
-                // Capture unique role_id of the trustor on the project
-                let trustor_role_ids: HashSet<String> = trustor_assignments
-                    .into_iter()
-                    .map(|x| x.role_id.clone())
-                    .collect();
-                let mut trust_roles = trust_roles.clone();
-                // expand implied roles of the trust
-                state
-                    .provider
-                    .get_role_provider()
-                    .expand_implied_roles(state, &mut trust_roles)
-                    .await
-                    .auth_context("expanding implied roles for trust")?;
-                // Filter out roles frozen in the trust that the trustor does not possess
-                // anymore.
-                if !trust_roles
-                    .iter()
-                    .all(|role| trustor_role_ids.contains(&role.id))
-                {
-                    debug!(
-                        "Trust roles {:?} are missing for the trustor {:?}",
-                        trust_roles, trustor_role_ids
-                    );
-                    return Err(AuthenticationError::ActorHasNoRolesOnTarget);
-                }
-                trust_roles.retain_mut(|role| role.domain_id.is_none());
-                trust_roles
-            } else {
-                // No roles were tied to the trust. Return all trustor roles.
-                trustor_assignments
-                    .into_iter()
-                    .map(|a| {
-                        a.try_into()
-                            .map_err(|_| AuthenticationError::RoleConversionFailed)
-                    })
-                    .collect::<Result<Vec<_>, _>>()?
-            }
-        }
+        ScopeInfo::System(system_id) => resolve_system_roles(state, ctx, system_id).await?,
+        ScopeInfo::TrustProject(tpi) => resolve_trust_roles(state, tpi).await?,
         ScopeInfo::Unscoped => Vec::new(),
     };
 
@@ -432,25 +271,274 @@ async fn calculate_effective_roles(
 
     Ok(roles)
 }
+
+// Resolve effective roles for a domain scope.
+async fn resolve_domain_roles(
+    state: &ServiceState,
+    ctx: &SecurityContext,
+    domain_id: &str,
+) -> Result<Vec<RoleRef>, AuthenticationError> {
+    let user_id = ctx.principal().get_user_id();
+    let assignments = state
+        .provider
+        .get_assignment_provider()
+        .list_role_assignments(
+            state,
+            &RoleAssignmentListParametersBuilder::default()
+                .user_id(&user_id)
+                .domain_id(domain_id)
+                .include_names(true)
+                .effective(true)
+                .build()
+                .map_err(AssignmentProviderError::from)?,
+        )
+        .await
+        .auth_context("resolving role assignments")?;
+    assignments_to_roles(assignments)
+}
+
+// Resolve effective roles for a project scope.
+async fn resolve_project_roles(
+    state: &ServiceState,
+    ctx: &SecurityContext,
+    project_id: &str,
+) -> Result<Vec<RoleRef>, AuthenticationError> {
+    if let Some(restriction) = ctx.token_restriction()
+        && !restriction.role_ids.is_empty()
+    {
+        return resolve_project_token_restriction_roles(state, restriction).await;
+    }
+
+    if let Some(mut roles) = resolve_project_spiffe_roles(ctx, project_id) {
+        state
+            .provider
+            .get_role_provider()
+            .expand_implied_roles(state, &mut roles)
+            .await
+            .auth_context("expanding scope roles")?;
+        return Ok(roles);
+    }
+
+    resolve_project_default_roles(state, ctx, project_id).await
+}
+
+// Resolve roles from a token restriction on a project scope.
+async fn resolve_project_token_restriction_roles(
+    state: &ServiceState,
+    restriction: &openstack_keystone_core_types::token::TokenRestriction,
+) -> Result<Vec<RoleRef>, AuthenticationError> {
+    if let Some(roles) = &restriction.roles {
+        return Ok(roles.clone());
+    }
+
+    let mut roles = restriction
+        .role_ids
+        .iter()
+        .map(|rid| RoleRef {
+            id: rid.clone(),
+            name: None,
+            domain_id: None,
+        })
+        .collect();
+    state
+        .provider
+        .get_role_provider()
+        .expand_implied_roles(state, &mut roles)
+        .await
+        .auth_context("expanding token restriction roles")?;
+    Ok(roles)
+}
+
+// Resolve roles from a SPIFFE binding for a given project scope.
+//
+// Returns `Some(Vec<RoleRef>)` if the binding contains a matching project
+// authorization with role IDs, `None` otherwise.  When `Some` is returned the
+// caller is responsible for expanding implied roles.
+fn resolve_project_spiffe_roles(ctx: &SecurityContext, project_id: &str) -> Option<Vec<RoleRef>> {
+    let binding = match ctx.authentication_context() {
+        AuthenticationContext::Spiffe(binding) => binding,
+        _ => return None,
+    };
+
+    let authz = binding.authorizations.as_ref()?.iter().find(|scope| {
+        matches!(scope, SpiffeAuthorization::Project { project_id: pid, .. } if *pid == project_id)
+    })?;
+
+    authz.role_refs()
+}
+
+// Resolve project-scoped roles using the default assignment-based logic.
+async fn resolve_project_default_roles(
+    state: &ServiceState,
+    ctx: &SecurityContext,
+    project_id: &str,
+) -> Result<Vec<RoleRef>, AuthenticationError> {
+    let user_id = ctx.principal().get_user_id();
+    let assignments = state
+        .provider
+        .get_assignment_provider()
+        .list_role_assignments(
+            state,
+            &RoleAssignmentListParametersBuilder::default()
+                .user_id(&user_id)
+                .project_id(project_id)
+                .include_names(false)
+                .effective(true)
+                .build()
+                .map_err(AssignmentProviderError::from)?,
+        )
+        .await
+        .auth_context("resolving role assignments")?;
+
+    match ctx.authentication_context() {
+        AuthenticationContext::ApplicationCredential {
+            application_credential,
+            ..
+        } => {
+            let user_role_ids: HashSet<String> =
+                assignments.iter().map(|a| a.role_id.clone()).collect();
+            let restricted = application_credential
+                .roles
+                .iter()
+                .filter(|role| user_role_ids.contains(&role.id))
+                .cloned()
+                .collect();
+            Ok(restricted)
+        }
+        _ => assignments_to_roles(assignments),
+    }
+}
+
+// Resolve effective roles for a system scope.
+async fn resolve_system_roles(
+    state: &ServiceState,
+    ctx: &SecurityContext,
+    system_id: &str,
+) -> Result<Vec<RoleRef>, AuthenticationError> {
+    if let AuthenticationContext::Spiffe(binding) = ctx.authentication_context() {
+        if binding.is_system {
+            let roles = state
+                .provider
+                .get_role_provider()
+                .list_roles(
+                    state,
+                    &RoleListParameters {
+                        name: Some("reader".into()),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .auth_context("searching reader role")?
+                .into_iter()
+                .map(|role| role.into())
+                .collect();
+            return Ok(roles);
+        } else {
+            return Ok(Vec::new());
+        }
+    }
+
+    let user_id = ctx.principal().get_user_id();
+    let assignments = state
+        .provider
+        .get_assignment_provider()
+        .list_role_assignments(
+            state,
+            &RoleAssignmentListParametersBuilder::default()
+                .user_id(&user_id)
+                .system_id(system_id)
+                .include_names(true)
+                .effective(true)
+                .build()
+                .map_err(AssignmentProviderError::from)?,
+        )
+        .await
+        .auth_context("resolving role assignments")?;
+    assignments_to_roles(assignments)
+}
+
+// Resolve effective roles for a trust scope.
+async fn resolve_trust_roles(
+    state: &ServiceState,
+    tpi: &TrustProjectInfo,
+) -> Result<Vec<RoleRef>, AuthenticationError> {
+    let trustor_assignments = state
+        .provider
+        .get_assignment_provider()
+        .list_role_assignments(
+            state,
+            &RoleAssignmentListParameters {
+                user_id: Some(tpi.trust.trustor_user_id.clone()),
+                project_id: Some(tpi.project.id.clone()),
+                effective: Some(true),
+                ..Default::default()
+            },
+        )
+        .await
+        .auth_context("resolving trust role assignments")?;
+
+    if let Some(trust_roles) = &tpi.trust.roles {
+        let trustor_role_ids: HashSet<String> = trustor_assignments
+            .iter()
+            .map(|a| a.role_id.clone())
+            .collect();
+        let mut trust_roles = trust_roles.clone();
+        state
+            .provider
+            .get_role_provider()
+            .expand_implied_roles(state, &mut trust_roles)
+            .await
+            .auth_context("expanding implied roles for trust")?;
+
+        if !trust_roles
+            .iter()
+            .all(|role| trustor_role_ids.contains(&role.id))
+        {
+            debug!(
+                "Trust roles {:?} are missing for the trustor {:?}",
+                trust_roles, trustor_role_ids
+            );
+            return Err(AuthenticationError::ActorHasNoRolesOnTarget);
+        }
+        trust_roles.retain_mut(|role| role.domain_id.is_none());
+        Ok(trust_roles)
+    } else {
+        assignments_to_roles(trustor_assignments)
+    }
+}
+
+// Convert a list of role assignments into [`RoleRef`] values.
+fn assignments_to_roles(
+    assignments: Vec<openstack_keystone_core_types::assignment::Assignment>,
+) -> Result<Vec<RoleRef>, AuthenticationError> {
+    assignments
+        .into_iter()
+        .map(|a| {
+            a.try_into()
+                .map_err(|_| AuthenticationError::RoleConversionFailed)
+        })
+        .collect::<Result<Vec<_>, _>>()
+}
+
 #[cfg(test)]
 mod tests {
     use openstack_keystone_core_types::assignment::{
-        Assignment, AssignmentType, RoleAssignmentListParameters,
+        Assignment, AssignmentProviderError, AssignmentType, RoleAssignmentListParameters,
     };
     use openstack_keystone_core_types::auth::{
-        AuthenticationContext, IdentityInfo, PrincipalInfo, ScopeInfo,
+        AuthenticationContext, IdentityInfo, PrincipalIdentityInfo, PrincipalInfo, ScopeInfo,
         SecurityContextTestingBuilder, TrustProjectInfo, UserIdentityInfo,
     };
     use openstack_keystone_core_types::identity::{UserOptions, UserResponse};
     use openstack_keystone_core_types::resource::Project;
-    use openstack_keystone_core_types::role::{RoleRef, RoleRefBuilder};
+    use openstack_keystone_core_types::role::{Role, RoleRef, RoleRefBuilder};
     use openstack_keystone_core_types::token::TokenRestriction;
     use openstack_keystone_core_types::trust::Trust;
     use std::collections::HashMap;
 
     use crate::assignment::MockAssignmentProvider;
     use crate::provider::Provider;
-    use crate::role::MockRoleProvider;
+    use crate::role::{MockRoleProvider, RoleProviderError};
     use crate::tests::get_mocked_state;
 
     use super::*;
@@ -555,8 +643,12 @@ mod tests {
     }
 
     fn assignment_with_role(rid: impl Into<String>) -> Assignment {
+        assignment_with_role_actor(rid, "uid")
+    }
+
+    fn assignment_with_role_actor(rid: impl Into<String>, actor: impl Into<String>) -> Assignment {
         Assignment {
-            actor_id: "uid".to_string(),
+            actor_id: actor.into(),
             role_id: rid.into(),
             role_name: Some("admin".to_string()),
             target_id: "target".to_string(),
@@ -568,6 +660,193 @@ mod tests {
 
     fn role_ref(id: impl Into<String>, name: impl Into<String>) -> RoleRef {
         RoleRefBuilder::default().id(id).name(name).build().unwrap()
+    }
+
+    fn role_ref_with_domain(
+        id: impl Into<String>,
+        name: impl Into<String>,
+        domain_id: Option<String>,
+    ) -> RoleRef {
+        let mut r = RoleRefBuilder::default().id(id).name(name).build().unwrap();
+        r.domain_id = domain_id;
+        r
+    }
+
+    fn make_spiffe_binding(
+        svid: impl Into<String>,
+        is_system: bool,
+        authorizations: Option<Vec<SpiffeAuthorization>>,
+    ) -> SpiffeBinding {
+        SpiffeBinding {
+            authorizations,
+            domain_id: "d1".to_string(),
+            svid: svid.into(),
+            is_system,
+            user_id: None,
+        }
+    }
+
+    fn make_spiffe_principal(svid: impl Into<String>, issuer: impl Into<String>) -> PrincipalInfo {
+        PrincipalInfo {
+            identity: IdentityInfo::Principal(PrincipalIdentityInfo {
+                id: svid.into(),
+                issuer: issuer.into(),
+                attributes: HashMap::new(),
+                domain: Some(openstack_keystone_core_types::resource::Domain {
+                    id: "d1".to_string(),
+                    description: None,
+                    enabled: true,
+                    name: "default".to_string(),
+                    extra: HashMap::new(),
+                }),
+            }),
+        }
+    }
+
+    fn make_role(id: impl Into<String>, name: impl Into<String>) -> Role {
+        Role {
+            id: id.into(),
+            name: name.into(),
+            description: None,
+            domain_id: None,
+            extra: HashMap::new(),
+        }
+    }
+
+    fn disabled_domain_scope(did: impl Into<String>) -> ScopeInfo {
+        ScopeInfo::Domain(openstack_keystone_core_types::resource::Domain {
+            id: did.into(),
+            description: None,
+            enabled: false,
+            name: "disabled".to_string(),
+            extra: HashMap::new(),
+        })
+    }
+
+    fn disabled_project_scope(pid: impl Into<String>) -> ScopeInfo {
+        ScopeInfo::Project {
+            project: Project {
+                id: pid.into(),
+                domain_id: "d1".to_string(),
+                enabled: false,
+                name: "p".to_string(),
+                description: None,
+                is_domain: false,
+                parent_id: None,
+                extra: HashMap::new(),
+            },
+            project_domain: openstack_keystone_core_types::resource::Domain {
+                id: "d1".to_string(),
+                description: None,
+                enabled: true,
+                name: "default".to_string(),
+                extra: HashMap::new(),
+            },
+        }
+    }
+
+    fn disabled_project_domain_scope(pid: impl Into<String>) -> ScopeInfo {
+        ScopeInfo::Project {
+            project: Project {
+                id: pid.into(),
+                domain_id: "d1".to_string(),
+                enabled: true,
+                name: "p".to_string(),
+                description: None,
+                is_domain: false,
+                parent_id: None,
+                extra: HashMap::new(),
+            },
+            project_domain: openstack_keystone_core_types::resource::Domain {
+                id: "d1".to_string(),
+                description: None,
+                enabled: false,
+                name: "disabled".to_string(),
+                extra: HashMap::new(),
+            },
+        }
+    }
+
+    fn disabled_trust_scope(
+        trustor: impl Into<String>,
+        trustee: impl Into<String>,
+        project: &str,
+        roles: Option<Vec<RoleRef>>,
+    ) -> ScopeInfo {
+        ScopeInfo::TrustProject(Box::new(TrustProjectInfo {
+            trust: Trust {
+                id: "t1".to_string(),
+                trustor_user_id: trustor.into(),
+                trustee_user_id: trustee.into(),
+                impersonation: false,
+                project_id: None,
+                expires_at: None,
+                deleted_at: None,
+                extra: None,
+                remaining_uses: None,
+                redelegated_trust_id: None,
+                redelegation_count: None,
+                roles,
+            },
+            project: Project {
+                id: project.to_string(),
+                domain_id: "d1".to_string(),
+                enabled: false,
+                name: "p".to_string(),
+                description: None,
+                is_domain: false,
+                parent_id: None,
+                extra: HashMap::new(),
+            },
+            project_domain: openstack_keystone_core_types::resource::Domain {
+                id: "d1".to_string(),
+                description: None,
+                enabled: true,
+                name: "default".to_string(),
+                extra: HashMap::new(),
+            },
+        }))
+    }
+
+    fn disabled_trust_project_domain_scope(
+        trustor: impl Into<String>,
+        trustee: impl Into<String>,
+        project: &str,
+        roles: Option<Vec<RoleRef>>,
+    ) -> ScopeInfo {
+        ScopeInfo::TrustProject(Box::new(TrustProjectInfo {
+            trust: Trust {
+                id: "t1".to_string(),
+                trustor_user_id: trustor.into(),
+                trustee_user_id: trustee.into(),
+                impersonation: false,
+                project_id: None,
+                expires_at: None,
+                deleted_at: None,
+                extra: None,
+                remaining_uses: None,
+                redelegated_trust_id: None,
+                redelegation_count: None,
+                roles,
+            },
+            project: Project {
+                id: project.to_string(),
+                domain_id: "d1".to_string(),
+                enabled: true,
+                name: "p".to_string(),
+                description: None,
+                is_domain: false,
+                parent_id: None,
+                extra: HashMap::new(),
+            },
+            project_domain: openstack_keystone_core_types::resource::Domain {
+                id: "d1".to_string(),
+                description: None,
+                enabled: false,
+                name: "disabled".to_string(),
+                extra: HashMap::new(),
+            },
+        }))
     }
 
     #[tokio::test]
@@ -829,5 +1108,1172 @@ mod tests {
             .unwrap();
         assert_eq!(roles.len(), 1);
         assert_eq!(roles[0].id, admin_rid);
+    }
+
+    #[tokio::test]
+    async fn test_project_scope_spiffe_matching_authz() {
+        let pid = "pid";
+        let rid1 = "spiffe_role";
+        let binding = make_spiffe_binding(
+            "spiffe://domain/ns/workload",
+            false,
+            Some(vec![SpiffeAuthorization::Project {
+                project_id: pid.to_string(),
+                role_ids: Some(vec![rid1.to_string()]),
+            }]),
+        );
+        let principal = make_spiffe_principal("spiffe://domain/ns/workload", "spire-agent");
+        let mut role_mock = MockRoleProvider::default();
+        role_mock
+            .expect_expand_implied_roles()
+            .returning(|_state, _roles| Ok(()));
+        let state =
+            get_mocked_state(None, Some(Provider::mocked_builder().mock_role(role_mock))).await;
+        let ctx = SecurityContextTestingBuilder::default()
+            .authentication_context(AuthenticationContext::Spiffe(binding))
+            .principal(principal)
+            .build();
+        let scope = make_project_scope(pid);
+        let roles = calculate_effective_roles(&state, &ctx, &scope)
+            .await
+            .unwrap();
+        assert_eq!(roles.len(), 1);
+        assert_eq!(roles[0].id, rid1);
+    }
+
+    #[tokio::test]
+    async fn test_project_scope_token_restriction_expand_role_ids() {
+        let rid1 = "rid1";
+        let rid2 = "rid2";
+        let tr = TokenRestriction {
+            id: "tr1".to_string(),
+            domain_id: "d1".to_string(),
+            allow_rescope: true,
+            allow_renew: false,
+            role_ids: vec![rid1.to_string(), rid2.to_string()],
+            roles: None,
+            project_id: Some("pid".to_string()),
+            user_id: Some("uid".to_string()),
+        };
+        let ctx = SecurityContextTestingBuilder::default()
+            .authentication_context(AuthenticationContext::Password)
+            .principal(make_user_identity("uid"))
+            .token_restriction(tr)
+            .build();
+        let mut role_mock = MockRoleProvider::default();
+        role_mock
+            .expect_expand_implied_roles()
+            .withf(move |_state, roles| roles.len() == 2 && roles.iter().any(|r| r.id == rid1))
+            .returning(move |_state, roles| {
+                for role in roles.iter_mut() {
+                    if role.id == rid1 {
+                        role.name = Some("admin".to_string());
+                    }
+                }
+                Ok(())
+            });
+        let state =
+            get_mocked_state(None, Some(Provider::mocked_builder().mock_role(role_mock))).await;
+        let scope = make_project_scope("pid");
+        let roles = calculate_effective_roles(&state, &ctx, &scope)
+            .await
+            .unwrap();
+        assert_eq!(roles.len(), 2);
+        assert!(roles.iter().any(|r| r.id == rid1));
+        assert!(roles.iter().any(|r| r.id == rid2));
+    }
+
+    #[tokio::test]
+    async fn test_trust_scope_missing_role_error() {
+        let trustor = "trustor";
+        let pid = "pid";
+        let trust_rid = "trust_role";
+        let trustor_rid = "other_role";
+        let trust_roles = vec![role_ref(trust_rid, "trustadmin")];
+        // Trustor has a different role, not the one on the trust
+        let mut assignment_mock = MockAssignmentProvider::default();
+        assignment_mock
+            .expect_list_role_assignments()
+            .withf(|_, q: &RoleAssignmentListParameters| {
+                q.user_id.as_deref() == Some(trustor)
+                    && q.project_id.as_deref() == Some(pid)
+                    && q.effective == Some(true)
+            })
+            .returning(move |_state, _q| Ok(vec![assignment_with_role(trustor_rid)]));
+        let mut role_mock = MockRoleProvider::default();
+        role_mock
+            .expect_expand_implied_roles()
+            .returning(|_state, _roles| Ok(()));
+        let state = get_mocked_state(
+            None,
+            Some(
+                Provider::mocked_builder()
+                    .mock_assignment(assignment_mock)
+                    .mock_role(role_mock),
+            ),
+        )
+        .await;
+        let ctx = SecurityContextTestingBuilder::default()
+            .authentication_context(AuthenticationContext::Password)
+            .principal(make_user_identity(trustor))
+            .build();
+        let scope = make_trust_scope(trustor, "trustee", pid, Some(trust_roles));
+        let result = calculate_effective_roles(&state, &ctx, &scope).await;
+        assert!(matches!(
+            result,
+            Err(AuthenticationError::ActorHasNoRolesOnTarget)
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_trust_scope_filters_domain_roles() {
+        let trustor = "trustor";
+        let pid = "pid";
+        let rid1 = "rid1";
+        let rid2 = "rid2";
+        let trust_roles = vec![
+            role_ref_with_domain(rid1, "admin", None),
+            role_ref_with_domain(rid2, "domain_admin", Some("d1".to_string())),
+        ];
+        let mut assignment_mock = MockAssignmentProvider::default();
+        assignment_mock
+            .expect_list_role_assignments()
+            .withf(|_, q: &RoleAssignmentListParameters| {
+                q.user_id.as_deref() == Some(trustor)
+                    && q.project_id.as_deref() == Some(pid)
+                    && q.effective == Some(true)
+            })
+            .returning(move |_state, _q| {
+                Ok(vec![assignment_with_role(rid1), assignment_with_role(rid2)])
+            });
+        let mut role_mock = MockRoleProvider::default();
+        role_mock
+            .expect_expand_implied_roles()
+            .returning(|_state, _roles| Ok(()));
+        let state = get_mocked_state(
+            None,
+            Some(
+                Provider::mocked_builder()
+                    .mock_assignment(assignment_mock)
+                    .mock_role(role_mock),
+            ),
+        )
+        .await;
+        let ctx = SecurityContextTestingBuilder::default()
+            .authentication_context(AuthenticationContext::Password)
+            .principal(make_user_identity(trustor))
+            .build();
+        let scope = make_trust_scope(trustor, "trustee", pid, Some(trust_roles));
+        let roles = calculate_effective_roles(&state, &ctx, &scope)
+            .await
+            .unwrap();
+        assert_eq!(roles.len(), 1);
+        assert_eq!(roles[0].id, rid1);
+    }
+
+    #[tokio::test]
+    async fn test_domain_scope_empty_assignments_error() {
+        let uid = "uid";
+        let did = "did";
+        let mut assignment_mock = MockAssignmentProvider::default();
+        assignment_mock
+            .expect_list_role_assignments()
+            .withf(|_, q: &RoleAssignmentListParameters| {
+                q.user_id.as_deref() == Some(uid)
+                    && q.domain_id.as_deref() == Some(did)
+                    && q.effective == Some(true)
+            })
+            .returning(move |_state, _q| Ok(Vec::<Assignment>::new()));
+        let state = get_mocked_state(
+            None,
+            Some(Provider::mocked_builder().mock_assignment(assignment_mock)),
+        )
+        .await;
+        let ctx = SecurityContextTestingBuilder::default()
+            .authentication_context(AuthenticationContext::Password)
+            .principal(make_user_identity(uid))
+            .build();
+        let scope = make_domain_scope(did);
+        let result = calculate_effective_roles(&state, &ctx, &scope).await;
+        assert!(matches!(
+            result,
+            Err(AuthenticationError::ActorHasNoRolesOnTarget)
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_domain_scope_disabled_error() {
+        let did = "did";
+        let state = get_mocked_state(None, None).await;
+        let ctx = SecurityContextTestingBuilder::default()
+            .authentication_context(AuthenticationContext::Password)
+            .principal(make_user_identity("uid"))
+            .build();
+        let scope = disabled_domain_scope(did);
+        let result = calculate_effective_roles(&state, &ctx, &scope).await;
+        match result.unwrap_err() {
+            //result,
+            //Err(AuthenticationError::DomainDisabled(id))
+            AuthenticationError::DomainDisabled(id) if id == did => {}
+            e => panic!("unexpected error: {:?}", e),
+        };
+    }
+
+    #[tokio::test]
+    async fn test_project_scope_disabled_error() {
+        let pid = "pid";
+        let state = get_mocked_state(None, None).await;
+        let ctx = SecurityContextTestingBuilder::default()
+            .authentication_context(AuthenticationContext::Password)
+            .principal(make_user_identity("uid"))
+            .build();
+        let scope = disabled_project_scope(pid);
+        let result = calculate_effective_roles(&state, &ctx, &scope).await;
+        match result.unwrap_err() {
+            //result,
+            //Err(AuthenticationError::ProjectDisabled(id))
+            AuthenticationError::ProjectDisabled(id) if id == pid => {}
+            e => panic!("unexpected error: {:?}", e),
+        };
+    }
+
+    #[tokio::test]
+    async fn test_project_scope_disabled_domain_error() {
+        let pid = "pid";
+        let state = get_mocked_state(None, None).await;
+        let ctx = SecurityContextTestingBuilder::default()
+            .authentication_context(AuthenticationContext::Password)
+            .principal(make_user_identity("uid"))
+            .build();
+        let scope = disabled_project_domain_scope(pid);
+        let result = calculate_effective_roles(&state, &ctx, &scope).await;
+        match result.unwrap_err() {
+            //result,
+            //Err(AuthenticationError::DomainDisabled(id))
+            AuthenticationError::DomainDisabled(id) if id == "d1" => {}
+            e => panic!("unexpected error: {:?}", e),
+        };
+    }
+
+    #[tokio::test]
+    async fn test_trust_scope_disabled_project_error() {
+        let state = get_mocked_state(None, None).await;
+        let ctx = SecurityContextTestingBuilder::default()
+            .authentication_context(AuthenticationContext::Password)
+            .principal(make_user_identity("trustor"))
+            .build();
+        let scope = disabled_trust_scope("trustor", "trustee", "pid", None);
+        let result = calculate_effective_roles(&state, &ctx, &scope).await;
+        match result.unwrap_err() {
+            //result,
+            //Err(AuthenticationError::ProjectDisabled(id))
+            AuthenticationError::ProjectDisabled(id) if id == "pid" => {}
+            e => panic!("unexpected error: {:?}", e),
+        };
+    }
+
+    #[tokio::test]
+    async fn test_trust_scope_disabled_domain_error() {
+        let state = get_mocked_state(None, None).await;
+        let ctx = SecurityContextTestingBuilder::default()
+            .authentication_context(AuthenticationContext::Password)
+            .principal(make_user_identity("trustor"))
+            .build();
+        let scope = disabled_trust_project_domain_scope("trustor", "trustee", "pid", None);
+        let result = calculate_effective_roles(&state, &ctx, &scope).await;
+        match result.unwrap_err() {
+            // result,
+            //Err(AuthenticationError::DomainDisabled(id))
+            AuthenticationError::DomainDisabled(id) if id == "d1" => {}
+            e => panic!("unexpected error: {:?}", e),
+        };
+    }
+
+    // --- Project scope empty assignments error ---
+    #[tokio::test]
+    async fn test_project_scope_empty_assignments_error() {
+        let uid = "uid";
+        let pid = "pid";
+        let mut assignment_mock = MockAssignmentProvider::default();
+        assignment_mock
+            .expect_list_role_assignments()
+            .withf(|_, q: &RoleAssignmentListParameters| {
+                q.user_id.as_deref() == Some(uid)
+                    && q.project_id.as_deref() == Some(pid)
+                    && q.effective == Some(true)
+                    && q.include_names == Some(false)
+            })
+            .returning(move |_state, _q| Ok(Vec::<Assignment>::new()));
+        let state = get_mocked_state(
+            None,
+            Some(Provider::mocked_builder().mock_assignment(assignment_mock)),
+        )
+        .await;
+        let ctx = SecurityContextTestingBuilder::default()
+            .authentication_context(AuthenticationContext::Password)
+            .principal(make_user_identity(uid))
+            .build();
+        let scope = make_project_scope(pid);
+        let result = calculate_effective_roles(&state, &ctx, &scope).await;
+        assert!(matches!(
+            result,
+            Err(AuthenticationError::ActorHasNoRolesOnTarget)
+        ));
+    }
+
+    // --- System scope empty assignments error ---
+    #[tokio::test]
+    async fn test_system_scope_empty_assignments_error() {
+        let uid = "uid";
+        let system = "all";
+        let mut assignment_mock = MockAssignmentProvider::default();
+        assignment_mock
+            .expect_list_role_assignments()
+            .withf(|_, q: &RoleAssignmentListParameters| {
+                q.user_id.as_deref() == Some(uid)
+                    && q.system_id.as_deref() == Some(system)
+                    && q.effective == Some(true)
+                    && q.include_names == Some(true)
+            })
+            .returning(move |_state, _q| Ok(Vec::<Assignment>::new()));
+        let state = get_mocked_state(
+            None,
+            Some(Provider::mocked_builder().mock_assignment(assignment_mock)),
+        )
+        .await;
+        let ctx = SecurityContextTestingBuilder::default()
+            .authentication_context(AuthenticationContext::Password)
+            .principal(make_user_identity(uid))
+            .build();
+        let scope = ScopeInfo::System(system.to_string());
+        let result = calculate_effective_roles(&state, &ctx, &scope).await;
+        assert!(matches!(
+            result,
+            Err(AuthenticationError::ActorHasNoRolesOnTarget)
+        ));
+    }
+
+    // --- SPIFFE system: is_system = true, returns reader role ---
+    #[tokio::test]
+    async fn test_system_scope_spiffe_system_true() {
+        let reader_rid = "reader";
+        let binding = make_spiffe_binding(
+            "spiffe://domain/ns/system-workload",
+            true,
+            Some(vec![SpiffeAuthorization::System {
+                system_id: "all".to_string(),
+                role_ids: None,
+            }]),
+        );
+        let principal = make_spiffe_principal("spiffe://domain/ns/system-workload", "spire-agent");
+        let mut role_mock = MockRoleProvider::default();
+        role_mock
+            .expect_list_roles()
+            .returning(move |_state, _params| Ok(vec![make_role(reader_rid, "reader")]));
+        let state =
+            get_mocked_state(None, Some(Provider::mocked_builder().mock_role(role_mock))).await;
+        let ctx = SecurityContextTestingBuilder::default()
+            .authentication_context(AuthenticationContext::Spiffe(binding))
+            .principal(principal)
+            .build();
+        let scope = ScopeInfo::System("all".to_string());
+        let roles = calculate_effective_roles(&state, &ctx, &scope)
+            .await
+            .unwrap();
+        assert_eq!(roles.len(), 1);
+        assert_eq!(roles[0].id, reader_rid);
+    }
+
+    // --- SPIFFE system: is_system = false, returns empty → error ---
+    #[tokio::test]
+    async fn test_system_scope_spiffe_system_false() {
+        let binding = make_spiffe_binding(
+            "spiffe://domain/ns/workload",
+            false,
+            Some(vec![SpiffeAuthorization::System {
+                system_id: "all".to_string(),
+                role_ids: None,
+            }]),
+        );
+        let principal = make_spiffe_principal("spiffe://domain/ns/workload", "spire-agent");
+        let state = get_mocked_state(None, None).await;
+        let ctx = SecurityContextTestingBuilder::default()
+            .authentication_context(AuthenticationContext::Spiffe(binding))
+            .principal(principal)
+            .build();
+        let scope = ScopeInfo::System("all".to_string());
+        let result = calculate_effective_roles(&state, &ctx, &scope).await;
+        assert!(matches!(
+            result,
+            Err(AuthenticationError::ActorHasNoRolesOnTarget)
+        ));
+    }
+
+    // --- SPIFFE project: authorizations_none, falls through to default
+    //     (which with no assignments returns empty → error) ---
+    #[tokio::test]
+    async fn test_project_scope_spiffe_authorizations_none() {
+        let pid = "pid";
+        let binding = make_spiffe_binding("spiffe://domain/ns/workload", false, None);
+        let principal = make_spiffe_principal("spiffe://domain/ns/workload", "spire-agent");
+        let mut assignment_mock = MockAssignmentProvider::default();
+        assignment_mock
+            .expect_list_role_assignments()
+            .withf(|_, q: &RoleAssignmentListParameters| {
+                q.project_id.as_deref() == Some(pid)
+                    && q.effective == Some(true)
+                    && q.include_names == Some(false)
+            })
+            .returning(move |_state, _q| Ok(Vec::<Assignment>::new()));
+        let state = get_mocked_state(
+            None,
+            Some(Provider::mocked_builder().mock_assignment(assignment_mock)),
+        )
+        .await;
+        let ctx = SecurityContextTestingBuilder::default()
+            .authentication_context(AuthenticationContext::Spiffe(binding))
+            .principal(principal)
+            .build();
+        let scope = make_project_scope(pid);
+        let result = calculate_effective_roles(&state, &ctx, &scope).await;
+        assert!(matches!(
+            result,
+            Err(AuthenticationError::ActorHasNoRolesOnTarget)
+        ));
+    }
+
+    // --- SPIFFE project: no matching project_id, falls through to default ---
+    #[tokio::test]
+    async fn test_project_scope_spiffe_no_matching_project() {
+        let target_pid = "pid";
+        let other_pid = "other_pid";
+        let binding = make_spiffe_binding(
+            "spiffe://domain/ns/workload",
+            false,
+            Some(vec![SpiffeAuthorization::Project {
+                project_id: other_pid.to_string(),
+                role_ids: Some(vec!["spiffe_role".to_string()]),
+            }]),
+        );
+        let principal = make_spiffe_principal("spiffe://domain/ns/workload", "spire-agent");
+        let mut assignment_mock = MockAssignmentProvider::default();
+        assignment_mock
+            .expect_list_role_assignments()
+            .withf(|_, q: &RoleAssignmentListParameters| {
+                q.project_id.as_deref() == Some(target_pid)
+                    && q.effective == Some(true)
+                    && q.include_names == Some(false)
+            })
+            .returning(move |_state, _q| Ok(Vec::<Assignment>::new()));
+        let state = get_mocked_state(
+            None,
+            Some(Provider::mocked_builder().mock_assignment(assignment_mock)),
+        )
+        .await;
+        let ctx = SecurityContextTestingBuilder::default()
+            .authentication_context(AuthenticationContext::Spiffe(binding))
+            .principal(principal)
+            .build();
+        let scope = make_project_scope(target_pid);
+        let result = calculate_effective_roles(&state, &ctx, &scope).await;
+        assert!(matches!(
+            result,
+            Err(AuthenticationError::ActorHasNoRolesOnTarget)
+        ));
+    }
+
+    // --- SPIFFE project: role_ids_none, falls through to default ---
+    #[tokio::test]
+    async fn test_project_scope_spiffe_role_ids_none() {
+        let pid = "pid";
+        let binding = make_spiffe_binding(
+            "spiffe://domain/ns/workload",
+            false,
+            Some(vec![SpiffeAuthorization::Project {
+                project_id: pid.to_string(),
+                role_ids: None,
+            }]),
+        );
+        let principal = make_spiffe_principal("spiffe://domain/ns/workload", "spire-agent");
+        let mut assignment_mock = MockAssignmentProvider::default();
+        assignment_mock
+            .expect_list_role_assignments()
+            .withf(|_, q: &RoleAssignmentListParameters| {
+                q.project_id.as_deref() == Some(pid)
+                    && q.effective == Some(true)
+                    && q.include_names == Some(false)
+            })
+            .returning(move |_state, _q| Ok(Vec::<Assignment>::new()));
+        let state = get_mocked_state(
+            None,
+            Some(Provider::mocked_builder().mock_assignment(assignment_mock)),
+        )
+        .await;
+        let ctx = SecurityContextTestingBuilder::default()
+            .authentication_context(AuthenticationContext::Spiffe(binding))
+            .principal(principal)
+            .build();
+        let scope = make_project_scope(pid);
+        let result = calculate_effective_roles(&state, &ctx, &scope).await;
+        assert!(matches!(
+            result,
+            Err(AuthenticationError::ActorHasNoRolesOnTarget)
+        ));
+    }
+
+    // --- AppCred: all roles pass filter ---
+    #[tokio::test]
+    async fn test_project_scope_appcred_all_roles_pass() {
+        let uid = "uid";
+        let pid = "pid";
+        let admin_rid = "admin";
+        let viewer_rid = "viewer";
+        let appcred_roles = vec![role_ref(admin_rid, "admin"), role_ref(viewer_rid, "viewer")];
+        let mut assignment_mock = MockAssignmentProvider::default();
+        assignment_mock
+            .expect_list_role_assignments()
+            .withf(|_, q: &RoleAssignmentListParameters| {
+                q.user_id.as_deref() == Some(uid)
+                    && q.project_id.as_deref() == Some(pid)
+                    && q.effective == Some(true)
+                    && q.include_names == Some(false)
+            })
+            .returning(move |_state, _q| {
+                Ok(vec![
+                    assignment_with_role(admin_rid),
+                    assignment_with_role(viewer_rid),
+                ])
+            });
+        let ac = openstack_keystone_core_types::application_credential::ApplicationCredential {
+            id: "ac1".to_string(),
+            user_id: uid.to_string(),
+            project_id: pid.to_string(),
+            name: "cred".to_string(),
+            description: None,
+            roles: appcred_roles,
+            unrestricted: false,
+            expires_at: None,
+            access_rules: None,
+        };
+        let ctx = SecurityContextTestingBuilder::default()
+            .authentication_context(AuthenticationContext::ApplicationCredential {
+                application_credential: ac,
+                token: None,
+            })
+            .principal(make_user_identity(uid))
+            .build();
+        let state = get_mocked_state(
+            None,
+            Some(Provider::mocked_builder().mock_assignment(assignment_mock)),
+        )
+        .await;
+        let scope = make_project_scope(pid);
+        let roles = calculate_effective_roles(&state, &ctx, &scope)
+            .await
+            .unwrap();
+        assert_eq!(roles.len(), 2);
+        assert!(roles.iter().any(|r| r.id == admin_rid));
+        assert!(roles.iter().any(|r| r.id == viewer_rid));
+    }
+
+    // --- Token restriction: roles: Some(empty) returns empty ---
+    #[tokio::test]
+    async fn test_project_scope_token_restriction_empty_roles() {
+        let tr = TokenRestriction {
+            id: "tr1".to_string(),
+            domain_id: "d1".to_string(),
+            allow_rescope: true,
+            allow_renew: false,
+            role_ids: vec!["rid1".to_string()],
+            roles: Some(Vec::new()),
+            project_id: Some("pid".to_string()),
+            user_id: Some("uid".to_string()),
+        };
+        let ctx = SecurityContextTestingBuilder::default()
+            .authentication_context(AuthenticationContext::Password)
+            .principal(make_user_identity("uid"))
+            .token_restriction(tr)
+            .build();
+        let state = get_mocked_state(None, None).await;
+        let scope = make_project_scope("pid");
+        let result = calculate_effective_roles(&state, &ctx, &scope).await;
+        assert!(matches!(
+            result,
+            Err(AuthenticationError::ActorHasNoRolesOnTarget)
+        ));
+    }
+
+    // --- Trust scope: expand_implied_roles adds an implied role, trustor has it
+    // ---
+    #[tokio::test]
+    async fn test_trust_scope_implied_role_expansion() {
+        let trustor = "trustor";
+        let pid = "pid";
+        let base_rid = "base_role";
+        let implied_rid = "implied_role";
+        let trust_roles = vec![role_ref(base_rid, "base")];
+        let mut assignment_mock = MockAssignmentProvider::default();
+        assignment_mock
+            .expect_list_role_assignments()
+            .withf(|_, q: &RoleAssignmentListParameters| {
+                q.user_id.as_deref() == Some(trustor)
+                    && q.project_id.as_deref() == Some(pid)
+                    && q.effective == Some(true)
+            })
+            .returning(move |_state, _q| {
+                Ok(vec![
+                    assignment_with_role_actor(base_rid, trustor),
+                    assignment_with_role_actor(implied_rid, trustor),
+                ])
+            });
+        let mut role_mock = MockRoleProvider::default();
+        role_mock
+            .expect_expand_implied_roles()
+            .returning(move |_state, roles| {
+                roles.push(role_ref(implied_rid, "implied"));
+                Ok(())
+            });
+        let state = get_mocked_state(
+            None,
+            Some(
+                Provider::mocked_builder()
+                    .mock_assignment(assignment_mock)
+                    .mock_role(role_mock),
+            ),
+        )
+        .await;
+        let ctx = SecurityContextTestingBuilder::default()
+            .authentication_context(AuthenticationContext::Password)
+            .principal(make_user_identity(trustor))
+            .build();
+        let scope = make_trust_scope(trustor, "trustee", pid, Some(trust_roles));
+        let roles = calculate_effective_roles(&state, &ctx, &scope)
+            .await
+            .unwrap();
+        assert_eq!(roles.len(), 2);
+        assert!(roles.iter().any(|r| r.id == base_rid));
+        assert!(roles.iter().any(|r| r.id == implied_rid));
+    }
+
+    // --- Project scope: expand_implied_roles adds an implied role for SPIFFE ---
+    #[tokio::test]
+    async fn test_project_scope_spiffe_implied_role_expansion() {
+        let pid = "pid";
+        let base_rid = "spiffe_role";
+        let implied_rid = "implied_role";
+        let binding = make_spiffe_binding(
+            "spiffe://domain/ns/workload",
+            false,
+            Some(vec![SpiffeAuthorization::Project {
+                project_id: pid.to_string(),
+                role_ids: Some(vec![base_rid.to_string()]),
+            }]),
+        );
+        let principal = make_spiffe_principal("spiffe://domain/ns/workload", "spire-agent");
+        let mut role_mock = MockRoleProvider::default();
+        role_mock
+            .expect_expand_implied_roles()
+            .returning(move |_state, roles| {
+                roles.push(role_ref(implied_rid, "implied"));
+                Ok(())
+            });
+        let state =
+            get_mocked_state(None, Some(Provider::mocked_builder().mock_role(role_mock))).await;
+        let ctx = SecurityContextTestingBuilder::default()
+            .authentication_context(AuthenticationContext::Spiffe(binding))
+            .principal(principal)
+            .build();
+        let scope = make_project_scope(pid);
+        let roles = calculate_effective_roles(&state, &ctx, &scope)
+            .await
+            .unwrap();
+        assert_eq!(roles.len(), 2);
+        assert!(roles.iter().any(|r| r.id == base_rid));
+        assert!(roles.iter().any(|r| r.id == implied_rid));
+    }
+
+    // --- assignments_to_roles: role conversion failure ---
+    #[test]
+    fn test_assignments_to_roles_conversion_failure() {
+        let mut bad_assignment = assignment_with_role("rid1");
+        bad_assignment.role_name = None;
+        let result = assignments_to_roles(vec![bad_assignment]);
+        assert!(matches!(
+            result,
+            Err(AuthenticationError::RoleConversionFailed)
+        ));
+    }
+
+    // --- SPIFFE non-system with principal identity on system scope, no assignments
+    // ---
+    #[tokio::test]
+    async fn test_system_scope_spiffe_non_system_no_assignments() {
+        let binding = make_spiffe_binding("spiffe://domain/ns/workload", false, None);
+        let principal = make_spiffe_principal("spiffe://domain/ns/workload", "spire-agent");
+        let ctx = SecurityContextTestingBuilder::default()
+            .authentication_context(AuthenticationContext::Spiffe(binding))
+            .principal(principal)
+            .build();
+        let state = get_mocked_state(None, None).await;
+        let scope = ScopeInfo::System("all".to_string());
+        let result = calculate_effective_roles(&state, &ctx, &scope).await;
+        assert!(matches!(
+            result,
+            Err(AuthenticationError::ActorHasNoRolesOnTarget)
+        ));
+    }
+
+    // --- Provider error: domain scope list_role_assignments ---
+    #[tokio::test]
+    async fn test_domain_scope_provider_error() {
+        let uid = "uid";
+        let did = "did";
+        let mut assignment_mock = MockAssignmentProvider::default();
+        assignment_mock
+            .expect_list_role_assignments()
+            .withf(|_, q: &RoleAssignmentListParameters| {
+                q.user_id.as_deref() == Some(uid)
+                    && q.domain_id.as_deref() == Some(did)
+                    && q.effective == Some(true)
+            })
+            .returning(move |_state, _q| Err(AssignmentProviderError::Driver("db down".into())));
+        let state = get_mocked_state(
+            None,
+            Some(Provider::mocked_builder().mock_assignment(assignment_mock)),
+        )
+        .await;
+        let ctx = SecurityContextTestingBuilder::default()
+            .authentication_context(AuthenticationContext::Password)
+            .principal(make_user_identity(uid))
+            .build();
+        let scope = make_domain_scope(did);
+        let result = calculate_effective_roles(&state, &ctx, &scope).await;
+        assert!(matches!(result, Err(AuthenticationError::Provider { .. })));
+    }
+
+    // --- Provider error: project scope list_role_assignments ---
+    #[tokio::test]
+    async fn test_project_scope_provider_error() {
+        let uid = "uid";
+        let pid = "pid";
+        let mut assignment_mock = MockAssignmentProvider::default();
+        assignment_mock
+            .expect_list_role_assignments()
+            .withf(|_, q: &RoleAssignmentListParameters| {
+                q.user_id.as_deref() == Some(uid)
+                    && q.project_id.as_deref() == Some(pid)
+                    && q.effective == Some(true)
+                    && q.include_names == Some(false)
+            })
+            .returning(move |_state, _q| Err(AssignmentProviderError::Driver("db down".into())));
+        let state = get_mocked_state(
+            None,
+            Some(Provider::mocked_builder().mock_assignment(assignment_mock)),
+        )
+        .await;
+        let ctx = SecurityContextTestingBuilder::default()
+            .authentication_context(AuthenticationContext::Password)
+            .principal(make_user_identity(uid))
+            .build();
+        let scope = make_project_scope(pid);
+        let result = calculate_effective_roles(&state, &ctx, &scope).await;
+        assert!(matches!(result, Err(AuthenticationError::Provider { .. })));
+    }
+
+    // --- Provider error: system scope list_role_assignments ---
+    #[tokio::test]
+    async fn test_system_scope_provider_error() {
+        let uid = "uid";
+        let system = "all";
+        let mut assignment_mock = MockAssignmentProvider::default();
+        assignment_mock
+            .expect_list_role_assignments()
+            .withf(|_, q: &RoleAssignmentListParameters| {
+                q.user_id.as_deref() == Some(uid)
+                    && q.system_id.as_deref() == Some(system)
+                    && q.effective == Some(true)
+                    && q.include_names == Some(true)
+            })
+            .returning(move |_state, _q| Err(AssignmentProviderError::Driver("db down".into())));
+        let state = get_mocked_state(
+            None,
+            Some(Provider::mocked_builder().mock_assignment(assignment_mock)),
+        )
+        .await;
+        let ctx = SecurityContextTestingBuilder::default()
+            .authentication_context(AuthenticationContext::Password)
+            .principal(make_user_identity(uid))
+            .build();
+        let scope = ScopeInfo::System(system.to_string());
+        let result = calculate_effective_roles(&state, &ctx, &scope).await;
+        assert!(matches!(result, Err(AuthenticationError::Provider { .. })));
+    }
+
+    // --- Provider error: trust scope list_role_assignments ---
+    #[tokio::test]
+    async fn test_trust_scope_provider_error() {
+        let trustor = "trustor";
+        let pid = "pid";
+        let mut assignment_mock = MockAssignmentProvider::default();
+        assignment_mock
+            .expect_list_role_assignments()
+            .withf(|_, q: &RoleAssignmentListParameters| {
+                q.user_id.as_deref() == Some(trustor)
+                    && q.project_id.as_deref() == Some(pid)
+                    && q.effective == Some(true)
+            })
+            .returning(move |_state, _q| Err(AssignmentProviderError::Driver("db down".into())));
+        let state = get_mocked_state(
+            None,
+            Some(Provider::mocked_builder().mock_assignment(assignment_mock)),
+        )
+        .await;
+        let ctx = SecurityContextTestingBuilder::default()
+            .authentication_context(AuthenticationContext::Password)
+            .principal(make_user_identity(trustor))
+            .build();
+        let scope = make_trust_scope(trustor, "trustee", pid, None);
+        let result = calculate_effective_roles(&state, &ctx, &scope).await;
+        assert!(matches!(result, Err(AuthenticationError::Provider { .. })));
+    }
+
+    // --- Provider error: SPIFFE expand_implied_roles ---
+    #[tokio::test]
+    async fn test_project_scope_spiffe_expand_implied_error() {
+        let pid = "pid";
+        let binding = make_spiffe_binding(
+            "spiffe://domain/ns/workload",
+            false,
+            Some(vec![SpiffeAuthorization::Project {
+                project_id: pid.to_string(),
+                role_ids: Some(vec!["spiffe_role".to_string()]),
+            }]),
+        );
+        let principal = make_spiffe_principal("spiffe://domain/ns/workload", "spire-agent");
+        let mut role_mock = MockRoleProvider::default();
+        role_mock
+            .expect_expand_implied_roles()
+            .returning(move |_state, _roles| Err(RoleProviderError::Driver("db down".into())));
+        let state =
+            get_mocked_state(None, Some(Provider::mocked_builder().mock_role(role_mock))).await;
+        let ctx = SecurityContextTestingBuilder::default()
+            .authentication_context(AuthenticationContext::Spiffe(binding))
+            .principal(principal)
+            .build();
+        let scope = make_project_scope(pid);
+        let result = calculate_effective_roles(&state, &ctx, &scope).await;
+        assert!(matches!(result, Err(AuthenticationError::Provider { .. })));
+    }
+
+    // --- Provider error: trust expand_implied_roles ---
+    #[tokio::test]
+    async fn test_trust_scope_expand_implied_error() {
+        let trustor = "trustor";
+        let pid = "pid";
+        let trust_rid = "trust_role";
+        let trust_roles = vec![role_ref(trust_rid, "trustadmin")];
+        let mut assignment_mock = MockAssignmentProvider::default();
+        assignment_mock
+            .expect_list_role_assignments()
+            .withf(|_, q: &RoleAssignmentListParameters| {
+                q.user_id.as_deref() == Some(trustor)
+                    && q.project_id.as_deref() == Some(pid)
+                    && q.effective == Some(true)
+            })
+            .returning(move |_state, _q| Ok(vec![assignment_with_role(trust_rid)]));
+        let mut role_mock = MockRoleProvider::default();
+        role_mock
+            .expect_expand_implied_roles()
+            .returning(move |_state, _roles| Err(RoleProviderError::Driver("db down".into())));
+        let state = get_mocked_state(
+            None,
+            Some(
+                Provider::mocked_builder()
+                    .mock_assignment(assignment_mock)
+                    .mock_role(role_mock),
+            ),
+        )
+        .await;
+        let ctx = SecurityContextTestingBuilder::default()
+            .authentication_context(AuthenticationContext::Password)
+            .principal(make_user_identity(trustor))
+            .build();
+        let scope = make_trust_scope(trustor, "trustee", pid, Some(trust_roles));
+        let result = calculate_effective_roles(&state, &ctx, &scope).await;
+        assert!(matches!(result, Err(AuthenticationError::Provider { .. })));
+    }
+
+    // --- Provider error: token restriction expand_implied_roles ---
+    #[tokio::test]
+    async fn test_project_scope_token_restriction_expand_error() {
+        let rid1 = "rid1";
+        let tr = TokenRestriction {
+            id: "tr1".to_string(),
+            domain_id: "d1".to_string(),
+            allow_rescope: true,
+            allow_renew: false,
+            role_ids: vec![rid1.to_string()],
+            roles: None,
+            project_id: Some("pid".to_string()),
+            user_id: Some("uid".to_string()),
+        };
+        let ctx = SecurityContextTestingBuilder::default()
+            .authentication_context(AuthenticationContext::Password)
+            .principal(make_user_identity("uid"))
+            .token_restriction(tr)
+            .build();
+        let mut role_mock = MockRoleProvider::default();
+        role_mock
+            .expect_expand_implied_roles()
+            .returning(move |_state, _roles| Err(RoleProviderError::Driver("db".into())));
+        let state =
+            get_mocked_state(None, Some(Provider::mocked_builder().mock_role(role_mock))).await;
+        let scope = make_project_scope("pid");
+        let result = calculate_effective_roles(&state, &ctx, &scope).await;
+        assert!(matches!(result, Err(AuthenticationError::Provider { .. })));
+    }
+
+    // --- Provider error: SPIFFE system list_roles ---
+    #[tokio::test]
+    async fn test_system_scope_spiffe_list_roles_error() {
+        let binding = make_spiffe_binding(
+            "spiffe://domain/ns/system-workload",
+            true,
+            Some(vec![SpiffeAuthorization::System {
+                system_id: "all".to_string(),
+                role_ids: None,
+            }]),
+        );
+        let principal = make_spiffe_principal("spiffe://domain/ns/system-workload", "spire-agent");
+        let mut role_mock = MockRoleProvider::default();
+        role_mock
+            .expect_list_roles()
+            .returning(move |_state, _params| Err(RoleProviderError::Driver("db".into())));
+        let state =
+            get_mocked_state(None, Some(Provider::mocked_builder().mock_role(role_mock))).await;
+        let ctx = SecurityContextTestingBuilder::default()
+            .authentication_context(AuthenticationContext::Spiffe(binding))
+            .principal(principal)
+            .build();
+        let scope = ScopeInfo::System("all".to_string());
+        let result = calculate_effective_roles(&state, &ctx, &scope).await;
+        assert!(matches!(result, Err(AuthenticationError::Provider { .. })));
+    }
+
+    // --- AppCred: empty roles list returns empty after filter ---
+    #[tokio::test]
+    async fn test_project_scope_appcred_empty_roles() {
+        let uid = "uid";
+        let pid = "pid";
+        let mut assignment_mock = MockAssignmentProvider::default();
+        assignment_mock
+            .expect_list_role_assignments()
+            .withf(|_, q: &RoleAssignmentListParameters| {
+                q.user_id.as_deref() == Some(uid)
+                    && q.project_id.as_deref() == Some(pid)
+                    && q.effective == Some(true)
+                    && q.include_names == Some(false)
+            })
+            .returning(move |_state, _q| Ok(vec![assignment_with_role("admin")]));
+        let ac = openstack_keystone_core_types::application_credential::ApplicationCredential {
+            id: "ac1".to_string(),
+            user_id: uid.to_string(),
+            project_id: pid.to_string(),
+            name: "cred".to_string(),
+            description: None,
+            roles: Vec::new(),
+            unrestricted: false,
+            expires_at: None,
+            access_rules: None,
+        };
+        let ctx = SecurityContextTestingBuilder::default()
+            .authentication_context(AuthenticationContext::ApplicationCredential {
+                application_credential: ac,
+                token: None,
+            })
+            .principal(make_user_identity(uid))
+            .build();
+        let state = get_mocked_state(
+            None,
+            Some(Provider::mocked_builder().mock_assignment(assignment_mock)),
+        )
+        .await;
+        let scope = make_project_scope(pid);
+        let result = calculate_effective_roles(&state, &ctx, &scope).await;
+        assert!(matches!(
+            result,
+            Err(AuthenticationError::ActorHasNoRolesOnTarget)
+        ));
+    }
+
+    // --- AppCred: all credential roles missing after filter ---
+    #[tokio::test]
+    async fn test_project_scope_appcred_all_roles_missing() {
+        let uid = "uid";
+        let pid = "pid";
+        let mut assignment_mock = MockAssignmentProvider::default();
+        assignment_mock
+            .expect_list_role_assignments()
+            .withf(|_, q: &RoleAssignmentListParameters| {
+                q.user_id.as_deref() == Some(uid)
+                    && q.project_id.as_deref() == Some(pid)
+                    && q.effective == Some(true)
+                    && q.include_names == Some(false)
+            })
+            .returning(move |_state, _q| Ok(vec![assignment_with_role("admin")]));
+        let ac = openstack_keystone_core_types::application_credential::ApplicationCredential {
+            id: "ac1".to_string(),
+            user_id: uid.to_string(),
+            project_id: pid.to_string(),
+            name: "cred".to_string(),
+            description: None,
+            roles: vec![role_ref("other", "other")],
+            unrestricted: false,
+            expires_at: None,
+            access_rules: None,
+        };
+        let ctx = SecurityContextTestingBuilder::default()
+            .authentication_context(AuthenticationContext::ApplicationCredential {
+                application_credential: ac,
+                token: None,
+            })
+            .principal(make_user_identity(uid))
+            .build();
+        let state = get_mocked_state(
+            None,
+            Some(Provider::mocked_builder().mock_assignment(assignment_mock)),
+        )
+        .await;
+        let scope = make_project_scope(pid);
+        let result = calculate_effective_roles(&state, &ctx, &scope).await;
+        assert!(matches!(
+            result,
+            Err(AuthenticationError::ActorHasNoRolesOnTarget)
+        ));
+    }
+
+    // --- Trust: expand adds role trustor does not have, .all() fails ---
+    #[tokio::test]
+    async fn test_trust_scope_expand_adds_missing_role() {
+        let trustor = "trustor";
+        let pid = "pid";
+        let base_rid = "base_role";
+        let extra_rid = "extra_role";
+        let trust_roles = vec![role_ref(base_rid, "base")];
+        // Trustor only has base_role, not extra_role
+        let mut assignment_mock = MockAssignmentProvider::default();
+        assignment_mock
+            .expect_list_role_assignments()
+            .withf(|_, q: &RoleAssignmentListParameters| {
+                q.user_id.as_deref() == Some(trustor)
+                    && q.project_id.as_deref() == Some(pid)
+                    && q.effective == Some(true)
+            })
+            .returning(move |_state, _q| Ok(vec![assignment_with_role_actor(base_rid, trustor)]));
+        let mut role_mock = MockRoleProvider::default();
+        role_mock
+            .expect_expand_implied_roles()
+            .returning(move |_state, roles| {
+                roles.push(role_ref(extra_rid, "extra"));
+                Ok(())
+            });
+        let state = get_mocked_state(
+            None,
+            Some(
+                Provider::mocked_builder()
+                    .mock_assignment(assignment_mock)
+                    .mock_role(role_mock),
+            ),
+        )
+        .await;
+        let ctx = SecurityContextTestingBuilder::default()
+            .authentication_context(AuthenticationContext::Password)
+            .principal(make_user_identity(trustor))
+            .build();
+        let scope = make_trust_scope(trustor, "trustee", pid, Some(trust_roles));
+        let result = calculate_effective_roles(&state, &ctx, &scope).await;
+        // After expand, trust_roles includes extra_role, but trustor does not have it
+        // .all() check fails -> ActorHasNoRolesOnTarget
+        assert!(matches!(
+            result,
+            Err(AuthenticationError::ActorHasNoRolesOnTarget)
+        ));
+    }
+
+    // --- Trust: no roles, trustor has no assignments ---
+    #[tokio::test]
+    async fn test_trust_scope_no_roles_no_assignments() {
+        let trustor = "trustor";
+        let pid = "pid";
+        let mut assignment_mock = MockAssignmentProvider::default();
+        assignment_mock
+            .expect_list_role_assignments()
+            .withf(|_, q: &RoleAssignmentListParameters| {
+                q.user_id.as_deref() == Some(trustor)
+                    && q.project_id.as_deref() == Some(pid)
+                    && q.effective == Some(true)
+            })
+            .returning(move |_state, _q| Ok(Vec::<Assignment>::new()));
+        let state = get_mocked_state(
+            None,
+            Some(Provider::mocked_builder().mock_assignment(assignment_mock)),
+        )
+        .await;
+        let ctx = SecurityContextTestingBuilder::default()
+            .authentication_context(AuthenticationContext::Password)
+            .principal(make_user_identity(trustor))
+            .build();
+        let scope = make_trust_scope(trustor, "trustee", pid, None);
+        let result = calculate_effective_roles(&state, &ctx, &scope).await;
+        assert!(matches!(
+            result,
+            Err(AuthenticationError::ActorHasNoRolesOnTarget)
+        ));
+    }
+
+    // --- Token restriction: role_ids empty, roles Some(roles) falls through ---
+    #[tokio::test]
+    async fn test_project_scope_token_restriction_no_role_ids_fallthrough() {
+        let uid = "uid";
+        let pid = "pid";
+        let restriction_roles = vec![role_ref("restricted", "restricted")];
+        let tr = TokenRestriction {
+            id: "tr1".to_string(),
+            domain_id: "d1".to_string(),
+            allow_rescope: true,
+            allow_renew: false,
+            role_ids: Vec::new(),
+            roles: Some(restriction_roles.clone()),
+            project_id: Some(pid.to_string()),
+            user_id: Some(uid.to_string()),
+        };
+        let ctx = SecurityContextTestingBuilder::default()
+            .authentication_context(AuthenticationContext::Password)
+            .principal(make_user_identity(uid))
+            .token_restriction(tr)
+            .build();
+        // role_ids is empty so !restriction.role_ids.is_empty() is false
+        // Falls through to assignment lookup which returns empty
+        let mut assignment_mock = MockAssignmentProvider::default();
+        assignment_mock
+            .expect_list_role_assignments()
+            .withf(|_, q: &RoleAssignmentListParameters| {
+                q.user_id.as_deref() == Some(uid)
+                    && q.project_id.as_deref() == Some(pid)
+                    && q.effective == Some(true)
+                    && q.include_names == Some(false)
+            })
+            .returning(move |_state, _q| Ok(Vec::<Assignment>::new()));
+        let state = get_mocked_state(
+            None,
+            Some(Provider::mocked_builder().mock_assignment(assignment_mock)),
+        )
+        .await;
+        let scope = make_project_scope(pid);
+        let result = calculate_effective_roles(&state, &ctx, &scope).await;
+        assert!(matches!(
+            result,
+            Err(AuthenticationError::ActorHasNoRolesOnTarget)
+        ));
     }
 }

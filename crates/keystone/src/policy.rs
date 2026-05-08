@@ -16,9 +16,11 @@ use std::time::SystemTime;
 
 use reqwest::{Client, Url};
 use serde_json::{Value, json};
-use tracing::{debug, trace};
+use tracing::{Level, debug, trace};
 
 use openstack_keystone_core::auth::ValidatedSecurityContext;
+
+pub use openstack_keystone_core::api::auth::Auth;
 pub use openstack_keystone_core::policy::*;
 
 /// Policy factory.
@@ -74,18 +76,18 @@ impl HttpPolicyEnforcer {
 
 #[async_trait::async_trait]
 impl PolicyEnforcer for HttpPolicyEnforcer {
-    //#[tracing::instrument(
-    //    name = "policy.enforce",
-    //    skip_all,
-    //    fields(
-    //        entrypoint = policy_name.as_ref(),
-    //        input,
-    //        result,
-    //        duration_ms
-    //    ),
-    //    err,
-    //    level = Level::DEBUG
-    //)]
+    #[tracing::instrument(
+        name = "policy.enforce",
+        skip_all,
+        fields(
+            entrypoint = policy_name,
+            input,
+            result,
+            duration_ms
+        ),
+        err(Debug),
+        level = Level::DEBUG
+    )]
     /// Enforces a policy decision using OPA.
     ///
     /// # Parameters
@@ -113,7 +115,7 @@ impl PolicyEnforcer for HttpPolicyEnforcer {
         });
         let span = tracing::Span::current();
 
-        trace!("checking policy decision with OPA using http");
+        debug!("checking policy decision with OPA using http");
         let url = self.base_url.join(policy_name.as_ref())?;
         let res: PolicyEvaluationResult = self
             .http_client

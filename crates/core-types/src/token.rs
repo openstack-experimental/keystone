@@ -92,6 +92,9 @@ impl FernetToken {
                 AuthenticationContext::Password => Ok(Self::DomainScope(
                     DomainScopePayload::from_security_context(ctx, domain, expires_at)?,
                 )),
+                AuthenticationContext::Spiffe(_) => {
+                    todo!()
+                }
                 AuthenticationContext::Token(..) => Ok(Self::DomainScope(
                     DomainScopePayload::from_security_context(ctx, domain, expires_at)?,
                 )),
@@ -118,6 +121,9 @@ impl FernetToken {
                         ctx, project, oidc, expires_at,
                     )?,
                 )),
+                AuthenticationContext::Spiffe(_) => {
+                    todo!()
+                }
                 _ => Ok(Self::ProjectScope(
                     ProjectScopePayload::from_security_context(ctx, project, expires_at)?,
                 )),
@@ -135,6 +141,9 @@ impl FernetToken {
                 AuthenticationContext::Oidc { oidc, .. } => Ok(Self::FederationUnscoped(
                     FederationUnscopedPayload::from_security_context(ctx, oidc, expires_at)?,
                 )),
+                AuthenticationContext::Spiffe(_) => {
+                    todo!()
+                }
 
                 _ => Ok(Self::Unscoped(UnscopedPayload::from_security_context(
                     ctx, expires_at,

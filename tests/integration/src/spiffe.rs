@@ -12,29 +12,4 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! # OpenStack Keystone core provider types
-
-#![allow(clippy::module_inception)]
-#![deny(clippy::unwrap_used)]
-
-pub mod application_credential;
-pub mod assignment;
-pub mod auth;
-pub mod catalog;
-pub mod error;
-pub mod federation;
-pub mod identity;
-pub mod identity_mapping;
-pub mod k8s_auth;
-pub mod resource;
-pub mod revoke;
-pub mod role;
-pub mod scope;
-pub mod spiffe;
-pub mod token;
-pub mod trust;
-
-/// Return `true` to be used as a positive default for the serde macros.
-pub fn default_true() -> bool {
-    true
-}
+mod binding;
