@@ -149,9 +149,11 @@ pub async fn get_state() -> Result<(Arc<Service>, TempDir)> {
     if std::env::var("USE_RAFT").is_ok() {
         let tmp_db_dir = tmp_dir.path().join("certs");
         create_dir(&tmp_db_dir)?;
-        let tls_configuration = make_certificates()?;
+        let tls_configuration =
+            openstack_keystone_config::RaftTlsConfiguration::Tls(make_certificates()?);
         cfg.distributed_storage = Some(DistributedStorageConfiguration {
-            cluster_addr: "http://127.0.0.1:12345".parse()?,
+            node_cluster_addr: "http://127.0.0.1:12345".parse()?,
+            node_listener_addr: "127.0.0.1:12345".parse()?,
             node_id: 1,
             path: tmp_db_dir.to_path_buf(),
             tls_configuration,

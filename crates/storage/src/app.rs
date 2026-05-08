@@ -83,7 +83,7 @@ pub async fn init_storage(config_manager: &Arc<ConfigManager>) -> Result<Storage
     // Create stores and network
     let (log_store, sm) = crate::new::<crate::TypeConfig, _>(ds_config.path).await?;
     let state_machine_store = Arc::new(sm);
-    let tls_watcher = init_tls_watcher(&config_manager).await?;
+    let tls_watcher = init_tls_watcher(config_manager).await?;
     let network = Arc::new(NetworkManager::new(tls_watcher.clone())?);
 
     // Create Raft instance

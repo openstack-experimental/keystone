@@ -59,7 +59,7 @@ pub trait PerformAction {
 #[tokio::main]
 async fn main() -> Result<(), Report> {
     let args = Args::parse();
-    let cfg = Config::new(args.config)?;
+    let cfg = Config::load_all(args.config)?;
     match args.command {
         Command::Storage(x) => x.take_action(&cfg).await?,
     }

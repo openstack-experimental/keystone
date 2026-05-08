@@ -11,19 +11,24 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 
 use http::Uri;
 use serde::Deserialize;
 
-use crate::common::TlsConfiguration;
+use crate::common::{TlsConfiguration, csv};
 
 /// Raft cluster configuration.
 #[derive(Debug, Deserialize, Clone)]
 pub struct DistributedStorageConfiguration {
-    /// Cluster address.
+    /// The address of the node in the cluster.
     #[serde(with = "http_serde::uri")]
-    pub cluster_addr: Uri,
+    pub node_cluster_addr: Uri,
+
+    /// Address on which current node listens for peer connections.
+    #[serde(default = "default_tcp_address")]
+    pub node_listener_addr: SocketAddr,
 
     /// Node id.
     pub node_id: u64,
@@ -33,16 +38,38 @@ pub struct DistributedStorageConfiguration {
 
     /// TLS configuration for the Raft cluster communication.
     #[serde(flatten)]
-    pub tls_configuration: TlsConfiguration,
+    pub tls_configuration: RaftTlsConfiguration,
 }
 
-/// Raft cluster node.
+fn default_tcp_address() -> SocketAddr {
+    SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 8081)
+}
+
+///// Raft cluster node.
+//#[derive(Debug, Deserialize, Clone)]
+//pub struct ClusterNode {
+//    /// Node address.
+//    pub addr: String,
+//    /// Node ID.
+//    pub id: u64,
+//}
+
+/// Raft TLS implementation.
 #[derive(Debug, Deserialize, Clone)]
-pub struct ClusterNode {
-    /// Node address.
-    pub addr: String,
-    /// Node ID.
-    pub id: u64,
+#[serde(untagged)]
+pub enum RaftTlsConfiguration {
+    /// Spiffe mTLS - not supported yet.
+    Spiffe(SpiffeTls),
+    /// Basic (manual) TLS.
+    Tls(TlsConfiguration),
+}
+
+/// Spiffe backed mTLS for the Raft.
+#[derive(Debug, Deserialize, Clone)]
+pub struct SpiffeTls {
+    /// Trusted domains for SPIFFE verification.
+    #[serde(deserialize_with = "csv")]
+    pub trust_domains: Vec<String>,
 }
 
 #[cfg(test)]
@@ -58,7 +85,7 @@ mod tests {
     #[test]
     fn test_deser() {
         let _cfg: DistributedStorageConfiguration = serde_json::from_value(json!({
-            "cluster_addr": "http://1.2.3.4:5678",
+            "node_cluster_addr": "http://1.2.3.4:5678",
             "node_id": 1,
             "path": "/tmp",
             "tls_cert_file": "/tmp/tls.cert",
@@ -72,7 +99,7 @@ mod tests {
         let c = Config::builder()
             .add_source(File::from_str(
                 r#"
-cluster_addr = https://localhost:8310
+node_cluster_addr = https://localhost:8310
 node_id = 1
 path = /keystone/storage
 tls_key_file = /foo
@@ -84,27 +111,25 @@ tls_client_ca_file = /baz
             .build()
             .unwrap();
         let cfg: DistributedStorageConfiguration = c.try_deserialize().unwrap();
-        assert_eq!("https://localhost:8310/", cfg.cluster_addr.to_string());
+        assert_eq!("https://localhost:8310/", cfg.node_cluster_addr.to_string());
         assert_eq!(1, cfg.node_id);
         assert_eq!("/keystone/storage", cfg.path.to_str().unwrap());
-        assert_eq!(
-            cfg.tls_configuration.tls_key_file,
-            Some(PathBuf::from("/foo"))
-        );
-        assert_eq!(
-            cfg.tls_configuration.tls_cert_file,
-            Some(PathBuf::from("/bar"))
-        );
-        assert_eq!(
-            cfg.tls_configuration.tls_client_ca_file,
-            Some(PathBuf::from("/baz"))
-        );
+        if let RaftTlsConfiguration::Tls(tls) = cfg.tls_configuration {
+            assert_eq!(tls.tls_key_file, Some(PathBuf::from("/foo")));
+            assert_eq!(tls.tls_cert_file, Some(PathBuf::from("/bar")));
+            assert_eq!(tls.tls_client_ca_file, Some(PathBuf::from("/baz")));
+        } else {
+            panic!("should be regular tls");
+        }
     }
 
     #[test]
     fn test_env() {
         temp_env::with_vars(
-            [("OS_DISTRIBUTED_STORAGE__CLUSTER_ADDR", Some("http://test/"))],
+            [(
+                "OS_DISTRIBUTED_STORAGE__NODE_CLUSTER_ADDR",
+                Some("http://test/"),
+            )],
             || {
                 let mut cfg_file = NamedTempFile::new().unwrap();
                 write!(
@@ -126,7 +151,7 @@ path = /foo
                     "http://test/",
                     cfg.distributed_storage
                         .expect("must be present")
-                        .cluster_addr
+                        .node_cluster_addr
                         .to_string()
                 );
             },

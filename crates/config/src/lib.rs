@@ -67,6 +67,7 @@ mod federation;
 mod fernet_token;
 mod identity;
 mod identity_mapping;
+mod interface;
 mod k8s_auth;
 mod listener;
 mod policy;
@@ -91,6 +92,7 @@ pub use federation::*;
 pub use fernet_token::*;
 pub use identity::*;
 pub use identity_mapping::*;
+pub use interface::*;
 pub use k8s_auth::*;
 pub use listener::*;
 pub use policy::*;
@@ -157,9 +159,13 @@ pub struct Config {
     #[serde(default)]
     pub k8s_auth: K8sAuthProvider,
 
-    /// Server listener configuration.
-    #[serde(default)]
-    pub listener: Listener,
+    /// Server listener configuration for the internal interface.
+    #[serde(rename = "interface_internal", default)]
+    pub interface_internal: Option<InternalInterface>,
+
+    /// Server listener configuration for the internal interface.
+    #[serde(rename = "interface_public", default)]
+    pub interface_public: PublicInterface,
 
     /// Resource provider configuration.
     #[serde(default)]
@@ -231,14 +237,11 @@ impl Config {
     /// - `Ok(Self)` if the config was parsed successfully
     pub fn load_all(path: PathBuf) -> Result<Self, Report> {
         let mut cfg = Self::new(path)?;
-        if let Some(ref mut ds) = cfg.distributed_storage {
-            ds.tls_configuration
-                .read_certs()
-                .wrap_err("reading distributed storage TLS configuration")?;
-        }
-        if let Some(ref mut tls) = cfg.listener.tls_configuration {
+        if let Some(ref mut ds) = cfg.distributed_storage
+            && let RaftTlsConfiguration::Tls(ref mut tls) = ds.tls_configuration
+        {
             tls.read_certs()
-                .wrap_err("reading listener TLS configuration")?;
+                .wrap_err("reading distributed storage TLS configuration")?;
         }
         Ok(cfg)
     }
@@ -246,18 +249,9 @@ impl Config {
     /// Get the list of all files that should be watched.
     fn get_watch_files(&self) -> HashSet<PathBuf> {
         let mut watched_paths = HashSet::new();
-        if let Some(ds) = &self.distributed_storage {
-            if let Some(crt) = &ds.tls_configuration.tls_cert_file {
-                watched_paths.insert(crt.clone());
-            }
-            if let Some(key) = &ds.tls_configuration.tls_key_file {
-                watched_paths.insert(key.clone());
-            }
-            if let Some(ca) = &ds.tls_configuration.tls_client_ca_file {
-                watched_paths.insert(ca.clone());
-            }
-        }
-        if let Some(tls) = &self.listener.tls_configuration {
+        if let Some(ds) = &self.distributed_storage
+            && let RaftTlsConfiguration::Tls(tls) = &ds.tls_configuration
+        {
             if let Some(crt) = &tls.tls_cert_file {
                 watched_paths.insert(crt.clone());
             }
@@ -360,12 +354,12 @@ impl ConfigManager {
 
         // Register file watches
         for watch in watched_paths.iter() {
-            let _ = watcher.watch(&watch.as_path(), RecursiveMode::NonRecursive);
+            let _ = watcher.watch(watch.as_path(), RecursiveMode::NonRecursive);
         }
 
         while let Some(_event) = sync_rx.recv().await {
             // 1. Drain the channel to ignore rapid-fire events
-            while let Ok(_) = sync_rx.try_recv() {}
+            while sync_rx.try_recv().is_ok() {}
 
             // Give the OS a moment to finish the file write
             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
@@ -376,7 +370,7 @@ impl ConfigManager {
                     for watch_candidate in new_cfg.get_watch_files() {
                         if !watched_paths.contains(&watch_candidate) {
                             let _ = watcher
-                                .watch(&watch_candidate.as_path(), RecursiveMode::NonRecursive);
+                                .watch(watch_candidate.as_path(), RecursiveMode::NonRecursive);
                             watched_paths.insert(watch_candidate.clone());
                         }
                     }
@@ -413,11 +407,11 @@ mod tests {
             write!(
                 cfg_file,
                 r#"
-[auth]
-methods = []
-[database]
-connection = "foo"
-            "#
+    [auth]
+    methods = []
+    [database]
+    connection = "foo"
+                "#
             )
             .unwrap();
 
@@ -432,11 +426,15 @@ connection = "foo"
         write!(
             site_vars_file,
             r#"
-[distributed_storage]
-node_id = 1
-cluster_addr = "http://foo:8300"
-path = "/tmp"
-        "#
+    [distributed_storage]
+    node_id = 1
+    node_cluster_addr = "http://foo:8300"
+    path = "/tmp"
+    type = "tls"
+    tls_key_file = "/foo"
+    tls_cert_file = "/bar"
+    tls_client_ca_file = "/baz"
+            "#
         )
         .unwrap();
         temp_env::with_var(
@@ -447,39 +445,64 @@ path = "/tmp"
                 write!(
                     cfg_file,
                     r#"
-[auth]
-methods = []
-[database]
-connection = "foo"
-            "#
+    [auth]
+    methods = []
+    [database]
+    connection = "foo"
+                "#
                 )
                 .unwrap();
 
                 let cfg = Config::new(cfg_file.path().to_path_buf()).unwrap();
                 let ds = cfg.distributed_storage.unwrap();
                 assert_eq!(1, ds.node_id);
-                assert_eq!("http://foo:8300/", ds.cluster_addr.to_string());
+                assert_eq!("http://foo:8300/", ds.node_cluster_addr.to_string());
             },
         );
     }
 
+    #[test]
+    fn test_listener_internal() {
+        let c = config::Config::builder()
+            .add_source(File::from_str(
+                r#"
+            [auth]
+            methods = []
+            [database]
+            connection = "foo"
+            [interface_internal]
+            tcp_addr = "1.2.3.4:5678"
+            type = "spiffe"
+            trust_domains = "example.org"
+            "#,
+                FileFormat::Ini,
+            ))
+            .build()
+            .unwrap();
+        let cfg: Config = c.try_deserialize().unwrap();
+        if let Some(internal_if) = &cfg.interface_internal {
+            if let ListenerConfig::Spiffe(spiffe) = &internal_if.listener {
+                assert!(spiffe.trust_domains.contains(&String::from("example.org")));
+            } else {
+                panic!("should be regular tls");
+            }
+        } else {
+            panic!("internal interface should be there");
+        }
+    }
+
     // Helper to setup a dummy config and cert file
-    fn setup_files(
-        dir: &std::path::Path,
-        //cert_name: Some(&str),
-        //cert_content: &str,
-    ) -> std::path::PathBuf {
+    fn setup_files(dir: &std::path::Path) -> std::path::PathBuf {
         let config_path = dir.join("keystone.conf");
 
-        //let mut cfg_file = NamedTempFile::new().unwrap();
         let mut f = fs::File::create(&config_path).unwrap();
         f.write_all(
             r#"
-[auth]
-methods = []
-[database]
-connection = "foo"
-            "#
+    [auth]
+    methods = []
+    [database]
+    connection = "foo"
+                "#
             .as_bytes(),
         )
         .unwrap();
@@ -524,11 +547,11 @@ connection = "foo"
         fs::write(
             &config_path,
             r#"
-[auth]
-methods = []
-[database]
-connection = "bar"
-"#,
+    [auth]
+    methods = []
+    [database]
+    connection = "bar"
+    "#,
         )
         .unwrap();
 
@@ -548,7 +571,6 @@ connection = "bar"
 
     #[tokio::test]
     async fn test_reload_on_cert_change() {
-        //let dir = tempdir().unwrap();
         let config_file = NamedTempFile::with_suffix(".conf").unwrap();
         let mut ca_file = NamedTempFile::new().unwrap();
         write!(ca_file, "ca").unwrap();
@@ -556,22 +578,22 @@ connection = "bar"
         write!(cert_file, "cert").unwrap();
         let mut key_file = NamedTempFile::new().unwrap();
         write!(key_file, "key").unwrap();
-        let mut f = fs::File::create(&config_file.path()).unwrap();
+        let mut f = fs::File::create(config_file.path()).unwrap();
         f.write_all(
             format!(
                 r#"
-[auth]
-methods = []
-[database]
-connection = "foo"
-[distributed_storage]
-cluster_addr = https://localhost:8310
-node_id = 1
-path = /keystone/storage
-tls_key_file = {:?}
-tls_cert_file = {:?}
-tls_client_ca_file = {:?}
-            "#,
+    [auth]
+    methods = []
+    [database]
+    connection = "foo"
+    [distributed_storage]
+    node_cluster_addr = https://localhost:8310
+    node_id = 1
+    path = /keystone/storage
+    tls_key_file = {:?}
+    tls_cert_file = {:?}
+    tls_client_ca_file = {:?}
+                "#,
                 key_file.path(),
                 cert_file.path(),
                 ca_file.path()
@@ -594,7 +616,7 @@ tls_client_ca_file = {:?}
         let mut f = std::fs::OpenOptions::new()
             .write(true)
             .truncate(true)
-            .open(&cert_file.path())
+            .open(cert_file.path())
             .unwrap();
         f.write_all("another cert".as_bytes()).unwrap();
 
@@ -604,13 +626,10 @@ tls_client_ca_file = {:?}
         for _ in 0..10 {
             sleep(Duration::from_millis(200)).await;
             let updated = mgr.config.read().await;
-            if updated
-                .distributed_storage
-                .as_ref()
-                .and_then(|x| x.tls_configuration.tls_cert_content.clone())
-                .as_ref()
-                .map(|x| x.expose_secret())
-                == Some("another cert".as_bytes())
+            if let Some(ds) = &updated.distributed_storage
+                && let RaftTlsConfiguration::Tls(data) = &ds.tls_configuration
+                && data.tls_cert_content.as_ref().map(|x| x.expose_secret())
+                    == Some("another cert".as_bytes())
             {
                 success = true;
                 break;

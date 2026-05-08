@@ -443,4 +443,4 @@ jobs:
 
       - name: Dump keystone-rs logs
         if: failure()
-        run: kubectl logs deployment/keystone-rs -c keystone
+        run: kubectl logs statefulset/keystone-rs -c keystone

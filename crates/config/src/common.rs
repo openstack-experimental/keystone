@@ -28,6 +28,7 @@ where
 {
     Ok(String::deserialize(deserializer)?
         .split(',')
+        .filter(|res| !res.is_empty())
         .map(Into::into)
         .collect())
 }
@@ -132,13 +133,21 @@ impl TlsConfiguration {
         }
         if let Some(ca) = &self.tls_client_ca_file {
             self.tls_client_ca_content = Some(
-                std::fs::read(&ca)
+                std::fs::read(ca)
                     .wrap_err_with(|| format!("reading tls ca file {:?}", ca))?
                     .into(),
             );
         }
         Ok(())
     }
+}
+
+/// Server interface type.
+#[derive(Debug, Deserialize, Clone)]
+pub enum Interface {
+    Admin,
+    Internal,
+    Public,
 }
 
 #[cfg(test)]

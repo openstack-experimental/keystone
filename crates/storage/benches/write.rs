@@ -16,20 +16,20 @@ use rcgen::{
     Issuer, KeyPair, KeyUsagePurpose, SanType,
 };
 use reserve_port::ReservedSocketAddr;
-use secrecy::ExposeSecret;
 use tempfile::TempDir;
 use tokio::runtime::Runtime;
-use tonic::transport::{Identity, ServerTlsConfig};
 
 use openstack_keystone_config::{
     Config, ConfigManager, DistributedStorageConfiguration, TlsConfiguration,
     TlsConfigurationBuilder,
 };
-use openstack_keystone_distributed_storage::StorageApi;
-use openstack_keystone_distributed_storage::app::{Storage, get_app_server, init_storage};
-use openstack_keystone_distributed_storage::protobuf as pb;
-use openstack_keystone_distributed_storage::store_command::*;
-use openstack_keystone_distributed_storage::{Metadata, Nonce, StoreDataEnvelope, TypeConfig};
+use openstack_keystone_distributed_storage::{
+    Metadata, Nonce, StorageApi, StoreDataEnvelope, TypeConfig,
+    app::{Storage, get_app_server, init_storage},
+    network::get_server_tls_config,
+    protobuf as pb,
+    store_command::*,
+};
 
 #[allow(dead_code)]
 struct InstanceHolder {
@@ -48,10 +48,13 @@ impl InstanceHolder {
         addr: &SocketAddr,
     ) -> DistributedStorageConfiguration {
         DistributedStorageConfiguration {
-            cluster_addr: format!("https://{}", addr).parse().unwrap(),
+            node_cluster_addr: format!("https://{}", addr).parse().unwrap(),
+            node_listener_addr: addr.clone(),
             node_id: node_id,
             path: db_path,
-            tls_configuration: tls_config.clone(),
+            tls_configuration: openstack_keystone_config::RaftTlsConfiguration::Tls(
+                tls_config.clone(),
+            ),
         }
     }
 
@@ -65,7 +68,7 @@ impl InstanceHolder {
             &addr,
         );
         let mut config = Config::default();
-        config.listener.cluster_address = Some(addr);
+        //config.listener.cluster_address = Some(addr);
         config.distributed_storage = Some(ds_config);
         let storage = init_storage(&ConfigManager::not_watched(config.clone())).await?;
         Ok(Self {
@@ -82,44 +85,21 @@ pub async fn start_raft_app(
     config: &Config,
     storage: &Storage,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let http_addr = config.listener.get_cluster_address();
     let ds_config = config
         .distributed_storage
         .as_ref()
         .expect("ds config must be present");
+    let addr = ds_config.node_listener_addr.clone();
     let node_id = ds_config.node_id;
 
-    let mut server = tonic::transport::Server::builder();
-    let ca = tonic::transport::Certificate::from_pem(
-        &ds_config
-            .tls_configuration
-            .tls_client_ca_content
-            .as_ref()
-            .expect("ca cert must be present")
-            .expose_secret(),
-    );
-    let identity = Identity::from_pem(
-        &ds_config
-            .tls_configuration
-            .tls_cert_content
-            .as_ref()
-            .expect("cert file must be present")
-            .expose_secret(),
-        &ds_config
-            .tls_configuration
-            .tls_key_content
-            .as_ref()
-            .expect("key file must be present")
-            .expose_secret(),
-    );
-    let tls_config = ServerTlsConfig::new().client_ca_root(ca).identity(identity);
-    server = server.tls_config(tls_config)?;
+    let mut server =
+        tonic::transport::Server::builder().tls_config(get_server_tls_config(config)?)?;
 
     let server_future = server
         .add_routes(get_app_server(&storage).await?)
-        .serve(http_addr);
+        .serve(addr.clone());
 
-    println!("Node {node_id} starting server at {http_addr}");
+    println!("Node {node_id} starting server at {addr}");
     server_future.await?;
 
     Ok(())

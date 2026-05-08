@@ -11,117 +11,86 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+//! # Server listeners
 
 use serde::Deserialize;
 
-use crate::common::TlsConfiguration;
+use crate::common::csv;
 
-/// Server listener section.
-#[derive(Debug, Deserialize, Clone)]
-pub struct Listener {
-    /// Default address to use for the server to server communication. This
-    /// defaults to one port higher than the value of address.
-    #[serde(default)]
-    pub cluster_address: Option<SocketAddr>,
-
-    /// Default address to use for the Rest API. Defaults to `0.0.0.0:8080`.
-    #[serde(default = "default_tcp_address")]
-    pub tcp_address: SocketAddr,
-
-    /// TLS configuration for the server listener.
-    #[serde(default)]
-    #[serde(flatten)]
-    pub tls_configuration: Option<TlsConfiguration>,
+/// Server listener configuration.
+#[derive(Debug, Default, Deserialize, Clone)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum ListenerConfig {
+    Spiffe(SpiffeListener),
+    #[default]
+    Http,
 }
 
-impl Default for Listener {
-    fn default() -> Self {
-        Self {
-            cluster_address: None,
-            tcp_address: default_tcp_address(),
-            tls_configuration: None,
-        }
-    }
-}
-
-impl Listener {
-    /// Get cluster address.
-    ///
-    /// Obtain the address to use for the server to server communication. This
-    /// defaults to one port higher than the value of address.
-    pub fn get_cluster_address(&self) -> SocketAddr {
-        match self.cluster_address {
-            Some(addr) => addr,
-            None => SocketAddr::new(self.tcp_address.ip(), self.tcp_address.port() + 1),
-        }
-    }
-}
-
-fn default_tcp_address() -> SocketAddr {
-    SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 8080)
+/// Server listener with SPIFFE mTLS support.
+#[derive(Debug, Deserialize, Clone, Default)]
+pub struct SpiffeListener {
+    /// Trusted domains to accept SPIFFE certificates from clients.
+    #[serde(deserialize_with = "csv")]
+    pub trust_domains: Vec<String>,
 }
 
 #[cfg(test)]
 mod tests {
-    use std::io::Write;
-
     use config::{Config, File, FileFormat};
-    use serde_json::json;
-    use tempfile::NamedTempFile;
 
     use super::*;
-
-    #[test]
-    fn test_deser() {
-        let cfg: Listener = serde_json::from_value(json!({
-            "tcp_address": "127.1.1.1:1234"
-        }))
-        .unwrap();
-        assert_eq!(
-            cfg.tcp_address,
-            SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 1, 1, 1)), 1234)
-        );
-    }
 
     #[test]
     fn test_deser_ini() {
         let c = Config::builder()
             .add_source(File::from_str(
                 r#"
-tcp_address = 128.0.0.1:1234
+type = "http"
 "#,
                 FileFormat::Ini,
             ))
             .build()
             .unwrap();
-        let cfg: Listener = c.try_deserialize().unwrap();
-        assert_eq!(
-            cfg.tcp_address,
-            SocketAddr::new(IpAddr::V4(Ipv4Addr::new(128, 0, 0, 1)), 1234)
-        );
-    }
-
-    #[test]
-    fn test_env() {
-        temp_env::with_vars(
-            [("OS_LISTENER__TCP_ADDRESS", Some("127.0.0.1:8080"))],
-            || {
-                let mut cfg_file = NamedTempFile::new().unwrap();
-                write!(
-                    cfg_file,
-                    r#"
-[auth]
-methods = []
-[database]
-connection = "foo"
-            "#
-                )
-                .unwrap();
-
-                let cfg = crate::Config::new(cfg_file.path().to_path_buf()).unwrap();
-                assert_eq!("127.0.0.1:8080", cfg.listener.tcp_address.to_string());
-            },
-        );
+        let sot: ListenerConfig = c.try_deserialize().unwrap();
+        if let ListenerConfig::Http = sot {
+        } else {
+            panic!("should be Http listener");
+        }
+        let c = Config::builder()
+            .add_source(File::from_str(
+                r#"
+type = spiffe
+trust_domains = "a,b,c"
+"#,
+                FileFormat::Ini,
+            ))
+            .build()
+            .unwrap();
+        let sot: ListenerConfig = c.try_deserialize().unwrap();
+        if let ListenerConfig::Spiffe(s) = sot {
+            assert!(s.trust_domains.contains(&String::from("a")));
+        } else {
+            panic!("should be spiffe listener");
+        }
+        let c = Config::builder()
+            .add_source(File::from_str(
+                r#"
+type = spiffe
+trust_domains = ""
+"#,
+                FileFormat::Ini,
+            ))
+            .build()
+            .unwrap();
+        let sot: ListenerConfig = c.try_deserialize().unwrap();
+        if let ListenerConfig::Spiffe(s) = sot {
+            assert!(
+                s.trust_domains.is_empty(),
+                "must be empty, instead is {:?}",
+                s.trust_domains
+            );
+        } else {
+            panic!("should be spiffe listener");
+        }
     }
 }
