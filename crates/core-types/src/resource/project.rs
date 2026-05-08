@@ -14,14 +14,14 @@
 use std::collections::HashMap;
 
 use derive_builder::Builder;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashSet;
 use validator::Validate;
 
 use crate::error::BuilderError;
 
-#[derive(Builder, Clone, Debug, Default, PartialEq, Serialize, Validate)]
+#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct Project {

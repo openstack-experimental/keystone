@@ -15,7 +15,7 @@
 //! # Trust types
 use chrono::{DateTime, Utc};
 use derive_builder::Builder;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use validator::Validate;
 
@@ -23,7 +23,7 @@ use crate::error::BuilderError;
 use crate::role::RoleRef;
 
 /// A trust object.
-#[derive(Builder, Clone, Debug, Default, Serialize, PartialEq, Validate)]
+#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct Trust {

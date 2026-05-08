@@ -23,6 +23,7 @@
 
 use chrono::{DateTime, Utc};
 use derive_builder::Builder;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tracing::warn;
 
@@ -162,7 +163,7 @@ impl AuthenticatedInfo {
 }
 
 /// Authorization information.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub enum AuthzInfo {
     /// Domain scope.
     Domain(Domain),

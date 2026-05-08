@@ -54,6 +54,9 @@ use crate::revoke::RevokeProvider;
 use crate::role::MockRoleProvider;
 use crate::role::RoleProvider;
 #[cfg(any(test, feature = "mock"))]
+use crate::spiffe::MockSpiffeProvider;
+use crate::spiffe::SpiffeProvider;
+#[cfg(any(test, feature = "mock"))]
 use crate::token::MockTokenProvider;
 use crate::token::TokenProvider;
 #[cfg(any(test, feature = "mock"))]
@@ -80,6 +83,8 @@ pub struct Provider {
     identity_mapping: IdentityMappingProvider,
     /// K8s auth provider.
     k8s_auth: K8sAuthProvider,
+    /// Spiffe provider.
+    spiffe: SpiffeProvider,
     /// Resource provider.
     resource: ResourceProvider,
     /// Revoke provider.
@@ -133,6 +138,11 @@ impl ProviderBuilder {
         new.k8s_auth = Some(K8sAuthProvider::Mock(value));
         new
     }
+    pub fn mock_spiffe(self, value: MockSpiffeProvider) -> Self {
+        let mut new = self;
+        new.spiffe = Some(SpiffeProvider::Mock(value));
+        new
+    }
     pub fn mock_resource(self, value: MockResourceProvider) -> Self {
         let mut new = self;
         new.resource = Some(ResourceProvider::Mock(value));
@@ -174,6 +184,7 @@ impl Provider {
         let identity_provider = IdentityProvider::new(&cfg, plugin_manager)?;
         let identity_mapping_provider = IdentityMappingProvider::new(&cfg, plugin_manager)?;
         let k8s_auth_provider = K8sAuthProvider::new(&cfg, plugin_manager)?;
+        let spiffe_provider = SpiffeProvider::new(&cfg, plugin_manager)?;
         let resource_provider = ResourceProvider::new(&cfg, plugin_manager)?;
         let revoke_provider = RevokeProvider::new(&cfg, plugin_manager)?;
         let role_provider = RoleProvider::new(&cfg, plugin_manager)?;
@@ -188,6 +199,7 @@ impl Provider {
             identity: identity_provider,
             identity_mapping: identity_mapping_provider,
             k8s_auth: k8s_auth_provider,
+            spiffe: spiffe_provider,
             resource: resource_provider,
             revoke: revoke_provider,
             role: role_provider,
@@ -207,6 +219,7 @@ impl Provider {
         let identity_mapping_mock = crate::identity_mapping::MockIdentityMappingProvider::default();
         let federation_mock = crate::federation::MockFederationProvider::default();
         let k8s_auth_mock = crate::k8s_auth::MockK8sAuthProvider::default();
+        let spiffe_mock = crate::spiffe::MockSpiffeProvider::default();
         let resource_mock = crate::resource::MockResourceProvider::default();
         let revoke_mock = crate::revoke::MockRevokeProvider::default();
         let role_mock = crate::role::MockRoleProvider::default();
@@ -221,6 +234,7 @@ impl Provider {
             .mock_identity_mapping(identity_mapping_mock)
             .mock_federation(federation_mock)
             .mock_k8s_auth(k8s_auth_mock)
+            .mock_spiffe(spiffe_mock)
             .mock_resource(resource_mock)
             .mock_revoke(revoke_mock)
             .mock_role(role_mock)
@@ -261,6 +275,11 @@ impl Provider {
     /// Get the K8s auth provider.
     pub fn get_k8s_auth_provider(&self) -> &K8sAuthProvider {
         &self.k8s_auth
+    }
+
+    /// Get the spiffe provider.
+    pub fn get_spiffe_provider(&self) -> &SpiffeProvider {
+        &self.spiffe
     }
 
     /// Get the resource provider.

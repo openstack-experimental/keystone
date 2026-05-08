@@ -14,7 +14,7 @@
 use std::collections::HashMap;
 
 use derive_builder::Builder;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use validator::Validate;
 
@@ -46,7 +46,7 @@ pub struct Role {
 }
 
 /// Short role representation (reference).
-#[derive(Builder, Clone, Debug, PartialEq, Serialize, Validate)]
+#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct RoleRef {

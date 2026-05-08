@@ -26,6 +26,7 @@ use crate::k8s_auth::K8sAuthProviderError;
 use crate::resource::ResourceProviderError;
 use crate::revoke::RevokeProviderError;
 use crate::role::RoleProviderError;
+use crate::spiffe::SpiffeProviderError;
 use crate::token::TokenProviderError;
 use crate::trust::TrustProviderError;
 
@@ -161,6 +162,14 @@ pub enum KeystoneError {
         /// The source of the error.
         #[from]
         source: RoleProviderError,
+    },
+
+    /// Spiffe provider.
+    #[error(transparent)]
+    SpiffeProvider {
+        /// The source of the error.
+        #[from]
+        source: SpiffeProviderError,
     },
 
     /// Token provider.

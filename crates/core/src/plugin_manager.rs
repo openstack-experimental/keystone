@@ -43,6 +43,8 @@ use crate::revoke::RevokeProviderError;
 use crate::revoke::backend::RevokeBackend;
 use crate::role::RoleProviderError;
 use crate::role::backend::RoleBackend;
+use crate::spiffe::SpiffeProviderError;
+use crate::spiffe::backend::SpiffeBackend;
 use crate::token::TokenProviderError;
 use crate::token::backend::TokenBackend;
 use crate::token::backend::TokenRestrictionBackend;
@@ -141,6 +143,19 @@ pub trait PluginManagerApi {
         &self,
         name: S,
     ) -> Result<&Arc<dyn K8sAuthBackend>, K8sAuthProviderError>;
+
+    /// Get registered spiffe backend.
+    ///
+    /// # Parameters
+    /// - `name`: The name of the backend to retrieve.
+    ///
+    /// # Returns
+    /// - `Ok(&Arc<dyn SpiffeBackend>)` if found, otherwise
+    ///   `Err(SpiffeProviderError)`.
+    fn get_spiffe_backend<S: AsRef<str>>(
+        &self,
+        name: S,
+    ) -> Result<&Arc<dyn SpiffeBackend>, SpiffeProviderError>;
 
     /// Get registered resource backend.
     ///
