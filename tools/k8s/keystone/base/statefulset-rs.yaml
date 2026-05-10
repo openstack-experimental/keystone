@@ -121,13 +121,18 @@ spec:
             - mountPath: /run/spire/sockets
               name: spiffe-workload-api
               readOnly: true
+            - mountPath: "/var/opa"
+              name: "opa-socket"
 
-        - command: ["opa", "run", "--server", "/policy", "--addr", ":8181", "--log-level", "debug"]
+        - command: ["opa", "run", "--server", "/policy", "--addr", "unix:///var/opa/opa.sock", "--log-level", "debug"]
           image: opa
           name: opa
           ports:
             - containerPort: 8181
               name: http
+          volumeMounts:
+            - mountPath: /var/opa
+              name: opa-socket
 
       volumes:
         - name: config
@@ -154,6 +159,8 @@ spec:
         - name: raft-storage
           emptyDir: {}
         - name: raft-config-shared
+          emptyDir: {}
+        - name: opa-socket
           emptyDir: {}
         - name: "spiffe-workload-api"
           csi:

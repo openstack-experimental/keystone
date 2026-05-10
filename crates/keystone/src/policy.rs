@@ -38,22 +38,37 @@ impl HttpPolicyEnforcer {
     /// Creates a new `HttpPolicyEnforcer`.
     ///
     /// # Parameters
-    /// * `url` - The base URL of the OPA server.
+    /// * `url` - The base URL of the OPA server. Can be http/https or the unix socket
     ///
     /// # Returns
     /// A `Result` containing the `HttpPolicyEnforcer` instance, or a
     /// `PolicyError`.
     pub async fn new(url: Url) -> Result<Self, PolicyError> {
-        let client = Client::builder()
-            .tcp_keepalive(std::time::Duration::from_secs(60))
-            .gzip(true)
-            .deflate(true)
-            .build()?;
-        Ok(Self {
-            http_client: Arc::new(client),
-            base_url: url.join("/v1/data/")?,
-            health_url: url.join("/health")?,
-        })
+        match url.scheme() {
+            "http" | "https" => {
+                // Communication with OPA over the network IF
+                let client = Client::builder()
+                    .tcp_keepalive(std::time::Duration::from_secs(60))
+                    .gzip(true)
+                    .deflate(true)
+                    .build()?;
+                Ok(Self {
+                    http_client: Arc::new(client),
+                    base_url: url.join("/v1/data/")?,
+                    health_url: url.join("/health")?,
+                })
+            }
+            "unix" => {
+                // Communication with OPA over the unix socket
+                let client = Client::builder().unix_socket(url.path()).build()?;
+                Ok(Self {
+                    http_client: Arc::new(client),
+                    base_url: "http://localhost/v1/data/".parse()?,
+                    health_url: "http://localhost/health".parse()?,
+                })
+            }
+            other => return Err(PolicyError::UnsupportedScheme(other.to_string())),
+        }
     }
 }
 
@@ -130,5 +145,32 @@ impl PolicyEnforcer for HttpPolicyEnforcer {
             .await?
             .error_for_status()?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_constructor() {
+        let enforcer = HttpPolicyEnforcer::new("http://foo.bar".parse().unwrap())
+            .await
+            .unwrap();
+        assert_eq!("http://foo.bar/v1/data/", enforcer.base_url.as_str());
+        assert_eq!("http://foo.bar/health", enforcer.health_url.as_str());
+        let enforcer = HttpPolicyEnforcer::new("unix:///var/test.sock".parse().unwrap())
+            .await
+            .unwrap();
+        assert_eq!("http://localhost/v1/data/", enforcer.base_url.as_str());
+        assert_eq!("http://localhost/health", enforcer.health_url.as_str());
+        match HttpPolicyEnforcer::new("moz:///var/test.sock".parse().unwrap()).await {
+            Err(PolicyError::UnsupportedScheme(s)) => {
+                assert_eq!("moz", s);
+            }
+            _ => {
+                panic!("should be unsupported scheme");
+            }
+        }
     }
 }
