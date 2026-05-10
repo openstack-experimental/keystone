@@ -58,6 +58,10 @@ pub enum PolicyError {
     #[error(transparent)]
     Reqwest(#[from] reqwest::Error),
 
+    /// Unsupported access scheme.
+    #[error("unsupported scheme {0}")]
+    UnsupportedScheme(String),
+
     /// Url parsing error.
     #[error(transparent)]
     UrlParse(#[from] url::ParseError),
