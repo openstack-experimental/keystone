@@ -152,6 +152,10 @@ pub enum TokenProviderError {
     #[error("driver `{0}` is not supported for the token provider")]
     UnsupportedDriver(String),
 
+    /// Unsupported identity (e.g., virtual principle).
+    #[error("unsupported principle type")]
+    UnsupportedPrinciple,
+
     /// Unsupported token restriction driver.
     #[error("driver `{0}` is not supported for the token restriction provider")]
     UnsupportedTRDriver(String),

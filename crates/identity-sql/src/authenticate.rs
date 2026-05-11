@@ -17,7 +17,7 @@ use sea_orm::DatabaseConnection;
 use tracing::info;
 
 use openstack_keystone_config::Config;
-use openstack_keystone_core::auth::{AuthenticatedInfo, AuthenticationError};
+use openstack_keystone_core::auth::*;
 use openstack_keystone_core::common::password_hashing;
 use openstack_keystone_core::identity::IdentityProviderError;
 use openstack_keystone_core_types::identity::{UserPasswordAuthRequest, UserResponseBuilder};
@@ -57,7 +57,7 @@ pub async fn authenticate_by_password(
     config: &Config,
     db: &DatabaseConnection,
     auth: &UserPasswordAuthRequest,
-) -> Result<AuthenticatedInfo, IdentityProviderError> {
+) -> Result<AuthenticationResult, IdentityProviderError> {
     let user_with_passwords = local_user::load_local_user_with_passwords(
         db,
         auth.id.as_ref(),
@@ -132,12 +132,25 @@ pub async fn authenticate_by_password(
         .merge_passwords_data(passwords)
         .build()?;
 
-    Ok(AuthenticatedInfo::builder()
-        .user_id(user_entry.id.clone())
-        .user(user_entry)
-        .methods(vec!["password".into()])
-        .build()
-        .map_err(AuthenticationError::from)?)
+    Ok(AuthenticationResultBuilder::default()
+        .context(AuthenticationContext::Password)
+        .principal(PrincipalInfo {
+            domain_id: Some(user_entry.domain_id.clone()),
+            identity: IdentityInfo::User(
+                UserIdentityInfoBuilder::default()
+                    .user_id(user_entry.id.clone())
+                    .user(user_entry.clone())
+                    .build()?,
+            ),
+        })
+        .build()?)
+
+    //Ok(AuthenticatedInfo::builder()
+    //    .user_id(user_entry.id.clone())
+    //    .user(user_entry)
+    //    .methods(vec!["password".into()])
+    //    .build()
+    //    .map_err(AuthenticationError::from)?)
 }
 
 /// Verify whether the account is temporarily locked according to the security

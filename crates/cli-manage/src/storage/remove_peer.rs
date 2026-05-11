@@ -60,7 +60,7 @@ impl PerformAction for RemovePeerCommand {
 
                 client
                     .change_membership(pb::raft::ChangeMembershipRequest {
-                        members: Vec::from_iter(members.into_iter()),
+                        members: Vec::from_iter(members),
                         retain: false,
                     })
                     .await?;

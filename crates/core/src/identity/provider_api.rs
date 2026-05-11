@@ -18,7 +18,7 @@ use std::collections::HashSet;
 
 use openstack_keystone_core_types::identity::*;
 
-use crate::auth::AuthenticatedInfo;
+use crate::auth::AuthenticationResult;
 use crate::identity::IdentityProviderError;
 use crate::keystone::ServiceState;
 
@@ -85,7 +85,7 @@ pub trait IdentityApi: Send + Sync {
         &self,
         state: &ServiceState,
         auth: &UserPasswordAuthRequest,
-    ) -> Result<AuthenticatedInfo, IdentityProviderError>;
+    ) -> Result<AuthenticationResult, IdentityProviderError>;
 
     /// Create a new group.
     ///

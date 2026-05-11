@@ -22,6 +22,7 @@
 use async_trait::async_trait;
 
 use openstack_keystone_config::Config;
+use openstack_keystone_core_types::auth::{AuthenticationResult, AuthzInfo, SecurityContext};
 pub use openstack_keystone_core_types::token::*;
 
 pub mod backend;
@@ -32,7 +33,6 @@ mod provider_api;
 pub mod service;
 mod validate;
 
-use crate::auth::{AuthenticatedInfo, AuthzInfo};
 use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManagerApi;
 use crate::token::service::TokenService;
@@ -86,7 +86,7 @@ impl TokenApi for TokenProvider {
         credential: &'a str,
         allow_expired: Option<bool>,
         window_seconds: Option<i64>,
-    ) -> Result<AuthenticatedInfo, TokenProviderError> {
+    ) -> Result<AuthenticationResult, TokenProviderError> {
         match self {
             Self::Service(provider) => {
                 provider
@@ -138,7 +138,7 @@ impl TokenApi for TokenProvider {
     /// Issue the Keystone token.
     ///
     /// # Parameters
-    /// - `authentication_info`: Information about the authenticated user.
+    /// - `security_context`: Information about the authenticated user.
     /// - `authz_info`: Authorization scope.
     /// - `token_restrictions`: Optional restrictions for the token.
     ///
@@ -147,18 +147,13 @@ impl TokenApi for TokenProvider {
     #[tracing::instrument(level = "debug", skip(self))]
     fn issue_token(
         &self,
-        authentication_info: AuthenticatedInfo,
-        authz_info: AuthzInfo,
-        token_restrictions: Option<&TokenRestriction>,
+        security_context: &SecurityContext,
+        authz_info: &AuthzInfo,
     ) -> Result<Token, TokenProviderError> {
         match self {
-            Self::Service(provider) => {
-                provider.issue_token(authentication_info, authz_info, token_restrictions)
-            }
+            Self::Service(provider) => provider.issue_token(security_context, authz_info),
             #[cfg(any(test, feature = "mock"))]
-            Self::Mock(provider) => {
-                provider.issue_token(authentication_info, authz_info, token_restrictions)
-            }
+            Self::Mock(provider) => provider.issue_token(security_context, authz_info),
         }
     }
 

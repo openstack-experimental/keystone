@@ -167,18 +167,18 @@ impl Provider {
         plugin_manager: &P,
     ) -> Result<Self, KeystoneError> {
         let application_credential_provider =
-            ApplicationCredentialProvider::new(&cfg, plugin_manager)?;
-        let assignment_provider = AssignmentProvider::new(&cfg, plugin_manager)?;
-        let catalog_provider = CatalogProvider::new(&cfg, plugin_manager)?;
-        let federation_provider = FederationProvider::new(&cfg, plugin_manager)?;
-        let identity_provider = IdentityProvider::new(&cfg, plugin_manager)?;
-        let identity_mapping_provider = IdentityMappingProvider::new(&cfg, plugin_manager)?;
-        let k8s_auth_provider = K8sAuthProvider::new(&cfg, plugin_manager)?;
-        let resource_provider = ResourceProvider::new(&cfg, plugin_manager)?;
-        let revoke_provider = RevokeProvider::new(&cfg, plugin_manager)?;
-        let role_provider = RoleProvider::new(&cfg, plugin_manager)?;
-        let token_provider = TokenProvider::new(&cfg, plugin_manager)?;
-        let trust_provider = TrustProvider::new(&cfg, plugin_manager)?;
+            ApplicationCredentialProvider::new(cfg, plugin_manager)?;
+        let assignment_provider = AssignmentProvider::new(cfg, plugin_manager)?;
+        let catalog_provider = CatalogProvider::new(cfg, plugin_manager)?;
+        let federation_provider = FederationProvider::new(cfg, plugin_manager)?;
+        let identity_provider = IdentityProvider::new(cfg, plugin_manager)?;
+        let identity_mapping_provider = IdentityMappingProvider::new(cfg, plugin_manager)?;
+        let k8s_auth_provider = K8sAuthProvider::new(cfg, plugin_manager)?;
+        let resource_provider = ResourceProvider::new(cfg, plugin_manager)?;
+        let revoke_provider = RevokeProvider::new(cfg, plugin_manager)?;
+        let role_provider = RoleProvider::new(cfg, plugin_manager)?;
+        let token_provider = TokenProvider::new(cfg, plugin_manager)?;
+        let trust_provider = TrustProvider::new(cfg, plugin_manager)?;
 
         Ok(Self {
             application_credential: application_credential_provider,

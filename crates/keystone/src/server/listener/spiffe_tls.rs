@@ -32,8 +32,8 @@ use crate::config::Interface;
 
 /// Start the Axum REST api with the SPIFFE mTLS enabled.
 ///
-/// The TLS server is started requesting the client certificates verified using the SPIFFE workload
-/// API.
+/// The TLS server is started requesting the client certificates verified using
+/// the SPIFFE workload API.
 pub async fn start_axum_app(
     addr: std::net::SocketAddr,
     app: Router,
@@ -41,8 +41,9 @@ pub async fn start_axum_app(
     trust_domains: Vec<String>,
     interface: Interface,
 ) -> Result<(), Report> {
-    // Establish connection to SPIFFE is a blocking operation. Operator may want to abort the
-    // process when such connection hangs, so we need to have a dedicated signal handling.
+    // Establish connection to SPIFFE is a blocking operation. Operator may want to
+    // abort the process when such connection hangs, so we need to have a
+    // dedicated signal handling.
     match std::env::var("SPIFFE_ENDPOINT_SOCKET") {
         Ok(val) => {
             if !val.starts_with("unix:///") {

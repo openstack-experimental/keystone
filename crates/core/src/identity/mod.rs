@@ -49,7 +49,7 @@ pub use mock::MockIdentityProvider;
 mod provider_api;
 mod service;
 
-use crate::auth::AuthenticatedInfo;
+use crate::auth::AuthenticationResult;
 use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManagerApi;
 use service::IdentityService;
@@ -186,7 +186,7 @@ impl IdentityApi for IdentityProvider {
         &self,
         state: &ServiceState,
         auth: &UserPasswordAuthRequest,
-    ) -> Result<AuthenticatedInfo, IdentityProviderError> {
+    ) -> Result<AuthenticationResult, IdentityProviderError> {
         match self {
             Self::Service(provider) => provider.authenticate_by_password(state, auth).await,
             #[cfg(any(test, feature = "mock"))]

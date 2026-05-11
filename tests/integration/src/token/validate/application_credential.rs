@@ -61,14 +61,26 @@ async fn test_valid() -> Result<(), Report> {
         )
         .await?;
 
+    let auth = AuthenticationResultBuilder::default()
+        .context(AuthenticationContext::ApplicationCredential(
+            cred.clone().into(),
+        ))
+        .principal(PrincipalInfo {
+            domain_id: Some(user.domain_id.clone()),
+            identity: IdentityInfo::User(
+                UserIdentityInfoBuilder::default()
+                    .user_id(user.id.clone())
+                    .user(user.clone())
+                    .build()?,
+            ),
+        })
+        .build()
+        .unwrap();
+    let ctx = SecurityContext::try_from(auth).unwrap();
+
     let token = state.provider.get_token_provider().issue_token(
-        AuthenticatedInfoBuilder::default()
-            .application_credential(cred.clone())
-            .user_id(user.id.clone())
-            .user(user.clone())
-            .methods(vec!["application_credential".into()])
-            .build()?,
-        AuthzInfo::Project(
+        &ctx,
+        &AuthzInfo::Project(
             ProjectBuilder::default()
                 .id(cred.project_id.clone())
                 .name(project.id.clone())
@@ -76,7 +88,6 @@ async fn test_valid() -> Result<(), Report> {
                 .enabled(true)
                 .build()?,
         ),
-        None,
     )?;
 
     let encoded_token = state.provider.get_token_provider().encode_token(&token)?;
@@ -141,14 +152,25 @@ async fn test_expired() -> Result<(), Report> {
         )
         .await?;
 
+    let auth = AuthenticationResultBuilder::default()
+        .context(AuthenticationContext::ApplicationCredential(
+            cred.clone().into(),
+        ))
+        .principal(PrincipalInfo {
+            domain_id: Some(user.domain_id.clone()),
+            identity: IdentityInfo::User(
+                UserIdentityInfoBuilder::default()
+                    .user_id(user.id.clone())
+                    .user(user.clone())
+                    .build()?,
+            ),
+        })
+        .build()
+        .unwrap();
+    let ctx = SecurityContext::try_from(auth).unwrap();
     let token = state.provider.get_token_provider().issue_token(
-        AuthenticatedInfoBuilder::default()
-            .application_credential(cred.clone())
-            .user_id(user.id.clone())
-            .user(user.clone())
-            .methods(vec!["application_credential".into()])
-            .build()?,
-        AuthzInfo::Project(
+        &ctx,
+        &AuthzInfo::Project(
             ProjectBuilder::default()
                 .id(cred.project_id.clone())
                 .name(project.id.clone())
@@ -156,7 +178,6 @@ async fn test_expired() -> Result<(), Report> {
                 .enabled(true)
                 .build()?,
         ),
-        None,
     )?;
 
     let encoded_token = state.provider.get_token_provider().encode_token(&token)?;
@@ -203,14 +224,26 @@ async fn test_valid_fewer_roles() -> Result<(), Report> {
         )
         .await?;
 
+    let auth = AuthenticationResultBuilder::default()
+        .context(AuthenticationContext::ApplicationCredential(
+            cred.clone().into(),
+        ))
+        .principal(PrincipalInfo {
+            domain_id: Some(user.domain_id.clone()),
+            identity: IdentityInfo::User(
+                UserIdentityInfoBuilder::default()
+                    .user_id(user.id.clone())
+                    .user(user.clone())
+                    .build()?,
+            ),
+        })
+        .build()
+        .unwrap();
+    let ctx = SecurityContext::try_from(auth).unwrap();
+
     let token = state.provider.get_token_provider().issue_token(
-        AuthenticatedInfoBuilder::default()
-            .application_credential(cred.clone())
-            .user_id(user.id.clone())
-            .user(user.clone())
-            .methods(vec!["application_credential".into()])
-            .build()?,
-        AuthzInfo::Project(
+        &ctx,
+        &AuthzInfo::Project(
             ProjectBuilder::default()
                 .id(cred.project_id.clone())
                 .name(project.id.clone())
@@ -218,7 +251,6 @@ async fn test_valid_fewer_roles() -> Result<(), Report> {
                 .enabled(true)
                 .build()?,
         ),
-        None,
     )?;
 
     let encoded_token = state.provider.get_token_provider().encode_token(&token)?;
@@ -281,14 +313,26 @@ async fn test_valid_all_roles_revoked() -> Result<(), Report> {
         )
         .await?;
 
+    let auth = AuthenticationResultBuilder::default()
+        .context(AuthenticationContext::ApplicationCredential(
+            cred.clone().into(),
+        ))
+        .principal(PrincipalInfo {
+            domain_id: Some(user.domain_id.clone()),
+            identity: IdentityInfo::User(
+                UserIdentityInfoBuilder::default()
+                    .user_id(user.id.clone())
+                    .user(user.clone())
+                    .build()?,
+            ),
+        })
+        .build()
+        .unwrap();
+    let ctx = SecurityContext::try_from(auth).unwrap();
+
     let token = state.provider.get_token_provider().issue_token(
-        AuthenticatedInfoBuilder::default()
-            .application_credential(cred.clone())
-            .user_id(user.id.clone())
-            .user(user.clone())
-            .methods(vec!["application_credential".into()])
-            .build()?,
-        AuthzInfo::Project(
+        &ctx,
+        &AuthzInfo::Project(
             ProjectBuilder::default()
                 .id(cred.project_id.clone())
                 .name(project.id.clone())
@@ -296,7 +340,6 @@ async fn test_valid_all_roles_revoked() -> Result<(), Report> {
                 .enabled(true)
                 .build()?,
         ),
-        None,
     )?;
 
     let encoded_token = state.provider.get_token_provider().encode_token(&token)?;
@@ -343,14 +386,26 @@ async fn test_token_revoked() -> Result<(), Report> {
         )
         .await?;
 
+    let auth = AuthenticationResultBuilder::default()
+        .context(AuthenticationContext::ApplicationCredential(
+            cred.clone().into(),
+        ))
+        .principal(PrincipalInfo {
+            domain_id: Some(user.domain_id.clone()),
+            identity: IdentityInfo::User(
+                UserIdentityInfoBuilder::default()
+                    .user_id(user.id.clone())
+                    .user(user.clone())
+                    .build()?,
+            ),
+        })
+        .build()
+        .unwrap();
+    let ctx = SecurityContext::try_from(auth).unwrap();
+
     let token = state.provider.get_token_provider().issue_token(
-        AuthenticatedInfoBuilder::default()
-            .application_credential(cred.clone())
-            .user_id(user.id.clone())
-            .user(user.clone())
-            .methods(vec!["application_credential".into()])
-            .build()?,
-        AuthzInfo::Project(
+        &ctx,
+        &AuthzInfo::Project(
             ProjectBuilder::default()
                 .id(cred.project_id.clone())
                 .name(project.id.clone())
@@ -358,7 +413,6 @@ async fn test_token_revoked() -> Result<(), Report> {
                 .enabled(true)
                 .build()?,
         ),
-        None,
     )?;
 
     let encoded_token = state.provider.get_token_provider().encode_token(&token)?;

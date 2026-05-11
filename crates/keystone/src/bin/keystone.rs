@@ -339,7 +339,7 @@ async fn main() -> Result<(), Report> {
         match &internal_if.listener {
             ListenerConfig::Spiffe(spiffe) => {
                 // Spiffe listener
-                let rest_addr = internal_if.tcp_address.clone();
+                let rest_addr = internal_if.tcp_address;
                 let rest_app = app.clone();
                 let rest_cancel_token = token.clone();
                 let rest_spiffe_trust_domains = spiffe.trust_domains.clone();

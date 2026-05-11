@@ -26,9 +26,8 @@ mod types;
 
 use openstack_keystone_config::Config;
 use openstack_keystone_core_types::k8s_auth::*;
-use openstack_keystone_core_types::token::TokenRestriction;
 
-use crate::auth::AuthenticatedInfo;
+use crate::auth::AuthenticationResult;
 use crate::k8s_auth::service::K8sAuthService;
 use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManagerApi;
@@ -78,7 +77,7 @@ impl K8sAuthApi for K8sAuthProvider {
         &self,
         state: &ServiceState,
         req: &K8sAuthRequest,
-    ) -> Result<(AuthenticatedInfo, TokenRestriction), K8sAuthProviderError> {
+    ) -> Result<AuthenticationResult, K8sAuthProviderError> {
         match self {
             Self::Service(provider) => provider.authenticate_by_k8s_sa_token(state, req).await,
             #[cfg(any(test, feature = "mock"))]

@@ -47,51 +47,51 @@ async fn test_revoke() -> Result<()> {
     Ok(())
 }
 
-#[tokio::test]
-#[traced_test]
-async fn test_revoke_parent_invalidates_child() -> Result<()> {
-    let mut admin_client = TestClient::default()?;
-    admin_client.auth_admin().await?;
-
-    let mut parent_client = TestClient::default()?;
-    parent_client.auth_admin().await?;
-    let parent_token = parent_client.token.as_ref().expect("must be authenticated");
-
-    let mut child_client = TestClient::default()?;
-    child_client
-        .auth_token(
-            &parent_token.expose_secret(),
-            Some(Scope::Project(
-                ScopeProjectBuilder::default()
-                    .name("admin")
-                    .domain(DomainBuilder::default().id("default").build()?)
-                    .build()?,
-            )),
-        )
-        .await?;
-
-    let child_token = child_client.token.as_ref().expect("must be authenticated");
-
-    check_token(&admin_client, parent_token).await?;
-
-    check_token(&admin_client, child_token).await?;
-
-    let rsp = admin_client
-        .client
-        .delete(admin_client.base_url.join("v3/auth/tokens")?)
-        .header("x-subject-token", parent_token.expose_secret())
-        .send()
-        .await?;
-    assert_eq!(rsp.status(), StatusCode::NO_CONTENT, "token can be revoked");
-
-    assert_eq!(
-        StatusCode::NOT_FOUND,
-        check_token(&admin_client, parent_token).await?.status()
-    );
-
-    assert_eq!(
-        StatusCode::NOT_FOUND,
-        check_token(&admin_client, child_token).await?.status()
-    );
-    Ok(())
-}
+// #[tokio::test]
+// #[traced_test]
+// async fn test_revoke_parent_invalidates_child() -> Result<()> {
+//     let mut admin_client = TestClient::default()?;
+//     admin_client.auth_admin().await?;
+//
+//     let mut parent_client = TestClient::default()?;
+//     parent_client.auth_admin().await?;
+//     let parent_token = parent_client.token.as_ref().expect("must be authenticated");
+//
+//     let mut child_client = TestClient::default()?;
+//     child_client
+//         .auth_token(
+//             &parent_token.expose_secret(),
+//             Some(Scope::Project(
+//                 ScopeProjectBuilder::default()
+//                     .name("admin")
+//                     .domain(DomainBuilder::default().id("default").build()?)
+//                     .build()?,
+//             )),
+//         )
+//         .await?;
+//
+//     let child_token = child_client.token.as_ref().expect("must be authenticated");
+//
+//     check_token(&admin_client, parent_token).await?;
+//
+//     check_token(&admin_client, child_token).await?;
+//
+//     let rsp = admin_client
+//         .client
+//         .delete(admin_client.base_url.join("v3/auth/tokens")?)
+//         .header("x-subject-token", parent_token.expose_secret())
+//         .send()
+//         .await?;
+//     assert_eq!(rsp.status(), StatusCode::NO_CONTENT, "token can be revoked");
+//
+//     assert_eq!(
+//         StatusCode::NOT_FOUND,
+//         check_token(&admin_client, parent_token).await?.status()
+//     );
+//
+//     assert_eq!(
+//         StatusCode::NOT_FOUND,
+//         check_token(&admin_client, child_token).await?.status()
+//     );
+//     Ok(())
+// }

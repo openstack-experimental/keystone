@@ -38,7 +38,8 @@ impl HttpPolicyEnforcer {
     /// Creates a new `HttpPolicyEnforcer`.
     ///
     /// # Parameters
-    /// * `url` - The base URL of the OPA server. Can be http/https or the unix socket
+    /// * `url` - The base URL of the OPA server. Can be http/https or the unix
+    ///   socket
     ///
     /// # Returns
     /// A `Result` containing the `HttpPolicyEnforcer` instance, or a

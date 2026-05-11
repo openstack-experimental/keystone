@@ -122,7 +122,7 @@ pub async fn create(
     // Process access rules
     if let Some(access_rules) = rec.access_rules {
         builder.access_rules(
-            process_access_rules(&txn, access_rules.into_iter(), internal_id, rec.user_id)
+            process_access_rules(&txn, access_rules, internal_id, rec.user_id)
                 .await?
                 .into_iter()
                 .collect::<Vec<_>>(),

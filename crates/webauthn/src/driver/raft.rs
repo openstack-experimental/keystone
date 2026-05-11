@@ -71,7 +71,7 @@ impl RaftDriver {
             }
             None => {
                 // Write the new value and use the result as the name
-                let ks_name = self.generate_state_keyspace_name(&storage);
+                let ks_name = self.generate_state_keyspace_name(storage);
                 storage
                     .set_value(
                         KEY_CURRENT_STATE,
@@ -258,7 +258,7 @@ impl WebauthnApi for RaftDriver {
             .ok_or(WebauthnError::RaftNotAvailable)?;
         raft.remove(
             self.get_user_cred_auth_state_key_name(user_id),
-            Some(self.get_current_state_keyspace_name(&raft).await?),
+            Some(self.get_current_state_keyspace_name(raft).await?),
         )
         .await?;
         Ok(())
@@ -284,7 +284,7 @@ impl WebauthnApi for RaftDriver {
             .ok_or(WebauthnError::RaftNotAvailable)?;
         raft.remove(
             self.get_user_cred_registration_state_key_name(user_id),
-            Some(self.get_current_state_keyspace_name(&raft).await?),
+            Some(self.get_current_state_keyspace_name(raft).await?),
         )
         .await?;
         Ok(())
@@ -312,7 +312,7 @@ impl WebauthnApi for RaftDriver {
         Ok(raft
             .get_by_key(
                 self.get_user_cred_auth_state_key_name(user_id),
-                Some(self.get_current_state_keyspace_name(&raft).await?),
+                Some(self.get_current_state_keyspace_name(raft).await?),
             )
             .await?
             .map(|x| x.data))
@@ -340,7 +340,7 @@ impl WebauthnApi for RaftDriver {
         Ok(raft
             .get_by_key(
                 self.get_user_cred_registration_state_key_name(user_id),
-                Some(self.get_current_state_keyspace_name(&raft).await?),
+                Some(self.get_current_state_keyspace_name(raft).await?),
             )
             .await?
             .map(|x| x.data))
@@ -398,7 +398,7 @@ impl WebauthnApi for RaftDriver {
                 metadata: Metadata::new(),
                 data: auth_state,
             },
-            Some(self.get_current_state_keyspace_name(&raft).await?),
+            Some(self.get_current_state_keyspace_name(raft).await?),
             None,
         )
         .await?;
@@ -431,7 +431,7 @@ impl WebauthnApi for RaftDriver {
                 metadata: Metadata::new(),
                 data: reg_state,
             },
-            Some(self.get_current_state_keyspace_name(&raft).await?),
+            Some(self.get_current_state_keyspace_name(raft).await?),
             None,
         )
         .await?;

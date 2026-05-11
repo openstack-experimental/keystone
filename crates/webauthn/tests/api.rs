@@ -73,7 +73,7 @@ fn get_provider_mocks(user_id: &Uuid) -> ProviderBuilder {
             }))
         });
     let uid = user_id.to_string().clone();
-    token_mock.expect_issue_token().returning(move |_, _, _| {
+    token_mock.expect_issue_token().returning(move |_, _| {
         Ok(ProviderToken::ProjectScope(ProjectScopePayload {
             user_id: uid.clone(),
             methods: Vec::from(["x509".to_string()]),

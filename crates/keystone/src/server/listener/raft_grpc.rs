@@ -67,24 +67,21 @@ pub async fn start_raft_app(
 pub async fn ensure_raft_initialized(state: ServiceState, config: Config) -> Result<(), Report> {
     if let Some(ds) = &config.distributed_storage
         && let Some(storage) = &state.storage
+        && !storage.raft.is_initialized().await?
+        && ds.node_id == 0
+        && let (Some(host), Some(port)) = (ds.node_cluster_addr.host(), ds.node_cluster_addr.port())
     {
-        if !storage.raft.is_initialized().await?
-            && ds.node_id == 0
-            && let (Some(host), Some(port)) =
-                (ds.node_cluster_addr.host(), ds.node_cluster_addr.port())
-        {
-            info!("Initializing the integrated storage since it is not initialized.");
-            storage
-                .raft
-                .initialize(HashMap::from([(
-                    0,
-                    openstack_keystone_distributed_storage::pb::raft::Node {
-                        node_id: 0,
-                        rpc_addr: format!("{host}:{port}"),
-                    },
-                )]))
-                .await?;
-        }
+        info!("Initializing the integrated storage since it is not initialized.");
+        storage
+            .raft
+            .initialize(HashMap::from([(
+                0,
+                openstack_keystone_distributed_storage::pb::raft::Node {
+                    node_id: 0,
+                    rpc_addr: format!("{host}:{port}"),
+                },
+            )]))
+            .await?;
     }
     Ok(())
 }

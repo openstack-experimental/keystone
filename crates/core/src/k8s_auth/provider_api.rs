@@ -16,9 +16,8 @@
 use async_trait::async_trait;
 
 use openstack_keystone_core_types::k8s_auth::*;
-use openstack_keystone_core_types::token::TokenRestriction;
 
-use crate::auth::AuthenticatedInfo;
+use crate::auth::AuthenticationResult;
 use crate::k8s_auth::K8sAuthProviderError;
 use crate::keystone::ServiceState;
 
@@ -38,7 +37,7 @@ pub trait K8sAuthApi: Send + Sync {
         &self,
         state: &ServiceState,
         req: &K8sAuthRequest,
-    ) -> Result<(AuthenticatedInfo, TokenRestriction), K8sAuthProviderError>;
+    ) -> Result<AuthenticationResult, K8sAuthProviderError>;
 
     /// Register new K8s auth instance.
     ///

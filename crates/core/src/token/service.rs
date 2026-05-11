@@ -20,7 +20,6 @@
 //! solution.
 
 use async_trait::async_trait;
-use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::{DateTime, TimeDelta, Utc};
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -31,13 +30,10 @@ use openstack_keystone_config::Config;
 use openstack_keystone_core_types::assignment::{
     RoleAssignmentListParameters, RoleAssignmentListParametersBuilder,
 };
-use openstack_keystone_core_types::resource::{Domain, Project};
 use openstack_keystone_core_types::role::RoleRef;
-use openstack_keystone_core_types::token::payload::*;
 use openstack_keystone_core_types::token::*;
-use openstack_keystone_core_types::trust::*;
 
-use crate::auth::{AuthenticatedInfo, AuthenticationError, AuthzInfo};
+use crate::auth::*;
 use crate::identity::IdentityApi;
 use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManagerApi;
@@ -106,329 +102,6 @@ impl TokenService {
         Ok(auth_expiration
             .map(|x| std::cmp::min(x, default_expiry))
             .unwrap_or(default_expiry))
-    }
-
-    /// Create unscoped token.
-    ///
-    /// # Parameters
-    /// - `authentication_info`: Information about the authenticated user.
-    ///
-    /// # Returns
-    /// - `Result<Token, TokenProviderError>` - The issued `Token` or an error.
-    fn create_unscoped_token(
-        &self,
-        authentication_info: &AuthenticatedInfo,
-    ) -> Result<Token, TokenProviderError> {
-        Ok(Token::Unscoped(
-            UnscopedPayloadBuilder::default()
-                .user_id(authentication_info.user_id.clone())
-                .user(authentication_info.user.clone())
-                .methods(authentication_info.methods.clone().iter())
-                .audit_ids(authentication_info.audit_ids.clone().iter())
-                .expires_at(self.get_new_token_expiry(&authentication_info.expires_at)?)
-                .build()?,
-        ))
-    }
-
-    /// Create project scoped token.
-    ///
-    /// # Parameters
-    /// - `authentication_info`: Information about the authenticated user.
-    /// - `project`: The project to scope the token to.
-    ///
-    /// # Returns
-    /// - `Result<Token, TokenProviderError>` - The issued `Token` or an error.
-    fn create_project_scope_token(
-        &self,
-        authentication_info: &AuthenticatedInfo,
-        project: &Project,
-    ) -> Result<Token, TokenProviderError> {
-        let token_expiry = self.get_new_token_expiry(&authentication_info.expires_at)?;
-        if let Some(application_credential) = &authentication_info.application_credential {
-            // Token for the application credential authentication
-            Ok(Token::ApplicationCredential(
-                ApplicationCredentialPayloadBuilder::default()
-                    .application_credential_id(application_credential.id.clone())
-                    .application_credential(application_credential.clone())
-                    .user_id(authentication_info.user_id.clone())
-                    .user(authentication_info.user.clone())
-                    .methods(authentication_info.methods.clone().iter())
-                    .audit_ids(authentication_info.audit_ids.clone().iter())
-                    .expires_at(
-                        application_credential
-                            .expires_at
-                            .map(|ac_expiry| std::cmp::min(token_expiry, ac_expiry))
-                            .unwrap_or(token_expiry),
-                    )
-                    .project_id(project.id.clone())
-                    .project(project.clone())
-                    .build()?,
-            ))
-        } else {
-            // General project scoped token
-            Ok(Token::ProjectScope(
-                ProjectScopePayloadBuilder::default()
-                    .user_id(authentication_info.user_id.clone())
-                    .user(authentication_info.user.clone())
-                    .methods(authentication_info.methods.clone().iter())
-                    .audit_ids(authentication_info.audit_ids.clone().iter())
-                    .expires_at(token_expiry)
-                    .project_id(project.id.clone())
-                    .project(project.clone())
-                    .build()?,
-            ))
-        }
-    }
-
-    /// Create domain scoped token.
-    ///
-    /// # Parameters
-    /// - `authentication_info`: Information about the authenticated user.
-    /// - `domain`: The domain to scope the token to.
-    ///
-    /// # Returns
-    /// - `Result<Token, TokenProviderError>` - The issued `Token` or an error.
-    fn create_domain_scope_token(
-        &self,
-        authentication_info: &AuthenticatedInfo,
-        domain: &Domain,
-    ) -> Result<Token, TokenProviderError> {
-        Ok(Token::DomainScope(
-            DomainScopePayloadBuilder::default()
-                .user_id(authentication_info.user_id.clone())
-                .user(authentication_info.user.clone())
-                .methods(authentication_info.methods.clone().iter())
-                .audit_ids(authentication_info.audit_ids.clone().iter())
-                .expires_at(self.get_new_token_expiry(&authentication_info.expires_at)?)
-                .domain_id(domain.id.clone())
-                .domain(domain.clone())
-                .build()?,
-        ))
-    }
-
-    /// Create unscoped token with the identity provider bind.
-    ///
-    /// # Parameters
-    /// - `authentication_info`: Information about the authenticated user.
-    ///
-    /// # Returns
-    /// - `Result<Token, TokenProviderError>` - The issued `Token` or an error.
-    fn create_federated_unscoped_token(
-        &self,
-        authentication_info: &AuthenticatedInfo,
-    ) -> Result<Token, TokenProviderError> {
-        if let (Some(idp_id), Some(protocol_id)) = (
-            authentication_info.idp_id.clone(),
-            authentication_info.protocol_id.clone(),
-        ) {
-            Ok(Token::FederationUnscoped(
-                FederationUnscopedPayloadBuilder::default()
-                    .user_id(authentication_info.user_id.clone())
-                    .user(authentication_info.user.clone())
-                    .methods(authentication_info.methods.clone().iter())
-                    .audit_ids(authentication_info.audit_ids.clone().iter())
-                    .expires_at(self.get_new_token_expiry(&authentication_info.expires_at)?)
-                    .idp_id(idp_id)
-                    .protocol_id(protocol_id)
-                    .group_ids(vec![])
-                    .build()?,
-            ))
-        } else {
-            Err(TokenProviderError::FederatedPayloadMissingData)
-        }
-    }
-
-    /// Create project scoped token with the identity provider bind.
-    ///
-    /// # Parameters
-    /// - `authentication_info`: Information about the authenticated user.
-    /// - `project`: The project to scope the token to.
-    ///
-    /// # Returns
-    /// - `Result<Token, TokenProviderError>` - The issued `Token` or an error.
-    fn create_federated_project_scope_token(
-        &self,
-        authentication_info: &AuthenticatedInfo,
-        project: &Project,
-    ) -> Result<Token, TokenProviderError> {
-        if let (Some(idp_id), Some(protocol_id)) = (
-            authentication_info.idp_id.clone(),
-            authentication_info.protocol_id.clone(),
-        ) {
-            Ok(Token::FederationProjectScope(
-                FederationProjectScopePayloadBuilder::default()
-                    .user_id(authentication_info.user_id.clone())
-                    .user(authentication_info.user.clone())
-                    .methods(authentication_info.methods.clone().iter())
-                    .audit_ids(authentication_info.audit_ids.clone().iter())
-                    .expires_at(self.get_new_token_expiry(&authentication_info.expires_at)?)
-                    .idp_id(idp_id)
-                    .protocol_id(protocol_id)
-                    .group_ids(
-                        authentication_info
-                            .user_groups
-                            .clone()
-                            .iter()
-                            .map(|grp| grp.id.clone())
-                            .collect::<Vec<_>>(),
-                    )
-                    .project_id(project.id.clone())
-                    .project(project.clone())
-                    .build()?,
-            ))
-        } else {
-            Err(TokenProviderError::FederatedPayloadMissingData)
-        }
-    }
-
-    /// Create domain scoped token with the identity provider bind.
-    ///
-    /// # Parameters
-    /// - `authentication_info`: Information about the authenticated user.
-    /// - `domain`: The domain to scope the token to.
-    ///
-    /// # Returns
-    /// - `Result<Token, TokenProviderError>` - The issued `Token` or an error.
-    fn create_federated_domain_scope_token(
-        &self,
-        authentication_info: &AuthenticatedInfo,
-        domain: &Domain,
-    ) -> Result<Token, TokenProviderError> {
-        if let (Some(idp_id), Some(protocol_id)) = (
-            authentication_info.idp_id.clone(),
-            authentication_info.protocol_id.clone(),
-        ) {
-            Ok(Token::FederationDomainScope(
-                FederationDomainScopePayloadBuilder::default()
-                    .user_id(authentication_info.user_id.clone())
-                    .user(authentication_info.user.clone())
-                    .methods(authentication_info.methods.clone().iter())
-                    .audit_ids(authentication_info.audit_ids.clone().iter())
-                    .expires_at(self.get_new_token_expiry(&authentication_info.expires_at)?)
-                    .idp_id(idp_id)
-                    .protocol_id(protocol_id)
-                    .group_ids(
-                        authentication_info
-                            .user_groups
-                            .clone()
-                            .iter()
-                            .map(|grp| grp.id.clone())
-                            .collect::<Vec<_>>(),
-                    )
-                    .domain_id(domain.id.clone())
-                    .domain(domain.clone())
-                    .build()?,
-            ))
-        } else {
-            Err(TokenProviderError::FederatedPayloadMissingData)
-        }
-    }
-
-    /// Create token with the specified restrictions.
-    ///
-    /// # Parameters
-    /// - `authentication_info`: Information about the authenticated user.
-    /// - `authz_info`: Authorization information.
-    /// - `restriction`: The restrictions to apply to the token.
-    ///
-    /// # Returns
-    /// - `Result<Token, TokenProviderError>` - The issued `Token` or an error.
-    fn create_restricted_token(
-        &self,
-        authentication_info: &AuthenticatedInfo,
-        authz_info: &AuthzInfo,
-        restriction: &TokenRestriction,
-    ) -> Result<Token, TokenProviderError> {
-        Ok(Token::Restricted(
-            RestrictedPayloadBuilder::default()
-                .user_id(
-                    restriction
-                        .user_id
-                        .as_ref()
-                        .unwrap_or(&authentication_info.user_id.clone()),
-                )
-                .user(authentication_info.user.clone())
-                .methods(authentication_info.methods.clone().iter())
-                .audit_ids(authentication_info.audit_ids.clone().iter())
-                .expires_at(self.get_new_token_expiry(&authentication_info.expires_at)?)
-                .token_restriction_id(restriction.id.clone())
-                .project_id(
-                    restriction
-                        .project_id
-                        .as_ref()
-                        .or(match authz_info {
-                            AuthzInfo::Project(project) => Some(&project.id),
-                            _ => None,
-                        })
-                        .ok_or_else(|| TokenProviderError::RestrictedTokenNotProjectScoped)?,
-                )
-                .allow_renew(restriction.allow_renew)
-                .allow_rescope(restriction.allow_rescope)
-                .roles(restriction.roles.clone())
-                .build()?,
-        ))
-    }
-
-    /// Create system scoped token.
-    ///
-    /// # Parameters
-    /// - `authentication_info`: Information about the authenticated user.
-    ///
-    /// # Returns
-    /// - `Result<Token, TokenProviderError>` - The issued `Token` or an error.
-    fn create_system_scoped_token(
-        &self,
-        authentication_info: &AuthenticatedInfo,
-    ) -> Result<Token, TokenProviderError> {
-        Ok(Token::SystemScope(
-            SystemScopePayloadBuilder::default()
-                .user_id(authentication_info.user_id.clone())
-                .user(authentication_info.user.clone())
-                .methods(authentication_info.methods.clone().iter())
-                .audit_ids(authentication_info.audit_ids.clone().iter())
-                .system_id("system")
-                .expires_at(self.get_new_token_expiry(&authentication_info.expires_at)?)
-                .build()?,
-        ))
-    }
-
-    /// Create token based on the trust.
-    ///
-    /// # Parameters
-    /// - `authentication_info`: Information about the authenticated user.
-    /// - `trust`: The trust relationship to use.
-    ///
-    /// # Returns
-    /// - `Result<Token, TokenProviderError>` - The issued `Token` or an error.
-    fn create_trust_token(
-        &self,
-        authentication_info: &AuthenticatedInfo,
-        trust: &Trust,
-    ) -> Result<Token, TokenProviderError> {
-        if let Some(project_id) = &trust.project_id {
-            Ok(Token::Trust(
-                TrustPayloadBuilder::default()
-                    .user_id(authentication_info.user_id.clone())
-                    .user(authentication_info.user.clone())
-                    .methods(authentication_info.methods.clone().iter())
-                    .audit_ids(authentication_info.audit_ids.clone().iter())
-                    .expires_at(self.get_new_token_expiry(&authentication_info.expires_at)?)
-                    .trust_id(trust.id.clone())
-                    .project_id(project_id.clone())
-                    .build()?,
-            ))
-        } else {
-            // Trust without project_id is unscoped
-            Ok(Token::Unscoped(
-                UnscopedPayloadBuilder::default()
-                    .user_id(authentication_info.user_id.clone())
-                    .user(authentication_info.user.clone())
-                    .methods(authentication_info.methods.clone().iter())
-                    .audit_ids(authentication_info.audit_ids.clone().iter())
-                    .expires_at(self.get_new_token_expiry(&authentication_info.expires_at)?)
-                    .build()?,
-            ))
-        }
     }
 
     /// Expand user information in the token.
@@ -510,16 +183,14 @@ impl TokenService {
         token: &mut Token,
     ) -> Result<(), TokenProviderError> {
         match token {
-            Token::ProjectScope(data) => {
-                if data.project.is_none() {
-                    let project = state
-                        .provider
-                        .get_resource_provider()
-                        .get_project(state, &data.project_id)
-                        .await?;
+            Token::ProjectScope(data) if data.project.is_none() => {
+                let project = state
+                    .provider
+                    .get_resource_provider()
+                    .get_project(state, &data.project_id)
+                    .await?;
 
-                    data.project = project;
-                }
+                data.project = project;
             }
             Token::ApplicationCredential(data) => {
                 if data.application_credential.is_none() {
@@ -546,49 +217,41 @@ impl TokenService {
                     data.project = project;
                 }
             }
-            Token::FederationProjectScope(data) => {
-                if data.project.is_none() {
-                    let project = state
-                        .provider
-                        .get_resource_provider()
-                        .get_project(state, &data.project_id)
-                        .await?;
+            Token::FederationProjectScope(data) if data.project.is_none() => {
+                let project = state
+                    .provider
+                    .get_resource_provider()
+                    .get_project(state, &data.project_id)
+                    .await?;
 
-                    data.project = project;
-                }
+                data.project = project;
             }
-            Token::DomainScope(data) => {
-                if data.domain.is_none() {
-                    let domain = state
-                        .provider
-                        .get_resource_provider()
-                        .get_domain(state, &data.domain_id)
-                        .await?;
+            Token::DomainScope(data) if data.domain.is_none() => {
+                let domain = state
+                    .provider
+                    .get_resource_provider()
+                    .get_domain(state, &data.domain_id)
+                    .await?;
 
-                    data.domain = domain;
-                }
+                data.domain = domain;
             }
-            Token::FederationDomainScope(data) => {
-                if data.domain.is_none() {
-                    let domain = state
-                        .provider
-                        .get_resource_provider()
-                        .get_domain(state, &data.domain_id)
-                        .await?;
+            Token::FederationDomainScope(data) if data.domain.is_none() => {
+                let domain = state
+                    .provider
+                    .get_resource_provider()
+                    .get_domain(state, &data.domain_id)
+                    .await?;
 
-                    data.domain = domain;
-                }
+                data.domain = domain;
             }
-            Token::Restricted(data) => {
-                if data.project.is_none() {
-                    let project = state
-                        .provider
-                        .get_resource_provider()
-                        .get_project(state, &data.project_id)
-                        .await?;
+            Token::Restricted(data) if data.project.is_none() => {
+                let project = state
+                    .provider
+                    .get_resource_provider()
+                    .get_project(state, &data.project_id)
+                    .await?;
 
-                    data.project = project;
-                }
+                data.project = project;
             }
             Token::SystemScope(_data) => {}
             Token::Trust(data) => {
@@ -787,15 +450,13 @@ impl TokenService {
                     return Err(TokenProviderError::ActorHasNoRolesOnTarget);
                 }
             }
-            Token::Restricted(data) => {
-                if data.roles.is_none() {
-                    self.get_token_restriction(state, &data.token_restriction_id, true)
-                        .await?
-                        .inspect(|restrictions| data.roles = restrictions.roles.clone())
-                        .ok_or(TokenProviderError::TokenRestrictionNotFound(
-                            data.token_restriction_id.clone(),
-                        ))?;
-                }
+            Token::Restricted(data) if data.roles.is_none() => {
+                self.get_token_restriction(state, &data.token_restriction_id, true)
+                    .await?
+                    .inspect(|restrictions| data.roles = restrictions.roles.clone())
+                    .ok_or(TokenProviderError::TokenRestrictionNotFound(
+                        data.token_restriction_id.clone(),
+                    ))?;
             }
             Token::SystemScope(data) => {
                 data.roles = Some(
@@ -896,27 +557,48 @@ impl TokenApi for TokenService {
         credential: &'a str,
         allow_expired: Option<bool>,
         window_seconds: Option<i64>,
-    ) -> Result<AuthenticatedInfo, TokenProviderError> {
+    ) -> Result<AuthenticationResult, TokenProviderError> {
         // TODO: is the expand really false?
         let token = self
             .validate_token(state, credential, allow_expired, window_seconds)
             .await?;
-        if let Token::Restricted(restriction) = &token
-            && !restriction.allow_renew
-        {
-            return Err(AuthenticationError::TokenRenewalForbidden)?;
-        }
-        let mut auth_info_builder = AuthenticatedInfo::builder();
-        auth_info_builder.user_id(token.user_id());
-        auth_info_builder.methods(token.methods().clone());
-        auth_info_builder.audit_ids(token.audit_ids().clone());
-        auth_info_builder.expires_at(*token.expires_at());
+        let user = token
+            .user()
+            .as_ref()
+            .ok_or(TokenProviderError::UserNotFound(token.user_id().clone()))?;
+        let mut ctx = AuthenticationResultBuilder::default();
+
+        ctx.context(AuthenticationContext::Token(
+            TokenContextBuilder::default()
+                .audit_ids(token.audit_ids().clone())
+                .methods(token.methods().clone())
+                .expires_at(*token.expires_at())
+                .build()?,
+        ))
+        .principal(PrincipalInfo {
+            domain_id: Some(user.domain_id.clone()),
+            identity: IdentityInfo::User(
+                UserIdentityInfoBuilder::default()
+                    .user_id(token.user_id())
+                    .user(user.clone())
+                    .build()?,
+            ),
+        });
         if let Token::Restricted(restriction) = &token {
-            auth_info_builder.token_restriction_id(restriction.token_restriction_id.clone());
+            if !restriction.allow_renew {
+                return Err(AuthenticationError::TokenRenewalForbidden)?;
+            }
+            let token_restriction = &state
+                .provider
+                .get_token_provider()
+                .get_token_restriction(state, &restriction.token_restriction_id, false)
+                .await?
+                .ok_or(TokenProviderError::TokenRestrictionNotFound(
+                    restriction.token_restriction_id.clone(),
+                ))?;
+            ctx.token_restriction(token_restriction.to_owned());
         }
-        Ok(auth_info_builder
-            .build()
-            .map_err(AuthenticationError::from)?)
+        Ok(ctx.build().map_err(AuthenticationError::from)?)
     }
 
     /// Validate token.
@@ -969,6 +651,22 @@ impl TokenApi for TokenService {
 
     /// Issue the Keystone token.
     ///
+    /// # Security Note
+    /// A series of checks is performed to verify whether a token for the
+    /// requested scope can be issued with the given [`SecurityContext`].
+    ///
+    /// * `token_restriction` - When set in the context only a restricted token
+    ///   bound to the project scope can be issued.
+    /// * `trust` - For Trust scope only Password/Token auth can be used. Trust
+    ///   from Trust is
+    /// forbidden.
+    /// * `system` - Only Password/Token auth can be used to grant system scope.
+    /// * `application_credentials` - Token can be granted only when auth is
+    ///   scoped to AppCreds and
+    /// the project_id matches the scope. No other token can be issued with
+    /// [`ApplicationCredential`] in the context.
+    ///
+    ///
     /// # Parameters
     /// - `authentication_info`: Information about the authenticated user.
     /// - `authz_info`: Authorization scope.
@@ -978,56 +676,23 @@ impl TokenApi for TokenService {
     /// - `Result<Token, TokenProviderError>` - The issued token or an error.
     fn issue_token(
         &self,
-        authentication_info: AuthenticatedInfo,
-        authz_info: AuthzInfo,
-        token_restrictions: Option<&TokenRestriction>,
+        ctx: &SecurityContext,
+        authz_info: &AuthzInfo,
     ) -> Result<Token, TokenProviderError> {
         // This should be executed already, but let's better repeat it as last line of
-        // defence. It is also necessary to call this before to stop before we
+        // defense. It is also necessary to call this before to stop before we
         // start to resolve authz info.
-        authentication_info.validate()?;
+        ctx.validate()?;
 
-        // TODO: Check whether it is allowed to change the scope of the token if
+        // Check whether it is allowed to change the scope of the token if
         // AuthenticatedInfo already contains scope it was issued for.
-        let mut authentication_info = authentication_info;
-        authentication_info
-            .audit_ids
-            .push(URL_SAFE_NO_PAD.encode(Uuid::new_v4().as_bytes()));
-        if let Some(token_restrictions) = &token_restrictions {
-            self.create_restricted_token(&authentication_info, &authz_info, token_restrictions)
-        } else if authentication_info.idp_id.is_some() && authentication_info.protocol_id.is_some()
-        {
-            match &authz_info {
-                AuthzInfo::Domain(domain) => {
-                    self.create_federated_domain_scope_token(&authentication_info, domain)
-                }
-                AuthzInfo::Project(project) => {
-                    self.create_federated_project_scope_token(&authentication_info, project)
-                }
-                AuthzInfo::Trust(_trust) => Err(TokenProviderError::Conflict {
-                    message: "cannot create trust token with an identity provider in scope".into(),
-                    context: "issuing token".into(),
-                }),
-                AuthzInfo::System => Err(TokenProviderError::Conflict {
-                    message: "cannot create system scope token with an identity provider in scope"
-                        .into(),
-                    context: "issuing token".into(),
-                }),
-                AuthzInfo::Unscoped => self.create_federated_unscoped_token(&authentication_info),
-            }
-        } else {
-            match &authz_info {
-                AuthzInfo::Domain(domain) => {
-                    self.create_domain_scope_token(&authentication_info, domain)
-                }
-                AuthzInfo::Project(project) => {
-                    self.create_project_scope_token(&authentication_info, project)
-                }
-                AuthzInfo::Trust(trust) => self.create_trust_token(&authentication_info, trust),
-                AuthzInfo::System => self.create_system_scoped_token(&authentication_info),
-                AuthzInfo::Unscoped => self.create_unscoped_token(&authentication_info),
-            }
-        }
+        ctx.validate_scope_boundaries(authz_info)?;
+        let token = Token::from_security_context_with_scope(
+            ctx,
+            authz_info,
+            self.get_new_token_expiry(&ctx.expires_at)?,
+        )?;
+        Ok(token)
     }
 
     /// Encode the token into a `String` representation.
@@ -1200,13 +865,11 @@ mod tests {
     use openstack_keystone_core_types::assignment::*;
     use openstack_keystone_core_types::identity::UserResponseBuilder;
     use openstack_keystone_core_types::resource::*;
-    use openstack_keystone_core_types::trust::*;
 
     use super::super::tests::setup_config;
     use super::*;
     use crate::application_credential::MockApplicationCredentialProvider;
     use crate::assignment::MockAssignmentProvider;
-    use crate::auth::AuthenticatedInfoBuilder;
     use crate::identity::MockIdentityProvider;
     use crate::provider::Provider;
     use crate::resource::MockResourceProvider;
@@ -1589,270 +1252,6 @@ mod tests {
             panic!(
                 "role expansion for application credential with roles the user does not have anymore should fail"
             );
-        }
-    }
-
-    #[tokio::test]
-    async fn test_create_unscoped_token() {
-        let token_provider = get_provider(&Config::default(), None);
-        let now = Utc::now();
-        let token = token_provider
-            .create_unscoped_token(
-                &AuthenticatedInfoBuilder::default()
-                    .user_id("uid")
-                    .expires_at(now)
-                    .build()
-                    .unwrap(),
-            )
-            .unwrap();
-        assert_eq!(*token.expires_at(), now);
-        assert_eq!(*token.user_id(), "uid");
-        let token = token_provider
-            .create_unscoped_token(
-                &AuthenticatedInfoBuilder::default()
-                    .user_id("uid")
-                    .build()
-                    .unwrap(),
-            )
-            .unwrap();
-        assert!(now < *token.expires_at());
-        assert_eq!(*token.user_id(), "uid");
-        assert!(token.project_id().is_none());
-    }
-
-    #[tokio::test]
-    async fn test_create_project_scope_token() {
-        let token_provider = get_provider(&Config::default(), None);
-        let now = Utc::now();
-        let token = token_provider
-            .create_project_scope_token(
-                &AuthenticatedInfoBuilder::default()
-                    .user_id("uid")
-                    .expires_at(now)
-                    .build()
-                    .unwrap(),
-                &ProjectBuilder::default()
-                    .id("pid")
-                    .domain_id("did")
-                    .name("pname")
-                    .enabled(true)
-                    .build()
-                    .unwrap(),
-            )
-            .unwrap();
-        assert_eq!(*token.expires_at(), now);
-        assert_eq!(*token.user_id(), "uid");
-        let token = token_provider
-            .create_project_scope_token(
-                &AuthenticatedInfoBuilder::default()
-                    .user_id("uid")
-                    .build()
-                    .unwrap(),
-                &ProjectBuilder::default()
-                    .id("pid")
-                    .domain_id("did")
-                    .name("pname")
-                    .enabled(true)
-                    .build()
-                    .unwrap(),
-            )
-            .unwrap();
-        assert!(now < *token.expires_at());
-        assert_eq!(*token.user_id(), "uid");
-        assert_eq!(*token.project_id().unwrap(), "pid");
-    }
-
-    #[tokio::test]
-    async fn test_create_domain_scope_token() {
-        let token_provider = get_provider(&Config::default(), None);
-        let now = Utc::now();
-        let token = token_provider
-            .create_domain_scope_token(
-                &AuthenticatedInfoBuilder::default()
-                    .user_id("uid")
-                    .expires_at(now)
-                    .build()
-                    .unwrap(),
-                &DomainBuilder::default()
-                    .id("did")
-                    .name("pname")
-                    .enabled(true)
-                    .build()
-                    .unwrap(),
-            )
-            .unwrap();
-        assert_eq!(*token.expires_at(), now);
-        assert_eq!(*token.user_id(), "uid");
-        let token = token_provider
-            .create_domain_scope_token(
-                &AuthenticatedInfoBuilder::default()
-                    .user_id("uid")
-                    .build()
-                    .unwrap(),
-                &DomainBuilder::default()
-                    .id("did")
-                    .name("pname")
-                    .enabled(true)
-                    .build()
-                    .unwrap(),
-            )
-            .unwrap();
-        assert!(now < *token.expires_at());
-        assert_eq!(*token.user_id(), "uid");
-        assert_eq!(token.domain().unwrap().id, "did");
-    }
-
-    #[tokio::test]
-    async fn test_create_system_token() {
-        let token_provider = get_provider(&Config::default(), None);
-        let now = Utc::now();
-        let token = token_provider
-            .create_system_scoped_token(
-                &AuthenticatedInfoBuilder::default()
-                    .user_id("uid")
-                    .expires_at(now)
-                    .build()
-                    .unwrap(),
-            )
-            .unwrap();
-        assert_eq!(*token.expires_at(), now);
-        assert_eq!(*token.user_id(), "uid");
-        let token = token_provider
-            .create_system_scoped_token(
-                &AuthenticatedInfoBuilder::default()
-                    .user_id("uid")
-                    .build()
-                    .unwrap(),
-            )
-            .unwrap();
-        assert!(now < *token.expires_at());
-        assert_eq!(*token.user_id(), "uid");
-        if let Token::SystemScope(data) = token {
-            assert_eq!(data.system_id, "system");
-        } else {
-            panic!("wrong token type");
-        }
-    }
-
-    #[tokio::test]
-    async fn test_create_trust_token() {
-        let token_provider = get_provider(&Config::default(), None);
-        let now = Utc::now();
-        let token = token_provider
-            .create_trust_token(
-                &AuthenticatedInfoBuilder::default()
-                    .user_id("uid")
-                    .expires_at(now)
-                    .build()
-                    .unwrap(),
-                &TrustBuilder::default()
-                    .id("tid")
-                    .impersonation(false)
-                    .trustor_user_id("trustor_uid")
-                    .trustee_user_id("trustor_uid")
-                    .build()
-                    .unwrap(),
-            )
-            .unwrap();
-        assert_eq!(*token.expires_at(), now);
-        assert_eq!(*token.user_id(), "uid");
-        let token = token_provider
-            .create_trust_token(
-                &AuthenticatedInfoBuilder::default()
-                    .user_id("uid")
-                    .build()
-                    .unwrap(),
-                &TrustBuilder::default()
-                    .id("tid")
-                    .impersonation(false)
-                    .trustor_user_id("trustor_uid")
-                    .trustee_user_id("trustor_uid")
-                    .project_id("pid")
-                    .build()
-                    .unwrap(),
-            )
-            .unwrap();
-        assert!(now < *token.expires_at());
-        assert_eq!(*token.user_id(), "uid");
-        if let Token::Trust(data) = token {
-            assert_eq!(data.trust_id, "tid");
-        } else {
-            panic!("wrong token type");
-        }
-
-        // unscoped
-        let token = token_provider
-            .create_trust_token(
-                &AuthenticatedInfoBuilder::default()
-                    .user_id("uid")
-                    .build()
-                    .unwrap(),
-                &TrustBuilder::default()
-                    .id("tid")
-                    .impersonation(false)
-                    .trustor_user_id("trustor_uid")
-                    .trustee_user_id("trustor_uid")
-                    .build()
-                    .unwrap(),
-            )
-            .unwrap();
-        assert!(now < *token.expires_at());
-        assert_eq!(*token.user_id(), "uid");
-        if let Token::Unscoped(_data) = token {
-        } else {
-            panic!("wrong token type");
-        }
-    }
-
-    #[tokio::test]
-    async fn test_create_restricted_token() {
-        let token_provider = get_provider(&Config::default(), None);
-        let now = Utc::now();
-        let token = token_provider
-            .create_restricted_token(
-                &AuthenticatedInfoBuilder::default()
-                    .user_id("uid")
-                    .expires_at(now)
-                    .build()
-                    .unwrap(),
-                &AuthzInfo::System,
-                &TokenRestrictionBuilder::default()
-                    .id("rid")
-                    .domain_id("did")
-                    .project_id("pid")
-                    .allow_renew(true)
-                    .allow_rescope(true)
-                    .role_ids([])
-                    .build()
-                    .unwrap(),
-            )
-            .unwrap();
-        assert_eq!(*token.expires_at(), now);
-        assert_eq!(*token.user_id(), "uid");
-        let token = token_provider
-            .create_restricted_token(
-                &AuthenticatedInfoBuilder::default()
-                    .user_id("uid")
-                    .build()
-                    .unwrap(),
-                &AuthzInfo::System,
-                &TokenRestrictionBuilder::default()
-                    .id("rid")
-                    .domain_id("did")
-                    .project_id("pid")
-                    .allow_renew(true)
-                    .allow_rescope(true)
-                    .role_ids([])
-                    .build()
-                    .unwrap(),
-            )
-            .unwrap();
-        assert!(now < *token.expires_at());
-        assert_eq!(*token.user_id(), "uid");
-        if let Token::Restricted(data) = token {
-            assert_eq!(data.token_restriction_id, "rid");
-        } else {
-            panic!("wrong token type");
         }
     }
 }

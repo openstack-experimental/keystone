@@ -12,13 +12,11 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use openstack_keystone_core::api::common::find_project_from_scope;
+
 use crate::api::v3::auth::token::types::AuthRequest;
-use crate::api::{
-    Scope,
-    common::{find_project_from_scope, get_domain},
-    error::KeystoneApiError,
-};
-use crate::auth::{AuthenticatedInfo, AuthzInfo};
+use crate::api::{Scope, common::get_domain, error::KeystoneApiError};
+use crate::auth::*;
 use crate::identity::IdentityApi;
 use crate::keystone::ServiceState;
 use crate::token::TokenApi;
@@ -31,13 +29,13 @@ use crate::token::TokenApi;
 pub(super) async fn authenticate_request(
     state: &ServiceState,
     req: &AuthRequest,
-) -> Result<AuthenticatedInfo, KeystoneApiError> {
-    let mut authenticated_info: Option<AuthenticatedInfo> = None;
+) -> Result<Vec<AuthenticationResult>, KeystoneApiError> {
+    let mut res = Vec::new();
     for method in req.auth.identity.methods.iter() {
         if method == "password" {
             if let Some(password_auth) = &req.auth.identity.password {
                 let req = password_auth.user.clone().try_into()?;
-                authenticated_info = Some(
+                res.push(
                     state
                         .provider
                         .get_identity_provider()
@@ -48,36 +46,35 @@ pub(super) async fn authenticate_request(
         } else if method == "token"
             && let Some(token) = &req.auth.identity.token
         {
-            let mut authz = state
+            let mut auth_res = state
                 .provider
                 .get_token_provider()
                 .authenticate_by_token(state, &token.id, Some(false), None)
                 .await?;
-            // Resolve the user
-            authz.user = Some(
-                state
-                    .provider
-                    .get_identity_provider()
-                    .get_user(state, &authz.user_id)
-                    .await
-                    .map(|x| {
-                        x.ok_or_else(|| KeystoneApiError::NotFound {
-                            resource: "user".into(),
-                            identifier: authz.user_id.clone(),
-                        })
-                    })??,
-            );
-            authenticated_info = Some(authz);
+            if let IdentityInfo::User(ref mut identity) = auth_res.principal.identity {
+                identity.user = Some(
+                    state
+                        .provider
+                        .get_identity_provider()
+                        .get_user(state, &identity.user_id)
+                        .await
+                        .map(|x| {
+                            x.ok_or_else(|| KeystoneApiError::NotFound {
+                                resource: "user".into(),
+                                identifier: identity.user_id.clone(),
+                            })
+                        })??,
+                );
+            };
+            res.push(auth_res);
 
             {}
         }
     }
-    authenticated_info
-        .ok_or(KeystoneApiError::UnauthorizedNoContext)
-        .and_then(|authn| {
-            authn.validate()?;
-            Ok(authn)
-        })
+    if res.is_empty() {
+        return Err(KeystoneApiError::UnauthorizedNoContext);
+    }
+    Ok(res)
 }
 
 /// Build the AuthZ information from the request.
@@ -111,7 +108,7 @@ pub(super) async fn get_authz_info(
                 return Err(KeystoneApiError::UnauthorizedNoContext);
             }
         }
-        Some(Scope::System(_scope)) => AuthzInfo::System,
+        Some(Scope::System(_scope)) => AuthzInfo::System("system".into()),
         None => AuthzInfo::Unscoped,
     };
     authz_info.validate()?;
@@ -120,33 +117,33 @@ pub(super) async fn get_authz_info(
 
 #[cfg(test)]
 mod tests {
+    use openstack_keystone_core_types::auth::*;
     use openstack_keystone_core_types::identity::{UserPasswordAuthRequest, UserResponseBuilder};
 
     use super::super::types::*;
     use super::*;
     use crate::api::KeystoneApiError;
     use crate::api::tests::get_mocked_state;
-    use crate::auth::AuthenticatedInfo;
     use crate::identity::MockIdentityProvider;
     use crate::provider::Provider;
     use crate::token::MockTokenProvider;
 
     #[tokio::test]
     async fn test_authenticate_request_password() {
-        let auth_info = AuthenticatedInfo::builder()
-            .user_id("uid")
-            .user(
-                UserResponseBuilder::default()
-                    .id("uid")
-                    .domain_id("udid")
-                    .enabled(true)
-                    .name("name")
-                    .build()
-                    .unwrap(),
-            )
+        let auth = AuthenticationResultBuilder::default()
+            .context(AuthenticationContext::Password)
+            .principal(PrincipalInfo {
+                domain_id: Some("did".into()),
+                identity: IdentityInfo::User(
+                    UserIdentityInfoBuilder::default()
+                        .user_id("uid")
+                        .build()
+                        .unwrap(),
+                ),
+            })
             .build()
             .unwrap();
-        let auth_clone = auth_info.clone();
+        let auth_clone = auth.clone();
         let mut identity_mock = MockIdentityProvider::default();
         identity_mock
             .expect_authenticate_by_password()
@@ -162,7 +159,7 @@ mod tests {
         let state = get_mocked_state(provider, true, None, None).await;
 
         assert_eq!(
-            auth_info,
+            vec![auth],
             authenticate_request(
                 &state,
                 &AuthRequest {
@@ -190,7 +187,29 @@ mod tests {
 
     #[tokio::test]
     async fn test_authenticate_request_token() {
+        let user = UserResponseBuilder::default()
+            .id("uid")
+            .domain_id("user_domain_id")
+            .enabled(true)
+            .name("name")
+            .build()
+            .unwrap();
+        let auth = AuthenticationResultBuilder::default()
+            .context(AuthenticationContext::Token(TokenContext::default()))
+            .principal(PrincipalInfo {
+                domain_id: Some("did".into()),
+                identity: IdentityInfo::User(
+                    UserIdentityInfoBuilder::default()
+                        .user_id("uid")
+                        .user(user.clone())
+                        .build()
+                        .unwrap(),
+                ),
+            })
+            .build()
+            .unwrap();
         let mut token_mock = MockTokenProvider::default();
+        let auth_clone = auth.clone();
         token_mock
             .expect_authenticate_by_token()
             .withf(
@@ -198,24 +217,12 @@ mod tests {
                     id == "fake_token" && *allow_expired == Some(false) && window.is_none()
                 },
             )
-            .returning(|_, _, _, _| {
-                Ok(AuthenticatedInfo::builder().user_id("uid").build().unwrap())
-            });
+            .returning(move |_, _, _, _| Ok(auth_clone.clone()));
         let mut identity_mock = MockIdentityProvider::default();
         identity_mock
             .expect_get_user()
             .withf(|_, id: &'_ str| id == "uid")
-            .returning(|_, id: &'_ str| {
-                Ok(Some(
-                    UserResponseBuilder::default()
-                        .id(id)
-                        .domain_id("user_domain_id")
-                        .enabled(true)
-                        .name("name")
-                        .build()
-                        .unwrap(),
-                ))
-            });
+            .returning(move |_, _| Ok(Some(user.clone())));
 
         let provider = Provider::mocked_builder()
             .mock_identity(identity_mock)
@@ -224,19 +231,7 @@ mod tests {
         let state = get_mocked_state(provider, true, None, Some(true)).await;
 
         assert_eq!(
-            AuthenticatedInfo::builder()
-                .user_id("uid")
-                .user(
-                    UserResponseBuilder::default()
-                        .id("uid")
-                        .domain_id("user_domain_id")
-                        .enabled(true)
-                        .name("name")
-                        .build()
-                        .unwrap(),
-                )
-                .build()
-                .unwrap(),
+            vec![auth],
             authenticate_request(
                 &state,
                 &AuthRequest {

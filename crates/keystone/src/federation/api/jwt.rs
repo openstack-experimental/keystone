@@ -33,22 +33,22 @@ use openidconnect::core::{
 use openidconnect::reqwest;
 use openidconnect::{Client, ClientId, IdToken, IssuerUrl, JsonWebKeySet, JsonWebKeySetUrl, Nonce};
 
-use openstack_keystone_core::api::v4::auth::token::token_impl::build_api_token_v4;
-
 use super::error::OidcError;
 use crate::api::v4::auth::token::types::TokenResponse as KeystoneTokenResponse;
 use crate::api::{
     KeystoneApiError,
-    common::get_authz_info,
     types::{Catalog, CatalogService},
 };
-use crate::auth::{AuthenticatedInfo, AuthenticationError};
+use crate::auth::*;
 use crate::catalog::CatalogApi;
 //use crate::common::types as provider_types;
 use crate::federation::{FederationApi, api::types::*};
 use crate::identity::{IdentityApi, error::IdentityProviderError};
 use crate::keystone::ServiceState;
 use crate::token::TokenApi;
+use openstack_keystone_core::api::{
+    common::get_authz_info, v4::auth::token::token_impl::build_api_token_v4,
+};
 use openstack_keystone_core_types::federation::{
     MappingListParameters as ProviderMappingListParameters,
     MappingType as ProviderMappingType,
@@ -299,15 +299,27 @@ pub async fn login(
             )
             .await?
     };
-    let authed_info = AuthenticatedInfo::builder()
-        .user_id(user.id.clone())
-        .user(user.clone())
-        .methods(vec!["openid".into()])
-        .idp_id(idp.id.clone())
-        .protocol_id("jwt".to_string())
-        .build()
-        .map_err(AuthenticationError::from)?;
-    authed_info.validate()?;
+    let auth = AuthenticationResultBuilder::default()
+        .principal(PrincipalInfo {
+            domain_id: Some(user.domain_id.clone()),
+            identity: IdentityInfo::User(
+                UserIdentityInfoBuilder::default()
+                    .user_id(user.id.clone())
+                    .user(user.clone())
+                    .build()?,
+            ),
+        })
+        .context(AuthenticationContext::Oidc(
+            OidcContextBuilder::default()
+                .idp_id(idp.id.clone())
+                .protocol_id("jwt")
+                .build()?,
+        ))
+        .build()?;
+    let mut ctx = SecurityContext::try_from(auth)?;
+    if let Some(token_restriction) = &token_restriction {
+        ctx.token_restriction = Some(token_restriction.clone());
+    }
 
     // TODO: detect scope from the mapping or claims
     let authz_info = get_authz_info(
@@ -325,11 +337,10 @@ pub async fn login(
     )
     .await?;
 
-    let mut token = state.provider.get_token_provider().issue_token(
-        authed_info,
-        authz_info,
-        token_restriction.as_ref(),
-    )?;
+    let mut token = state
+        .provider
+        .get_token_provider()
+        .issue_token(&ctx, &authz_info)?;
 
     // TODO: roles should be granted for the jwt login already
 

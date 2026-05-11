@@ -19,7 +19,7 @@ serde_json.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 url = { workspace = true, features = ["serde"] }
-uuid.workspace = true
+uuid = { workspace = true, features = ["v4", "v5"] }
 validator = { workspace = true, features = ["derive"] }
 
 [dev-dependencies]
