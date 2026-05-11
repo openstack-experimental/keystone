@@ -61,7 +61,7 @@ serde.workspace = true
 serde_json.workspace = true
 serde_urlencoded.workspace = true
 spiffe = { workspace = true, features = ["x509-source"] }
-spiffe-rustls = "0.5.0"
+spiffe-rustls = "0.6.0"
 spiffe-rustls-tokio = "0.3"
 thiserror.workspace = true
 tokio = { workspace = true, features = ["fs", "macros", "signal", "rt-multi-thread"] }

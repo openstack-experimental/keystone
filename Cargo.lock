@@ -6036,13 +6036,13 @@ dependencies = [
 
 [[package]]
 name = "spiffe-rustls"
-version = "0.5.0"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6aaefd19f26d525058a995d7fde5bfb17d4345a86727b8ecd1860008e2986868"
+checksum = "bc06b7e78bff3c414373f2a6265f63bfe49fbe712c6e92fee28487543ad994d1"
 dependencies = [
  "oid-registry 0.8.1",
  "rustls",
- "spiffe 0.14.0",
+ "spiffe 0.15.0",
  "thiserror 2.0.18",
  "tokio",
  "tokio-util",
