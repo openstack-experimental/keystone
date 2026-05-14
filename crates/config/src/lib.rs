@@ -347,8 +347,8 @@ impl ConfigManager {
         // Watch the main config
         watched_paths.insert(config_path.clone());
         if let Some(parent) = config_path.parent() {
-            // For K8 it is practical to add a directory watch since the CM is replaced as a whole
-            // without touching the individual file.
+            // For K8 it is practical to add a directory watch since the CM is replaced as a
+            // whole without touching the individual file.
             watched_paths.insert(parent.to_path_buf());
         }
 

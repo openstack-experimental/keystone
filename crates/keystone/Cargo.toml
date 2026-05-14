@@ -36,7 +36,7 @@ openstack-keystone-appcred-sql = { version = "0.1", path = "../appcred-sql/" }
 openstack-keystone-assignment-sql = { version = "0.1", path = "../assignment-sql/" }
 openstack-keystone-catalog-sql = { version = "0.1", path = "../catalog-sql/" }
 openstack-keystone-config = { version = "0.1", path = "../config" }
-openstack-keystone-core = { version = "0.1", path = "../core" }
+openstack-keystone-core = { version = "0.1", path = "../core", features = ["api"] }
 openstack-keystone-core-types = { version = "0.1", path = "../core-types" }
 openstack-keystone-distributed-storage = { version = "0.1", path = "../storage/"}
 openstack-keystone-federation-sql = { version = "0.1", path = "../federation-sql" }

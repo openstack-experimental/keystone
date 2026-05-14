@@ -25,10 +25,12 @@ use crate::{
 };
 use openstack_keystone_api_types::error::KeystoneApiError;
 use openstack_keystone_api_types::v4::auth::token::TokenResponse;
-use openstack_keystone_core::api::v4::auth::token::token_impl::build_api_token_v4;
-use openstack_keystone_core::auth::{AuthenticatedInfo, AuthenticationError, AuthzInfo};
-use openstack_keystone_core::identity::IdentityApi;
 use openstack_keystone_core::token::TokenApi;
+use openstack_keystone_core::{api::v4::auth::token::token_impl::build_api_token_v4, auth::*};
+use openstack_keystone_core::{
+    auth::{AuthzInfo, SecurityContext},
+    identity::IdentityApi,
+};
 
 /// Finish user passkey authentication.
 ///
@@ -133,34 +135,33 @@ pub async fn finish(
             .delete_user_webauthn_credential_authentication_state(&state.core, &user_id)
             .await?;
     }
-    let authed_info = AuthenticatedInfo::builder()
-        .user_id(user_id.clone())
-        .user(
-            state
-                .core
-                .provider
-                .get_identity_provider()
-                .get_user(&state.core, &user_id)
-                .await
-                .map(|x| {
-                    x.ok_or_else(|| KeystoneApiError::NotFound {
-                        resource: "user".into(),
-                        identifier: user_id,
-                    })
-                })??,
-        )
-        // Unless Keystone support passkey auth method we use x509 (which it technically is close
-        // to).
-        .methods(vec!["x509".into()])
-        .build()
-        .map_err(AuthenticationError::from)?;
-    authed_info.validate()?;
 
-    let token = state.core.provider.get_token_provider().issue_token(
-        authed_info,
-        AuthzInfo::Unscoped,
-        None,
-    )?;
+    let user = state
+        .core
+        .provider
+        .get_identity_provider()
+        .get_user(&state.core, &user_id)
+        .await?
+        .ok_or(KeystoneApiError::Conflict("user not found".into()))?;
+    let auth = AuthenticationResultBuilder::default()
+        .principal(PrincipalInfo {
+            domain_id: None,
+            identity: IdentityInfo::User(
+                UserIdentityInfoBuilder::default()
+                    .user_id(user_id.clone())
+                    .user(user.clone())
+                    .build()?,
+            ),
+        })
+        .context(AuthenticationContext::WebauthN)
+        .build()?;
+    let ctx = SecurityContext::try_from(auth)?;
+
+    let token = state
+        .core
+        .provider
+        .get_token_provider()
+        .issue_token(&ctx, &AuthzInfo::Unscoped)?;
 
     let api_token = TokenResponse {
         token: build_api_token_v4(&token, &state.core).await?,

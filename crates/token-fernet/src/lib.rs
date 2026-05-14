@@ -196,7 +196,7 @@ impl FernetTokenProvider {
     fn set_auth_methods_cache_combinations(&mut self) {
         self.auth_methods_code_cache.clear();
         for auth_pairs in all_combinations(self.auth_map.values().cloned()) {
-            let pair: HashSet<String> = HashSet::from_iter(auth_pairs.into_iter());
+            let pair: HashSet<String> = HashSet::from_iter(auth_pairs);
             self.encode_auth_methods(pair.clone())
                 .ok()
                 .map(|val| self.auth_methods_code_cache.insert(val, pair));

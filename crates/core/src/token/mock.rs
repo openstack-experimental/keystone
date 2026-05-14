@@ -19,7 +19,7 @@ use mockall::mock;
 use openstack_keystone_core_types::token::*;
 
 use super::error::TokenProviderError;
-use crate::auth::{AuthenticatedInfo, AuthzInfo};
+use crate::auth::{AuthenticationResult, AuthzInfo, SecurityContext};
 use crate::keystone::ServiceState;
 
 use super::TokenApi;
@@ -35,7 +35,7 @@ mock! {
             credential: &'a str,
             allow_expired: Option<bool>,
             window_seconds: Option<i64>,
-        ) -> Result<AuthenticatedInfo, TokenProviderError>;
+        ) -> Result<AuthenticationResult, TokenProviderError>;
 
         async fn validate_token<'a>(
             &self,
@@ -48,9 +48,8 @@ mock! {
         #[mockall::concretize]
         fn issue_token(
             &self,
-            authentication_info: AuthenticatedInfo,
-            authz_info: AuthzInfo,
-            token_restriction: Option<&TokenRestriction>
+            security_context: &SecurityContext,
+            authz_info: &AuthzInfo,
         ) -> Result<Token, TokenProviderError>;
 
         fn encode_token(&self, token: &Token) -> Result<String, TokenProviderError>;

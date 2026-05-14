@@ -168,7 +168,7 @@ impl TryFrom<&Token> for RevocationEventListParameters {
                     .user()
                     .iter()
                     .map(|user| user.domain_id.clone())
-                    .chain(value.domain().map(|domain| domain.id.clone()))
+                    .chain(value.domain_id().cloned())
                     .collect::<Vec<String>>(),
             ),
             expires_at: None,

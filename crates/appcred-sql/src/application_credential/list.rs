@@ -94,10 +94,7 @@ pub async fn list(
         })
         .collect::<Result<Vec<Vec<_>>, _>>()?;
     let mut results: Vec<ApplicationCredential> = Vec::new();
-    for (ref apc, (roles, rules)) in db_entities
-        .into_iter()
-        .zip(roles.into_iter().zip(rules.into_iter()))
-    {
+    for (ref apc, (roles, rules)) in db_entities.into_iter().zip(roles.into_iter().zip(rules)) {
         let mut builder: ApplicationCredentialBuilder = apc.try_into()?;
         builder.roles(roles);
         builder.access_rules(rules);

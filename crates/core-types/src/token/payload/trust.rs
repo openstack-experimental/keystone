@@ -19,10 +19,12 @@ use serde::Serialize;
 use validator::Validate;
 
 use super::common;
+use crate::auth::SecurityContext;
 use crate::error::BuilderError;
 use crate::identity::UserResponse;
 use crate::resource::Project;
 use crate::token::Token;
+use crate::token::error::TokenProviderError;
 use crate::trust::Trust;
 
 /// Trust token payload.
@@ -92,5 +94,70 @@ impl TrustPayloadBuilder {
 impl From<TrustPayload> for Token {
     fn from(value: TrustPayload) -> Self {
         Self::Trust(value)
+    }
+}
+
+impl TrustPayload {
+    /// Construct a trust-scoped token payload from a [`SecurityContext`].
+    ///
+    /// Propagates the principal's user ID, authentication methods, and audit
+    /// IDs from the context, and embeds the trust object and its identifier
+    /// into the payload.
+    pub fn from_security_context<S: Into<String>>(
+        ctx: &SecurityContext,
+        trust: &Trust,
+        project_id: S,
+        expires_at: DateTime<Utc>,
+    ) -> Result<Self, TokenProviderError> {
+        Ok(TrustPayloadBuilder::default()
+            .user_id(ctx.principal.get_user_id())
+            .methods(ctx.auth_methods.iter())
+            .audit_ids(ctx.audit_ids.iter())
+            .expires_at(expires_at)
+            .trust_id(trust.id.clone())
+            .trust(trust.clone())
+            .project_id(project_id)
+            .build()?)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use chrono::Utc;
+
+    use super::*;
+    use crate::auth::*;
+    use crate::trust::*;
+
+    #[test]
+    fn test_create_from_security_context() {
+        let now = Utc::now();
+        let auth = AuthenticationResultBuilder::default()
+            .context(AuthenticationContext::Password)
+            .principal(PrincipalInfo {
+                domain_id: Some("did".into()),
+                identity: IdentityInfo::User(
+                    UserIdentityInfoBuilder::default()
+                        .user_id("uid")
+                        .build()
+                        .unwrap(),
+                ),
+            })
+            .build()
+            .unwrap();
+        let ctx = SecurityContext::try_from(auth).unwrap();
+
+        let trust = TrustBuilder::default()
+            .id("tid")
+            .impersonation(false)
+            .trustor_user_id("trustor_uid")
+            .trustee_user_id("trustor_uid")
+            .build()
+            .unwrap();
+        let payload = TrustPayload::from_security_context(&ctx, &trust, "pid", now).unwrap();
+        assert_eq!(now, payload.expires_at);
+        assert_eq!("uid", payload.user_id);
+        assert_eq!(vec!["password"], payload.methods);
+        assert_eq!("tid", payload.trust_id);
     }
 }

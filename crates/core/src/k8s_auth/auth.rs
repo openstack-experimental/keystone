@@ -25,9 +25,8 @@ use tokio::fs;
 use tracing::{debug, trace};
 
 use openstack_keystone_core_types::k8s_auth::*;
-use openstack_keystone_core_types::token::TokenRestriction;
 
-use crate::auth::AuthenticatedInfo;
+use crate::auth::*;
 use crate::identity::IdentityApi;
 use crate::k8s_auth::{
     K8sAuthApi, K8sAuthProviderError, service::K8sAuthService, types::K8sClaims,
@@ -238,7 +237,7 @@ impl K8sAuthService {
         &self,
         state: &ServiceState,
         req: &K8sAuthRequest,
-    ) -> Result<(AuthenticatedInfo, TokenRestriction), K8sAuthProviderError> {
+    ) -> Result<AuthenticationResult, K8sAuthProviderError> {
         let token_provider = state.provider.get_token_provider();
         let identity_provider = state.provider.get_identity_provider();
         // Fetch k8s auth instance.
@@ -289,16 +288,21 @@ impl K8sAuthService {
             .get_user(state, user_id)
             .await?
             .ok_or(K8sAuthProviderError::UserNotFound(user_id.clone()))?;
-        Ok((
-            AuthenticatedInfo {
-                methods: vec!["mapped".to_string()],
-                token_restriction_id: Some(role.token_restriction_id),
-                user: Some(user),
-                user_id: user_id.clone(),
-                ..Default::default()
-            },
-            token_restriction,
-        ))
+        Ok(AuthenticationResultBuilder::default()
+            .principal(PrincipalInfo {
+                domain_id: Some(user.domain_id.clone()),
+                identity: IdentityInfo::User(
+                    UserIdentityInfoBuilder::default()
+                        .user_id(user_id.clone())
+                        .user(user.clone())
+                        .build()?,
+                ),
+            })
+            .context(AuthenticationContext::K8s(K8sContext {
+                token_restriction_id: role.token_restriction_id.clone(),
+            }))
+            .token_restriction(token_restriction)
+            .build()?)
     }
 }
 
@@ -1089,18 +1093,18 @@ FPrC1HpT3dzIAiEAtEB0so+KoJb/2Opn1RycVzxke1CQrWgjS8ySnnFK5ok=
     #[tokio::test]
     async fn test_auth() -> Result<()> {
         let mut token_mock = MockTokenProvider::default();
+        let tr = TokenRestriction {
+            id: "trid".into(),
+            domain_id: "did".into(),
+            project_id: Some("pid".into()),
+            user_id: Some("uid".into()),
+            ..Default::default()
+        };
+        let tr_clone = tr.clone();
         token_mock
             .expect_get_token_restriction()
             .withf(|_, id: &'_ str, expand: &bool| id == "trid" && *expand)
-            .returning(|_, _, _| {
-                Ok(Some(TokenRestriction {
-                    id: "trid".into(),
-                    domain_id: "did".into(),
-                    project_id: Some("pid".into()),
-                    user_id: Some("uid".into()),
-                    ..Default::default()
-                }))
-            });
+            .returning(move |_, _, _| Ok(Some(tr_clone.clone())));
 
         let mut identity_mock = MockIdentityProvider::default();
         identity_mock
@@ -1119,7 +1123,7 @@ FPrC1HpT3dzIAiEAtEB0so+KoJb/2Opn1RycVzxke1CQrWgjS8ySnnFK5ok=
 
         let (provider, state, token, _mock_server) =
             build_auth_test(token_mock, identity_mock).await?;
-        let (auth_info, tr) = provider
+        let auth_res = provider
             .authenticate_by_k8s_sa_token(
                 &state,
                 &K8sAuthRequest {
@@ -1129,11 +1133,15 @@ FPrC1HpT3dzIAiEAtEB0so+KoJb/2Opn1RycVzxke1CQrWgjS8ySnnFK5ok=
                 },
             )
             .await?;
-        assert_eq!("uid", auth_info.user_id);
-        assert_eq!(vec!["mapped".to_string()], auth_info.methods);
-        let trid = auth_info.token_restriction_id.unwrap();
-        assert_eq!("trid".to_string(), trid);
-        assert_eq!(tr.id, trid);
+        match &auth_res.principal.identity {
+            IdentityInfo::User(user) => {
+                assert_eq!("uid", user.user_id);
+            }
+            _ => {
+                panic!("should result in a user");
+            }
+        }
+        assert_eq!(tr, auth_res.token_restriction.unwrap());
 
         Ok(())
     }

@@ -21,10 +21,10 @@ use tracing_test::traced_test;
 
 use openstack_keystone_trust_sql::entity::{trust as db_trust, trust_role as db_trust_role};
 
-use openstack_keystone::auth::*;
 use openstack_keystone::keystone::Service;
 use openstack_keystone::token::{Token, TokenApi, TokenProviderError};
 use openstack_keystone::trust::TrustApi;
+use openstack_keystone_core_types::auth::*;
 use openstack_keystone_core_types::trust::*;
 
 use super::grant_role_to_user_on_project;
@@ -103,15 +103,25 @@ async fn test_valid() -> Result<(), Report> {
         .await?
         .expect("trust_a is present");
 
-    let token = state.provider.get_token_provider().issue_token(
-        AuthenticatedInfoBuilder::default()
-            .user_id(user_b.id.clone())
-            .user(user_b.clone())
-            .methods(vec!["password".into()])
-            .build()?,
-        AuthzInfo::Trust(trust.clone()),
-        None,
-    )?;
+    let auth = AuthenticationResultBuilder::default()
+        .context(AuthenticationContext::Password)
+        .principal(PrincipalInfo {
+            domain_id: Some(user_b.domain_id.clone()),
+            identity: IdentityInfo::User(
+                UserIdentityInfoBuilder::default()
+                    .user_id(user_b.id.clone())
+                    .user(user_b.clone())
+                    .build()?,
+            ),
+        })
+        .build()
+        .unwrap();
+    let ctx = SecurityContext::try_from(auth).unwrap();
+
+    let token = state
+        .provider
+        .get_token_provider()
+        .issue_token(&ctx, &AuthzInfo::Trust(trust.clone()))?;
 
     let encoded_token = state.provider.get_token_provider().encode_token(&token)?;
 
@@ -176,15 +186,24 @@ async fn test_valid_redelegated() -> Result<(), Report> {
         .await?
         .expect("trust_a_b is present");
 
-    let token = state.provider.get_token_provider().issue_token(
-        AuthenticatedInfoBuilder::default()
-            .user_id(user_c.id.clone())
-            .user(user_c.clone())
-            .methods(vec!["password".into()])
-            .build()?,
-        AuthzInfo::Trust(trust.clone()),
-        None,
-    )?;
+    let auth = AuthenticationResultBuilder::default()
+        .context(AuthenticationContext::Password)
+        .principal(PrincipalInfo {
+            domain_id: Some(user_c.domain_id.clone()),
+            identity: IdentityInfo::User(
+                UserIdentityInfoBuilder::default()
+                    .user_id(user_c.id.clone())
+                    .user(user_c.clone())
+                    .build()?,
+            ),
+        })
+        .build()
+        .unwrap();
+    let ctx = SecurityContext::try_from(auth).unwrap();
+    let token = state
+        .provider
+        .get_token_provider()
+        .issue_token(&ctx, &AuthzInfo::Trust(trust.clone()))?;
 
     let encoded_token = state.provider.get_token_provider().encode_token(&token)?;
 
@@ -247,15 +266,25 @@ async fn test_fewer_roles() -> Result<(), Report> {
         .await?
         .expect("trust_a is present");
 
-    let token = state.provider.get_token_provider().issue_token(
-        AuthenticatedInfoBuilder::default()
-            .user_id(user_b.id.clone())
-            .user(user_b.clone())
-            .methods(vec!["password".into()])
-            .build()?,
-        AuthzInfo::Trust(trust.clone()),
-        None,
-    )?;
+    let auth = AuthenticationResultBuilder::default()
+        .context(AuthenticationContext::Password)
+        .principal(PrincipalInfo {
+            domain_id: Some(user_b.domain_id.clone()),
+            identity: IdentityInfo::User(
+                UserIdentityInfoBuilder::default()
+                    .user_id(user_b.id.clone())
+                    .user(user_b.clone())
+                    .build()?,
+            ),
+        })
+        .build()
+        .unwrap();
+    let ctx = SecurityContext::try_from(auth).unwrap();
+
+    let token = state
+        .provider
+        .get_token_provider()
+        .issue_token(&ctx, &AuthzInfo::Trust(trust.clone()))?;
 
     let encoded_token = state.provider.get_token_provider().encode_token(&token)?;
 
@@ -303,15 +332,25 @@ async fn test_exclude_local_roles() -> Result<(), Report> {
         .await?
         .expect("trust_a is present");
 
-    let token = state.provider.get_token_provider().issue_token(
-        AuthenticatedInfoBuilder::default()
-            .user_id(user_b.id.clone())
-            .user(user_b.clone())
-            .methods(vec!["password".into()])
-            .build()?,
-        AuthzInfo::Trust(trust.clone()),
-        None,
-    )?;
+    let auth = AuthenticationResultBuilder::default()
+        .context(AuthenticationContext::Password)
+        .principal(PrincipalInfo {
+            domain_id: Some(user_b.domain_id.clone()),
+            identity: IdentityInfo::User(
+                UserIdentityInfoBuilder::default()
+                    .user_id(user_b.id.clone())
+                    .user(user_b.clone())
+                    .build()?,
+            ),
+        })
+        .build()
+        .unwrap();
+    let ctx = SecurityContext::try_from(auth).unwrap();
+
+    let token = state
+        .provider
+        .get_token_provider()
+        .issue_token(&ctx, &AuthzInfo::Trust(trust.clone()))?;
 
     let encoded_token = state.provider.get_token_provider().encode_token(&token)?;
 

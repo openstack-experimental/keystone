@@ -145,6 +145,10 @@ pub enum K8sAuthProviderError {
     #[error("token restriction {0} not found")]
     TokenRestrictionNotFound(String),
 
+    /// Token restriction not found.
+    #[error("token restriction missing in the authentication result")]
+    TokenRestrictionMissing,
+
     /// Token restriction MUST specify the `project_id`.
     #[error("token restriction must specify `project_id`")]
     TokenRestrictionMustSpecifyProjectId,

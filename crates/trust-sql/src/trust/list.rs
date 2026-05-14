@@ -67,7 +67,7 @@ pub async fn list(
 
     db_trusts
         .into_iter()
-        .zip(roles.into_iter())
+        .zip(roles)
         .map(|(trust, roles)| {
             let mut res: Trust = trust.try_into()?;
             if !roles.is_empty() {

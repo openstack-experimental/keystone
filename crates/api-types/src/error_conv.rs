@@ -75,10 +75,16 @@ impl From<JsonRejection> for KeystoneApiError {
 impl From<AuthenticationError> for KeystoneApiError {
     fn from(value: AuthenticationError) -> Self {
         match value {
+            AuthenticationError::AuthPrincipalDiffers => {
+                KeystoneApiError::unauthorized(value, None::<String>)
+            }
             AuthenticationError::DomainDisabled(..) => {
                 KeystoneApiError::unauthorized(value, None::<String>)
             }
             AuthenticationError::ProjectDisabled(..) => {
+                KeystoneApiError::unauthorized(value, None::<String>)
+            }
+            AuthenticationError::ScopeNotAllowed => {
                 KeystoneApiError::unauthorized(value, None::<String>)
             }
             AuthenticationError::StructBuilder { source } => {
@@ -116,6 +122,9 @@ impl From<AuthenticationError> for KeystoneApiError {
             }
             AuthenticationError::Unauthorized => {
                 KeystoneApiError::unauthorized(value, None::<String>)
+            }
+            AuthenticationError::Validation { source } => {
+                KeystoneApiError::InternalError(source.to_string())
             }
         }
     }

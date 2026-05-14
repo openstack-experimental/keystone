@@ -31,10 +31,9 @@ use openidconnect::{
 use crate::api::v4::auth::token::types::TokenResponse as KeystoneTokenResponse;
 use crate::api::{
     KeystoneApiError,
-    common::get_authz_info,
     types::{Catalog, CatalogService},
 };
-use crate::auth::{AuthenticatedInfo, AuthenticationError};
+use crate::auth::*;
 use crate::catalog::CatalogApi;
 use crate::federation::{
     FederationApi,
@@ -44,7 +43,9 @@ use crate::identity::IdentityApi;
 use crate::identity::error::IdentityProviderError;
 use crate::keystone::ServiceState;
 use crate::token::TokenApi;
-use openstack_keystone_core::api::v4::auth::token::token_impl::build_api_token_v4;
+use openstack_keystone_core::api::{
+    common::get_authz_info, v4::auth::token::token_impl::build_api_token_v4,
+};
 use openstack_keystone_core_types::identity::{
     FederationBuilder, FederationProtocol, Group, GroupCreate, GroupListParameters,
     UserCreateBuilder,
@@ -138,7 +139,7 @@ pub async fn callback(
         return Err(OidcError::MappingDisabled)?;
     }
 
-    let token_restrictions = if let Some(tr_id) = &mapping.token_restriction_id {
+    let token_restriction = if let Some(tr_id) = &mapping.token_restriction_id {
         state
             .provider
             .get_token_provider()
@@ -304,25 +305,47 @@ pub async fn callback(
             .await?,
     );
 
-    let authed_info = AuthenticatedInfo::builder()
-        .user_id(user.id.clone())
-        .user(user.clone())
-        .methods(vec!["openid".into()])
-        .idp_id(idp.id.clone())
-        .protocol_id("oidc".to_string())
-        .user_groups(user_groups)
-        .build()
-        .map_err(AuthenticationError::from)?;
-    authed_info.validate()?;
+    let auth = AuthenticationResultBuilder::default()
+        .principal(PrincipalInfo {
+            domain_id: Some(user.domain_id.clone()),
+            identity: IdentityInfo::User(
+                UserIdentityInfoBuilder::default()
+                    .user_id(user.id.clone())
+                    .user(user.clone())
+                    .user_groups(user_groups)
+                    .build()?,
+            ),
+        })
+        .context(AuthenticationContext::Oidc(
+            OidcContextBuilder::default()
+                .idp_id(idp.id.clone())
+                .protocol_id("oidc")
+                .build()?,
+        ))
+        .build()?;
+    let mut ctx = SecurityContext::try_from(auth)?;
+    if let Some(token_restriction) = &token_restriction {
+        ctx.token_restriction = Some(token_restriction.clone());
+    }
+
+    //let authed_info = AuthenticatedInfo::builder()
+    //    .user_id(user.id.clone())
+    //    .user(user.clone())
+    //    .methods(vec!["openid".into()])
+    //    .idp_id(idp.id.clone())
+    //    .protocol_id("oidc".to_string())
+    //    .user_groups(user_groups)
+    //    .build()
+    //    .map_err(AuthenticationError::from)?;
+    //authed_info.validate()?;
 
     let authz_info = get_authz_info(&state, auth_state.scope.as_ref()).await?;
     trace!("Granting the scope: {:?}", authz_info);
 
-    let mut token = state.provider.get_token_provider().issue_token(
-        authed_info,
-        authz_info,
-        token_restrictions.as_ref(),
-    )?;
+    let mut token = state
+        .provider
+        .get_token_provider()
+        .issue_token(&ctx, &authz_info)?;
 
     token = state
         .provider

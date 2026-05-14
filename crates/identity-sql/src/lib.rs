@@ -18,7 +18,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sea_orm::{DatabaseConnection, Schema, sea_query::Index};
 
-use openstack_keystone_core::auth::AuthenticatedInfo;
+use openstack_keystone_core::auth::AuthenticationResult;
 use openstack_keystone_core::identity::IdentityProviderError;
 use openstack_keystone_core::identity::backend::IdentityBackend;
 use openstack_keystone_core::keystone::ServiceState;
@@ -143,7 +143,7 @@ impl IdentityBackend for SqlBackend {
         &self,
         state: &ServiceState,
         auth: &UserPasswordAuthRequest,
-    ) -> Result<AuthenticatedInfo, IdentityProviderError> {
+    ) -> Result<AuthenticationResult, IdentityProviderError> {
         let config = state.config_manager.config.read().await;
         Ok(authenticate::authenticate_by_password(&config, &state.db, auth).await?)
     }

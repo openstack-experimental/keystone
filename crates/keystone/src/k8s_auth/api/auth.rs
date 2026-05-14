@@ -24,17 +24,17 @@ use validator::Validate;
 
 use openstack_keystone_api_types::error::KeystoneApiError;
 use openstack_keystone_api_types::k8s_auth::K8sAuthRequest;
-use openstack_keystone_core::api::v4::auth::token::token_impl::build_api_token_v4;
-use openstack_keystone_core::k8s_auth::K8sAuthApi;
+use openstack_keystone_core::api::{
+    common::get_authz_info, v4::auth::token::token_impl::build_api_token_v4,
+};
+use openstack_keystone_core::k8s_auth::{K8sAuthApi, K8sAuthProviderError};
 use openstack_keystone_core::keystone::ServiceState;
 use openstack_keystone_core::token::TokenApi;
+use openstack_keystone_core_types::auth::*;
 use openstack_keystone_core_types::scope::{Project, Scope};
 
+use crate::api::types::{Catalog, CatalogService};
 use crate::api::v4::auth::token::types::TokenResponse;
-use crate::api::{
-    common::get_authz_info,
-    types::{Catalog, CatalogService},
-};
 use crate::catalog::CatalogApi;
 
 pub(super) fn openapi_router() -> OpenApiRouter<ServiceState> {
@@ -78,13 +78,21 @@ pub async fn post(
 ) -> Result<impl IntoResponse, KeystoneApiError> {
     req.validate()?;
 
-    let (authn_info, token_restriction) = state
+    let auth_result = state
         .provider
         .get_k8s_auth_provider()
         .authenticate_by_k8s_sa_token(&state, &req.to_provider_with_instance_id(instance_id))
         .await?;
+    let token_restriction = auth_result
+        .token_restriction
+        .as_ref()
+        .ok_or(K8sAuthProviderError::TokenRestrictionMissing)?
+        .clone();
 
-    authn_info.validate()?;
+    let mut ctx = SecurityContext::try_from(auth_result)?;
+    ctx.token_restriction = Some(token_restriction.clone());
+
+    //authn_info.validate()?;
     let authz_info = get_authz_info(
         &state,
         token_restriction
@@ -101,11 +109,10 @@ pub async fn post(
     .await?;
     authz_info.validate()?;
 
-    let mut token = state.provider.get_token_provider().issue_token(
-        authn_info,
-        authz_info,
-        Some(&token_restriction),
-    )?;
+    let mut token = state
+        .provider
+        .get_token_provider()
+        .issue_token(&ctx, &authz_info)?;
 
     token = state
         .provider

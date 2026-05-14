@@ -16,9 +16,8 @@ use async_trait::async_trait;
 use mockall::mock;
 
 use openstack_keystone_core_types::k8s_auth::*;
-use openstack_keystone_core_types::token::TokenRestriction;
 
-use crate::auth::AuthenticatedInfo;
+use crate::auth::AuthenticationResult;
 use crate::k8s_auth::{K8sAuthApi, K8sAuthProviderError};
 use crate::keystone::ServiceState;
 
@@ -33,7 +32,7 @@ mock! {
             &self,
             state: &ServiceState,
             req: &K8sAuthRequest,
-        ) -> Result<(AuthenticatedInfo, TokenRestriction), K8sAuthProviderError>;
+        ) -> Result<AuthenticationResult, K8sAuthProviderError>;
 
         /// Register new K8s auth instance.
         async fn create_auth_instance(

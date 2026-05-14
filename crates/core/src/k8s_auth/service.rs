@@ -19,9 +19,8 @@ use async_trait::async_trait;
 
 use openstack_keystone_config::Config;
 use openstack_keystone_core_types::k8s_auth::*;
-use openstack_keystone_core_types::token::TokenRestriction;
 
-use crate::auth::AuthenticatedInfo;
+use crate::auth::AuthenticationResult;
 use crate::common::{HttpClientPool, HttpClientProvider};
 use crate::k8s_auth::{K8sAuthApi, K8sAuthProviderError, backend::K8sAuthBackend};
 use crate::keystone::ServiceState;
@@ -75,7 +74,7 @@ impl K8sAuthApi for K8sAuthService {
         &self,
         state: &ServiceState,
         req: &K8sAuthRequest,
-    ) -> Result<(AuthenticatedInfo, TokenRestriction), K8sAuthProviderError> {
+    ) -> Result<AuthenticationResult, K8sAuthProviderError> {
         self.authenticate(state, req).await
     }
 

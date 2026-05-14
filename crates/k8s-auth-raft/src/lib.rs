@@ -45,7 +45,7 @@ impl RaftBackend {
     /// # Returns
     /// The prefix key.
     fn get_auth_instance_prefix(&self) -> String {
-        format!("k8s_auth:instance:id:")
+        "k8s_auth:instance:id:".to_string()
     }
 
     /// Get the storage key for auth instance - domain based index.
@@ -95,7 +95,7 @@ impl RaftBackend {
     /// # Returns
     /// The prefix key.
     fn get_auth_role_prefix(&self) -> String {
-        format!("k8s_auth:role:id:")
+        "k8s_auth:role:id:".to_string()
     }
 
     /// Get the storage key for auth role - domain based index.
@@ -431,10 +431,9 @@ impl K8sAuthBackend for RaftBackend {
                     .await
                     .map_err(K8sAuthProviderError::raft)?
                     .map(|x| x.data)
+                    && post_filters.iter().all(|f| f.matches(&candidate))
                 {
-                    if post_filters.iter().all(|f| f.matches(&candidate)) {
-                        res.push(candidate);
-                    }
+                    res.push(candidate);
                 }
             }
         } else {
@@ -531,10 +530,9 @@ impl K8sAuthBackend for RaftBackend {
                     .await
                     .map_err(K8sAuthProviderError::raft)?
                     .map(|x| x.data)
+                    && post_filters.iter().all(|f| f.matches(&candidate))
                 {
-                    if post_filters.iter().all(|f| f.matches(&candidate)) {
-                        res.push(candidate);
-                    }
+                    res.push(candidate);
                 }
             }
         } else {

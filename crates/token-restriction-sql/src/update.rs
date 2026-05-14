@@ -120,7 +120,7 @@ pub async fn update<S: AsRef<str>>(
                             )
                             .add(
                                 token_restriction_role_association::Column::RoleId
-                                    .is_in(roles_to_remove.into_iter()),
+                                    .is_in(roles_to_remove),
                             ),
                     )
                     .exec(db)

@@ -17,12 +17,9 @@ use url::Url;
 
 use openstack_keystone_api_types::Link;
 use openstack_keystone_config::Config;
-use openstack_keystone_core_types::resource::{Domain, Project};
-use openstack_keystone_core_types::scope::Scope as ProviderScope;
+use openstack_keystone_core_types::resource::Domain;
 
 use crate::api::KeystoneApiError;
-use crate::api::types::ScopeProject;
-use crate::auth::AuthzInfo;
 use crate::keystone::ServiceState;
 use crate::resource::ResourceApi;
 
@@ -63,100 +60,6 @@ pub async fn get_domain<I: AsRef<str>, N: AsRef<str>>(
     } else {
         Err(KeystoneApiError::DomainIdOrName)
     }
-}
-
-/// Find the project referred in the scope.
-///
-/// # Arguments
-/// * `state` - The service state.
-/// * `scope` - The scope to find the project.
-///
-/// # Returns
-/// The resolved project.
-pub async fn find_project_from_scope(
-    state: &ServiceState,
-    scope: &ScopeProject,
-) -> Result<Option<Project>, KeystoneApiError> {
-    let project = if let Some(pid) = &scope.id {
-        state
-            .provider
-            .get_resource_provider()
-            .get_project(state, pid)
-            .await?
-    } else if let Some(name) = &scope.name {
-        if let Some(domain) = &scope.domain {
-            let domain_id = match &domain.id {
-                Some(id) => id.clone(),
-                None => {
-                    state
-                        .provider
-                        .get_resource_provider()
-                        .find_domain_by_name(
-                            state,
-                            &domain
-                                .name
-                                .clone()
-                                .ok_or(KeystoneApiError::DomainIdOrName)?,
-                        )
-                        .await?
-                        .ok_or(KeystoneApiError::NotFound {
-                            resource: "domain".to_string(),
-                            identifier: domain
-                                .name
-                                .clone()
-                                .ok_or(KeystoneApiError::DomainIdOrName)?,
-                        })?
-                        .id
-                }
-            };
-            state
-                .provider
-                .get_resource_provider()
-                .get_project_by_name(state, name, &domain_id)
-                .await?
-        } else {
-            return Err(KeystoneApiError::ProjectDomain);
-        }
-    } else {
-        return Err(KeystoneApiError::ProjectIdOrName);
-    };
-    Ok(project)
-}
-
-/// Convert [ProviderScope] to [AuthzInfo].
-///
-/// # Arguments
-/// * `state`: The service state
-/// * `scope`: The scope to extract the AuthZ information from
-///
-/// # Returns
-/// * `Ok(AuthzInfo)`: The AuthZ information
-/// * `Err(KeystoneApiError)`: An error if the scope is not valid
-#[tracing::instrument(skip(state), err)]
-pub async fn get_authz_info(
-    state: &ServiceState,
-    scope: Option<&ProviderScope>,
-) -> Result<AuthzInfo, KeystoneApiError> {
-    let authz_info = match scope {
-        Some(ProviderScope::Project(scope)) => {
-            if let Some(project) = find_project_from_scope(state, &scope.into()).await? {
-                AuthzInfo::Project(project)
-            } else {
-                return Err(KeystoneApiError::UnauthorizedNoContext);
-            }
-        }
-        Some(ProviderScope::Domain(scope)) => {
-            if let Ok(domain) = get_domain(state, scope.id.as_ref(), scope.name.as_ref()).await {
-                AuthzInfo::Domain(domain)
-            } else {
-                return Err(KeystoneApiError::UnauthorizedNoContext);
-            }
-        }
-        Some(ProviderScope::System(_scope)) => todo!(),
-        None => AuthzInfo::Unscoped,
-    };
-    authz_info.validate()?;
-    Ok(authz_info)
 }
 
 /// Prepare the links for the paginated resource collection.

@@ -64,13 +64,23 @@ async fn test_token_revoked() -> Result<(), Report> {
     let role = create_role(&state, RoleCreateBuilder::default().name("role_b").build()?).await?;
     grant_role_to_user_on_project(&state, &user.id, &project.id, &role.id).await?;
 
+    let auth = AuthenticationResultBuilder::default()
+        .context(AuthenticationContext::Password)
+        .principal(PrincipalInfo {
+            domain_id: Some(user.domain_id.clone()),
+            identity: IdentityInfo::User(
+                UserIdentityInfoBuilder::default()
+                    .user_id(user.id.clone())
+                    .user(user.clone())
+                    .build()?,
+            ),
+        })
+        .build()
+        .unwrap();
+    let ctx = SecurityContext::try_from(auth).unwrap();
     let token = state.provider.get_token_provider().issue_token(
-        AuthenticatedInfoBuilder::default()
-            .user_id(user.id.clone())
-            .user(user.clone())
-            .methods(vec!["password".into()])
-            .build()?,
-        AuthzInfo::Project(
+        &ctx,
+        &AuthzInfo::Project(
             ProjectBuilder::default()
                 .id(project.id.clone())
                 .name(project.name.clone())
@@ -78,7 +88,6 @@ async fn test_token_revoked() -> Result<(), Report> {
                 .enabled(true)
                 .build()?,
         ),
-        None,
     )?;
 
     // Token gets proper issued_at only during the serialization
@@ -148,13 +157,23 @@ async fn test_revoked_event_role() -> Result<(), Report> {
     let role = create_role(&state, RoleCreateBuilder::default().name("role_b").build()?).await?;
     grant_role_to_user_on_project(&state, &user.id, &project.id, &role.id).await?;
 
+    let auth = AuthenticationResultBuilder::default()
+        .context(AuthenticationContext::Password)
+        .principal(PrincipalInfo {
+            domain_id: Some(user.domain_id.clone()),
+            identity: IdentityInfo::User(
+                UserIdentityInfoBuilder::default()
+                    .user_id(user.id.clone())
+                    .user(user.clone())
+                    .build()?,
+            ),
+        })
+        .build()
+        .unwrap();
+    let ctx = SecurityContext::try_from(auth).unwrap();
     let token = state.provider.get_token_provider().issue_token(
-        AuthenticatedInfoBuilder::default()
-            .user_id(user.id.clone())
-            .user(user.clone())
-            .methods(vec!["password".into()])
-            .build()?,
-        AuthzInfo::Project(
+        &ctx,
+        &AuthzInfo::Project(
             ProjectBuilder::default()
                 .id(project.id.clone())
                 .name(project.name.clone())
@@ -162,7 +181,6 @@ async fn test_revoked_event_role() -> Result<(), Report> {
                 .enabled(true)
                 .build()?,
         ),
-        None,
     )?;
 
     // Token gets proper issued_at only during the serialization
@@ -239,13 +257,23 @@ async fn test_revoked_event_user() -> Result<(), Report> {
     let role = create_role(&state, RoleCreateBuilder::default().name("role_b").build()?).await?;
     grant_role_to_user_on_project(&state, &user.id, &project.id, &role.id).await?;
 
+    let auth = AuthenticationResultBuilder::default()
+        .context(AuthenticationContext::Password)
+        .principal(PrincipalInfo {
+            domain_id: Some(user.domain_id.clone()),
+            identity: IdentityInfo::User(
+                UserIdentityInfoBuilder::default()
+                    .user_id(user.id.clone())
+                    .user(user.clone())
+                    .build()?,
+            ),
+        })
+        .build()
+        .unwrap();
+    let ctx = SecurityContext::try_from(auth).unwrap();
     let token = state.provider.get_token_provider().issue_token(
-        AuthenticatedInfoBuilder::default()
-            .user_id(user.id.clone())
-            .user(user.clone())
-            .methods(vec!["password".into()])
-            .build()?,
-        AuthzInfo::Project(
+        &ctx,
+        &AuthzInfo::Project(
             ProjectBuilder::default()
                 .id(project.id.clone())
                 .name(project.name.clone())
@@ -253,7 +281,6 @@ async fn test_revoked_event_user() -> Result<(), Report> {
                 .enabled(true)
                 .build()?,
         ),
-        None,
     )?;
 
     // Token gets proper issued_at only during the serialization
@@ -330,13 +357,23 @@ async fn test_revoked_event_project() -> Result<(), Report> {
     let role = create_role(&state, RoleCreateBuilder::default().name("role_b").build()?).await?;
     grant_role_to_user_on_project(&state, &user.id, &project.id, &role.id).await?;
 
+    let auth = AuthenticationResultBuilder::default()
+        .context(AuthenticationContext::Password)
+        .principal(PrincipalInfo {
+            domain_id: Some(user.domain_id.clone()),
+            identity: IdentityInfo::User(
+                UserIdentityInfoBuilder::default()
+                    .user_id(user.id.clone())
+                    .user(user.clone())
+                    .build()?,
+            ),
+        })
+        .build()
+        .unwrap();
+    let ctx = SecurityContext::try_from(auth).unwrap();
     let token = state.provider.get_token_provider().issue_token(
-        AuthenticatedInfoBuilder::default()
-            .user_id(user.id.clone())
-            .user(user.clone())
-            .methods(vec!["password".into()])
-            .build()?,
-        AuthzInfo::Project(
+        &ctx,
+        &AuthzInfo::Project(
             ProjectBuilder::default()
                 .id(project.id.clone())
                 .name(project.name.clone())
@@ -344,7 +381,6 @@ async fn test_revoked_event_project() -> Result<(), Report> {
                 .enabled(true)
                 .build()?,
         ),
-        None,
     )?;
 
     // Token gets proper issued_at only during the serialization

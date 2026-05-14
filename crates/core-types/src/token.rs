@@ -16,6 +16,7 @@ use chrono::{DateTime, Utc};
 use serde::Serialize;
 use validator::Validate;
 
+use crate::auth::*;
 use crate::identity::UserResponse;
 use crate::resource::{Domain, Project};
 use crate::role::RoleRef;
@@ -54,7 +55,80 @@ pub enum Token {
     Unscoped(UnscopedPayload),
 }
 
+// TODO: From<Token> for SecurityContext
+
 impl Token {
+    /// Construct the [`Token`] for the requested [`AuthzInfo`] with the current
+    /// [`SecurityContext`].`
+    ///
+    /// # Security Note
+    /// This is the low-level method with no real validation whether the token
+    /// can be issued.
+    pub fn from_security_context_with_scope(
+        ctx: &SecurityContext,
+        scope: &AuthzInfo,
+        expires_at: DateTime<Utc>,
+    ) -> Result<Self, error::TokenProviderError> {
+        if let Some(token_restriction) = &ctx.token_restriction {
+            return Ok(Self::Restricted(RestrictedPayload::from_security_context(
+                ctx,
+                token_restriction,
+                expires_at,
+            )?));
+        }
+        match scope {
+            AuthzInfo::Domain(domain) => match &ctx.authentication_context {
+                AuthenticationContext::Oidc(oidc) => Ok(Self::FederationDomainScope(
+                    FederationDomainScopePayload::from_security_context(
+                        ctx, domain, oidc, expires_at,
+                    )?,
+                )),
+                AuthenticationContext::Trust(_trust) => todo!(),
+                _ => Ok(Self::DomainScope(
+                    DomainScopePayload::from_security_context(ctx, domain, expires_at)?,
+                )),
+            },
+            AuthzInfo::Project(project) => match &ctx.authentication_context {
+                AuthenticationContext::ApplicationCredential(app_cred) => {
+                    Ok(Self::ApplicationCredential(
+                        ApplicationCredentialPayload::from_security_context(
+                            ctx, app_cred, expires_at,
+                        )?,
+                    ))
+                }
+                AuthenticationContext::Oidc(oidc) => Ok(Self::FederationProjectScope(
+                    FederationProjectScopePayload::from_security_context(
+                        ctx, project, oidc, expires_at,
+                    )?,
+                )),
+                _ => Ok(Self::ProjectScope(
+                    ProjectScopePayload::from_security_context(ctx, project, expires_at)?,
+                )),
+            },
+            AuthzInfo::Trust(trust) => Ok(match &trust.project_id {
+                Some(project_id) => Self::Trust(TrustPayload::from_security_context(
+                    ctx,
+                    trust,
+                    project_id.clone(),
+                    expires_at,
+                )?),
+                None => todo!(),
+            }),
+            AuthzInfo::System(system) => Ok(Self::SystemScope(
+                SystemScopePayload::from_security_context(ctx, system, expires_at)?,
+            )),
+            AuthzInfo::Unscoped => match &ctx.authentication_context {
+                AuthenticationContext::Oidc(oidc) => Ok(Self::FederationUnscoped(
+                    FederationUnscopedPayload::from_security_context(ctx, oidc, expires_at)?,
+                )),
+
+                _ => Ok(Self::Unscoped(UnscopedPayload::from_security_context(
+                    ctx, expires_at,
+                )?)),
+            },
+        }
+    }
+
     pub const fn user_id(&self) -> &String {
         match self {
             Self::ApplicationCredential(x) => &x.user_id,
@@ -192,6 +266,22 @@ impl Token {
         }
     }
 
+    /// Get the domain ID for domain-scoped tokens.
+    ///
+    /// Returns the domain identifier when the token is a [`Token::DomainScope`]
+    /// or [`Token::FederationDomainScope`]. Returns `None` for all other
+    /// token types.
+    pub const fn domain_id(&self) -> Option<&String> {
+        match self {
+            Self::DomainScope(x) => Some(&x.domain_id),
+            Self::FederationDomainScope(x) => Some(&x.domain_id),
+            _ => None,
+        }
+    }
+
+    /// Get the resolved [`Domain`] if present in the token. It may be empty for
+    /// the DomainScope and FederationDomainScope token when it was not
+    /// previously minted.
     pub const fn domain(&self) -> Option<&Domain> {
         match self {
             Self::DomainScope(x) => x.domain.as_ref(),

@@ -25,7 +25,7 @@ use validator::Validate;
 use openstack_keystone_config::Config;
 use openstack_keystone_core_types::identity::*;
 
-use crate::auth::AuthenticatedInfo;
+use crate::auth::AuthenticationResult;
 use crate::identity::{IdentityApi, IdentityProviderError, backend::IdentityBackend};
 use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManagerApi;
@@ -155,7 +155,7 @@ impl IdentityApi for IdentityService {
         &self,
         state: &ServiceState,
         auth: &UserPasswordAuthRequest,
-    ) -> Result<AuthenticatedInfo, IdentityProviderError> {
+    ) -> Result<AuthenticationResult, IdentityProviderError> {
         let mut auth = auth.clone();
         if auth.id.is_none() {
             if auth.name.is_none() {

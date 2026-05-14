@@ -138,16 +138,26 @@ async fn test_revoke_user_project_grant_auth_impact() -> Result<()> {
             .build()?,
     );
 
-    let pre_revoke_token = state.provider.get_token_provider().issue_token(
-        AuthenticatedInfoBuilder::default()
-            .application_credential(cred.clone())
-            .user_id(user.id.clone())
-            .user(user.clone())
-            .methods(vec!["application_credential".into()])
-            .build()?,
-        authz.clone(),
-        None,
-    )?;
+    let auth = AuthenticationResultBuilder::default()
+        .context(AuthenticationContext::ApplicationCredential(
+            cred.clone().into(),
+        ))
+        .principal(PrincipalInfo {
+            domain_id: Some(user.domain_id.clone()),
+            identity: IdentityInfo::User(
+                UserIdentityInfoBuilder::default()
+                    .user_id(user.id.clone())
+                    .user(user.clone())
+                    .build()?,
+            ),
+        })
+        .build()
+        .unwrap();
+    let ctx = SecurityContext::try_from(auth).unwrap();
+    let pre_revoke_token = state
+        .provider
+        .get_token_provider()
+        .issue_token(&ctx, &authz.clone())?;
     let pre_revoke_encoded = state
         .provider
         .get_token_provider()
@@ -194,17 +204,10 @@ async fn test_revoke_user_project_grant_auth_impact() -> Result<()> {
     // new second before granting new token to prevent it being also eventually
     // revoked
     tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-
-    let post_revoke_token = state.provider.get_token_provider().issue_token(
-        AuthenticatedInfoBuilder::default()
-            .application_credential(cred.clone())
-            .user_id(user.id.clone())
-            .user(user.clone())
-            .methods(vec!["application_credential".into()])
-            .build()?,
-        authz,
-        None,
-    )?;
+    let post_revoke_token = state
+        .provider
+        .get_token_provider()
+        .issue_token(&ctx, &authz)?;
     let post_revoke_encoded = state
         .provider
         .get_token_provider()

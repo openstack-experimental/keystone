@@ -22,6 +22,7 @@ use axum::{
 use validator::Validate;
 
 use openstack_keystone_core::api::v3::auth::token::token_impl::build_api_token_v3;
+use openstack_keystone_core_types::auth::*;
 
 use crate::api::v3::auth::token::common::{authenticate_request, get_authz_info};
 use crate::api::v3::auth::token::types::{AuthRequest, CreateTokenParameters, TokenResponse};
@@ -48,27 +49,22 @@ pub(super) async fn create(
     Json(req): Json<AuthRequest>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
     req.validate()?;
-    let authed_info = authenticate_request(&state, &req).await?;
+    let auth_res = authenticate_request(&state, &req).await?;
+    let ctx = SecurityContext::try_from(auth_res)?;
     let authz_info = get_authz_info(&state, &req).await?;
-    if let Some(restriction_id) = &authed_info.token_restriction_id {
-        let restriction = state
-            .provider
-            .get_token_provider()
-            .get_token_restriction(&state, restriction_id, true)
-            .await?
-            .ok_or(KeystoneApiError::InternalError(
-                "token restriction {restriction_id} not found".to_string(),
-            ))?;
-        if !restriction.allow_rescope && req.auth.scope.is_some() {
-            return Err(KeystoneApiError::AuthenticationRescopeForbidden);
-        }
+    // This is a new authentication/reauthentication. Check if that is allowed at
+    // all
+    if let Some(token_restriction) = &ctx.token_restriction
+        && !token_restriction.allow_rescope
+        && req.auth.scope.is_some()
+    {
+        return Err(KeystoneApiError::AuthenticationRescopeForbidden);
     }
 
-    let mut token =
-        state
-            .provider
-            .get_token_provider()
-            .issue_token(authed_info, authz_info, None)?;
+    let mut token = state
+        .provider
+        .get_token_provider()
+        .issue_token(&ctx, &authz_info)?;
 
     token = state
         .provider
@@ -123,13 +119,13 @@ mod tests {
     use tracing_test::traced_test;
 
     use openstack_keystone_config::{Config, ConfigManager};
+    use openstack_keystone_core_types::auth::*;
     use openstack_keystone_core_types::identity::{UserPasswordAuthRequest, UserResponseBuilder};
     use openstack_keystone_core_types::resource::{Domain, Project};
     use openstack_keystone_core_types::token::{ProjectScopePayload, Token as ProviderToken};
 
     use crate::api::v3::auth::token::types::*;
     use crate::assignment::MockAssignmentProvider;
-    use crate::auth::AuthenticatedInfo;
     use crate::catalog::MockCatalogProvider;
     use crate::identity::MockIdentityProvider;
     use crate::keystone::Service;
@@ -166,6 +162,20 @@ mod tests {
             .expect_list_role_assignments()
             .returning(|_, _| Ok(Vec::new()));
 
+        let auth = AuthenticationResultBuilder::default()
+            .context(AuthenticationContext::Password)
+            .principal(PrincipalInfo {
+                domain_id: Some("did".into()),
+                identity: IdentityInfo::User(
+                    UserIdentityInfoBuilder::default()
+                        .user_id("uid")
+                        .build()
+                        .unwrap(),
+                ),
+            })
+            .build()
+            .unwrap();
+
         let mut identity_mock = MockIdentityProvider::default();
         identity_mock
             .expect_authenticate_by_password()
@@ -174,21 +184,7 @@ mod tests {
                     && req.password == "pass"
                     && req.name == Some("uname".to_string())
             })
-            .returning(|_, _| {
-                Ok(AuthenticatedInfo::builder()
-                    .user_id("uid")
-                    .user(
-                        UserResponseBuilder::default()
-                            .id("uid")
-                            .domain_id("udid")
-                            .enabled(true)
-                            .name("name")
-                            .build()
-                            .unwrap(),
-                    )
-                    .build()
-                    .unwrap())
-            });
+            .returning(move |_, _| Ok(auth.clone()));
 
         let mut resource_mock = MockResourceProvider::default();
         resource_mock
@@ -204,7 +200,7 @@ mod tests {
             .withf(|_, id: &'_ str| id == "pdid")
             .returning(move |_, _| Ok(Some(project_domain.clone())));
         let mut token_mock = MockTokenProvider::default();
-        token_mock.expect_issue_token().returning(|_, _, _| {
+        token_mock.expect_issue_token().returning(|_, _| {
             Ok(ProviderToken::ProjectScope(ProjectScopePayload {
                 user_id: "bar".into(),
                 methods: Vec::from(["password".to_string()]),
@@ -334,23 +330,23 @@ mod tests {
     async fn test_post_project_disabled() {
         let config = Config::default();
         let mut identity_mock = MockIdentityProvider::default();
+        let auth = AuthenticationResultBuilder::default()
+            .context(AuthenticationContext::Password)
+            .principal(PrincipalInfo {
+                domain_id: Some("did".into()),
+                identity: IdentityInfo::User(
+                    UserIdentityInfoBuilder::default()
+                        .user_id("uid")
+                        .build()
+                        .unwrap(),
+                ),
+            })
+            .build()
+            .unwrap();
+        let auth_clone = auth.clone();
         identity_mock
             .expect_authenticate_by_password()
-            .returning(|_, _| {
-                Ok(AuthenticatedInfo::builder()
-                    .user_id("uid")
-                    .user(
-                        UserResponseBuilder::default()
-                            .id("uid")
-                            .domain_id("udid")
-                            .enabled(true)
-                            .name("name")
-                            .build()
-                            .unwrap(),
-                    )
-                    .build()
-                    .unwrap())
-            });
+            .returning(move |_, _| Ok(auth_clone.clone()));
 
         let mut resource_mock = MockResourceProvider::default();
         resource_mock
