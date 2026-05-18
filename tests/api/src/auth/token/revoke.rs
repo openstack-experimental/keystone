@@ -55,7 +55,8 @@ async fn test_revoke() -> Result<()> {
 //
 //     let mut parent_client = TestClient::default()?;
 //     parent_client.auth_admin().await?;
-//     let parent_token = parent_client.token.as_ref().expect("must be authenticated");
+//     let parent_token = parent_client.token.as_ref().expect("must be
+// authenticated");
 //
 //     let mut child_client = TestClient::default()?;
 //     child_client
@@ -70,7 +71,8 @@ async fn test_revoke() -> Result<()> {
 //         )
 //         .await?;
 //
-//     let child_token = child_client.token.as_ref().expect("must be authenticated");
+//     let child_token = child_client.token.as_ref().expect("must be
+// authenticated");
 //
 //     check_token(&admin_client, parent_token).await?;
 //

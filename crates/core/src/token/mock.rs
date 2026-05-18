@@ -19,7 +19,7 @@ use mockall::mock;
 use openstack_keystone_core_types::token::*;
 
 use super::error::TokenProviderError;
-use crate::auth::{AuthenticationResult, AuthzInfo, SecurityContext};
+use crate::auth::{ScopeInfo, SecurityContext, ValidatedSecurityContext};
 use crate::keystone::ServiceState;
 
 use super::TokenApi;
@@ -29,42 +29,31 @@ mock! {
 
     #[async_trait]
     impl TokenApi for TokenProvider {
-        async fn authenticate_by_token<'a>(
+        async fn authorize_by_token<'a>(
             &self,
             state: &ServiceState,
             credential: &'a str,
             allow_expired: Option<bool>,
             window_seconds: Option<i64>,
-        ) -> Result<AuthenticationResult, TokenProviderError>;
+        ) -> Result<ValidatedSecurityContext, TokenProviderError>;
 
-        async fn validate_token<'a>(
+        async fn validate_to_context<'a>(
             &self,
             state: &ServiceState,
             credential: &'a str,
             allow_expired: Option<bool>,
             window_seconds: Option<i64>,
-        ) -> Result<Token, TokenProviderError>;
+        ) -> Result<ValidatedSecurityContext, TokenProviderError>;
 
         #[mockall::concretize]
-        fn issue_token(
-            &self,
-            security_context: &SecurityContext,
-            authz_info: &AuthzInfo,
-        ) -> Result<Token, TokenProviderError>;
-
-        fn encode_token(&self, token: &Token) -> Result<String, TokenProviderError>;
-
-        async fn populate_role_assignments(
+        async fn issue_token_context(
             &self,
             state: &ServiceState,
-            token: &mut Token,
-        ) -> Result<(), TokenProviderError>;
+            ctx: &SecurityContext,
+            scope: &ScopeInfo,
+        ) -> Result<ValidatedSecurityContext, TokenProviderError>;
 
-        async fn expand_token_information(
-            &self,
-            state: &ServiceState,
-            token: &Token,
-        ) -> Result<Token, TokenProviderError>;
+        fn encode_token(&self, token: &FernetToken) -> Result<String, TokenProviderError>;
 
         async fn get_token_restriction<'a>(
             &self,

@@ -114,7 +114,7 @@ pub async fn get(
                     if !federated_user.is_empty() {
                         user_builder.merge_federated_user_data(federated_user);
                     } else {
-                        return Err(IdentityProviderError::MalformedUser(user_id.to_string()))?;
+                        return Err(IdentityProviderError::MalformedUser(user_id.to_string()));
                     }
                 }
             },

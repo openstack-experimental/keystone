@@ -120,7 +120,7 @@ pub async fn start_axum_app(
                                 res = &mut conn => {
                                     // Normal completion
                                     if let Err(err) = res {
-                                        eprintln!("Connection error: {:?}", err);
+                                        tracing::debug!("TLS connection error: {:?}", err);
                                     }
                                 },
                                 _ = conn_token.cancelled() => {
@@ -133,8 +133,7 @@ pub async fn start_axum_app(
                             }
                         }
                         Err(e) => {
-                            tracing::info!("TLS Handshake failed for {}: {}", peer_addr, e);
-                            return;
+                            tracing::warn!("TLS handshake failed for {}: {}", peer_addr, e);
                         }
                     }
                 });

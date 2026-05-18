@@ -46,10 +46,12 @@ impl TryFrom<api_types::UserPassword>
     }
 }
 
-impl TryFrom<&openstack_keystone_core_types::token::Token> for api_types::Token {
+impl TryFrom<&openstack_keystone_core_types::token::FernetToken> for api_types::Token {
     type Error = BuilderError;
 
-    fn try_from(value: &openstack_keystone_core_types::token::Token) -> Result<Self, Self::Error> {
+    fn try_from(
+        value: &openstack_keystone_core_types::token::FernetToken,
+    ) -> Result<Self, Self::Error> {
         let mut token = api_types::TokenBuilder::default();
         token.user(
             api_types::UserBuilder::default()

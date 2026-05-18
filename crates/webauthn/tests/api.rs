@@ -30,13 +30,17 @@ use webauthn_authenticator_rs::WebauthnAuthenticator;
 use webauthn_authenticator_rs::softtoken::SoftToken;
 
 use openstack_keystone_api_types::webauthn::*;
+use openstack_keystone_core::assignment::MockAssignmentProvider;
 use openstack_keystone_core::identity::MockIdentityProvider;
 use openstack_keystone_core::provider::{Provider, ProviderBuilder};
 use openstack_keystone_core::resource::MockResourceProvider;
-use openstack_keystone_core::token::{MockTokenProvider, Token, UnscopedPayload};
+use openstack_keystone_core::token::MockTokenProvider;
+use openstack_keystone_core_types::assignment::*;
+use openstack_keystone_core_types::auth::*;
 use openstack_keystone_core_types::identity::UserResponseBuilder;
-use openstack_keystone_core_types::resource::{Domain, Project};
-use openstack_keystone_core_types::token::{ProjectScopePayload, Token as ProviderToken};
+use openstack_keystone_core_types::resource::{Domain, Project, ProjectBuilder};
+use openstack_keystone_core_types::role::RoleRefBuilder;
+use openstack_keystone_core_types::token::ProjectScopePayload;
 use openstack_keystone_webauthn::api::init_extension;
 
 mod common;
@@ -46,53 +50,119 @@ fn get_provider_mocks(user_id: &Uuid) -> ProviderBuilder {
     let provider_builder = Provider::mocked_builder();
     let mut token_mock = MockTokenProvider::default();
     let uid = user_id.to_string().clone();
-    token_mock
-        .expect_validate_token()
-        .returning(move |_, _, _, _| {
-            Ok(Token::Unscoped(UnscopedPayload {
-                user_id: uid.clone(),
-                user: Some(
-                    UserResponseBuilder::default()
-                        .id(uid.clone())
-                        .domain_id("udid")
-                        .enabled(true)
-                        .name("name")
-                        .build()
-                        .unwrap(),
-                ),
-                ..Default::default()
-            }))
-        });
-    let uid = user_id.to_string().clone();
-    token_mock
-        .expect_expand_token_information()
-        .returning(move |_, _| {
-            Ok(Token::Unscoped(UnscopedPayload {
-                user_id: uid.clone(),
-                ..Default::default()
-            }))
-        });
-    let uid = user_id.to_string().clone();
-    token_mock.expect_issue_token().returning(move |_, _| {
-        Ok(ProviderToken::ProjectScope(ProjectScopePayload {
-            user_id: uid.clone(),
-            methods: Vec::from(["x509".to_string()]),
-            user: Some(
-                UserResponseBuilder::default()
-                    .id("uid")
-                    .domain_id("user_domain_id")
-                    .enabled(true)
-                    .name("name")
+    let user = UserResponseBuilder::default()
+        .id(uid.clone())
+        .domain_id("user_domain_id")
+        .enabled(true)
+        .name("name")
+        .build()
+        .unwrap();
+    let user_domain = Domain {
+        id: user.domain_id.clone(),
+        enabled: true,
+        name: "user_domain".into(),
+        ..Default::default()
+    };
+    let project = Project {
+        id: "project_id".into(),
+        domain_id: "project_domain_id".into(),
+        enabled: true,
+        ..Default::default()
+    };
+    let project_domain = Domain {
+        id: "project_domain_id".into(),
+        enabled: true,
+        name: "project_domain".into(),
+        ..Default::default()
+    };
+
+    let auth = AuthenticationResultBuilder::default()
+        .context(AuthenticationContext::Token(
+            openstack_keystone_core_types::token::FernetToken::ProjectScope(
+                ProjectScopePayload::default(),
+            ),
+        ))
+        .principal(PrincipalInfo {
+            identity: IdentityInfo::User(
+                UserIdentityInfoBuilder::default()
+                    .user_id(user.id.clone())
+                    .user(user.clone())
+                    .user_domain(user_domain.clone())
                     .build()
                     .unwrap(),
             ),
-            project_id: "pid".into(),
+        })
+        .authorization(
+            AuthzInfoBuilder::default()
+                .scope(ScopeInfo::Project {
+                    project: ProjectBuilder::default()
+                        .id("pid")
+                        .domain_id("project_domain_id")
+                        .enabled(true)
+                        .name("project_name")
+                        .build()
+                        .unwrap(),
+                    project_domain: project_domain.clone(),
+                })
+                .roles(vec![
+                    RoleRefBuilder::default()
+                        .id("admin")
+                        .name("admin")
+                        .build()
+                        .unwrap(),
+                ])
+                .build()
+                .unwrap(),
+        )
+        .build()
+        .unwrap();
+    let _auth_clone = auth.clone();
+    let uid = user_id.to_string().clone();
+
+    let mut sc = SecurityContext::try_from(auth).unwrap();
+    sc.set_token(
+        openstack_keystone_core_types::token::FernetToken::ProjectScope(ProjectScopePayload {
+            user_id: uid.clone(),
+            methods: vec!["password".to_string()],
+            project_id: "project_id".into(),
             ..Default::default()
-        }))
-    });
+        }),
+    );
+    let vsc_for_mock = openstack_keystone_core::auth::ValidatedSecurityContext::test_new(sc);
+    let vsc_clone = vsc_for_mock.clone();
+    token_mock
+        .expect_authorize_by_token()
+        .returning(move |_, _, _, _| Ok(vsc_clone.clone()));
+    token_mock
+        .expect_issue_token_context()
+        .returning(move |_, _, _| Ok(vsc_for_mock.clone()));
+    //token_mock.expect_issue_token().returning(move |_, _| {
+    //    Ok(ProviderToken::ProjectScope(ProjectScopePayload {
+    //        user_id: uid.clone(),
+    //        methods: Vec::from(["x509".to_string()]),
+    //        project_id: "pid".into(),
+    //        ..Default::default()
+    //    }))
+    //});
     token_mock
         .expect_encode_token()
         .returning(|_| Ok("token".to_string()));
+
+    let mut assignment_mock = MockAssignmentProvider::default();
+    assignment_mock
+        .expect_list_role_assignments()
+        .withf(|_, _s| true)
+        .returning(|_, _| {
+            Ok(vec![Assignment {
+                role_id: "role".into(),
+                role_name: Some("rn".into()),
+                actor_id: "actor".into(),
+                target_id: "target".into(),
+                r#type: AssignmentType::UserProject,
+                inherited: false,
+                implied_via: None,
+            }])
+        });
     let mut identity_mock = MockIdentityProvider::default();
     let uid = user_id.to_string().clone();
     identity_mock.expect_get_user().returning(move |_, _| {
@@ -108,25 +178,9 @@ fn get_provider_mocks(user_id: &Uuid) -> ProviderBuilder {
     });
     let mut resource_mock = MockResourceProvider::default();
 
-    let project = Project {
-        id: "pid".into(),
-        domain_id: "pdid".into(),
-        enabled: true,
-        ..Default::default()
-    };
-    let user_domain = Domain {
-        id: "user_domain_id".into(),
-        enabled: true,
-        ..Default::default()
-    };
-    let project_domain = Domain {
-        id: "pdid".into(),
-        enabled: true,
-        ..Default::default()
-    };
     resource_mock
         .expect_get_project()
-        .withf(|_, id: &'_ str| id == "pid")
+        .withf(|_, id: &'_ str| id == "project_id")
         .returning(move |_, _| Ok(Some(project.clone())));
     resource_mock
         .expect_get_domain()
@@ -134,10 +188,11 @@ fn get_provider_mocks(user_id: &Uuid) -> ProviderBuilder {
         .returning(move |_, _| Ok(Some(user_domain.clone())));
     resource_mock
         .expect_get_domain()
-        .withf(|_, id: &'_ str| id == "pdid")
+        .withf(|_, id: &'_ str| id == "project_domain_id")
         .returning(move |_, _| Ok(Some(project_domain.clone())));
 
     provider_builder
+        .mock_assignment(assignment_mock)
         .mock_token(token_mock)
         .mock_identity(identity_mock)
         .mock_resource(resource_mock)
@@ -179,8 +234,7 @@ async fn test_webauthn_roundtrip() -> Result<()> {
     let ccr = client
         .post(format!(
             "http://{}/users/{}/passkeys/register_start",
-            addr,
-            user_id.to_string()
+            addr, user_id
         ))
         .header("x-auth-token", "fake")
         .json(&json!(UserPasskeyRegistrationStartRequest {
@@ -206,8 +260,7 @@ async fn test_webauthn_roundtrip() -> Result<()> {
     let passkey = client
         .post(format!(
             "http://{}/users/{}/passkeys/register_finish",
-            addr,
-            user_id.to_string()
+            addr, user_id
         ))
         .header("x-auth-token", "fake")
         .json(&serde_json::to_value(&finish_req)?)

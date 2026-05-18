@@ -20,8 +20,7 @@ use validator::Validate;
 use super::common;
 use crate::auth::{IdentityInfo, OidcContext, SecurityContext};
 use crate::error::BuilderError;
-use crate::identity::UserResponse;
-use crate::token::Token;
+use crate::token::FernetToken;
 use crate::token::error::TokenProviderError;
 
 /// Federated unscoped token payload.
@@ -51,8 +50,6 @@ pub struct FederationUnscopedPayload {
 
     #[builder(default)]
     pub issued_at: DateTime<Utc>,
-    #[builder(default)]
-    pub user: Option<UserResponse>,
 }
 
 impl FederationUnscopedPayloadBuilder {
@@ -94,7 +91,7 @@ impl FederationUnscopedPayloadBuilder {
     }
 }
 
-impl From<FederationUnscopedPayload> for Token {
+impl From<FederationUnscopedPayload> for FernetToken {
     fn from(value: FederationUnscopedPayload) -> Self {
         Self::FederationUnscoped(value)
     }
@@ -113,11 +110,11 @@ impl FederationUnscopedPayload {
         oidc: &OidcContext,
         expires_at: DateTime<Utc>,
     ) -> Result<Self, TokenProviderError> {
-        match &ctx.principal.identity {
+        match &ctx.principal().identity {
             IdentityInfo::User(user) => Ok(FederationUnscopedPayloadBuilder::default()
-                .user_id(ctx.principal.get_user_id())
-                .methods(ctx.auth_methods.iter())
-                .audit_ids(ctx.audit_ids.iter())
+                .user_id(ctx.principal().get_user_id())
+                .methods(ctx.auth_methods().iter())
+                .audit_ids(ctx.audit_ids().iter())
                 .expires_at(expires_at)
                 .idp_id(oidc.idp_id.clone())
                 .protocol_id(oidc.protocol_id.clone())
@@ -141,7 +138,6 @@ mod tests {
         let auth = AuthenticationResultBuilder::default()
             .context(AuthenticationContext::Password)
             .principal(PrincipalInfo {
-                domain_id: Some("did".into()),
                 identity: IdentityInfo::User(
                     UserIdentityInfoBuilder::default()
                         .user_id("uid")

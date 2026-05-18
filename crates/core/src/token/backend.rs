@@ -15,7 +15,10 @@
 
 use openstack_keystone_config::Config;
 
-use openstack_keystone_core_types::token::*;
+use openstack_keystone_core_types::token::{
+    FernetToken, TokenRestriction, TokenRestrictionCreate, TokenRestrictionListParameters,
+    TokenRestrictionUpdate,
+};
 
 use crate::keystone::ServiceState;
 use crate::token::TokenProviderError;
@@ -36,7 +39,7 @@ pub trait TokenBackend: Send + Sync {
     ///
     /// # Returns
     /// - `Result<Token, TokenProviderError>` - The decoded token or an error.
-    fn decode(&self, credential: &str) -> Result<Token, TokenProviderError>;
+    fn decode(&self, credential: &str) -> Result<FernetToken, TokenProviderError>;
 
     /// Encode the token into a string.
     ///
@@ -45,7 +48,7 @@ pub trait TokenBackend: Send + Sync {
     ///
     /// # Returns
     /// - `Result<String, TokenProviderError>` - The encoded string or an error.
-    fn encode(&self, token: &Token) -> Result<String, TokenProviderError>;
+    fn encode(&self, token: &FernetToken) -> Result<String, TokenProviderError>;
 }
 
 /// Token restrictions backend interface.

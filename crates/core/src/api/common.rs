@@ -12,6 +12,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //! # Common API helpers
+use openstack_keystone_core_types::auth::ScopeInfo;
 use serde::Serialize;
 use url::Url;
 
@@ -22,7 +23,6 @@ use openstack_keystone_config::Config;
 use openstack_keystone_core_types::resource::{Domain, Project};
 use openstack_keystone_core_types::scope::Scope as ProviderScope;
 
-use crate::auth::AuthzInfo;
 use crate::keystone::ServiceState;
 use crate::resource::{
     ResourceApi,
@@ -153,40 +153,46 @@ pub async fn find_project_from_scope(
     Ok(project)
 }
 
-/// Convert [ProviderScope] to [AuthzInfo].
+/// Convert [ProviderScope] to [ScopeInfo].
 ///
 /// # Arguments
 /// * `state`: The service state
-/// * `scope`: The scope to extract the AuthZ information from
+/// * `scope`: The scope to extract the scope information from
 ///
 /// # Returns
-/// * `Ok(AuthzInfo)`: The AuthZ information
+/// * `Ok(ScopeInfo)`: The scope information
 /// * `Err(KeystoneApiError)`: An error if the scope is not valid
 #[tracing::instrument(skip(state), err)]
 pub async fn get_authz_info(
     state: &ServiceState,
     scope: Option<&ProviderScope>,
-) -> Result<AuthzInfo, KeystoneApiError> {
-    let authz_info = match scope {
+) -> Result<ScopeInfo, KeystoneApiError> {
+    let authz_scope = match scope {
         Some(ProviderScope::Project(scope)) => {
             if let Some(project) = find_project_from_scope(state, &scope.into()).await? {
-                AuthzInfo::Project(project)
+                let domain_id = project.domain_id.clone();
+                ScopeInfo::Project {
+                    project,
+                    project_domain: get_domain(state, Some(&domain_id), None::<&str>).await?,
+                }
             } else {
                 return Err(KeystoneApiError::UnauthorizedNoContext);
             }
         }
         Some(ProviderScope::Domain(scope)) => {
             if let Ok(domain) = get_domain(state, scope.id.as_ref(), scope.name.as_ref()).await {
-                AuthzInfo::Domain(domain)
+                ScopeInfo::Domain(domain)
             } else {
                 return Err(KeystoneApiError::UnauthorizedNoContext);
             }
         }
-        Some(ProviderScope::System(_scope)) => todo!(),
-        None => AuthzInfo::Unscoped,
+        Some(ProviderScope::System(_scope)) => ScopeInfo::System("system".into()),
+        // TODO: Trust scope should be handled here
+        None => ScopeInfo::Unscoped,
     };
-    authz_info.validate()?;
-    Ok(authz_info)
+    authz_scope.validate()?;
+
+    Ok(authz_scope)
 }
 
 /// Prepare the links for the paginated resource collection.
@@ -310,7 +316,6 @@ mod tests {
             Provider::mocked_builder().mock_resource(resource_mock),
             true,
             None,
-            Some(false),
         )
         .await;
 

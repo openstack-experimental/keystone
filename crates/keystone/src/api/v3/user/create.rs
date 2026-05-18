@@ -81,7 +81,7 @@ mod tests {
     use openstack_keystone_core_types::identity::{UserCreate, UserResponseBuilder};
 
     use super::super::openapi_router;
-    use crate::api::tests::get_mocked_state;
+    use crate::api::tests::{get_mocked_state, test_fixture_scoped};
     use crate::api::v3::user::types::{
         UserCreateBuilder as ApiUserCreate, UserCreateRequest, UserResponse as ApiUserResponse,
     };
@@ -104,10 +104,10 @@ mod tests {
                     .unwrap())
             });
 
+        let vsc = test_fixture_scoped();
         let state = get_mocked_state(
             Provider::mocked_builder().mock_identity(identity_mock),
             true,
-            None,
             None,
         )
         .await;
@@ -131,7 +131,7 @@ mod tests {
                     .method("POST")
                     .header(http::header::CONTENT_TYPE, "application/json")
                     .uri("/")
-                    .header("x-auth-token", "foo")
+                    .extension(vsc)
                     .body(Body::from(serde_json::to_string(&user).unwrap()))
                     .unwrap(),
             )

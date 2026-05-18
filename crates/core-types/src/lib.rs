@@ -15,6 +15,7 @@
 //! # OpenStack Keystone core provider types
 
 #![allow(clippy::module_inception)]
+#![deny(clippy::unwrap_used)]
 
 pub mod application_credential;
 pub mod assignment;

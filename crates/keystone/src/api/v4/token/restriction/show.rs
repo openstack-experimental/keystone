@@ -101,12 +101,13 @@ mod tests {
         super::{openapi_router, tests::get_token_provider_mock_with_mocks},
         *,
     };
-    use crate::api::tests::get_mocked_state;
+    use crate::api::tests::{get_mocked_state, test_fixture_scoped};
     use crate::api::v3::role::types::RoleRef;
     use crate::provider::Provider;
 
     #[tokio::test]
     async fn test_get() {
+        let vsc = test_fixture_scoped();
         let mut token_mock = get_token_provider_mock_with_mocks();
         token_mock
             .expect_get_token_restriction()
@@ -143,7 +144,6 @@ mod tests {
             Provider::mocked_builder().mock_token(token_mock),
             true,
             None,
-            Some(true),
         )
         .await;
 
@@ -156,7 +156,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri("/foo")
-                    .header("x-auth-token", "foo")
+                    .extension(vsc.clone())
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -170,7 +170,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri("/bar")
-                    .header("x-auth-token", "foo")
+                    .extension(vsc)
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -208,6 +208,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_forbidden() {
+        let vsc = test_fixture_scoped();
         let mut token_mock = get_token_provider_mock_with_mocks();
         token_mock
             .expect_get_token_restriction()
@@ -239,7 +240,6 @@ mod tests {
             Provider::mocked_builder().mock_token(token_mock),
             false,
             None,
-            Some(true),
         )
         .await;
 
@@ -252,7 +252,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri("/bar")
-                    .header("x-auth-token", "foo")
+                    .extension(vsc)
                     .body(Body::empty())
                     .unwrap(),
             )

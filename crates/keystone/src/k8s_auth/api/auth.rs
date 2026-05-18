@@ -24,9 +24,8 @@ use validator::Validate;
 
 use openstack_keystone_api_types::error::KeystoneApiError;
 use openstack_keystone_api_types::k8s_auth::K8sAuthRequest;
-use openstack_keystone_core::api::{
-    common::get_authz_info, v4::auth::token::token_impl::build_api_token_v4,
-};
+use openstack_keystone_api_types::v3::auth::token::TokenBuilder;
+use openstack_keystone_core::api::common::get_authz_info;
 use openstack_keystone_core::k8s_auth::{K8sAuthApi, K8sAuthProviderError};
 use openstack_keystone_core::keystone::ServiceState;
 use openstack_keystone_core::token::TokenApi;
@@ -90,7 +89,7 @@ pub async fn post(
         .clone();
 
     let mut ctx = SecurityContext::try_from(auth_result)?;
-    ctx.token_restriction = Some(token_restriction.clone());
+    ctx.set_token_restriction(token_restriction.clone());
 
     //authn_info.validate()?;
     let authz_info = get_authz_info(
@@ -109,20 +108,14 @@ pub async fn post(
     .await?;
     authz_info.validate()?;
 
-    let mut token = state
+    let vsc = state
         .provider
         .get_token_provider()
-        .issue_token(&ctx, &authz_info)?;
-
-    token = state
-        .provider
-        .get_token_provider()
-        .expand_token_information(&state, &token)
-        .await
-        .map_err(KeystoneApiError::forbidden)?;
+        .issue_token_context(&state, &ctx, &authz_info)
+        .await?;
 
     let mut api_token = TokenResponse {
-        token: build_api_token_v4(&token, &state).await?,
+        token: TokenBuilder::try_from(&vsc)?.build()?,
     };
     api_token.validate()?;
 
@@ -147,7 +140,10 @@ pub async fn post(
         StatusCode::OK,
         [(
             "X-Subject-Token",
-            state.provider.get_token_provider().encode_token(&token)?,
+            state
+                .provider
+                .get_token_provider()
+                .encode_token(vsc.token()?)?,
         )],
         Json(api_token),
     )

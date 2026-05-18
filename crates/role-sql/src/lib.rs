@@ -165,6 +165,8 @@ impl RoleBackend for SqlBackend {
         state: &ServiceState,
         params: &RoleListParameters,
     ) -> Result<Vec<Role>, RoleProviderError> {
+        // TODO: Add possibility to list roles with expansion and filter (e.g., token_restriction
+        // has list of roles that need to be returned resolved)
         Ok(role::list(&state.db, params).await?)
     }
 }

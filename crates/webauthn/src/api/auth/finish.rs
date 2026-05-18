@@ -24,13 +24,11 @@ use crate::{
     api::types::{CombinedExtensionState, auth::*},
 };
 use openstack_keystone_api_types::error::KeystoneApiError;
-use openstack_keystone_api_types::v4::auth::token::TokenResponse;
+use openstack_keystone_api_types::v3::auth::token::TokenBuilder;
+use openstack_keystone_api_types::v3::auth::token::TokenResponse;
+use openstack_keystone_core::auth::*;
+use openstack_keystone_core::identity::IdentityApi;
 use openstack_keystone_core::token::TokenApi;
-use openstack_keystone_core::{api::v4::auth::token::token_impl::build_api_token_v4, auth::*};
-use openstack_keystone_core::{
-    auth::{AuthzInfo, SecurityContext},
-    identity::IdentityApi,
-};
 
 /// Finish user passkey authentication.
 ///
@@ -99,7 +97,7 @@ pub async fn finish(
                 let now = Utc::now();
                 if auth_result.counter() > 0 {
                     if auth_result.counter() <= credential.counter {
-                        return Err(WebauthnError::CounterVerification)?;
+                        return Err(WebauthnError::CounterVerification.into());
                     }
                     credential.counter = auth_result.counter();
                 }
@@ -145,7 +143,6 @@ pub async fn finish(
         .ok_or(KeystoneApiError::Conflict("user not found".into()))?;
     let auth = AuthenticationResultBuilder::default()
         .principal(PrincipalInfo {
-            domain_id: None,
             identity: IdentityInfo::User(
                 UserIdentityInfoBuilder::default()
                     .user_id(user_id.clone())
@@ -157,14 +154,15 @@ pub async fn finish(
         .build()?;
     let ctx = SecurityContext::try_from(auth)?;
 
-    let token = state
+    let vsc = state
         .core
         .provider
         .get_token_provider()
-        .issue_token(&ctx, &AuthzInfo::Unscoped)?;
+        .issue_token_context(&state.core, &ctx, &ScopeInfo::Unscoped)
+        .await?;
 
     let api_token = TokenResponse {
-        token: build_api_token_v4(&token, &state.core).await?,
+        token: TokenBuilder::try_from(&vsc)?.build()?,
     };
     Ok((
         StatusCode::OK,
@@ -174,7 +172,7 @@ pub async fn finish(
                 .core
                 .provider
                 .get_token_provider()
-                .encode_token(&token)?,
+                .encode_token(vsc.token()?)?,
         )],
         Json(api_token),
     )

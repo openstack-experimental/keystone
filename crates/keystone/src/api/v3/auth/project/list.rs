@@ -58,7 +58,7 @@ pub(super) async fn list(
         .list_role_assignments(
             &state,
             &RoleAssignmentListParameters {
-                user_id: Some(user_auth.user_id().clone()),
+                user_id: Some(user_auth.principal().get_user_id().clone()),
                 effective: Some(true),
                 include_names: Some(false),
                 ..Default::default()
@@ -115,7 +115,7 @@ mod tests {
         Project as ProviderProject, ProjectListParameters,
     };
 
-    use crate::api::tests::get_mocked_state;
+    use crate::api::tests::{get_mocked_state, test_fixture_scoped};
     use crate::api::v3::project::types::ProjectShort;
     use crate::assignment::MockAssignmentProvider;
     use crate::provider::Provider;
@@ -130,7 +130,7 @@ mod tests {
         assignment_mock
             .expect_list_role_assignments()
             .withf(|_, params: &RoleAssignmentListParameters| {
-                params.user_id.as_ref().is_some_and(|x| x == "bar")
+                params.user_id.as_ref().is_some_and(|x| x == "uid")
                     && params.effective.is_some_and(|x| x)
                     && params.include_names.is_some_and(|x| !x)
             })
@@ -202,7 +202,8 @@ mod tests {
         let provider_builder = Provider::mocked_builder()
             .mock_assignment(assignment_mock)
             .mock_resource(resource_mock);
-        let state = get_mocked_state(provider_builder, true, None, None).await;
+        let vsc = test_fixture_scoped();
+        let state = get_mocked_state(provider_builder, true, None).await;
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -213,7 +214,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri("/")
-                    .header("x-auth-token", "foo")
+                    .extension(vsc)
                     .body(Body::empty())
                     .unwrap(),
             )

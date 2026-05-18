@@ -19,13 +19,10 @@ use serde::Serialize;
 use validator::Validate;
 
 use super::common;
-use crate::auth::{AuthzInfo, IdentityInfo, SecurityContext};
+use crate::auth::{IdentityInfo, ScopeInfo, SecurityContext};
 use crate::error::BuilderError;
-use crate::identity::UserResponse;
-use crate::resource::Project;
-use crate::role::RoleRef;
 use crate::token::error::TokenProviderError;
-use crate::token::{Token, TokenRestriction};
+use crate::token::{FernetToken, TokenRestriction};
 
 /// Restricted token payload.
 #[derive(Builder, Clone, Debug, Default, PartialEq, Serialize, Validate)]
@@ -59,12 +56,6 @@ pub struct RestrictedPayload {
 
     #[builder(default)]
     pub issued_at: DateTime<Utc>,
-    #[builder(default)]
-    pub user: Option<UserResponse>,
-    #[builder(default)]
-    pub roles: Option<Vec<RoleRef>>,
-    #[builder(default)]
-    pub project: Option<Project>,
 }
 
 impl RestrictedPayloadBuilder {
@@ -91,7 +82,7 @@ impl RestrictedPayloadBuilder {
     }
 }
 
-impl From<RestrictedPayload> for Token {
+impl From<RestrictedPayload> for FernetToken {
     fn from(value: RestrictedPayload) -> Self {
         Self::Restricted(value)
     }
@@ -111,7 +102,7 @@ impl RestrictedPayload {
         restriction: &TokenRestriction,
         expires_at: DateTime<Utc>,
     ) -> Result<Self, TokenProviderError> {
-        match &ctx.principal.identity {
+        match &ctx.principal().identity {
             IdentityInfo::User(user) => Ok(RestrictedPayloadBuilder::default()
                 .user_id(
                     restriction
@@ -119,27 +110,24 @@ impl RestrictedPayload {
                         .as_ref()
                         .unwrap_or(&user.user_id.clone()),
                 )
-                .methods(ctx.auth_methods.iter())
-                .audit_ids(ctx.audit_ids.iter())
+                .methods(ctx.auth_methods().iter())
+                .audit_ids(ctx.audit_ids().iter())
                 .expires_at(expires_at)
                 .token_restriction_id(restriction.id.clone())
                 .project_id(
                     restriction
                         .project_id
                         .as_ref()
-                        .or(match &ctx.authorization {
-                            Some(AuthzInfo::Project(project)) => Some(&project.id),
+                        .or(match &ctx.authorization().map(|x| &x.scope) {
+                            Some(ScopeInfo::Project { project, .. }) => Some(&project.id),
                             _ => None,
                         })
                         .ok_or_else(|| TokenProviderError::RestrictedTokenNotProjectScoped)?,
                 )
                 .allow_renew(restriction.allow_renew)
                 .allow_rescope(restriction.allow_rescope)
-                .roles(restriction.roles.clone())
                 .build()?),
-            _ => {
-                todo!();
-            }
+            _ => Err(TokenProviderError::TokenRestrictionPrincipalNotSupported),
         }
     }
 }
@@ -158,7 +146,6 @@ mod tests {
         let auth = AuthenticationResultBuilder::default()
             .context(AuthenticationContext::Password)
             .principal(PrincipalInfo {
-                domain_id: Some("did".into()),
                 identity: IdentityInfo::User(
                     UserIdentityInfoBuilder::default()
                         .user_id("uid")

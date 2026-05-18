@@ -18,7 +18,7 @@ use std::sync::Arc;
 
 use openstack_keystone_core::assignment::AssignmentApi;
 use openstack_keystone_core::keystone::Service;
-use openstack_keystone_core_types::assignment::AssignmentCreate;
+use openstack_keystone_core_types::assignment::*;
 
 mod application_credential;
 mod trust;
@@ -35,6 +35,28 @@ async fn grant_role_to_user_on_project<U: Into<String>, P: Into<String>, R: Into
         .create_grant(
             state,
             AssignmentCreate::user_project(user, project, role, false),
+        )
+        .await?;
+    Ok(())
+}
+
+async fn revoke_role_from_user_on_project<U: Into<String>, P: Into<String>, R: Into<String>>(
+    state: &Arc<Service>,
+    user: U,
+    project: P,
+    role: R,
+) -> Result<(), Report> {
+    state
+        .provider
+        .get_assignment_provider()
+        .revoke_grant(
+            state,
+            AssignmentBuilder::default()
+                .actor_id(user)
+                .role_id(role)
+                .target_id(project)
+                .r#type(AssignmentType::UserProject)
+                .build()?,
         )
         .await?;
     Ok(())

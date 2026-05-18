@@ -77,7 +77,7 @@ mod tests {
     use openstack_keystone_core_types::role::{RoleBuilder, RoleListParameters};
 
     use super::super::openapi_router;
-    use crate::api::tests::get_mocked_state;
+    use crate::api::tests::{get_mocked_state, test_fixture_scoped};
     use crate::api::v3::role::types::{Role as ApiRole, RoleList};
     use crate::provider::Provider;
     use crate::role::MockRoleProvider;
@@ -94,13 +94,9 @@ mod tests {
                 ])
             });
 
-        let state = get_mocked_state(
-            Provider::mocked_builder().mock_role(role_mock),
-            true,
-            None,
-            None,
-        )
-        .await;
+        let vsc = test_fixture_scoped();
+        let state =
+            get_mocked_state(Provider::mocked_builder().mock_role(role_mock), true, None).await;
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -111,7 +107,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri("/")
-                    .header("x-auth-token", "foo")
+                    .extension(vsc)
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -147,13 +143,9 @@ mod tests {
             })
             .returning(|_, _| Ok(Vec::new()));
 
-        let state = get_mocked_state(
-            Provider::mocked_builder().mock_role(role_mock),
-            true,
-            None,
-            None,
-        )
-        .await;
+        let vsc = test_fixture_scoped();
+        let state =
+            get_mocked_state(Provider::mocked_builder().mock_role(role_mock), true, None).await;
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -164,7 +156,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri("/?domain_id=domain&name=name")
-                    .header("x-auth-token", "foo")
+                    .extension(vsc)
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -179,7 +171,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_list_unauth() {
-        let state = get_mocked_state(Provider::mocked_builder(), false, None, None).await;
+        let state = get_mocked_state(Provider::mocked_builder(), false, None).await;
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())

@@ -25,6 +25,14 @@ pub enum ApplicationCredentialProviderError {
     #[error("more than one access rule matching the ID and parameters found")]
     AccessRuleConflict,
 
+    /// Application Credential used in the token is not found.
+    #[error("application credential with id: {0} not found")]
+    ApplicationCredentialNotFound(String),
+
+    /// Application Credential used in the token has expired.
+    #[error("application credential has expired")]
+    ApplicationCredentialExpired,
+
     /// Conflict.
     #[error("conflict: {0}")]
     Conflict(String),

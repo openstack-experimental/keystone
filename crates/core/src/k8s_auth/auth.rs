@@ -290,7 +290,6 @@ impl K8sAuthService {
             .ok_or(K8sAuthProviderError::UserNotFound(user_id.clone()))?;
         Ok(AuthenticationResultBuilder::default()
             .principal(PrincipalInfo {
-                domain_id: Some(user.domain_id.clone()),
                 identity: IdentityInfo::User(
                     UserIdentityInfoBuilder::default()
                         .user_id(user_id.clone())

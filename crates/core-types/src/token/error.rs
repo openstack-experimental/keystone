@@ -136,17 +136,29 @@ pub enum TokenProviderError {
     #[error("token restriction {0} not found")]
     TokenRestrictionNotFound(String),
 
+    /// Token restriction not supported for the given principal.
+    #[error("token restriction not supported for the principal")]
+    TokenRestrictionPrincipalNotSupported,
+
     /// Revoked token error.
     #[error("token has been revoked")]
     TokenRevoked,
+
+    /// Trust used in the token is not found.
+    #[error("trust with id: {0} not found")]
+    TrustNotFound(String),
 
     /// Trust provider error.
     #[error(transparent)]
     TrustProvider(#[from] TrustProviderError),
 
-    /// The user domain of the trustee is disabled.
-    #[error("trustee domain disabled")]
+    /// The trustor domain is disabled.
+    #[error("trustor domain disabled")]
     TrustorDomainDisabled,
+
+    /// The trustor user is disabled.
+    #[error("trustor user disabled")]
+    TrustorUserDisabled(String),
 
     /// Unsupported token restriction driver.
     #[error("driver `{0}` is not supported for the token provider")]

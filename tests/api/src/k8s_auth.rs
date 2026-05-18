@@ -13,6 +13,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Test the k8s auth functionality
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use eyre::{Result, eyre};
@@ -25,15 +26,18 @@ use openstack_sdk_core::{AsyncOpenStack, api::RawQueryAsync};
 
 use openstack_keystone_api_types::k8s_auth::role::*;
 use openstack_keystone_api_types::k8s_auth::{K8sAuthRequest, instance::*};
+use openstack_keystone_api_types::v3::auth::token::*;
 use openstack_keystone_api_types::v3::project::*;
+use openstack_keystone_api_types::v3::role::*;
 use openstack_keystone_api_types::v3::user::*;
-use openstack_keystone_api_types::v4::auth::token::*;
 use openstack_keystone_api_types::v4::token_restriction::*;
 
 mod guard;
 use guard::*;
+mod common;
 mod identity;
 mod resource;
+mod role;
 mod token_restriction;
 
 mod k8s_auth {
@@ -47,6 +51,7 @@ use crate::k8s_auth::auth::*;
 use crate::k8s_auth::instance::create_auth_instance;
 use crate::k8s_auth::role::create_auth_role;
 use crate::resource::project::create_project;
+use crate::role::list_roles;
 use crate::token_restriction::create_token_restriction;
 
 async fn auth<I: AsRef<str>>(
@@ -95,6 +100,13 @@ async fn test_k8s_auth() -> Result<()> {
         .build()?;
     let project = create_project(&test_client, project_create).await?;
 
+    let roles: HashMap<String, Role> = list_roles(&test_client)
+        .await?
+        .into_iter()
+        .map(|r| (r.name.clone(), r))
+        .collect();
+    let member_role = roles.get("member").expect("member role must exist");
+
     let tr = create_token_restriction(
         &test_client,
         TokenRestrictionCreate {
@@ -103,7 +115,7 @@ async fn test_k8s_auth() -> Result<()> {
             domain_id: "default".into(),
             project_id: Some(project.id.clone()),
             user_id: Some(user.id.clone()),
-            roles: vec![],
+            roles: vec![RoleRef::from(member_role)],
         },
     )
     .await?;

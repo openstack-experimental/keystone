@@ -20,10 +20,8 @@ use validator::Validate;
 use super::common;
 use crate::auth::SecurityContext;
 use crate::error::BuilderError;
-use crate::identity::UserResponse;
 use crate::resource::Project;
-use crate::role::RoleRef;
-use crate::token::Token;
+use crate::token::FernetToken;
 use crate::token::error::TokenProviderError;
 
 #[derive(Builder, Clone, Debug, Default, PartialEq, Serialize, Validate)]
@@ -47,13 +45,6 @@ pub struct ProjectScopePayload {
 
     #[builder(default)]
     pub issued_at: DateTime<Utc>,
-
-    #[builder(default)]
-    pub user: Option<UserResponse>,
-    #[builder(default)]
-    pub roles: Option<Vec<RoleRef>>,
-    #[builder(default)]
-    pub project: Option<Project>,
 }
 
 impl ProjectScopePayloadBuilder {
@@ -80,7 +71,7 @@ impl ProjectScopePayloadBuilder {
     }
 }
 
-impl From<ProjectScopePayload> for Token {
+impl From<ProjectScopePayload> for FernetToken {
     fn from(value: ProjectScopePayload) -> Self {
         Self::ProjectScope(value)
     }
@@ -97,12 +88,11 @@ impl ProjectScopePayload {
         expires_at: DateTime<Utc>,
     ) -> Result<Self, TokenProviderError> {
         Ok(ProjectScopePayloadBuilder::default()
-            .user_id(ctx.principal.get_user_id())
-            .methods(ctx.auth_methods.iter())
-            .audit_ids(ctx.audit_ids.iter())
+            .user_id(ctx.principal().get_user_id())
+            .methods(ctx.auth_methods().iter())
+            .audit_ids(ctx.audit_ids().iter())
             .expires_at(expires_at)
             .project_id(project.id.clone())
-            .project(project.clone())
             .build()?)
     }
 }
@@ -121,7 +111,6 @@ mod tests {
         let auth = AuthenticationResultBuilder::default()
             .context(AuthenticationContext::Password)
             .principal(PrincipalInfo {
-                domain_id: Some("did".into()),
                 identity: IdentityInfo::User(
                     UserIdentityInfoBuilder::default()
                         .user_id("uid")

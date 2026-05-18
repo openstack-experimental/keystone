@@ -89,7 +89,7 @@ mod tests {
     use openstack_keystone_core_types::resource::Project as ProviderProject;
 
     use super::super::openapi_router;
-    use crate::api::tests::get_mocked_state;
+    use crate::api::tests::{get_mocked_state, test_fixture_scoped};
     use crate::api::v3::project::types::*;
     use crate::provider::Provider;
     use crate::resource::MockResourceProvider;
@@ -112,7 +112,8 @@ mod tests {
         });
 
         let provider_builder = Provider::mocked_builder().mock_resource(resource_mock);
-        let state = get_mocked_state(provider_builder, true, None, None).await;
+        let vsc = test_fixture_scoped();
+        let state = get_mocked_state(provider_builder, true, None).await;
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -131,7 +132,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri("/")
-                    .header("x-auth-token", "foo")
+                    .extension(vsc)
                     .header(header::CONTENT_TYPE, "application/json")
                     .method("POST")
                     .body(Body::from(serde_json::to_string(&req).unwrap()))
@@ -163,7 +164,8 @@ mod tests {
     #[traced_test]
     #[tokio::test]
     async fn test_not_allowed() {
-        let state = get_mocked_state(Provider::mocked_builder(), false, None, None).await;
+        let vsc = test_fixture_scoped();
+        let state = get_mocked_state(Provider::mocked_builder(), false, None).await;
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -182,7 +184,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri("/")
-                    .header("x-auth-token", "foo")
+                    .extension(vsc)
                     .header(header::CONTENT_TYPE, "application/json")
                     .method("POST")
                     .body(Body::from(serde_json::to_string(&req).unwrap()))

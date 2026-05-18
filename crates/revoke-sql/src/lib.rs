@@ -17,13 +17,14 @@ use async_trait::async_trait;
 
 use sea_orm::{DatabaseConnection, Schema};
 
+use openstack_keystone_core::auth::ValidatedSecurityContext;
 use openstack_keystone_core::keystone::ServiceState;
 use openstack_keystone_core::revoke::{RevokeProviderError, backend::RevokeBackend};
 use openstack_keystone_core::{
     SqlDriver, SqlDriverRegistration, db::create_table, error::DatabaseError,
 };
 use openstack_keystone_core_types::revoke::*;
-use openstack_keystone_core_types::token::Token;
+use openstack_keystone_core_types::token::FernetToken;
 
 use crate::entity::revocation_event as db_revocation_event;
 
@@ -101,10 +102,15 @@ impl RevokeBackend for SqlBackend {
     async fn is_token_revoked(
         &self,
         state: &ServiceState,
-        token: &Token,
+        token_security_context: &ValidatedSecurityContext,
     ) -> Result<bool, RevokeProviderError> {
         // Check for the token revocation events.
-        if list::count(&state.db, &token.try_into()?).await? > 0 {
+
+        let params_builder =
+            RevocationEventListParametersBuilder::try_from(token_security_context)?;
+
+        let params = params_builder.build()?;
+        if list::count(&state.db, &params).await? > 0 {
             Ok(true)
         } else {
             Ok(false)
@@ -125,7 +131,7 @@ impl RevokeBackend for SqlBackend {
     async fn revoke_token(
         &self,
         state: &ServiceState,
-        token: &Token,
+        token: &FernetToken,
     ) -> Result<(), RevokeProviderError> {
         Ok(create::create(&state.db, token.try_into()?)
             .await

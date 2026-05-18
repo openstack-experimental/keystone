@@ -15,8 +15,9 @@ eyre.workspace = true
 inventory.workspace = true
 itertools.workspace = true
 openstack-keystone-config = { version = "0.1", path = "../../crates/config" }
+openstack-keystone-api-types = { version = "0.1", path = "../../crates/api-types", features = ["builder", "conv"] }
 openstack-keystone-core = { version = "0.1", path = "../../crates/core", features = ["mock"] }
-openstack-keystone-core-types = { version = "0.1", path = "../../crates/core-types" }
+openstack-keystone-core-types = { version = "0.1", path = "../../crates/core-types", features = ["mock"] }
 openstack-keystone-identity-sql = { version = "0.1", path = "../../crates/identity-sql/" }
 openstack-keystone-token-fernet = { version = "0.1", path = "../../crates/token-fernet/" }
 openstack-keystone-trust-sql = { version = "0.1", path = "../../crates/trust-sql/" }

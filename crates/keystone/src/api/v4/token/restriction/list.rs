@@ -103,12 +103,13 @@ mod tests {
         super::{openapi_router, tests::get_token_provider_mock_with_mocks},
         *,
     };
-    use crate::api::tests::get_mocked_state;
+    use crate::api::tests::{get_mocked_state, test_fixture_scoped};
     use crate::api::v3::role::types::RoleRef;
     use crate::provider::Provider;
 
     #[tokio::test]
     async fn test_list() {
+        let vsc = test_fixture_scoped();
         let mut token_mock = get_token_provider_mock_with_mocks();
         token_mock
             .expect_list_token_restrictions()
@@ -140,7 +141,6 @@ mod tests {
             Provider::mocked_builder().mock_token(token_mock),
             true,
             None,
-            Some(true),
         )
         .await;
 
@@ -153,7 +153,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri("/")
-                    .header("x-auth-token", "foo")
+                    .extension(vsc)
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -191,6 +191,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_list_qp() {
+        let vsc = test_fixture_scoped();
         let mut token_mock = get_token_provider_mock_with_mocks();
         token_mock
             .expect_list_token_restrictions()
@@ -228,7 +229,6 @@ mod tests {
             Provider::mocked_builder().mock_token(token_mock),
             true,
             None,
-            Some(true),
         )
         .await;
 
@@ -241,7 +241,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri("/?domain_id=did&user_id=uid&project_id=pid")
-                    .header("x-auth-token", "foo")
+                    .extension(vsc)
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -256,7 +256,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_list_forbidden() {
-        let state = get_mocked_state(Provider::mocked_builder(), false, None, None).await;
+        let vsc = test_fixture_scoped();
+        let state = get_mocked_state(Provider::mocked_builder(), false, None).await;
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -267,7 +268,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri("/")
-                    .header("x-auth-token", "foo")
+                    .extension(vsc)
                     .body(Body::empty())
                     .unwrap(),
             )

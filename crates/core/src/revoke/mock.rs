@@ -16,8 +16,9 @@ use async_trait::async_trait;
 use mockall::mock;
 
 use openstack_keystone_core_types::revoke::*;
-use openstack_keystone_core_types::token::Token;
+use openstack_keystone_core_types::token::FernetToken;
 
+use crate::auth::ValidatedSecurityContext;
 use crate::keystone::ServiceState;
 use crate::revoke::{RevokeApi, RevokeProviderError};
 
@@ -35,13 +36,13 @@ mock! {
         async fn is_token_revoked(
             &self,
             state: &ServiceState,
-            token: &Token,
+            token_security_context: &ValidatedSecurityContext,
         ) -> Result<bool, RevokeProviderError>;
 
         async fn revoke_token(
             &self,
             state: &ServiceState,
-            token: &Token,
+            token: &FernetToken,
         ) -> Result<(), RevokeProviderError>;
     }
 }

@@ -20,9 +20,7 @@ use validator::Validate;
 use super::common;
 use crate::auth::SecurityContext;
 use crate::error::BuilderError;
-use crate::identity::UserResponse;
-use crate::role::RoleRef;
-use crate::token::Token;
+use crate::token::FernetToken;
 use crate::token::error::TokenProviderError;
 
 #[derive(Builder, Clone, Debug, Default, PartialEq, Serialize, Validate)]
@@ -46,11 +44,6 @@ pub struct SystemScopePayload {
 
     #[builder(default)]
     pub issued_at: DateTime<Utc>,
-
-    #[builder(default)]
-    pub user: Option<UserResponse>,
-    #[builder(default)]
-    pub roles: Option<Vec<RoleRef>>,
 }
 
 impl SystemScopePayloadBuilder {
@@ -77,7 +70,7 @@ impl SystemScopePayloadBuilder {
     }
 }
 
-impl From<SystemScopePayload> for Token {
+impl From<SystemScopePayload> for FernetToken {
     fn from(value: SystemScopePayload) -> Self {
         Self::SystemScope(value)
     }
@@ -94,9 +87,9 @@ impl SystemScopePayload {
         expires_at: DateTime<Utc>,
     ) -> Result<Self, TokenProviderError> {
         Ok(SystemScopePayloadBuilder::default()
-            .user_id(ctx.principal.get_user_id())
-            .methods(ctx.auth_methods.iter())
-            .audit_ids(ctx.audit_ids.iter())
+            .user_id(ctx.principal().get_user_id())
+            .methods(ctx.auth_methods().iter())
+            .audit_ids(ctx.audit_ids().iter())
             .expires_at(expires_at)
             .system_id(system)
             .build()?)
@@ -116,7 +109,6 @@ mod tests {
         let auth = AuthenticationResultBuilder::default()
             .context(AuthenticationContext::Password)
             .principal(PrincipalInfo {
-                domain_id: Some("did".into()),
                 identity: IdentityInfo::User(
                     UserIdentityInfoBuilder::default()
                         .user_id("uid")

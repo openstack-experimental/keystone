@@ -139,3 +139,13 @@ pub struct RoleCreateRequest {
     #[cfg_attr(feature = "validate", validate(nested))]
     pub role: RoleCreate,
 }
+
+impl From<&Role> for RoleRef {
+    fn from(value: &Role) -> Self {
+        Self {
+            domain_id: value.domain_id.clone(),
+            id: value.id.clone(),
+            name: value.name.clone(),
+        }
+    }
+}

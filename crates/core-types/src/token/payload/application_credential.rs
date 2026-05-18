@@ -21,10 +21,7 @@ use super::common;
 use crate::application_credential::ApplicationCredential;
 use crate::auth::SecurityContext;
 use crate::error::BuilderError;
-use crate::identity::UserResponse;
-use crate::resource::Project;
-use crate::role::RoleRef;
-use crate::token::Token;
+use crate::token::FernetToken;
 use crate::token::error::TokenProviderError;
 
 #[derive(Builder, Clone, Debug, Default, PartialEq, Serialize, Validate)]
@@ -51,16 +48,6 @@ pub struct ApplicationCredentialPayload {
 
     #[builder(default)]
     pub issued_at: DateTime<Utc>,
-
-    #[builder(default)]
-    pub user: Option<UserResponse>,
-    #[builder(default)]
-    pub application_credential: Option<ApplicationCredential>,
-    #[builder(default)]
-    pub project: Option<Project>,
-    /// Effective roles of the token.
-    #[builder(default)]
-    pub roles: Option<Vec<RoleRef>>,
 }
 
 impl ApplicationCredentialPayloadBuilder {
@@ -87,7 +74,7 @@ impl ApplicationCredentialPayloadBuilder {
     }
 }
 
-impl From<ApplicationCredentialPayload> for Token {
+impl From<ApplicationCredentialPayload> for FernetToken {
     fn from(value: ApplicationCredentialPayload) -> Self {
         Self::ApplicationCredential(value)
     }
@@ -106,9 +93,9 @@ impl ApplicationCredentialPayload {
         expires_at: DateTime<Utc>,
     ) -> Result<Self, TokenProviderError> {
         Ok(ApplicationCredentialPayloadBuilder::default()
-            .user_id(ctx.principal.get_user_id())
-            .methods(ctx.auth_methods.iter())
-            .audit_ids(ctx.audit_ids.iter())
+            .user_id(ctx.principal().get_user_id())
+            .methods(ctx.auth_methods().iter())
+            .audit_ids(ctx.audit_ids().iter())
             .expires_at(
                 app_cred
                     .expires_at
@@ -116,7 +103,6 @@ impl ApplicationCredentialPayload {
                     .unwrap_or(expires_at),
             )
             .application_credential_id(app_cred.id.clone())
-            .application_credential(app_cred.clone())
             .project_id(app_cred.project_id.clone())
             .build()?)
     }
@@ -136,7 +122,6 @@ mod tests {
         let auth = AuthenticationResultBuilder::default()
             .context(AuthenticationContext::Password)
             .principal(PrincipalInfo {
-                domain_id: Some("did".into()),
                 identity: IdentityInfo::User(
                     UserIdentityInfoBuilder::default()
                         .user_id("uid")

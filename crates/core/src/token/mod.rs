@@ -22,7 +22,7 @@
 use async_trait::async_trait;
 
 use openstack_keystone_config::Config;
-use openstack_keystone_core_types::auth::{AuthenticationResult, AuthzInfo, SecurityContext};
+use openstack_keystone_core_types::auth::{ScopeInfo, SecurityContext};
 pub use openstack_keystone_core_types::token::*;
 
 pub mod backend;
@@ -31,8 +31,8 @@ pub mod error;
 mod mock;
 mod provider_api;
 pub mod service;
-mod validate;
 
+use crate::auth::ValidatedSecurityContext;
 use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManagerApi;
 use crate::token::service::TokenService;
@@ -79,81 +79,65 @@ impl TokenApi for TokenProvider {
     /// # Returns
     /// - `Result<AuthenticatedInfo, TokenProviderError>` - Authenticated
     ///   information or an error.
-    #[tracing::instrument(level = "info", skip(self, state, credential))]
-    async fn authenticate_by_token<'a>(
+    #[tracing::instrument(level = "info", skip(self, state, credential), err(Debug))]
+    async fn authorize_by_token<'a>(
         &self,
         state: &ServiceState,
         credential: &'a str,
         allow_expired: Option<bool>,
         window_seconds: Option<i64>,
-    ) -> Result<AuthenticationResult, TokenProviderError> {
+    ) -> Result<ValidatedSecurityContext, TokenProviderError> {
         match self {
             Self::Service(provider) => {
                 provider
-                    .authenticate_by_token(state, credential, allow_expired, window_seconds)
+                    .authorize_by_token(state, credential, allow_expired, window_seconds)
                     .await
             }
             #[cfg(any(test, feature = "mock"))]
             Self::Mock(provider) => {
                 provider
-                    .authenticate_by_token(state, credential, allow_expired, window_seconds)
+                    .authorize_by_token(state, credential, allow_expired, window_seconds)
                     .await
             }
         }
     }
 
-    /// Validate token.
-    ///
-    /// # Parameters
-    /// - `state`: The current service state.
-    /// - `credential`: The token credential string.
-    /// - `allow_expired`: Whether to allow expired tokens.
-    /// - `window_seconds`: Expiration buffer in seconds.
-    ///
-    /// # Returns
-    /// - `Result<Token, TokenProviderError>` - The decoded token or an error.
-    #[tracing::instrument(level = "info", skip(self, state, credential))]
-    async fn validate_token<'a>(
+    /// Validate the token and produce a [`ValidatedSecurityContext`].
+    #[tracing::instrument(level = "info", skip(self, state, credential), err(Debug))]
+    async fn validate_to_context<'a>(
         &self,
         state: &ServiceState,
         credential: &'a str,
         allow_expired: Option<bool>,
         window_seconds: Option<i64>,
-    ) -> Result<Token, TokenProviderError> {
+    ) -> Result<ValidatedSecurityContext, TokenProviderError> {
         match self {
             Self::Service(provider) => {
                 provider
-                    .validate_token(state, credential, allow_expired, window_seconds)
+                    .validate_to_context(state, credential, allow_expired, window_seconds)
                     .await
             }
             #[cfg(any(test, feature = "mock"))]
             Self::Mock(provider) => {
                 provider
-                    .validate_token(state, credential, allow_expired, window_seconds)
+                    .validate_to_context(state, credential, allow_expired, window_seconds)
                     .await
             }
         }
     }
 
-    /// Issue the Keystone token.
-    ///
-    /// # Parameters
-    /// - `security_context`: Information about the authenticated user.
-    /// - `authz_info`: Authorization scope.
-    /// - `token_restrictions`: Optional restrictions for the token.
-    ///
-    /// # Returns
-    /// - `Result<Token, TokenProviderError>` - The issued token or an error.
-    #[tracing::instrument(level = "debug", skip(self))]
-    fn issue_token(
+    /// Issue a token and produce a [`ValidatedSecurityContext`].
+    #[tracing::instrument(level = "debug", skip(self, state), err(Debug))]
+    async fn issue_token_context(
         &self,
-        security_context: &SecurityContext,
-        authz_info: &AuthzInfo,
-    ) -> Result<Token, TokenProviderError> {
+        state: &ServiceState,
+        ctx: &SecurityContext,
+        scope: &ScopeInfo,
+    ) -> Result<ValidatedSecurityContext, TokenProviderError> {
         match self {
-            Self::Service(provider) => provider.issue_token(security_context, authz_info),
+            Self::Service(provider) => provider.issue_token_context(state, ctx, scope).await,
             #[cfg(any(test, feature = "mock"))]
-            Self::Mock(provider) => provider.issue_token(security_context, authz_info),
+            Self::Mock(provider) => provider.issue_token_context(state, ctx, scope).await,
         }
     }
 
@@ -164,54 +148,11 @@ impl TokenApi for TokenProvider {
     ///
     /// # Returns
     /// - `Result<String, TokenProviderError>` - The encoded string or an error.
-    fn encode_token(&self, token: &Token) -> Result<String, TokenProviderError> {
+    fn encode_token(&self, token: &FernetToken) -> Result<String, TokenProviderError> {
         match self {
             Self::Service(provider) => provider.encode_token(token),
             #[cfg(any(test, feature = "mock"))]
             Self::Mock(provider) => provider.encode_token(token),
-        }
-    }
-
-    /// Populate role assignments in the token that support that information.
-    ///
-    /// # Parameters
-    /// - `state`: The current service state.
-    /// - `token`: The token to populate.
-    ///
-    /// # Returns
-    /// - `Result<(), TokenProviderError>` - Ok on success, or an error.
-    async fn populate_role_assignments(
-        &self,
-        state: &ServiceState,
-        token: &mut Token,
-    ) -> Result<(), TokenProviderError> {
-        match self {
-            Self::Service(provider) => provider.populate_role_assignments(state, token).await,
-            #[cfg(any(test, feature = "mock"))]
-            Self::Mock(provider) => provider.populate_role_assignments(state, token).await,
-        }
-    }
-
-    /// Expand the token information.
-    ///
-    /// Query and expand information about the user, scope and the role
-    /// assignments into the token.
-    ///
-    /// # Parameters
-    /// - `state`: The current service state.
-    /// - `token`: The token to expand.
-    ///
-    /// # Returns
-    /// - `Result<Token, TokenProviderError>` - The expanded token or an error.
-    async fn expand_token_information(
-        &self,
-        state: &ServiceState,
-        token: &Token,
-    ) -> Result<Token, TokenProviderError> {
-        match self {
-            Self::Service(provider) => provider.expand_token_information(state, token).await,
-            #[cfg(any(test, feature = "mock"))]
-            Self::Mock(provider) => provider.expand_token_information(state, token).await,
         }
     }
 

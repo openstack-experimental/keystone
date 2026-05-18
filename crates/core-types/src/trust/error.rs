@@ -91,6 +91,10 @@ pub enum TrustProviderError {
         source: BuilderError,
     },
 
+    /// Trust used in the token is not found.
+    #[error("trust with id: {0} not found")]
+    TrustNotFound(String),
+
     /// Unsupported driver.
     #[error("unsupported driver `{0}` for the trust provider")]
     UnsupportedDriver(String),

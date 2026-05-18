@@ -12,7 +12,10 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::error::BuilderError;
+use crate::{
+    error::BuilderError,
+    role::{RoleRef, RoleRefBuilder},
+};
 use derive_builder::Builder;
 use serde::Serialize;
 use std::fmt;
@@ -50,6 +53,18 @@ pub struct Assignment {
     /// Assignment through the role inference rules.
     #[builder(default)]
     pub implied_via: Option<String>,
+}
+
+impl TryInto<RoleRef> for Assignment {
+    type Error = BuilderError;
+    fn try_into(self) -> Result<RoleRef, Self::Error> {
+        let mut builder = RoleRefBuilder::default();
+        builder.id(self.role_id);
+        if let Some(role_name) = self.role_name {
+            builder.name(role_name);
+        }
+        builder.build()
+    }
 }
 
 /// The new assignment object.

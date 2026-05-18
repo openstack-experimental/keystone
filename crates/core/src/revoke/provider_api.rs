@@ -17,8 +17,9 @@
 use async_trait::async_trait;
 
 use openstack_keystone_core_types::revoke::*;
-use openstack_keystone_core_types::token::Token;
+use openstack_keystone_core_types::token::FernetToken;
 
+use crate::auth::ValidatedSecurityContext;
 use crate::keystone::ServiceState;
 use crate::revoke::RevokeProviderError;
 
@@ -43,11 +44,12 @@ pub trait RevokeApi: Send + Sync {
     ///
     /// # Arguments
     /// * `state` - The current service state.
+    /// * `token_security_context` - A `ValidatedSecurityContext` of the Token.
     /// * `token` - The token to check.
     async fn is_token_revoked(
         &self,
         state: &ServiceState,
-        token: &Token,
+        token_security_context: &ValidatedSecurityContext,
     ) -> Result<bool, RevokeProviderError>;
 
     /// Revoke the token.
@@ -61,6 +63,6 @@ pub trait RevokeApi: Send + Sync {
     async fn revoke_token(
         &self,
         state: &ServiceState,
-        token: &Token,
+        token: &FernetToken,
     ) -> Result<(), RevokeProviderError>;
 }

@@ -201,7 +201,7 @@ mod tests {
     use openstack_keystone_core_types::identity::*;
 
     use super::openapi_router;
-    use crate::api::tests::get_mocked_state;
+    use crate::api::tests::{get_mocked_state, test_fixture_scoped};
     use crate::api::v3::group::types::{GroupBuilder as ApiGroupBuilder, GroupList};
     use crate::api::v3::user::types::{
         UserBuilder as ApiUser, UserCreateBuilder as ApiUserCreate, UserCreateRequest, UserList,
@@ -216,6 +216,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_list() {
+        let vsc = test_fixture_scoped();
         let mut identity_mock = MockIdentityProvider::default();
         identity_mock
             .expect_list_users()
@@ -236,7 +237,6 @@ mod tests {
             Provider::mocked_builder().mock_identity(identity_mock),
             true,
             None,
-            None,
         )
         .await;
 
@@ -249,7 +249,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri("/")
-                    .header("x-auth-token", "foo")
+                    .extension(vsc)
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -276,6 +276,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_list_qp() {
+        let vsc = test_fixture_scoped();
         let mut identity_mock = MockIdentityProvider::default();
         identity_mock
             .expect_list_users()
@@ -292,7 +293,6 @@ mod tests {
             Provider::mocked_builder().mock_identity(identity_mock),
             true,
             None,
-            None,
         )
         .await;
 
@@ -305,7 +305,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri("/?domain_id=domain&name=name")
-                    .header("x-auth-token", "foo")
+                    .extension(vsc)
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -320,7 +320,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_list_unauth() {
-        let state = get_mocked_state(Provider::mocked_builder(), false, None, None).await;
+        let state = get_mocked_state(Provider::mocked_builder(), false, None).await;
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -337,6 +337,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_create() {
+        let vsc = test_fixture_scoped();
         let mut identity_mock = MockIdentityProvider::default();
         identity_mock
             .expect_create_user()
@@ -354,7 +355,6 @@ mod tests {
         let state = get_mocked_state(
             Provider::mocked_builder().mock_identity(identity_mock),
             true,
-            None,
             None,
         )
         .await;
@@ -378,7 +378,7 @@ mod tests {
                     .method("POST")
                     .header(http::header::CONTENT_TYPE, "application/json")
                     .uri("/")
-                    .header("x-auth-token", "foo")
+                    .extension(vsc)
                     .body(Body::from(serde_json::to_string(&user).unwrap()))
                     .unwrap(),
             )
@@ -395,6 +395,7 @@ mod tests {
     #[tokio::test]
     #[tracing_test::traced_test]
     async fn test_get() {
+        let vsc = test_fixture_scoped();
         let mut identity_mock = MockIdentityProvider::default();
         identity_mock
             .expect_get_user()
@@ -420,7 +421,6 @@ mod tests {
             Provider::mocked_builder().mock_identity(identity_mock),
             true,
             None,
-            None,
         )
         .await;
 
@@ -433,7 +433,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri("/foo")
-                    .header("x-auth-token", "foo")
+                    .extension(vsc.clone())
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -447,7 +447,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri("/bar")
-                    .header("x-auth-token", "foo")
+                    .extension(vsc)
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -472,6 +472,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_delete() {
+        let vsc = test_fixture_scoped();
         let mut identity_mock = MockIdentityProvider::default();
         identity_mock
             .expect_delete_user()
@@ -487,7 +488,6 @@ mod tests {
             Provider::mocked_builder().mock_identity(identity_mock),
             true,
             None,
-            None,
         )
         .await;
 
@@ -501,7 +501,7 @@ mod tests {
                 Request::builder()
                     .method("DELETE")
                     .uri("/foo")
-                    .header("x-auth-token", "foo")
+                    .extension(vsc.clone())
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -516,7 +516,7 @@ mod tests {
                 Request::builder()
                     .method("DELETE")
                     .uri("/bar")
-                    .header("x-auth-token", "foo")
+                    .extension(vsc)
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -528,6 +528,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_groups() {
+        let vsc = test_fixture_scoped();
         let mut identity_mock = MockIdentityProvider::default();
         identity_mock
             .expect_list_groups_of_user()
@@ -545,7 +546,6 @@ mod tests {
             Provider::mocked_builder().mock_identity(identity_mock),
             true,
             None,
-            None,
         )
         .await;
 
@@ -558,7 +558,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri("/foo/groups")
-                    .header("x-auth-token", "foo")
+                    .extension(vsc)
                     .body(Body::empty())
                     .unwrap(),
             )

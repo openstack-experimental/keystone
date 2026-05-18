@@ -26,6 +26,10 @@ pub enum RevokeProviderError {
     #[error("backend driver error: {0}")]
     Driver(String),
 
+    /// No Token in the security context.
+    #[error("security context does not have token set")]
+    SecurityContextHasNoToken,
+
     /// Structures builder error.
     #[error(transparent)]
     StructBuilder {

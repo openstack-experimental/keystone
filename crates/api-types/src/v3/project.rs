@@ -249,7 +249,7 @@ mod tests {
         assert_eq!(
             serde_json::json!({"name": "name", "domain_id": "did", "enabled": true, "is_domain": false}),
             serde_json::to_value(
-                &ProjectCreateBuilder::default()
+                ProjectCreateBuilder::default()
                     .name("name")
                     .domain_id("did")
                     .build()
@@ -260,7 +260,7 @@ mod tests {
         assert_eq!(
             serde_json::json!({"name": "name", "domain_id": "did", "enabled": true, "is_domain": false, "unknown": "bar"}),
             serde_json::to_value(
-                &ProjectCreateBuilder::default()
+                ProjectCreateBuilder::default()
                     .name("name")
                     .domain_id("did")
                     .extra(std::collections::HashMap::from([(

@@ -43,9 +43,8 @@ use crate::identity::IdentityApi;
 use crate::identity::error::IdentityProviderError;
 use crate::keystone::ServiceState;
 use crate::token::TokenApi;
-use openstack_keystone_core::api::{
-    common::get_authz_info, v4::auth::token::token_impl::build_api_token_v4,
-};
+use openstack_keystone_api_types::v3::auth::token::TokenBuilder;
+use openstack_keystone_core::api::common::get_authz_info;
 use openstack_keystone_core_types::identity::{
     FederationBuilder, FederationProtocol, Group, GroupCreate, GroupListParameters,
     UserCreateBuilder,
@@ -104,7 +103,7 @@ pub async fn callback(
         })?;
 
     if auth_state.expires_at < Utc::now() {
-        return Err(OidcError::AuthStateExpired)?;
+        return Err(OidcError::AuthStateExpired.into());
     }
 
     let idp = state
@@ -133,10 +132,10 @@ pub async fn callback(
 
     // Check for IdP and mapping `enabled` state
     if !idp.enabled {
-        return Err(OidcError::IdentityProviderDisabled)?;
+        return Err(OidcError::IdentityProviderDisabled.into());
     }
     if !mapping.enabled {
-        return Err(OidcError::MappingDisabled)?;
+        return Err(OidcError::MappingDisabled.into());
     }
 
     let token_restriction = if let Some(tr_id) = &mapping.token_restriction_id {
@@ -173,7 +172,7 @@ pub async fn callback(
         )
         .set_redirect_uri(RedirectUrl::new(auth_state.redirect_uri).map_err(OidcError::from)?)
     } else {
-        return Err(OidcError::ClientWithoutDiscoveryNotSupported)?;
+        return Err(OidcError::ClientWithoutDiscoveryNotSupported.into());
     };
 
     // Finish authorization request by exchanging the authorization code for the
@@ -307,7 +306,6 @@ pub async fn callback(
 
     let auth = AuthenticationResultBuilder::default()
         .principal(PrincipalInfo {
-            domain_id: Some(user.domain_id.clone()),
             identity: IdentityInfo::User(
                 UserIdentityInfoBuilder::default()
                     .user_id(user.id.clone())
@@ -316,46 +314,30 @@ pub async fn callback(
                     .build()?,
             ),
         })
-        .context(AuthenticationContext::Oidc(
-            OidcContextBuilder::default()
+        .context(AuthenticationContext::Oidc {
+            oidc: OidcContextBuilder::default()
                 .idp_id(idp.id.clone())
                 .protocol_id("oidc")
                 .build()?,
-        ))
+            token: None,
+        })
         .build()?;
     let mut ctx = SecurityContext::try_from(auth)?;
     if let Some(token_restriction) = &token_restriction {
-        ctx.token_restriction = Some(token_restriction.clone());
+        ctx.set_token_restriction(token_restriction.clone());
     }
-
-    //let authed_info = AuthenticatedInfo::builder()
-    //    .user_id(user.id.clone())
-    //    .user(user.clone())
-    //    .methods(vec!["openid".into()])
-    //    .idp_id(idp.id.clone())
-    //    .protocol_id("oidc".to_string())
-    //    .user_groups(user_groups)
-    //    .build()
-    //    .map_err(AuthenticationError::from)?;
-    //authed_info.validate()?;
 
     let authz_info = get_authz_info(&state, auth_state.scope.as_ref()).await?;
     trace!("Granting the scope: {:?}", authz_info);
 
-    let mut token = state
+    let vsc = state
         .provider
         .get_token_provider()
-        .issue_token(&ctx, &authz_info)?;
-
-    token = state
-        .provider
-        .get_token_provider()
-        .expand_token_information(&state, &token)
-        .await
-        .map_err(KeystoneApiError::forbidden)?;
+        .issue_token_context(&state, &ctx, &authz_info)
+        .await?;
 
     let mut api_token = KeystoneTokenResponse {
-        token: build_api_token_v4(&token, &state).await?,
+        token: TokenBuilder::try_from(&vsc)?.build()?,
     };
     let catalog: Catalog = Catalog(
         state
@@ -379,7 +361,10 @@ pub async fn callback(
         StatusCode::OK,
         [(
             "X-Subject-Token",
-            state.provider.get_token_provider().encode_token(&token)?,
+            state
+                .provider
+                .get_token_provider()
+                .encode_token(vsc.token()?)?,
         )],
         Json(api_token),
     )

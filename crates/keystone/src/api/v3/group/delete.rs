@@ -83,7 +83,7 @@ mod tests {
     use openstack_keystone_core_types::identity::*;
 
     use super::super::openapi_router;
-    use crate::api::tests::get_mocked_state;
+    use crate::api::tests::{get_mocked_state, test_fixture_scoped};
     use crate::identity::{MockIdentityProvider, error::IdentityProviderError};
     use crate::provider::Provider;
 
@@ -112,17 +112,17 @@ mod tests {
             .withf(|_, id: &'_ str| id == "bar")
             .returning(|_, _| Ok(()));
 
+        let vsc = test_fixture_scoped();
         let state = get_mocked_state(
             Provider::mocked_builder().mock_identity(identity_mock),
             true,
-            None,
             None,
         )
         .await;
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
-            .with_state(state.clone());
+            .with_state(state);
 
         let response = api
             .as_service()
@@ -130,7 +130,7 @@ mod tests {
                 Request::builder()
                     .method("DELETE")
                     .uri("/foo")
-                    .header("x-auth-token", "foo")
+                    .extension(vsc.clone())
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -145,7 +145,7 @@ mod tests {
                 Request::builder()
                     .method("DELETE")
                     .uri("/bar")
-                    .header("x-auth-token", "foo")
+                    .extension(vsc)
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -160,7 +160,6 @@ mod tests {
         let state = crate::api::tests::get_mocked_state(
             crate::provider::Provider::mocked_builder(),
             false,
-            None,
             None,
         )
         .await;
@@ -199,10 +198,10 @@ mod tests {
                 }))
             });
 
+        let vsc = test_fixture_scoped();
         let state = get_mocked_state(
             Provider::mocked_builder().mock_identity(identity_mock),
             false,
-            None,
             None,
         )
         .await;
@@ -217,7 +216,7 @@ mod tests {
                 Request::builder()
                     .method("DELETE")
                     .uri("/foo")
-                    .header("x-auth-token", "foo")
+                    .extension(vsc)
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -235,10 +234,10 @@ mod tests {
             .withf(|_, id: &'_ str| id == "foo")
             .returning(|_, _| Ok(None));
 
+        let vsc = test_fixture_scoped();
         let state = get_mocked_state(
             Provider::mocked_builder().mock_identity(identity_mock),
             false,
-            None,
             None,
         )
         .await;
@@ -253,7 +252,7 @@ mod tests {
                 Request::builder()
                     .method("DELETE")
                     .uri("/foo")
-                    .header("x-auth-token", "foo")
+                    .extension(vsc)
                     .body(Body::empty())
                     .unwrap(),
             )

@@ -71,6 +71,8 @@
 //! current objective is to retain the existing Keystone Python implementation
 //! as the trusted, mature baseline and incrementally build the “Keystone-NG”
 //! Rust service as the complement.
+#![deny(clippy::unwrap_used)]
+
 use async_trait::async_trait;
 use sea_orm::{DatabaseConnection, Schema};
 

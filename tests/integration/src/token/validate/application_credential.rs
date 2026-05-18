@@ -16,18 +16,17 @@
 use chrono::Utc;
 use eyre::Report;
 use openstack_keystone::revoke::RevokeApi;
-use std::collections::HashSet;
 use tracing_test::traced_test;
 use uuid::Uuid;
 
 use openstack_keystone::application_credential::ApplicationCredentialApi;
 use openstack_keystone::auth::*;
-use openstack_keystone::token::{Token, TokenApi, TokenProviderError};
+use openstack_keystone::token::{FernetToken, TokenApi, TokenProviderError};
 use openstack_keystone_core_types::application_credential::*;
-use openstack_keystone_core_types::resource::ProjectBuilder;
+use openstack_keystone_core_types::resource::{DomainBuilder, ProjectBuilder};
 use openstack_keystone_core_types::role::*;
 
-use super::grant_role_to_user_on_project;
+use super::{grant_role_to_user_on_project, revoke_role_from_user_on_project};
 
 use crate::common::get_state;
 use crate::{create_domain, create_project, create_role, create_user};
@@ -62,11 +61,11 @@ async fn test_valid() -> Result<(), Report> {
         .await?;
 
     let auth = AuthenticationResultBuilder::default()
-        .context(AuthenticationContext::ApplicationCredential(
-            cred.clone().into(),
-        ))
+        .context(AuthenticationContext::ApplicationCredential {
+            application_credential: cred.clone().into(),
+            token: None,
+        })
         .principal(PrincipalInfo {
-            domain_id: Some(user.domain_id.clone()),
             identity: IdentityInfo::User(
                 UserIdentityInfoBuilder::default()
                     .user_id(user.id.clone())
@@ -78,39 +77,52 @@ async fn test_valid() -> Result<(), Report> {
         .unwrap();
     let ctx = SecurityContext::try_from(auth).unwrap();
 
-    let token = state.provider.get_token_provider().issue_token(
-        &ctx,
-        &AuthzInfo::Project(
-            ProjectBuilder::default()
-                .id(cred.project_id.clone())
-                .name(project.id.clone())
-                .domain_id(domain.id.clone())
-                .enabled(true)
-                .build()?,
-        ),
-    )?;
+    let vsc = state
+        .provider
+        .get_token_provider()
+        .issue_token_context(
+            &state,
+            &ctx,
+            &ScopeInfo::Project {
+                project: ProjectBuilder::default()
+                    .id(cred.project_id.clone())
+                    .name(project.id.clone())
+                    .domain_id(domain.id.clone())
+                    .enabled(true)
+                    .build()?,
+                project_domain: DomainBuilder::default()
+                    .id(domain.id.clone())
+                    .name(domain.name.clone())
+                    .enabled(true)
+                    .build()?,
+            },
+        )
+        .await?;
 
-    let encoded_token = state.provider.get_token_provider().encode_token(&token)?;
+    let encoded_token = state
+        .provider
+        .get_token_provider()
+        .encode_token(vsc.inner().token().unwrap())?;
 
     let unpacked_token = state
         .provider
         .get_token_provider()
-        .validate_token(&state, &encoded_token, None, None)
+        .validate_to_context(&state, &encoded_token, None, None)
         .await;
 
-    if let Ok(unpacked_token) = unpacked_token {
-        match unpacked_token {
-            Token::ApplicationCredential(ref data) => {
+    if let Ok(ref vsc_result) = unpacked_token {
+        match vsc_result.inner().token().unwrap() {
+            FernetToken::ApplicationCredential(data) => {
                 assert_eq!(data.application_credential_id, cred.id);
-                assert_eq!(
-                    HashSet::from_iter(
-                        unpacked_token
-                            .effective_roles()
-                            .expect("roles present in the token")
-                            .iter()
-                            .map(|role| role.id.clone())
-                    ),
-                    HashSet::from([role.id.clone()])
+                let roles = vsc_result
+                    .inner()
+                    .authorization()
+                    .expect("authz present")
+                    .effective_roles()
+                    .expect("roles present");
+                assert!(
+                    roles.iter().any(|r| r.id == role.id),
+                    "token should contain the granted role"
                 );
             }
             _ => {
@@ -153,11 +165,11 @@ async fn test_expired() -> Result<(), Report> {
         .await?;
 
     let auth = AuthenticationResultBuilder::default()
-        .context(AuthenticationContext::ApplicationCredential(
-            cred.clone().into(),
-        ))
+        .context(AuthenticationContext::ApplicationCredential {
+            application_credential: cred.clone().into(),
+            token: None,
+        })
         .principal(PrincipalInfo {
-            domain_id: Some(user.domain_id.clone()),
             identity: IdentityInfo::User(
                 UserIdentityInfoBuilder::default()
                     .user_id(user.id.clone())
@@ -168,30 +180,38 @@ async fn test_expired() -> Result<(), Report> {
         .build()
         .unwrap();
     let ctx = SecurityContext::try_from(auth).unwrap();
-    let token = state.provider.get_token_provider().issue_token(
-        &ctx,
-        &AuthzInfo::Project(
-            ProjectBuilder::default()
-                .id(cred.project_id.clone())
-                .name(project.id.clone())
-                .domain_id(domain.id.clone())
-                .enabled(true)
-                .build()?,
-        ),
-    )?;
-
-    let encoded_token = state.provider.get_token_provider().encode_token(&token)?;
-
-    let unpacked_token = state
+    let result = state
         .provider
         .get_token_provider()
-        .validate_token(&state, &encoded_token, None, None)
+        .issue_token_context(
+            &state,
+            &ctx,
+            &ScopeInfo::Project {
+                project: ProjectBuilder::default()
+                    .id(cred.project_id.clone())
+                    .name(project.id.clone())
+                    .domain_id(domain.id.clone())
+                    .enabled(true)
+                    .build()?,
+                project_domain: DomainBuilder::default()
+                    .id(domain.id.clone())
+                    .name(domain.name.clone())
+                    .enabled(true)
+                    .build()?,
+            },
+        )
         .await;
 
-    if let Err(TokenProviderError::Expired) = unpacked_token {
-    } else {
-        panic!("the token should be expired");
-    }
+    assert!(
+        matches!(
+            result,
+            Err(TokenProviderError::Authentication(
+                AuthenticationError::AuthApplicationCredentialExpired
+            ))
+        ),
+        "Token issuance should fail for expired application credential: {:?}",
+        result
+    );
 
     Ok(())
 }
@@ -225,11 +245,11 @@ async fn test_valid_fewer_roles() -> Result<(), Report> {
         .await?;
 
     let auth = AuthenticationResultBuilder::default()
-        .context(AuthenticationContext::ApplicationCredential(
-            cred.clone().into(),
-        ))
+        .context(AuthenticationContext::ApplicationCredential {
+            application_credential: cred.clone().into(),
+            token: None,
+        })
         .principal(PrincipalInfo {
-            domain_id: Some(user.domain_id.clone()),
             identity: IdentityInfo::User(
                 UserIdentityInfoBuilder::default()
                     .user_id(user.id.clone())
@@ -241,39 +261,56 @@ async fn test_valid_fewer_roles() -> Result<(), Report> {
         .unwrap();
     let ctx = SecurityContext::try_from(auth).unwrap();
 
-    let token = state.provider.get_token_provider().issue_token(
-        &ctx,
-        &AuthzInfo::Project(
-            ProjectBuilder::default()
-                .id(cred.project_id.clone())
-                .name(project.id.clone())
-                .domain_id(domain.id.clone())
-                .enabled(true)
-                .build()?,
-        ),
-    )?;
+    let vsc = state
+        .provider
+        .get_token_provider()
+        .issue_token_context(
+            &state,
+            &ctx,
+            &ScopeInfo::Project {
+                project: ProjectBuilder::default()
+                    .id(cred.project_id.clone())
+                    .name(project.id.clone())
+                    .domain_id(domain.id.clone())
+                    .enabled(true)
+                    .build()?,
+                project_domain: DomainBuilder::default()
+                    .id(domain.id.clone())
+                    .name(domain.name.clone())
+                    .enabled(true)
+                    .build()?,
+            },
+        )
+        .await?;
 
-    let encoded_token = state.provider.get_token_provider().encode_token(&token)?;
+    let encoded_token = state
+        .provider
+        .get_token_provider()
+        .encode_token(vsc.inner().token().unwrap())?;
 
     let unpacked_token = state
         .provider
         .get_token_provider()
-        .validate_token(&state, &encoded_token, None, None)
+        .validate_to_context(&state, &encoded_token, None, None)
         .await;
 
-    if let Ok(unpacked_token) = unpacked_token {
-        match unpacked_token {
-            Token::ApplicationCredential(ref data) => {
+    if let Ok(ref vsc_result) = unpacked_token {
+        match vsc_result.inner().token().unwrap() {
+            FernetToken::ApplicationCredential(data) => {
                 assert_eq!(data.application_credential_id, cred.id);
-                assert_eq!(
-                    HashSet::from_iter(
-                        unpacked_token
-                            .effective_roles()
-                            .expect("roles present in the token")
-                            .iter()
-                            .map(|role| role.id.clone())
-                    ),
-                    HashSet::from([role_a.id.clone()])
+                let roles = vsc_result
+                    .inner()
+                    .authorization()
+                    .expect("authz present")
+                    .effective_roles()
+                    .expect("roles present");
+                assert!(
+                    roles.iter().any(|r| r.id == role_a.id),
+                    "token should contain role_a from app cred"
+                );
+                assert!(
+                    !roles.iter().any(|r| r.id == role_b.id),
+                    "token should NOT contain role_b (not granted on project)"
                 );
             }
             _ => {
@@ -295,7 +332,8 @@ async fn test_valid_all_roles_revoked() -> Result<(), Report> {
     let domain = create_domain!(state)?;
     let project = create_project!(state, domain.id.clone())?;
     let user = create_user!(state, domain.id.clone())?;
-    let role_b = create_role!(state)?;
+    let role_a = create_role!(state)?;
+    grant_role_to_user_on_project(&state, &user.id, &project.id, &role_a.id).await?;
 
     let cred: ApplicationCredentialCreateResponse = state
         .provider
@@ -306,7 +344,7 @@ async fn test_valid_all_roles_revoked() -> Result<(), Report> {
                 access_rules: None,
                 name: Uuid::new_v4().to_string(),
                 project_id: project.id.clone(),
-                roles: vec![RoleRef::from(role_b.clone())],
+                roles: vec![RoleRef::from(role_a.clone())],
                 user_id: user.id.clone(),
                 ..Default::default()
             },
@@ -314,11 +352,11 @@ async fn test_valid_all_roles_revoked() -> Result<(), Report> {
         .await?;
 
     let auth = AuthenticationResultBuilder::default()
-        .context(AuthenticationContext::ApplicationCredential(
-            cred.clone().into(),
-        ))
+        .context(AuthenticationContext::ApplicationCredential {
+            application_credential: cred.clone().into(),
+            token: None,
+        })
         .principal(PrincipalInfo {
-            domain_id: Some(user.domain_id.clone()),
             identity: IdentityInfo::User(
                 UserIdentityInfoBuilder::default()
                     .user_id(user.id.clone())
@@ -330,30 +368,46 @@ async fn test_valid_all_roles_revoked() -> Result<(), Report> {
         .unwrap();
     let ctx = SecurityContext::try_from(auth).unwrap();
 
-    let token = state.provider.get_token_provider().issue_token(
-        &ctx,
-        &AuthzInfo::Project(
-            ProjectBuilder::default()
-                .id(cred.project_id.clone())
-                .name(project.id.clone())
-                .domain_id(domain.id.clone())
-                .enabled(true)
-                .build()?,
-        ),
-    )?;
+    let vsc = state
+        .provider
+        .get_token_provider()
+        .issue_token_context(
+            &state,
+            &ctx,
+            &ScopeInfo::Project {
+                project: ProjectBuilder::default()
+                    .id(cred.project_id.clone())
+                    .name(project.id.clone())
+                    .domain_id(domain.id.clone())
+                    .enabled(true)
+                    .build()?,
+                project_domain: DomainBuilder::default()
+                    .id(domain.id.clone())
+                    .name(domain.name.clone())
+                    .enabled(true)
+                    .build()?,
+            },
+        )
+        .await?;
 
-    let encoded_token = state.provider.get_token_provider().encode_token(&token)?;
-
+    let encoded_token = state
+        .provider
+        .get_token_provider()
+        .encode_token(vsc.inner().token().unwrap())?;
+    revoke_role_from_user_on_project(&state, &user.id, &project.id, &role_a.id).await?;
     let unpacked_token = state
         .provider
         .get_token_provider()
-        .validate_token(&state, &encoded_token, None, None)
+        .validate_to_context(&state, &encoded_token, None, None)
         .await;
 
-    if let Err(TokenProviderError::ActorHasNoRolesOnTarget) = unpacked_token {
+    if let Err(TokenProviderError::Authentication(AuthenticationError::ActorHasNoRolesOnTarget)) =
+        &unpacked_token
+    {
     } else {
         panic!(
-            "should have returned error since the application credential is not having any active role assignment"
+            "should have returned error since the application credential is not having any active role assignment: {:?}",
+            unpacked_token
         );
     }
     Ok(())
@@ -387,11 +441,11 @@ async fn test_token_revoked() -> Result<(), Report> {
         .await?;
 
     let auth = AuthenticationResultBuilder::default()
-        .context(AuthenticationContext::ApplicationCredential(
-            cred.clone().into(),
-        ))
+        .context(AuthenticationContext::ApplicationCredential {
+            application_credential: cred.clone().into(),
+            token: None,
+        })
         .principal(PrincipalInfo {
-            domain_id: Some(user.domain_id.clone()),
             identity: IdentityInfo::User(
                 UserIdentityInfoBuilder::default()
                     .user_id(user.id.clone())
@@ -403,37 +457,50 @@ async fn test_token_revoked() -> Result<(), Report> {
         .unwrap();
     let ctx = SecurityContext::try_from(auth).unwrap();
 
-    let token = state.provider.get_token_provider().issue_token(
-        &ctx,
-        &AuthzInfo::Project(
-            ProjectBuilder::default()
-                .id(cred.project_id.clone())
-                .name(project.id.clone())
-                .domain_id(domain.id.clone())
-                .enabled(true)
-                .build()?,
-        ),
-    )?;
-
-    let encoded_token = state.provider.get_token_provider().encode_token(&token)?;
-
-    let token = state
+    let vsc = state
         .provider
         .get_token_provider()
-        .validate_token(&state, &encoded_token, None, None)
+        .issue_token_context(
+            &state,
+            &ctx,
+            &ScopeInfo::Project {
+                project: ProjectBuilder::default()
+                    .id(cred.project_id.clone())
+                    .name(project.id.clone())
+                    .domain_id(domain.id.clone())
+                    .enabled(true)
+                    .build()?,
+                project_domain: DomainBuilder::default()
+                    .id(domain.id.clone())
+                    .name(domain.name.clone())
+                    .enabled(true)
+                    .build()?,
+            },
+        )
+        .await?;
+
+    let encoded_token = state
+        .provider
+        .get_token_provider()
+        .encode_token(vsc.inner().token().unwrap())?;
+
+    let vsc = state
+        .provider
+        .get_token_provider()
+        .validate_to_context(&state, &encoded_token, None, None)
         .await?;
 
     state
         .provider
         .get_revoke_provider()
-        .revoke_token(&state, &token)
+        .revoke_token(&state, vsc.inner().token().unwrap())
         .await?;
 
     assert!(
         state
             .provider
             .get_revoke_provider()
-            .is_token_revoked(&state, &token)
+            .is_token_revoked(&state, &vsc)
             .await?
     );
     Ok(())

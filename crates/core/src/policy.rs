@@ -17,13 +17,18 @@
 //! be invoked either with the HTTP request or as a WASM module.
 
 use async_trait::async_trait;
+use derive_builder::Builder;
 #[cfg(any(test, feature = "mock"))]
 use mockall::mock;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
 
-use crate::token::Token;
+use openstack_keystone_core_types::auth::*;
+use openstack_keystone_core_types::trust::Trust;
+
+use crate::auth::ValidatedSecurityContext;
+use crate::error::BuilderError;
 
 /// Policy related error.
 #[derive(Debug, Error)]
@@ -50,13 +55,25 @@ pub enum PolicyError {
     #[error(transparent)]
     Join(#[from] tokio::task::JoinError),
 
-    /// Json serializaion error.
+    /// Json serialization error.
     #[error(transparent)]
     Json(#[from] serde_json::Error),
 
     /// HTTP client error.
     #[error(transparent)]
     Reqwest(#[from] reqwest::Error),
+
+    /// The security context must be resolved before the use.
+    #[error("security context is not resolved")]
+    SecurityContextNotResolved,
+
+    /// Structures builder error.
+    #[error(transparent)]
+    StructBuilder {
+        /// The source of the error.
+        #[from]
+        source: BuilderError,
+    },
 
     /// Unsupported access scheme.
     #[error("unsupported scheme {0}")]
@@ -97,7 +114,7 @@ pub trait PolicyEnforcer: Send + Sync {
     async fn enforce(
         &self,
         policy_name: &'static str,
-        credentials: &Token,
+        credentials: &ValidatedSecurityContext,
         target: Value,
         update: Option<Value>,
     ) -> Result<PolicyEvaluationResult, PolicyError>;
@@ -121,7 +138,7 @@ mock! {
         async fn enforce(
             &self,
             policy_name: &'static str,
-            credentials: &Token,
+            credentials: &ValidatedSecurityContext,
             target: Value,
             current: Option<Value>
         ) -> Result<PolicyEvaluationResult, PolicyError>;
@@ -138,19 +155,37 @@ pub enum EvaluationError {
 }
 
 /// OpenPolicyAgent `Credentials` object.
-#[derive(Serialize, Debug)]
+#[derive(Builder, Serialize, Debug)]
+#[builder(build_fn(error = "BuilderError"))]
+#[builder(setter(into, strip_option))]
 pub struct Credentials {
+    /// User ID.
     pub user_id: String,
+
+    /// List of roles the principal has on the scope.
+    #[serde(rename(serialize = "roles"))]
     pub roles: Vec<String>,
+
+    // TODO: replace scope info with a flattened enum
+    #[builder(default)]
     #[serde(default)]
     pub project_id: Option<String>,
+
+    #[builder(default)]
     #[serde(default)]
     pub domain_id: Option<String>,
+
+    #[builder(default)]
     #[serde(default)]
     pub system: Option<String>,
+
+    #[builder(default)]
+    #[serde(default)]
+    pub trust: Option<Trust>,
 }
 
-impl From<&Token> for Credentials {
+impl TryFrom<&ValidatedSecurityContext> for Credentials {
+    type Error = PolicyError;
     /// Convert a token into credentials for policy evaluation.
     ///
     /// # Parameters
@@ -158,21 +193,42 @@ impl From<&Token> for Credentials {
     ///
     /// # Returns
     /// - `Self` - The constructed `Credentials` object.
-    fn from(token: &Token) -> Self {
-        Self {
-            user_id: token.user_id().clone(),
-            roles: token
-                .effective_roles()
-                .map(|x| {
-                    x.iter()
-                        .filter_map(|role| role.name.clone())
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_default(),
-            project_id: token.project().map(|val| val.id.clone()),
-            domain_id: token.domain().map(|val| val.id.clone()),
-            system: None,
+    fn try_from(sc: &ValidatedSecurityContext) -> Result<Self, Self::Error> {
+        let mut builder = CredentialsBuilder::default();
+        builder.user_id(sc.principal().get_user_id());
+        if let Some(authz) = sc.authorization() {
+            match &authz.scope {
+                ScopeInfo::Domain(domain) => {
+                    builder.domain_id(domain.id.clone());
+                }
+                ScopeInfo::Project { project, .. } => {
+                    builder.project_id(project.id.clone());
+                }
+                ScopeInfo::System(system) => {
+                    builder.system(system.clone());
+                }
+                ScopeInfo::TrustProject(tpi) => {
+                    builder.project_id(tpi.project.id.clone());
+                    builder.trust(tpi.trust.clone());
+                }
+                ScopeInfo::Unscoped => {}
+            }
+            if !matches!(authz.scope, ScopeInfo::Unscoped) {
+                if let Some(roles) = &authz.effective_roles() {
+                    builder.roles(
+                        roles
+                            .iter()
+                            .filter_map(|role| role.name.clone())
+                            .collect::<Vec<_>>(),
+                    );
+                } else {
+                    return Err(PolicyError::SecurityContextNotResolved);
+                }
+            }
         }
+        let cred = builder.build()?;
+        tracing::info!("Converted {:?} into {:?}", sc, cred);
+        Ok(cred)
     }
 }
 
