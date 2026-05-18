@@ -26,6 +26,7 @@ use openstack_keystone_core_types::assignment::AssignmentProviderError;
 use openstack_keystone_core_types::auth::AuthenticationError;
 use openstack_keystone_core_types::catalog::CatalogProviderError;
 use openstack_keystone_core_types::error::BuilderError;
+use openstack_keystone_core_types::error::KeystoneError;
 use openstack_keystone_core_types::identity::IdentityProviderError;
 use openstack_keystone_core_types::resource::ResourceProviderError;
 use openstack_keystone_core_types::revoke::RevokeProviderError;
@@ -75,15 +76,25 @@ impl From<JsonRejection> for KeystoneApiError {
 impl From<AuthenticationError> for KeystoneApiError {
     fn from(value: AuthenticationError) -> Self {
         match value {
-            AuthenticationError::AuthPrincipalDiffers => {
+            AuthenticationError::ActorHasNoRolesOnTarget => {
+                KeystoneApiError::unauthorized(value, None::<String>)
+            }
+            AuthenticationError::AuthnPrincipalMismatch => {
+                KeystoneApiError::unauthorized(value, None::<String>)
+            }
+            AuthenticationError::AuthzPrincipalMismatch => {
                 KeystoneApiError::unauthorized(value, None::<String>)
             }
             AuthenticationError::DomainDisabled(..) => {
                 KeystoneApiError::unauthorized(value, None::<String>)
             }
+            AuthenticationError::PrincipalDomainIdMissing => {
+                KeystoneApiError::unauthorized(value, None::<String>)
+            }
             AuthenticationError::ProjectDisabled(..) => {
                 KeystoneApiError::unauthorized(value, None::<String>)
             }
+            AuthenticationError::SecurityContextNotResolved => KeystoneApiError::internal(value),
             AuthenticationError::ScopeNotAllowed => {
                 KeystoneApiError::unauthorized(value, None::<String>)
             }
@@ -125,6 +136,9 @@ impl From<AuthenticationError> for KeystoneApiError {
             }
             AuthenticationError::Validation { source } => {
                 KeystoneApiError::InternalError(source.to_string())
+            }
+            AuthenticationError::RoleConversionFailed => {
+                KeystoneApiError::InternalError(value.to_string())
             }
         }
     }
@@ -216,6 +230,10 @@ impl From<TokenProviderError> for KeystoneApiError {
     fn from(value: TokenProviderError) -> Self {
         match value {
             TokenProviderError::Authentication(source) => source.into(),
+            TokenProviderError::TrustorDomainDisabled
+            | TokenProviderError::TrustorUserDisabled(_) => {
+                Self::unauthorized(value, None::<String>)
+            }
             TokenProviderError::DomainDisabled(x) => Self::NotFound {
                 resource: "domain".into(),
                 identifier: x,
@@ -254,5 +272,27 @@ impl From<uuid::Error> for KeystoneApiError {
 impl From<validator::ValidationErrors> for KeystoneApiError {
     fn from(value: validator::ValidationErrors) -> Self {
         Self::BadRequest(value.to_string())
+    }
+}
+
+impl From<KeystoneError> for KeystoneApiError {
+    fn from(value: KeystoneError) -> Self {
+        match value {
+            //KeystoneError::ApplicationCredential { source } => source.into(),
+            KeystoneError::AssignmentProvider { source } => source.into(),
+            KeystoneError::Authentication { source } => source.into(),
+            KeystoneError::CatalogProvider { source } => source.into(),
+            KeystoneError::FederationProvider { source } => source.into(),
+            //KeystoneError::IdentityMapping { source } => source.into(),
+            KeystoneError::Json { source } => source.into(),
+            KeystoneError::K8sAuthProvider { source } => source.into(),
+            KeystoneError::PolicyEnforcementNotAvailable => KeystoneApiError::internal(value),
+            KeystoneError::ResourceProvider { source } => source.into(),
+            KeystoneError::RevokeProvider { source } => source.into(),
+            KeystoneError::RoleProvider { source } => source.into(),
+            KeystoneError::TokenProvider { source } => source.into(),
+            KeystoneError::TrustProvider { source } => source.into(),
+            _ => KeystoneApiError::internal(value),
+        }
     }
 }

@@ -156,7 +156,7 @@ mod tests {
     use openstack_keystone_core_types::k8s_auth as provider_types;
 
     use super::{super::openapi_router, *};
-    use crate::api::tests::get_mocked_state;
+    use crate::api::tests::{get_mocked_state, test_fixture_scoped};
     use crate::k8s_auth::{MockK8sAuthProvider, api::types::K8sAuthRole};
     use crate::provider::Provider;
 
@@ -186,7 +186,10 @@ mod tests {
             });
 
         provider = provider.mock_k8s_auth(mock);
-        let state = get_mocked_state(provider, true, None, None).await;
+        let vsc = test_fixture_scoped();
+
+        // skip_default_token_provider=true since we inject VSC via extension
+        let state = get_mocked_state(provider, true, None).await;
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -198,7 +201,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri("/instances/cid/roles/foo")
-                    .header("x-auth-token", "foo")
+                    .extension(vsc.clone())
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -212,7 +215,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri("/instances/cid/roles/bar")
-                    .header("x-auth-token", "foo")
+                    .extension(vsc.clone())
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -244,7 +247,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri("/roles/foo")
-                    .header("x-auth-token", "foo")
+                    .extension(vsc.clone())
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -258,7 +261,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri("/roles/bar")
-                    .header("x-auth-token", "foo")
+                    .extension(vsc.clone())
                     .body(Body::empty())
                     .unwrap(),
             )

@@ -28,7 +28,7 @@ use openstack_keystone_api_types::v4::auth::token::TokenResponse;
 use openstack_keystone_core::token::TokenApi;
 use openstack_keystone_core::{api::v4::auth::token::token_impl::build_api_token_v4, auth::*};
 use openstack_keystone_core::{
-    auth::{AuthzInfo, SecurityContext},
+    auth::{ScopeInfo, SecurityContext},
     identity::IdentityApi,
 };
 
@@ -161,7 +161,7 @@ pub async fn finish(
         .core
         .provider
         .get_token_provider()
-        .issue_token(&ctx, &AuthzInfo::Unscoped)?;
+        .issue_token(&ctx, &ScopeInfo::Unscoped)?;
 
     let api_token = TokenResponse {
         token: build_api_token_v4(&token, &state.core).await?,

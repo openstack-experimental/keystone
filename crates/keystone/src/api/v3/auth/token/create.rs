@@ -52,6 +52,12 @@ pub(super) async fn create(
     let auth_res = authenticate_request(&state, &req).await?;
     let ctx = SecurityContext::try_from(auth_res)?;
     let authz_info = get_authz_info(&state, &req).await?;
+
+    if let Some(bound) = &ctx.authorization {
+        if bound.scope != authz_info {
+            return Err(AuthenticationError::ScopeNotAllowed)?;
+        }
+    }
     // This is a new authentication/reauthentication. Check if that is allowed at
     // all
     if let Some(token_restriction) = &ctx.token_restriction

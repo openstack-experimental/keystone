@@ -18,6 +18,7 @@ use thiserror::Error;
 
 use crate::application_credential::ApplicationCredentialProviderError;
 use crate::assignment::AssignmentProviderError;
+use crate::auth::AuthenticationError;
 use crate::catalog::CatalogProviderError;
 use crate::federation::FederationProviderError;
 use crate::identity::IdentityProviderError;
@@ -73,6 +74,14 @@ pub enum KeystoneError {
         /// The source of the error.
         #[from]
         source: AssignmentProviderError,
+    },
+
+    /// Authentication error.
+    #[error(transparent)]
+    Authentication {
+        /// The source of the error.
+        #[from]
+        source: AuthenticationError,
     },
 
     /// Catalog provider.

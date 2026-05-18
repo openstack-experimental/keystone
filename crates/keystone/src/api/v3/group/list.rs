@@ -75,7 +75,7 @@ mod tests {
     use tower_http::trace::TraceLayer;
 
     use super::super::openapi_router;
-    use crate::api::tests::get_mocked_state;
+    use crate::api::tests::{get_mocked_state, test_fixture_scoped};
     use crate::identity::MockIdentityProvider;
     use crate::{
         api::v3::group::types::{GroupBuilder as ApiGroupBuilder, GroupList},
@@ -98,10 +98,10 @@ mod tests {
                 }])
             });
 
+        let vsc = test_fixture_scoped();
         let state = get_mocked_state(
             Provider::mocked_builder().mock_identity(identity_mock),
             true,
-            None,
             None,
         )
         .await;
@@ -115,7 +115,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri("/")
-                    .header("x-auth-token", "foo")
+                    .extension(vsc)
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -152,10 +152,10 @@ mod tests {
             })
             .returning(|_, _| Ok(Vec::new()));
 
+        let vsc = test_fixture_scoped();
         let state = get_mocked_state(
             Provider::mocked_builder().mock_identity(identity_mock),
             true,
-            None,
             None,
         )
         .await;
@@ -169,7 +169,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri("/?domain_id=domain&name=name")
-                    .header("x-auth-token", "foo")
+                    .extension(vsc)
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -184,7 +184,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_list_unauth() {
-        let state = get_mocked_state(Provider::mocked_builder(), false, None, None).await;
+        let state = get_mocked_state(Provider::mocked_builder(), false, None).await;
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -201,10 +201,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_list_not_allowed() {
+        let vsc = test_fixture_scoped();
         let state = crate::api::tests::get_mocked_state(
             crate::provider::Provider::mocked_builder(),
             false,
-            None,
             None,
         )
         .await;
@@ -218,7 +218,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri("/")
-                    .header("x-auth-token", "foo")
+                    .extension(vsc)
                     .body(Body::empty())
                     .unwrap(),
             )

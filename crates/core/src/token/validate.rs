@@ -201,18 +201,27 @@ pub async fn validate_token_subject(
                     return Err(TokenProviderError::UserIsNotTrustee);
                 }
 
-                // Resolve and verify trustor domain is enabled
-                let trustor_domain_id = state
+                // Resolve and verify trustor user is enabled and resolves to a
+                // domain that is also enabled
+                let trustor = state
                     .provider
                     .get_identity_provider()
-                    .get_user_domain_id(state, &trust.trustor_user_id)
+                    .get_user(state, &trust.trustor_user_id)
                     .await?;
+                let trustor = trustor.ok_or_else(|| {
+                    TokenProviderError::UserNotFound(trust.trustor_user_id.clone())
+                })?;
+                if !trustor.enabled {
+                    return Err(TokenProviderError::TrustorUserDisabled(
+                        trust.trustor_user_id.clone(),
+                    ));
+                }
 
-                if user_domain_id != trustor_domain_id
+                if user_domain_id != trustor.domain_id
                     && !state
                         .provider
                         .get_resource_provider()
-                        .get_domain_enabled(state, &trustor_domain_id)
+                        .get_domain_enabled(state, &trustor.domain_id)
                         .await?
                 {
                     return Err(TokenProviderError::TrustorDomainDisabled);

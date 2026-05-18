@@ -129,7 +129,7 @@ async fn test_revoke_user_project_grant_auth_impact() -> Result<()> {
         )
         .await?;
 
-    let authz = AuthzInfo::Project(
+    let authz = ScopeInfo::Project(
         ProjectBuilder::default()
             .id(cred.project_id.clone())
             .name(project.id.clone())

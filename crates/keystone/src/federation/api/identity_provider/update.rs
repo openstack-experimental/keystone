@@ -101,7 +101,7 @@ mod tests {
     use openstack_keystone_core_types::federation as provider_types;
 
     use super::{super::openapi_router, *};
-    use crate::api::tests::get_mocked_state;
+    use crate::api::tests::{get_mocked_state, test_fixture_scoped};
     use crate::federation::MockFederationProvider;
     use crate::provider::Provider;
 
@@ -136,10 +136,11 @@ mod tests {
                 })
             });
 
+        let vsc = test_fixture_scoped();
+
         let state = get_mocked_state(
             Provider::mocked_builder().mock_federation(federation_mock),
             true,
-            None,
             None,
         )
         .await;
@@ -163,7 +164,7 @@ mod tests {
                     .method("PUT")
                     .header(header::CONTENT_TYPE, "application/json")
                     .uri("/1")
-                    .header("x-auth-token", "foo")
+                    .extension(vsc)
                     .body(Body::from(serde_json::to_string(&req).unwrap()))
                     .unwrap(),
             )

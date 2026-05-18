@@ -598,6 +598,9 @@ impl TokenApi for TokenService {
                 ))?;
             ctx.token_restriction(token_restriction.to_owned());
         }
+        if let Some(authorization) = token.authorization() {
+            ctx.authorization(authorization);
+        }
         Ok(ctx.build().map_err(AuthenticationError::from)?)
     }
 
@@ -631,7 +634,8 @@ impl TokenApi for TokenService {
             return Err(TokenProviderError::Expired);
         }
 
-        // Expand the token unless `expand = Some(false)`
+        // Revocation check builds list filters by the token audit_id, user_id,
+        // project_id and the roles. Token must thus be fully expanded.
         token = self.expand_token_information(state, &token).await?;
 
         if state
@@ -669,7 +673,7 @@ impl TokenApi for TokenService {
     ///
     /// # Parameters
     /// - `authentication_info`: Information about the authenticated user.
-    /// - `authz_info`: Authorization scope.
+    /// - `scope`: Scope for the token.
     /// - `token_restrictions`: Optional restrictions for the token.
     ///
     /// # Returns
@@ -677,7 +681,7 @@ impl TokenApi for TokenService {
     fn issue_token(
         &self,
         ctx: &SecurityContext,
-        authz_info: &AuthzInfo,
+        scope: &ScopeInfo,
     ) -> Result<Token, TokenProviderError> {
         // This should be executed already, but let's better repeat it as last line of
         // defense. It is also necessary to call this before to stop before we
@@ -686,10 +690,10 @@ impl TokenApi for TokenService {
 
         // Check whether it is allowed to change the scope of the token if
         // AuthenticatedInfo already contains scope it was issued for.
-        ctx.validate_scope_boundaries(authz_info)?;
+        ctx.validate_scope_boundaries(scope)?;
         let token = Token::from_security_context_with_scope(
             ctx,
-            authz_info,
+            scope,
             self.get_new_token_expiry(&ctx.expires_at)?,
         )?;
         Ok(token)

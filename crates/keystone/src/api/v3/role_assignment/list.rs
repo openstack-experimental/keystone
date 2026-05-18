@@ -90,7 +90,7 @@ mod tests {
     };
 
     use super::super::openapi_router;
-    use crate::api::tests::get_mocked_state;
+    use crate::api::tests::{get_mocked_state, test_fixture_scoped};
     use crate::api::v3::role_assignment::types::{
         Assignment as ApiAssignment, AssignmentList as ApiAssignmentList, Project, Role, Scope,
         User,
@@ -116,10 +116,10 @@ mod tests {
                 }])
             });
 
+        let vsc = test_fixture_scoped();
         let state = get_mocked_state(
             Provider::mocked_builder().mock_assignment(assignment_mock),
             true,
-            None,
             None,
         )
         .await;
@@ -133,7 +133,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri("/role_assignments")
-                    .header("x-auth-token", "foo")
+                    .extension(vsc)
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -228,10 +228,10 @@ mod tests {
                 }])
             });
 
+        let vsc = test_fixture_scoped();
         let state = get_mocked_state(
             Provider::mocked_builder().mock_assignment(assignment_mock),
             true,
-            None,
             None,
         )
         .await;
@@ -245,7 +245,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri("/role_assignments?role.id=role&user.id=user1&scope.project.id=project1")
-                    .header("x-auth-token", "foo")
+                    .extension(vsc.clone())
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -262,7 +262,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri("/role_assignments?role.id=role&user.id=user2&scope.domain.id=domain2")
-                    .header("x-auth-token", "foo")
+                    .extension(vsc.clone())
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -276,7 +276,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri("/role_assignments?group.id=group3&scope.project.id=project3")
-                    .header("x-auth-token", "foo")
+                    .extension(vsc)
                     .body(Body::empty())
                     .unwrap(),
             )

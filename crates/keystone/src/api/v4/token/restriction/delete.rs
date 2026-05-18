@@ -97,12 +97,13 @@ mod tests {
     use openstack_keystone_core_types::token as provider_types;
 
     use super::super::{openapi_router, tests::get_token_provider_mock_with_mocks};
-    use crate::api::tests::get_mocked_state;
+    use crate::api::tests::{get_mocked_state, test_fixture_scoped};
     use crate::provider::Provider;
     use crate::token::TokenProviderError;
 
     #[tokio::test]
     async fn test_delete() {
+        let vsc = test_fixture_scoped();
         let mut token_mock = get_token_provider_mock_with_mocks();
         token_mock
             .expect_get_token_restriction()
@@ -148,7 +149,6 @@ mod tests {
             Provider::mocked_builder().mock_token(token_mock),
             true,
             None,
-            Some(true),
         )
         .await;
 
@@ -162,7 +162,7 @@ mod tests {
                 Request::builder()
                     .method("DELETE")
                     .uri("/foo")
-                    .header("x-auth-token", "foo")
+                    .extension(vsc.clone())
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -177,7 +177,7 @@ mod tests {
                 Request::builder()
                     .method("DELETE")
                     .uri("/bar")
-                    .header("x-auth-token", "foo")
+                    .extension(vsc)
                     .body(Body::empty())
                     .unwrap(),
             )

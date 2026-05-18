@@ -144,7 +144,7 @@ mod tests {
     use openstack_keystone_core_types::resource::Domain;
 
     use super::super::openapi_router;
-    use crate::api::tests::get_mocked_state;
+    use crate::api::tests::{get_mocked_state, test_fixture_scoped};
     use crate::api::v3::auth::token::types::*;
     use crate::catalog::MockCatalogProvider;
     use crate::identity::MockIdentityProvider;
@@ -205,7 +205,8 @@ mod tests {
             .mock_token(token_mock)
             .mock_catalog(catalog_mock);
 
-        let state = get_mocked_state(provider, true, None, Some(true)).await;
+        let vsc = test_fixture_scoped();
+        let state = get_mocked_state(provider, true, None).await;
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -216,7 +217,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri("/")
-                    .header("x-auth-token", "foo")
+                    .extension(vsc.clone())
                     .header("x-subject-token", "foo")
                     .body(Body::empty())
                     .unwrap(),
@@ -234,7 +235,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri("/")
-                    .header("x-auth-token", "foo")
+                    .extension(vsc)
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -309,7 +310,8 @@ mod tests {
             .mock_token(token_mock)
             .mock_catalog(catalog_mock);
 
-        let state = get_mocked_state(provider, true, None, Some(true)).await;
+        let vsc = test_fixture_scoped();
+        let state = get_mocked_state(provider, true, None).await;
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -320,7 +322,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri("/?allow_expired=true")
-                    .header("x-auth-token", "foo")
+                    .extension(vsc)
                     .header("x-subject-token", "bar")
                     .body(Body::empty())
                     .unwrap(),
@@ -349,7 +351,8 @@ mod tests {
             .returning(|_, _, _, _| Err(TokenProviderError::Expired));
 
         let provider = Provider::mocked_builder().mock_token(token_mock);
-        let state = get_mocked_state(provider, true, None, Some(true)).await;
+        let vsc = test_fixture_scoped();
+        let state = get_mocked_state(provider, true, None).await;
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -360,7 +363,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri("/")
-                    .header("x-auth-token", "foo")
+                    .extension(vsc)
                     .header("x-subject-token", "baz")
                     .body(Body::empty())
                     .unwrap(),
@@ -390,7 +393,8 @@ mod tests {
 
         let provider = Provider::mocked_builder().mock_token(token_mock);
 
-        let state = get_mocked_state(provider, true, None, Some(true)).await;
+        let vsc = test_fixture_scoped();
+        let state = get_mocked_state(provider, true, None).await;
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -401,7 +405,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri("/")
-                    .header("x-auth-token", "foo")
+                    .extension(vsc)
                     .header("x-subject-token", "baz")
                     .body(Body::empty())
                     .unwrap(),
@@ -414,7 +418,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_unauth() {
-        let state = get_mocked_state(Provider::mocked_builder(), false, None, None).await;
+        let state = get_mocked_state(Provider::mocked_builder(), false, None).await;
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())

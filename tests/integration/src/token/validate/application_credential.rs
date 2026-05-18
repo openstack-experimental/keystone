@@ -80,7 +80,7 @@ async fn test_valid() -> Result<(), Report> {
 
     let token = state.provider.get_token_provider().issue_token(
         &ctx,
-        &AuthzInfo::Project(
+        &ScopeInfo::Project(
             ProjectBuilder::default()
                 .id(cred.project_id.clone())
                 .name(project.id.clone())
@@ -170,7 +170,7 @@ async fn test_expired() -> Result<(), Report> {
     let ctx = SecurityContext::try_from(auth).unwrap();
     let token = state.provider.get_token_provider().issue_token(
         &ctx,
-        &AuthzInfo::Project(
+        &ScopeInfo::Project(
             ProjectBuilder::default()
                 .id(cred.project_id.clone())
                 .name(project.id.clone())
@@ -243,7 +243,7 @@ async fn test_valid_fewer_roles() -> Result<(), Report> {
 
     let token = state.provider.get_token_provider().issue_token(
         &ctx,
-        &AuthzInfo::Project(
+        &ScopeInfo::Project(
             ProjectBuilder::default()
                 .id(cred.project_id.clone())
                 .name(project.id.clone())
@@ -332,7 +332,7 @@ async fn test_valid_all_roles_revoked() -> Result<(), Report> {
 
     let token = state.provider.get_token_provider().issue_token(
         &ctx,
-        &AuthzInfo::Project(
+        &ScopeInfo::Project(
             ProjectBuilder::default()
                 .id(cred.project_id.clone())
                 .name(project.id.clone())
@@ -405,7 +405,7 @@ async fn test_token_revoked() -> Result<(), Report> {
 
     let token = state.provider.get_token_provider().issue_token(
         &ctx,
-        &AuthzInfo::Project(
+        &ScopeInfo::Project(
             ProjectBuilder::default()
                 .id(cred.project_id.clone())
                 .name(project.id.clone())

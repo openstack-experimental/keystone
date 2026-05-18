@@ -101,7 +101,7 @@ mod tests {
     use tower_http::trace::TraceLayer;
 
     use super::super::openapi_router;
-    use crate::api::tests::get_mocked_state;
+    use crate::api::tests::{get_mocked_state, test_fixture_scoped};
     use crate::provider::Provider;
     use crate::revoke::MockRevokeProvider;
     use crate::token::{
@@ -169,7 +169,8 @@ mod tests {
             .mock_token(token_mock)
             .mock_revoke(revoke_mock);
 
-        let state = get_mocked_state(provider, true, None, Some(true)).await;
+        let vsc = test_fixture_scoped();
+        let state = get_mocked_state(provider, true, None).await;
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -181,7 +182,7 @@ mod tests {
                 Request::builder()
                     .uri("/")
                     .method("DELETE")
-                    .header("x-auth-token", "foo")
+                    .extension(vsc)
                     .header("x-subject-token", "baz")
                     .body(Body::empty())
                     .unwrap(),
@@ -203,7 +204,8 @@ mod tests {
 
         let provider = Provider::mocked_builder().mock_token(token_mock);
 
-        let state = get_mocked_state(provider, true, None, Some(true)).await;
+        let vsc = test_fixture_scoped();
+        let state = get_mocked_state(provider, true, None).await;
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -215,7 +217,7 @@ mod tests {
                 Request::builder()
                     .uri("/")
                     .method("DELETE")
-                    .header("x-auth-token", "foo")
+                    .extension(vsc)
                     .header("x-subject-token", "baz")
                     .body(Body::empty())
                     .unwrap(),
@@ -236,7 +238,8 @@ mod tests {
             .returning(move |_, _, _, _| Err(TokenProviderError::TokenRevoked));
 
         let provider = Provider::mocked_builder().mock_token(token_mock);
-        let state = get_mocked_state(provider, true, None, Some(true)).await;
+        let vsc = test_fixture_scoped();
+        let state = get_mocked_state(provider, true, None).await;
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -248,7 +251,7 @@ mod tests {
                 Request::builder()
                     .uri("/")
                     .method("DELETE")
-                    .header("x-auth-token", "foo")
+                    .extension(vsc)
                     .header("x-subject-token", "baz")
                     .body(Body::empty())
                     .unwrap(),

@@ -144,9 +144,13 @@ pub enum TokenProviderError {
     #[error(transparent)]
     TrustProvider(#[from] TrustProviderError),
 
-    /// The user domain of the trustee is disabled.
-    #[error("trustee domain disabled")]
+    /// The trustor domain is disabled.
+    #[error("trustor domain disabled")]
     TrustorDomainDisabled,
+
+    /// The trustor user is disabled.
+    #[error("trustor user disabled")]
+    TrustorUserDisabled(String),
 
     /// Unsupported token restriction driver.
     #[error("driver `{0}` is not supported for the token provider")]

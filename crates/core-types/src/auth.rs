@@ -35,6 +35,7 @@ use crate::application_credential::ApplicationCredential;
 use crate::error::BuilderError;
 use crate::identity::{Group, UserResponse};
 use crate::resource::{Domain, Project};
+use crate::role::RoleRef;
 use crate::token::TokenRestriction;
 use crate::trust::Trust;
 
@@ -43,17 +44,34 @@ const NAMESPACE_UUID: Uuid = uuid!("96f0e3b8-0d21-41bc-bd0d-457da94345f9");
 
 #[derive(Error, Debug)]
 pub enum AuthenticationError {
-    /// Auth principal mismatch.
-    #[error("the principal differs in authentication results")]
-    AuthPrincipalDiffers,
+    /// Actor has no roles on the target scope.
+    #[error("actor has no roles on scope")]
+    ActorHasNoRolesOnTarget,
+
+    /// AuthenticationContext is bound to the user not matching the
+    /// SecurityContext principal.
+    #[error("authorization context bind is not owned by a context principal")]
+    AuthzPrincipalMismatch,
+
+    /// Varying principal used in multiple authentication methods.
+    #[error("the principal differs between authentication results")]
+    AuthnPrincipalMismatch,
 
     /// Domain is disabled.
     #[error("The domain is disabled.")]
     DomainDisabled(String),
 
+    /// Principal not supported for the request.
+    #[error("principal with `domain_id` is required")]
+    PrincipalDomainIdMissing,
+
     /// Project is disabled.
     #[error("The project is disabled.")]
     ProjectDisabled(String),
+
+    /// The security context must be resolved before the use.
+    #[error("security context is not resolved")]
+    SecurityContextNotResolved,
 
     /// Scope is not allowed with the current SecurityContext.
     #[error("target scope is not allowed with the current authentication context")]
@@ -98,6 +116,10 @@ pub enum AuthenticationError {
         #[from]
         source: ValidationErrors,
     },
+
+    /// A role assignment failed to convert to a valid RoleRef.
+    #[error("role assignment cannot be converted to a role reference")]
+    RoleConversionFailed,
 }
 
 /// Security Context of the operation.
@@ -142,6 +164,19 @@ impl SecurityContext {
     /// - User object id must match user_id
     pub fn validate(&self) -> Result<(), AuthenticationError> {
         self.principal.validate()?;
+        match &self.authentication_context {
+            AuthenticationContext::ApplicationCredential(application_credential) => {
+                if application_credential.user_id != self.principal.get_user_id() {
+                    return Err(AuthenticationError::AuthzPrincipalMismatch);
+                }
+            }
+            AuthenticationContext::Trust(trust) => {
+                if trust.trustee_user_id != self.principal.get_user_id() {
+                    return Err(AuthenticationError::AuthzPrincipalMismatch);
+                }
+            }
+            _ => {}
+        }
         Ok(())
     }
 
@@ -157,9 +192,9 @@ impl SecurityContext {
     /// No validations of whether the principal has any roles on the target
     /// scope are performed. This is barely AuthN/AuthZ context boundaries
     /// check.
-    pub fn validate_scope_boundaries(&self, scope: &AuthzInfo) -> Result<(), AuthenticationError> {
+    pub fn validate_scope_boundaries(&self, scope: &ScopeInfo) -> Result<(), AuthenticationError> {
         match scope {
-            AuthzInfo::Domain(_domain) => {
+            ScopeInfo::Domain(_domain) => {
                 if self.token_restriction.is_some() {
                     return Err(AuthenticationError::ScopeNotAllowed);
                 };
@@ -177,7 +212,7 @@ impl SecurityContext {
                     AuthenticationContext::WebauthN => Ok(()),
                 }
             }
-            AuthzInfo::Project(project) => {
+            ScopeInfo::Project(project) => {
                 if let Some(token_restriction) = &self.token_restriction
                     && let Some(tr_pid) = &token_restriction.project_id
                     && *tr_pid != project.id
@@ -205,7 +240,7 @@ impl SecurityContext {
                     AuthenticationContext::WebauthN => Ok(()),
                 }
             }
-            AuthzInfo::Trust(_trust) => {
+            ScopeInfo::Trust(_trust) => {
                 if self.token_restriction.is_some() {
                     return Err(AuthenticationError::ScopeNotAllowed);
                 };
@@ -223,7 +258,7 @@ impl SecurityContext {
                     AuthenticationContext::WebauthN => Err(AuthenticationError::ScopeNotAllowed),
                 }
             }
-            AuthzInfo::System(_system) => {
+            ScopeInfo::System(_system) => {
                 if self.token_restriction.is_some() {
                     return Err(AuthenticationError::ScopeNotAllowed);
                 };
@@ -240,7 +275,7 @@ impl SecurityContext {
                     AuthenticationContext::WebauthN => Ok(()),
                 }
             }
-            AuthzInfo::Unscoped => {
+            ScopeInfo::Unscoped => {
                 if self.token_restriction.is_some() {
                     return Err(AuthenticationError::ScopeNotAllowed);
                 };
@@ -257,6 +292,23 @@ impl SecurityContext {
                 }
             }
         }
+    }
+
+    // Verifies all required fields are populated before policy enforcement
+    pub fn fully_resolved(&self) -> Result<(), AuthenticationError> {
+        self.validate()?;
+        let authz = self
+            .authorization
+            .as_ref()
+            .ok_or(AuthenticationError::SecurityContextNotResolved)?;
+        // Unscoped with no roles is valid. Scoped with no roles OR empty roles list is
+        // not.
+        if !matches!(authz.scope, ScopeInfo::Unscoped)
+            && authz.roles.as_ref().is_none_or(|r| r.is_empty())
+        {
+            return Err(AuthenticationError::SecurityContextNotResolved);
+        }
+        Ok(())
     }
 }
 
@@ -284,7 +336,11 @@ impl TryFrom<AuthenticationResult> for SecurityContext {
             builder.token_restriction(token_restriction);
         }
         builder.auth_methods(value.context.methods());
-        Ok(builder.build()?)
+        let mut ctx = builder.build()?;
+        if value.authorization.is_some() {
+            ctx.authorization = value.authorization;
+        }
+        Ok(ctx)
     }
 }
 
@@ -295,7 +351,7 @@ impl TryFrom<Vec<AuthenticationResult>> for SecurityContext {
     ///
     /// The first result provides the principal and primary authentication
     /// context. All subsequent results must share the same principal;
-    /// otherwise [`AuthenticationError::AuthPrincipalDiffers`] is returned.
+    /// otherwise [`AuthenticationError::AuthPrincipalMismatch`] is returned.
     /// Audit IDs and authentication methods are aggregated across all results.
     fn try_from(value: Vec<AuthenticationResult>) -> Result<Self, Self::Error> {
         let mut builder = SecurityContextBuilder::default();
@@ -309,6 +365,9 @@ impl TryFrom<Vec<AuthenticationResult>> for SecurityContext {
             if let Some(token_restriction) = auth.token_restriction {
                 builder.token_restriction(token_restriction);
             }
+            if let Some(authorization) = auth.authorization.clone() {
+                builder.authorization(authorization);
+            }
             if let AuthenticationContext::Token(token) = &auth.context {
                 audit_ids.extend(token.audit_ids.clone());
             };
@@ -318,12 +377,15 @@ impl TryFrom<Vec<AuthenticationResult>> for SecurityContext {
         let mut ctx = builder.build()?;
         for auth in auth_results {
             if auth.principal != ctx.principal {
-                return Err(AuthenticationError::AuthPrincipalDiffers);
+                return Err(AuthenticationError::AuthnPrincipalMismatch);
             }
             if let AuthenticationContext::Token(token) = &auth.context {
                 ctx.audit_ids.extend(token.audit_ids.clone());
             };
             ctx.auth_methods.extend(auth.context.methods());
+            if ctx.authorization.is_none() && auth.authorization.is_some() {
+                ctx.authorization = auth.authorization;
+            }
         }
 
         Ok(ctx)
@@ -455,6 +517,7 @@ impl UserIdentityInfo {
 pub struct PrincipalIdentityInfo {
     /// The unique identifier for the workload (e.g., SPIFFE ID or GitHub
     /// Subject).
+    #[validate(length(min = 1))]
     pub id: String,
 
     /// Metadata about the workload environment.
@@ -464,10 +527,17 @@ pub struct PrincipalIdentityInfo {
     pub attributes: HashMap<String, String>,
 
     /// The source of the identity (e.g., "https://token.actions.githubusercontent.com").
+    #[validate(length(min = 1))]
     pub issuer: String,
 }
 
 /// Authentication context.
+///
+/// # Security Note
+///
+/// Role information in AuthenticationContext represent original information of
+/// the resource (application_credential, trust, etc), and **not** the effective
+/// roles.
 #[derive(Clone, Debug, PartialEq)]
 pub enum AuthenticationContext {
     /// Login using application credentials.
@@ -561,14 +631,68 @@ pub struct AuthenticationResult {
     /// The identity this provider identified/verified.
     pub principal: PrincipalInfo,
 
+    /// Authorization information extracted from the authentication token.
+    ///
+    /// Populated when the parent token carries scope and role information
+    /// that should be propagated to the new security context. Other
+    /// authentication methods _(e.g., SPIFFE, K8s)_ may also produce
+    /// authorization context here.
+    #[builder(default)]
+    pub authorization: Option<AuthzInfo>,
+
     /// Token restriction rules tied to the authentication.
     #[builder(default)]
     pub token_restriction: Option<TokenRestriction>,
 }
 
 /// Authorization information.
+#[derive(Builder, Clone, Debug, PartialEq, Validate)]
+#[builder(build_fn(error = "BuilderError"))]
+#[builder(setter(into, strip_option))]
+pub struct AuthzInfo {
+    /// Effective roles on the authorization scope.
+    #[builder(default)]
+    #[validate(required)]
+    pub roles: Option<Vec<RoleRef>>,
+
+    /// Scope information.
+    pub scope: ScopeInfo,
+}
+
+impl AuthzInfo {
+    pub fn roles<I, V>(&mut self, iter: I) -> &mut Self
+    where
+        I: Iterator<Item = V>,
+        V: Into<RoleRef>,
+    {
+        self.roles
+            .get_or_insert_with(Vec::new)
+            .extend(iter.map(Into::into));
+        self
+    }
+
+    pub fn try_set_roles<I, V>(&mut self, iter: I) -> Result<(), AuthenticationError>
+    where
+        I: IntoIterator<Item = V>,
+        V: TryInto<RoleRef>,
+    {
+        for assignment in iter {
+            match assignment.try_into() {
+                Ok(role) => {
+                    self.roles.get_or_insert_with(Vec::new).push(role);
+                }
+                Err(_) => {
+                    return Err(AuthenticationError::RoleConversionFailed)?;
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Authorization information.
 #[derive(Clone, Debug, PartialEq)]
-pub enum AuthzInfo {
+pub enum ScopeInfo {
     /// Domain scope.
     Domain(Domain),
     /// Project scope.
@@ -581,7 +705,7 @@ pub enum AuthzInfo {
     Unscoped,
 }
 
-impl AuthzInfo {
+impl ScopeInfo {
     /// Validate the authorization information:
     ///
     /// - Unscoped: always valid
@@ -589,19 +713,19 @@ impl AuthzInfo {
     /// - Domain: check if the domain is enabled
     pub fn validate(&self) -> Result<(), AuthenticationError> {
         match self {
-            AuthzInfo::Domain(domain) => {
+            ScopeInfo::Domain(domain) => {
                 if !domain.enabled {
                     return Err(AuthenticationError::DomainDisabled(domain.id.clone()));
                 }
             }
-            AuthzInfo::Project(project) => {
+            ScopeInfo::Project(project) => {
                 if !project.enabled {
                     return Err(AuthenticationError::ProjectDisabled(project.id.clone()));
                 }
             }
-            AuthzInfo::System(_) => {}
-            AuthzInfo::Trust(_) => {}
-            AuthzInfo::Unscoped => {}
+            ScopeInfo::System(_) => {}
+            ScopeInfo::Trust(_) => {}
+            ScopeInfo::Unscoped => {}
         }
         Ok(())
     }
@@ -613,9 +737,327 @@ mod tests {
     use std::collections::HashMap;
 
     use crate::application_credential::ApplicationCredentialBuilder;
-    use crate::identity::{UserOptions, UserResponse};
+    use crate::assignment::{AssignmentBuilder, AssignmentType};
+    use crate::identity::UserOptions;
+    use crate::role::RoleRefBuilder;
     use crate::token::TokenRestrictionBuilder;
     use crate::trust::*;
+
+    // --- Fixture builders ---
+
+    fn make_user(uid: &str, enabled: bool) -> UserResponse {
+        UserResponse {
+            id: uid.to_string(),
+            enabled,
+            default_project_id: None,
+            domain_id: "did".into(),
+            extra: HashMap::new(),
+            name: "foo".into(),
+            options: UserOptions::default(),
+            federated: None,
+            password_expires_at: None,
+        }
+    }
+
+    fn make_enabled_user(uid: &str) -> UserIdentityInfo {
+        UserIdentityInfoBuilder::default()
+            .user_id(uid)
+            .user(make_user(uid, true))
+            .build()
+            .unwrap()
+    }
+
+    fn make_disabled_user(uid: &str) -> UserIdentityInfo {
+        UserIdentityInfoBuilder::default()
+            .user_id(uid)
+            .user(make_user(uid, false))
+            .build()
+            .unwrap()
+    }
+
+    fn make_principal(uid: &str) -> PrincipalInfo {
+        PrincipalInfo {
+            domain_id: Some("did".into()),
+            identity: IdentityInfo::User(make_enabled_user(uid)),
+        }
+    }
+
+    fn make_project() -> Project {
+        Project {
+            id: "pid".into(),
+            domain_id: "did".into(),
+            enabled: true,
+            name: "proj".into(),
+            description: Some("desc".into()),
+            is_domain: false,
+            parent_id: None,
+            extra: HashMap::new(),
+            ..Default::default()
+        }
+    }
+
+    fn make_disabled_project() -> Project {
+        Project {
+            id: "pid".into(),
+            domain_id: "did".into(),
+            enabled: false,
+            name: "proj".into(),
+            ..Default::default()
+        }
+    }
+
+    fn make_project2() -> Project {
+        Project {
+            id: "pid2".into(),
+            domain_id: "did".into(),
+            enabled: true,
+            name: "proj2".into(),
+            ..Default::default()
+        }
+    }
+
+    fn make_domain() -> Domain {
+        Domain {
+            id: "did".into(),
+            name: "default".into(),
+            enabled: true,
+            description: None,
+            extra: HashMap::new(),
+        }
+    }
+
+    fn make_disabled_domain() -> Domain {
+        Domain {
+            id: "did".into(),
+            name: "default".into(),
+            enabled: false,
+            description: None,
+            extra: HashMap::new(),
+        }
+    }
+
+    fn make_trust_with_project(pid: &str) -> Trust {
+        TrustBuilder::default()
+            .id("trust_id")
+            .trustor_user_id("trustor")
+            .trustee_user_id("trustee")
+            .project_id(pid)
+            .impersonation(false)
+            .build()
+            .unwrap()
+    }
+
+    fn make_token_restriction(pid: &str) -> TokenRestriction {
+        TokenRestrictionBuilder::default()
+            .allow_rescope(true)
+            .allow_renew(true)
+            .id("tr_id")
+            .domain_id("did")
+            .role_ids(vec![])
+            .project_id(pid)
+            .build()
+            .unwrap()
+    }
+
+    fn admin_role() -> RoleRef {
+        RoleRefBuilder::default()
+            .id("admin")
+            .name("admin")
+            .build()
+            .unwrap()
+    }
+
+    /// Pre-built scopes used by every scope-boundaries test.
+    struct AllScopes {
+        project: ScopeInfo,
+        project2: ScopeInfo,
+        domain: ScopeInfo,
+        trust: ScopeInfo,
+        system: ScopeInfo,
+        unscoped: ScopeInfo,
+    }
+
+    impl AllScopes {
+        fn new() -> Self {
+            // Trust scope without project (generic trust)
+            let trust = TrustBuilder::default()
+                .id("trust_id")
+                .trustor_user_id("trustor")
+                .trustee_user_id("trustee")
+                .impersonation(false)
+                .build()
+                .unwrap();
+            Self {
+                project: ScopeInfo::Project(make_project()),
+                project2: ScopeInfo::Project(make_project2()),
+                domain: ScopeInfo::Domain(make_domain().clone()),
+                trust: ScopeInfo::Trust(trust),
+                system: ScopeInfo::System("all".into()),
+                unscoped: ScopeInfo::Unscoped,
+            }
+        }
+    }
+
+    // --- Test helpers for AuthenticationResult + SecurityContext ---
+
+    fn make_password_context(principal: PrincipalInfo) -> SecurityContext {
+        let auth = AuthenticationResultBuilder::default()
+            .context(AuthenticationContext::Password)
+            .principal(principal)
+            .build()
+            .unwrap();
+        SecurityContext::try_from(auth).unwrap()
+    }
+
+    fn make_auth_ctx_with_scope(
+        ctx: AuthenticationContext,
+        principal: PrincipalInfo,
+    ) -> SecurityContext {
+        let auth = AuthenticationResultBuilder::default()
+            .context(ctx)
+            .principal(principal)
+            .build()
+            .unwrap();
+        SecurityContext::try_from(auth).unwrap()
+    }
+
+    fn make_auth_ctx_with_tr(
+        ctx: AuthenticationContext,
+        principal: PrincipalInfo,
+        tr: TokenRestriction,
+    ) -> SecurityContext {
+        let auth = AuthenticationResultBuilder::default()
+            .context(ctx)
+            .principal(principal)
+            .token_restriction(tr)
+            .build()
+            .unwrap();
+        SecurityContext::try_from(auth).unwrap()
+    }
+
+    fn make_auth_result_unscoped(
+        principal: PrincipalInfo,
+        roles: Option<Vec<RoleRef>>,
+    ) -> SecurityContext {
+        let auth = AuthenticationResultBuilder::default()
+            .context(AuthenticationContext::Password)
+            .principal(principal)
+            .authorization(AuthzInfo {
+                scope: ScopeInfo::Unscoped,
+                roles,
+            })
+            .build()
+            .unwrap();
+        SecurityContext::try_from(auth).unwrap()
+    }
+
+    fn make_auth_result_project(
+        principal: PrincipalInfo,
+        project: Project,
+        roles: Option<Vec<RoleRef>>,
+    ) -> SecurityContext {
+        let auth = AuthenticationResultBuilder::default()
+            .context(AuthenticationContext::Password)
+            .principal(principal)
+            .authorization(AuthzInfo {
+                scope: ScopeInfo::Project(project),
+                roles,
+            })
+            .build()
+            .unwrap();
+        SecurityContext::try_from(auth).unwrap()
+    }
+
+    fn make_auth_result_system(
+        principal: PrincipalInfo,
+        roles: Option<Vec<RoleRef>>,
+    ) -> SecurityContext {
+        let auth = AuthenticationResultBuilder::default()
+            .context(AuthenticationContext::Password)
+            .principal(principal)
+            .authorization(AuthzInfo {
+                scope: ScopeInfo::System("all".into()),
+                roles,
+            })
+            .build()
+            .unwrap();
+        SecurityContext::try_from(auth).unwrap()
+    }
+
+    fn make_auth_result_domain(
+        principal: PrincipalInfo,
+        roles: Option<Vec<RoleRef>>,
+    ) -> SecurityContext {
+        let auth = AuthenticationResultBuilder::default()
+            .context(AuthenticationContext::Password)
+            .principal(principal)
+            .authorization(AuthzInfo {
+                scope: ScopeInfo::Domain(make_domain()),
+                roles,
+            })
+            .build()
+            .unwrap();
+        SecurityContext::try_from(auth).unwrap()
+    }
+
+    fn make_trust(trustee_uid: &str) -> Trust {
+        TrustBuilder::default()
+            .id("trust_id")
+            .trustor_user_id("trustor")
+            .trustee_user_id(trustee_uid)
+            .impersonation(false)
+            .build()
+            .unwrap()
+    }
+
+    fn make_trust_no_project() -> Trust {
+        TrustBuilder::default()
+            .id("trust_id")
+            .trustor_user_id("trustor")
+            .trustee_user_id("trustee")
+            .impersonation(false)
+            .build()
+            .unwrap()
+    }
+
+    fn make_trust_with_roles(roles: Option<Vec<RoleRef>>) -> SecurityContext {
+        let auth = AuthenticationResultBuilder::default()
+            .context(AuthenticationContext::Password)
+            .principal(make_principal("uid"))
+            .authorization(AuthzInfo {
+                scope: ScopeInfo::Trust(make_trust_no_project()),
+                roles,
+            })
+            .build()
+            .unwrap();
+        SecurityContext::try_from(auth).unwrap()
+    }
+
+    fn make_app_cred(user_id: &str) -> ApplicationCredential {
+        ApplicationCredentialBuilder::default()
+            .id("app_cred_id")
+            .name("app_cred_name")
+            .project_id("pid")
+            .roles(vec![])
+            .unrestricted(false)
+            .user_id(user_id)
+            .build()
+            .unwrap()
+    }
+
+    fn make_token_ctx(principal: PrincipalInfo) -> SecurityContext {
+        let token = TokenContext {
+            audit_ids: vec!["parent1".to_string(), "parent2".to_string()],
+            methods: vec!["password".to_string()],
+            expires_at: Utc::now(),
+        };
+        let auth = AuthenticationResultBuilder::default()
+            .context(AuthenticationContext::Token(token))
+            .principal(principal)
+            .build()
+            .unwrap();
+        SecurityContext::try_from(auth).unwrap()
+    }
 
     #[test]
     fn test_authn_validate_no_user() {
@@ -631,23 +1073,9 @@ mod tests {
 
     #[test]
     fn test_authn_validate_user_disabled() {
-        let authn = UserIdentityInfoBuilder::default()
-            .user_id("uid")
-            .user(UserResponse {
-                id: "uid".to_string(),
-                enabled: false,
-                default_project_id: None,
-                domain_id: "did".into(),
-                extra: HashMap::new(),
-                name: "foo".into(),
-                options: UserOptions::default(),
-                federated: None,
-                password_expires_at: None,
-            })
-            .build()
-            .unwrap();
-        if let Err(AuthenticationError::UserDisabled(uid)) = authn.validate() {
-            assert_eq!("uid", uid);
+        let authn = make_disabled_user("uid");
+        if let Err(AuthenticationError::UserDisabled(uid_err)) = authn.validate() {
+            assert_eq!("uid", uid_err);
         } else {
             panic!("should fail for disabled user");
         }
@@ -657,17 +1085,7 @@ mod tests {
     fn test_authn_validate_user_mismatch() {
         let authn = UserIdentityInfoBuilder::default()
             .user_id("uid1")
-            .user(UserResponse {
-                id: "uid2".to_string(),
-                enabled: false,
-                default_project_id: None,
-                domain_id: "did".into(),
-                extra: HashMap::new(),
-                name: "foo".into(),
-                options: UserOptions::default(),
-                federated: None,
-                password_expires_at: None,
-            })
+            .user(make_user("uid2", false))
             .build()
             .unwrap();
         if let Err(AuthenticationError::Unauthorized) = authn.validate() {
@@ -678,24 +1096,14 @@ mod tests {
 
     #[test]
     fn test_authz_validate_project() {
-        let authz = AuthzInfo::Project(Project {
-            id: "pid".into(),
-            domain_id: "pdid".into(),
-            enabled: true,
-            ..Default::default()
-        });
-        assert!(authz.validate().is_ok());
+        assert!(ScopeInfo::Project(make_project()).validate().is_ok());
     }
 
     #[test]
     fn test_authz_validate_project_disabled() {
-        let authz = AuthzInfo::Project(Project {
-            id: "pid".into(),
-            domain_id: "pdid".into(),
-            enabled: false,
-            ..Default::default()
-        });
-        if let Err(AuthenticationError::ProjectDisabled(..)) = authz.validate() {
+        if let Err(AuthenticationError::ProjectDisabled(..)) =
+            ScopeInfo::Project(make_disabled_project()).validate()
+        {
         } else {
             panic!("should fail when project is not enabled");
         }
@@ -703,24 +1111,14 @@ mod tests {
 
     #[test]
     fn test_authz_validate_domain() {
-        let authz = AuthzInfo::Domain(Domain {
-            id: "id".into(),
-            name: "name".into(),
-            enabled: true,
-            ..Default::default()
-        });
-        assert!(authz.validate().is_ok());
+        assert!(ScopeInfo::Domain(make_domain()).validate().is_ok());
     }
 
     #[test]
     fn test_authz_validate_domain_disabled() {
-        let authz = AuthzInfo::Domain(Domain {
-            id: "id".into(),
-            name: "name".into(),
-            enabled: false,
-            ..Default::default()
-        });
-        if let Err(AuthenticationError::DomainDisabled(..)) = authz.validate() {
+        if let Err(AuthenticationError::DomainDisabled(..)) =
+            ScopeInfo::Domain(make_disabled_domain()).validate()
+        {
         } else {
             panic!("should fail when domain is not enabled");
         }
@@ -728,429 +1126,186 @@ mod tests {
 
     #[test]
     fn test_authz_validate_system() {
-        let authz = AuthzInfo::System("system".into());
+        let authz = ScopeInfo::System("system".into());
         assert!(authz.validate().is_ok());
     }
 
     #[test]
     fn test_authz_validate_unscoped() {
-        let authz = AuthzInfo::Unscoped;
+        let authz = ScopeInfo::Unscoped;
         assert!(authz.validate().is_ok());
     }
 
     #[test]
-    fn test_validate_scope_boundarires_with_token_restriction() {
-        let project = AuthzInfo::Project(Project {
-            id: "pid".into(),
-            domain_id: "pdid".into(),
-            enabled: true,
-            ..Default::default()
-        });
-        let project2 = AuthzInfo::Project(Project {
-            id: "pid2".into(),
-            domain_id: "pdid".into(),
-            enabled: true,
-            ..Default::default()
-        });
-        let domain = AuthzInfo::Domain(Domain {
-            id: "id".into(),
-            name: "name".into(),
-            enabled: true,
-            ..Default::default()
-        });
-        let trust = AuthzInfo::Trust(
-            TrustBuilder::default()
-                .id("trust_id")
-                .trustor_user_id("trustor")
-                .trustee_user_id("trustee")
-                .impersonation(false)
-                .build()
-                .unwrap(),
-        );
-        let system = AuthzInfo::System("system".into());
-        let unscoped = AuthzInfo::Unscoped;
-        let tr = TokenRestrictionBuilder::default()
-            .allow_rescope(true)
-            .allow_renew(true)
-            .id("tr_id")
-            .domain_id("did")
-            .role_ids(vec![])
-            .project_id("pid")
-            .build()
-            .unwrap();
-        let auth = AuthenticationResultBuilder::default()
-            .context(AuthenticationContext::Password)
-            .principal(PrincipalInfo {
-                domain_id: Some("did".into()),
-                identity: IdentityInfo::User(
-                    UserIdentityInfoBuilder::default()
-                        .user_id("uid")
-                        .build()
-                        .unwrap(),
-                ),
-            })
-            .token_restriction(tr.clone())
-            .build()
-            .unwrap();
-        let ctx = SecurityContext::try_from(auth).unwrap();
-        assert!(matches!(
-            ctx.validate_scope_boundaries(&domain),
-            Err(AuthenticationError::ScopeNotAllowed)
-        ));
-        assert!(ctx.validate_scope_boundaries(&project).is_ok());
-        assert!(
-            matches!(
-                ctx.validate_scope_boundaries(&project2),
-                Err(AuthenticationError::ScopeNotAllowed),
-            ),
-            "TR restricted to the other project"
+    fn test_validate_scope_boundaries_with_token_restriction() {
+        let s = AllScopes::new();
+        let ctx = make_auth_ctx_with_tr(
+            AuthenticationContext::Password,
+            make_principal("uid"),
+            make_token_restriction("pid"),
         );
         assert!(matches!(
-            ctx.validate_scope_boundaries(&trust),
+            ctx.validate_scope_boundaries(&s.domain),
+            Err(AuthenticationError::ScopeNotAllowed)
+        ));
+        assert!(ctx.validate_scope_boundaries(&s.project).is_ok());
+        assert!(matches!(
+            ctx.validate_scope_boundaries(&s.project2),
             Err(AuthenticationError::ScopeNotAllowed)
         ));
         assert!(matches!(
-            ctx.validate_scope_boundaries(&system),
+            ctx.validate_scope_boundaries(&s.trust),
             Err(AuthenticationError::ScopeNotAllowed)
         ));
         assert!(matches!(
-            ctx.validate_scope_boundaries(&unscoped),
+            ctx.validate_scope_boundaries(&s.system),
+            Err(AuthenticationError::ScopeNotAllowed)
+        ));
+        assert!(matches!(
+            ctx.validate_scope_boundaries(&s.unscoped),
             Err(AuthenticationError::ScopeNotAllowed)
         ));
     }
 
     #[test]
     fn test_validate_scope_boundaries_app_cred() {
-        let project = AuthzInfo::Project(Project {
-            id: "pid".into(),
-            domain_id: "pdid".into(),
-            enabled: true,
-            ..Default::default()
-        });
-        let project2 = AuthzInfo::Project(Project {
-            id: "pid2".into(),
-            domain_id: "pdid".into(),
-            enabled: true,
-            ..Default::default()
-        });
-        let domain = AuthzInfo::Domain(Domain {
-            id: "id".into(),
-            name: "name".into(),
-            enabled: true,
-            ..Default::default()
-        });
-        let trust = AuthzInfo::Trust(
-            TrustBuilder::default()
-                .id("trust_id")
-                .trustor_user_id("trustor")
-                .trustee_user_id("trustee")
-                .impersonation(false)
-                .build()
-                .unwrap(),
+        let s = AllScopes::new();
+        let ctx = make_auth_ctx_with_scope(
+            AuthenticationContext::ApplicationCredential(
+                ApplicationCredentialBuilder::default()
+                    .id("app_cred_id")
+                    .name("app_cred_name")
+                    .project_id("pid")
+                    .roles(vec![])
+                    .unrestricted(false)
+                    .user_id("uid")
+                    .build()
+                    .unwrap(),
+            ),
+            make_principal("uid"),
         );
-        let system = AuthzInfo::System("system".into());
-        let unscoped = AuthzInfo::Unscoped;
-        let app_cred = ApplicationCredentialBuilder::default()
-            .id("app_cred_id")
-            .name("app_cred_name")
-            .project_id("pid")
-            .roles(vec![])
-            .unrestricted(false)
-            .user_id("uid")
-            .build()
-            .unwrap();
-        let auth = AuthenticationResultBuilder::default()
-            .context(AuthenticationContext::ApplicationCredential(app_cred))
-            .principal(PrincipalInfo {
-                domain_id: Some("did".into()),
-                identity: IdentityInfo::User(
-                    UserIdentityInfoBuilder::default()
-                        .user_id("uid")
-                        .build()
-                        .unwrap(),
-                ),
-            })
-            .build()
-            .unwrap();
-        let ctx = SecurityContext::try_from(auth).unwrap();
         assert!(matches!(
-            ctx.validate_scope_boundaries(&domain),
+            ctx.validate_scope_boundaries(&s.domain),
             Err(AuthenticationError::ScopeNotAllowed)
         ));
-        assert!(ctx.validate_scope_boundaries(&project).is_ok());
+        assert!(ctx.validate_scope_boundaries(&s.project).is_ok());
         assert!(matches!(
-            ctx.validate_scope_boundaries(&project2),
-            Err(AuthenticationError::ScopeNotAllowed),
-        ),);
-        assert!(matches!(
-            ctx.validate_scope_boundaries(&trust),
+            ctx.validate_scope_boundaries(&s.project2),
             Err(AuthenticationError::ScopeNotAllowed)
         ));
         assert!(matches!(
-            ctx.validate_scope_boundaries(&system),
+            ctx.validate_scope_boundaries(&s.trust),
             Err(AuthenticationError::ScopeNotAllowed)
         ));
         assert!(matches!(
-            ctx.validate_scope_boundaries(&unscoped),
+            ctx.validate_scope_boundaries(&s.system),
+            Err(AuthenticationError::ScopeNotAllowed)
+        ));
+        assert!(matches!(
+            ctx.validate_scope_boundaries(&s.unscoped),
             Err(AuthenticationError::ScopeNotAllowed)
         ));
     }
 
     #[test]
     fn test_validate_scope_boundaries_oidc() {
-        let project = AuthzInfo::Project(Project {
-            id: "pid".into(),
-            domain_id: "pdid".into(),
-            enabled: true,
-            ..Default::default()
-        });
-        let project2 = AuthzInfo::Project(Project {
-            id: "pid2".into(),
-            domain_id: "pdid".into(),
-            enabled: true,
-            ..Default::default()
-        });
-        let domain = AuthzInfo::Domain(Domain {
-            id: "id".into(),
-            name: "name".into(),
-            enabled: true,
-            ..Default::default()
-        });
-        let trust = AuthzInfo::Trust(
-            TrustBuilder::default()
-                .id("trust_id")
-                .trustor_user_id("trustor")
-                .trustee_user_id("trustee")
-                .impersonation(false)
-                .build()
-                .unwrap(),
-        );
-        let system = AuthzInfo::System("system".into());
-        let unscoped = AuthzInfo::Unscoped;
-        let auth = AuthenticationResultBuilder::default()
-            .context(AuthenticationContext::Oidc(
+        let s = AllScopes::new();
+        let ctx = make_auth_ctx_with_scope(
+            AuthenticationContext::Oidc(
                 OidcContextBuilder::default()
                     .idp_id("idp")
                     .protocol_id("protocol")
                     .build()
                     .unwrap(),
-            ))
-            .principal(PrincipalInfo {
-                domain_id: Some("did".into()),
-                identity: IdentityInfo::User(
-                    UserIdentityInfoBuilder::default()
-                        .user_id("uid")
-                        .build()
-                        .unwrap(),
-                ),
-            })
-            .build()
-            .unwrap();
-        let ctx = SecurityContext::try_from(auth).unwrap();
-        assert!(ctx.validate_scope_boundaries(&domain).is_ok());
-        assert!(ctx.validate_scope_boundaries(&project).is_ok());
-        assert!(ctx.validate_scope_boundaries(&project2).is_ok());
+            ),
+            make_principal("uid"),
+        );
+        assert!(ctx.validate_scope_boundaries(&s.domain).is_ok());
+        assert!(ctx.validate_scope_boundaries(&s.project).is_ok());
+        assert!(ctx.validate_scope_boundaries(&s.project2).is_ok());
         assert!(matches!(
-            ctx.validate_scope_boundaries(&trust),
+            ctx.validate_scope_boundaries(&s.trust),
             Err(AuthenticationError::ScopeNotAllowed)
         ));
         assert!(matches!(
-            ctx.validate_scope_boundaries(&system),
+            ctx.validate_scope_boundaries(&s.system),
             Err(AuthenticationError::ScopeNotAllowed)
         ));
-        assert!(ctx.validate_scope_boundaries(&unscoped).is_ok());
+        assert!(ctx.validate_scope_boundaries(&s.unscoped).is_ok());
     }
 
     #[test]
     fn test_validate_scope_boundarires_k8s() {
-        let project = AuthzInfo::Project(Project {
-            id: "pid".into(),
-            domain_id: "pdid".into(),
-            enabled: true,
-            ..Default::default()
-        });
-        let project2 = AuthzInfo::Project(Project {
-            id: "pid2".into(),
-            domain_id: "pdid".into(),
-            enabled: true,
-            ..Default::default()
-        });
-        let domain = AuthzInfo::Domain(Domain {
-            id: "id".into(),
-            name: "name".into(),
-            enabled: true,
-            ..Default::default()
-        });
-        let trust = AuthzInfo::Trust(
-            TrustBuilder::default()
-                .id("trust_id")
-                .trustor_user_id("trustor")
-                .trustee_user_id("trustee")
-                .impersonation(false)
-                .build()
-                .unwrap(),
-        );
-        let system = AuthzInfo::System("system".into());
-        let unscoped = AuthzInfo::Unscoped;
-        let tr = TokenRestrictionBuilder::default()
-            .allow_rescope(true)
-            .allow_renew(true)
-            .id("tr_id")
-            .domain_id("did")
-            .role_ids(vec![])
-            .project_id("pid")
-            .build()
-            .unwrap();
-        let auth = AuthenticationResultBuilder::default()
-            .context(AuthenticationContext::K8s(
+        let s = AllScopes::new();
+        let tr = make_token_restriction("pid");
+        let ctx = make_auth_ctx_with_tr(
+            AuthenticationContext::K8s(
                 K8sContextBuilder::default()
                     .token_restriction_id(tr.id.clone())
                     .build()
                     .unwrap(),
-            ))
-            .principal(PrincipalInfo {
-                domain_id: Some("did".into()),
-                identity: IdentityInfo::User(
-                    UserIdentityInfoBuilder::default()
-                        .user_id("uid")
-                        .build()
-                        .unwrap(),
-                ),
-            })
-            .token_restriction(tr.clone())
-            .build()
-            .unwrap();
-        let ctx = SecurityContext::try_from(auth).unwrap();
+            ),
+            make_principal("uid"),
+            tr,
+        );
         assert!(matches!(
-            ctx.validate_scope_boundaries(&domain),
+            ctx.validate_scope_boundaries(&s.domain),
             Err(AuthenticationError::ScopeNotAllowed)
         ));
-        assert!(ctx.validate_scope_boundaries(&project).is_ok());
+        assert!(ctx.validate_scope_boundaries(&s.project).is_ok());
         assert!(matches!(
-            ctx.validate_scope_boundaries(&project2),
-            Err(AuthenticationError::ScopeNotAllowed),
-        ),);
-        assert!(matches!(
-            ctx.validate_scope_boundaries(&trust),
+            ctx.validate_scope_boundaries(&s.project2),
             Err(AuthenticationError::ScopeNotAllowed)
         ));
         assert!(matches!(
-            ctx.validate_scope_boundaries(&system),
+            ctx.validate_scope_boundaries(&s.trust),
             Err(AuthenticationError::ScopeNotAllowed)
         ));
         assert!(matches!(
-            ctx.validate_scope_boundaries(&unscoped),
+            ctx.validate_scope_boundaries(&s.system),
+            Err(AuthenticationError::ScopeNotAllowed)
+        ));
+        assert!(matches!(
+            ctx.validate_scope_boundaries(&s.unscoped),
             Err(AuthenticationError::ScopeNotAllowed)
         ));
     }
 
     #[test]
     fn test_validate_scope_boundaries_password() {
-        let project = AuthzInfo::Project(Project {
-            id: "pid".into(),
-            domain_id: "pdid".into(),
-            enabled: true,
-            ..Default::default()
-        });
-        let project2 = AuthzInfo::Project(Project {
-            id: "pid2".into(),
-            domain_id: "pdid".into(),
-            enabled: true,
-            ..Default::default()
-        });
-        let domain = AuthzInfo::Domain(Domain {
-            id: "id".into(),
-            name: "name".into(),
-            enabled: true,
-            ..Default::default()
-        });
-        let trust = AuthzInfo::Trust(
-            TrustBuilder::default()
-                .id("trust_id")
-                .trustor_user_id("trustor")
-                .trustee_user_id("trustee")
-                .impersonation(false)
-                .build()
-                .unwrap(),
-        );
-        let system = AuthzInfo::System("system".into());
-        let unscoped = AuthzInfo::Unscoped;
-        let auth = AuthenticationResultBuilder::default()
-            .context(AuthenticationContext::Password)
-            .principal(PrincipalInfo {
-                domain_id: Some("did".into()),
-                identity: IdentityInfo::User(
-                    UserIdentityInfoBuilder::default()
-                        .user_id("uid")
-                        .build()
-                        .unwrap(),
-                ),
-            })
-            .build()
-            .unwrap();
-        let ctx = SecurityContext::try_from(auth).unwrap();
-        assert!(ctx.validate_scope_boundaries(&domain).is_ok());
-        assert!(ctx.validate_scope_boundaries(&project).is_ok());
-        assert!(ctx.validate_scope_boundaries(&project2).is_ok());
-        assert!(ctx.validate_scope_boundaries(&trust).is_ok());
-        assert!(ctx.validate_scope_boundaries(&system).is_ok());
-        assert!(ctx.validate_scope_boundaries(&unscoped).is_ok());
+        let s = AllScopes::new();
+        let ctx = make_password_context(make_principal("uid"));
+        assert!(ctx.validate_scope_boundaries(&s.domain).is_ok());
+        assert!(ctx.validate_scope_boundaries(&s.project).is_ok());
+        assert!(ctx.validate_scope_boundaries(&s.project2).is_ok());
+        assert!(ctx.validate_scope_boundaries(&s.trust).is_ok());
+        assert!(ctx.validate_scope_boundaries(&s.system).is_ok());
+        assert!(ctx.validate_scope_boundaries(&s.unscoped).is_ok());
     }
 
     #[test]
     fn test_validate_scope_boundarires_trust() {
-        let project = AuthzInfo::Project(Project {
-            id: "pid".into(),
-            domain_id: "pdid".into(),
-            enabled: true,
-            ..Default::default()
-        });
-        let project2 = AuthzInfo::Project(Project {
-            id: "pid2".into(),
-            domain_id: "pdid".into(),
-            enabled: true,
-            ..Default::default()
-        });
-        let domain = AuthzInfo::Domain(Domain {
-            id: "id".into(),
-            name: "name".into(),
-            enabled: true,
-            ..Default::default()
-        });
-        let trust = TrustBuilder::default()
-            .id("trust_id")
-            .trustor_user_id("trustor")
-            .trustee_user_id("trustee")
-            .project_id("pid")
-            .impersonation(false)
-            .build()
-            .unwrap();
-        let trust_scope = AuthzInfo::Trust(trust.clone());
-        let system = AuthzInfo::System("system".into());
-        let unscoped = AuthzInfo::Unscoped;
-        let auth = AuthenticationResultBuilder::default()
-            .context(AuthenticationContext::Trust(trust.clone()))
-            .principal(PrincipalInfo {
-                domain_id: Some("did".into()),
-                identity: IdentityInfo::User(
-                    UserIdentityInfoBuilder::default()
-                        .user_id("uid")
-                        .build()
-                        .unwrap(),
-                ),
-            })
-            .build()
-            .unwrap();
-        let ctx = SecurityContext::try_from(auth).unwrap();
+        let p = make_project();
+        let p2 = make_project2();
+        let d = make_domain();
+        let trust = make_trust_with_project(&p.id);
+        let trust_scope = ScopeInfo::Trust(trust.clone());
+        let system = ScopeInfo::System("all".into());
+        let unscoped = ScopeInfo::Unscoped;
+        let ctx =
+            make_auth_ctx_with_scope(AuthenticationContext::Trust(trust), make_principal("uid"));
         assert!(matches!(
-            ctx.validate_scope_boundaries(&domain),
+            ctx.validate_scope_boundaries(&ScopeInfo::Domain(d)),
             Err(AuthenticationError::ScopeNotAllowed)
         ));
-        assert!(ctx.validate_scope_boundaries(&project).is_ok());
+        assert!(
+            ctx.validate_scope_boundaries(&ScopeInfo::Project(p))
+                .is_ok()
+        );
         assert!(matches!(
-            ctx.validate_scope_boundaries(&project2),
-            Err(AuthenticationError::ScopeNotAllowed),
-        ),);
+            ctx.validate_scope_boundaries(&ScopeInfo::Project(p2)),
+            Err(AuthenticationError::ScopeNotAllowed)
+        ));
         assert!(matches!(
             ctx.validate_scope_boundaries(&trust_scope),
             Err(AuthenticationError::ScopeNotAllowed)
@@ -1167,57 +1322,449 @@ mod tests {
 
     #[test]
     fn test_validate_scope_boundaries_webauthn() {
-        let project = AuthzInfo::Project(Project {
-            id: "pid".into(),
-            domain_id: "pdid".into(),
-            enabled: true,
-            ..Default::default()
-        });
-        let project2 = AuthzInfo::Project(Project {
-            id: "pid2".into(),
-            domain_id: "pdid".into(),
-            enabled: true,
-            ..Default::default()
-        });
-        let domain = AuthzInfo::Domain(Domain {
-            id: "id".into(),
-            name: "name".into(),
-            enabled: true,
-            ..Default::default()
-        });
-        let trust = AuthzInfo::Trust(
-            TrustBuilder::default()
-                .id("trust_id")
-                .trustor_user_id("trustor")
-                .trustee_user_id("trustee")
-                .impersonation(false)
+        let s = AllScopes::new();
+        let ctx = make_auth_ctx_with_scope(AuthenticationContext::WebauthN, make_principal("uid"));
+        assert!(ctx.validate_scope_boundaries(&s.domain).is_ok());
+        assert!(ctx.validate_scope_boundaries(&s.project).is_ok());
+        assert!(ctx.validate_scope_boundaries(&s.project2).is_ok());
+        assert!(matches!(
+            ctx.validate_scope_boundaries(&s.trust),
+            Err(AuthenticationError::ScopeNotAllowed)
+        ));
+        assert!(ctx.validate_scope_boundaries(&s.system).is_ok());
+        assert!(ctx.validate_scope_boundaries(&s.unscoped).is_ok());
+    }
+
+    #[test]
+    fn test_fully_resolved_none_authorization() {
+        let ctx = make_password_context(make_principal("uid"));
+        assert!(matches!(
+            ctx.fully_resolved(),
+            Err(AuthenticationError::SecurityContextNotResolved)
+        ));
+    }
+
+    #[test]
+    fn test_fully_resolved_unscoped_none_roles() {
+        let ctx = make_auth_result_unscoped(make_principal("uid"), None);
+        assert!(ctx.fully_resolved().is_ok());
+    }
+
+    #[test]
+    fn test_fully_resolved_unscoped_empty_roles() {
+        let ctx = make_auth_result_unscoped(make_principal("uid"), Some(vec![]));
+        assert!(ctx.fully_resolved().is_ok());
+    }
+
+    #[test]
+    fn test_fully_resolved_scoped_none_roles() {
+        let ctx = make_auth_result_project(make_principal("uid"), make_project(), None);
+        assert!(matches!(
+            ctx.fully_resolved(),
+            Err(AuthenticationError::SecurityContextNotResolved)
+        ));
+    }
+
+    #[test]
+    fn test_fully_resolved_scoped_empty_roles() {
+        let ctx = make_auth_result_project(make_principal("uid"), make_project(), Some(vec![]));
+        assert!(matches!(
+            ctx.fully_resolved(),
+            Err(AuthenticationError::SecurityContextNotResolved)
+        ));
+    }
+
+    #[test]
+    fn test_fully_resolved_scoped_with_roles() {
+        let ctx = make_auth_result_project(
+            make_principal("uid"),
+            make_project(),
+            Some(vec![admin_role()]),
+        );
+        assert!(ctx.fully_resolved().is_ok());
+    }
+
+    #[test]
+    fn test_fully_resolved_system_with_roles() {
+        let ctx = make_auth_result_system(make_principal("uid"), Some(vec![admin_role()]));
+        assert!(ctx.fully_resolved().is_ok());
+    }
+
+    #[test]
+    fn test_fully_resolved_system_none_roles() {
+        let ctx = make_auth_result_system(make_principal("uid"), None);
+        assert!(matches!(
+            ctx.fully_resolved(),
+            Err(AuthenticationError::SecurityContextNotResolved)
+        ));
+    }
+
+    #[test]
+    fn test_fully_resolved_domain_with_roles() {
+        let ctx = make_auth_result_domain(make_principal("uid"), Some(vec![admin_role()]));
+        assert!(ctx.fully_resolved().is_ok());
+    }
+
+    #[test]
+    fn test_fully_resolved_domain_none_roles() {
+        let ctx = make_auth_result_domain(make_principal("uid"), None);
+        assert!(matches!(
+            ctx.fully_resolved(),
+            Err(AuthenticationError::SecurityContextNotResolved)
+        ));
+    }
+
+    #[test]
+    fn test_try_from_auth_to_security_context() {
+        let ctx = make_auth_result_project(
+            make_principal("uid"),
+            make_project(),
+            Some(vec![admin_role()]),
+        );
+        assert!(matches!(
+            ctx.authentication_context,
+            AuthenticationContext::Password
+        ));
+        assert!(matches!(ctx.principal.identity, IdentityInfo::User(_)));
+        assert!(matches!(
+            ctx.authorization,
+            Some(AuthzInfo {
+                scope: ScopeInfo::Project(_),
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn test_try_from_auth_unscoped_to_security_context() {
+        let ctx = make_auth_result_unscoped(make_principal("uid"), None);
+        assert!(matches!(
+            ctx.authorization,
+            Some(AuthzInfo {
+                scope: ScopeInfo::Unscoped,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn test_validate_scope_boundaries_system() {
+        let s = AllScopes::new();
+        let ctx = make_auth_result_system(make_principal("uid"), Some(vec![admin_role()]));
+        // Password auth can request any scope
+        assert!(ctx.validate_scope_boundaries(&s.project).is_ok());
+        assert!(ctx.validate_scope_boundaries(&s.domain).is_ok());
+        assert!(ctx.validate_scope_boundaries(&s.system).is_ok());
+        assert!(ctx.validate_scope_boundaries(&s.unscoped).is_ok());
+    }
+
+    #[test]
+    fn test_identity_validate_user() {
+        let user = IdentityInfo::User(make_enabled_user("uid"));
+        assert!(user.validate().is_ok());
+    }
+
+    #[test]
+    fn test_identity_validate_user_disabled() {
+        let user = IdentityInfo::User(make_disabled_user("uid"));
+        assert!(matches!(
+            user.validate(),
+            Err(AuthenticationError::UserDisabled(_))
+        ));
+    }
+
+    #[test]
+    fn test_identity_validate_principal() {
+        let principal = IdentityInfo::Principal(
+            PrincipalIdentityInfoBuilder::default()
+                .id("p1")
+                .issuer("https://my.spiffe.id")
                 .build()
                 .unwrap(),
         );
-        let system = AuthzInfo::System("system".into());
-        let unscoped = AuthzInfo::Unscoped;
-        let auth = AuthenticationResultBuilder::default()
-            .context(AuthenticationContext::WebauthN)
-            .principal(PrincipalInfo {
-                domain_id: Some("did".into()),
-                identity: IdentityInfo::User(
-                    UserIdentityInfoBuilder::default()
-                        .user_id("uid")
-                        .build()
-                        .unwrap(),
-                ),
+        assert!(principal.validate().is_ok());
+    }
+
+    #[test]
+    fn test_authz_validation_disabled_project() {
+        let scope = ScopeInfo::Project(make_disabled_project());
+        assert!(matches!(
+            scope.validate(),
+            Err(AuthenticationError::ProjectDisabled(id)) if id == "pid"
+        ));
+    }
+
+    #[test]
+    fn test_authz_validation_disabled_domain() {
+        let scope = ScopeInfo::Domain(make_disabled_domain());
+        assert!(matches!(
+            scope.validate(),
+            Err(AuthenticationError::DomainDisabled(id)) if id == "did"
+        ));
+    }
+
+    // --- MFA: TryFrom<Vec<AuthenticationResult>> ---
+
+    #[test]
+    fn test_mfa_principal_mismatch() {
+        let auth1 = AuthenticationResultBuilder::default()
+            .context(AuthenticationContext::Password)
+            .principal(make_principal("uid1"))
+            .build()
+            .unwrap();
+        let auth2 = AuthenticationResultBuilder::default()
+            .context(AuthenticationContext::Password)
+            .principal(make_principal("uid2"))
+            .build()
+            .unwrap();
+        assert!(matches!(
+            SecurityContext::try_from(vec![auth1, auth2]),
+            Err(AuthenticationError::AuthnPrincipalMismatch)
+        ));
+    }
+
+    #[test]
+    fn test_mfa_authz_propagated_from_second() {
+        let auth1 = AuthenticationResultBuilder::default()
+            .context(AuthenticationContext::Password)
+            .principal(make_principal("uid"))
+            .build()
+            .unwrap();
+        let auth2 = AuthenticationResultBuilder::default()
+            .context(AuthenticationContext::Password)
+            .principal(make_principal("uid"))
+            .authorization(AuthzInfo {
+                scope: ScopeInfo::Unscoped,
+                roles: Some(vec![admin_role()]),
             })
             .build()
             .unwrap();
-        let ctx = SecurityContext::try_from(auth).unwrap();
-        assert!(ctx.validate_scope_boundaries(&domain).is_ok());
-        assert!(ctx.validate_scope_boundaries(&project).is_ok());
-        assert!(ctx.validate_scope_boundaries(&project2).is_ok());
+        let ctx = SecurityContext::try_from(vec![auth1, auth2]).unwrap();
         assert!(matches!(
-            ctx.validate_scope_boundaries(&trust),
-            Err(AuthenticationError::ScopeNotAllowed)
+            ctx.authorization,
+            Some(AuthzInfo {
+                scope: ScopeInfo::Unscoped,
+                ..
+            })
         ));
-        assert!(ctx.validate_scope_boundaries(&system).is_ok());
-        assert!(ctx.validate_scope_boundaries(&unscoped).is_ok());
+        assert!(ctx.authorization.as_ref().unwrap().roles.is_some());
+    }
+
+    #[test]
+    fn test_mfa_token_audit_ids_extended() {
+        let token1 = TokenContext {
+            audit_ids: vec!["parent1".to_string()],
+            methods: vec!["token".to_string()],
+            expires_at: Utc::now(),
+        };
+        let auth1 = AuthenticationResultBuilder::default()
+            .context(AuthenticationContext::Token(token1))
+            .principal(make_principal("uid"))
+            .build()
+            .unwrap();
+        let token2 = TokenContext {
+            audit_ids: vec!["parent2".to_string(), "parent3".to_string()],
+            methods: vec!["token".to_string()],
+            expires_at: Utc::now(),
+        };
+        let auth2 = AuthenticationResultBuilder::default()
+            .context(AuthenticationContext::Token(token2))
+            .principal(make_principal("uid"))
+            .authorization(AuthzInfo {
+                scope: ScopeInfo::Unscoped,
+                roles: None,
+            })
+            .build()
+            .unwrap();
+        let ctx = SecurityContext::try_from(vec![auth1, auth2]).unwrap();
+        assert!(ctx.audit_ids.iter().any(|s| s == "parent1"));
+        assert!(ctx.audit_ids.iter().any(|s| s == "parent2"));
+        assert!(ctx.audit_ids.iter().any(|s| s == "parent3"));
+    }
+
+    #[test]
+    fn test_mfa_auth_methods_aggregated() {
+        let auth1 = AuthenticationResultBuilder::default()
+            .context(AuthenticationContext::Password)
+            .principal(make_principal("uid"))
+            .build()
+            .unwrap();
+        let oidc = OidcContextBuilder::default()
+            .idp_id("idp")
+            .protocol_id("protocol")
+            .build()
+            .unwrap();
+        let auth2 = AuthenticationResultBuilder::default()
+            .context(AuthenticationContext::Oidc(oidc))
+            .principal(make_principal("uid"))
+            .build()
+            .unwrap();
+        let ctx = SecurityContext::try_from(vec![auth1, auth2]).unwrap();
+        assert!(ctx.auth_methods.contains("password"));
+        assert!(ctx.auth_methods.contains("openid"));
+    }
+
+    // --- SecurityContext::validate() principal mismatch arms ---
+
+    #[test]
+    fn test_validate_appcred_principal_mismatch() {
+        let appcred = make_app_cred("other_user");
+        let ctx = make_auth_ctx_with_scope(
+            AuthenticationContext::ApplicationCredential(appcred),
+            make_principal("uid"),
+        );
+        assert!(matches!(
+            ctx.validate(),
+            Err(AuthenticationError::AuthzPrincipalMismatch)
+        ));
+    }
+
+    #[test]
+    fn test_validate_appcred_principal_match() {
+        let appcred = make_app_cred("uid");
+        let ctx = make_auth_ctx_with_scope(
+            AuthenticationContext::ApplicationCredential(appcred),
+            make_principal("uid"),
+        );
+        assert!(ctx.validate().is_ok());
+    }
+
+    #[test]
+    fn test_validate_trust_principal_mismatch() {
+        let trust = make_trust("other_user");
+        let ctx =
+            make_auth_ctx_with_scope(AuthenticationContext::Trust(trust), make_principal("uid"));
+        assert!(matches!(
+            ctx.validate(),
+            Err(AuthenticationError::AuthzPrincipalMismatch)
+        ));
+    }
+
+    #[test]
+    fn test_validate_trust_principal_match() {
+        let trust = make_trust("uid");
+        let ctx =
+            make_auth_ctx_with_scope(AuthenticationContext::Trust(trust), make_principal("uid"));
+        assert!(ctx.validate().is_ok());
+    }
+
+    // --- AuthzInfo::try_set_roles failure path ---
+
+    #[test]
+    fn test_try_set_roles_success() {
+        let mut authz = AuthzInfo {
+            scope: ScopeInfo::Project(make_project()),
+            roles: None,
+        };
+        let assignment = AssignmentBuilder::default()
+            .actor_id("uid")
+            .role_id("admin")
+            .role_name("admin")
+            .target_id("pid")
+            .r#type(AssignmentType::UserProject)
+            .inherited(false)
+            .build()
+            .unwrap();
+        assert!(authz.try_set_roles(vec![assignment]).is_ok());
+        assert_eq!(authz.roles.as_ref().unwrap().len(), 1);
+        assert_eq!(authz.roles.as_ref().unwrap()[0].id, "admin");
+    }
+
+    #[test]
+    fn test_try_set_roles_mixed_success_failure() {
+        let mut authz = AuthzInfo {
+            scope: ScopeInfo::Project(make_project()),
+            roles: None,
+        };
+        let good = AssignmentBuilder::default()
+            .actor_id("uid")
+            .role_id("admin")
+            .target_id("pid")
+            .r#type(AssignmentType::UserProject)
+            .inherited(false)
+            .build()
+            .unwrap();
+        let bad = AssignmentBuilder::default()
+            .actor_id("uid")
+            .role_id("")
+            .target_id("pid")
+            .r#type(AssignmentType::UserProject)
+            .inherited(false)
+            .build()
+            .unwrap();
+        assert!(authz.try_set_roles(vec![good, bad]).is_err());
+    }
+
+    // --- HV-08: PrincipalIdentityInfo empty id/issuer ---
+
+    #[test]
+    fn test_principal_empty_id_fails_validate() {
+        let principal = PrincipalIdentityInfoBuilder::default()
+            .id("")
+            .issuer("https://my.spiffe.id")
+            .build()
+            .unwrap();
+        assert!(principal.validate().is_err());
+    }
+
+    #[test]
+    fn test_principal_empty_issuer_fails_validate() {
+        let principal = PrincipalIdentityInfoBuilder::default()
+            .id("p1")
+            .issuer("")
+            .build()
+            .unwrap();
+        assert!(principal.validate().is_err());
+    }
+
+    // --- Trust scope in fully_resolved() ---
+
+    #[test]
+    fn test_fully_resolved_trust_with_roles() {
+        let ctx = make_trust_with_roles(Some(vec![admin_role()]));
+        assert!(ctx.fully_resolved().is_ok());
+    }
+
+    #[test]
+    fn test_fully_resolved_trust_none_roles() {
+        let ctx = make_trust_with_roles(None);
+        assert!(matches!(
+            ctx.fully_resolved(),
+            Err(AuthenticationError::SecurityContextNotResolved)
+        ));
+    }
+
+    #[test]
+    fn test_fully_resolved_trust_empty_roles() {
+        let ctx = make_trust_with_roles(Some(vec![]));
+        assert!(matches!(
+            ctx.fully_resolved(),
+            Err(AuthenticationError::SecurityContextNotResolved)
+        ));
+    }
+
+    // --- TokenContext audit_ids propagation ---
+
+    #[test]
+    fn test_token_ctx_audit_ids_propagated() {
+        let ctx = make_token_ctx(make_principal("uid"));
+        assert!(ctx.audit_ids.len() >= 3);
+        assert!(ctx.audit_ids.iter().any(|s| s == "parent1"));
+        assert!(ctx.audit_ids.iter().any(|s| s == "parent2"));
+    }
+
+    #[test]
+    fn test_token_ctx_methods_include_token() {
+        let ctx = make_token_ctx(make_principal("uid"));
+        assert!(ctx.auth_methods.contains("password"));
+        assert!(ctx.auth_methods.contains("token"));
+    }
+
+    // --- Trust scope validate() ---
+
+    #[test]
+    fn test_authz_validate_trust() {
+        let trust = make_trust_no_project();
+        assert!(ScopeInfo::Trust(trust).validate().is_ok());
     }
 }

@@ -161,7 +161,6 @@ mod tests {
             Provider::mocked_builder().mock_resource(resource_mock),
             true,
             None,
-            Some(false),
         )
         .await;
 

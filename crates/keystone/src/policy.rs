@@ -18,8 +18,7 @@ use reqwest::{Client, Url};
 use serde_json::{Value, json};
 use tracing::{debug, trace};
 
-use crate::token::Token;
-
+use openstack_keystone_core::auth::ValidatedSecurityContext;
 pub use openstack_keystone_core::policy::*;
 
 /// Policy factory.
@@ -91,7 +90,7 @@ impl PolicyEnforcer for HttpPolicyEnforcer {
     ///
     /// # Parameters
     /// * `policy_name` - The name of the policy to evaluate.
-    /// * `credentials` - The token containing the requester's credentials.
+    /// * `credentials` - The SecurityContext of the connection.
     /// * `target` - The target resource for the policy evaluation.
     /// * `update` - Optional update data for the policy evaluation.
     ///
@@ -100,12 +99,13 @@ impl PolicyEnforcer for HttpPolicyEnforcer {
     async fn enforce(
         &self,
         policy_name: &'static str,
-        credentials: &Token,
+        credentials: &ValidatedSecurityContext,
         target: Value,
         update: Option<Value>,
     ) -> Result<PolicyEvaluationResult, PolicyError> {
         let start = SystemTime::now();
-        let creds: Credentials = credentials.into();
+        // Convert SecurityContext into Credentials object that is passed to OPA
+        let creds: Credentials = credentials.try_into()?;
         let input = json!({
             "credentials": creds,
             "target": target,

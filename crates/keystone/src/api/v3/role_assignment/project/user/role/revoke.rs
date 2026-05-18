@@ -145,7 +145,7 @@ mod tests {
     use openstack_keystone_core_types::resource::*;
     use openstack_keystone_core_types::role::*;
 
-    use crate::api::tests::get_mocked_state;
+    use crate::api::tests::{get_mocked_state, test_fixture_scoped};
     use crate::api::v3::role_assignment::openapi_router;
     use crate::assignment::MockAssignmentProvider;
     use crate::identity::MockIdentityProvider;
@@ -208,7 +208,8 @@ mod tests {
             .mock_identity(identity_mock)
             .mock_resource(resource_mock)
             .mock_role(role_mock);
-        let state = get_mocked_state(provider_builder, true, None, None).await;
+        let vsc = test_fixture_scoped();
+        let state = get_mocked_state(provider_builder, true, None).await;
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
             .with_state(state);
@@ -219,7 +220,7 @@ mod tests {
                 Request::builder()
                     .method("DELETE")
                     .uri("/projects/project_id/users/user_id/roles/role_id")
-                    .header("x-auth-token", "foo")
+                    .extension(vsc)
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -277,7 +278,8 @@ mod tests {
             .mock_identity(identity_mock)
             .mock_resource(resource_mock)
             .mock_role(role_mock);
-        let state = get_mocked_state(provider_builder, false, None, None).await; // Policy NOT allowed
+        let vsc = test_fixture_scoped();
+        let state = get_mocked_state(provider_builder, false, None).await; // Policy NOT allowed
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
             .with_state(state);
@@ -288,7 +290,7 @@ mod tests {
                 Request::builder()
                     .method("DELETE")
                     .uri("/projects/project_id/users/user_id/roles/role_id")
-                    .header("x-auth-token", "foo")
+                    .extension(vsc)
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -337,7 +339,8 @@ mod tests {
             .mock_identity(identity_mock)
             .mock_resource(resource_mock)
             .mock_role(role_mock);
-        let state = get_mocked_state(provider_builder, true, None, None).await;
+        let vsc = test_fixture_scoped();
+        let state = get_mocked_state(provider_builder, true, None).await;
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
             .with_state(state);
@@ -348,7 +351,7 @@ mod tests {
                 Request::builder()
                     .method("DELETE")
                     .uri("/projects/project_id/users/user_id/roles/role_id")
-                    .header("x-auth-token", "foo")
+                    .extension(vsc)
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -401,7 +404,8 @@ mod tests {
             .mock_identity(identity_mock)
             .mock_resource(resource_mock)
             .mock_role(role_mock);
-        let state = get_mocked_state(provider_builder, true, None, None).await;
+        let vsc = test_fixture_scoped();
+        let state = get_mocked_state(provider_builder, true, None).await;
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
             .with_state(state);
@@ -412,7 +416,7 @@ mod tests {
                 Request::builder()
                     .method("DELETE")
                     .uri("/projects/project_id/users/user_id/roles/role_id")
-                    .header("x-auth-token", "foo")
+                    .extension(vsc)
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -463,7 +467,8 @@ mod tests {
             .mock_identity(identity_mock)
             .mock_resource(resource_mock)
             .mock_role(role_mock);
-        let state = get_mocked_state(provider_builder, true, None, None).await;
+        let vsc = test_fixture_scoped();
+        let state = get_mocked_state(provider_builder, true, None).await;
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
             .with_state(state);
@@ -474,7 +479,7 @@ mod tests {
                 Request::builder()
                     .method("DELETE")
                     .uri("/projects/project_id/users/user_id/roles/role_id")
-                    .header("x-auth-token", "foo")
+                    .extension(vsc)
                     .body(Body::empty())
                     .unwrap(),
             )

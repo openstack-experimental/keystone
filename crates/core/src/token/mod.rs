@@ -22,7 +22,7 @@
 use async_trait::async_trait;
 
 use openstack_keystone_config::Config;
-use openstack_keystone_core_types::auth::{AuthenticationResult, AuthzInfo, SecurityContext};
+use openstack_keystone_core_types::auth::{AuthenticationResult, ScopeInfo, SecurityContext};
 pub use openstack_keystone_core_types::token::*;
 
 pub mod backend;
@@ -139,7 +139,7 @@ impl TokenApi for TokenProvider {
     ///
     /// # Parameters
     /// - `security_context`: Information about the authenticated user.
-    /// - `authz_info`: Authorization scope.
+    /// - `scope`: Scope for the token.
     /// - `token_restrictions`: Optional restrictions for the token.
     ///
     /// # Returns
@@ -148,12 +148,12 @@ impl TokenApi for TokenProvider {
     fn issue_token(
         &self,
         security_context: &SecurityContext,
-        authz_info: &AuthzInfo,
+        scope: &ScopeInfo,
     ) -> Result<Token, TokenProviderError> {
         match self {
-            Self::Service(provider) => provider.issue_token(security_context, authz_info),
+            Self::Service(provider) => provider.issue_token(security_context, scope),
             #[cfg(any(test, feature = "mock"))]
-            Self::Mock(provider) => provider.issue_token(security_context, authz_info),
+            Self::Mock(provider) => provider.issue_token(security_context, scope),
         }
     }
 

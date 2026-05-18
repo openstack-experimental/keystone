@@ -97,7 +97,7 @@ mod tests {
     use tower_http::trace::TraceLayer;
 
     use super::super::openapi_router;
-    use crate::api::tests::get_mocked_state;
+    use crate::api::tests::{get_mocked_state, test_fixture_scoped};
     use crate::identity::MockIdentityProvider;
     use crate::{
         api::v3::group::types::{GroupBuilder as ApiGroupBuilder, GroupList},
@@ -135,10 +135,10 @@ mod tests {
                 }])
             });
 
+        let vsc = test_fixture_scoped();
         let state = get_mocked_state(
             Provider::mocked_builder().mock_identity(identity_mock),
             true,
-            None,
             None,
         )
         .await;
@@ -152,7 +152,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri("/foo/groups")
-                    .header("x-auth-token", "foo")
+                    .extension(vsc)
                     .body(Body::empty())
                     .unwrap(),
             )

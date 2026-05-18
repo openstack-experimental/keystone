@@ -80,7 +80,7 @@ async fn test_token_revoked() -> Result<(), Report> {
     let ctx = SecurityContext::try_from(auth).unwrap();
     let token = state.provider.get_token_provider().issue_token(
         &ctx,
-        &AuthzInfo::Project(
+        &ScopeInfo::Project(
             ProjectBuilder::default()
                 .id(project.id.clone())
                 .name(project.name.clone())
@@ -173,7 +173,7 @@ async fn test_revoked_event_role() -> Result<(), Report> {
     let ctx = SecurityContext::try_from(auth).unwrap();
     let token = state.provider.get_token_provider().issue_token(
         &ctx,
-        &AuthzInfo::Project(
+        &ScopeInfo::Project(
             ProjectBuilder::default()
                 .id(project.id.clone())
                 .name(project.name.clone())
@@ -273,7 +273,7 @@ async fn test_revoked_event_user() -> Result<(), Report> {
     let ctx = SecurityContext::try_from(auth).unwrap();
     let token = state.provider.get_token_provider().issue_token(
         &ctx,
-        &AuthzInfo::Project(
+        &ScopeInfo::Project(
             ProjectBuilder::default()
                 .id(project.id.clone())
                 .name(project.name.clone())
@@ -373,7 +373,7 @@ async fn test_revoked_event_project() -> Result<(), Report> {
     let ctx = SecurityContext::try_from(auth).unwrap();
     let token = state.provider.get_token_provider().issue_token(
         &ctx,
-        &AuthzInfo::Project(
+        &ScopeInfo::Project(
             ProjectBuilder::default()
                 .id(project.id.clone())
                 .name(project.name.clone())

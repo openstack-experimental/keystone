@@ -86,33 +86,33 @@ pub(super) async fn authenticate_request(
 ///
 /// # Result
 ///
-/// * `Ok(AuthzInfo)` - The AuthZ information
+/// * `Ok(ScopeInfo)` - The scope information
 /// * `Err(KeystoneApiError)` - The error
 #[tracing::instrument(skip(state), err)]
 pub(super) async fn get_authz_info(
     state: &ServiceState,
     req: &AuthRequest,
-) -> Result<AuthzInfo, KeystoneApiError> {
-    let authz_info = match &req.auth.scope {
+) -> Result<ScopeInfo, KeystoneApiError> {
+    let authz_scope = match &req.auth.scope {
         Some(Scope::Project(scope)) => {
             if let Some(project) = find_project_from_scope(state, scope).await? {
-                AuthzInfo::Project(project)
+                ScopeInfo::Project(project)
             } else {
                 return Err(KeystoneApiError::UnauthorizedNoContext);
             }
         }
         Some(Scope::Domain(scope)) => {
             if let Ok(domain) = get_domain(state, scope.id.as_ref(), scope.name.as_ref()).await {
-                AuthzInfo::Domain(domain)
+                ScopeInfo::Domain(domain)
             } else {
                 return Err(KeystoneApiError::UnauthorizedNoContext);
             }
         }
-        Some(Scope::System(_scope)) => AuthzInfo::System("system".into()),
-        None => AuthzInfo::Unscoped,
+        Some(Scope::System(_scope)) => ScopeInfo::System("system".into()),
+        None => ScopeInfo::Unscoped,
     };
-    authz_info.validate()?;
-    Ok(authz_info)
+    authz_scope.validate()?;
+    Ok(authz_scope)
 }
 
 #[cfg(test)]
@@ -156,7 +156,7 @@ mod tests {
 
         let provider = Provider::mocked_builder().mock_identity(identity_mock);
 
-        let state = get_mocked_state(provider, true, None, None).await;
+        let state = get_mocked_state(provider, true, None).await;
 
         assert_eq!(
             vec![auth],
@@ -228,7 +228,7 @@ mod tests {
             .mock_identity(identity_mock)
             .mock_token(token_mock);
 
-        let state = get_mocked_state(provider, true, None, Some(true)).await;
+        let state = get_mocked_state(provider, true, None).await;
 
         assert_eq!(
             vec![auth],
@@ -254,7 +254,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_authenticate_request_unsupported() {
-        let state = get_mocked_state(Provider::mocked_builder(), true, None, Some(true)).await;
+        let state = get_mocked_state(Provider::mocked_builder(), true, None).await;
 
         let rsp = authenticate_request(
             &state,

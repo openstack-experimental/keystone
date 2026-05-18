@@ -72,7 +72,7 @@ mod tests {
     use tower_http::trace::TraceLayer;
 
     use super::super::openapi_router;
-    use crate::api::tests::get_mocked_state;
+    use crate::api::tests::{get_mocked_state, test_fixture_scoped};
     use crate::identity::MockIdentityProvider;
     use crate::{
         api::v3::group::types::{
@@ -97,10 +97,10 @@ mod tests {
                 })
             });
 
+        let vsc = test_fixture_scoped();
         let state = get_mocked_state(
             Provider::mocked_builder().mock_identity(identity_mock),
             true,
-            None,
             None,
         )
         .await;
@@ -124,7 +124,7 @@ mod tests {
                     .method("POST")
                     .header(header::CONTENT_TYPE, "application/json")
                     .uri("/")
-                    .header("x-auth-token", "foo")
+                    .extension(vsc)
                     .body(Body::from(serde_json::to_string(&req).unwrap()))
                     .unwrap(),
             )
@@ -144,7 +144,6 @@ mod tests {
         let state = crate::api::tests::get_mocked_state(
             crate::provider::Provider::mocked_builder(),
             false,
-            None,
             None,
         )
         .await;
@@ -179,10 +178,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_not_allowed() {
+        let vsc = test_fixture_scoped();
         let state = crate::api::tests::get_mocked_state(
             crate::provider::Provider::mocked_builder(),
             false,
-            None,
             None,
         )
         .await;
@@ -206,7 +205,7 @@ mod tests {
                     .method("POST")
                     .header(header::CONTENT_TYPE, "application/json")
                     .uri("/")
-                    .header("x-auth-token", "foo")
+                    .extension(vsc)
                     .body(Body::from(serde_json::to_string(&req).unwrap()))
                     .unwrap(),
             )

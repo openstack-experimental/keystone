@@ -96,7 +96,7 @@ mod tests {
     use openstack_keystone_core_types::k8s_auth as provider_types;
 
     use super::super::openapi_router;
-    use crate::api::tests::get_mocked_state;
+    use crate::api::tests::{get_mocked_state, test_fixture_scoped};
     use crate::k8s_auth::{K8sAuthProviderError, MockK8sAuthProvider};
     use crate::provider::Provider;
 
@@ -130,7 +130,10 @@ mod tests {
             .returning(|_, _| Ok(()));
 
         provider = provider.mock_k8s_auth(mock);
-        let state = get_mocked_state(provider, true, None, None).await;
+        let vsc = test_fixture_scoped();
+
+        // skip_default_token_provider=true since we inject VSC via extension
+        let state = get_mocked_state(provider, true, None).await;
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -142,7 +145,7 @@ mod tests {
                 Request::builder()
                     .method("DELETE")
                     .uri("/foo")
-                    .header("x-auth-token", "foo")
+                    .extension(vsc.clone())
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -157,7 +160,7 @@ mod tests {
                 Request::builder()
                     .method("DELETE")
                     .uri("/bar")
-                    .header("x-auth-token", "foo")
+                    .extension(vsc.clone())
                     .body(Body::empty())
                     .unwrap(),
             )

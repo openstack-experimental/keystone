@@ -19,7 +19,7 @@ use serde::Serialize;
 use validator::Validate;
 
 use super::common;
-use crate::auth::{AuthzInfo, IdentityInfo, SecurityContext};
+use crate::auth::{IdentityInfo, ScopeInfo, SecurityContext};
 use crate::error::BuilderError;
 use crate::identity::UserResponse;
 use crate::resource::Project;
@@ -127,8 +127,8 @@ impl RestrictedPayload {
                     restriction
                         .project_id
                         .as_ref()
-                        .or(match &ctx.authorization {
-                            Some(AuthzInfo::Project(project)) => Some(&project.id),
+                        .or(match &ctx.authorization.as_ref().map(|x| &x.scope) {
+                            Some(ScopeInfo::Project(project)) => Some(&project.id),
                             _ => None,
                         })
                         .ok_or_else(|| TokenProviderError::RestrictedTokenNotProjectScoped)?,

@@ -108,12 +108,13 @@ mod tests {
         super::{openapi_router, tests::get_token_provider_mock_with_mocks},
         *,
     };
-    use crate::api::tests::get_mocked_state;
+    use crate::api::tests::{get_mocked_state, test_fixture_scoped};
     use crate::provider::Provider;
 
     #[tokio::test]
     #[traced_test]
     async fn test_update() {
+        let vsc = test_fixture_scoped();
         let mut token_mock = get_token_provider_mock_with_mocks();
         token_mock
             .expect_get_token_restriction()
@@ -158,7 +159,6 @@ mod tests {
             Provider::mocked_builder().mock_token(token_mock),
             true,
             None,
-            Some(true),
         )
         .await;
 
@@ -180,7 +180,7 @@ mod tests {
                     .method("PUT")
                     .header(header::CONTENT_TYPE, "application/json")
                     .uri("/1")
-                    .header("x-auth-token", "foo")
+                    .extension(vsc)
                     .body(Body::from(serde_json::to_string(&req).unwrap()))
                     .unwrap(),
             )

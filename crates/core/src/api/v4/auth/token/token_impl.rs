@@ -255,7 +255,7 @@ mod tests {
         let provider = Provider::mocked_builder()
             .mock_identity(identity_mock)
             .mock_resource(resource_mock);
-        let state = get_mocked_state(provider, true, None, None).await;
+        let state = get_mocked_state(provider, true, None).await;
 
         let api_token = build_api_token_v4(
             &ProviderToken::Unscoped(UnscopedPayload {
@@ -303,7 +303,7 @@ mod tests {
             .mock_identity(identity_mock)
             .mock_resource(resource_mock);
 
-        let state = get_mocked_state(provider, true, None, None).await;
+        let state = get_mocked_state(provider, true, None).await;
 
         let api_token = build_api_token_v4(
             &ProviderToken::DomainScope(DomainScopePayload {
@@ -365,7 +365,7 @@ mod tests {
             .mock_identity(identity_mock)
             .mock_resource(resource_mock);
 
-        let state = get_mocked_state(provider, true, None, None).await;
+        let state = get_mocked_state(provider, true, None).await;
 
         let token = ProviderToken::ProjectScope(ProjectScopePayload {
             user_id: "bar".into(),
@@ -436,7 +436,7 @@ mod tests {
             .mock_identity(identity_mock)
             .mock_resource(resource_mock);
 
-        let state = get_mocked_state(provider, true, None, None).await;
+        let state = get_mocked_state(provider, true, None).await;
 
         let token = ProviderToken::Trust(TrustPayload {
             user_id: "bar".into(),

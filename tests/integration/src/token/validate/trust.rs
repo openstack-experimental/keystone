@@ -121,7 +121,7 @@ async fn test_valid() -> Result<(), Report> {
     let token = state
         .provider
         .get_token_provider()
-        .issue_token(&ctx, &AuthzInfo::Trust(trust.clone()))?;
+        .issue_token(&ctx, &ScopeInfo::Trust(trust.clone()))?;
 
     let encoded_token = state.provider.get_token_provider().encode_token(&token)?;
 
@@ -203,7 +203,7 @@ async fn test_valid_redelegated() -> Result<(), Report> {
     let token = state
         .provider
         .get_token_provider()
-        .issue_token(&ctx, &AuthzInfo::Trust(trust.clone()))?;
+        .issue_token(&ctx, &ScopeInfo::Trust(trust.clone()))?;
 
     let encoded_token = state.provider.get_token_provider().encode_token(&token)?;
 
@@ -284,7 +284,7 @@ async fn test_fewer_roles() -> Result<(), Report> {
     let token = state
         .provider
         .get_token_provider()
-        .issue_token(&ctx, &AuthzInfo::Trust(trust.clone()))?;
+        .issue_token(&ctx, &ScopeInfo::Trust(trust.clone()))?;
 
     let encoded_token = state.provider.get_token_provider().encode_token(&token)?;
 
@@ -350,7 +350,7 @@ async fn test_exclude_local_roles() -> Result<(), Report> {
     let token = state
         .provider
         .get_token_provider()
-        .issue_token(&ctx, &AuthzInfo::Trust(trust.clone()))?;
+        .issue_token(&ctx, &ScopeInfo::Trust(trust.clone()))?;
 
     let encoded_token = state.provider.get_token_provider().encode_token(&token)?;
 

@@ -30,12 +30,15 @@ use webauthn_authenticator_rs::WebauthnAuthenticator;
 use webauthn_authenticator_rs::softtoken::SoftToken;
 
 use openstack_keystone_api_types::webauthn::*;
+use openstack_keystone_core::assignment::MockAssignmentProvider;
 use openstack_keystone_core::identity::MockIdentityProvider;
 use openstack_keystone_core::provider::{Provider, ProviderBuilder};
 use openstack_keystone_core::resource::MockResourceProvider;
-use openstack_keystone_core::token::{MockTokenProvider, Token, UnscopedPayload};
+use openstack_keystone_core::token::MockTokenProvider;
+use openstack_keystone_core_types::assignment::*;
+use openstack_keystone_core_types::auth::*;
 use openstack_keystone_core_types::identity::UserResponseBuilder;
-use openstack_keystone_core_types::resource::{Domain, Project};
+use openstack_keystone_core_types::resource::{Domain, Project, ProjectBuilder};
 use openstack_keystone_core_types::token::{ProjectScopePayload, Token as ProviderToken};
 use openstack_keystone_webauthn::api::init_extension;
 
@@ -47,30 +50,36 @@ fn get_provider_mocks(user_id: &Uuid) -> ProviderBuilder {
     let mut token_mock = MockTokenProvider::default();
     let uid = user_id.to_string().clone();
     token_mock
-        .expect_validate_token()
+        .expect_authenticate_by_token()
         .returning(move |_, _, _, _| {
-            Ok(Token::Unscoped(UnscopedPayload {
-                user_id: uid.clone(),
-                user: Some(
-                    UserResponseBuilder::default()
-                        .id(uid.clone())
-                        .domain_id("udid")
-                        .enabled(true)
-                        .name("name")
+            Ok(AuthenticationResultBuilder::default()
+                .context(AuthenticationContext::Token(TokenContext::default()))
+                .principal(PrincipalInfo {
+                    domain_id: Some("udid".into()),
+                    identity: IdentityInfo::User(
+                        UserIdentityInfoBuilder::default()
+                            .user_id(uid.clone())
+                            .build()
+                            .unwrap(),
+                    ),
+                })
+                .authorization(
+                    AuthzInfoBuilder::default()
+                        .scope(ScopeInfo::Project(
+                            ProjectBuilder::default()
+                                .id("pid")
+                                .domain_id("domain_id")
+                                .enabled(true)
+                                .name("project_name")
+                                .build()
+                                .unwrap(),
+                        ))
+                        .roles(vec![])
                         .build()
                         .unwrap(),
-                ),
-                ..Default::default()
-            }))
-        });
-    let uid = user_id.to_string().clone();
-    token_mock
-        .expect_expand_token_information()
-        .returning(move |_, _| {
-            Ok(Token::Unscoped(UnscopedPayload {
-                user_id: uid.clone(),
-                ..Default::default()
-            }))
+                )
+                .build()
+                .unwrap())
         });
     let uid = user_id.to_string().clone();
     token_mock.expect_issue_token().returning(move |_, _| {
@@ -93,6 +102,22 @@ fn get_provider_mocks(user_id: &Uuid) -> ProviderBuilder {
     token_mock
         .expect_encode_token()
         .returning(|_| Ok("token".to_string()));
+
+    let mut assignment_mock = MockAssignmentProvider::default();
+    assignment_mock
+        .expect_list_role_assignments()
+        .withf(|_, _s| true)
+        .returning(|_, _| {
+            Ok(vec![Assignment {
+                role_id: "role".into(),
+                role_name: Some("rn".into()),
+                actor_id: "actor".into(),
+                target_id: "target".into(),
+                r#type: AssignmentType::UserProject,
+                inherited: false,
+                implied_via: None,
+            }])
+        });
     let mut identity_mock = MockIdentityProvider::default();
     let uid = user_id.to_string().clone();
     identity_mock.expect_get_user().returning(move |_, _| {
@@ -138,6 +163,7 @@ fn get_provider_mocks(user_id: &Uuid) -> ProviderBuilder {
         .returning(move |_, _| Ok(Some(project_domain.clone())));
 
     provider_builder
+        .mock_assignment(assignment_mock)
         .mock_token(token_mock)
         .mock_identity(identity_mock)
         .mock_resource(resource_mock)

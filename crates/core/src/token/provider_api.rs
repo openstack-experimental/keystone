@@ -17,7 +17,7 @@ use async_trait::async_trait;
 
 use openstack_keystone_core_types::token::*;
 
-use crate::auth::{AuthenticationResult, AuthzInfo, SecurityContext};
+use crate::auth::{AuthenticationResult, ScopeInfo, SecurityContext};
 use crate::keystone::ServiceState;
 use crate::token::TokenProviderError;
 
@@ -65,7 +65,7 @@ pub trait TokenApi: Send + Sync {
     ///
     /// # Parameters
     /// - `security_context`: Authentication information for the token.
-    /// - `authz_info`: Authorization information (scope) for the token.
+    /// - `scope`: Scope information for the token.
     /// - `token_restriction`: Optional restrictions for the token.
     ///
     /// # Returns
@@ -73,7 +73,7 @@ pub trait TokenApi: Send + Sync {
     fn issue_token(
         &self,
         security_context: &SecurityContext,
-        authz_info: &AuthzInfo,
+        scope: &ScopeInfo,
     ) -> Result<Token, TokenProviderError>;
 
     /// Encode the token into the X-Subject-Token String.

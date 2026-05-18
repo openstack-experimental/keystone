@@ -55,10 +55,8 @@ pub enum Token {
     Unscoped(UnscopedPayload),
 }
 
-// TODO: From<Token> for SecurityContext
-
 impl Token {
-    /// Construct the [`Token`] for the requested [`AuthzInfo`] with the current
+    /// Construct the [`Token`] for the requested [`ScopeInfo`] with the current
     /// [`SecurityContext`].`
     ///
     /// # Security Note
@@ -66,7 +64,7 @@ impl Token {
     /// can be issued.
     pub fn from_security_context_with_scope(
         ctx: &SecurityContext,
-        scope: &AuthzInfo,
+        scope: &ScopeInfo,
         expires_at: DateTime<Utc>,
     ) -> Result<Self, error::TokenProviderError> {
         if let Some(token_restriction) = &ctx.token_restriction {
@@ -77,7 +75,7 @@ impl Token {
             )?));
         }
         match scope {
-            AuthzInfo::Domain(domain) => match &ctx.authentication_context {
+            ScopeInfo::Domain(domain) => match &ctx.authentication_context {
                 AuthenticationContext::Oidc(oidc) => Ok(Self::FederationDomainScope(
                     FederationDomainScopePayload::from_security_context(
                         ctx, domain, oidc, expires_at,
@@ -88,7 +86,7 @@ impl Token {
                     DomainScopePayload::from_security_context(ctx, domain, expires_at)?,
                 )),
             },
-            AuthzInfo::Project(project) => match &ctx.authentication_context {
+            ScopeInfo::Project(project) => match &ctx.authentication_context {
                 AuthenticationContext::ApplicationCredential(app_cred) => {
                     Ok(Self::ApplicationCredential(
                         ApplicationCredentialPayload::from_security_context(
@@ -105,7 +103,7 @@ impl Token {
                     ProjectScopePayload::from_security_context(ctx, project, expires_at)?,
                 )),
             },
-            AuthzInfo::Trust(trust) => Ok(match &trust.project_id {
+            ScopeInfo::Trust(trust) => Ok(match &trust.project_id {
                 Some(project_id) => Self::Trust(TrustPayload::from_security_context(
                     ctx,
                     trust,
@@ -114,10 +112,10 @@ impl Token {
                 )?),
                 None => todo!(),
             }),
-            AuthzInfo::System(system) => Ok(Self::SystemScope(
+            ScopeInfo::System(system) => Ok(Self::SystemScope(
                 SystemScopePayload::from_security_context(ctx, system, expires_at)?,
             )),
-            AuthzInfo::Unscoped => match &ctx.authentication_context {
+            ScopeInfo::Unscoped => match &ctx.authentication_context {
                 AuthenticationContext::Oidc(oidc) => Ok(Self::FederationUnscoped(
                     FederationUnscopedPayload::from_security_context(ctx, oidc, expires_at)?,
                 )),
@@ -290,6 +288,13 @@ impl Token {
         }
     }
 
+    pub const fn system_id(&self) -> Option<&String> {
+        match self {
+            Self::SystemScope(x) => Some(&x.system_id),
+            _ => None,
+        }
+    }
+
     /// Original roles that were granted to the authn/authz.
     ///
     /// For application credentials original roles represent the roles tied to
@@ -342,6 +347,53 @@ impl Token {
                 None => None,
             },
             _ => None,
+        }
+    }
+
+    /// Extract authorization information from the expanded token.
+    ///
+    /// Returns `[None]` when scope objects have not been expanded yet
+    /// _(e.g., the project/domain object is `[None]` but the scope ID is
+    /// present)_.
+    pub fn authorization(&self) -> Option<AuthzInfo> {
+        let roles = self.effective_roles().cloned();
+        match self {
+            Self::Unscoped(_) | Self::FederationUnscoped(_) => Some(AuthzInfo {
+                scope: ScopeInfo::Unscoped,
+                roles: None,
+            }),
+            Self::ProjectScope(x) => x.project.as_ref().map(|p| AuthzInfo {
+                scope: ScopeInfo::Project(p.clone()),
+                roles,
+            }),
+            Self::FederationProjectScope(x) => x.project.as_ref().map(|p| AuthzInfo {
+                scope: ScopeInfo::Project(p.clone()),
+                roles,
+            }),
+            Self::DomainScope(x) => x.domain.as_ref().map(|d| AuthzInfo {
+                scope: ScopeInfo::Domain(d.clone()),
+                roles,
+            }),
+            Self::FederationDomainScope(x) => x.domain.as_ref().map(|d| AuthzInfo {
+                scope: ScopeInfo::Domain(d.clone()),
+                roles,
+            }),
+            Self::SystemScope(x) => Some(AuthzInfo {
+                scope: ScopeInfo::System(x.system_id.clone()),
+                roles,
+            }),
+            Self::Restricted(x) => x.project.as_ref().map(|p| AuthzInfo {
+                scope: ScopeInfo::Project(p.clone()),
+                roles,
+            }),
+            Self::ApplicationCredential(x) => x.project.as_ref().map(|p| AuthzInfo {
+                scope: ScopeInfo::Project(p.clone()),
+                roles,
+            }),
+            Self::Trust(x) => x.trust.as_ref().map(|t| AuthzInfo {
+                scope: ScopeInfo::Trust(t.clone()),
+                roles,
+            }),
         }
     }
 }

@@ -76,7 +76,7 @@ pub(super) async fn list_nested(
         auth_instance_id: Some(instance_id),
         name: query.name,
         domain_id: if !res.can_see_other_domain_resources.is_some_and(|x| x) {
-            user_auth.user().as_ref().map(|val| val.domain_id.clone())
+            user_auth.principal.domain_id.clone()
         } else {
             None
         },
@@ -145,7 +145,7 @@ pub(super) async fn list(
         auth_instance_id: query.auth_instance_id,
         name: query.name,
         domain_id: if !res.can_see_other_domain_resources.is_some_and(|x| x) {
-            user_auth.user().as_ref().map(|val| val.domain_id.clone())
+            user_auth.principal.domain_id.clone()
         } else {
             query.domain_id
         },
@@ -191,8 +191,8 @@ mod tests {
 
     use openstack_keystone_core_types::k8s_auth as provider_types;
 
-    use super::{super::*, *};
-    use crate::api::tests::get_mocked_state;
+    use super::{super::openapi_router, *};
+    use crate::api::tests::{get_mocked_state, test_fixture_scoped};
     use crate::k8s_auth::MockK8sAuthProvider;
     use crate::provider::Provider;
 
@@ -218,7 +218,10 @@ mod tests {
             });
 
         provider = provider.mock_k8s_auth(mock);
-        let state = get_mocked_state(provider, true, None, None).await;
+        let vsc = test_fixture_scoped();
+
+        // skip_default_token_provider=true since we inject VSC via extension
+        let state = get_mocked_state(provider, true, None).await;
 
         // Nested style
         let mut api = openapi_router()
@@ -229,7 +232,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri("/instances/cid/roles")
-                    .header("x-auth-token", "foo")
+                    .extension(vsc.clone())
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -260,7 +263,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri("/roles")
-                    .header("x-auth-token", "foo")
+                    .extension(vsc)
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -295,7 +298,7 @@ mod tests {
             .withf(|_, qp: &provider_types::K8sAuthRoleListParameters| {
                 provider_types::K8sAuthRoleListParameters {
                     auth_instance_id: Some("cid".into()),
-                    domain_id: Some("udid".into()),
+                    domain_id: Some("domain_id".into()),
                     name: Some("name".into()),
                 } == *qp
             })
@@ -315,7 +318,7 @@ mod tests {
         mock.expect_list_auth_roles()
             .withf(|_, qp: &provider_types::K8sAuthRoleListParameters| {
                 provider_types::K8sAuthRoleListParameters {
-                    domain_id: Some("udid".into()),
+                    domain_id: Some("domain_id".into()),
                     name: Some("name".into()),
                     ..Default::default()
                 } == *qp
@@ -335,7 +338,10 @@ mod tests {
             });
 
         provider = provider.mock_k8s_auth(mock);
-        let state = get_mocked_state(provider, true, None, None).await;
+        let vsc = test_fixture_scoped();
+
+        // skip_default_token_provider=true since we inject VSC via extension
+        let state = get_mocked_state(provider, true, None).await;
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -347,7 +353,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri("/instances/cid/roles?name=name")
-                    .header("x-auth-token", "foo")
+                    .extension(vsc.clone())
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -365,7 +371,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri("/roles?name=name")
-                    .header("x-auth-token", "foo")
+                    .extension(vsc)
                     .body(Body::empty())
                     .unwrap(),
             )

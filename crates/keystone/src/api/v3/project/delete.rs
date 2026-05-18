@@ -84,7 +84,7 @@ mod tests {
     use openstack_keystone_core_types::resource as provider_types;
 
     use super::super::openapi_router;
-    use crate::api::tests::get_mocked_state;
+    use crate::api::tests::{get_mocked_state, test_fixture_scoped};
     use crate::provider::Provider;
     use crate::resource::MockResourceProvider;
 
@@ -110,7 +110,8 @@ mod tests {
             .returning(|_, _| Ok(()));
 
         provider = provider.mock_resource(mock);
-        let state = get_mocked_state(provider, true, None, None).await;
+        let vsc = test_fixture_scoped();
+        let state = get_mocked_state(provider, true, None).await;
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -122,7 +123,7 @@ mod tests {
                 Request::builder()
                     .method("DELETE")
                     .uri("/foo")
-                    .header("x-auth-token", "foo")
+                    .extension(vsc.clone())
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -137,7 +138,7 @@ mod tests {
                 Request::builder()
                     .method("DELETE")
                     .uri("/bar")
-                    .header("x-auth-token", "foo")
+                    .extension(vsc)
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -156,7 +157,8 @@ mod tests {
             .returning(|_, _| Ok(None));
 
         provider = provider.mock_resource(mock);
-        let state = get_mocked_state(provider, false, None, None).await;
+        let vsc = test_fixture_scoped();
+        let state = get_mocked_state(provider, false, None).await;
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -168,7 +170,7 @@ mod tests {
                 Request::builder()
                     .method("DELETE")
                     .uri("/foo")
-                    .header("x-auth-token", "foo")
+                    .extension(vsc)
                     .body(Body::empty())
                     .unwrap(),
             )

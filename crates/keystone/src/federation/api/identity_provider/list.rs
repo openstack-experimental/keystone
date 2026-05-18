@@ -75,10 +75,11 @@ pub(super) async fn list(
 
     let domain_ids = if query.domain_id.as_ref().is_none() {
         if !res.can_see_other_domain_resources.is_some_and(|x| x) {
+            //let principal_domain_id = user_auth.principal.domain_id.clone();
             let domain_ids: HashSet<Option<String>> = HashSet::from([
                 None,
                 // TODO: perhaps we should first look at the domain_scope and than user domain.
-                user_auth.user().as_ref().map(|val| val.domain_id.clone()),
+                user_auth.principal.domain_id.clone(),
             ]);
             Some(domain_ids)
         } else {
@@ -86,6 +87,10 @@ pub(super) async fn list(
             None
         }
     } else {
+        if user_auth.principal.domain_id != query.domain_id {
+            return Err(KeystoneApiError::UnauthorizedNoContext)?;
+        }
+
         Some(HashSet::from([query.domain_id.clone()]))
     };
     let mut provider_list_params = ProviderIdentityProviderListParameters::from(query.clone());
@@ -133,7 +138,7 @@ mod tests {
     use openstack_keystone_core_types::federation as provider_types;
 
     use super::{super::openapi_router, *};
-    use crate::api::tests::get_mocked_state;
+    use crate::api::tests::{get_mocked_state, test_fixture_scoped};
     use crate::federation::MockFederationProvider;
     use crate::provider::Provider;
 
@@ -154,10 +159,10 @@ mod tests {
                     ..Default::default()
                 }])
             });
+        let vsc = test_fixture_scoped();
         let state = get_mocked_state(
             Provider::mocked_builder().mock_federation(federation_mock),
             true,
-            None,
             None,
         )
         .await;
@@ -171,7 +176,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri("/")
-                    .header("x-auth-token", "foo")
+                    .extension(vsc)
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -204,7 +209,9 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn test_list_qp() {
+    /// test listing if forbidden to show IDP of foreign domain when user does
+    /// not have permision to see resources of other domains.
+    async fn test_list_policy_allow_but_other_domain() {
         let mut federation_mock = MockFederationProvider::default();
         federation_mock
             .expect_list_identity_providers()
@@ -212,90 +219,6 @@ mod tests {
                 provider_types::IdentityProviderListParameters {
                     name: Some("name".into()),
                     domain_ids: Some(HashSet::from([Some("did".into())])),
-                    limit: Some(1),
-                    marker: Some("marker".into()),
-                } == *qp
-            })
-            .returning(|_, _| {
-                Ok(vec![provider_types::IdentityProvider {
-                    id: "id".into(),
-                    name: "name".into(),
-                    domain_id: Some("did".into()),
-                    ..Default::default()
-                }])
-            });
-
-        let state = get_mocked_state(
-            Provider::mocked_builder().mock_federation(federation_mock),
-            true,
-            None,
-            None,
-        )
-        .await;
-
-        let mut api = openapi_router()
-            .layer(TraceLayer::new_for_http())
-            .with_state(state);
-
-        let response = api
-            .as_service()
-            .oneshot(
-                Request::builder()
-                    .uri("/?name=name&domain_id=did&limit=1&marker=marker")
-                    .header("x-auth-token", "foo")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(response.status(), StatusCode::OK);
-
-        let body = response.into_body().collect().await.unwrap().to_bytes();
-        let _res: IdentityProviderList = serde_json::from_slice(&body).unwrap();
-    }
-
-    #[tokio::test]
-    #[traced_test]
-    async fn test_list_forbidden() {
-        let federation_mock = MockFederationProvider::default();
-        let state = get_mocked_state(
-            Provider::mocked_builder().mock_federation(federation_mock),
-            false,
-            None,
-            None,
-        )
-        .await;
-
-        let mut api = openapi_router()
-            .layer(TraceLayer::new_for_http())
-            .with_state(state);
-
-        let response = api
-            .as_service()
-            .oneshot(
-                Request::builder()
-                    .uri("/")
-                    .header("x-auth-token", "foo")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(response.status(), StatusCode::FORBIDDEN);
-    }
-
-    #[tokio::test]
-    #[traced_test]
-    async fn test_list_shared_and_own() {
-        let mut federation_mock = MockFederationProvider::default();
-        federation_mock
-            .expect_list_identity_providers()
-            .withf(|_, qp: &provider_types::IdentityProviderListParameters| {
-                provider_types::IdentityProviderListParameters {
-                    name: Some("name".into()),
-                    domain_ids: Some(HashSet::from([None, Some("udid".into())])),
                     limit: Some(20),
                     marker: None,
                 } == *qp
@@ -309,11 +232,63 @@ mod tests {
                 }])
             });
 
+        let vsc = test_fixture_scoped();
+
         let state = get_mocked_state(
             Provider::mocked_builder().mock_federation(federation_mock),
             true,
             Some(false),
-            None,
+        )
+        .await;
+
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        let response = api
+            .as_service()
+            .oneshot(
+                Request::builder()
+                    .uri("/?name=name&limit=20&domain_id=did")
+                    .extension(vsc)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_list_shared_and_own() {
+        let mut federation_mock = MockFederationProvider::default();
+        federation_mock
+            .expect_list_identity_providers()
+            .withf(|_, qp: &provider_types::IdentityProviderListParameters| {
+                provider_types::IdentityProviderListParameters {
+                    name: Some("name".into()),
+                    domain_ids: Some(HashSet::from([None, Some("domain_id".into())])),
+                    limit: Some(20),
+                    marker: None,
+                } == *qp
+            })
+            .returning(|_, _| {
+                Ok(vec![provider_types::IdentityProvider {
+                    id: "id".into(),
+                    name: "name".into(),
+                    domain_id: Some("did".into()),
+                    ..Default::default()
+                }])
+            });
+
+        let vsc = test_fixture_scoped();
+
+        let state = get_mocked_state(
+            Provider::mocked_builder().mock_federation(federation_mock),
+            true,
+            Some(false),
         )
         .await;
 
@@ -326,7 +301,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri("/?name=name")
-                    .header("x-auth-token", "foo")
+                    .extension(vsc)
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -342,15 +317,13 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_list_all() {
-        // Test listing ALL idps when the user does not specify the domain_id and is
-        // allowed to see IDP of other domains (admin)
         let mut federation_mock = MockFederationProvider::default();
         federation_mock
             .expect_list_identity_providers()
             .withf(|_, qp: &provider_types::IdentityProviderListParameters| {
                 provider_types::IdentityProviderListParameters {
                     name: Some("name".into()),
-                    domain_ids: None,
+                    domain_ids: Some(HashSet::from([None, Some("domain_id".into())])),
                     limit: Some(20),
                     marker: None,
                 } == *qp
@@ -364,11 +337,12 @@ mod tests {
                 }])
             });
 
+        let vsc = test_fixture_scoped();
+
         let state = get_mocked_state(
             Provider::mocked_builder().mock_federation(federation_mock),
             true,
-            Some(true),
-            None,
+            Some(false),
         )
         .await;
 
@@ -381,7 +355,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri("/?name=name")
-                    .header("x-auth-token", "foo")
+                    .extension(vsc)
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -403,7 +377,7 @@ mod tests {
             .withf(|_, qp: &provider_types::IdentityProviderListParameters| {
                 provider_types::IdentityProviderListParameters {
                     limit: Some(1),
-                    domain_ids: Some(HashSet::from([None, Some("udid".into())])),
+                    domain_ids: Some(HashSet::from([None, Some("domain_id".into())])),
                     ..Default::default()
                 } == *qp
             })
@@ -416,11 +390,12 @@ mod tests {
                 }])
             });
 
+        let vsc = test_fixture_scoped();
+
         let state = get_mocked_state(
             Provider::mocked_builder().mock_federation(federation_mock),
             true,
             Some(false),
-            None,
         )
         .await;
 
@@ -433,7 +408,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri("/?limit=1")
-                    .header("x-auth-token", "foo")
+                    .extension(vsc)
                     .body(Body::empty())
                     .unwrap(),
             )

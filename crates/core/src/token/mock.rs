@@ -19,7 +19,7 @@ use mockall::mock;
 use openstack_keystone_core_types::token::*;
 
 use super::error::TokenProviderError;
-use crate::auth::{AuthenticationResult, AuthzInfo, SecurityContext};
+use crate::auth::{AuthenticationResult, ScopeInfo, SecurityContext};
 use crate::keystone::ServiceState;
 
 use super::TokenApi;
@@ -49,7 +49,7 @@ mock! {
         fn issue_token(
             &self,
             security_context: &SecurityContext,
-            authz_info: &AuthzInfo,
+            scope: &ScopeInfo,
         ) -> Result<Token, TokenProviderError>;
 
         fn encode_token(&self, token: &Token) -> Result<String, TokenProviderError>;

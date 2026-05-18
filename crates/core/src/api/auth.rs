@@ -12,22 +12,34 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //! # API authentication handling
+use std::ops::Deref;
+use std::sync::Arc;
+
 use axum::{
     extract::{FromRef, FromRequestParts},
     http::request::Parts,
 };
 use spiffe::SpiffeId;
-use std::sync::Arc;
 use tracing::{debug, error};
 
 use openstack_keystone_config::Interface;
+use openstack_keystone_core_types::auth::*;
 
 use crate::api::KeystoneApiError;
+use crate::auth::ValidatedSecurityContext;
+use crate::identity::IdentityApi;
 use crate::keystone::ServiceState;
-use crate::token::{Token, TokenApi};
+use crate::token::TokenApi;
 
 #[derive(Debug, Clone)]
-pub struct Auth(pub Token);
+pub struct Auth(pub ValidatedSecurityContext);
+
+impl Deref for Auth {
+    type Target = ValidatedSecurityContext;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
 
 impl<S> FromRequestParts<S> for Auth
 where
@@ -38,8 +50,16 @@ where
 
     #[tracing::instrument(skip(state), err)]
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        #[cfg(any(test, feature = "mock"))]
+        {
+            if let Some(vsc) = parts.extensions.get::<ValidatedSecurityContext>() {
+                vsc.fully_resolved()?;
+                return Ok(Auth(vsc.clone()));
+            }
+        }
+
         if let Some(svid) = parts.extensions.get::<SpiffeId>() {
-            tracing::info!("the svid is {:?}", svid);
+            tracing::debug!("spiffe svid present: {}", svid);
         }
         // Extract the interface on which the connection is being served
         let interface = parts
@@ -63,14 +83,33 @@ where
 
         let state = Arc::from_ref(state);
 
-        let token = state
+        let mut auth_res = state
             .provider
             .get_token_provider()
-            .validate_token(&state, auth_header, Some(false), None)
+            .authenticate_by_token(&state, auth_header, Some(false), None)
             .await
             .inspect_err(|e| error!("{:#?}", e))
             .map_err(|_| KeystoneApiError::UnauthorizedNoContext)?;
 
-        Ok(Self(token))
+        if let IdentityInfo::User(ref mut identity) = auth_res.principal.identity {
+            identity.user = Some(
+                state
+                    .provider
+                    .get_identity_provider()
+                    .get_user(&state, &identity.user_id)
+                    .await
+                    .map(|x| {
+                        x.ok_or_else(|| KeystoneApiError::NotFound {
+                            resource: "user".into(),
+                            identifier: identity.user_id.clone(),
+                        })
+                    })??,
+            );
+        };
+        let sc = SecurityContext::try_from(auth_res)?;
+        let vsc = ValidatedSecurityContext::new_with_roles(sc, &state).await?;
+        vsc.fully_resolved()?;
+
+        Ok(Auth(vsc))
     }
 }
