@@ -80,14 +80,12 @@ async fn test_token_revoked() -> Result<(), Report> {
     let ctx = SecurityContext::try_from(auth).unwrap();
     let token = state.provider.get_token_provider().issue_token(
         &ctx,
-        &ScopeInfo::Project(
-            ProjectBuilder::default()
+        &ScopeInfo::Project { project: ProjectBuilder::default()
                 .id(project.id.clone())
                 .name(project.name.clone())
                 .domain_id(project.domain_id.clone())
                 .enabled(true)
-                .build()?,
-        ),
+                .build()?, domain: None },
     )?;
 
     // Token gets proper issued_at only during the serialization
@@ -173,14 +171,12 @@ async fn test_revoked_event_role() -> Result<(), Report> {
     let ctx = SecurityContext::try_from(auth).unwrap();
     let token = state.provider.get_token_provider().issue_token(
         &ctx,
-        &ScopeInfo::Project(
-            ProjectBuilder::default()
+        &ScopeInfo::Project { project: ProjectBuilder::default()
                 .id(project.id.clone())
                 .name(project.name.clone())
                 .domain_id(project.domain_id.clone())
                 .enabled(true)
-                .build()?,
-        ),
+                .build()?, domain: None },
     )?;
 
     // Token gets proper issued_at only during the serialization
@@ -273,14 +269,12 @@ async fn test_revoked_event_user() -> Result<(), Report> {
     let ctx = SecurityContext::try_from(auth).unwrap();
     let token = state.provider.get_token_provider().issue_token(
         &ctx,
-        &ScopeInfo::Project(
-            ProjectBuilder::default()
+        &ScopeInfo::Project { project: ProjectBuilder::default()
                 .id(project.id.clone())
                 .name(project.name.clone())
                 .domain_id(project.domain_id.clone())
                 .enabled(true)
-                .build()?,
-        ),
+                .build()?, domain: None },
     )?;
 
     // Token gets proper issued_at only during the serialization
@@ -373,14 +367,12 @@ async fn test_revoked_event_project() -> Result<(), Report> {
     let ctx = SecurityContext::try_from(auth).unwrap();
     let token = state.provider.get_token_provider().issue_token(
         &ctx,
-        &ScopeInfo::Project(
-            ProjectBuilder::default()
+        &ScopeInfo::Project { project: ProjectBuilder::default()
                 .id(project.id.clone())
                 .name(project.name.clone())
                 .domain_id(project.domain_id.clone())
                 .enabled(true)
-                .build()?,
-        ),
+                .build()?, domain: None },
     )?;
 
     // Token gets proper issued_at only during the serialization

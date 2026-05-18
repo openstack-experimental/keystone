@@ -128,7 +128,7 @@ impl RestrictedPayload {
                         .project_id
                         .as_ref()
                         .or(match &ctx.authorization.as_ref().map(|x| &x.scope) {
-                            Some(ScopeInfo::Project(project)) => Some(&project.id),
+                            Some(ScopeInfo::Project { project, domain: _ }) => Some(&project.id),
                             _ => None,
                         })
                         .ok_or_else(|| TokenProviderError::RestrictedTokenNotProjectScoped)?,

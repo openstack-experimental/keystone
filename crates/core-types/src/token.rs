@@ -86,7 +86,7 @@ impl Token {
                     DomainScopePayload::from_security_context(ctx, domain, expires_at)?,
                 )),
             },
-            ScopeInfo::Project(project) => match &ctx.authentication_context {
+            ScopeInfo::Project { project, domain: _ } => match &ctx.authentication_context {
                 AuthenticationContext::ApplicationCredential(app_cred) => {
                     Ok(Self::ApplicationCredential(
                         ApplicationCredentialPayload::from_security_context(
@@ -363,11 +363,11 @@ impl Token {
                 roles: None,
             }),
             Self::ProjectScope(x) => x.project.as_ref().map(|p| AuthzInfo {
-                scope: ScopeInfo::Project(p.clone()),
+                scope: ScopeInfo::Project { project: p.clone(), domain: None },
                 roles,
             }),
             Self::FederationProjectScope(x) => x.project.as_ref().map(|p| AuthzInfo {
-                scope: ScopeInfo::Project(p.clone()),
+                scope: ScopeInfo::Project { project: p.clone(), domain: None },
                 roles,
             }),
             Self::DomainScope(x) => x.domain.as_ref().map(|d| AuthzInfo {
@@ -383,11 +383,11 @@ impl Token {
                 roles,
             }),
             Self::Restricted(x) => x.project.as_ref().map(|p| AuthzInfo {
-                scope: ScopeInfo::Project(p.clone()),
+                scope: ScopeInfo::Project { project: p.clone(), domain: None },
                 roles,
             }),
             Self::ApplicationCredential(x) => x.project.as_ref().map(|p| AuthzInfo {
-                scope: ScopeInfo::Project(p.clone()),
+                scope: ScopeInfo::Project { project: p.clone(), domain: None },
                 roles,
             }),
             Self::Trust(x) => x.trust.as_ref().map(|t| AuthzInfo {

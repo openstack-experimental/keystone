@@ -196,7 +196,7 @@ impl TryFrom<&ValidatedSecurityContext> for Credentials {
                 ScopeInfo::Domain(domain) => {
                     builder.domain_id(domain.id.clone());
                 }
-                ScopeInfo::Project(project) => {
+                ScopeInfo::Project { project, domain: _ } => {
                     builder.project_id(project.id.clone());
                 }
                 ScopeInfo::System(system) => {

@@ -62,13 +62,13 @@ pub mod tests {
                     name: Some("admin".to_string()),
                     domain_id: None,
                 }]),
-                scope: ScopeInfo::Project(Project {
+                scope: ScopeInfo::Project { project: Project {
                     id: "project_id".to_string(),
                     domain_id: "domain_id".to_string(),
                     enabled: true,
                     name: "admin".to_string(),
                     ..Default::default()
-                }),
+                }, domain: None },
             }),
             expires_at: None,
             principal: PrincipalInfo {

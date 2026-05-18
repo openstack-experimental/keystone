@@ -96,7 +96,10 @@ pub(super) async fn get_authz_info(
     let authz_scope = match &req.auth.scope {
         Some(Scope::Project(scope)) => {
             if let Some(project) = find_project_from_scope(state, scope).await? {
-                ScopeInfo::Project(project)
+                ScopeInfo::Project {
+                    project,
+                    domain: None,
+                }
             } else {
                 return Err(KeystoneApiError::UnauthorizedNoContext);
             }

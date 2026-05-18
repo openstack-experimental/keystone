@@ -129,14 +129,12 @@ async fn test_revoke_user_project_grant_auth_impact() -> Result<()> {
         )
         .await?;
 
-    let authz = ScopeInfo::Project(
-        ProjectBuilder::default()
+    let authz = ScopeInfo::Project { project: ProjectBuilder::default()
             .id(cred.project_id.clone())
             .name(project.id.clone())
             .domain_id(project.domain_id.clone())
             .enabled(true)
-            .build()?,
-    );
+            .build()?, domain: None };
 
     let auth = AuthenticationResultBuilder::default()
         .context(AuthenticationContext::ApplicationCredential(

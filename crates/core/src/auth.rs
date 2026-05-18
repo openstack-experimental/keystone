@@ -104,7 +104,7 @@ pub async fn calculate_effective_roles_in_security_context(
                         .into_iter(),
                 )?;
             }
-            ScopeInfo::Project(project) => {
+            ScopeInfo::Project { project, domain: _ } => {
                 let user_roles = state
                     .provider
                     .get_assignment_provider()
@@ -143,6 +143,16 @@ pub async fn calculate_effective_roles_in_security_context(
                     _ => {
                         // for everything else just set all roles the principal has on the project.
                         authorization.try_set_roles(user_roles.into_iter())?;
+                    }
+                }
+                if authorization.roles.as_ref().is_none_or(|r| r.is_empty()) {
+                    return Err(AuthenticationError::ActorHasNoRolesOnTarget)?;
+                }
+                // Checking token restrictions take place at the end to ensure it is not
+                // overwritten by other logic.
+                if let Some(token_restriction) = &security_context.token_restriction {
+                    if let Some(roles) = &token_restriction.roles {
+                        authorization.roles = Some(roles.clone());
                     }
                 }
             }

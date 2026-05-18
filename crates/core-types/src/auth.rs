@@ -212,7 +212,7 @@ impl SecurityContext {
                     AuthenticationContext::WebauthN => Ok(()),
                 }
             }
-            ScopeInfo::Project(project) => {
+            ScopeInfo::Project { project, domain: _ } => {
                 if let Some(token_restriction) = &self.token_restriction
                     && let Some(tr_pid) = &token_restriction.project_id
                     && *tr_pid != project.id
@@ -696,7 +696,12 @@ pub enum ScopeInfo {
     /// Domain scope.
     Domain(Domain),
     /// Project scope.
-    Project(Project),
+    Project {
+        /// Project information.
+        project: Project,
+        /// Domain information for the project scope.
+        domain: Option<Domain>,
+    },
     /// System scope.
     System(String),
     /// Trust scope.
@@ -718,10 +723,10 @@ impl ScopeInfo {
                     return Err(AuthenticationError::DomainDisabled(domain.id.clone()));
                 }
             }
-            ScopeInfo::Project(project) => {
-                if !project.enabled {
-                    return Err(AuthenticationError::ProjectDisabled(project.id.clone()));
-                }
+ScopeInfo::Project { project, domain: _ } => {
+            if !project.enabled {
+                return Err(AuthenticationError::ProjectDisabled(project.id.clone()));
+            }
             }
             ScopeInfo::System(_) => {}
             ScopeInfo::Trust(_) => {}
@@ -888,8 +893,14 @@ mod tests {
                 .build()
                 .unwrap();
             Self {
-                project: ScopeInfo::Project(make_project()),
-                project2: ScopeInfo::Project(make_project2()),
+                project: ScopeInfo::Project {
+                    project: make_project(),
+                    domain: None,
+                },
+                project2: ScopeInfo::Project {
+                    project: make_project2(),
+                    domain: None,
+                },
                 domain: ScopeInfo::Domain(make_domain().clone()),
                 trust: ScopeInfo::Trust(trust),
                 system: ScopeInfo::System("all".into()),
@@ -960,7 +971,10 @@ mod tests {
             .context(AuthenticationContext::Password)
             .principal(principal)
             .authorization(AuthzInfo {
-                scope: ScopeInfo::Project(project),
+                scope: ScopeInfo::Project {
+                    project,
+                    domain: None,
+                },
                 roles,
             })
             .build()
@@ -1096,13 +1110,22 @@ mod tests {
 
     #[test]
     fn test_authz_validate_project() {
-        assert!(ScopeInfo::Project(make_project()).validate().is_ok());
+        assert!(ScopeInfo::Project {
+            project: make_project(),
+            domain: None,
+        }
+        .validate()
+        .is_ok());
     }
 
     #[test]
     fn test_authz_validate_project_disabled() {
         if let Err(AuthenticationError::ProjectDisabled(..)) =
-            ScopeInfo::Project(make_disabled_project()).validate()
+            (ScopeInfo::Project {
+                project: make_disabled_project(),
+                domain: None,
+            })
+            .validate()
         {
         } else {
             panic!("should fail when project is not enabled");
@@ -1299,11 +1322,17 @@ mod tests {
             Err(AuthenticationError::ScopeNotAllowed)
         ));
         assert!(
-            ctx.validate_scope_boundaries(&ScopeInfo::Project(p))
-                .is_ok()
+            ctx.validate_scope_boundaries(&ScopeInfo::Project {
+                project: p,
+                domain: None,
+            })
+            .is_ok()
         );
         assert!(matches!(
-            ctx.validate_scope_boundaries(&ScopeInfo::Project(p2)),
+            ctx.validate_scope_boundaries(&ScopeInfo::Project {
+                project: p2,
+                domain: None,
+            }),
             Err(AuthenticationError::ScopeNotAllowed)
         ));
         assert!(matches!(
@@ -1426,13 +1455,16 @@ mod tests {
             AuthenticationContext::Password
         ));
         assert!(matches!(ctx.principal.identity, IdentityInfo::User(_)));
-        assert!(matches!(
-            ctx.authorization,
-            Some(AuthzInfo {
-                scope: ScopeInfo::Project(_),
-                ..
-            })
-        ));
+        let authz_scope_match = if let Some(AuthzInfo { scope, .. }) = &ctx.authorization {
+            if let ScopeInfo::Project { project, .. } = scope {
+                project.id == "pid"
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+        assert!(authz_scope_match);
     }
 
     #[test]
@@ -1487,7 +1519,10 @@ mod tests {
 
     #[test]
     fn test_authz_validation_disabled_project() {
-        let scope = ScopeInfo::Project(make_disabled_project());
+        let scope = ScopeInfo::Project {
+            project: make_disabled_project(),
+            domain: None,
+        };
         assert!(matches!(
             scope.validate(),
             Err(AuthenticationError::ProjectDisabled(id)) if id == "pid"
@@ -1653,7 +1688,10 @@ mod tests {
     #[test]
     fn test_try_set_roles_success() {
         let mut authz = AuthzInfo {
-            scope: ScopeInfo::Project(make_project()),
+            scope: ScopeInfo::Project {
+                project: make_project(),
+                domain: None,
+            },
             roles: None,
         };
         let assignment = AssignmentBuilder::default()
@@ -1673,7 +1711,10 @@ mod tests {
     #[test]
     fn test_try_set_roles_mixed_success_failure() {
         let mut authz = AuthzInfo {
-            scope: ScopeInfo::Project(make_project()),
+            scope: ScopeInfo::Project {
+                project: make_project(),
+                domain: None,
+            },
             roles: None,
         };
         let good = AssignmentBuilder::default()

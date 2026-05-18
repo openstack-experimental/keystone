@@ -65,15 +65,13 @@ fn get_provider_mocks(user_id: &Uuid) -> ProviderBuilder {
                 })
                 .authorization(
                     AuthzInfoBuilder::default()
-                        .scope(ScopeInfo::Project(
-                            ProjectBuilder::default()
+                        .scope(ScopeInfo::Project { project: ProjectBuilder::default()
                                 .id("pid")
                                 .domain_id("domain_id")
                                 .enabled(true)
                                 .name("project_name")
                                 .build()
-                                .unwrap(),
-                        ))
+                                .unwrap(), domain: None })
                         .roles(vec![])
                         .build()
                         .unwrap(),
