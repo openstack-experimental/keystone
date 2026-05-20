@@ -104,6 +104,17 @@ impl TryFrom<api_types::RoleAssignmentListParameters>
     }
 }
 
+impl TryFrom<provider_types::Assignment> for api_types::Role {
+    type Error = KeystoneApiError;
+
+    fn try_from(value: provider_types::Assignment) -> Result<Self, Self::Error> {
+        Ok(api_types::Role {
+            id: value.role_id,
+            name: value.role_name,
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::v3::role_assignment::*;

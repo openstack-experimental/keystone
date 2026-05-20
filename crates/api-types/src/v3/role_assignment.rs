@@ -175,3 +175,13 @@ pub struct RoleAssignmentListParameters {
     #[serde(default)]
     pub include_names: Option<bool>,
 }
+
+/// Role assignments - List of roles.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
+pub struct RoleAssignmentRoleList {
+    /// Collection of role objects from assignments.
+    #[cfg_attr(feature = "validate", validate(nested))]
+    pub roles: Vec<Role>,
+}
