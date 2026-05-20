@@ -67,7 +67,7 @@ pub(super) async fn list(
 
     let domain_id = if query.domain_id.as_ref().is_none() {
         if !res.can_see_other_domain_resources.is_some_and(|x| x) {
-            user_auth.principal.domain_id.clone()
+            user_auth.principal().domain_id.clone()
         } else {
             // User can see other domain's resources and query is empty - leave it empty
             None

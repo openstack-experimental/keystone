@@ -170,9 +170,10 @@ pub async fn get_authz_info(
     let authz_scope = match scope {
         Some(ProviderScope::Project(scope)) => {
             if let Some(project) = find_project_from_scope(state, &scope.into()).await? {
+                let pid = project.id.clone();
                 ScopeInfo::Project {
                     project,
-                    domain: None,
+                    project_domain: get_domain(state, Some(&pid), None::<&str>).await?,
                 }
             } else {
                 return Err(KeystoneApiError::UnauthorizedNoContext);
@@ -185,7 +186,8 @@ pub async fn get_authz_info(
                 return Err(KeystoneApiError::UnauthorizedNoContext);
             }
         }
-        Some(ProviderScope::System(_scope)) => todo!(),
+        Some(ProviderScope::System(_scope)) => ScopeInfo::System("system".into()),
+        // TODO: Trust scope should be handled here
         None => ScopeInfo::Unscoped,
     };
     authz_scope.validate()?;

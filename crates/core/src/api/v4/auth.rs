@@ -12,6 +12,5 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-pub mod token {
-    pub mod token_impl;
-}
+// Token building for v4 delegates to v3 via
+// TokenBuilder::try_from(&ValidatedSecurityContext).

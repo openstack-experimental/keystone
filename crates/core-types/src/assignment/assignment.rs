@@ -63,7 +63,7 @@ impl TryInto<RoleRef> for Assignment {
         if let Some(role_name) = self.role_name {
             builder.name(role_name);
         }
-        Ok(builder.build()?)
+        builder.build()
     }
 }
 

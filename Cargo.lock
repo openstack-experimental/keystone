@@ -6498,6 +6498,7 @@ dependencies = [
  "inventory",
  "itertools 0.14.0",
  "openstack-keystone",
+ "openstack-keystone-api-types",
  "openstack-keystone-config",
  "openstack-keystone-core",
  "openstack-keystone-core-types",

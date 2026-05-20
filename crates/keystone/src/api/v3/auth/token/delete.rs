@@ -60,10 +60,10 @@ pub(super) async fn delete(
 
     // Default behavior is to return 404 for expired tokens. It makes sense to log
     // internally the error before mapping it.
-    let token = state
+    let vsc = state
         .provider
         .get_token_provider()
-        .validate_token(&state, &subject_token, None, None)
+        .validate_to_context(&state, &subject_token, None, None)
         .await
         .inspect_err(|e| error!("{:?}", e.to_string()))
         .map_err(|_| KeystoneApiError::NotFound {
@@ -76,7 +76,7 @@ pub(super) async fn delete(
         .enforce(
             "identity/auth/token/revoke",
             &user_auth,
-            to_value(json!({"token": &token}))?,
+            to_value(json!({"token": &vsc.token()?}))?,
             None,
         )
         .await?;
@@ -84,7 +84,7 @@ pub(super) async fn delete(
     state
         .provider
         .get_revoke_provider()
-        .revoke_token(&state, &token)
+        .revoke_token(&state, vsc.token()?)
         .await
         .map_err(KeystoneApiError::forbidden)?;
 
@@ -104,65 +104,113 @@ mod tests {
     use crate::api::tests::{get_mocked_state, test_fixture_scoped};
     use crate::provider::Provider;
     use crate::revoke::MockRevokeProvider;
-    use crate::token::{
-        MockTokenProvider, Token as ProviderToken, TokenProviderError, UnscopedPayload,
-    };
+    use crate::token::{FernetToken as ProviderToken, MockTokenProvider, TokenProviderError};
 
-    fn get_prepopulated_token_mock() -> MockTokenProvider {
-        let decoded_auth_token = ProviderToken::Unscoped(UnscopedPayload {
-            user_id: "bar".into(),
+    fn get_prepopulated_context() -> openstack_keystone_core::auth::ValidatedSecurityContext {
+        use openstack_keystone_core_types::auth::{AuthzInfoBuilder, *};
+        use openstack_keystone_core_types::resource::Domain as CoreDomain;
+        use openstack_keystone_core_types::token::UnscopedPayload;
+
+        let user_domain = CoreDomain {
+            id: "user_domain_id".into(),
+            enabled: true,
             ..Default::default()
-        });
+        };
 
-        let mut token_mock = MockTokenProvider::default();
-        // x-auth-token validated
-        let decoded_auth_token_clone1 = decoded_auth_token.clone();
-        token_mock
-            .expect_validate_token()
-            .withf(|_, token: &'_ str, _, _| token == "foo")
-            .returning(move |_, _, _, _| Ok(decoded_auth_token_clone1.clone()));
-        // auth-token expanded
-        let decoded_auth_token_clone2 = decoded_auth_token.clone();
-        token_mock
-            .expect_expand_token_information()
-            .withf(move |_, token: &ProviderToken| *token == decoded_auth_token_clone2.clone())
-            .returning(|_, _| {
-                Ok(ProviderToken::Unscoped(UnscopedPayload {
+        let authz = AuthzInfoBuilder::default()
+            .scope(ScopeInfo::Unscoped)
+            .build()
+            .unwrap();
+
+        openstack_keystone_core::auth::ValidatedSecurityContext::test_new(
+            SecurityContext::test_build()
+                .authentication_context(AuthenticationContext::Password)
+                .principal(PrincipalInfo {
+                    domain_id: Some("user_domain_id".into()),
+                    identity: IdentityInfo::User(
+                        UserIdentityInfoBuilder::default()
+                            .user_id("bar")
+                            .user_domain(user_domain)
+                            .build()
+                            .unwrap(),
+                    ),
+                })
+                .token(ProviderToken::Unscoped(UnscopedPayload {
                     user_id: "bar".into(),
                     ..Default::default()
                 }))
-            });
-        // auth-token roles populated
-        let decoded_auth_token_clone3 = decoded_auth_token.clone();
+                .authorization(authz)
+                .build(),
+        )
+    }
+
+    fn get_prepopulated_token_mock() -> MockTokenProvider {
+        let vsc = get_prepopulated_context();
+
+        let mut token_mock = MockTokenProvider::default();
+        // x-auth-token validated via validate_to_context
         token_mock
-            .expect_populate_role_assignments()
-            .withf(move |_, token: &ProviderToken| *token == decoded_auth_token_clone3.clone())
-            .returning(|_, _| Ok(()));
+            .expect_validate_to_context()
+            .withf(|_, token: &'_ str, _, _| token == "foo")
+            .returning(move |_, _, _, _| Ok(vsc.clone()));
 
         token_mock
     }
 
     #[tokio::test]
     async fn test_delete() {
-        let decoded_subject_token = ProviderToken::Unscoped(UnscopedPayload {
-            user_id: "foobar".into(),
+        use openstack_keystone_core_types::auth::{AuthzInfoBuilder, *};
+        use openstack_keystone_core_types::resource::Domain as CoreDomain;
+        use openstack_keystone_core_types::token::UnscopedPayload;
+
+        let user_domain = CoreDomain {
+            id: "user_domain_id".into(),
+            enabled: true,
             ..Default::default()
-        });
+        };
+
+        let vsc_for_mock = {
+            let authz = AuthzInfoBuilder::default()
+                .scope(ScopeInfo::Unscoped)
+                .build()
+                .unwrap();
+            openstack_keystone_core::auth::ValidatedSecurityContext::test_new(
+                SecurityContext::test_build()
+                    .authentication_context(AuthenticationContext::Password)
+                    .principal(PrincipalInfo {
+                        domain_id: Some("user_domain_id".into()),
+                        identity: IdentityInfo::User(
+                            UserIdentityInfoBuilder::default()
+                                .user_id("foobar")
+                                .user_domain(user_domain)
+                                .build()
+                                .unwrap(),
+                        ),
+                    })
+                    .token(ProviderToken::Unscoped(UnscopedPayload {
+                        user_id: "foobar".into(),
+                        ..Default::default()
+                    }))
+                    .authorization(authz)
+                    .build(),
+            )
+        };
+
+        let fernet_for_revoke = vsc_for_mock.inner().token().unwrap().clone();
+
         let mut token_mock = get_prepopulated_token_mock();
 
         // subject token validated
-        let decoded_subject_token_clone = decoded_subject_token.clone();
         token_mock
-            .expect_validate_token()
+            .expect_validate_to_context()
             .withf(|_, token: &'_ str, _, _| token == "baz")
-            .returning(move |_, _, _, _| Ok(decoded_subject_token_clone.clone()));
+            .returning(move |_, _, _, _| Ok(vsc_for_mock.clone()));
 
         let mut revoke_mock = MockRevokeProvider::default();
         // subject token revoked
-        let decoded_subject_token_clone2 = decoded_subject_token.clone();
         revoke_mock
             .expect_revoke_token()
-            .withf(move |_, token: &ProviderToken| *token == decoded_subject_token_clone2.clone())
+            .withf(move |_, token: &ProviderToken| *token == fernet_for_revoke)
             .returning(|_, _| Ok(()));
 
         let provider = Provider::mocked_builder()
@@ -198,7 +246,7 @@ mod tests {
         let mut token_mock = get_prepopulated_token_mock();
         // subject token validated
         token_mock
-            .expect_validate_token()
+            .expect_validate_to_context()
             .withf(|_, token: &'_ str, _, _| token == "baz")
             .returning(move |_, _, _, _| Err(TokenProviderError::Expired));
 
@@ -233,7 +281,7 @@ mod tests {
         let mut token_mock = get_prepopulated_token_mock();
         // subject token validated
         token_mock
-            .expect_validate_token()
+            .expect_validate_to_context()
             .withf(|_, token: &'_ str, _, _| token == "baz")
             .returning(move |_, _, _, _| Err(TokenProviderError::TokenRevoked));
 

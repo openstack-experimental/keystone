@@ -41,14 +41,13 @@ use crate::api::{
 };
 use crate::auth::*;
 use crate::catalog::CatalogApi;
+use openstack_keystone_api_types::v3::auth::token::TokenBuilder;
 //use crate::common::types as provider_types;
 use crate::federation::{FederationApi, api::types::*};
 use crate::identity::{IdentityApi, error::IdentityProviderError};
 use crate::keystone::ServiceState;
 use crate::token::TokenApi;
-use openstack_keystone_core::api::{
-    common::get_authz_info, v4::auth::token::token_impl::build_api_token_v4,
-};
+use openstack_keystone_core::api::common::get_authz_info;
 use openstack_keystone_core_types::federation::{
     MappingListParameters as ProviderMappingListParameters,
     MappingType as ProviderMappingType,
@@ -176,10 +175,10 @@ pub async fn login(
 
     // Check for IdP and mapping `enabled` state
     if !idp.enabled {
-        return Err(OidcError::IdentityProviderDisabled)?;
+        return Err(OidcError::IdentityProviderDisabled.into());
     }
     if !mapping.enabled {
-        return Err(OidcError::MappingDisabled)?;
+        return Err(OidcError::MappingDisabled.into());
     }
 
     tracing::debug!("Mapping is {:?}", mapping);
@@ -229,7 +228,7 @@ pub async fn login(
         metadata.issuer().clone()
     } else {
         warn!("No issuer_url can be determined for {:?}", idp);
-        return Err(OidcError::NoJwtIssuer)?;
+        return Err(OidcError::NoJwtIssuer.into());
     };
 
     let jwks_url = if let Some(jwks_url) = &idp.jwks_url {
@@ -238,7 +237,7 @@ pub async fn login(
         metadata.jwks_uri().clone()
     } else {
         warn!("No jwks_url can be determined for {:?}", idp);
-        return Err(OidcError::NoJwtIssuer)?;
+        return Err(OidcError::NoJwtIssuer.into());
     };
 
     let jwks: JsonWebKeySet<CoreJsonWebKey> = JsonWebKeySet::fetch_async(&jwks_url, &http_client)
@@ -309,16 +308,17 @@ pub async fn login(
                     .build()?,
             ),
         })
-        .context(AuthenticationContext::Oidc(
-            OidcContextBuilder::default()
+        .context(AuthenticationContext::Oidc {
+            oidc: OidcContextBuilder::default()
                 .idp_id(idp.id.clone())
                 .protocol_id("jwt")
                 .build()?,
-        ))
+            token: None,
+        })
         .build()?;
     let mut ctx = SecurityContext::try_from(auth)?;
     if let Some(token_restriction) = &token_restriction {
-        ctx.token_restriction = Some(token_restriction.clone());
+        ctx.set_token_restriction(token_restriction.clone());
     }
 
     // TODO: detect scope from the mapping or claims
@@ -337,22 +337,14 @@ pub async fn login(
     )
     .await?;
 
-    let mut token = state
+    let vsc = state
         .provider
         .get_token_provider()
-        .issue_token(&ctx, &authz_info)?;
-
-    // TODO: roles should be granted for the jwt login already
-
-    token = state
-        .provider
-        .get_token_provider()
-        .expand_token_information(&state, &token)
-        .await
-        .map_err(KeystoneApiError::forbidden)?;
+        .issue_token_context(&state, &ctx, &authz_info)
+        .await?;
 
     let mut api_token = KeystoneTokenResponse {
-        token: build_api_token_v4(&token, &state).await?,
+        token: TokenBuilder::try_from(&vsc)?.build()?,
     };
     let catalog: Catalog = Catalog(
         state
@@ -375,7 +367,10 @@ pub async fn login(
         StatusCode::OK,
         [(
             "X-Subject-Token",
-            state.provider.get_token_provider().encode_token(&token)?,
+            state
+                .provider
+                .get_token_provider()
+                .encode_token(vsc.token()?)?,
         )],
         Json(api_token),
     )

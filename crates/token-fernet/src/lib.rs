@@ -277,9 +277,13 @@ impl FernetTokenProvider {
     /// # Returns
     /// A `Result` containing the decrypted `Token` if successful, or a
     /// `FernetDriverError`.
-    fn decode(&self, rd: &mut &[u8], timestamp: DateTime<Utc>) -> Result<Token, FernetDriverError> {
+    fn decode(
+        &self,
+        rd: &mut &[u8],
+        timestamp: DateTime<Utc>,
+    ) -> Result<FernetToken, FernetDriverError> {
         if let Marker::FixArray(_) = read_marker(rd).map_err(ValueReadError::from)? {
-            let mut token: Token = match read_payload_token_type(rd)? {
+            let mut token: FernetToken = match read_payload_token_type(rd)? {
                 0 => Ok(UnscopedPayload::disassemble(rd, self)?.into()),
                 1 => Ok(DomainScopePayload::disassemble(rd, self)?.into()),
                 2 => Ok(ProjectScopePayload::disassemble(rd, self)?.into()),
@@ -307,66 +311,66 @@ impl FernetTokenProvider {
     /// # Returns
     /// A `Result` containing the encoded bytes if successful, or a
     /// `FernetDriverError`.
-    fn encode(&self, token: &Token) -> Result<Bytes, FernetDriverError> {
+    fn encode(&self, token: &FernetToken) -> Result<Bytes, FernetDriverError> {
         token.validate()?;
         let mut buf = vec![];
         match token {
-            Token::ApplicationCredential(data) => {
+            FernetToken::ApplicationCredential(data) => {
                 write_array_len(&mut buf, 7)
                     .map_err(|x| FernetDriverError::RmpEncode(x.to_string()))?;
                 write_pfix(&mut buf, 9).map_err(|x| FernetDriverError::RmpEncode(x.to_string()))?;
                 data.assemble(&mut buf, self)?;
             }
-            Token::DomainScope(data) => {
+            FernetToken::DomainScope(data) => {
                 write_array_len(&mut buf, 6)
                     .map_err(|x| FernetDriverError::RmpEncode(x.to_string()))?;
                 write_pfix(&mut buf, 1).map_err(|x| FernetDriverError::RmpEncode(x.to_string()))?;
                 data.assemble(&mut buf, self)?;
             }
-            Token::Trust(data) => {
+            FernetToken::Trust(data) => {
                 write_array_len(&mut buf, 7)
                     .map_err(|x| FernetDriverError::RmpEncode(x.to_string()))?;
                 write_pfix(&mut buf, 3).map_err(|x| FernetDriverError::RmpEncode(x.to_string()))?;
                 data.assemble(&mut buf, self)?;
             }
-            Token::FederationUnscoped(data) => {
+            FernetToken::FederationUnscoped(data) => {
                 write_array_len(&mut buf, 8)
                     .map_err(|x| FernetDriverError::RmpEncode(x.to_string()))?;
                 write_pfix(&mut buf, 4).map_err(|x| FernetDriverError::RmpEncode(x.to_string()))?;
                 data.assemble(&mut buf, self)?;
             }
-            Token::FederationProjectScope(data) => {
+            FernetToken::FederationProjectScope(data) => {
                 write_array_len(&mut buf, 9)
                     .map_err(|x| FernetDriverError::RmpEncode(x.to_string()))?;
                 write_pfix(&mut buf, 5).map_err(|x| FernetDriverError::RmpEncode(x.to_string()))?;
                 data.assemble(&mut buf, self)?;
             }
-            Token::FederationDomainScope(data) => {
+            FernetToken::FederationDomainScope(data) => {
                 write_array_len(&mut buf, 9)
                     .map_err(|x| FernetDriverError::RmpEncode(x.to_string()))?;
                 write_pfix(&mut buf, 6).map_err(|x| FernetDriverError::RmpEncode(x.to_string()))?;
                 data.assemble(&mut buf, self)?;
             }
-            Token::ProjectScope(data) => {
+            FernetToken::ProjectScope(data) => {
                 write_array_len(&mut buf, 6)
                     .map_err(|x| FernetDriverError::RmpEncode(x.to_string()))?;
                 write_pfix(&mut buf, 2).map_err(|x| FernetDriverError::RmpEncode(x.to_string()))?;
                 data.assemble(&mut buf, self)?;
             }
-            Token::Restricted(data) => {
+            FernetToken::Restricted(data) => {
                 write_array_len(&mut buf, 9)
                     .map_err(|x| FernetDriverError::RmpEncode(x.to_string()))?;
                 write_pfix(&mut buf, 11)
                     .map_err(|x| FernetDriverError::RmpEncode(x.to_string()))?;
                 data.assemble(&mut buf, self)?;
             }
-            Token::SystemScope(data) => {
+            FernetToken::SystemScope(data) => {
                 write_array_len(&mut buf, 6)
                     .map_err(|x| FernetDriverError::RmpEncode(x.to_string()))?;
                 write_pfix(&mut buf, 8).map_err(|x| FernetDriverError::RmpEncode(x.to_string()))?;
                 data.assemble(&mut buf, self)?;
             }
-            Token::Unscoped(data) => {
+            FernetToken::Unscoped(data) => {
                 write_array_len(&mut buf, 5)
                     .map_err(|x| FernetDriverError::RmpEncode(x.to_string()))?;
                 write_pfix(&mut buf, 0).map_err(|x| FernetDriverError::RmpEncode(x.to_string()))?;
@@ -409,7 +413,7 @@ impl FernetTokenProvider {
     /// # Returns
     /// A `Result` containing the decrypted `Token` if successful, or a
     /// `FernetDriverError`.
-    pub fn decrypt(&self, credential: &str) -> Result<Token, FernetDriverError> {
+    pub fn decrypt(&self, credential: &str) -> Result<FernetToken, FernetDriverError> {
         // TODO: Implement fernet keys change watching. Keystone loads them from FS on
         // every request and in the best case it costs 15µs.
         let fernet = match &self.fernet {
@@ -429,7 +433,7 @@ impl FernetTokenProvider {
     /// # Returns
     /// A `Result` containing the encrypted token string if successful, or a
     /// `FernetDriverError`.
-    pub fn encrypt(&self, token: &Token) -> Result<String, FernetDriverError> {
+    pub fn encrypt(&self, token: &FernetToken) -> Result<String, FernetDriverError> {
         let payload = self.encode(token)?;
         let res = match &self.fernet {
             Some(fernet) => fernet.encrypt(&payload),
@@ -458,7 +462,7 @@ impl TokenBackend for FernetTokenProvider {
     /// A `Result` containing the decrypted `Token` if successful, or a
     /// `TokenProviderError`.
     #[tracing::instrument(level = "trace", skip(self, credential))]
-    fn decode(&self, credential: &str) -> Result<Token, TokenProviderError> {
+    fn decode(&self, credential: &str) -> Result<FernetToken, TokenProviderError> {
         Ok(self.decrypt(credential)?)
     }
 
@@ -471,7 +475,7 @@ impl TokenBackend for FernetTokenProvider {
     /// A `Result` containing the encrypted token string if successful, or a
     /// `TokenProviderError`.
     #[tracing::instrument(level = "trace", skip(self, token))]
-    fn encode(&self, token: &Token) -> Result<String, TokenProviderError> {
+    fn encode(&self, token: &FernetToken) -> Result<String, TokenProviderError> {
         Ok(self.encrypt(token)?)
     }
 }
@@ -499,16 +503,14 @@ fn b64_decode_url(input: &str) -> std::result::Result<Vec<u8>, base64::DecodeErr
 /// A `Result` containing the `DateTime<Utc>` if successful, or a
 /// `FernetDriverError`.
 fn get_fernet_timestamp(payload: &str) -> Result<DateTime<Utc>, FernetDriverError> {
-    let data = match b64_decode_url(payload) {
-        Ok(data) => data,
-        Err(_) => return Err(fernet::DecryptionError)?,
-    };
+    let data = b64_decode_url(payload)
+        .map_err(|_| FernetDriverError::FernetDecryption(fernet::DecryptionError))?;
 
     let mut input = Cursor::new(data);
 
     match input.read_u8() {
         Ok(0x80) => {}
-        _ => return Err(fernet::DecryptionError)?,
+        _ => return Err(FernetDriverError::FernetDecryption(fernet::DecryptionError)),
     }
 
     input
@@ -574,7 +576,7 @@ pub mod tests {
         config
     }
 
-    fn discard_issued_at(mut token: Token) -> Token {
+    fn discard_issued_at(mut token: FernetToken) -> FernetToken {
         token.set_issued_at(Default::default());
         token
     }
@@ -586,7 +588,7 @@ pub mod tests {
         let mut provider = FernetTokenProvider::new(setup_config());
         provider.load_keys().unwrap();
 
-        if let Token::Unscoped(decrypted) = provider.decrypt(token).unwrap() {
+        if let FernetToken::Unscoped(decrypted) = provider.decrypt(token).unwrap() {
             assert_eq!(decrypted.user_id, "4b7d364ad87d400bbd91798e3c15e9c2");
             let mut methods_curr = decrypted.methods.clone();
             methods_curr.sort();
@@ -606,7 +608,7 @@ pub mod tests {
 
     #[tokio::test]
     async fn test_unscoped_roundtrip() {
-        let token = Token::Unscoped(UnscopedPayload {
+        let token = FernetToken::Unscoped(UnscopedPayload {
             user_id: Uuid::new_v4().simple().to_string(),
             methods: vec!["password".into()],
             audit_ids: vec!["Zm9vCg".into()],
@@ -629,7 +631,7 @@ pub mod tests {
         let mut provider = FernetTokenProvider::new(setup_config());
         provider.load_keys().unwrap();
 
-        if let Token::DomainScope(decrypted) = provider.decrypt(token).unwrap() {
+        if let FernetToken::DomainScope(decrypted) = provider.decrypt(token).unwrap() {
             assert_eq!(decrypted.user_id, "4b7d364ad87d400bbd91798e3c15e9c2");
             assert_eq!(decrypted.domain_id, "default");
             assert_eq!(decrypted.methods, vec!["password"]);
@@ -645,7 +647,7 @@ pub mod tests {
 
     #[tokio::test]
     async fn test_domain_roundtrip() {
-        let token = Token::DomainScope(DomainScopePayload {
+        let token = FernetToken::DomainScope(DomainScopePayload {
             user_id: Uuid::new_v4().simple().to_string(),
             methods: vec!["password".into()],
             domain_id: Uuid::new_v4().simple().to_string(),
@@ -669,7 +671,7 @@ pub mod tests {
         let mut provider = FernetTokenProvider::new(setup_config());
         provider.load_keys().unwrap();
 
-        if let Token::ProjectScope(decrypted) = provider.decrypt(token).unwrap() {
+        if let FernetToken::ProjectScope(decrypted) = provider.decrypt(token).unwrap() {
             assert_eq!(decrypted.user_id, "4b7d364ad87d400bbd91798e3c15e9c2");
             assert_eq!(decrypted.project_id, "97cd761d581b485792a4afc8cc6a998d");
             assert_eq!(decrypted.methods, vec!["password"]);
@@ -685,7 +687,7 @@ pub mod tests {
 
     #[tokio::test]
     async fn test_project_roundtrip() {
-        let token = Token::ProjectScope(ProjectScopePayload {
+        let token = FernetToken::ProjectScope(ProjectScopePayload {
             user_id: Uuid::new_v4().simple().to_string(),
             methods: vec!["password".into()],
             project_id: Uuid::new_v4().simple().to_string(),
@@ -709,7 +711,7 @@ pub mod tests {
         let mut provider = FernetTokenProvider::new(setup_config());
         provider.load_keys().unwrap();
 
-        if let Token::FederationUnscoped(decrypted) = provider.decrypt(token).unwrap() {
+        if let FernetToken::FederationUnscoped(decrypted) = provider.decrypt(token).unwrap() {
             assert_eq!(decrypted.user_id, "8980e124df5245509131bdc5c66c54cc");
             assert_eq!(decrypted.methods, vec!["openid"]);
             assert_eq!(
@@ -730,7 +732,7 @@ pub mod tests {
 
     #[tokio::test]
     async fn test_federation_unscoped_roundtrip() {
-        let token = Token::FederationUnscoped(FederationUnscopedPayload {
+        let token = FernetToken::FederationUnscoped(FederationUnscopedPayload {
             user_id: Uuid::new_v4().simple().to_string(),
             methods: vec!["password".into()],
             group_ids: vec!["g1".into()],
@@ -757,7 +759,7 @@ pub mod tests {
         let mut provider = FernetTokenProvider::new(setup_config());
         provider.load_keys().unwrap();
 
-        if let Token::FederationProjectScope(decrypted) = provider.decrypt(token).unwrap() {
+        if let FernetToken::FederationProjectScope(decrypted) = provider.decrypt(token).unwrap() {
             assert_eq!(decrypted.user_id, "8980e124df5245509131bdc5c66c54cc");
             assert_eq!(decrypted.methods, vec!["openid"]);
             assert_eq!(
@@ -779,7 +781,7 @@ pub mod tests {
 
     #[tokio::test]
     async fn test_federation_project_scope_roundtrip() {
-        let token = Token::FederationProjectScope(FederationProjectScopePayload {
+        let token = FernetToken::FederationProjectScope(FederationProjectScopePayload {
             user_id: Uuid::new_v4().simple().to_string(),
             methods: vec!["password".into()],
             project_id: "pid".into(),
@@ -806,7 +808,7 @@ pub mod tests {
         let mut provider = FernetTokenProvider::new(setup_config());
         provider.load_keys().unwrap();
 
-        if let Token::FederationDomainScope(decrypted) = provider.decrypt(token).unwrap() {
+        if let FernetToken::FederationDomainScope(decrypted) = provider.decrypt(token).unwrap() {
             assert_eq!(decrypted.user_id, "8980e124df5245509131bdc5c66c54cc");
             assert_eq!(decrypted.methods, vec!["openid"]);
             assert_eq!(
@@ -828,7 +830,7 @@ pub mod tests {
 
     #[tokio::test]
     async fn test_federation_domain_scope_roundtrip() {
-        let token = Token::FederationDomainScope(FederationDomainScopePayload {
+        let token = FernetToken::FederationDomainScope(FederationDomainScopePayload {
             user_id: Uuid::new_v4().simple().to_string(),
             methods: vec!["password".into()],
             domain_id: "pid".into(),
@@ -856,7 +858,7 @@ pub mod tests {
         let mut provider = FernetTokenProvider::new(setup_config());
         provider.load_keys().unwrap();
 
-        if let Token::ApplicationCredential(decrypted) = provider.decrypt(token).unwrap() {
+        if let FernetToken::ApplicationCredential(decrypted) = provider.decrypt(token).unwrap() {
             assert_eq!(decrypted.user_id, "4b7d364ad87d400bbd91798e3c15e9c2");
             assert_eq!(decrypted.project_id, "97cd761d581b485792a4afc8cc6a998d");
             assert_eq!(decrypted.methods, vec!["application_credential"]);
@@ -876,7 +878,7 @@ pub mod tests {
 
     #[tokio::test]
     async fn test_application_credential_roundtrip() {
-        let token = Token::ApplicationCredential(ApplicationCredentialPayload {
+        let token = FernetToken::ApplicationCredential(ApplicationCredentialPayload {
             user_id: Uuid::new_v4().simple().to_string(),
             methods: vec!["application_credential".into()],
             project_id: Uuid::new_v4().simple().to_string(),
@@ -896,7 +898,7 @@ pub mod tests {
 
     #[tokio::test]
     async fn test_restricted_roundtrip() {
-        let token = Token::Restricted(RestrictedPayload {
+        let token = FernetToken::Restricted(RestrictedPayload {
             user_id: Uuid::new_v4().simple().to_string(),
             methods: vec!["password".into()],
             token_restriction_id: Uuid::new_v4().simple().to_string(),
@@ -918,7 +920,7 @@ pub mod tests {
 
     #[tokio::test]
     async fn test_trust_roundtrip() {
-        let token = Token::Trust(TrustPayload {
+        let token = FernetToken::Trust(TrustPayload {
             user_id: Uuid::new_v4().simple().to_string(),
             methods: vec!["password".into()],
             trust_id: Uuid::new_v4().simple().to_string(),

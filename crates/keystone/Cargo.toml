@@ -83,6 +83,7 @@ validator = { workspace = true, features = ["derive"] }
 [dev-dependencies]
 http-body-util.workspace = true
 openstack-keystone-core = { version = "0.1", path = "../core", features = ["api", "mock"] }
+openstack-keystone-core-types = { version = "0.1", path = "../core-types", features = ["mock"] }
 rstest.workspace = true
 tracing-test = { workspace = true, features = ["no-env-filter"] }
 url.workspace = true

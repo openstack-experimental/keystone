@@ -138,15 +138,15 @@ pub async fn post(
             })?
             .to_owned()
     } else {
-        return Err(OidcError::MappingRequired)?;
+        return Err(OidcError::MappingRequired.into());
     };
 
     // Check for IdP and mapping `enabled` state
     if !idp.enabled {
-        return Err(OidcError::IdentityProviderDisabled)?;
+        return Err(OidcError::IdentityProviderDisabled.into());
     }
     if !mapping.enabled {
-        return Err(OidcError::MappingDisabled)?;
+        return Err(OidcError::MappingDisabled.into());
     }
 
     let client = if let Some(discovery_url) = &idp.oidc_discovery_url {
@@ -171,7 +171,7 @@ pub async fn post(
         // TODO: Check the redirect uri against mapping.allowed_redirect_uris
         .set_redirect_uri(RedirectUrl::new(req.redirect_uri.clone()).map_err(OidcError::from)?)
     } else {
-        return Err(OidcError::ClientWithoutDiscoveryNotSupported)?;
+        return Err(OidcError::ClientWithoutDiscoveryNotSupported.into());
     };
 
     let (pkce_challenge, pkce_verifier) = PkceCodeChallenge::new_random_sha256();

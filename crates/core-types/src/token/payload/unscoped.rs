@@ -21,7 +21,7 @@ use super::common;
 use crate::auth::SecurityContext;
 use crate::error::BuilderError;
 use crate::identity::UserResponse;
-use crate::token::Token;
+use crate::token::FernetToken;
 use crate::token::error::TokenProviderError;
 
 #[derive(Builder, Clone, Debug, Default, PartialEq, Serialize, Validate)]
@@ -71,7 +71,7 @@ impl UnscopedPayloadBuilder {
     }
 }
 
-impl From<UnscopedPayload> for Token {
+impl From<UnscopedPayload> for FernetToken {
     fn from(value: UnscopedPayload) -> Self {
         Self::Unscoped(value)
     }
@@ -87,9 +87,9 @@ impl UnscopedPayload {
         expires_at: DateTime<Utc>,
     ) -> Result<Self, TokenProviderError> {
         Ok(UnscopedPayloadBuilder::default()
-            .user_id(ctx.principal.get_user_id())
-            .methods(ctx.auth_methods.iter())
-            .audit_ids(ctx.audit_ids.iter())
+            .user_id(ctx.principal().get_user_id())
+            .methods(ctx.auth_methods().iter())
+            .audit_ids(ctx.audit_ids().iter())
             .expires_at(expires_at)
             .build()?)
     }
@@ -106,12 +106,7 @@ mod tests {
     fn test_create_from_security_context() {
         let now = Utc::now();
         let auth = AuthenticationResultBuilder::default()
-            .context(AuthenticationContext::Token(
-                TokenContextBuilder::default()
-                    .expires_at(now.clone())
-                    .build()
-                    .unwrap(),
-            ))
+            .context(AuthenticationContext::Password)
             .principal(PrincipalInfo {
                 domain_id: Some("did".into()),
                 identity: IdentityInfo::User(
@@ -134,6 +129,6 @@ mod tests {
             payload.expires_at
         );
         assert_eq!("uid", payload.user_id);
-        assert_eq!(vec!["token"], payload.methods);
+        assert_eq!(vec!["password"], payload.methods);
     }
 }

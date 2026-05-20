@@ -31,7 +31,7 @@ use axum::{
 use serde_json::{json, to_value};
 use tracing::error;
 
-use openstack_keystone_core::api::v3::auth::token::token_impl::build_api_token_v3;
+use openstack_keystone_api_types::v3::auth::token::TokenBuilder;
 
 use crate::api::v3::auth::token::types::{TokenResponse, ValidateTokenParameters};
 use crate::api::{Catalog, CatalogService, auth::Auth, error::KeystoneApiError};
@@ -77,10 +77,10 @@ pub(super) async fn show(
 
     // Default behavior is to return 404 for expired tokens. It makes sense to log
     // internally the error before mapping it.
-    let token = state
+    let vsc = state
         .provider
         .get_token_provider()
-        .validate_token(&state, &subject_token, query.allow_expired, None)
+        .validate_to_context(&state, &subject_token, query.allow_expired, None)
         .await
         .inspect_err(|e| error!("{:?}", e.to_string()))
         .map_err(|_| KeystoneApiError::NotFound {
@@ -93,13 +93,14 @@ pub(super) async fn show(
         .enforce(
             "identity/auth/token/show",
             &user_auth,
-            to_value(json!({"token": &token}))?,
+            to_value(json!({"token": &vsc.token()?}))?,
             None,
         )
         .await?;
 
-    //// Expand the token since we didn't expand it before.
-    let mut response_token = build_api_token_v3(&token, &state).await?;
+    let mut response_token = TokenResponse {
+        token: TokenBuilder::try_from(&vsc)?.build()?,
+    };
 
     if !query.nocatalog.is_some_and(|x| x) {
         let catalog: Catalog = Catalog(
@@ -118,16 +119,10 @@ pub(super) async fn show(
                 .collect::<Vec<_>>(),
         );
 
-        response_token.catalog = Some(catalog);
+        response_token.token.catalog = Some(catalog);
     }
 
-    Ok((
-        StatusCode::OK,
-        Json(TokenResponse {
-            token: response_token,
-        }),
-    )
-        .into_response())
+    Ok((StatusCode::OK, Json(response_token)).into_response())
 }
 
 #[cfg(test)]
@@ -140,67 +135,79 @@ mod tests {
     use tower::ServiceExt; // for `call`, `oneshot`, and `ready`
     use tower_http::trace::TraceLayer;
 
-    use openstack_keystone_core_types::identity::UserResponseBuilder;
-    use openstack_keystone_core_types::resource::Domain;
-
     use super::super::openapi_router;
     use crate::api::tests::{get_mocked_state, test_fixture_scoped};
     use crate::api::v3::auth::token::types::*;
     use crate::catalog::MockCatalogProvider;
-    use crate::identity::MockIdentityProvider;
     use crate::provider::Provider;
     use crate::resource::MockResourceProvider;
-    use crate::token::{
-        MockTokenProvider, Token as ProviderToken, TokenProviderError, UnscopedPayload,
-    };
+    use crate::token::{MockTokenProvider, TokenProviderError};
 
     #[tokio::test]
     async fn test_get() {
-        let mut identity_mock = MockIdentityProvider::default();
-        identity_mock.expect_get_user().returning(|_, id: &'_ str| {
-            Ok(Some(
-                UserResponseBuilder::default()
-                    .id(id)
-                    .domain_id("user_domain_id")
-                    .enabled(true)
-                    .name("name")
-                    .build()
-                    .unwrap(),
-            ))
-        });
+        use openstack_keystone_core_types::auth::*;
+        use openstack_keystone_core_types::resource::Domain as CoreDomain;
+        use openstack_keystone_core_types::token::UnscopedPayload;
+
+        let user_domain = CoreDomain {
+            id: "user_domain_id".into(),
+            enabled: true,
+            ..Default::default()
+        };
+
+        let authz = AuthzInfoBuilder::default()
+            .scope(ScopeInfo::Domain(CoreDomain {
+                id: "user_domain_id".into(),
+                enabled: true,
+                ..Default::default()
+            }))
+            .build()
+            .unwrap();
+
+        let vsc_for_mock = openstack_keystone_core::auth::ValidatedSecurityContext::test_new(
+            SecurityContext::test_build()
+                .authentication_context(AuthenticationContext::Password)
+                .principal(PrincipalInfo {
+                    domain_id: Some("user_domain_id".into()),
+                    identity: IdentityInfo::User(
+                        UserIdentityInfoBuilder::default()
+                            .user_id("bar")
+                            .user_domain(user_domain)
+                            .build()
+                            .unwrap(),
+                    ),
+                })
+                .token(openstack_keystone_core_types::token::FernetToken::Unscoped(
+                    UnscopedPayload {
+                        user_id: "bar".into(),
+                        ..Default::default()
+                    },
+                ))
+                .authorization(authz)
+                .build(),
+        );
+
+        let mut token_mock = MockTokenProvider::default();
+        token_mock
+            .expect_validate_to_context()
+            .returning(move |_, _, _, _| Ok(vsc_for_mock.clone()));
+        let mut catalog_mock = MockCatalogProvider::default();
+        catalog_mock
+            .expect_get_catalog()
+            .returning(|_, _| Ok(Vec::new()));
 
         let mut resource_mock = MockResourceProvider::default();
         resource_mock
             .expect_get_domain()
             .withf(|_, id: &'_ str| id == "user_domain_id")
             .returning(|_, _| {
-                Ok(Some(Domain {
+                Ok(Some(CoreDomain {
                     id: "user_domain_id".into(),
                     ..Default::default()
                 }))
             });
-        let mut token_mock = MockTokenProvider::default();
-        token_mock.expect_validate_token().returning(|_, _, _, _| {
-            Ok(ProviderToken::Unscoped(UnscopedPayload {
-                user_id: "bar".into(),
-                ..Default::default()
-            }))
-        });
-        token_mock
-            .expect_expand_token_information()
-            .returning(|_, _| {
-                Ok(ProviderToken::Unscoped(UnscopedPayload {
-                    user_id: "bar".into(),
-                    ..Default::default()
-                }))
-            });
-        let mut catalog_mock = MockCatalogProvider::default();
-        catalog_mock
-            .expect_get_catalog()
-            .returning(|_, _| Ok(Vec::new()));
 
         let provider = Provider::mocked_builder()
-            .mock_identity(identity_mock)
             .mock_resource(resource_mock)
             .mock_token(token_mock)
             .mock_catalog(catalog_mock);
@@ -246,66 +253,74 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_get_allow_expired() {
-        let mut identity_mock = MockIdentityProvider::default();
-        identity_mock.expect_get_user().returning(|_, id: &'_ str| {
-            Ok(Some(
-                UserResponseBuilder::default()
-                    .id(id)
-                    .domain_id("user_domain_id")
-                    .enabled(true)
-                    .name("name")
-                    .build()
-                    .unwrap(),
-            ))
-        });
+    async fn test_show_domain() {
+        use openstack_keystone_core_types::auth::{AuthzInfoBuilder, *};
+        use openstack_keystone_core_types::resource::Domain as CoreDomain;
+        use openstack_keystone_core_types::token::UnscopedPayload;
+
+        let user_domain = CoreDomain {
+            id: "user_domain_id".into(),
+            enabled: true,
+            ..Default::default()
+        };
+
+        let authz = AuthzInfoBuilder::default()
+            .scope(ScopeInfo::Domain(CoreDomain {
+                id: "user_domain_id".into(),
+                enabled: true,
+                ..Default::default()
+            }))
+            .build()
+            .unwrap();
+
+        let vsc_for_mock = openstack_keystone_core::auth::ValidatedSecurityContext::test_new(
+            SecurityContext::test_build()
+                .authentication_context(AuthenticationContext::Password)
+                .principal(PrincipalInfo {
+                    domain_id: Some("user_domain_id".into()),
+                    identity: IdentityInfo::User(
+                        UserIdentityInfoBuilder::default()
+                            .user_id("bar")
+                            .user_domain(user_domain)
+                            .build()
+                            .unwrap(),
+                    ),
+                })
+                .token(openstack_keystone_core_types::token::FernetToken::Unscoped(
+                    UnscopedPayload {
+                        user_id: "bar".into(),
+                        ..Default::default()
+                    },
+                ))
+                .authorization(authz)
+                .build(),
+        );
+
+        let mut token_mock = MockTokenProvider::default();
+        token_mock
+            .expect_validate_to_context()
+            .withf(|_, token: &'_ str, allow_expired: &Option<bool>, _| {
+                token == "bar" && *allow_expired == Some(true)
+            })
+            .returning(move |_, _, _, _| Ok(vsc_for_mock.clone()));
+
+        let mut catalog_mock = MockCatalogProvider::default();
+        catalog_mock
+            .expect_get_catalog()
+            .returning(|_, _| Ok(Vec::new()));
 
         let mut resource_mock = MockResourceProvider::default();
         resource_mock
             .expect_get_domain()
             .withf(|_, id: &'_ str| id == "user_domain_id")
             .returning(|_, _| {
-                Ok(Some(Domain {
+                Ok(Some(CoreDomain {
                     id: "user_domain_id".into(),
                     ..Default::default()
                 }))
             });
-        let mut token_mock = MockTokenProvider::default();
-        token_mock
-            .expect_validate_token()
-            .withf(|_, token: &'_ str, _, _| token == "foo")
-            .returning(|_, _, _, _| {
-                Ok(ProviderToken::Unscoped(UnscopedPayload {
-                    user_id: "bar".into(),
-                    ..Default::default()
-                }))
-            });
-        token_mock
-            .expect_validate_token()
-            .withf(|_, token: &'_ str, allow_expired: &Option<bool>, _| {
-                token == "bar" && *allow_expired == Some(true)
-            })
-            .returning(|_, _, _, _| {
-                Ok(ProviderToken::Unscoped(UnscopedPayload {
-                    user_id: "bar".into(),
-                    ..Default::default()
-                }))
-            });
-        token_mock
-            .expect_expand_token_information()
-            .returning(|_, _| {
-                Ok(ProviderToken::Unscoped(UnscopedPayload {
-                    user_id: "bar".into(),
-                    ..Default::default()
-                }))
-            });
-        let mut catalog_mock = MockCatalogProvider::default();
-        catalog_mock
-            .expect_get_catalog()
-            .returning(|_, _| Ok(Vec::new()));
 
         let provider = Provider::mocked_builder()
-            .mock_identity(identity_mock)
             .mock_resource(resource_mock)
             .mock_token(token_mock)
             .mock_catalog(catalog_mock);
@@ -337,16 +352,7 @@ mod tests {
     async fn test_get_expired() {
         let mut token_mock = MockTokenProvider::default();
         token_mock
-            .expect_validate_token()
-            .withf(|_, token: &'_ str, _, _| token == "foo")
-            .returning(|_, _, _, _| {
-                Ok(ProviderToken::Unscoped(UnscopedPayload {
-                    user_id: "bar".into(),
-                    ..Default::default()
-                }))
-            });
-        token_mock
-            .expect_validate_token()
+            .expect_validate_to_context()
             .withf(|_, token: &'_ str, _, _| token == "baz")
             .returning(|_, _, _, _| Err(TokenProviderError::Expired));
 
@@ -378,16 +384,7 @@ mod tests {
     async fn test_get_revoked() {
         let mut token_mock = MockTokenProvider::default();
         token_mock
-            .expect_validate_token()
-            .withf(|_, token: &'_ str, _, _| token == "foo")
-            .returning(|_, _, _, _| {
-                Ok(ProviderToken::Unscoped(UnscopedPayload {
-                    user_id: "bar".into(),
-                    ..Default::default()
-                }))
-            });
-        token_mock
-            .expect_validate_token()
+            .expect_validate_to_context()
             .withf(|_, token: &'_ str, _, _| token == "baz")
             .returning(|_, _, _, _| Err(TokenProviderError::TokenRevoked));
 

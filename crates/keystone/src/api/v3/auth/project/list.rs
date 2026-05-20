@@ -58,7 +58,7 @@ pub(super) async fn list(
         .list_role_assignments(
             &state,
             &RoleAssignmentListParameters {
-                user_id: Some(user_auth.principal.get_user_id().clone()),
+                user_id: Some(user_auth.principal().get_user_id().clone()),
                 effective: Some(true),
                 include_names: Some(false),
                 ..Default::default()

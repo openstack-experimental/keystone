@@ -14,10 +14,10 @@
 
 use {
     axum::{
-        Json,
         extract::rejection::JsonRejection,
         http::StatusCode,
         response::{IntoResponse, Response},
+        Json,
     },
     serde_json::json,
 };
@@ -79,7 +79,13 @@ impl From<AuthenticationError> for KeystoneApiError {
             AuthenticationError::ActorHasNoRolesOnTarget => {
                 KeystoneApiError::unauthorized(value, None::<String>)
             }
+            AuthenticationError::AuthApplicationCredentialExpired => {
+                KeystoneApiError::unauthorized(value, None::<String>)
+            }
             AuthenticationError::AuthnPrincipalMismatch => {
+                KeystoneApiError::unauthorized(value, None::<String>)
+            }
+            AuthenticationError::AuthTokenExpired => {
                 KeystoneApiError::unauthorized(value, None::<String>)
             }
             AuthenticationError::AuthzPrincipalMismatch => {
@@ -88,16 +94,12 @@ impl From<AuthenticationError> for KeystoneApiError {
             AuthenticationError::DomainDisabled(..) => {
                 KeystoneApiError::unauthorized(value, None::<String>)
             }
-            AuthenticationError::PrincipalDomainIdMissing => {
-                KeystoneApiError::unauthorized(value, None::<String>)
-            }
+            AuthenticationError::Forbidden => KeystoneApiError::forbidden(value),
             AuthenticationError::ProjectDisabled(..) => {
                 KeystoneApiError::unauthorized(value, None::<String>)
             }
             AuthenticationError::SecurityContextNotResolved => KeystoneApiError::internal(value),
-            AuthenticationError::ScopeNotAllowed => {
-                KeystoneApiError::unauthorized(value, None::<String>)
-            }
+            AuthenticationError::ScopeNotAllowed => KeystoneApiError::forbidden(value),
             AuthenticationError::StructBuilder { source } => {
                 KeystoneApiError::InternalError(source.to_string())
             }
@@ -134,12 +136,13 @@ impl From<AuthenticationError> for KeystoneApiError {
             AuthenticationError::Unauthorized => {
                 KeystoneApiError::unauthorized(value, None::<String>)
             }
-            AuthenticationError::Validation { source } => {
-                KeystoneApiError::InternalError(source.to_string())
-            }
             AuthenticationError::RoleConversionFailed => {
                 KeystoneApiError::InternalError(value.to_string())
             }
+            AuthenticationError::Validation(ref ve) => {
+                KeystoneApiError::BadRequest(format!("validation error: {ve}"))
+            }
+            other => KeystoneApiError::unauthorized(other, None::<String>),
         }
     }
 }

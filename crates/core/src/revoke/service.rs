@@ -18,8 +18,9 @@ use std::sync::Arc;
 
 use openstack_keystone_config::Config;
 use openstack_keystone_core_types::revoke::*;
-use openstack_keystone_core_types::token::Token;
+use openstack_keystone_core_types::token::FernetToken;
 
+use crate::auth::ValidatedSecurityContext;
 use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManagerApi;
 use crate::revoke::{RevokeApi, RevokeProviderError, backend::RevokeBackend};
@@ -71,14 +72,17 @@ impl RevokeApi for RevokeService {
     ///
     /// # Arguments
     /// * `state` - The current service state.
+    /// * `token_security_context` - A `ValidatedSecurityContext` of the Token.
     /// * `token` - The token to check.
     async fn is_token_revoked(
         &self,
         state: &ServiceState,
-        token: &Token,
+        token_security_context: &ValidatedSecurityContext,
     ) -> Result<bool, RevokeProviderError> {
         tracing::info!("Checking for the revocation events");
-        self.backend_driver.is_token_revoked(state, token).await
+        self.backend_driver
+            .is_token_revoked(state, token_security_context)
+            .await
     }
 
     /// Revoke the token.
@@ -92,7 +96,7 @@ impl RevokeApi for RevokeService {
     async fn revoke_token(
         &self,
         state: &ServiceState,
-        token: &Token,
+        token: &FernetToken,
     ) -> Result<(), RevokeProviderError> {
         self.backend_driver.revoke_token(state, token).await
     }

@@ -45,6 +45,7 @@ validator.workspace = true
 config = { workspace = true }
 httpmock = { version = "0.8", features = ["http2"] }
 mockall.workspace = true
+openstack-keystone-core-types = { version = "0.1", path = "../core-types/", features = ["mock"] }
 rstest.workspace = true
 tracing-test = { workspace = true, features = ["no-env-filter"] }
 url.workspace = true
@@ -53,4 +54,4 @@ url.workspace = true
 default = []
 api = ["openstack-keystone-api-types/builder", "dep:axum", "openstack-keystone-api-types/conv"]
 bench_internals = []
-mock = ["dep:mockall"]
+mock = ["dep:mockall", "openstack-keystone-core-types/mock"]

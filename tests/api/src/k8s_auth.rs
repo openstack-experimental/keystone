@@ -25,9 +25,9 @@ use openstack_sdk_core::{AsyncOpenStack, api::RawQueryAsync};
 
 use openstack_keystone_api_types::k8s_auth::role::*;
 use openstack_keystone_api_types::k8s_auth::{K8sAuthRequest, instance::*};
+use openstack_keystone_api_types::v3::auth::token::*;
 use openstack_keystone_api_types::v3::project::*;
 use openstack_keystone_api_types::v3::user::*;
-use openstack_keystone_api_types::v4::auth::token::*;
 use openstack_keystone_api_types::v4::token_restriction::*;
 
 mod guard;

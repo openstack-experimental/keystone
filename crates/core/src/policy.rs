@@ -25,6 +25,7 @@ use serde_json::Value;
 use thiserror::Error;
 
 use openstack_keystone_core_types::auth::*;
+use openstack_keystone_core_types::trust::Trust;
 
 use crate::auth::ValidatedSecurityContext;
 use crate::error::BuilderError;
@@ -177,6 +178,10 @@ pub struct Credentials {
     #[builder(default)]
     #[serde(default)]
     pub system: Option<String>,
+
+    #[builder(default)]
+    #[serde(default)]
+    pub trust: Option<Trust>,
 }
 
 impl TryFrom<&ValidatedSecurityContext> for Credentials {
@@ -190,34 +195,33 @@ impl TryFrom<&ValidatedSecurityContext> for Credentials {
     /// - `Self` - The constructed `Credentials` object.
     fn try_from(sc: &ValidatedSecurityContext) -> Result<Self, Self::Error> {
         let mut builder = CredentialsBuilder::default();
-        builder.user_id(sc.principal.get_user_id());
-        if let Some(authz) = &sc.authorization {
+        builder.user_id(sc.principal().get_user_id());
+        if let Some(authz) = sc.authorization() {
             match &authz.scope {
                 ScopeInfo::Domain(domain) => {
                     builder.domain_id(domain.id.clone());
                 }
-                ScopeInfo::Project { project, domain: _ } => {
+                ScopeInfo::Project { project, .. } => {
                     builder.project_id(project.id.clone());
                 }
                 ScopeInfo::System(system) => {
                     builder.system(system.clone());
                 }
-                ScopeInfo::Trust(trust) => {
-                    if let Some(project_id) = &trust.project_id {
-                        builder.project_id(project_id.clone());
-                    }
+                ScopeInfo::TrustProject(tpi) => {
+                    builder.project_id(tpi.project.id.clone());
+                    builder.trust(tpi.trust.clone());
                 }
                 ScopeInfo::Unscoped => {}
             }
-            match &authz.roles {
+            match authz.effective_roles() {
                 Some(roles) => {
                     builder.role_ids(roles.iter().map(|role| role.id.clone()).collect::<Vec<_>>());
                     if roles.is_empty() && !matches!(authz.scope, ScopeInfo::Unscoped) {
-                        return Err(PolicyError::SecurityContextNotResolved)?;
+                        return Err(PolicyError::SecurityContextNotResolved);
                     }
                 }
                 None if !matches!(authz.scope, ScopeInfo::Unscoped) => {
-                    return Err(PolicyError::SecurityContextNotResolved)?;
+                    return Err(PolicyError::SecurityContextNotResolved);
                 }
                 _ => {}
             }

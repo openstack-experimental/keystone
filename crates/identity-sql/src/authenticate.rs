@@ -78,7 +78,7 @@ pub async fn authenticate_by_password(
         .is_some_and(|val| val)
         && should_lock(config, db, &local_user).await?
     {
-        return Err(AuthenticationError::UserLocked(local_user.user_id.clone()))?;
+        return Err(AuthenticationError::UserLocked(local_user.user_id.clone()).into());
     }
 
     let passwords: Vec<db_password::Model> = password.into_iter().collect();
@@ -100,15 +100,15 @@ pub async fn authenticate_by_password(
         .await
         .map_err(IdentityProviderError::password_hash)?
     {
-        return Err(AuthenticationError::UserNameOrPasswordWrong)?;
+        return Err(AuthenticationError::UserNameOrPasswordWrong.into());
     }
     // Check if expired password exempt is on
     if !user_opts.ignore_password_expiry.is_some_and(|val| val) {
         // otherwise check for expired password
         if password::is_password_expired(latest_password)? {
-            return Err(AuthenticationError::UserPasswordExpired(
-                local_user.user_id.clone(),
-            ))?;
+            return Err(
+                AuthenticationError::UserPasswordExpired(local_user.user_id.clone()).into(),
+            );
         }
     }
 

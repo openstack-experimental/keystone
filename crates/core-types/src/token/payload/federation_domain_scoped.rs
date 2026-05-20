@@ -20,10 +20,8 @@ use validator::Validate;
 use super::common;
 use crate::auth::{IdentityInfo, OidcContext, SecurityContext};
 use crate::error::BuilderError;
-use crate::identity::UserResponse;
 use crate::resource::Domain;
-use crate::role::RoleRef;
-use crate::token::Token;
+use crate::token::FernetToken;
 use crate::token::error::TokenProviderError;
 
 /// Federated domain scope token payload.
@@ -57,14 +55,6 @@ pub struct FederationDomainScopePayload {
 
     #[builder(default)]
     pub issued_at: DateTime<Utc>,
-
-    // Fields not serialized into the token.
-    #[builder(default)]
-    pub user: Option<UserResponse>,
-    #[builder(default)]
-    pub roles: Option<Vec<RoleRef>>,
-    #[builder(default)]
-    pub domain: Option<Domain>,
 }
 
 impl FederationDomainScopePayloadBuilder {
@@ -108,7 +98,7 @@ impl FederationDomainScopePayloadBuilder {
     }
 }
 
-impl From<FederationDomainScopePayload> for Token {
+impl From<FederationDomainScopePayload> for FernetToken {
     fn from(value: FederationDomainScopePayload) -> Self {
         Self::FederationDomainScope(value)
     }
@@ -129,14 +119,13 @@ impl FederationDomainScopePayload {
         oidc: &OidcContext,
         expires_at: DateTime<Utc>,
     ) -> Result<Self, TokenProviderError> {
-        match &ctx.principal.identity {
+        match &ctx.principal().identity {
             IdentityInfo::User(user) => Ok(FederationDomainScopePayloadBuilder::default()
-                .user_id(ctx.principal.get_user_id())
-                .methods(ctx.auth_methods.iter())
-                .audit_ids(ctx.audit_ids.iter())
+                .user_id(ctx.principal().get_user_id())
+                .methods(ctx.auth_methods().iter())
+                .audit_ids(ctx.audit_ids().iter())
                 .expires_at(expires_at)
                 .domain_id(domain.id.clone())
-                .domain(domain.clone())
                 .idp_id(oidc.idp_id.clone())
                 .protocol_id(oidc.protocol_id.clone())
                 .group_ids(user.user_groups.iter().map(|g| g.id.clone()))

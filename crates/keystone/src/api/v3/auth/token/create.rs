@@ -21,7 +21,7 @@ use axum::{
 };
 use validator::Validate;
 
-use openstack_keystone_core::api::v3::auth::token::token_impl::build_api_token_v3;
+use openstack_keystone_api_types::v3::auth::token::TokenBuilder;
 use openstack_keystone_core_types::auth::*;
 
 use crate::api::v3::auth::token::common::{authenticate_request, get_authz_info};
@@ -53,33 +53,28 @@ pub(super) async fn create(
     let ctx = SecurityContext::try_from(auth_res)?;
     let authz_info = get_authz_info(&state, &req).await?;
 
-    if let Some(bound) = &ctx.authorization {
-        if bound.scope != authz_info {
-            return Err(AuthenticationError::ScopeNotAllowed)?;
-        }
+    if let Some(bound) = ctx.authorization()
+        && bound.scope != authz_info
+    {
+        return Err(AuthenticationError::ScopeNotAllowed.into());
     }
     // This is a new authentication/reauthentication. Check if that is allowed at
     // all
-    if let Some(token_restriction) = &ctx.token_restriction
+    if let Some(token_restriction) = ctx.token_restriction()
         && !token_restriction.allow_rescope
         && req.auth.scope.is_some()
     {
         return Err(KeystoneApiError::AuthenticationRescopeForbidden);
     }
 
-    let mut token = state
+    let vsc = state
         .provider
         .get_token_provider()
-        .issue_token(&ctx, &authz_info)?;
-
-    token = state
-        .provider
-        .get_token_provider()
-        .expand_token_information(&state, &token)
+        .issue_token_context(&state, &ctx, &authz_info)
         .await?;
 
     let mut api_token = TokenResponse {
-        token: build_api_token_v3(&token, &state).await?,
+        token: TokenBuilder::try_from(&vsc)?.build()?,
     };
     if !query.nocatalog.is_some_and(|x| x) {
         let catalog: Catalog = Catalog(
@@ -99,15 +94,18 @@ pub(super) async fn create(
         );
         api_token.token.catalog = Some(catalog);
     }
-    return Ok((
+    Ok((
         StatusCode::OK,
         [(
             "X-Subject-Token",
-            state.provider.get_token_provider().encode_token(&token)?,
+            state
+                .provider
+                .get_token_provider()
+                .encode_token(vsc.token()?)?,
         )],
         Json(api_token),
     )
-        .into_response());
+        .into_response())
 }
 
 #[cfg(test)]
@@ -126,9 +124,9 @@ mod tests {
 
     use openstack_keystone_config::{Config, ConfigManager};
     use openstack_keystone_core_types::auth::*;
-    use openstack_keystone_core_types::identity::{UserPasswordAuthRequest, UserResponseBuilder};
-    use openstack_keystone_core_types::resource::{Domain, Project};
-    use openstack_keystone_core_types::token::{ProjectScopePayload, Token as ProviderToken};
+    use openstack_keystone_core_types::identity::UserPasswordAuthRequest;
+    use openstack_keystone_core_types::resource::{Domain, DomainBuilder, Project};
+    use openstack_keystone_core_types::token::ProjectScopePayload;
 
     use crate::api::v3::auth::token::types::*;
     use crate::assignment::MockAssignmentProvider;
@@ -191,6 +189,20 @@ mod tests {
                     && req.name == Some("uname".to_string())
             })
             .returning(move |_, _| Ok(auth.clone()));
+        identity_mock.expect_get_user().returning(|_, _| {
+            use openstack_keystone_core_types::identity::UserResponse;
+            Ok(Some(UserResponse {
+                id: "uid".into(),
+                name: "uname".into(),
+                domain_id: "user_domain_id".into(),
+                enabled: true,
+                default_project_id: None,
+                extra: std::collections::HashMap::new(),
+                federated: None,
+                options: openstack_keystone_core_types::identity::UserOptions::default(),
+                password_expires_at: None,
+            }))
+        });
 
         let mut resource_mock = MockResourceProvider::default();
         resource_mock
@@ -206,51 +218,78 @@ mod tests {
             .withf(|_, id: &'_ str| id == "pdid")
             .returning(move |_, _| Ok(Some(project_domain.clone())));
         let mut token_mock = MockTokenProvider::default();
-        token_mock.expect_issue_token().returning(|_, _| {
-            Ok(ProviderToken::ProjectScope(ProjectScopePayload {
-                user_id: "bar".into(),
+        let vsc_for_mock = {
+            use openstack_keystone_core_types::auth::AuthzInfoBuilder;
+            use openstack_keystone_core_types::resource::ProjectBuilder;
+            use openstack_keystone_core_types::role::RoleRefBuilder;
+            use openstack_keystone_core_types::token::FernetToken;
+            let user_resp = openstack_keystone_core_types::identity::UserResponseBuilder::default()
+                .id("uid")
+                .name("uname".to_string())
+                .domain_id("user_domain_id".to_string())
+                .enabled(true)
+                .build()
+                .unwrap();
+            let fernet_payload = ProjectScopePayload {
+                user_id: "uid".into(),
                 methods: Vec::from(["password".to_string()]),
-                user: Some(
-                    UserResponseBuilder::default()
-                        .id("uid")
-                        .domain_id("user_domain_id")
-                        .enabled(true)
-                        .name("name")
-                        .build()
-                        .unwrap(),
-                ),
                 project_id: "pid".into(),
                 ..Default::default()
-            }))
-        });
-        token_mock
-            .expect_populate_role_assignments()
-            .returning(|_, _| Ok(()));
-        token_mock
-            .expect_expand_token_information()
-            .returning(|_, _| {
-                Ok(ProviderToken::ProjectScope(ProjectScopePayload {
-                    user_id: "bar".into(),
-                    methods: Vec::from(["password".to_string()]),
-                    user: Some(
-                        UserResponseBuilder::default()
-                            .id("uid")
-                            .domain_id("user_domain_id")
-                            .enabled(true)
-                            .name("name")
+            };
+            let authz = AuthzInfoBuilder::default()
+                .roles(vec![
+                    RoleRefBuilder::default()
+                        .id("admin")
+                        .name("admin")
+                        .build()
+                        .unwrap(),
+                ])
+                .scope(ScopeInfo::Project {
+                    project: ProjectBuilder::default()
+                        .id("pid")
+                        .domain_id("pdid")
+                        .enabled(true)
+                        .name("pname")
+                        .build()
+                        .unwrap(),
+                    project_domain: DomainBuilder::default()
+                        .id("pdid")
+                        .name("pdname")
+                        .enabled(true)
+                        .build()
+                        .unwrap(),
+                })
+                .build()
+                .unwrap();
+            let sc = SecurityContext::test_build()
+                .authentication_context(AuthenticationContext::Password)
+                .principal(PrincipalInfo {
+                    domain_id: Some("did".into()),
+                    identity: IdentityInfo::User(
+                        UserIdentityInfoBuilder::default()
+                            .user_id("uid")
+                            .user(user_resp)
+                            .user_domain(
+                                DomainBuilder::default()
+                                    .id("user_domain_id")
+                                    .name("user_domain_name")
+                                    .enabled(true)
+                                    .build()
+                                    .unwrap(),
+                            )
                             .build()
                             .unwrap(),
                     ),
-                    project_id: "pid".into(),
-                    project: Some(Project {
-                        id: "pid".into(),
-                        domain_id: "pdid".into(),
-                        enabled: true,
-                        ..Default::default()
-                    }),
-                    ..Default::default()
-                }))
-            });
+                })
+                .token(FernetToken::ProjectScope(fernet_payload))
+                .authorization(authz)
+                .build();
+            openstack_keystone_core::auth::ValidatedSecurityContext::test_new(sc)
+        };
+        let vsc_clone = vsc_for_mock.clone();
+        token_mock
+            .expect_issue_token_context()
+            .returning(move |_, _, _| Ok(vsc_clone.clone()));
         token_mock
             .expect_encode_token()
             .returning(|_| Ok("token".to_string()));
@@ -363,6 +402,17 @@ mod tests {
                     id: "pid".into(),
                     domain_id: "pdid".into(),
                     enabled: false,
+                    ..Default::default()
+                }))
+            });
+        resource_mock
+            .expect_get_domain()
+            .withf(|_, id: &'_ str| id == "pdid")
+            .returning(move |_, _| {
+                Ok(Some(Domain {
+                    id: "pdid".into(),
+                    name: "pdname".into(),
+                    enabled: true,
                     ..Default::default()
                 }))
             });

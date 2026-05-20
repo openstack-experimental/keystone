@@ -17,10 +17,13 @@
 use chrono::{DateTime, Timelike, Utc};
 use derive_builder::Builder;
 
-use crate::token::Token;
+use crate::error::BuilderError;
+use crate::role::RoleRef;
+use crate::token::FernetToken;
 
 /// Revocation event.
 #[derive(Builder, Clone, Debug, Default, PartialEq)]
+#[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct RevocationEvent {
     pub access_token_id: Option<String>,
@@ -51,6 +54,7 @@ pub struct RevocationEvent {
 
 /// Revocation event creation data.
 #[derive(Builder, Clone, Debug, Default, PartialEq)]
+#[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct RevocationEventCreate {
     #[builder(default)]
@@ -95,6 +99,7 @@ pub struct RevocationEventCreate {
 /// It may be necessary to list revocation events not related to the certain
 /// token.
 #[derive(Builder, Clone, Debug, Default, PartialEq)]
+#[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct RevocationEventListParameters {
     //pub access_token_id: Option<String>,
@@ -114,7 +119,7 @@ pub struct RevocationEventListParameters {
     pub expires_at: Option<DateTime<Utc>>,
 
     /// List revocation events with the `issued_before` value greater or equal
-    /// the value (revocating tokens issued before the certain time).
+    /// the value (revoking tokens issued before the certain time).
     #[builder(default)]
     pub issued_before: Option<DateTime<Utc>>,
 
@@ -140,72 +145,24 @@ pub struct RevocationEventListParameters {
     pub user_ids: Option<Vec<String>>,
 }
 
-/// Convert Token into the revocation events listing parameters following the
-/// <https://openstack-experimental.github.io/keystone/adr/0009-auth-token-revoke.html#revocation-check>.
-// TODO: It is necessary to also consider list of the token roles against the
-// role_id of the entry TODO: domain_id of the database entry should be compared
-// against the user_domain_id and the scope_domain_id. That means, however, that
-// we must resolve the user first.
-impl TryFrom<&Token> for RevocationEventListParameters {
-    type Error = crate::error::BuilderError;
-    fn try_from(value: &Token) -> Result<Self, Self::Error> {
-        // TODO: for trust token user_id can be trustee_id or trustor_id
-        Ok(Self {
-            //access_token_id: None,
-            //audit_chain_id: None,
-            audit_id: Some(
-                value
-                    .audit_ids()
-                    .first()
-                    .ok_or(crate::error::BuilderError::Validation(
-                        "token has no audit_id".to_string(),
-                    ))?, //.ok_or(RevokeProviderError::TokenHasNoAuditId)?,
-            )
-            .cloned(),
-            //consumer_id: None,
-            domain_ids: Some(
-                value
-                    .user()
-                    .iter()
-                    .map(|user| user.domain_id.clone())
-                    .chain(value.domain_id().cloned())
-                    .collect::<Vec<String>>(),
-            ),
-            expires_at: None,
-            issued_before: Some(*value.issued_at()),
-            project_id: value.project_id().cloned(),
-            revoked_at: None,
-            role_ids: value
-                .original_roles()
-                .map(|roles| roles.iter().map(|role| role.id.clone()).collect()),
-            trust_id: if let Token::Trust(data) = value {
-                Some(data.trust_id.clone())
-            } else {
-                None
-            },
-            user_ids: if let Token::Trust(data) = value {
-                Some(
-                    vec![
-                        Some(data.user_id.clone()),
-                        data.trust.as_ref().map(|x| x.trustee_user_id.clone()),
-                        data.trust.as_ref().map(|x| x.trustor_user_id.clone()),
-                    ]
-                    .into_iter()
-                    .flatten()
-                    .collect(),
-                )
-            } else {
-                Some(vec![value.user_id().clone()])
-            },
-        })
+impl RevocationEventListParametersBuilder {
+    pub fn role_refs<'a, I>(&mut self, iter: I) -> &mut Self
+    where
+        I: Iterator<Item = &'a RoleRef>,
+    {
+        self.role_ids
+            .get_or_insert_default()
+            .get_or_insert_with(Vec::new)
+            .extend(iter.map(|role| role.id.clone()));
+        self
     }
 }
 
 /// Convert the Token into the new revocation events record following the
 /// <https://openstack-experimental.github.io/keystone/adr/0009-auth-token-revoke.html#token-revocation>.
-impl TryFrom<&Token> for RevocationEventCreate {
+impl TryFrom<&FernetToken> for RevocationEventCreate {
     type Error = crate::error::BuilderError;
-    fn try_from(value: &Token) -> Result<Self, Self::Error> {
+    fn try_from(value: &FernetToken) -> Result<Self, Self::Error> {
         let now = Utc::now();
         Ok(Self {
             access_token_id: None,
@@ -221,7 +178,7 @@ impl TryFrom<&Token> for RevocationEventCreate {
             project_id: None,
             revoked_at: now,
             role_id: None,
-            trust_id: if let Token::Trust(data) = value {
+            trust_id: if let FernetToken::Trust(data) = value {
                 Some(data.trust_id.clone())
             } else {
                 None
@@ -234,70 +191,11 @@ impl TryFrom<&Token> for RevocationEventCreate {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::identity::UserResponseBuilder;
-    use crate::role::RoleRef;
-    use crate::token::{ProjectScopePayload, TrustPayload};
-    use crate::trust::Trust;
-
-    #[test]
-    fn test_list_for_project_scope_token() {
-        let token = Token::ProjectScope(ProjectScopePayload {
-            user_id: "user_id".into(),
-            user: Some(
-                UserResponseBuilder::default()
-                    .id("user_id")
-                    .domain_id("user_domain_id")
-                    .enabled(true)
-                    .name("name")
-                    .build()
-                    .unwrap(),
-            ),
-            methods: Vec::from(["password".to_string()]),
-            project_id: "project_id".into(),
-            audit_ids: vec!["Zm9vCg".into()],
-            expires_at: DateTime::parse_from_rfc3339("2025-11-17T19:55:06.123456Z")
-                .unwrap()
-                .with_timezone(&Utc),
-            roles: Some(vec![
-                RoleRef {
-                    id: "role_id1".to_string(),
-                    name: None,
-                    domain_id: None,
-                },
-                RoleRef {
-                    id: "role_id2".to_string(),
-                    name: None,
-                    domain_id: None,
-                },
-            ]),
-            ..Default::default()
-        });
-        let revocation: RevocationEventListParameters =
-            RevocationEventListParameters::try_from(&token).unwrap();
-
-        //assert!(revocation.audit_chain_id.is_none());
-        assert_eq!(
-            *token.audit_ids().first().unwrap(),
-            revocation.audit_id.unwrap()
-        );
-        //assert!(revocation.consumer_id.is_none());
-        assert_eq!(
-            revocation.domain_ids.unwrap(),
-            vec!["user_domain_id".to_string()]
-        );
-        assert!(revocation.expires_at.is_none());
-        assert_eq!(revocation.project_id.unwrap(), "project_id".to_string());
-        assert_eq!(
-            revocation.role_ids.unwrap(),
-            vec!["role_id1".to_string(), "role_id2".to_string()]
-        );
-        //assert!(revocation.trust_id.is_none());
-        assert_eq!(revocation.user_ids.unwrap(), vec!["user_id".to_string()]);
-    }
+    use crate::token::ProjectScopePayload;
 
     #[test]
     fn test_create_from_token() {
-        let token = Token::ProjectScope(ProjectScopePayload {
+        let token = FernetToken::ProjectScope(ProjectScopePayload {
             user_id: "bar".into(),
             methods: Vec::from(["password".to_string()]),
             project_id: "pid".into(),
@@ -305,18 +203,6 @@ mod tests {
             expires_at: DateTime::parse_from_rfc3339("2025-11-17T19:55:06.123456Z")
                 .unwrap()
                 .with_timezone(&Utc),
-            roles: Some(vec![
-                RoleRef {
-                    id: "role_id1".to_string(),
-                    name: None,
-                    domain_id: None,
-                },
-                RoleRef {
-                    id: "role_id2".to_string(),
-                    name: None,
-                    domain_id: None,
-                },
-            ]),
             ..Default::default()
         });
         let revocation: RevocationEventCreate = RevocationEventCreate::try_from(&token).unwrap();
@@ -339,76 +225,5 @@ mod tests {
         assert!(revocation.role_id.is_none());
         assert!(revocation.trust_id.is_none());
         assert!(revocation.user_id.is_none());
-    }
-
-    #[test]
-    fn test_list_for_trust_token() {
-        let token = Token::Trust(TrustPayload {
-            user_id: "user_id".into(),
-            user: Some(
-                UserResponseBuilder::default()
-                    .id("user_id")
-                    .domain_id("user_domain_id")
-                    .enabled(true)
-                    .name("name")
-                    .build()
-                    .unwrap(),
-            ),
-            methods: Vec::from(["trust".to_string()]),
-            project_id: "project_id".into(),
-            audit_ids: vec!["Zm9vCg".into()],
-            expires_at: DateTime::parse_from_rfc3339("2025-11-17T19:55:06.123456Z")
-                .unwrap()
-                .with_timezone(&Utc),
-            trust_id: "trust_id".into(),
-            trust: Some(Trust {
-                id: "trust_id".into(),
-                impersonation: false,
-                trustee_user_id: "trustee".into(),
-                trustor_user_id: "trustor".into(),
-                roles: Some(vec![
-                    RoleRef {
-                        id: "role_id1".to_string(),
-                        name: None,
-                        domain_id: None,
-                    },
-                    RoleRef {
-                        id: "role_id2".to_string(),
-                        name: None,
-                        domain_id: None,
-                    },
-                ]),
-                ..Default::default()
-            }),
-            ..Default::default()
-        });
-        let revocation: RevocationEventListParameters =
-            RevocationEventListParameters::try_from(&token).unwrap();
-
-        //assert!(revocation.audit_chain_id.is_none());
-        assert_eq!(
-            *token.audit_ids().first().unwrap(),
-            revocation.audit_id.unwrap()
-        );
-        //assert!(revocation.consumer_id.is_none());
-        assert_eq!(
-            revocation.domain_ids.unwrap(),
-            vec!["user_domain_id".to_string()]
-        );
-        assert!(revocation.expires_at.is_none());
-        assert_eq!(revocation.project_id.unwrap(), "project_id".to_string());
-        assert_eq!(
-            revocation.role_ids.unwrap(),
-            vec!["role_id1".to_string(), "role_id2".to_string()]
-        );
-        assert_eq!(revocation.trust_id.unwrap(), "trust_id".to_string());
-        assert_eq!(
-            revocation.user_ids.unwrap(),
-            vec![
-                "user_id".to_string(),
-                "trustee".to_string(),
-                "trustor".to_string()
-            ]
-        );
     }
 }

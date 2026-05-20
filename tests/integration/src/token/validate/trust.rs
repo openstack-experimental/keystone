@@ -15,21 +15,23 @@
 
 use eyre::Report;
 use sea_orm::{DbConn, entity::*};
-use std::collections::HashSet;
 use std::sync::Arc;
 use tracing_test::traced_test;
 
 use openstack_keystone_trust_sql::entity::{trust as db_trust, trust_role as db_trust_role};
 
 use openstack_keystone::keystone::Service;
-use openstack_keystone::token::{Token, TokenApi, TokenProviderError};
+use openstack_keystone::resource::ResourceApi;
+use openstack_keystone::token::{FernetToken, TokenApi, TokenProviderError};
 use openstack_keystone::trust::TrustApi;
+use openstack_keystone_api_types::v3::auth::token::TokenBuilder;
 use openstack_keystone_core_types::auth::*;
 use openstack_keystone_core_types::trust::*;
 
 use super::grant_role_to_user_on_project;
 
 use crate::common::get_state;
+use crate::token::validate::revoke_role_from_user_on_project;
 use crate::{create_domain, create_project, create_role, create_user};
 
 async fn create_trust<S: Into<String>>(
@@ -118,36 +120,62 @@ async fn test_valid() -> Result<(), Report> {
         .unwrap();
     let ctx = SecurityContext::try_from(auth).unwrap();
 
-    let token = state
+    let trust_project = state
+        .provider
+        .get_resource_provider()
+        .get_project(&state, &trust.project_id.clone().unwrap())
+        .await?
+        .expect("trust project exists");
+    let project_domain = state
+        .provider
+        .get_resource_provider()
+        .get_domain(&state, &trust_project.domain_id)
+        .await?
+        .expect("trust project domain exists");
+
+    println!("user_a: {:?}; user_b: {:?}", user_a.id, user_b.id);
+    let vsc = state
         .provider
         .get_token_provider()
-        .issue_token(&ctx, &ScopeInfo::Trust(trust.clone()))?;
+        .issue_token_context(
+            &state,
+            &ctx,
+            &ScopeInfo::TrustProject(Box::new(TrustProjectInfo {
+                trust: trust.clone(),
+                project: trust_project,
+                project_domain,
+            })),
+        )
+        .await?;
 
-    let encoded_token = state.provider.get_token_provider().encode_token(&token)?;
-
-    let unpacked_token = state
+    let encoded_token = state
         .provider
         .get_token_provider()
-        .validate_token(&state, &encoded_token, None, None)
+        .encode_token(vsc.inner().token().unwrap())?;
+
+    let vsc_result = state
+        .provider
+        .get_token_provider()
+        .validate_to_context(&state, &encoded_token, None, None)
         .await;
 
-    if let Ok(unpacked_token) = &unpacked_token {
-        match unpacked_token {
-            Token::Trust(ttrust) => {
+    if let Ok(ref vsc_result) = vsc_result {
+        match vsc_result.inner().token().unwrap() {
+            FernetToken::Trust(ttrust) => {
                 assert_eq!(trust.id, ttrust.trust_id, "trust id matches");
                 assert_eq!(
                     trust.trustee_user_id, ttrust.user_id,
                     "token uid is the trustee"
                 );
-                assert_eq!(
-                    HashSet::from_iter(
-                        unpacked_token
-                            .effective_roles()
-                            .expect("roles present in the token")
-                            .iter()
-                            .map(|role| role.id.clone())
-                    ),
-                    HashSet::from([role_a.id.clone()])
+                let roles = vsc_result
+                    .inner()
+                    .authorization()
+                    .expect("authz present")
+                    .effective_roles()
+                    .expect("roles present");
+                assert!(
+                    roles.iter().any(|r| r.id == role_a.id),
+                    "token should contain role_a"
                 );
             }
             _ => {
@@ -155,7 +183,7 @@ async fn test_valid() -> Result<(), Report> {
             }
         }
     } else {
-        panic!("the valid trust token is expected");
+        panic!("the valid trust token is expected, {:?}", vsc_result);
     }
 
     Ok(())
@@ -200,32 +228,57 @@ async fn test_valid_redelegated() -> Result<(), Report> {
         .build()
         .unwrap();
     let ctx = SecurityContext::try_from(auth).unwrap();
-    let token = state
+    let trust_project = state
+        .provider
+        .get_resource_provider()
+        .get_project(&state, &trust.project_id.clone().unwrap())
+        .await?
+        .expect("trust project exists");
+    let project_domain = state
+        .provider
+        .get_resource_provider()
+        .get_domain(&state, &trust_project.domain_id)
+        .await?
+        .expect("trust project domain exists");
+
+    let vsc = state
         .provider
         .get_token_provider()
-        .issue_token(&ctx, &ScopeInfo::Trust(trust.clone()))?;
+        .issue_token_context(
+            &state,
+            &ctx,
+            &ScopeInfo::TrustProject(Box::new(TrustProjectInfo {
+                trust: trust.clone(),
+                project: trust_project,
+                project_domain,
+            })),
+        )
+        .await?;
 
-    let encoded_token = state.provider.get_token_provider().encode_token(&token)?;
-
-    let unpacked_token = state
+    let encoded_token = state
         .provider
         .get_token_provider()
-        .validate_token(&state, &encoded_token, None, None)
+        .encode_token(vsc.inner().token().unwrap())?;
+
+    let vsc_result = state
+        .provider
+        .get_token_provider()
+        .validate_to_context(&state, &encoded_token, None, None)
         .await;
 
-    if let Ok(unpacked_token) = &unpacked_token {
-        match unpacked_token {
-            Token::Trust(ttrust) => {
+    if let Ok(ref vsc_result) = vsc_result {
+        match vsc_result.inner().token().unwrap() {
+            FernetToken::Trust(ttrust) => {
                 assert_eq!(trust.id, ttrust.trust_id);
-                assert_eq!(
-                    HashSet::from_iter(
-                        unpacked_token
-                            .effective_roles()
-                            .expect("roles present in the token")
-                            .iter()
-                            .map(|role| role.id.clone())
-                    ),
-                    HashSet::from([role_a.id.clone()])
+                let roles = vsc_result
+                    .inner()
+                    .authorization()
+                    .expect("authz present")
+                    .effective_roles()
+                    .expect("roles present");
+                assert!(
+                    roles.iter().any(|r| r.id == role_a.id),
+                    "token should contain role_a"
                 );
             }
             _ => {
@@ -235,7 +288,7 @@ async fn test_valid_redelegated() -> Result<(), Report> {
     } else {
         panic!(
             "the valid trust token is expected, it is {:?} instead",
-            unpacked_token
+            vsc_result
         );
     }
 
@@ -252,6 +305,7 @@ async fn test_fewer_roles() -> Result<(), Report> {
 
     let user_a = create_user!(state, domain.id.clone())?;
     let user_b = create_user!(state, domain.id.clone())?;
+    grant_role_to_user_on_project(&state, &user_a.id, &project.id, &role_a.id).await?;
 
     create_trust(
         &state.db,
@@ -281,22 +335,54 @@ async fn test_fewer_roles() -> Result<(), Report> {
         .unwrap();
     let ctx = SecurityContext::try_from(auth).unwrap();
 
-    let token = state
+    let trust_project = state
+        .provider
+        .get_resource_provider()
+        .get_project(&state, &trust.project_id.clone().unwrap())
+        .await?
+        .expect("trust project exists");
+    let project_domain = state
+        .provider
+        .get_resource_provider()
+        .get_domain(&state, &trust_project.domain_id)
+        .await?
+        .expect("trust project domain exists");
+
+    let vsc = state
         .provider
         .get_token_provider()
-        .issue_token(&ctx, &ScopeInfo::Trust(trust.clone()))?;
+        .issue_token_context(
+            &state,
+            &ctx,
+            &ScopeInfo::TrustProject(Box::new(TrustProjectInfo {
+                trust: trust.clone(),
+                project: trust_project,
+                project_domain,
+            })),
+        )
+        .await?;
 
-    let encoded_token = state.provider.get_token_provider().encode_token(&token)?;
+    let encoded_token = state
+        .provider
+        .get_token_provider()
+        .encode_token(vsc.inner().token().unwrap())?;
+
+    revoke_role_from_user_on_project(&state, &user_a.id, &project.id, &role_a.id).await?;
 
     let unpacked_token = state
         .provider
         .get_token_provider()
-        .validate_token(&state, &encoded_token, None, None)
+        .validate_to_context(&state, &encoded_token, None, None)
         .await;
 
-    if let Err(TokenProviderError::ActorHasNoRolesOnTarget) = unpacked_token {
+    if let Err(TokenProviderError::Authentication(AuthenticationError::ActorHasNoRolesOnTarget)) =
+        unpacked_token
+    {
     } else {
-        panic!("should have returned error since the trustor is not having active role assignment");
+        panic!(
+            "should have returned error since the trustor is not having active role assignment: {:?}",
+            unpacked_token
+        );
     }
     Ok(())
 }
@@ -347,36 +433,65 @@ async fn test_exclude_local_roles() -> Result<(), Report> {
         .unwrap();
     let ctx = SecurityContext::try_from(auth).unwrap();
 
-    let token = state
+    let trust_project = state
+        .provider
+        .get_resource_provider()
+        .get_project(&state, &trust.project_id.clone().unwrap())
+        .await?
+        .expect("trust project exists");
+    let project_domain = state
+        .provider
+        .get_resource_provider()
+        .get_domain(&state, &trust_project.domain_id)
+        .await?
+        .expect("trust project domain exists");
+
+    let vsc = state
         .provider
         .get_token_provider()
-        .issue_token(&ctx, &ScopeInfo::Trust(trust.clone()))?;
+        .issue_token_context(
+            &state,
+            &ctx,
+            &ScopeInfo::TrustProject(Box::new(TrustProjectInfo {
+                trust: trust.clone(),
+                project: trust_project,
+                project_domain,
+            })),
+        )
+        .await?;
 
-    let encoded_token = state.provider.get_token_provider().encode_token(&token)?;
-
-    let unpacked_token = state
+    let encoded_token = state
         .provider
         .get_token_provider()
-        .validate_token(&state, &encoded_token, None, None)
+        .encode_token(vsc.inner().token().unwrap())?;
+
+    let vsc_result = state
+        .provider
+        .get_token_provider()
+        .validate_to_context(&state, &encoded_token, None, None)
         .await;
 
-    if let Ok(unpacked_token) = &unpacked_token {
-        match unpacked_token {
-            Token::Trust(ttrust) => {
+    if let Ok(ref vsc_result) = vsc_result {
+        match vsc_result.inner().token().unwrap() {
+            FernetToken::Trust(ttrust) => {
                 assert_eq!(trust.id, ttrust.trust_id, "trust id matches");
                 assert_eq!(
                     trust.trustee_user_id, ttrust.user_id,
                     "token uid is the trustee"
                 );
-                assert_eq!(
-                    HashSet::from_iter(
-                        unpacked_token
-                            .effective_roles()
-                            .expect("roles present in the token")
-                            .iter()
-                            .map(|role| role.id.clone())
-                    ),
-                    HashSet::from([role_a.id.clone()])
+                let roles = vsc_result
+                    .inner()
+                    .authorization()
+                    .expect("authz present")
+                    .effective_roles()
+                    .expect("roles present");
+                assert!(
+                    roles.iter().any(|r| r.id == role_a.id),
+                    "token should contain global role_a"
+                );
+                assert!(
+                    !roles.iter().any(|r| r.id == role_x.id),
+                    "token should NOT contain domain-scoped role_x"
                 );
             }
             _ => {
@@ -386,6 +501,103 @@ async fn test_exclude_local_roles() -> Result<(), Report> {
     } else {
         panic!("the valid trust token is expected");
     }
+
+    Ok(())
+}
+
+#[tokio::test]
+#[traced_test]
+async fn test_trust_populated_in_api_token_response() -> Result<(), Report> {
+    let (state, _tmp) = get_state().await?;
+    let domain = create_domain!(state)?;
+    let project = create_project!(state, domain.id.clone())?;
+    let role_a = create_role!(state)?;
+
+    let user_a = create_user!(state, domain.id.clone())?;
+    let user_b = create_user!(state, domain.id.clone())?;
+
+    grant_role_to_user_on_project(
+        &state,
+        user_a.id.clone(),
+        project.id.clone(),
+        role_a.id.clone(),
+    )
+    .await?;
+
+    create_trust(
+        &state.db,
+        "trust_a".to_string(),
+        user_a.id.clone(),
+        user_b.id.clone(),
+        project.id.clone(),
+        vec![role_a.id.clone()],
+    )
+    .await?;
+    let trust = get_trust(&state, "trust_a")
+        .await?
+        .expect("trust_a is present");
+
+    let auth = AuthenticationResultBuilder::default()
+        .context(AuthenticationContext::Password)
+        .principal(PrincipalInfo {
+            domain_id: Some(user_b.domain_id.clone()),
+            identity: IdentityInfo::User(
+                UserIdentityInfoBuilder::default()
+                    .user_id(user_b.id.clone())
+                    .user(user_b.clone())
+                    .build()?,
+            ),
+        })
+        .build()
+        .unwrap();
+    let ctx = SecurityContext::try_from(auth).unwrap();
+
+    let trust_project = state
+        .provider
+        .get_resource_provider()
+        .get_project(&state, &trust.project_id.clone().unwrap())
+        .await?
+        .expect("trust project exists");
+    let project_domain = state
+        .provider
+        .get_resource_provider()
+        .get_domain(&state, &trust_project.domain_id)
+        .await?
+        .expect("trust project domain exists");
+
+    let vsc = state
+        .provider
+        .get_token_provider()
+        .issue_token_context(
+            &state,
+            &ctx,
+            &ScopeInfo::TrustProject(Box::new(TrustProjectInfo {
+                trust: trust.clone(),
+                project: trust_project,
+                project_domain,
+            })),
+        )
+        .await?;
+
+    let api_token = TokenBuilder::try_from(&vsc)?.build()?;
+    assert!(
+        api_token.trust.is_some(),
+        "trust field should be populated in API token response"
+    );
+    let api_trust = api_token.trust.unwrap();
+    assert_eq!(api_trust.id, trust.id, "trust id matches");
+    assert_eq!(
+        api_trust.trustor_user.id, trust.trustor_user_id,
+        "trustor user id matches"
+    );
+    assert_eq!(
+        api_trust.trustee_user.id, trust.trustee_user_id,
+        "trustee user id matches"
+    );
+    assert_eq!(
+        api_trust.impersonation, trust.impersonation,
+        "impersonation flag matches"
+    );
 
     Ok(())
 }

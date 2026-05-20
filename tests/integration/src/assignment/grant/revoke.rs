@@ -129,17 +129,25 @@ async fn test_revoke_user_project_grant_auth_impact() -> Result<()> {
         )
         .await?;
 
-    let authz = ScopeInfo::Project { project: ProjectBuilder::default()
+    let authz = ScopeInfo::Project {
+        project: ProjectBuilder::default()
             .id(cred.project_id.clone())
             .name(project.id.clone())
             .domain_id(project.domain_id.clone())
             .enabled(true)
-            .build()?, domain: None };
+            .build()?,
+        project_domain: DomainBuilder::default()
+            .id(domain.id.clone())
+            .name(domain.name.clone())
+            .enabled(true)
+            .build()?,
+    };
 
     let auth = AuthenticationResultBuilder::default()
-        .context(AuthenticationContext::ApplicationCredential(
-            cred.clone().into(),
-        ))
+        .context(AuthenticationContext::ApplicationCredential {
+            application_credential: cred.clone().into(),
+            token: None,
+        })
         .principal(PrincipalInfo {
             domain_id: Some(user.domain_id.clone()),
             identity: IdentityInfo::User(
@@ -152,21 +160,22 @@ async fn test_revoke_user_project_grant_auth_impact() -> Result<()> {
         .build()
         .unwrap();
     let ctx = SecurityContext::try_from(auth).unwrap();
-    let pre_revoke_token = state
+    let pre_revoke_token_context = state
         .provider
         .get_token_provider()
-        .issue_token(&ctx, &authz.clone())?;
+        .issue_token_context(&state, &ctx, &authz.clone())
+        .await?;
     let pre_revoke_encoded = state
         .provider
         .get_token_provider()
-        .encode_token(&pre_revoke_token)?;
+        .encode_token(pre_revoke_token_context.inner().token().unwrap())?;
 
     // Sanity check: token is valid before revocation
     assert!(
         state
             .provider
             .get_token_provider()
-            .validate_token(&state, &pre_revoke_encoded, None, None)
+            .validate_to_context(&state, &pre_revoke_encoded, None, None)
             .await
             .is_ok(),
         "Token should be valid before revocation"
@@ -190,7 +199,7 @@ async fn test_revoke_user_project_grant_auth_impact() -> Result<()> {
             state
                 .provider
                 .get_token_provider()
-                .validate_token(&state, &pre_revoke_encoded, None, None)
+                .validate_to_context(&state, &pre_revoke_encoded, None, None)
                 .await,
             Err(TokenProviderError::TokenRevoked)
         ),
@@ -202,26 +211,31 @@ async fn test_revoke_user_project_grant_auth_impact() -> Result<()> {
     // new second before granting new token to prevent it being also eventually
     // revoked
     tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-    let post_revoke_token = state
+    let post_revoke_token_ctx = state
         .provider
         .get_token_provider()
-        .issue_token(&ctx, &authz)?;
+        .issue_token_context(&state, &ctx, &authz.clone())
+        .await?;
     let post_revoke_encoded = state
         .provider
         .get_token_provider()
-        .encode_token(&post_revoke_token)?;
+        .encode_token(post_revoke_token_ctx.inner().token().unwrap())?;
 
     let validated = state
         .provider
         .get_token_provider()
-        .validate_token(&state, &post_revoke_encoded, None, None)
+        .validate_to_context(&state, &post_revoke_encoded, None, None)
         .await?;
 
     let roles = validated
+        .inner()
+        .authorization()
+        .expect("authz is there")
         .effective_roles()
-        .expect("Token should have effective roles");
+        .expect("must have roles");
 
     assert!(roles.iter().any(|r| r.id == role_b.id));
     assert!(!roles.iter().any(|r| r.id == role_a.id));
+
     Ok(())
 }

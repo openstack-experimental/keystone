@@ -46,29 +46,20 @@ pub(super) async fn authenticate_request(
         } else if method == "token"
             && let Some(token) = &req.auth.identity.token
         {
-            let mut auth_res = state
+            let vsc = state
                 .provider
                 .get_token_provider()
-                .authenticate_by_token(state, &token.id, Some(false), None)
+                .authorize_by_token(state, &token.id, Some(false), None)
                 .await?;
-            if let IdentityInfo::User(ref mut identity) = auth_res.principal.identity {
-                identity.user = Some(
-                    state
-                        .provider
-                        .get_identity_provider()
-                        .get_user(state, &identity.user_id)
-                        .await
-                        .map(|x| {
-                            x.ok_or_else(|| KeystoneApiError::NotFound {
-                                resource: "user".into(),
-                                identifier: identity.user_id.clone(),
-                            })
-                        })??,
-                );
+            let auth_res = AuthenticationResult {
+                audit_id: vsc.inner().audit_ids().first().cloned().unwrap_or_default(),
+                context: vsc.inner().authentication_context().clone(),
+                expires_at: vsc.inner().expires_at(),
+                principal: vsc.inner().principal().clone(),
+                authorization: vsc.inner().authorization().cloned(),
+                token_restriction: vsc.inner().token_restriction().cloned(),
             };
             res.push(auth_res);
-
-            {}
         }
     }
     if res.is_empty() {
@@ -78,6 +69,10 @@ pub(super) async fn authenticate_request(
 }
 
 /// Build the AuthZ information from the request.
+///
+/// TODO: this method is identical to the one in
+/// openstack_keystone_core::api::common but they take different structures
+/// (which are still identical). Deduplicate
 ///
 /// # Arguments
 ///
@@ -96,9 +91,10 @@ pub(super) async fn get_authz_info(
     let authz_scope = match &req.auth.scope {
         Some(Scope::Project(scope)) => {
             if let Some(project) = find_project_from_scope(state, scope).await? {
+                let domain_id = project.domain_id.clone();
                 ScopeInfo::Project {
                     project,
-                    domain: None,
+                    project_domain: get_domain(state, Some(&domain_id), None::<&str>).await?,
                 }
             } else {
                 return Err(KeystoneApiError::UnauthorizedNoContext);
@@ -122,6 +118,7 @@ pub(super) async fn get_authz_info(
 mod tests {
     use openstack_keystone_core_types::auth::*;
     use openstack_keystone_core_types::identity::{UserPasswordAuthRequest, UserResponseBuilder};
+    use openstack_keystone_core_types::resource::Domain;
 
     use super::super::types::*;
     use super::*;
@@ -198,29 +195,42 @@ mod tests {
             .build()
             .unwrap();
         let auth = AuthenticationResultBuilder::default()
-            .context(AuthenticationContext::Token(TokenContext::default()))
+            .context(AuthenticationContext::Token(
+                openstack_keystone_core_types::token::FernetToken::Unscoped(
+                    openstack_keystone_core_types::token::UnscopedPayload::default(),
+                ),
+            ))
             .principal(PrincipalInfo {
                 domain_id: Some("did".into()),
                 identity: IdentityInfo::User(
                     UserIdentityInfoBuilder::default()
                         .user_id("uid")
                         .user(user.clone())
+                        .user_domain(Domain {
+                            id: "user_domain_id".into(),
+                            enabled: true,
+                            ..Default::default()
+                        })
                         .build()
                         .unwrap(),
                 ),
             })
             .build()
             .unwrap();
+        let vsc_for_mock = {
+            let sc = SecurityContext::try_from(auth.clone()).unwrap();
+            openstack_keystone_core::auth::ValidatedSecurityContext::test_new(sc)
+        };
+        let vsc_clone = vsc_for_mock.clone();
         let mut token_mock = MockTokenProvider::default();
-        let auth_clone = auth.clone();
         token_mock
-            .expect_authenticate_by_token()
+            .expect_authorize_by_token()
             .withf(
                 |_, id: &'_ str, allow_expired: &Option<bool>, window: &Option<i64>| {
                     id == "fake_token" && *allow_expired == Some(false) && window.is_none()
                 },
             )
-            .returning(move |_, _, _, _| Ok(auth_clone.clone()));
+            .returning(move |_, _, _, _| Ok(vsc_clone.clone()));
         let mut identity_mock = MockIdentityProvider::default();
         identity_mock
             .expect_get_user()

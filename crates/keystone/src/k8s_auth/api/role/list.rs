@@ -76,7 +76,7 @@ pub(super) async fn list_nested(
         auth_instance_id: Some(instance_id),
         name: query.name,
         domain_id: if !res.can_see_other_domain_resources.is_some_and(|x| x) {
-            user_auth.principal.domain_id.clone()
+            user_auth.principal().domain_id.clone()
         } else {
             None
         },
@@ -145,7 +145,7 @@ pub(super) async fn list(
         auth_instance_id: query.auth_instance_id,
         name: query.name,
         domain_id: if !res.can_see_other_domain_resources.is_some_and(|x| x) {
-            user_auth.principal.domain_id.clone()
+            user_auth.principal().domain_id.clone()
         } else {
             query.domain_id
         },

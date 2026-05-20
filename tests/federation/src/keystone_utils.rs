@@ -34,7 +34,7 @@ use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;
 
 use openstack_keystone_api_types::federation::*;
-use openstack_keystone_api_types::v4::auth::token::TokenResponse;
+use openstack_keystone_api_types::v3::auth::token::TokenResponse;
 use openstack_keystone_api_types::v4::user::*;
 
 static CONFIG: OnceLock<TestConfig> = OnceLock::new();

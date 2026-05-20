@@ -23,11 +23,9 @@ use spiffe::SpiffeId;
 use tracing::{debug, error};
 
 use openstack_keystone_config::Interface;
-use openstack_keystone_core_types::auth::*;
 
 use crate::api::KeystoneApiError;
 use crate::auth::ValidatedSecurityContext;
-use crate::identity::IdentityApi;
 use crate::keystone::ServiceState;
 use crate::token::TokenApi;
 
@@ -78,36 +76,19 @@ where
             auth_header
         } else {
             debug!("No supported information has been provided.");
-            return Err(KeystoneApiError::UnauthorizedNoContext)?;
+            return Err(KeystoneApiError::UnauthorizedNoContext);
         };
 
         let state = Arc::from_ref(state);
 
-        let mut auth_res = state
+        let vsc = state
             .provider
             .get_token_provider()
-            .authenticate_by_token(&state, auth_header, Some(false), None)
+            .authorize_by_token(&state, auth_header, Some(false), None)
             .await
             .inspect_err(|e| error!("{:#?}", e))
             .map_err(|_| KeystoneApiError::UnauthorizedNoContext)?;
 
-        if let IdentityInfo::User(ref mut identity) = auth_res.principal.identity {
-            identity.user = Some(
-                state
-                    .provider
-                    .get_identity_provider()
-                    .get_user(&state, &identity.user_id)
-                    .await
-                    .map(|x| {
-                        x.ok_or_else(|| KeystoneApiError::NotFound {
-                            resource: "user".into(),
-                            identifier: identity.user_id.clone(),
-                        })
-                    })??,
-            );
-        };
-        let sc = SecurityContext::try_from(auth_res)?;
-        let vsc = ValidatedSecurityContext::new_with_roles(sc, &state).await?;
         vsc.fully_resolved()?;
 
         Ok(Auth(vsc))

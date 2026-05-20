@@ -17,7 +17,7 @@ use async_trait::async_trait;
 
 use openstack_keystone_core_types::token::*;
 
-use crate::auth::{AuthenticationResult, ScopeInfo, SecurityContext};
+use crate::auth::{ScopeInfo, SecurityContext, ValidatedSecurityContext};
 use crate::keystone::ServiceState;
 use crate::token::TokenProviderError;
 
@@ -33,17 +33,21 @@ pub trait TokenApi: Send + Sync {
     /// - `window_seconds`: Expiration buffer in seconds.
     ///
     /// # Returns
-    /// - `Result<AuthenticatedInfo, TokenProviderError>` - Authenticated
+    /// - `Result<ValidatedSecurityContext, TokenProviderError>` - Authenticated
     ///   information or an error.
-    async fn authenticate_by_token<'a>(
+    async fn authorize_by_token<'a>(
         &self,
         state: &ServiceState,
         credential: &'a str,
         allow_expired: Option<bool>,
         window_seconds: Option<i64>,
-    ) -> Result<AuthenticationResult, TokenProviderError>;
+    ) -> Result<ValidatedSecurityContext, TokenProviderError>;
 
-    /// Validate the token.
+    /// Validate the token and produce a [`ValidatedSecurityContext`].
+    ///
+    /// Decodes the fernet token, checks expiration and revocation, builds
+    /// the security context from the token data, validates, resolves effective
+    /// roles, and returns the locked context.
     ///
     /// # Parameters
     /// - `state`: The current service state.
@@ -52,29 +56,39 @@ pub trait TokenApi: Send + Sync {
     /// - `window_seconds`: Expiration buffer in seconds.
     ///
     /// # Returns
-    /// - `Result<Token, TokenProviderError>` - The decoded token or an error.
-    async fn validate_token<'a>(
+    /// - `Result<ValidatedSecurityContext, TokenProviderError>` - The validated
+    ///   and expanded security context or an error.
+    async fn validate_to_context<'a>(
         &self,
         state: &ServiceState,
         credential: &'a str,
         allow_expired: Option<bool>,
         window_seconds: Option<i64>,
-    ) -> Result<Token, TokenProviderError>;
+    ) -> Result<ValidatedSecurityContext, TokenProviderError>;
 
-    /// Issue a token for given parameters.
+    /// Issue a token and produce a [`ValidatedSecurityContext`] without
+    /// performing validation.
+    ///
+    /// Creates a token from the provided [`SecurityContext`] and scope,
+    /// builds authorization info from the token scope, resolves effective
+    /// roles, and returns the validated security context with the issued
+    /// token embedded. Skips revocation, expiration, and subject
+    /// validation since the token was just issued.
     ///
     /// # Parameters
-    /// - `security_context`: Authentication information for the token.
-    /// - `scope`: Scope information for the token.
-    /// - `token_restriction`: Optional restrictions for the token.
+    /// - `state`: The current service state.
+    /// - `ctx`: The security context from which the token is issued.
+    /// - `scope`: Scope for the token.
     ///
     /// # Returns
-    /// - `Result<Token, TokenProviderError>` - The issued token or an error.
-    fn issue_token(
+    /// - `Result<ValidatedSecurityContext, TokenProviderError>` - The validated
+    ///   security context with the issued token embedded or an error.
+    async fn issue_token_context(
         &self,
-        security_context: &SecurityContext,
+        state: &ServiceState,
+        ctx: &SecurityContext,
         scope: &ScopeInfo,
-    ) -> Result<Token, TokenProviderError>;
+    ) -> Result<ValidatedSecurityContext, TokenProviderError>;
 
     /// Encode the token into the X-Subject-Token String.
     ///
@@ -83,36 +97,7 @@ pub trait TokenApi: Send + Sync {
     ///
     /// # Returns
     /// - `Result<String, TokenProviderError>` - The encoded string or an error.
-    fn encode_token(&self, token: &Token) -> Result<String, TokenProviderError>;
-
-    /// Populate role assignments in the token that support that information.
-    ///
-    /// # Parameters
-    /// - `state`: The current service state.
-    /// - `token`: The token to populate.
-    ///
-    /// # Returns
-    /// - `Result<(), TokenProviderError>` - Ok on success, or an error.
-    async fn populate_role_assignments(
-        &self,
-        state: &ServiceState,
-        token: &mut Token,
-    ) -> Result<(), TokenProviderError>;
-
-    /// Populate additional information (project, domain, roles, etc) in the
-    /// token that support that information.
-    ///
-    /// # Parameters
-    /// - `state`: The current service state.
-    /// - `token`: The token to expand.
-    ///
-    /// # Returns
-    /// - `Result<Token, TokenProviderError>` - The expanded token or an error.
-    async fn expand_token_information(
-        &self,
-        state: &ServiceState,
-        token: &Token,
-    ) -> Result<Token, TokenProviderError>;
+    fn encode_token(&self, token: &FernetToken) -> Result<String, TokenProviderError>;
 
     /// Get the token restriction by the ID.
     ///

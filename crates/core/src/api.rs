@@ -27,10 +27,10 @@ pub mod tests {
     use crate::auth::ValidatedSecurityContext;
     use openstack_keystone_config::{Config, ConfigManager};
     use openstack_keystone_core_types::auth::{
-        AuthenticationContext, AuthzInfo, IdentityInfo, PrincipalInfo, ScopeInfo, SecurityContext,
-        UserIdentityInfoBuilder,
+        AuthenticationContext, AuthzInfoBuilder, IdentityInfo, PrincipalInfo, ScopeInfo,
+        SecurityContext, UserIdentityInfoBuilder,
     };
-    use openstack_keystone_core_types::resource::Project;
+    use openstack_keystone_core_types::resource::{Domain, Project};
     use openstack_keystone_core_types::role::RoleRef;
 
     use crate::keystone::{Service, ServiceState};
@@ -43,6 +43,7 @@ pub mod tests {
     /// Directly constructs the struct via `ValidatedSecurityContext::test_new`
     /// so no provider mocks are needed. The `fully_resolved` check passes
     /// because `authorization` contains a non-empty roles list.
+    #[cfg(any(test, feature = "mock"))]
     pub fn test_fixture_scoped() -> ValidatedSecurityContext {
         let user = openstack_keystone_core_types::identity::UserResponseBuilder::default()
             .id("uid")
@@ -52,37 +53,52 @@ pub mod tests {
             .build()
             .unwrap();
 
-        ValidatedSecurityContext::test_new(SecurityContext {
-            audit_ids: vec!["audit_1".to_string()],
-            authentication_context: AuthenticationContext::Password,
-            auth_methods: std::collections::HashSet::from_iter(vec!["password".to_string()]),
-            authorization: Some(AuthzInfo {
-                roles: Some(vec![RoleRef {
-                    id: "admin".to_string(),
-                    name: Some("admin".to_string()),
-                    domain_id: None,
-                }]),
-                scope: ScopeInfo::Project { project: Project {
+        let authz = AuthzInfoBuilder::default()
+            .roles(vec![RoleRef {
+                id: "admin".to_string(),
+                name: Some("admin".to_string()),
+                domain_id: None,
+            }])
+            .scope(ScopeInfo::Project {
+                project: Project {
                     id: "project_id".to_string(),
                     domain_id: "domain_id".to_string(),
                     enabled: true,
                     name: "admin".to_string(),
                     ..Default::default()
-                }, domain: None },
-            }),
-            expires_at: None,
-            principal: PrincipalInfo {
+                },
+                project_domain: Domain {
+                    id: "domain_id".to_string(),
+                    name: "domain_name".to_string(),
+                    enabled: true,
+                    ..Default::default()
+                },
+            })
+            .build()
+            .unwrap();
+
+        let sc = SecurityContext::test_build()
+            .authentication_context(AuthenticationContext::Password)
+            .principal(PrincipalInfo {
                 domain_id: Some("domain_id".to_string()),
                 identity: IdentityInfo::User(
                     UserIdentityInfoBuilder::default()
                         .user_id("uid")
                         .user(user)
+                        .user_domain(openstack_keystone_core_types::resource::Domain {
+                            id: "domain_id".to_string(),
+                            name: "domain_name".to_string(),
+                            enabled: true,
+                            ..Default::default()
+                        })
                         .build()
                         .unwrap(),
                 ),
-            },
-            token_restriction: None,
-        })
+            })
+            .authorization(authz)
+            .build();
+
+        ValidatedSecurityContext::test_new(sc)
     }
 
     /// Initialize the mocked service state.

@@ -17,9 +17,6 @@ use serde::Serialize;
 use validator::Validate;
 
 use crate::auth::*;
-use crate::identity::UserResponse;
-use crate::resource::{Domain, Project};
-use crate::role::RoleRef;
 
 mod error;
 pub mod payload;
@@ -32,7 +29,7 @@ pub use restriction::*;
 /// Fernet Token.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(untagged)]
-pub enum Token {
+pub enum FernetToken {
     /// Application credential.
     ApplicationCredential(ApplicationCredentialPayload),
     /// Domain scoped.
@@ -55,46 +52,54 @@ pub enum Token {
     Unscoped(UnscopedPayload),
 }
 
-impl Token {
-    /// Construct the [`Token`] for the requested [`ScopeInfo`] with the current
-    /// [`SecurityContext`].`
+impl FernetToken {
+    /// Construct the [`FernetToken`] for the requested [`ScopeInfo`] with the
+    /// current [`SecurityContext`].
     ///
     /// # Security Note
     /// This is the low-level method with no real validation whether the token
     /// can be issued.
-    pub fn from_security_context_with_scope(
+    pub fn from_security_context(
         ctx: &SecurityContext,
-        scope: &ScopeInfo,
         expires_at: DateTime<Utc>,
     ) -> Result<Self, error::TokenProviderError> {
-        if let Some(token_restriction) = &ctx.token_restriction {
+        if let Some(token_restriction) = ctx.token_restriction() {
             return Ok(Self::Restricted(RestrictedPayload::from_security_context(
                 ctx,
                 token_restriction,
                 expires_at,
             )?));
         }
+        let scope = ctx
+            .authorization()
+            .map(|authz| &authz.scope)
+            .ok_or(TokenProviderError::ScopeMissing)?;
         match scope {
-            ScopeInfo::Domain(domain) => match &ctx.authentication_context {
-                AuthenticationContext::Oidc(oidc) => Ok(Self::FederationDomainScope(
+            ScopeInfo::Domain(domain) => match ctx.authentication_context() {
+                AuthenticationContext::Oidc { oidc, .. } => Ok(Self::FederationDomainScope(
                     FederationDomainScopePayload::from_security_context(
                         ctx, domain, oidc, expires_at,
                     )?,
                 )),
-                AuthenticationContext::Trust(_trust) => todo!(),
+                AuthenticationContext::Trust { .. } => {
+                    Err(AuthenticationError::ScopeNotAllowed.into())
+                }
                 _ => Ok(Self::DomainScope(
                     DomainScopePayload::from_security_context(ctx, domain, expires_at)?,
                 )),
             },
-            ScopeInfo::Project { project, domain: _ } => match &ctx.authentication_context {
-                AuthenticationContext::ApplicationCredential(app_cred) => {
-                    Ok(Self::ApplicationCredential(
-                        ApplicationCredentialPayload::from_security_context(
-                            ctx, app_cred, expires_at,
-                        )?,
-                    ))
-                }
-                AuthenticationContext::Oidc(oidc) => Ok(Self::FederationProjectScope(
+            ScopeInfo::Project { project, .. } => match ctx.authentication_context() {
+                AuthenticationContext::ApplicationCredential {
+                    application_credential,
+                    ..
+                } => Ok(Self::ApplicationCredential(
+                    ApplicationCredentialPayload::from_security_context(
+                        ctx,
+                        application_credential,
+                        expires_at,
+                    )?,
+                )),
+                AuthenticationContext::Oidc { oidc, .. } => Ok(Self::FederationProjectScope(
                     FederationProjectScopePayload::from_security_context(
                         ctx, project, oidc, expires_at,
                     )?,
@@ -103,20 +108,17 @@ impl Token {
                     ProjectScopePayload::from_security_context(ctx, project, expires_at)?,
                 )),
             },
-            ScopeInfo::Trust(trust) => Ok(match &trust.project_id {
-                Some(project_id) => Self::Trust(TrustPayload::from_security_context(
-                    ctx,
-                    trust,
-                    project_id.clone(),
-                    expires_at,
-                )?),
-                None => todo!(),
-            }),
+            ScopeInfo::TrustProject(tpi) => Ok(Self::Trust(TrustPayload::from_security_context(
+                ctx,
+                tpi.trust.id.clone(),
+                tpi.project.id.clone(),
+                expires_at,
+            )?)),
             ScopeInfo::System(system) => Ok(Self::SystemScope(
                 SystemScopePayload::from_security_context(ctx, system, expires_at)?,
             )),
-            ScopeInfo::Unscoped => match &ctx.authentication_context {
-                AuthenticationContext::Oidc(oidc) => Ok(Self::FederationUnscoped(
+            ScopeInfo::Unscoped => match ctx.authentication_context() {
+                AuthenticationContext::Oidc { oidc, .. } => Ok(Self::FederationUnscoped(
                     FederationUnscopedPayload::from_security_context(ctx, oidc, expires_at)?,
                 )),
 
@@ -139,21 +141,6 @@ impl Token {
             Self::SystemScope(x) => &x.user_id,
             Self::Trust(x) => &x.user_id,
             Self::Unscoped(x) => &x.user_id,
-        }
-    }
-
-    pub const fn user(&self) -> &Option<UserResponse> {
-        match self {
-            Self::ApplicationCredential(x) => &x.user,
-            Self::DomainScope(x) => &x.user,
-            Self::FederationUnscoped(x) => &x.user,
-            Self::FederationProjectScope(x) => &x.user,
-            Self::FederationDomainScope(x) => &x.user,
-            Self::ProjectScope(x) => &x.user,
-            Self::Restricted(x) => &x.user,
-            Self::SystemScope(x) => &x.user,
-            Self::Trust(x) => &x.user,
-            Self::Unscoped(x) => &x.user,
         }
     }
 
@@ -242,17 +229,6 @@ impl Token {
         }
     }
 
-    pub const fn project(&self) -> Option<&Project> {
-        match self {
-            Self::ApplicationCredential(x) => x.project.as_ref(),
-            Self::ProjectScope(x) => x.project.as_ref(),
-            Self::FederationProjectScope(x) => x.project.as_ref(),
-            Self::Restricted(x) => x.project.as_ref(),
-            Self::Trust(x) => x.project.as_ref(),
-            _ => None,
-        }
-    }
-
     pub const fn project_id(&self) -> Option<&String> {
         match self {
             Self::ApplicationCredential(x) => Some(&x.project_id),
@@ -266,24 +242,14 @@ impl Token {
 
     /// Get the domain ID for domain-scoped tokens.
     ///
-    /// Returns the domain identifier when the token is a [`Token::DomainScope`]
-    /// or [`Token::FederationDomainScope`]. Returns `None` for all other
+    /// Returns the domain identifier when the token is a
+    /// [`FernetToken::DomainScope`]
+    /// or [`FernetToken::FederationDomainScope`]. Returns `None` for all other
     /// token types.
     pub const fn domain_id(&self) -> Option<&String> {
         match self {
             Self::DomainScope(x) => Some(&x.domain_id),
             Self::FederationDomainScope(x) => Some(&x.domain_id),
-            _ => None,
-        }
-    }
-
-    /// Get the resolved [`Domain`] if present in the token. It may be empty for
-    /// the DomainScope and FederationDomainScope token when it was not
-    /// previously minted.
-    pub const fn domain(&self) -> Option<&Domain> {
-        match self {
-            Self::DomainScope(x) => x.domain.as_ref(),
-            Self::FederationDomainScope(x) => x.domain.as_ref(),
             _ => None,
         }
     }
@@ -294,111 +260,9 @@ impl Token {
             _ => None,
         }
     }
-
-    /// Original roles that were granted to the authn/authz.
-    ///
-    /// For application credentials original roles represent the roles tied to
-    /// the application credential, while the effective roles represent the
-    /// subset of the original roles that the user still have on the target
-    /// scope. Some logic may need to differentiate between the roles
-    /// originally tied to the authz from the effective roles in the moment of
-    /// the new authentication.
-    pub const fn original_roles(&self) -> Option<&Vec<RoleRef>> {
-        match self {
-            Self::ApplicationCredential(x) => match &x.application_credential {
-                Some(ac) => Some(&ac.roles),
-                None => None,
-            },
-            Self::DomainScope(x) => x.roles.as_ref(),
-            Self::FederationProjectScope(x) => x.roles.as_ref(),
-            Self::FederationDomainScope(x) => x.roles.as_ref(),
-            Self::ProjectScope(x) => x.roles.as_ref(),
-            Self::Restricted(x) => x.roles.as_ref(),
-            Self::SystemScope(x) => x.roles.as_ref(),
-            Self::Trust(x) => match &x.trust {
-                Some(trust) => trust.roles.as_ref(),
-                None => None,
-            },
-            _ => None,
-        }
-    }
-
-    /// Effective roles of the token.
-    ///
-    /// Application credentials, trusts and other concepts may bind roles for
-    /// the use. When some of this roles has been revoked from the user
-    /// afterwards the user should not be able to obtain them anymore. Some
-    /// concepts are being disabled completely in such case, some are supposed
-    /// to have a reduced scope (e.g., application credentials).
-    ///
-    /// Effective roles represent the roles that the user can currently get on
-    /// the target scope.
-    pub const fn effective_roles(&self) -> Option<&Vec<RoleRef>> {
-        match self {
-            Self::ApplicationCredential(x) => x.roles.as_ref(),
-            Self::DomainScope(x) => x.roles.as_ref(),
-            Self::FederationProjectScope(x) => x.roles.as_ref(),
-            Self::FederationDomainScope(x) => x.roles.as_ref(),
-            Self::ProjectScope(x) => x.roles.as_ref(),
-            Self::Restricted(x) => x.roles.as_ref(),
-            Self::SystemScope(x) => x.roles.as_ref(),
-            Self::Trust(x) => match &x.trust {
-                Some(trust) => trust.roles.as_ref(),
-                None => None,
-            },
-            _ => None,
-        }
-    }
-
-    /// Extract authorization information from the expanded token.
-    ///
-    /// Returns `[None]` when scope objects have not been expanded yet
-    /// _(e.g., the project/domain object is `[None]` but the scope ID is
-    /// present)_.
-    pub fn authorization(&self) -> Option<AuthzInfo> {
-        let roles = self.effective_roles().cloned();
-        match self {
-            Self::Unscoped(_) | Self::FederationUnscoped(_) => Some(AuthzInfo {
-                scope: ScopeInfo::Unscoped,
-                roles: None,
-            }),
-            Self::ProjectScope(x) => x.project.as_ref().map(|p| AuthzInfo {
-                scope: ScopeInfo::Project { project: p.clone(), domain: None },
-                roles,
-            }),
-            Self::FederationProjectScope(x) => x.project.as_ref().map(|p| AuthzInfo {
-                scope: ScopeInfo::Project { project: p.clone(), domain: None },
-                roles,
-            }),
-            Self::DomainScope(x) => x.domain.as_ref().map(|d| AuthzInfo {
-                scope: ScopeInfo::Domain(d.clone()),
-                roles,
-            }),
-            Self::FederationDomainScope(x) => x.domain.as_ref().map(|d| AuthzInfo {
-                scope: ScopeInfo::Domain(d.clone()),
-                roles,
-            }),
-            Self::SystemScope(x) => Some(AuthzInfo {
-                scope: ScopeInfo::System(x.system_id.clone()),
-                roles,
-            }),
-            Self::Restricted(x) => x.project.as_ref().map(|p| AuthzInfo {
-                scope: ScopeInfo::Project { project: p.clone(), domain: None },
-                roles,
-            }),
-            Self::ApplicationCredential(x) => x.project.as_ref().map(|p| AuthzInfo {
-                scope: ScopeInfo::Project { project: p.clone(), domain: None },
-                roles,
-            }),
-            Self::Trust(x) => x.trust.as_ref().map(|t| AuthzInfo {
-                scope: ScopeInfo::Trust(t.clone()),
-                roles,
-            }),
-        }
-    }
 }
 
-impl Validate for Token {
+impl Validate for FernetToken {
     fn validate(&self) -> Result<(), validator::ValidationErrors> {
         match self {
             Self::ApplicationCredential(x) => x.validate(),

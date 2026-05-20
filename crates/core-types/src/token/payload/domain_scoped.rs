@@ -20,10 +20,8 @@ use validator::Validate;
 use super::common;
 use crate::auth::SecurityContext;
 use crate::error::BuilderError;
-use crate::identity::UserResponse;
 use crate::resource::Domain;
-use crate::role::RoleRef;
-use crate::token::Token;
+use crate::token::FernetToken;
 use crate::token::error::TokenProviderError;
 
 #[derive(Builder, Clone, Debug, Default, PartialEq, Serialize, Validate)]
@@ -47,13 +45,6 @@ pub struct DomainScopePayload {
 
     #[builder(default)]
     pub issued_at: DateTime<Utc>,
-
-    #[builder(default)]
-    pub user: Option<UserResponse>,
-    #[builder(default)]
-    pub roles: Option<Vec<RoleRef>>,
-    #[builder(default)]
-    pub domain: Option<Domain>,
 }
 
 impl DomainScopePayloadBuilder {
@@ -80,7 +71,7 @@ impl DomainScopePayloadBuilder {
     }
 }
 
-impl From<DomainScopePayload> for Token {
+impl From<DomainScopePayload> for FernetToken {
     fn from(value: DomainScopePayload) -> Self {
         Self::DomainScope(value)
     }
@@ -97,12 +88,11 @@ impl DomainScopePayload {
         expires_at: DateTime<Utc>,
     ) -> Result<Self, TokenProviderError> {
         Ok(DomainScopePayloadBuilder::default()
-            .user_id(ctx.principal.get_user_id())
-            .methods(ctx.auth_methods.iter())
-            .audit_ids(ctx.audit_ids.iter())
+            .user_id(ctx.principal().get_user_id())
+            .methods(ctx.auth_methods().iter())
+            .audit_ids(ctx.audit_ids().iter())
             .expires_at(expires_at)
             .domain_id(domain.id.clone())
-            .domain(domain.clone())
             .build()?)
     }
 }

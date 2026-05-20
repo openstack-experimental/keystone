@@ -75,11 +75,11 @@ pub(super) async fn list(
 
     let domain_ids = if query.domain_id.as_ref().is_none() {
         if !res.can_see_other_domain_resources.is_some_and(|x| x) {
-            //let principal_domain_id = user_auth.principal.domain_id.clone();
+            //let principal_domain_id = user_auth.principal().domain_id.clone();
             let domain_ids: HashSet<Option<String>> = HashSet::from([
                 None,
                 // TODO: perhaps we should first look at the domain_scope and than user domain.
-                user_auth.principal.domain_id.clone(),
+                user_auth.principal().domain_id.clone(),
             ]);
             Some(domain_ids)
         } else {
@@ -87,8 +87,8 @@ pub(super) async fn list(
             None
         }
     } else {
-        if user_auth.principal.domain_id != query.domain_id {
-            return Err(KeystoneApiError::UnauthorizedNoContext)?;
+        if user_auth.principal().domain_id != query.domain_id {
+            return Err(KeystoneApiError::UnauthorizedNoContext);
         }
 
         Some(HashSet::from([query.domain_id.clone()]))
@@ -210,7 +210,7 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     /// test listing if forbidden to show IDP of foreign domain when user does
-    /// not have permision to see resources of other domains.
+    /// not have permission to see resources of other domains.
     async fn test_list_policy_allow_but_other_domain() {
         let mut federation_mock = MockFederationProvider::default();
         federation_mock

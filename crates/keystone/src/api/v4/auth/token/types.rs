@@ -12,4 +12,4 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-pub use openstack_keystone_api_types::v4::auth::token::*;
+pub use openstack_keystone_api_types::v3::auth::token::*;

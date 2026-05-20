@@ -27,6 +27,7 @@ impl RaftVote for pb::raft::Vote {
         }
     }
 
+    #[allow(clippy::expect_used)]
     fn leader_id(&self) -> &LeaderId {
         self.leader_id.as_ref().expect("Vote must have a leader_id")
     }

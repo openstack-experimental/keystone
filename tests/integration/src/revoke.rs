@@ -22,6 +22,7 @@ use openstack_keystone::revoke::RevokeApi;
 use openstack_keystone::token::TokenApi;
 use openstack_keystone_core_types::identity::*;
 use openstack_keystone_core_types::resource::*;
+use openstack_keystone_core_types::resource::{DomainBuilder, ProjectBuilder};
 use openstack_keystone_core_types::revoke::*;
 use openstack_keystone_core_types::role::RoleCreateBuilder;
 
@@ -78,44 +79,59 @@ async fn test_token_revoked() -> Result<(), Report> {
         .build()
         .unwrap();
     let ctx = SecurityContext::try_from(auth).unwrap();
-    let token = state.provider.get_token_provider().issue_token(
-        &ctx,
-        &ScopeInfo::Project { project: ProjectBuilder::default()
-                .id(project.id.clone())
-                .name(project.name.clone())
-                .domain_id(project.domain_id.clone())
-                .enabled(true)
-                .build()?, domain: None },
-    )?;
-
-    // Token gets proper issued_at only during the serialization
-    let encoded_token = state.provider.get_token_provider().encode_token(&token)?;
-
-    let token = state
+    let vsc_issued = state
         .provider
         .get_token_provider()
-        .validate_token(&state, &encoded_token, None, None)
+        .issue_token_context(
+            &state,
+            &ctx,
+            &ScopeInfo::Project {
+                project: ProjectBuilder::default()
+                    .id(project.id.clone())
+                    .name(project.name.clone())
+                    .domain_id(project.domain_id.clone())
+                    .enabled(true)
+                    .build()?,
+                project_domain: DomainBuilder::default()
+                    .id(domain.id.clone())
+                    .name(domain.name.clone())
+                    .enabled(true)
+                    .build()?,
+            },
+        )
+        .await?;
+
+    // Token gets proper issued_at only during the serialization
+    let encoded_token = state
+        .provider
+        .get_token_provider()
+        .encode_token(vsc_issued.inner().token().unwrap())?;
+
+    let vsc = state
+        .provider
+        .get_token_provider()
+        .validate_to_context(&state, &encoded_token, None, None)
         .await?;
 
     assert!(
         !state
             .provider
             .get_revoke_provider()
-            .is_token_revoked(&state, &token)
+            .is_token_revoked(&state, &vsc)
             .await?
     );
 
     state
         .provider
         .get_revoke_provider()
-        .revoke_token(&state, &token)
+        .revoke_token(&state, vsc.inner().token().unwrap())
         .await?;
 
     assert!(
         state
             .provider
             .get_revoke_provider()
-            .is_token_revoked(&state, &token)
+            .is_token_revoked(&state, &vsc)
             .await?
     );
     Ok(())
@@ -169,30 +185,45 @@ async fn test_revoked_event_role() -> Result<(), Report> {
         .build()
         .unwrap();
     let ctx = SecurityContext::try_from(auth).unwrap();
-    let token = state.provider.get_token_provider().issue_token(
-        &ctx,
-        &ScopeInfo::Project { project: ProjectBuilder::default()
-                .id(project.id.clone())
-                .name(project.name.clone())
-                .domain_id(project.domain_id.clone())
-                .enabled(true)
-                .build()?, domain: None },
-    )?;
-
-    // Token gets proper issued_at only during the serialization
-    let encoded_token = state.provider.get_token_provider().encode_token(&token)?;
-
-    let token = state
+    let vsc_issued = state
         .provider
         .get_token_provider()
-        .validate_token(&state, &encoded_token, None, None)
+        .issue_token_context(
+            &state,
+            &ctx,
+            &ScopeInfo::Project {
+                project: ProjectBuilder::default()
+                    .id(project.id.clone())
+                    .name(project.name.clone())
+                    .domain_id(project.domain_id.clone())
+                    .enabled(true)
+                    .build()?,
+                project_domain: DomainBuilder::default()
+                    .id(domain.id.clone())
+                    .name(domain.name.clone())
+                    .enabled(true)
+                    .build()?,
+            },
+        )
+        .await?;
+
+    // Token gets proper issued_at only during the serialization
+    let encoded_token = state
+        .provider
+        .get_token_provider()
+        .encode_token(vsc_issued.inner().token().unwrap())?;
+
+    let vsc = state
+        .provider
+        .get_token_provider()
+        .validate_to_context(&state, &encoded_token, None, None)
         .await?;
 
     assert!(
         !state
             .provider
             .get_revoke_provider()
-            .is_token_revoked(&state, &token)
+            .is_token_revoked(&state, &vsc)
             .await?
     );
 
@@ -213,7 +244,7 @@ async fn test_revoked_event_role() -> Result<(), Report> {
         state
             .provider
             .get_revoke_provider()
-            .is_token_revoked(&state, &token)
+            .is_token_revoked(&state, &vsc)
             .await?
     );
     Ok(())
@@ -267,30 +298,45 @@ async fn test_revoked_event_user() -> Result<(), Report> {
         .build()
         .unwrap();
     let ctx = SecurityContext::try_from(auth).unwrap();
-    let token = state.provider.get_token_provider().issue_token(
-        &ctx,
-        &ScopeInfo::Project { project: ProjectBuilder::default()
-                .id(project.id.clone())
-                .name(project.name.clone())
-                .domain_id(project.domain_id.clone())
-                .enabled(true)
-                .build()?, domain: None },
-    )?;
-
-    // Token gets proper issued_at only during the serialization
-    let encoded_token = state.provider.get_token_provider().encode_token(&token)?;
-
-    let token = state
+    let vsc_issued = state
         .provider
         .get_token_provider()
-        .validate_token(&state, &encoded_token, None, None)
+        .issue_token_context(
+            &state,
+            &ctx,
+            &ScopeInfo::Project {
+                project: ProjectBuilder::default()
+                    .id(project.id.clone())
+                    .name(project.name.clone())
+                    .domain_id(project.domain_id.clone())
+                    .enabled(true)
+                    .build()?,
+                project_domain: DomainBuilder::default()
+                    .id(domain.id.clone())
+                    .name(domain.name.clone())
+                    .enabled(true)
+                    .build()?,
+            },
+        )
+        .await?;
+
+    // Token gets proper issued_at only during the serialization
+    let encoded_token = state
+        .provider
+        .get_token_provider()
+        .encode_token(vsc_issued.inner().token().unwrap())?;
+
+    let vsc = state
+        .provider
+        .get_token_provider()
+        .validate_to_context(&state, &encoded_token, None, None)
         .await?;
 
     assert!(
         !state
             .provider
             .get_revoke_provider()
-            .is_token_revoked(&state, &token)
+            .is_token_revoked(&state, &vsc)
             .await?
     );
 
@@ -311,7 +357,7 @@ async fn test_revoked_event_user() -> Result<(), Report> {
         state
             .provider
             .get_revoke_provider()
-            .is_token_revoked(&state, &token)
+            .is_token_revoked(&state, &vsc)
             .await?
     );
     Ok(())
@@ -365,30 +411,45 @@ async fn test_revoked_event_project() -> Result<(), Report> {
         .build()
         .unwrap();
     let ctx = SecurityContext::try_from(auth).unwrap();
-    let token = state.provider.get_token_provider().issue_token(
-        &ctx,
-        &ScopeInfo::Project { project: ProjectBuilder::default()
-                .id(project.id.clone())
-                .name(project.name.clone())
-                .domain_id(project.domain_id.clone())
-                .enabled(true)
-                .build()?, domain: None },
-    )?;
-
-    // Token gets proper issued_at only during the serialization
-    let encoded_token = state.provider.get_token_provider().encode_token(&token)?;
-
-    let token = state
+    let vsc_issued = state
         .provider
         .get_token_provider()
-        .validate_token(&state, &encoded_token, None, None)
+        .issue_token_context(
+            &state,
+            &ctx,
+            &ScopeInfo::Project {
+                project: ProjectBuilder::default()
+                    .id(project.id.clone())
+                    .name(project.name.clone())
+                    .domain_id(project.domain_id.clone())
+                    .enabled(true)
+                    .build()?,
+                project_domain: DomainBuilder::default()
+                    .id(domain.id.clone())
+                    .name(domain.name.clone())
+                    .enabled(true)
+                    .build()?,
+            },
+        )
+        .await?;
+
+    // Token gets proper issued_at only during the serialization
+    let encoded_token = state
+        .provider
+        .get_token_provider()
+        .encode_token(vsc_issued.inner().token().unwrap())?;
+
+    let vsc = state
+        .provider
+        .get_token_provider()
+        .validate_to_context(&state, &encoded_token, None, None)
         .await?;
 
     assert!(
         !state
             .provider
             .get_revoke_provider()
-            .is_token_revoked(&state, &token)
+            .is_token_revoked(&state, &vsc)
             .await?
     );
 
@@ -409,7 +470,7 @@ async fn test_revoked_event_project() -> Result<(), Report> {
         state
             .provider
             .get_revoke_provider()
-            .is_token_revoked(&state, &token)
+            .is_token_revoked(&state, &vsc)
             .await?
     );
     Ok(())

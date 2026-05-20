@@ -327,6 +327,7 @@ impl ConfigManager {
 
     /// Watch loop for constant watching for the configuration changes and
     /// corresponding notifications.
+    #[allow(clippy::expect_used)]
     async fn watch_loop(manager: Arc<Self>, config_path: PathBuf) {
         let (sync_tx, mut sync_rx) = tokio::sync::mpsc::channel(1);
 

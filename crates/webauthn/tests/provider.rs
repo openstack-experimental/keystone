@@ -77,7 +77,7 @@ async fn test_webauthn_auth() -> Result<()> {
     let user_id = Uuid::new_v4();
 
     let mut authenticator = WebauthnAuthenticator::new(SoftToken::new(true)?.0);
-    let cred = generate_webauthn_credential(&state, &mut authenticator, user_id.clone())?;
+    let cred = generate_webauthn_credential(&state, &mut authenticator, user_id)?;
 
     let (_ccr, auth_state) = state
         .extension
@@ -143,8 +143,8 @@ async fn test_webauthn_credential() -> Result<()> {
     let mut authenticator = WebauthnAuthenticator::new(authenticator_backend);
     let user_id = Uuid::new_v4();
 
-    let mut cred1 = generate_webauthn_credential(&state, &mut authenticator, user_id.clone())?;
-    let cred2 = generate_webauthn_credential(&state, &mut authenticator, user_id.clone())?;
+    let mut cred1 = generate_webauthn_credential(&state, &mut authenticator, user_id)?;
+    let cred2 = generate_webauthn_credential(&state, &mut authenticator, user_id)?;
 
     let res = state
         .extension
@@ -287,7 +287,7 @@ async fn test_webauthn_roundtrip() -> Result<()> {
         origin,
         webauthn_authenticator_rs::prelude::RequestChallengeResponse {
             public_key: cca.public_key.try_into()?,
-            mediation: cca.mediation.map(Into::into),
+            mediation: cca.mediation,
         },
     )?;
 
