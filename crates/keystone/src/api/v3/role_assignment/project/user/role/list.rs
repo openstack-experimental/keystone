@@ -23,14 +23,14 @@ use axum::{
 use serde_json::json;
 use tracing::info;
 
-
 use openstack_keystone_api_types::v3::role_assignment::{Role, RoleAssignmentRoleList};
 use openstack_keystone_core_types::assignment::RoleAssignmentListParameters;
 
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
 use crate::{
-    api::auth::Auth, assignment::AssignmentApi, identity::IdentityApi, resource::ResourceApi};
+    api::auth::Auth, assignment::AssignmentApi, identity::IdentityApi, resource::ResourceApi,
+};
 
 /// List the roles that a user has on a project.
 ///
@@ -71,7 +71,7 @@ pub(super) async fn list(
     };
     // Use join instead of try_join to have more constant latency preventing timing
     // attacks.
-    let (user,project, assignments) = tokio::join!(
+    let (user, project, assignments) = tokio::join!(
         state
             .provider
             .get_identity_provider()
@@ -118,7 +118,6 @@ pub(super) async fn list(
 
     Ok((StatusCode::OK, Json(RoleAssignmentRoleList { roles })).into_response())
 }
-
 
 #[cfg(test)]
 mod tests {
