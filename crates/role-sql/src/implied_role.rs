@@ -97,7 +97,7 @@ pub async fn list_rules(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use sea_orm::{DatabaseBackend, MockDatabase, Transaction};
 
     use crate::entity::implied_role;
@@ -144,10 +144,10 @@ mod tests {
         );
     }
 
-    fn get_implied_role_mock(id: String, implied_id: String) -> implied_role::Model {
+    pub fn get_implied_role_mock<S: Into<String>>(id: S, implied_id: S) -> implied_role::Model {
         implied_role::Model {
-            prior_role_id: id.clone(),
-            implied_role_id: implied_id.clone(),
+            prior_role_id: id.into(),
+            implied_role_id: implied_id.into(),
         }
     }
 
@@ -155,20 +155,20 @@ mod tests {
     async fn test_list_rules() {
         let db = MockDatabase::new(DatabaseBackend::Postgres)
             .append_query_results([vec![
-                get_implied_role_mock("1".into(), "2".into()),
-                get_implied_role_mock("1".into(), "3".into()),
-                get_implied_role_mock("2".into(), "4".into()),
-                get_implied_role_mock("4".into(), "7".into()),
-                get_implied_role_mock("4".into(), "8".into()),
-                get_implied_role_mock("5".into(), "6".into()),
+                get_implied_role_mock("1", "2"),
+                get_implied_role_mock("1", "3"),
+                get_implied_role_mock("2", "4"),
+                get_implied_role_mock("4", "7"),
+                get_implied_role_mock("4", "8"),
+                get_implied_role_mock("5", "6"),
             ]])
             .append_query_results([vec![
-                get_implied_role_mock("1".into(), "2".into()),
-                get_implied_role_mock("1".into(), "3".into()),
-                get_implied_role_mock("2".into(), "4".into()),
-                get_implied_role_mock("4".into(), "7".into()),
-                get_implied_role_mock("4".into(), "8".into()),
-                get_implied_role_mock("5".into(), "6".into()),
+                get_implied_role_mock("1", "2"),
+                get_implied_role_mock("1", "3"),
+                get_implied_role_mock("2", "4"),
+                get_implied_role_mock("4", "7"),
+                get_implied_role_mock("4", "8"),
+                get_implied_role_mock("5", "6"),
             ]])
             .into_connection();
         assert_eq!(

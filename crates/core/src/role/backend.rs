@@ -45,6 +45,17 @@ pub trait RoleBackend: Send + Sync {
         id: &'a str,
     ) -> Result<(), RoleProviderError>;
 
+    /// Expand implied roles.
+    ///
+    /// # Arguments
+    /// * `state` - The current service state.
+    /// * `roles` - The list of roles to expand.
+    async fn expand_implied_roles(
+        &self,
+        state: &ServiceState,
+        roles: &mut Vec<RoleRef>,
+    ) -> Result<(), RoleProviderError>;
+
     /// Get single role by ID.
     ///
     /// * `state` - The current service state.
@@ -57,17 +68,6 @@ pub trait RoleBackend: Send + Sync {
         state: &ServiceState,
         id: &'a str,
     ) -> Result<Option<Role>, RoleProviderError>;
-
-    /// Expand implied roles.
-    ///
-    /// # Arguments
-    /// * `state` - The current service state.
-    /// * `roles` - The list of roles to expand.
-    async fn expand_implied_roles(
-        &self,
-        state: &ServiceState,
-        roles: &mut Vec<RoleRef>,
-    ) -> Result<(), RoleProviderError>;
 
     /// List role imply rules.
     ///

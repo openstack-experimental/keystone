@@ -48,6 +48,17 @@ pub trait RoleApi: Send + Sync {
         id: &'a str,
     ) -> Result<(), RoleProviderError>;
 
+    /// Expand implied roles.
+    ///
+    /// # Arguments
+    /// * `state` - The current service state.
+    /// * `roles` - The list of roles to expand.
+    async fn expand_implied_roles(
+        &self,
+        state: &ServiceState,
+        roles: &mut Vec<RoleRef>,
+    ) -> Result<(), RoleProviderError>;
+
     /// Get a single role.
     ///
     /// * `state` - The current service state.
@@ -60,17 +71,6 @@ pub trait RoleApi: Send + Sync {
         state: &ServiceState,
         role_id: &'a str,
     ) -> Result<Option<Role>, RoleProviderError>;
-
-    /// Expand implied roles.
-    ///
-    /// # Arguments
-    /// * `state` - The current service state.
-    /// * `roles` - The list of roles to expand.
-    async fn expand_implied_roles(
-        &self,
-        state: &ServiceState,
-        roles: &mut Vec<RoleRef>,
-    ) -> Result<(), RoleProviderError>;
 
     /// List role imply rules.
     ///

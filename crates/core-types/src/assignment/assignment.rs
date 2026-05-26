@@ -225,6 +225,7 @@ pub struct RoleAssignmentListParameters {
     #[validate(length(max = 64))]
     pub role_id: Option<String>,
 
+    // Actors
     /// Get role assignments for the user.
     #[builder(default)]
     #[validate(length(max = 64))]
@@ -235,14 +236,17 @@ pub struct RoleAssignmentListParameters {
     #[validate(length(max = 64))]
     pub group_id: Option<String>,
 
-    /// Query role assignments on the project.
-    #[builder(default)]
-    #[validate(length(max = 64))]
-    pub project_id: Option<String>,
+    // Targets
     /// Query role assignments on the domain.
     #[builder(default)]
     #[validate(length(max = 64))]
     pub domain_id: Option<String>,
+
+    /// Query role assignments on the project.
+    #[builder(default)]
+    #[validate(length(max = 64))]
+    pub project_id: Option<String>,
+
     /// Query role assignments on the system.
     #[builder(default)]
     #[validate(length(max = 64))]

@@ -25,24 +25,28 @@ use crate::error::BuilderError;
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct Role {
-    /// The role ID.
-    #[validate(length(min = 1, max = 64))]
-    pub id: String,
-    /// The role name.
-    #[validate(length(min = 1, max = 255))]
-    pub name: String,
-    /// The role domain_id.
-    #[builder(default)]
-    #[validate(length(min = 1, max = 64))]
-    pub domain_id: Option<String>,
     /// The role description.
     #[builder(default)]
     #[validate(length(min = 1, max = 255))]
     pub description: Option<String>,
+
+    /// The role domain_id.
+    #[builder(default)]
+    #[validate(length(min = 1, max = 64))]
+    pub domain_id: Option<String>,
+
     /// Additional role properties.
     #[builder(default)]
     #[serde(flatten)]
     pub extra: HashMap<String, Value>,
+
+    /// The role ID.
+    #[validate(length(min = 1, max = 64))]
+    pub id: String,
+
+    /// The role name.
+    #[validate(length(min = 1, max = 255))]
+    pub name: String,
 }
 
 /// Short role representation (reference).
@@ -95,6 +99,7 @@ pub struct RoleListParameters {
     #[builder(default)]
     #[validate(length(min = 1, max = 64))]
     pub domain_id: Option<Option<String>>,
+
     /// Filter roles by the name attribute.
     #[builder(default)]
     #[validate(length(min = 1, max = 255))]
@@ -106,22 +111,26 @@ pub struct RoleListParameters {
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct RoleCreate {
-    /// The role ID.
-    #[builder(default)]
-    #[validate(length(min = 1, max = 64))]
-    pub id: Option<String>,
-    /// The role name.
-    #[validate(length(min = 1, max = 255))]
-    pub name: String,
-    /// The role domain_id.
-    #[builder(default)]
-    #[validate(length(min = 1, max = 64))]
-    pub domain_id: Option<String>,
     /// The role description.
     #[builder(default)]
     #[validate(length(max = 255))]
     pub description: Option<String>,
+
+    /// The role domain_id.
+    #[builder(default)]
+    #[validate(length(min = 1, max = 64))]
+    pub domain_id: Option<String>,
+
     /// Additional role properties.
     #[builder(default)]
     pub extra: HashMap<String, Value>,
+
+    /// The role ID.
+    #[builder(default)]
+    #[validate(length(min = 1, max = 64))]
+    pub id: Option<String>,
+
+    /// The role name.
+    #[validate(length(min = 1, max = 255))]
+    pub name: String,
 }
