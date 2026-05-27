@@ -16,9 +16,8 @@ use eyre::Result;
 use tracing_test::traced_test;
 
 use openstack_keystone_api_types::v3::role::*;
-use openstack_sdk_core::{AsyncOpenStack, config::CloudConfig};
+use openstack_sdk::{AsyncOpenStack, config::CloudConfig};
 
-use crate::common::*;
 use crate::role::*;
 
 #[tokio::test]

@@ -16,10 +16,10 @@ chrono.workspace = true
 derive_builder.workspace = true
 eyre.workspace = true
 inventory.workspace = true
-openstack-keystone-api-types = { version = "0.1", features = ["openapi", "validate", "conv"], path = "../api-types/" }
-openstack-keystone-core = { version = "0.1", path = "../core", features = ["api"] }
-openstack-keystone-core-types = { version = "0.1", path = "../core-types/" }
-openstack-keystone-distributed-storage = { version = "0.1", path = "../storage/"}
+openstack-keystone-api-types = { workspace = true, features = ["openapi", "validate", "conv"] }
+openstack-keystone-core = { workspace = true, features = ["api"] }
+openstack-keystone-core-types.workspace = true
+openstack-keystone-distributed-storage.workspace = true
 sea-orm = { workspace = true }
 serde.workspace = true
 serde_json.workspace = true
@@ -37,9 +37,9 @@ webauthn-rs = { workspace = true, features = ["danger-allow-state-serialisation"
 axum = { workspace = true, features = ["http2", "tokio"] }
 base64urlsafedata.workspace = true
 mockall.workspace = true
-openstack-keystone-config = { version = "0.1", path = "../config" }
-openstack-keystone-core = { version = "0.1", path = "../core", features = ["mock"] }
-openstack-keystone-token-fernet = { version = "0.1", path = "../token-fernet/" }
+openstack-keystone-config.workspace = true
+openstack-keystone-core = { workspace = true, features = ["mock"] }
+openstack-keystone-token-fernet.workspace = true
 rcgen.workspace = true
 reqwest.workspace = true
 reserve-port = "2.4"

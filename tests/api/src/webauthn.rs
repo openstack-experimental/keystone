@@ -23,11 +23,11 @@ use url::Url;
 
 use openstack_keystone_api_types::webauthn::register::*;
 use openstack_keystone_api_types::webauthn::{PublicKeyCredentialCreationOptions, auth::*};
-use openstack_sdk_core::{
+use openstack_sdk::{
     AsyncOpenStack,
     api::{QueryAsync, RawQueryAsync},
 };
-use openstack_sdk_core::{api::rest_endpoint_prelude::*, types::identity::v3::AuthResponse};
+use openstack_sdk::{api::rest_endpoint_prelude::*, types::identity::v3::AuthResponse};
 use webauthn_authenticator_rs::{AuthenticatorBackend, WebauthnAuthenticator};
 
 mod register;

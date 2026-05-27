@@ -11,4 +11,4 @@ repository.workspace = true
 dist = false
 
 [dependencies]
-openstack_keystone_api_types = { version = "0.1", path = "../../crates/keystone" }
+openstack_keystone_api_types.workspace = true

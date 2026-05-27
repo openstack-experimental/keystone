@@ -18,8 +18,8 @@ use std::sync::Arc;
 use eyre::Result;
 
 use openstack_keystone_api_types::v3::project::*;
-use openstack_sdk_core::api::rest_endpoint_prelude::*;
-use openstack_sdk_core::{AsyncOpenStack, api::QueryAsync};
+use openstack_sdk::api::rest_endpoint_prelude::*;
+use openstack_sdk::{AsyncOpenStack, api::QueryAsync};
 
 use crate::guard::*;
 
@@ -94,7 +94,7 @@ impl RestEndpoint for ProjectDeleteRequest {
 #[async_trait::async_trait]
 impl DeletableResource for Project {
     async fn delete(&self, state: &Arc<AsyncOpenStack>) -> Result<()> {
-        Ok(openstack_sdk_core::api::ignore(ProjectDeleteRequest {
+        Ok(openstack_sdk::api::ignore(ProjectDeleteRequest {
             id: self.id.clone(),
         })
         .query_async(state.as_ref())

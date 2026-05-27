@@ -18,7 +18,7 @@ use std::sync::Arc;
 use eyre::Result;
 use tracing_test::traced_test;
 
-use openstack_sdk_core::{AsyncOpenStack, config::CloudConfig};
+use openstack_sdk::{AsyncOpenStack, config::CloudConfig};
 
 use super::*;
 use crate::role::list_roles;

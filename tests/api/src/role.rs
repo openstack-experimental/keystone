@@ -18,10 +18,9 @@ use derive_builder::Builder;
 use eyre::Result;
 
 use openstack_keystone_api_types::v3::role::*;
-use openstack_sdk_core::api::rest_endpoint_prelude::*;
-use openstack_sdk_core::{AsyncOpenStack, api::QueryAsync};
+use openstack_sdk::api::rest_endpoint_prelude::*;
+use openstack_sdk::{AsyncOpenStack, api::QueryAsync};
 
-use crate::common::*;
 use crate::guard::*;
 
 mod create;
@@ -125,7 +124,7 @@ impl RestEndpoint for RoleDeleteRequest {
 #[async_trait::async_trait]
 impl DeletableResource for Role {
     async fn delete(&self, state: &Arc<AsyncOpenStack>) -> Result<()> {
-        Ok(openstack_sdk_core::api::ignore(RoleDeleteRequest {
+        Ok(openstack_sdk::api::ignore(RoleDeleteRequest {
             id: self.id.clone(),
         })
         .query_async(state.as_ref())

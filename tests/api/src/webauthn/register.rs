@@ -22,7 +22,7 @@ use webauthn_authenticator_rs::WebauthnAuthenticator;
 use webauthn_authenticator_rs::softtoken::SoftToken;
 
 use openstack_keystone_api_types::v3::user::UserCreateBuilder;
-use openstack_sdk_core::{AsyncOpenStack, config::CloudConfig};
+use openstack_sdk::{AsyncOpenStack, config::CloudConfig};
 
 use super::*;
 use crate::guard::*;
