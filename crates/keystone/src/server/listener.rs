@@ -13,4 +13,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //! # Keystone API listeners
 pub mod raft_grpc;
+mod spiffe_common;
 pub mod spiffe_tls;
+pub mod spiffe_tls_uds;

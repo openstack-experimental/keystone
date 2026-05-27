@@ -147,7 +147,7 @@ impl TlsConfiguration {
 }
 
 /// Server interface type.
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Clone, PartialEq)]
 pub enum Interface {
     Admin,
     Internal,

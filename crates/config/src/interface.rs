@@ -16,7 +16,7 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 use serde::Deserialize;
 
-use crate::ListenerConfig;
+use crate::{ListenerConfig, UnixSocketListener};
 
 /// Keystone internal API interface.
 #[derive(Debug, Deserialize, Clone)]
@@ -40,6 +40,20 @@ pub struct PublicInterface {
     /// Listener configuration.
     #[serde(flatten)]
     pub listener: ListenerConfig,
+}
+
+/// Keystone admin API interface. Requires SPIFFE and unix socket.
+#[derive(Debug, Deserialize, Clone)]
+pub struct AdminInterface {
+    /// SVID for the admin account. When specified, for a connection with a
+    /// matching SVID a corresponding dynamic SPIFFE Binding would be used with a
+    /// "is_system" flag set to true and an admin role on the system scope.
+    /// This is especially helpful for the bootstrapping activities.
+    pub admin_svid: Option<String>,
+
+    /// Listener configuration. Admin interface can be only exposed through the unix socket.
+    #[serde(flatten)]
+    pub listener: UnixSocketListener,
 }
 
 impl Default for PublicInterface {

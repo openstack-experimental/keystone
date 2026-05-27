@@ -30,6 +30,8 @@ use thiserror::Error;
 use tracing::warn;
 use uuid::{Uuid, uuid};
 
+use openstack_keystone_config::Interface;
+
 use crate::application_credential::ApplicationCredential;
 use crate::assignment::AssignmentProviderError;
 use crate::error::BuilderError;
@@ -197,6 +199,14 @@ pub struct SecurityContext {
     #[builder(default)]
     expires_at: Option<DateTime<Utc>>,
 
+    /// Interface the connection was established on.
+    #[builder(default = "Interface::Public")]
+    interface: Interface,
+
+    /// Whether context is established for the admin.
+    #[builder(default)]
+    is_admin: bool,
+
     /// Identity information.
     principal: PrincipalInfo,
 
@@ -276,6 +286,8 @@ impl SecurityContextTestingBuilder {
                 .expect("SecurityContextTestingBuilder: principal is required"),
             authorization: self.authorization,
             expires_at: self.expires_at,
+            is_admin: false,
+            interface: Interface::Public,
             token_restriction: self.token_restriction,
             token: self.token,
         }
@@ -436,6 +448,20 @@ impl SecurityContext {
     #[must_use]
     pub fn expires_at(&self) -> Option<DateTime<Utc>> {
         self.expires_at
+    }
+
+    /// Returns information whether the user is considered an admin.
+    ///
+    /// # Returns
+    ///
+    /// A boolean set to true when the authenticated Principal is an admin.
+    pub fn is_admin(&self) -> bool {
+        self.is_admin
+    }
+
+    /// Set the context to represent the administrative user.
+    pub fn set_is_admin(&mut self) {
+        self.is_admin = true;
     }
 
     /// Updates the expiration datetime, respecting the policy that the latest

@@ -4,6 +4,8 @@ import data.identity.group.list
 
 test_allowed if {
 	list.allow with input as {"credentials": {"roles": ["admin"]}}
+	list.allow with input as {"credentials": {"roles": [], "is_admin": true}}
+	list.allow with input as {"credentials": {"roles": ["reader"], "system": "all"}}
 	list.allow with input as {"credentials": {"roles": ["reader"], "domain_id": "foo"}, "target": {"domain_id": "foo"}}
 }
 

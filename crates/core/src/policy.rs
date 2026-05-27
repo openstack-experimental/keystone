@@ -181,6 +181,9 @@ pub enum EvaluationError {
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(into, strip_option))]
 pub struct Credentials {
+    /// Specifies whether the user is an admin.
+    pub is_admin: bool,
+
     /// User ID.
     pub user_id: String,
 
@@ -219,6 +222,7 @@ impl TryFrom<&ValidatedSecurityContext> for Credentials {
     fn try_from(sc: &ValidatedSecurityContext) -> Result<Self, Self::Error> {
         let mut builder = CredentialsBuilder::default();
         builder.user_id(sc.principal().get_user_id());
+        builder.is_admin(sc.is_admin());
         if let Some(authz) = sc.authorization() {
             match &authz.scope {
                 ScopeInfo::Domain(domain) => {

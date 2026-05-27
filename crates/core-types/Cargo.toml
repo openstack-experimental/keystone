@@ -13,6 +13,7 @@ base64.workspace = true
 chrono = { workspace = true, features = ["serde", "now"] }
 derive_builder.workspace = true
 eyre.workspace = true
+openstack-keystone-config.workspace = true
 secrecy = { workspace = true, features = ["serde"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true

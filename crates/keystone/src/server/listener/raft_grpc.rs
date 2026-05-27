@@ -11,9 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-//! Main Keystone executable.
-//!
-//! This is the entry point of the `keystone` binary.
+//! # Raft gRPC listener
 use std::collections::HashMap;
 
 use color_eyre::eyre::{Report, Result};

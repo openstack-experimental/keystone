@@ -16,7 +16,7 @@ use std::time::SystemTime;
 
 use reqwest::{Client, Url};
 use serde_json::{Value, json};
-use tracing::{Level, debug, trace};
+use tracing::{Level, debug};
 
 use openstack_keystone_core::auth::ValidatedSecurityContext;
 

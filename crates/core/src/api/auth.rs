@@ -23,7 +23,7 @@ use spiffe::SpiffeId;
 use tracing::{debug, error};
 
 use openstack_keystone_config::Interface;
-use openstack_keystone_core_types::auth::*;
+use openstack_keystone_core_types::{auth::*, spiffe::SpiffeBindingBuilder};
 
 use crate::api::KeystoneApiError;
 use crate::auth::ValidatedSecurityContext;
@@ -65,6 +65,8 @@ where
     /// contains the scope information (whether it is scoped or explicitly
     /// Unscoped).
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        // Only available in tests - get mock ValidatedSecurityContext injected as
+        // extension instead of populating mocks for all individual calls.
         #[cfg(any(test, feature = "mock"))]
         {
             if let Some(vsc) = parts.extensions.get::<ValidatedSecurityContext>() {
@@ -75,7 +77,7 @@ where
 
         // Extract the interface on which the connection is being served
         // TODO: Insert interface info into the Context
-        let _interface = parts
+        let interface = parts
             .extensions
             .get::<Interface>()
             .cloned()
@@ -87,6 +89,48 @@ where
         if let Some(svid) = parts.extensions.get::<SpiffeId>() {
             tracing::debug!("authenticating the spiffe svid {}", svid);
 
+            if let Some(admin_svid) = &state
+                .config_manager
+                .config
+                .read()
+                .await
+                .interface_admin
+                .as_ref()
+                .and_then(|admin_if| admin_if.admin_svid.as_ref())
+                && interface == Interface::Admin
+            {
+                // The admin_svid was configured and it is it over the admin interface - short
+                // circuit the admin
+                let auth_result: AuthenticationResult = AuthenticationResultBuilder::default()
+                    .context(AuthenticationContext::Spiffe(
+                        SpiffeBindingBuilder::default()
+                            .svid(*admin_svid)
+                            .domain_id("")
+                            .is_system(true)
+                            .build()?,
+                    ))
+                    .principal(
+                        PrincipalInfoBuilder::default()
+                            .identity(IdentityInfo::Principal(
+                                PrincipalIdentityInfoBuilder::default()
+                                    .id(*admin_svid)
+                                    .issuer(svid.trust_domain_name())
+                                    .build()?,
+                            ))
+                            .build()?,
+                    )
+                    .build()?;
+
+                let mut ctx = SecurityContext::try_from(auth_result)?;
+                ctx.set_is_admin();
+                let vsc = ValidatedSecurityContext::new_for_scope(
+                    ctx,
+                    ScopeInfo::System("all".into()),
+                    &state,
+                )
+                .await?;
+                return Ok(Auth(vsc));
+            }
             if let Some(binding) = state
                 .provider
                 .get_spiffe_provider()

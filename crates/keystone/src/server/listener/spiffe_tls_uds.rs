@@ -11,14 +11,20 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-//! # TLS server listener with the SPIFFE integration
+//! # Unix socket listener with SPIFFE integration
+
+use std::path::Path;
 
 use axum::Router;
 use color_eyre::eyre::{Report, Result};
+use eyre::Context;
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use hyper_util::server::conn::auto::Builder;
-use spiffe_rustls_tokio::TlsAcceptor;
-use tokio::net::TcpListener;
+use spiffe::SpiffeId;
+use spiffe::cert::spiffe_id_from_der;
+use tokio::fs;
+use tokio::net::UnixListener;
+use tokio_rustls::TlsAcceptor;
 use tokio_util::sync::CancellationToken;
 use tower::Service;
 use tracing::info;
@@ -26,12 +32,12 @@ use tracing::info;
 use crate::config::Interface;
 use crate::server::listener::spiffe_common;
 
-/// Start the Axum REST api with the SPIFFE mTLS enabled.
+/// Start the Axum REST api over the Unix Socket with the SPIFFE mTLS enabled.
 ///
 /// The TLS server is started requesting the client certificates verified using
 /// the SPIFFE workload API.
 pub async fn start_axum_app(
-    addr: std::net::SocketAddr,
+    socket_path: &Path,
     app: Router,
     token: CancellationToken,
     trust_domains: Vec<String>,
@@ -45,12 +51,21 @@ pub async fn start_axum_app(
 
     let acceptor = TlsAcceptor::from(spiffe_server_config);
 
-    info!("Starting Rest API at {:?} with SPIFFE mTLS", addr);
-    let listener = TcpListener::bind(&addr).await?;
+    info!("Starting Admin API at {:?} with SPIFFE mTLS", socket_path);
+    if let Some(parent) = socket_path.parent() {
+        fs::create_dir_all(&parent).await.wrap_err_with(|| {
+            format!(
+                "creating parent directory {:?} for the UDS socket",
+                socket_path
+            )
+        })?;
+    }
+    tokio::fs::remove_file(&socket_path).await.ok();
+    let listener = UnixListener::bind(socket_path)?;
     loop {
         tokio::select! {
             _ = token.cancelled() => break,
-            Ok((stream, peer_addr)) = listener.accept() => {
+            Ok((stream, _peer_addr)) = listener.accept() => {
                 let acceptor = acceptor.clone();
                 let app = app.clone();
                 let conn_token = token.clone();
@@ -58,11 +73,17 @@ pub async fn start_axum_app(
 
                 tokio::spawn(async move {
                     match acceptor.accept(stream).await {
-                        Ok((tls_stream, peer_identity)) => {
+                        Ok(tls_stream) => {
+                            let (_, connection) = tls_stream.get_ref();
+                            let spiffe_id: Option<SpiffeId> = connection
+                                .peer_certificates()
+                                .and_then(|certs| certs.first())
+                                .map(|leaf| spiffe_id_from_der(leaf))
+                                .transpose().unwrap_or_default();
 
                             let hyper_service = hyper::service::service_fn(move |req: hyper::Request<hyper::body::Incoming>| {
                                 let mut app = app.clone();
-                                let spiffe_id = peer_identity.spiffe_id().cloned();
+                                let spiffe_id = spiffe_id.clone();
                                 let interface_clone = interface_clone.clone();
                                 async move {
                                     let mut req = req;
@@ -101,7 +122,7 @@ pub async fn start_axum_app(
                             }
                         }
                         Err(e) => {
-                            tracing::warn!("TLS handshake failed for {}: {}", peer_addr, e);
+                            tracing::warn!("TLS handshake failed for socket connection: {}", e);
                         }
                     }
                 });
@@ -109,5 +130,6 @@ pub async fn start_axum_app(
         }
     }
 
+    fs::remove_file(&socket_path).await.ok();
     Ok(())
 }

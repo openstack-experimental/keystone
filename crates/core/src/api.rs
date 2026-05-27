@@ -20,6 +20,7 @@ pub mod v4;
 pub use openstack_keystone_api_types::error::KeystoneApiError;
 
 #[cfg(any(test, feature = "mock"))]
+#[allow(clippy::unwrap_used)]
 pub mod tests {
     use sea_orm::DatabaseConnection;
     use std::sync::Arc;

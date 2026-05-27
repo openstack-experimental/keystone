@@ -43,7 +43,7 @@ impl TryFrom<&ValidatedSecurityContext> for TokenBuilder {
             response.methods(methods);
         }
 
-        fill_identity_info(&mut response, &ctx)?;
+        fill_identity_info(&mut response, ctx)?;
 
         if let Some(authz) = ctx.authorization() {
             fill_scope(&mut response, authz)?;

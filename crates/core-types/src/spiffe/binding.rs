@@ -92,6 +92,7 @@ impl SpiffeAuthorization {
 #[builder(setter(strip_option, into))]
 pub struct SpiffeBinding {
     /// Bound authorizations.
+    #[builder(default)]
     pub authorizations: Option<Vec<SpiffeAuthorization>>,
 
     /// Domain ID the identity belongs to.
@@ -106,6 +107,7 @@ pub struct SpiffeBinding {
 
     /// The ID of the User the identity is mapped to. When not specified a
     /// virtual user_id is being derived from the SVID.
+    #[builder(default)]
     pub user_id: Option<String>,
 }
 

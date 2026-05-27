@@ -39,6 +39,7 @@ use tower_http::{
     trace::{DefaultOnRequest, DefaultOnResponse, TraceLayer},
 };
 use tracing::{Level, debug, error, info, info_span, trace};
+use tracing_error::ErrorLayer;
 use tracing_subscriber::{
     Layer,
     filter::{LevelFilter, Targets},
@@ -55,7 +56,7 @@ use openstack_keystone::keystone::ServiceState;
 use openstack_keystone::plugin_manager::PluginManager;
 use openstack_keystone::policy::HttpPolicyEnforcer;
 use openstack_keystone::provider::Provider;
-use openstack_keystone::server::listener::{raft_grpc, spiffe_tls};
+use openstack_keystone::server::listener::{raft_grpc, spiffe_tls, spiffe_tls_uds};
 use openstack_keystone::webauthn;
 use openstack_keystone::{api, common};
 
@@ -195,7 +196,11 @@ async fn main() -> Result<(), Report> {
         );
     }
     // build the tracing registry
-    tracing_subscriber::registry().with(log_layers).init();
+    tracing_subscriber::registry()
+        .with(ErrorLayer::default())
+        .with(log_layers)
+        .init();
+    color_eyre::install()?;
 
     info!("Starting Keystone...");
 
@@ -355,7 +360,7 @@ async fn main() -> Result<(), Report> {
                     )
                     .await
                     {
-                        error!("REST API server error: {e}");
+                        error!("Internal REST API interface listener error: {:#}", e);
                         cancel_token.cancel();
                     }
                 });
@@ -364,6 +369,32 @@ async fn main() -> Result<(), Report> {
                 error!("only SPIFFE is supported for internal interface");
             }
         }
+    }
+
+    if let Some(admin_if) = &cfg.interface_admin {
+        // admin spiffe UDS listener
+        let socket_path = admin_if.listener.socket_path.clone();
+        let rest_app = app.clone();
+        let rest_cancel_token = token.clone();
+        let rest_spiffe_trust_domains = admin_if.listener.trust_domains.clone();
+
+        handles.spawn(async move {
+            let cancel_token = rest_cancel_token.clone();
+            if let Err(e) = spiffe_tls_uds::start_axum_app(
+                socket_path.as_path(),
+                rest_app,
+                rest_cancel_token,
+                rest_spiffe_trust_domains,
+                Interface::Admin,
+            )
+            .await
+            {
+                error!("Admin interface listener error: {:#}", e);
+                cancel_token.cancel();
+                // remove the socket also when an error was raised.
+                tokio::fs::remove_file(&socket_path).await.ok();
+            }
+        });
     }
 
     // Wait for both (or handle errors)

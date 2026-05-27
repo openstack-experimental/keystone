@@ -13,6 +13,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //! # Server listeners
 
+use std::path::PathBuf;
+
 use serde::Deserialize;
 
 use crate::common::csv;
@@ -24,6 +26,7 @@ pub enum ListenerConfig {
     Spiffe(SpiffeListener),
     #[default]
     Http,
+    UnixSocket(UnixSocketListener),
 }
 
 /// Server listener with SPIFFE mTLS support.
@@ -32,6 +35,22 @@ pub struct SpiffeListener {
     /// Trusted domains to accept SPIFFE certificates from clients.
     #[serde(deserialize_with = "csv")]
     pub trust_domains: Vec<String>,
+}
+
+/// Server listener listening on the Unix socket.
+#[derive(Debug, Deserialize, Clone, Default)]
+pub struct UnixSocketListener {
+    /// Socket path. Defaults to `/var/lib/keystone/keystone.sock`.
+    #[serde(default = "default_socket_path")]
+    pub socket_path: PathBuf,
+
+    /// Trusted domains to accept SPIFFE certificates from clients.
+    #[serde(deserialize_with = "csv")]
+    pub trust_domains: Vec<String>,
+}
+
+fn default_socket_path() -> PathBuf {
+    PathBuf::from("/var/lib/keystone/keystone.sock")
 }
 
 #[cfg(test)]

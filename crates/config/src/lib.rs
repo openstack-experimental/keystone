@@ -169,6 +169,10 @@ pub struct Config {
     #[serde(rename = "interface_public", default)]
     pub interface_public: PublicInterface,
 
+    /// Server listener configuration for the admin interface.
+    #[serde(rename = "interface_admin", default)]
+    pub interface_admin: Option<AdminInterface>,
+
     /// Resource provider configuration.
     #[serde(default)]
     pub resource: ResourceProvider,
