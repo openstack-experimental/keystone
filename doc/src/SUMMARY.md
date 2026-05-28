@@ -26,6 +26,8 @@
     - [Application Credentials](adr/0014-application-credentials.md)
     - [Kubernetes Auth](adr/0015-kubernetes-auth.md)
     - [Distributed Storage](adr/0016-raft-storage.md)
+    - [Security Context](adr/0017-security-context.md)
+    - [Plugin linking](adr/0018-plugin-linking.md)
 - [Policy enforcement](policy.md)
 - [Fernet token]()
   - [Token payloads]()

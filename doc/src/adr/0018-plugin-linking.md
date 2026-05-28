@@ -139,4 +139,3 @@ test code, Cargo.toml of test crates) were updated via the subagent.
 - `crates/keystone/build.rs` — auto-discovery and anchor generation
 - `crates/keystone/src/lib.rs` — `include!()` of generated anchors
 - `crates/cli-manage/src/db.rs` — binary-side `_INVENTORY_LINK` reference
-
