@@ -35,7 +35,7 @@ futures.workspace = true
 http.workspace = true
 mockall.workspace = true
 openraft = { workspace = true, features = ["serde", "type-alias"] }
-openstack-keystone-config = { version = "0.1", path = "../config/" }
+openstack-keystone-config.workspace = true
 prost.workspace = true
 rand.workspace = true
 rmp.workspace = true

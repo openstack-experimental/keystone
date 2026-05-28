@@ -68,7 +68,7 @@ futures = { version = "0.3" }
 futures-util = { version = "0.3" }
 http-body-util = "0.1"
 http = { version = "1.4" }
-hyper = { version = "1.9" }
+hyper = { version = "1.10" }
 hyper-util = { version = "0.1" }
 inventory = { version = "0.3" }
 itertools = { version = "0.14" }
@@ -76,15 +76,20 @@ mockall = { version = "0.14" }
 mockall_double = { version = "0.3" }
 nix = { version = "0.31", default-features = false }
 openidconnect = { version = "4.0" }
-openraft = { version = "0.10.0-alpha.17" }
+openraft = { version = "=0.10.0-alpha.20" }
+openstack-keystone-api-types = { version = "0.1", features = ["openapi", "validate", "conv"], path = "crates/api-types" }
 openstack-keystone-config = { version = "0.1.0", path = "crates/config"}
+openstack-keystone-core = { version = "0.1.0", path = "crates/core" }
+openstack-keystone-core-types = { version = "0.1.0", path = "crates/core-types" }
+openstack-keystone-distributed-storage = { version = "0.1.0", path = "crates/storage"}
+openstack-keystone-token-fernet = { version = "0.1.0", path = "crates/token-fernet" }
 prost = { version = "0.14" }
 rand = { version = "0.10" }
 regex = { version = "1.12" }
 reqwest = { version = "0.13" }
-rcgen = "0.14.7"
+rcgen = { version = "0.14" }
 rmp = { version = "0.8" }
-rstest = "0.26"
+rstest = { version = "0.26" }
 rustls = { version = "0.23" }
 schemars = { version = "1.2" }
 scopeguard = "1.2.0"
@@ -95,10 +100,10 @@ serde = { version = "1.0" }
 serde_bytes = { version = "0.11" }
 serde_json = { version = "1.0" }
 serde_urlencoded = { version = "0.7" }
-spiffe = { version = "0.15.0" }
+spiffe = { version = "0.15" }
 tempfile = { version = "3.27" }
 thiserror = { version = "2.0" }
-tokio = { version = "1.51", default-features = false }
+tokio = { version = "1.52", default-features = false }
 tokio-rustls = "0.26.4"
 tokio-util = { version = "0.7" }
 tonic = { version = "0.14" }
@@ -141,6 +146,3 @@ expect_used = "deny"
 print_stdout = "deny"
 unwrap_used = "deny"
 doc_paragraphs_missing_punctuation = "warn"
-
-#[patch.crates-io]
-#openraft = { git = "https://github.com/databendlabs/openraft", tag = "v0.10.0-alpha.13" }

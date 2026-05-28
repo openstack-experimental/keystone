@@ -17,8 +17,6 @@ use reqwest::StatusCode;
 use secrecy::ExposeSecret;
 use tracing_test::traced_test;
 
-use openstack_keystone_api_types::scope::*;
-
 use crate::auth::token::*;
 use crate::common::*;
 

@@ -17,8 +17,8 @@ use std::sync::Arc;
 use derive_builder::Builder;
 use eyre::Result;
 
-use openstack_sdk_core::api::rest_endpoint_prelude::*;
-use openstack_sdk_core::{AsyncOpenStack, api::QueryAsync};
+use openstack_sdk::api::rest_endpoint_prelude::*;
+use openstack_sdk::{AsyncOpenStack, api::QueryAsync};
 
 mod check;
 mod grant;
@@ -93,7 +93,7 @@ pub async fn check_grant<
     user_id: U,
     role_id: R,
 ) -> Result<bool> {
-    Ok(openstack_sdk_core::api::ignore(
+    Ok(openstack_sdk::api::ignore(
         ProjectUserRoleGrantCheckBuilder::default()
             .project_id(project_id.as_ref())
             .user_id(user_id.as_ref())
@@ -115,7 +115,7 @@ pub async fn add_project_grant<
     user_id: U,
     role_id: R,
 ) -> Result<()> {
-    openstack_sdk_core::api::ignore(
+    openstack_sdk::api::ignore(
         ProjectUserRoleGrantSetBuilder::default()
             .project_id(project_id.as_ref())
             .user_id(user_id.as_ref())

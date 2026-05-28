@@ -21,8 +21,8 @@ use secrecy::SecretString;
 use tokio::fs;
 use uuid::Uuid;
 
-use openstack_sdk_core::config::CloudConfig;
-use openstack_sdk_core::{AsyncOpenStack, api::RawQueryAsync};
+use openstack_sdk::config::CloudConfig;
+use openstack_sdk::{AsyncOpenStack, api::RawQueryAsync};
 
 use openstack_keystone_api_types::k8s_auth::role::*;
 use openstack_keystone_api_types::k8s_auth::{K8sAuthRequest, instance::*};

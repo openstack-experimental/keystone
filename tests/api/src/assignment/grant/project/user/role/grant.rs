@@ -20,7 +20,7 @@ use uuid::Uuid;
 
 use openstack_keystone_api_types::v3::project::ProjectCreateBuilder;
 use openstack_keystone_api_types::v3::user::UserCreateBuilder;
-use openstack_sdk_core::{AsyncOpenStack, config::CloudConfig};
+use openstack_sdk::{AsyncOpenStack, config::CloudConfig};
 
 use super::*;
 use crate::guard::*;

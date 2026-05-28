@@ -18,7 +18,7 @@ use derive_builder::Builder;
 use eyre::Result;
 
 use openstack_keystone_api_types::k8s_auth::auth::*;
-use openstack_sdk_core::api::rest_endpoint_prelude::*;
+use openstack_sdk::api::rest_endpoint_prelude::*;
 
 #[derive(Builder)]
 //#[builder(build_fn(error = "BuilderError"))]

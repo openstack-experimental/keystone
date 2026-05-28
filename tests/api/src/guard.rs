@@ -16,7 +16,7 @@ use std::ops::Deref;
 use std::sync::Arc;
 
 use eyre::Result;
-use openstack_sdk_core::AsyncOpenStack;
+use openstack_sdk::AsyncOpenStack;
 
 #[async_trait::async_trait]
 pub trait DeletableResource: Send + Sync {

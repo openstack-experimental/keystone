@@ -17,7 +17,7 @@ use std::sync::Arc;
 use eyre::Result;
 
 //use openstack_keystone_api_types::scope::*;
-use openstack_sdk_core::{AsyncOpenStack, config::CloudConfig};
+use openstack_sdk::{AsyncOpenStack, config::CloudConfig};
 
 use crate::auth::project::list_auth_projects;
 
@@ -31,15 +31,13 @@ async fn test_rescope_project_scope() -> Result<()> {
         // auth with project_id
         test_client
             .authorize(
-                Some(
-                    openstack_sdk_core::auth::authtoken::AuthTokenScope::Project(
-                        openstack_sdk_core::types::identity::v3::Project {
-                            id: Some(project.id.clone()),
-                            name: None,
-                            domain: None,
-                        },
-                    ),
-                ),
+                Some(openstack_sdk::auth::authtoken::AuthTokenScope::Project(
+                    openstack_sdk::types::identity::v3::Project {
+                        id: Some(project.id.clone()),
+                        name: None,
+                        domain: None,
+                    },
+                )),
                 false,
                 false,
             )
@@ -47,18 +45,16 @@ async fn test_rescope_project_scope() -> Result<()> {
         // auth with project name and domain_id
         test_client
             .authorize(
-                Some(
-                    openstack_sdk_core::auth::authtoken::AuthTokenScope::Project(
-                        openstack_sdk_core::types::identity::v3::Project {
-                            id: None,
-                            name: Some(project.name.clone()),
-                            domain: Some(openstack_sdk_core::types::identity::v3::Domain {
-                                id: Some(project.domain_id.clone()),
-                                name: None,
-                            }),
-                        },
-                    ),
-                ),
+                Some(openstack_sdk::auth::authtoken::AuthTokenScope::Project(
+                    openstack_sdk::types::identity::v3::Project {
+                        id: None,
+                        name: Some(project.name.clone()),
+                        domain: Some(openstack_sdk::types::identity::v3::Domain {
+                            id: Some(project.domain_id.clone()),
+                            name: None,
+                        }),
+                    },
+                )),
                 false,
                 false,
             )

@@ -18,7 +18,7 @@ use eyre::Result;
 use tracing_test::traced_test;
 
 use openstack_keystone_api_types::v3::role::Role;
-use openstack_sdk_core::{AsyncOpenStack, config::CloudConfig};
+use openstack_sdk::{AsyncOpenStack, config::CloudConfig};
 
 use crate::role::*;
 

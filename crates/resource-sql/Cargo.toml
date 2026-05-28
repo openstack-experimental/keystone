@@ -13,15 +13,15 @@ exclude.workspace = true
 [dependencies]
 async-trait.workspace = true
 inventory.workspace = true
-openstack-keystone-core = { version = "0.1", path = "../core" }
-openstack-keystone-core-types = { version = "0.1", path = "../core-types" }
+openstack-keystone-core.workspace = true
+openstack-keystone-core-types.workspace = true
 sea-orm.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
 uuid = { workspace = true, features = ["v4"] }
 
 [dev-dependencies]
-openstack-keystone-core = { version = "0.1", path = "../core", features = ["mock"] }
+openstack-keystone-core = { workspace = true, features = ["mock"] }
 sea-orm = { workspace = true, features = ["mock", "sqlx-sqlite" ]}
 tokio = { workspace = true, features = ["macros"] }
 

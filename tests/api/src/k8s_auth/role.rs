@@ -19,8 +19,8 @@ use derive_builder::Builder;
 use eyre::Result;
 
 use openstack_keystone_api_types::k8s_auth::role::*;
-use openstack_sdk_core::api::rest_endpoint_prelude::*;
-use openstack_sdk_core::{AsyncOpenStack, api::QueryAsync};
+use openstack_sdk::api::rest_endpoint_prelude::*;
+use openstack_sdk::{AsyncOpenStack, api::QueryAsync};
 
 use crate::guard::*;
 
@@ -140,7 +140,7 @@ impl RestEndpoint for K8sAuthRoleDeleteRequest<'_> {
 #[async_trait::async_trait]
 impl DeletableResource for K8sAuthRole {
     async fn delete(&self, state: &Arc<AsyncOpenStack>) -> Result<()> {
-        Ok(openstack_sdk_core::api::ignore(K8sAuthRoleDeleteRequest {
+        Ok(openstack_sdk::api::ignore(K8sAuthRoleDeleteRequest {
             id: self.id.clone().into(),
         })
         .query_async(state.as_ref())
