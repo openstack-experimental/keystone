@@ -11,11 +11,11 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-//! # V4 API types
-pub mod auth;
-pub mod spiffe;
-pub mod token_restriction;
-pub mod user;
+//! SPIFFE API types.
+
+pub mod binding;
+
+pub use binding::*;
 
 #[cfg(feature = "conv")]
-mod token_restriction_conv;
+mod binding_conv;

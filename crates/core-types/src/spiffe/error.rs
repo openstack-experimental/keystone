@@ -42,7 +42,7 @@ pub enum SpiffeProviderError {
     RaftNotAvailable,
 
     /// Raft storage error.
-    #[error("raft storage error in the spiffe provider")]
+    #[error("raft storage error in the spiffe provider: {source}")]
     RaftStoreError {
         /// The source of the error.
         #[from]

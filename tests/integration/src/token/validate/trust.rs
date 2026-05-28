@@ -132,7 +132,6 @@ async fn test_valid() -> Result<(), Report> {
         .await?
         .expect("trust project domain exists");
 
-    println!("user_a: {:?}; user_b: {:?}", user_a.id, user_b.id);
     let vsc = state
         .provider
         .get_token_provider()

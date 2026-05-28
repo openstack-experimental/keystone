@@ -11,7 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-//! # Kubernetes authentication.
+//! # SPIFFE provider
 
 use std::sync::Arc;
 
@@ -24,7 +24,7 @@ use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManagerApi;
 use crate::spiffe::{SpiffeApi, SpiffeProviderError, backend::SpiffeBackend};
 
-/// Spiffeprovider.
+/// Spiffe Provider.
 pub struct SpiffeService {
     /// Backend driver.
     pub(super) backend_driver: Arc<dyn SpiffeBackend>,

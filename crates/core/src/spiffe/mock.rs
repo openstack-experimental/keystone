@@ -11,7 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-//! # K8s auth - internal mocking tools.
+//! # SPIFFE provider - internal mocking tools.
 use async_trait::async_trait;
 use mockall::mock;
 

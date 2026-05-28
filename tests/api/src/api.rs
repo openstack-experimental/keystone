@@ -19,4 +19,5 @@ mod guard;
 mod identity;
 mod resource;
 mod role;
+mod spiffe;
 mod webauthn;

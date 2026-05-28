@@ -11,7 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-//! # K8s Auth error
+//! # SPIFFE Provider error
 pub use openstack_keystone_core_types::spiffe::SpiffeProviderError;
 
 impl From<crate::error::DatabaseError> for SpiffeProviderError {

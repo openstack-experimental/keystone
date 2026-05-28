@@ -24,6 +24,7 @@ use crate::role::RoleRef;
 
 /// Authorization information.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum SpiffeAuthorization {
     /// Domain scope.
     Domain {

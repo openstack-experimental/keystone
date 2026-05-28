@@ -164,7 +164,7 @@ mock! {
             policy_name: &'static str,
             credentials: &ValidatedSecurityContext,
             target: Value,
-            current: Option<Value>
+            existing: Option<Value>
         ) -> Result<PolicyEvaluationResult, PolicyError>;
 
         async fn health_check(&self) -> Result<(), PolicyError>;

@@ -28,7 +28,7 @@ serde.workspace = true
 serde_json.workspace = true
 serde_urlencoded = { workspace = true, optional = true }
 thiserror.workspace = true
-utoipa = { workspace = true, features = ["chrono"], optional = true }
+utoipa = { workspace = true, features = ["chrono", "url"], optional = true }
 validator = { workspace = true, features = ["derive"], optional = true }
 webauthn-rs-proto.workspace = true
 url = { workspace = true, optional = true }

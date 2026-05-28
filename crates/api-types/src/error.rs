@@ -118,6 +118,17 @@ impl KeystoneApiError {
         //}
     }
 
+    pub fn not_found<R, I>(resource: R, identifier: I) -> Self
+    where
+        R: Into<String>,
+        I: Into<String>,
+    {
+        Self::NotFound {
+            resource: resource.into(),
+            identifier: identifier.into(),
+        }
+    }
+
     pub fn unauthorized<E, C>(error: E, context: Option<C>) -> Self
     where
         E: std::error::Error + Send + Sync + 'static,

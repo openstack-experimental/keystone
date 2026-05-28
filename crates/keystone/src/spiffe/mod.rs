@@ -11,11 +11,5 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-//! # V4 API types
-pub mod auth;
-pub mod spiffe;
-pub mod token_restriction;
-pub mod user;
-
-#[cfg(feature = "conv")]
-mod token_restriction_conv;
+//! # SPIFFE workload identity.
+pub use openstack_keystone_core::spiffe::*;

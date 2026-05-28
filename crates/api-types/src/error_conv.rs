@@ -234,6 +234,10 @@ impl From<SpiffeProviderError> for KeystoneApiError {
     fn from(value: SpiffeProviderError) -> Self {
         match value {
             ref err @ SpiffeProviderError::Conflict(..) => Self::BadRequest(err.to_string()),
+            SpiffeProviderError::BindingNotFound(svid) => Self::NotFound {
+                resource: "spiffe binding".into(),
+                identifier: svid,
+            },
             other => Self::InternalError(other.to_string()),
         }
     }

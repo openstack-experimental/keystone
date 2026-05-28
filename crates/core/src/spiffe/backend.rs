@@ -11,7 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-//! # K8s auth: Backends.
+//! # SPIFFE provider: Backends.
 use async_trait::async_trait;
 
 use openstack_keystone_core_types::spiffe::*;
@@ -19,9 +19,9 @@ use openstack_keystone_core_types::spiffe::*;
 use crate::keystone::ServiceState;
 use crate::spiffe::SpiffeProviderError;
 
-/// K8s auth Backend trait.
+/// SPIFFE Backend trait.
 ///
-/// Backend driver interface expected by the revocation auth_instance.
+/// Backend driver interface expected by the SPIFFE provider.
 #[cfg_attr(test, mockall::automock)]
 #[async_trait]
 pub trait SpiffeBackend: Send + Sync {
