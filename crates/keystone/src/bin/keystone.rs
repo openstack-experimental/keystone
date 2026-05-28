@@ -317,6 +317,58 @@ async fn main() -> Result<(), Report> {
         raft_grpc::ensure_raft_initialized(shared_state.clone(), cfg.clone()).await?;
     }
 
+    // OPA Subprocess
+    if let Some(policies_path) = &cfg.api_policy.opa_policies_path {
+        let opa_url = &cfg.api_policy.opa_base_url;
+        let addr = match opa_url.scheme() {
+            "http" | "https" => format!(
+                "{}:{}",
+                opa_url.host_str().unwrap_or("0.0.0.0"),
+                opa_url.port().unwrap_or(8181)
+            ),
+            "unix" | "http+unix" => format!("unix://{}", opa_url.path()),
+            _ => format!(
+                "{}:{}",
+                opa_url.host_str().unwrap_or("0.0.0.0"),
+                opa_url.port().unwrap_or(8181)
+            ),
+        };
+
+        info!(
+            "Starting OPA subprocess with policies from {:?} listening on {}",
+            policies_path, addr
+        );
+        let mut opa_cmd = tokio::process::Command::new("opa");
+        opa_cmd
+            .arg("run")
+            .arg("-s")
+            .arg(policies_path)
+            .arg("--addr")
+            .arg(&addr)
+            .kill_on_drop(true);
+
+        match opa_cmd.spawn() {
+            Ok(mut child) => {
+                let opa_cancel_token = token.clone();
+                handles.spawn(async move {
+                    tokio::select! {
+                        status = child.wait() => {
+                            error!("OPA subprocess exited unexpectedly: {:?}", status);
+                        }
+                        () = opa_cancel_token.cancelled() => {
+                            info!("Killing OPA subprocess");
+                            child.kill().await.ok();
+                        }
+                    }
+                });
+            }
+            Err(e) => {
+                error!("Failed to start OPA subprocess: {}", e);
+                return Err(e).wrap_err("Failed to start OPA subprocess");
+            }
+        }
+    }
+
     // Start the public interface listener
     match cfg.interface_public.listener {
         ListenerConfig::Http => {

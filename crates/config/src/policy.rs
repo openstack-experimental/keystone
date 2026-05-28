@@ -12,6 +12,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 use serde::Deserialize;
+use std::path::PathBuf;
 use url::Url;
 use url_macro::url;
 
@@ -27,6 +28,11 @@ pub struct PolicyProvider {
     /// OpenPolicyAgent instance url to use for evaluating the policy.
     #[serde(default = "default_opa_base_url")]
     pub opa_base_url: Url,
+
+    /// Path to the policies to trigger starting OPA as a subprocess. When set
+    /// OPA would be started as `opa run -s <OPA_POLICIES_PATH> --addr
+    /// OPA_BASE_URL`. The OPA binary must be in the PATH for this to work.
+    pub opa_policies_path: Option<PathBuf>,
 }
 
 impl Default for PolicyProvider {
@@ -34,6 +40,7 @@ impl Default for PolicyProvider {
         Self {
             enable: true,
             opa_base_url: default_opa_base_url(),
+            opa_policies_path: None,
         }
     }
 }
