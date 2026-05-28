@@ -35,7 +35,7 @@ runs:
 
     - name: Fix keystone permissions
       shell: bash
-      run: chmod u+x keystone keystone-db
+      run: chmod u+x keystone keystone-manage
 
     - name: Prepare keystone config file
       shell: bash
@@ -119,7 +119,7 @@ runs:
 
     - name: Apply Rust keystone DB changes
       shell: bash
-      run: ./keystone-db -c ${{ github.workspace }}/etc/keystone.conf up
+      run: ./keystone-manage -c ${{ github.workspace }}/etc/keystone.conf db up
 
     - name: Start rust keystone
       shell: bash

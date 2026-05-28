@@ -1,29 +1,31 @@
 [workspace]
 members = [
   "crates/api-types",
-  "crates/appcred-sql",
-  "crates/assignment-sql",
-  "crates/catalog-sql",
+  "crates/appcred-driver-sql",
+  "crates/assignment-driver-sql",
+  "crates/catalog-driver-sql",
   "crates/config",
   "crates/core",
   "crates/core-types",
-  "crates/federation-sql",
-  "crates/identity-sql",
-  "crates/idmapping-sql",
-  "crates/k8s-auth-sql",
+  "crates/federation-driver-sql",
+  "crates/identity-driver-sql",
+  "crates/idmapping-driver-sql",
+  "crates/k8s-auth-driver-raft",
+  "crates/k8s-auth-driver-sql",
   "crates/keystone",
-  "crates/resource-sql",
-  "crates/role-sql",
+  "crates/resource-driver-sql",
+  "crates/role-driver-sql",
   "crates/storage",
-  "crates/token-fernet",
-  "crates/token-restriction-sql", 
-  "crates/trust-sql",
-  "crates/revoke-sql",
+  "crates/spiffe-driver-raft",
+  "crates/token-driver-fernet",
+  "crates/token-restriction-driver-sql",
+  "crates/trust-driver-sql",
+  "crates/revoke-driver-sql",
   "crates/webauthn",
   "crates/cli-manage",
   "tests/api",
   "tests/integration",
-  "tests/federation", "crates/k8s-auth-raft", "crates/spiffe-raft",
+  "tests/federation",
 ]
 exclude = [
   "tests/loadtest"
@@ -78,11 +80,26 @@ nix = { version = "0.31", default-features = false }
 openidconnect = { version = "4.0" }
 openraft = { version = "=0.10.0-alpha.20" }
 openstack-keystone-api-types = { version = "0.1", features = ["openapi", "validate", "conv"], path = "crates/api-types" }
+openstack-keystone-appcred-driver-sql = { version = "0.1", path = "crates/appcred-driver-sql/" }
+openstack-keystone-assignment-driver-sql = { version = "0.1", path = "crates/assignment-driver-sql/" }
+openstack-keystone-catalog-driver-sql = { version = "0.1", path = "crates/catalog-driver-sql/" }
 openstack-keystone-config = { version = "0.1.0", path = "crates/config"}
 openstack-keystone-core = { version = "0.1.0", path = "crates/core" }
 openstack-keystone-core-types = { version = "0.1.0", path = "crates/core-types" }
 openstack-keystone-distributed-storage = { version = "0.1.0", path = "crates/storage"}
-openstack-keystone-token-fernet = { version = "0.1.0", path = "crates/token-fernet" }
+openstack-keystone-federation-driver-sql = { version = "0.1", path = "crates/federation-driver-sql" }
+openstack-keystone-k8s-auth-driver-sql = { version = "0.1", path = "crates/k8s-auth-driver-sql/" }
+openstack-keystone-k8s-auth-driver-raft = { version = "0.1", path = "crates/k8s-auth-driver-raft/" }
+openstack-keystone-identity-driver-sql = { version = "0.1", path = "crates/identity-driver-sql" }
+openstack-keystone-idmapping-driver-sql = { version = "0.1", path = "crates/idmapping-driver-sql" }
+openstack-keystone-resource-driver-sql = { version = "0.1", path = "crates/resource-driver-sql/" }
+openstack-keystone-revoke-driver-sql = { version = "0.1", path = "crates/revoke-driver-sql/" }
+openstack-keystone-role-driver-sql = { version = "0.1", path = "crates/role-driver-sql/" }
+openstack-keystone-spiffe-driver-raft = { version = "0.1", path = "crates/spiffe-driver-raft/" }
+openstack-keystone-token-driver-fernet = { version = "0.1.0", path = "crates/token-driver-fernet" }
+openstack-keystone-token-restriction-driver-sql = { version = "0.1", path = "crates/token-restriction-driver-sql/" }
+openstack-keystone-trust-driver-sql = { version = "0.1", path = "crates/trust-driver-sql/" }
+openstack-keystone-webauthn = { version = "0.1", path = "crates/webauthn/"}
 prost = { version = "0.14" }
 rand = { version = "0.10" }
 regex = { version = "1.12" }
@@ -101,6 +118,7 @@ serde_bytes = { version = "0.11" }
 serde_json = { version = "1.0" }
 serde_urlencoded = { version = "0.7" }
 spiffe = { version = "0.15" }
+temp-env = { version = "0.3" }
 tempfile = { version = "3.27" }
 thiserror = { version = "2.0" }
 tokio = { version = "1.52", default-features = false }

@@ -18,7 +18,7 @@ use sea_orm::{DbConn, entity::*};
 use std::sync::Arc;
 use tracing_test::traced_test;
 
-use openstack_keystone_trust_sql::entity::{trust as db_trust, trust_role as db_trust_role};
+use openstack_keystone_trust_driver_sql::entity::{trust as db_trust, trust_role as db_trust_role};
 
 use openstack_keystone::keystone::Service;
 use openstack_keystone::resource::ResourceApi;

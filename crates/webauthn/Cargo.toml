@@ -21,6 +21,7 @@ openstack-keystone-core = { workspace = true, features = ["api"] }
 openstack-keystone-core-types.workspace = true
 openstack-keystone-distributed-storage.workspace = true
 sea-orm = { workspace = true }
+sea-orm-migration = { workspace = true }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
@@ -39,7 +40,7 @@ base64urlsafedata.workspace = true
 mockall.workspace = true
 openstack-keystone-config.workspace = true
 openstack-keystone-core = { workspace = true, features = ["mock"] }
-openstack-keystone-token-fernet.workspace = true
+openstack-keystone-token-driver-fernet.workspace = true
 rcgen.workspace = true
 reqwest.workspace = true
 reserve-port = "2.4"

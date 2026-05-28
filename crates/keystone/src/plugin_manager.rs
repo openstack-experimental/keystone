@@ -542,51 +542,51 @@ impl PluginManager {
     fn register_sql_drivers(&mut self) {
         self.register_application_credential_backend(
             "sql",
-            Arc::new(openstack_keystone_appcred_sql::SqlBackend::default()),
+            Arc::new(openstack_keystone_appcred_driver_sql::SqlBackend::default()),
         );
         self.register_assignment_backend(
             "sql",
-            Arc::new(openstack_keystone_assignment_sql::SqlBackend::default()),
+            Arc::new(openstack_keystone_assignment_driver_sql::SqlBackend::default()),
         );
         self.register_catalog_backend(
             "sql",
-            Arc::new(openstack_keystone_catalog_sql::SqlBackend::default()),
+            Arc::new(openstack_keystone_catalog_driver_sql::SqlBackend::default()),
         );
         self.register_federation_backend(
             "sql",
-            Arc::new(openstack_keystone_federation_sql::SqlBackend::default()),
+            Arc::new(openstack_keystone_federation_driver_sql::SqlBackend::default()),
         );
         self.register_identity_backend(
             "sql",
-            Arc::new(openstack_keystone_identity_sql::SqlBackend::default()),
+            Arc::new(openstack_keystone_identity_driver_sql::SqlBackend::default()),
         );
         self.register_identity_mapping_backend(
             "sql",
-            Arc::new(openstack_keystone_idmapping_sql::SqlBackend::default()),
+            Arc::new(openstack_keystone_idmapping_driver_sql::SqlBackend::default()),
         );
         self.register_k8s_auth_backend(
             "sql",
-            Arc::new(openstack_keystone_k8s_auth_sql::SqlBackend::default()),
+            Arc::new(openstack_keystone_k8s_auth_driver_sql::SqlBackend::default()),
         );
         self.register_resource_backend(
             "sql",
-            Arc::new(openstack_keystone_resource_sql::SqlBackend::default()),
+            Arc::new(openstack_keystone_resource_driver_sql::SqlBackend::default()),
         );
         self.register_revoke_backend(
             "sql",
-            Arc::new(openstack_keystone_revoke_sql::SqlBackend::default()),
+            Arc::new(openstack_keystone_revoke_driver_sql::SqlBackend::default()),
         );
         self.register_role_backend(
             "sql",
-            Arc::new(openstack_keystone_role_sql::SqlBackend::default()),
+            Arc::new(openstack_keystone_role_driver_sql::SqlBackend::default()),
         );
         self.register_token_restriction_backend(
             "sql",
-            Arc::new(openstack_keystone_token_restriction_sql::SqlBackend::default()),
+            Arc::new(openstack_keystone_token_restriction_driver_sql::SqlBackend::default()),
         );
         self.register_trust_backend(
             "sql",
-            Arc::new(openstack_keystone_trust_sql::SqlBackend::default()),
+            Arc::new(openstack_keystone_trust_driver_sql::SqlBackend::default()),
         );
     }
 
@@ -617,17 +617,17 @@ impl PluginManager {
         slf.register_sql_drivers();
         slf.register_token_backend(
             "fernet",
-            Arc::new(openstack_keystone_token_fernet::FernetTokenProvider::new(
-                config.clone(),
-            )),
+            Arc::new(
+                openstack_keystone_token_driver_fernet::FernetTokenProvider::new(config.clone()),
+            ),
         );
         slf.register_k8s_auth_backend(
             "raft",
-            Arc::new(openstack_keystone_k8s_auth_raft::RaftBackend::default()),
+            Arc::new(openstack_keystone_k8s_auth_driver_raft::RaftBackend::default()),
         );
         slf.register_spiffe_backend(
             "raft",
-            Arc::new(openstack_keystone_spiffe_raft::RaftBackend::default()),
+            Arc::new(openstack_keystone_spiffe_driver_raft::RaftBackend::default()),
         );
         slf
     }

@@ -79,13 +79,19 @@ pub mod auth;
 pub mod catalog;
 pub mod common;
 pub mod config;
-pub mod db_migration;
 pub mod error;
 pub mod federation;
 pub mod identity;
 pub mod identity_mapping;
 pub mod k8s_auth;
 pub mod keystone;
+
+// Force inventory::submit! sections from each plugin crate to remain
+// linked. The build.rs script discovers all openstack-keystone-*
+// dependencies from Cargo.toml and generates a #[used] static that
+// references the anchor() function from each one.
+include!(concat!(env!("OUT_DIR"), "/inventory_anchors.rs"));
+
 pub mod plugin_manager;
 pub mod policy;
 pub mod provider;

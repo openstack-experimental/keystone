@@ -21,8 +21,10 @@ use color_eyre::Report;
 
 use openstack_keystone_config::Config;
 
+mod db;
 mod storage;
 
+use crate::db::*;
 use crate::storage::*;
 
 /// OpenStack Keystone management CLI.
@@ -47,6 +49,10 @@ struct Args {
 
 #[derive(Parser)]
 enum Command {
+    /// Database management commands.
+    Db(DbCommand),
+
+    /// Distributed storage management.
     Storage(StorageCommand),
 }
 
@@ -61,6 +67,7 @@ async fn main() -> Result<(), Report> {
     let args = Args::parse();
     let cfg = Config::load_all(args.config)?;
     match args.command {
+        Command::Db(x) => x.take_action(&cfg).await?,
         Command::Storage(x) => x.take_action(&cfg).await?,
     }
     Ok(())

@@ -75,6 +75,7 @@
 
 use async_trait::async_trait;
 use sea_orm::{DatabaseConnection, Schema};
+use sea_orm_migration::MigrationTrait;
 
 #[cfg(feature = "api")]
 pub mod api;
@@ -118,6 +119,18 @@ pub trait SqlDriver: Send + Sync {
         connection: &DatabaseConnection,
         schema: &Schema,
     ) -> Result<(), error::DatabaseError>;
+
+    /// Returns the migrations associated with this driver.
+    ///
+    /// Each SQL driver defines its own migrations that need to be applied to
+    /// bring the database schema up to date. These are returned as a vector
+    /// of boxed migration trait objects.
+    ///
+    /// # Returns
+    /// - A vector of boxed migration trait objects managed by this driver.
+    fn migrations(&self) -> Vec<Box<dyn MigrationTrait>> {
+        Vec::new()
+    }
 }
 
 // This struct "wraps" the trait object so inventory can track it

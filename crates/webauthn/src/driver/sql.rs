@@ -14,8 +14,10 @@
 
 use async_trait::async_trait;
 use sea_orm::{DatabaseConnection, Schema};
+use sea_orm_migration::MigrationTrait;
 use webauthn_rs::prelude::{PasskeyAuthentication, PasskeyRegistration};
 
+use openstack_keystone_core::SqlDriver as CoreSqlDriver;
 use openstack_keystone_core::SqlDriverRegistration;
 use openstack_keystone_core::db::create_table;
 use openstack_keystone_core::error::DatabaseError;
@@ -27,6 +29,7 @@ use crate::{
 };
 
 pub mod credential;
+pub mod migration;
 mod model;
 pub mod state;
 
@@ -262,7 +265,7 @@ impl WebauthnApi for SqlDriver {
 }
 
 #[async_trait]
-impl openstack_keystone_core::SqlDriver for SqlDriver {
+impl CoreSqlDriver for SqlDriver {
     /// Setup the database tables for the WebAuthN extension.
     ///
     /// # Parameters
@@ -289,6 +292,10 @@ impl openstack_keystone_core::SqlDriver for SqlDriver {
         )
         .await?;
         Ok(())
+    }
+
+    fn migrations(&self) -> Vec<Box<dyn MigrationTrait>> {
+        migration::migrations()
     }
 }
 

@@ -18,7 +18,7 @@ use eyre::Report;
 use sea_orm::entity::*;
 use tracing_test::traced_test;
 
-use openstack_keystone_identity_sql::entity::{
+use openstack_keystone_identity_driver_sql::entity::{
     expiring_user_group_membership,
     prelude::ExpiringUserGroupMembership as DbExpiringUserGroupMembership,
 };

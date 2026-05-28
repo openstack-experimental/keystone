@@ -623,9 +623,9 @@ dependencies = [
 
 [[package]]
 name = "brotli"
-version = "8.0.2"
+version = "8.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4bd8b9603c7aa97359dbd97ecf258968c95f3adddd6db2f7e7a5bef101c84560"
+checksum = "8119e4516436f5708bbc474a9d395bf12f1b5395e93a92a56e647ac3388c8610"
 dependencies = [
  "alloc-no-stdlib",
  "alloc-stdlib",
@@ -634,9 +634,9 @@ dependencies = [
 
 [[package]]
 name = "brotli-decompressor"
-version = "5.0.0"
+version = "5.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "874bb8112abecc98cbd6d81ea4fa7e94fb9449648c93cc89aa40c81c24d7de03"
+checksum = "5962523e1b92ce1b5e793d9169b9943eece10d39f62550bc04bb605d75b94924"
 dependencies = [
  "alloc-no-stdlib",
  "alloc-stdlib",
@@ -3710,31 +3710,30 @@ dependencies = [
  "hyper-util",
  "openidconnect",
  "openstack-keystone-api-types",
- "openstack-keystone-appcred-sql",
- "openstack-keystone-assignment-sql",
- "openstack-keystone-catalog-sql",
+ "openstack-keystone-appcred-driver-sql",
+ "openstack-keystone-assignment-driver-sql",
+ "openstack-keystone-catalog-driver-sql",
  "openstack-keystone-config",
  "openstack-keystone-core",
  "openstack-keystone-core-types",
  "openstack-keystone-distributed-storage",
- "openstack-keystone-federation-sql",
- "openstack-keystone-identity-sql",
- "openstack-keystone-idmapping-sql",
- "openstack-keystone-k8s-auth-raft",
- "openstack-keystone-k8s-auth-sql",
- "openstack-keystone-resource-sql",
- "openstack-keystone-revoke-sql",
- "openstack-keystone-role-sql",
- "openstack-keystone-spiffe-raft",
- "openstack-keystone-token-fernet",
- "openstack-keystone-token-restriction-sql",
- "openstack-keystone-trust-sql",
+ "openstack-keystone-federation-driver-sql",
+ "openstack-keystone-identity-driver-sql",
+ "openstack-keystone-idmapping-driver-sql",
+ "openstack-keystone-k8s-auth-driver-raft",
+ "openstack-keystone-k8s-auth-driver-sql",
+ "openstack-keystone-resource-driver-sql",
+ "openstack-keystone-revoke-driver-sql",
+ "openstack-keystone-role-driver-sql",
+ "openstack-keystone-spiffe-driver-raft",
+ "openstack-keystone-token-driver-fernet",
+ "openstack-keystone-token-restriction-driver-sql",
+ "openstack-keystone-trust-driver-sql",
  "openstack-keystone-webauthn",
  "reqwest 0.13.4",
  "rstest",
  "rustls",
  "sea-orm",
- "sea-orm-migration",
  "secrecy",
  "serde",
  "serde_json",
@@ -3746,6 +3745,7 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "tokio-util",
+ "toml",
  "tonic",
  "tower",
  "tower-http",
@@ -3786,7 +3786,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "openstack-keystone-appcred-sql"
+name = "openstack-keystone-appcred-driver-sql"
 version = "0.1.0"
 dependencies = [
  "async-trait",
@@ -3803,7 +3803,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "openstack-keystone-assignment-sql"
+name = "openstack-keystone-assignment-driver-sql"
 version = "0.1.0"
 dependencies = [
  "async-trait",
@@ -3817,7 +3817,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "openstack-keystone-catalog-sql"
+name = "openstack-keystone-catalog-driver-sql"
 version = "0.1.0"
 dependencies = [
  "async-trait",
@@ -3838,12 +3838,19 @@ dependencies = [
  "clap",
  "color-eyre",
  "comfy-table",
+ "eyre",
+ "inventory",
  "openstack-keystone",
  "openstack-keystone-config",
+ "openstack-keystone-core",
  "openstack-keystone-distributed-storage",
+ "sea-orm",
+ "sea-orm-migration",
  "secrecy",
  "tokio",
  "tonic",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -3893,6 +3900,7 @@ dependencies = [
  "reqwest 0.13.4",
  "rstest",
  "sea-orm",
+ "sea-orm-migration",
  "secrecy",
  "serde",
  "serde_json",
@@ -3966,7 +3974,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "openstack-keystone-federation-sql"
+name = "openstack-keystone-federation-driver-sql"
 version = "0.1.0"
 dependencies = [
  "async-trait",
@@ -3976,6 +3984,7 @@ dependencies = [
  "openstack-keystone-core",
  "openstack-keystone-core-types",
  "sea-orm",
+ "sea-orm-migration",
  "serde_json",
  "tokio",
  "tracing",
@@ -3983,7 +3992,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "openstack-keystone-identity-sql"
+name = "openstack-keystone-identity-driver-sql"
 version = "0.1.0"
 dependencies = [
  "async-trait",
@@ -4003,7 +4012,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "openstack-keystone-idmapping-sql"
+name = "openstack-keystone-idmapping-driver-sql"
 version = "0.1.0"
 dependencies = [
  "async-trait",
@@ -4017,7 +4026,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "openstack-keystone-k8s-auth-raft"
+name = "openstack-keystone-k8s-auth-driver-raft"
 version = "0.1.0"
 dependencies = [
  "async-trait",
@@ -4030,7 +4039,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "openstack-keystone-k8s-auth-sql"
+name = "openstack-keystone-k8s-auth-driver-sql"
 version = "0.1.0"
 dependencies = [
  "async-trait",
@@ -4038,13 +4047,14 @@ dependencies = [
  "openstack-keystone-core",
  "openstack-keystone-core-types",
  "sea-orm",
+ "sea-orm-migration",
  "tokio",
  "tracing",
  "uuid",
 ]
 
 [[package]]
-name = "openstack-keystone-resource-sql"
+name = "openstack-keystone-resource-driver-sql"
 version = "0.1.0"
 dependencies = [
  "async-trait",
@@ -4059,7 +4069,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "openstack-keystone-revoke-sql"
+name = "openstack-keystone-revoke-driver-sql"
 version = "0.1.0"
 dependencies = [
  "async-trait",
@@ -4074,7 +4084,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "openstack-keystone-role-sql"
+name = "openstack-keystone-role-driver-sql"
 version = "0.1.0"
 dependencies = [
  "async-trait",
@@ -4089,7 +4099,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "openstack-keystone-spiffe-raft"
+name = "openstack-keystone-spiffe-driver-raft"
 version = "0.1.0"
 dependencies = [
  "async-trait",
@@ -4102,7 +4112,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "openstack-keystone-token-fernet"
+name = "openstack-keystone-token-driver-fernet"
 version = "0.1.1"
 dependencies = [
  "base64 0.22.1",
@@ -4130,7 +4140,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "openstack-keystone-token-restriction-sql"
+name = "openstack-keystone-token-restriction-driver-sql"
 version = "0.1.0"
 dependencies = [
  "async-trait",
@@ -4138,12 +4148,13 @@ dependencies = [
  "openstack-keystone-core",
  "openstack-keystone-core-types",
  "sea-orm",
+ "sea-orm-migration",
  "tokio",
  "tracing",
 ]
 
 [[package]]
-name = "openstack-keystone-trust-sql"
+name = "openstack-keystone-trust-driver-sql"
 version = "0.1.0"
 dependencies = [
  "async-trait",
@@ -4175,11 +4186,12 @@ dependencies = [
  "openstack-keystone-core",
  "openstack-keystone-core-types",
  "openstack-keystone-distributed-storage",
- "openstack-keystone-token-fernet",
+ "openstack-keystone-token-driver-fernet",
  "rcgen",
  "reqwest 0.13.4",
  "reserve-port",
  "sea-orm",
+ "sea-orm-migration",
  "serde",
  "serde_json",
  "tempfile",
@@ -7084,9 +7096,9 @@ dependencies = [
  "openstack-keystone-core",
  "openstack-keystone-core-types",
  "openstack-keystone-distributed-storage",
- "openstack-keystone-identity-sql",
- "openstack-keystone-token-fernet",
- "openstack-keystone-trust-sql",
+ "openstack-keystone-identity-driver-sql",
+ "openstack-keystone-token-driver-fernet",
+ "openstack-keystone-trust-driver-sql",
  "rcgen",
  "sea-orm",
  "secrecy",

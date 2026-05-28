@@ -26,3 +26,9 @@ pub mod types;
 
 pub use error::*;
 pub use types::*;
+
+/// Linkage anchor — see ADR-0018. Referenced by the `keystone` crate's
+/// `build.rs`-generated `_ANCHORS` static so the linker extracts `.rlib`
+/// members, keeping `inventory::submit!` sections visible at runtime.
+#[allow(dead_code)]
+pub fn anchor() {}

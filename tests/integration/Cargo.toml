@@ -18,9 +18,9 @@ openstack-keystone-config.workspace = true
 openstack-keystone-api-types = { workspace = true, features = ["builder", "conv"] }
 openstack-keystone-core = { workspace = true, features = ["mock"] }
 openstack-keystone-core-types = { workspace = true, features = ["mock"] }
-openstack-keystone-identity-sql = { version = "0.1", path = "../../crates/identity-sql/" }
-openstack-keystone-token-fernet = { version = "0.1", path = "../../crates/token-fernet/" }
-openstack-keystone-trust-sql = { version = "0.1", path = "../../crates/trust-sql/" }
+openstack-keystone-identity-driver-sql = { version = "0.1", path = "../../crates/identity-driver-sql/" }
+openstack-keystone-token-driver-fernet.workspace = true
+openstack-keystone-trust-driver-sql = { version = "0.1", path = "../../crates/trust-driver-sql/" }
 openstack-keystone-distributed-storage.workspace = true
 openstack-keystone = { version = "0.1", path = "../../crates/keystone/" }
 rcgen.workspace = true

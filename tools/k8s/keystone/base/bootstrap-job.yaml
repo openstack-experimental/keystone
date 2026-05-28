@@ -39,7 +39,7 @@ spec:
                   name: keystone-db-app
           image: keystone-rs
           name: keystone-db-rs
-          command: [keystone-db, up]
+          command: [keystone-manage, db, up]
           volumeMounts:
             - mountPath: /etc/keystone/keystone.conf
               name: config

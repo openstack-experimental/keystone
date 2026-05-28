@@ -1,0 +1,191 @@
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+// SPDX-License-Identifier: Apache-2.0
+//! # OpenStack Keystone SQL driver for the revocation event provider
+
+use async_trait::async_trait;
+
+use sea_orm::{DatabaseConnection, Schema};
+
+use openstack_keystone_core::auth::ValidatedSecurityContext;
+use openstack_keystone_core::keystone::ServiceState;
+use openstack_keystone_core::revoke::{RevokeProviderError, backend::RevokeBackend};
+use openstack_keystone_core::{
+    SqlDriver, SqlDriverRegistration, db::create_table, error::DatabaseError,
+};
+use openstack_keystone_core_types::revoke::*;
+use openstack_keystone_core_types::token::FernetToken;
+
+use crate::entity::revocation_event as db_revocation_event;
+
+mod create;
+pub mod entity;
+mod list;
+
+/// Sql Database revocation backend.
+#[derive(Default)]
+pub struct SqlBackend {}
+
+/// Linkage anchor — see ADR-0018. Referenced by the `keystone` crate's
+/// `build.rs`-generated `_ANCHORS` static so the linker extracts `.rlib`
+/// members, keeping `inventory::submit!` sections visible at runtime.
+#[allow(dead_code)]
+pub fn anchor() {}
+
+// Submit the plugin to the registry at compile-time
+static PLUGIN: SqlBackend = SqlBackend {};
+inventory::submit! {
+    SqlDriverRegistration { driver: &PLUGIN }
+}
+
+impl From<db_revocation_event::Model> for RevocationEvent {
+    /// Convert database revocation event model to core revocation event.
+    ///
+    /// # Parameters
+    /// - `value`: The database model to convert.
+    ///
+    /// # Returns
+    /// The converted `RevocationEvent`.
+    fn from(value: db_revocation_event::Model) -> Self {
+        Self {
+            domain_id: value.domain_id,
+            project_id: value.project_id,
+            user_id: value.user_id,
+            role_id: value.role_id,
+            trust_id: value.trust_id,
+            consumer_id: value.consumer_id,
+            access_token_id: value.access_token_id,
+            issued_before: value.issued_before.and_utc(),
+            expires_at: value.expires_at.map(|expires_at| expires_at.and_utc()),
+            revoked_at: value.revoked_at.and_utc(),
+            audit_id: value.audit_id,
+            audit_chain_id: value.audit_chain_id,
+        }
+    }
+}
+
+#[async_trait]
+impl RevokeBackend for SqlBackend {
+    /// Create revocation event.
+    ///
+    /// # Parameters
+    /// - `state`: The service state containing the database connection.
+    /// - `event`: The revocation event details to create.
+    ///
+    /// # Returns
+    /// A `Result` containing the created `RevocationEvent`, or a
+    /// `RevokeProviderError`.
+    async fn create_revocation_event(
+        &self,
+        state: &ServiceState,
+        event: RevocationEventCreate,
+    ) -> Result<RevocationEvent, RevokeProviderError> {
+        Ok(create::create(&state.db, event).await?)
+    }
+
+    /// Check the token for being revoked.
+    ///
+    /// List not expired revocation records that invalidate the token and
+    /// returns true if there is at least one such record.
+    ///
+    /// # Parameters
+    /// - `state`: The service state containing the database connection.
+    /// - `token`: The token to check.
+    ///
+    /// # Returns
+    /// A `Result` containing a boolean indicating if the token is revoked, or a
+    /// `RevokeProviderError`.
+    async fn is_token_revoked(
+        &self,
+        state: &ServiceState,
+        token_security_context: &ValidatedSecurityContext,
+    ) -> Result<bool, RevokeProviderError> {
+        // Check for the token revocation events.
+
+        let params_builder =
+            RevocationEventListParametersBuilder::try_from(token_security_context)?;
+
+        let params = params_builder.build()?;
+        if list::count(&state.db, &params).await? > 0 {
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
+    /// Revoke the token.
+    ///
+    /// Mark the token as revoked to prohibit from being used even while not
+    /// expired.
+    ///
+    /// # Parameters
+    /// - `state`: The service state containing the database connection.
+    /// - `token`: The token to revoke.
+    ///
+    /// # Returns
+    /// A `Result` indicating success or a `RevokeProviderError`.
+    async fn revoke_token(
+        &self,
+        state: &ServiceState,
+        token: &FernetToken,
+    ) -> Result<(), RevokeProviderError> {
+        Ok(create::create(&state.db, token.try_into()?)
+            .await
+            .map(|_| ())?)
+    }
+}
+
+#[async_trait]
+impl SqlDriver for SqlBackend {
+    /// Set up the database schema for revocation events.
+    ///
+    /// # Parameters
+    /// - `connection`: The database connection.
+    /// - `schema`: The database schema.
+    ///
+    /// # Returns
+    /// A `Result` indicating success or a `DatabaseError`.
+    async fn setup(
+        &self,
+        connection: &DatabaseConnection,
+        schema: &Schema,
+    ) -> Result<(), DatabaseError> {
+        create_table(connection, schema, crate::entity::prelude::RevocationEvent).await?;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use chrono::NaiveDateTime;
+
+    use crate::entity::revocation_event as db_revocation_event;
+
+    pub(super) fn get_mock() -> db_revocation_event::Model {
+        db_revocation_event::Model {
+            id: 1i32,
+            domain_id: Some("did".into()),
+            project_id: Some("pid".into()),
+            user_id: Some("uid".into()),
+            role_id: Some("rid".into()),
+            trust_id: Some("trust_id".into()),
+            consumer_id: Some("consumer_id".into()),
+            access_token_id: Some("access_token_id".into()),
+            issued_before: NaiveDateTime::default(),
+            expires_at: Some(NaiveDateTime::default()),
+            revoked_at: NaiveDateTime::default(),
+            audit_id: Some("audit_id".into()),
+            audit_chain_id: Some("audit_chain_id".into()),
+        }
+    }
+}

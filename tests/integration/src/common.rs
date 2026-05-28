@@ -139,7 +139,7 @@ pub async fn get_state() -> Result<(Arc<Service>, TempDir)> {
     let mut cfg: Config = Config::default();
     cfg.auth.methods = vec!["application_credential".into(), "password".into()];
     cfg.fernet_tokens.key_repository = tmp_fernet_repo.to_path_buf();
-    let fernet_utils = openstack_keystone_token_fernet::utils::FernetUtils {
+    let fernet_utils = openstack_keystone_token_driver_fernet::utils::FernetUtils {
         key_repository: cfg.fernet_tokens.key_repository.clone(),
         max_active_keys: cfg.fernet_tokens.max_active_keys,
     };

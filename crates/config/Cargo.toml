@@ -16,8 +16,8 @@ config = { workspace = true, features = ["async", "ini", "toml"] }
 derive_builder.workspace = true
 eyre.workspace = true
 http.workspace = true
-http-serde = "2.1.1"
-notify = "8.2.0"
+http-serde = "2.1"
+notify = "8.2"
 regex.workspace = true
 secrecy = { workspace = true, features = ["serde"] }
 serde = { workspace = true, features = ["derive"] }
@@ -28,7 +28,7 @@ url-macro.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true
-temp-env = "0.3.6"
+temp-env.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 
