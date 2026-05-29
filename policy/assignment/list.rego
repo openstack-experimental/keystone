@@ -6,6 +6,19 @@ package identity.assignment.list
 import data.identity
 import data.identity.assignment
 
+# List role assignments.
+#
+# The `input.target.assignment` contains query parameters (RoleAssignmentListParameters):
+#   domain_id:    string (optional)  Filters the response by a domain ID.
+#   group_id:     string (optional)  Filters the response by a group ID.
+#   effective:    bool (optional)    Returns the effective assignments.
+#   project_id:   string (optional)  Filters the response by a project ID.
+#   role_id:      string (optional)  Filters the response by a role ID.
+#   user_id:      string (optional)  Filters the response by a user ID.
+#   include_names: bool (optional)    Include names of entities.
+#
+# The `input.existing` is null
+#
 default allow := false
 
 # METADATA

@@ -18,6 +18,7 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
+use serde_json::json;
 
 use openstack_keystone_api_types::v3::role::{Role, RoleResponse};
 
@@ -55,7 +56,7 @@ pub(super) async fn show(
         .enforce(
             "identity/role/show",
             &user_auth,
-            serde_json::to_value(&current)?,
+            json!({"role": current}),
             None,
         )
         .await?;

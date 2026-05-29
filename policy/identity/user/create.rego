@@ -4,7 +4,17 @@ package identity.user.create
 
 import data.identity
 
-# Create a new user group
+# Create a new user
+#
+# The `input.target.user` is the new user object (UserCreate):
+#   default_project_id:  string (optional)  The ID of the default project for the user.
+#   domain_id:           string            User domain ID.
+#   enabled:             bool              If the user is enabled.
+#   name:               string            The user name.
+#   options:             object (optional)  The resource options for the user.
+#   password:            string (optional)  The password for the user.
+#
+# The `input.existing` is null
 #
 default allow := false
 

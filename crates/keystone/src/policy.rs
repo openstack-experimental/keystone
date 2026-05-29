@@ -93,8 +93,11 @@ impl PolicyEnforcer for HttpPolicyEnforcer {
     /// # Parameters
     /// * `policy_name` - The name of the policy to evaluate.
     /// * `credentials` - The SecurityContext of the request.
-    /// * `target` - The target resource for the policy evaluation.
-    /// * `update` - Optional update data for the policy evaluation.
+    /// * `target` - The object the action is acting upon (new object for
+    ///   create, patch for update, query params for list, `Value::Null` for
+    ///   show/delete).
+    /// * `existing` - The existing/stored object before the action (for update
+    ///   operations), or `None`.
     ///
     /// # Returns
     /// A `Result` containing the `PolicyEvaluationResult`, or a `PolicyError`.
@@ -103,7 +106,7 @@ impl PolicyEnforcer for HttpPolicyEnforcer {
         policy_name: &'static str,
         credentials: &ValidatedSecurityContext,
         target: Value,
-        update: Option<Value>,
+        existing: Option<Value>,
     ) -> Result<PolicyEvaluationResult, PolicyError> {
         let start = SystemTime::now();
         // Convert SecurityContext into Credentials object that is passed to OPA
@@ -111,7 +114,7 @@ impl PolicyEnforcer for HttpPolicyEnforcer {
         let input = json!({
             "credentials": creds,
             "target": target,
-            "update": update,
+            "existing": existing.unwrap_or(Value::Null),
         });
         let span = tracing::Span::current();
 

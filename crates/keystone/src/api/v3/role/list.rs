@@ -18,6 +18,7 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
+use serde_json::json;
 
 use super::types::{Role, RoleList, RoleListParameters};
 use crate::api::auth::Auth;
@@ -48,7 +49,7 @@ pub(super) async fn list(
         .enforce(
             "identity/role/list",
             &user_auth,
-            serde_json::to_value(&query)?,
+            json!({"role": query}),
             None,
         )
         .await?;

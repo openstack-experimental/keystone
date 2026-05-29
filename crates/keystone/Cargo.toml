@@ -61,7 +61,7 @@ spiffe = { workspace = true, features = ["x509-source"] }
 spiffe-rustls = "0.6"
 spiffe-rustls-tokio = "0.3"
 thiserror.workspace = true
-tokio = { workspace = true, features = ["fs", "macros", "signal", "rt-multi-thread"] }
+tokio = { workspace = true, features = ["fs", "macros", "process", "signal", "rt-multi-thread"] }
 tokio-rustls.workspace = true
 tokio-util.workspace = true
 tonic = { workspace = true, features = ["server", "tls-aws-lc" ] }

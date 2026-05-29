@@ -5,7 +5,13 @@ package identity.k8s_auth.instance.list
 import data.identity
 
 # List k8s auth instances.
-
+#
+# The `input.target.instance` contains query parameters (K8sAuthInstanceListParameters):
+#   domain_id:    string (optional)  Domain id.
+#   name:         string (optional)  Name.
+#
+# The `input.existing` is null
+#
 default allow := false
 
 can_see_other_domain_resources if {
@@ -24,7 +30,7 @@ allow if {
 # allow listing when the domain_id is unset. Code is responsible for setting
 # domain_id to the current one.
 allow if {
-	input.target.domain_id == null
+	input.target.instance.domain_id == null
 	"reader" in input.credentials.roles
 }
 

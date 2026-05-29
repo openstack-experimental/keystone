@@ -19,6 +19,7 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
+use serde_json::json;
 
 use openstack_keystone_api_types::k8s_auth::*;
 
@@ -72,7 +73,7 @@ pub(super) async fn show(
         .enforce(
             "identity/k8s_auth/instance/show",
             &user_auth,
-            serde_json::to_value(&current)?,
+            json!({"instance": current}),
             None,
         )
         .await?;

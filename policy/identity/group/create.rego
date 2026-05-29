@@ -6,6 +6,13 @@ import data.identity
 
 # Create a new user group
 #
+# The `input.target.group` is the new group object (GroupCreate):
+#   domain_id:    string        Group domain ID.
+#   name:         string        Group name.
+#   description:  string (optional) Group description.
+#
+# The `input.existing` is null
+#
 default allow := false
 
 allow if {

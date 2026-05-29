@@ -19,7 +19,7 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
-use serde_json::to_value;
+use serde_json::json;
 use validator::Validate;
 
 use openstack_keystone_api_types::k8s_auth::*;
@@ -67,7 +67,7 @@ pub(super) async fn list_nested(
         .enforce(
             "identity/k8s_auth/role/list",
             &user_auth,
-            to_value(&query)?,
+            json!({"role": query}),
             None,
         )
         .await?;
@@ -136,7 +136,7 @@ pub(super) async fn list(
         .enforce(
             "identity/k8s_auth/role/list",
             &user_auth,
-            to_value(&query)?,
+            json!({"role": query}),
             None,
         )
         .await?;

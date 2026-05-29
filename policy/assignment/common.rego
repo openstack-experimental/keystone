@@ -24,11 +24,11 @@ project_role_domain_matches if {
 
 # description: Ensure that if a domain_id is explicitly provided, it matches the scope
 domain_matches_scope if {
-	input.target.domain_id == null
+	input.target.assignment.domain_id == null
 }
 
 domain_matches_scope if {
-	input.target.domain_id == input.credentials.domain_id
+	input.target.assignment.domain_id == input.credentials.domain_id
 }
 
 # description: Ensure that if a project is provided, its domain matches the scope
@@ -73,5 +73,5 @@ all_filters_match_scope if {
 # This prevents "listing all" by requiring that the target domain
 # is explicitly the one the user is managed in.
 is_scoped_to_token_domain if {
-	input.target.domain_id == input.credentials.domain_id
+	input.target.assignment.domain_id == input.credentials.domain_id
 }

@@ -18,6 +18,7 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
+use serde_json::json;
 use validator::Validate;
 
 use super::types::{User, UserCreateRequest, UserListParameters, UserResponse};
@@ -50,7 +51,7 @@ pub(super) async fn create(
         .enforce(
             "identity/user/create",
             &user_auth,
-            serde_json::to_value(&req.user)?,
+            json!({"user": req.user}),
             None,
         )
         .await?;

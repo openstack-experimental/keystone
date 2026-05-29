@@ -18,6 +18,7 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
+use serde_json::json;
 
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
@@ -64,9 +65,9 @@ pub(super) async fn remove(
     state
         .policy_enforcer
         .enforce(
-            "identity/identity_provider_delete",
+            "identity/federation/identity_provider/delete",
             &user_auth,
-            serde_json::to_value(&current)?,
+            json!({"identity_provider": current}),
             None,
         )
         .await?;

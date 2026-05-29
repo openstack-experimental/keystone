@@ -19,7 +19,7 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
-use serde_json::to_value;
+use serde_json::json;
 use std::collections::HashSet;
 use validator::Validate;
 
@@ -66,9 +66,9 @@ pub(super) async fn list(
     let res = state
         .policy_enforcer
         .enforce(
-            "identity/identity_provider_list",
+            "identity/federation/identity_provider/list",
             &user_auth,
-            to_value(&query)?,
+            json!({"identity_provider": query}),
             None,
         )
         .await?;

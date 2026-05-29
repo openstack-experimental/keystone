@@ -19,7 +19,7 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
-use serde_json::to_value;
+use serde_json::json;
 
 use crate::api::{KeystoneApiError, auth::Auth, common::build_pagination_links};
 use crate::federation::{FederationApi, api::types::*};
@@ -59,7 +59,12 @@ pub(super) async fn list(
 ) -> Result<impl IntoResponse, KeystoneApiError> {
     state
         .policy_enforcer
-        .enforce("identity/mapping_list", &user_auth, to_value(&query)?, None)
+        .enforce(
+            "identity/federation/mapping/list",
+            &user_auth,
+            json!({"mapping": query}),
+            None,
+        )
         .await?;
 
     let mappings: Vec<Mapping> = state

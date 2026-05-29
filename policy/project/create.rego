@@ -5,7 +5,17 @@ package identity.project.create
 import data.identity
 
 # Create a new project
-
+#
+# The `input.target.project` is the new project object (ProjectCreate):
+#   description:  string (optional)  The description of the project.
+#   domain_id:    string            The ID of the domain for the project.
+#   enabled:      bool              If set to true, project is enabled.
+#   is_domain:    bool              Indicates whether the project also acts as a domain.
+#   name:         string            The name of the project.
+#   parent_id:    string (optional)  The ID of the parent of the project.
+#
+# The `input.existing` is null
+#
 default allow := false
 
 allow if {

@@ -14,6 +14,7 @@
 //! Token restriction: create.
 
 use axum::{Json, debug_handler, extract::State, http::StatusCode, response::IntoResponse};
+use serde_json::json;
 use validator::Validate;
 
 use crate::api::auth::Auth;
@@ -54,9 +55,9 @@ pub(super) async fn create(
     state
         .policy_enforcer
         .enforce(
-            "identity/token_restriction/create",
+            "identity/token/token_restriction/create",
             &user_auth,
-            serde_json::to_value(&req.restriction)?,
+            json!({"restriction": req.restriction}),
             None,
         )
         .await?;

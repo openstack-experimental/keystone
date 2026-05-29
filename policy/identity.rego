@@ -6,52 +6,6 @@ token_subject if {
 	input.credentials.user_id == input.target.token.user_id
 }
 
-global_idp if {
-	not input.target.domain_id
-}
-
-global_idp if {
-	input.target.domain_id == null
-}
-
-own_idp if {
-	input.target.domain_id != null
-	input.target.domain_id == input.credentials.domain_id
-}
-
-foreign_idp if {
-	input.target.domain_id != null
-	input.target.domain_id != input.credentials.domain_id
-}
-
-global_mapping if {
-	not input.target.domain_id
-}
-
-global_mapping if {
-	input.target.domain_id == null
-}
-
-own_mapping if {
-	input.target.domain_id != null
-	input.target.domain_id == input.credentials.domain_id
-}
-
-foreign_mapping if {
-	input.target.domain_id != null
-	input.target.domain_id != input.credentials.domain_id
-}
-
-foreign_token_restriction if {
-	input.target.domain_id != null
-	input.target.domain_id != input.credentials.domain_id
-}
-
-own_token_restriction if {
-	input.target.domain_id != null
-	input.target.domain_id == input.credentials.domain_id
-}
-
 global_role if {
 	input.target.role.domain_id == null
 }
@@ -71,13 +25,43 @@ own_role_or_global_role if {
 }
 
 own_target if {
-	input.target.domain_id != null
-	input.target.domain_id == input.credentials.domain_id
+	any_domain_id != null
+	any_domain_id == input.credentials.domain_id
 }
 
 foreign_target if {
-	input.target.domain_id != null
-	input.target.domain_id != input.credentials.domain_id
+	any_domain_id != null
+	any_domain_id != input.credentials.domain_id
+}
+
+# Collect domain_id from any known wrapped resource key.
+# Used by own_target / foreign_target / domain_matches_domain_scope.
+any_domain_id := input.target.instance.domain_id if {
+	input.target.instance.domain_id
+}
+
+any_domain_id := input.target.user.domain_id if {
+	input.target.user.domain_id
+}
+
+any_domain_id := input.target.group.domain_id if {
+	input.target.group.domain_id
+}
+
+any_domain_id := input.target.restriction.domain_id if {
+	input.target.restriction.domain_id
+}
+
+any_domain_id := input.target.project.domain_id if {
+	input.target.project.domain_id
+}
+
+any_domain_id := input.target.role.domain_id if {
+	input.target.role.domain_id
+}
+
+any_domain_id := input.target.token.domain_id if {
+	input.target.token.domain_id
 }
 
 project_domain_matches_domain_scope if {
@@ -86,6 +70,6 @@ project_domain_matches_domain_scope if {
 }
 
 domain_matches_domain_scope if {
-	input.target.domain_id != null
-	input.target.domain_id = input.credentials.domain_id
+	any_domain_id != null
+	any_domain_id = input.credentials.domain_id
 }

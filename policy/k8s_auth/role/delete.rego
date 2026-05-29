@@ -5,7 +5,13 @@ package identity.k8s_auth.role.delete
 import data.identity
 
 # Delete k8s auth role.
-
+#
+# The `input.target.role` is the stored role object (K8sAuthRole):
+#   domain_id:    string        domain ID
+#   id:           string        role ID
+#
+# The `input.existing` is null
+#
 default allow := false
 
 allow if {

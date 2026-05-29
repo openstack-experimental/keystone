@@ -4,6 +4,16 @@ package identity.group.delete
 
 import data.identity
 
+# Delete identity group.
+#
+# The `input.target.group` is the stored group object:
+#   domain_id:    string            Group domain ID.
+#   description:  string (optional)  Group description.
+#   id:           string            Group ID.
+#   name:         string            Group name.
+#
+# The `input.existing` is null
+#
 default allow := false
 
 allow if {

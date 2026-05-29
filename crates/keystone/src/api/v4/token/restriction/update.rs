@@ -19,6 +19,7 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
+use serde_json::json;
 use validator::Validate;
 
 use crate::api::auth::Auth;
@@ -60,20 +61,21 @@ pub(super) async fn update(
     Json(req): Json<TokenRestrictionUpdateRequest>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
     req.validate()?;
-    // Fetch the current resource to pass current object into the policy evaluation
+    // Fetch the current resource to pass it as existing object into the policy evaluation
     let current = state
         .provider
         .get_token_provider()
         .get_token_restriction(&state, &id, false)
         .await?;
+    let existing_restriction = current.as_ref().map(|c| json!({"restriction": c}));
 
     state
         .policy_enforcer
         .enforce(
-            "identity/token_restriction/update",
+            "identity/token/token_restriction/update",
             &user_auth,
-            serde_json::to_value(&current)?,
-            Some(serde_json::to_value(&req.restriction)?),
+            json!({"restriction": req.restriction}),
+            existing_restriction,
         )
         .await?;
 

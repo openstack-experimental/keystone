@@ -18,6 +18,7 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
+use serde_json::json;
 
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
@@ -59,7 +60,7 @@ pub(super) async fn remove_nested(
         .enforce(
             "identity/k8s_auth/role/delete",
             &user_auth,
-            serde_json::to_value(&current)?,
+            json!({"role": current}),
             None,
         )
         .await?;
@@ -115,7 +116,7 @@ pub(super) async fn remove(
         .enforce(
             "identity/k8s_auth/role/delete",
             &user_auth,
-            serde_json::to_value(&current)?,
+            json!({"role": current}),
             None,
         )
         .await?;

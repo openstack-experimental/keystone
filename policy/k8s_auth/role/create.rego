@@ -4,12 +4,21 @@ package identity.k8s_auth.role.create
 
 import data.identity
 
-# # Create k8s auth role.
-
-# # Input:
-# * input.target.instance - auth_instance object
-# * input.target.role - auth_role object
-
+# Create k8s auth role.
+#
+# The `input.target.instance` is the instance context:
+#   domain_id:    string        domain ID
+#
+# The `input.target.role` is the new role object (K8sAuthRoleCreate):
+#   bound_audience:                string (optional)  Optional Audience claim to verify in the JWT.
+#   bound_service_account_names:   array              List of service account names able to access this role.
+#   bound_service_account_namespaces: array            List of namespaces allowed to access this role.
+#   enabled:                       bool              If the role is enabled.
+#   name:                          string            K8s auth role name.
+#   token_restriction_id:           string            A token restriction ID.
+#
+# The `input.existing` is null
+#
 default allow := false
 
 own_instance if {

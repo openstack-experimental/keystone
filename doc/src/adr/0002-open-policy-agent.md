@@ -42,3 +42,107 @@ Engine.
 
 - When covering existing functionality of the python Keystone policies SHOULD be
   converted as is and do not introduce a changed flow.
+
+## Standardized Policy Input Structure
+
+The `PolicyEnforcer` interface is standardized with the following signature:
+
+```rust
+async fn enforce(
+    &self,
+    policy_name: &'static str,
+    credentials: &ValidatedSecurityContext,
+    target: Value,
+    existing: Option<Value>,
+) -> Result<PolicyEvaluationResult, PolicyError>;
+```
+
+The OPA input document structure is:
+
+```json
+{
+  "credentials": { "user_id": "...", "roles": [...], "domain_id": "...", ... },
+  "target": {
+    "<resource>": <object or null>
+  },
+  "existing": {
+    "<resource>": <object or null>
+  }
+}
+```
+
+The `<resource>` key matches the REST resource type: `user`, `group`, `role`,
+`project`, `instance`, `idp`, `mapping`, `restriction`, `assignment`, etc.
+This prevents field name collisions between policies and ensures each resource's
+data is properly isolated.
+
+### Field Semantics Per Operation
+
+The `<resource>` key matches the REST resource type:
+- `user`, `group`, `role`, `project`, `instance`, `idp`, `mapping`, `restriction`, `assignment`, etc.
+- This isolates data and prevents field name collisions between different resource schemas.
+
+Policies read fields as `input.target.user.domain_id`,
+`input.existing.restriction.user_id`, `input.target.instance.name`, etc.
+
+Examples:
+- Create user: `{"target": {"user": request_payload}}`
+- Update restriction: `{"target": {"restriction": patch}, "existing": {"restriction": stored}}`
+- Show group: `{"target": {"group": stored_object}}`
+- List instances: `{"target": {"instance": query_params}}`
+
+### Implementation Details
+
+The handler-side contract for `enforce()`:
+
+- **Create**: Pass `serde_json::to_value(request_object)?` as target, `None` as
+  existing
+- **Update**: Pass `serde_json::to_value(patch)?` as target,
+  `Option::from(stored_object).map(serde_json::to_value)` as existing
+- **Show**: Pass `serde_json::to_value(stored_object)?` as target, `None` as
+  existing
+- **Delete**: Pass `serde_json::to_value(stored_object)?` as target, `None` as
+  existing
+- **List**: Pass `serde_json::to_value(query_params)?` as target, `None` as
+  existing
+
+### Policy Evaluation Guidelines
+
+Ownership predicates that need to work across create/show/delete/update should
+resolve the `domain_id` from either target or existing:
+
+```rego
+# Resolve domain_id from target or existing depending on operation
+resource_domain_id := input.target.domain_id if {
+    input.target.domain_id
+}
+resource_domain_id := input.existing.domain_id if {
+    input.existing.domain_id
+}
+
+own_resource if {
+    resource_domain_id != null
+    resource_domain_id == input.credentials.domain_id
+}
+```
+
+Validation rules (checking user-provided data for referential integrity, e.g.,
+that domain/project/role IDs exist) should read from `input.target` for both
+create and update operations, as `target` carries the user's request in both
+cases.
+
+### Notes
+
+- The `input.existing` field is `Value::Null` when passed as `None` from the
+  handler, not an absent key. Policies can check `input.existing == null`.
+
+- The `input.target` field is never `null` except deliberately (e.g., when no
+  target object is relevant). For operations where the object is the existing
+  stored resource, `target` carries that object.
+
+- Policy tests (`*_test.rego`) should use the same input structure as handlers:
+  - Create tests: `"target": { "binding": { ... } }`
+  - Update tests:
+    `"target": { "binding": { ... } }, "existing": { "binding": { ... } }`
+  - Show/Delete tests: `"target": { "binding": { ... } }`
+

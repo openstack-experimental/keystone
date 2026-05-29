@@ -18,6 +18,7 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
+use serde_json::json;
 
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
@@ -63,7 +64,7 @@ pub(super) async fn remove(
         .enforce(
             "identity/k8s_auth/instance/delete",
             &user_auth,
-            serde_json::to_value(&current)?,
+            json!({"instance": current}),
             None,
         )
         .await?;

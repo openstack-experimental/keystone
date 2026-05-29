@@ -18,6 +18,7 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
+use serde_json::json;
 
 use super::types::{User, UserResponse};
 use crate::api::auth::Auth;
@@ -53,7 +54,7 @@ pub(super) async fn show(
         .enforce(
             "identity/user/show",
             &user_auth,
-            serde_json::to_value(&current)?,
+            json!({"user": current}),
             None,
         )
         .await?;

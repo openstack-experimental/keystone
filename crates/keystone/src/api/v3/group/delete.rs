@@ -16,6 +16,7 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
+use serde_json::json;
 
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
@@ -50,7 +51,7 @@ pub async fn delete(
         .enforce(
             "identity/group/delete",
             &user_auth,
-            serde_json::to_value(&current)?,
+            json!({"group": current}),
             None,
         )
         .await?;

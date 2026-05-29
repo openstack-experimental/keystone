@@ -18,6 +18,7 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
+use serde_json::json;
 use validator::Validate;
 
 use super::types::{User, UserList, UserListParameters};
@@ -50,7 +51,7 @@ pub(super) async fn list(
         .enforce(
             "identity/user/list",
             &user_auth,
-            serde_json::to_value(&query)?,
+            json!({"user": query}),
             None,
         )
         .await?;

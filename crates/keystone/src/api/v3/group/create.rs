@@ -12,6 +12,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 use axum::{Json, debug_handler, extract::State, http::StatusCode, response::IntoResponse};
+use serde_json::json;
 use validator::Validate;
 
 use super::types::{Group, GroupCreateRequest, GroupResponse};
@@ -42,7 +43,7 @@ pub async fn create(
         .enforce(
             "identity/group/create",
             &user_auth,
-            serde_json::to_value(&req.group)?,
+            json!({"group": req.group}),
             None,
         )
         .await?;

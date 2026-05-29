@@ -1,11 +1,18 @@
 # METADATA
 # description: Policy for listing token restrictions
-package identity.token_restriction.list
+package identity.token.token_restriction.list
 
-import data.identity
+import data.identity.token
 
-# List token restriction.
-
+# List token restrictions.
+#
+# The `input.target.restriction` contains query parameters (TokenRestrictionListParameters):
+#   domain_id:    string (optional)  Domain id.
+#   user_id:      string (optional)  User id.
+#   project_id:   string (optional)  Project id.
+#
+# The `input.existing` is null
+#
 default allow := false
 
 allow if {
@@ -18,10 +25,10 @@ allow if {
 
 allow if {
 	"member" in input.credentials.roles
-	identity.own_token_restriction
+	token.own_token_restriction
 }
 
 violation contains {"field": "domain_id", "msg": "showing token restrictions requires `admin` role."} if {
-	identity.foreign_token_restriction
+	token.foreign_token_restriction
 	not "admin" in input.credentials.roles
 }

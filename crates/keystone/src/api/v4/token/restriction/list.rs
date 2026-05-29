@@ -19,7 +19,7 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
-use serde_json::to_value;
+use serde_json::json;
 
 use openstack_keystone_core_types::token::TokenRestrictionListParameters as ProviderTokenRestrictionListParameters;
 
@@ -60,9 +60,9 @@ pub(super) async fn list(
     state
         .policy_enforcer
         .enforce(
-            "identity/token_restriction/list",
+            "identity/token/token_restriction/list",
             &user_auth,
-            to_value(&query)?,
+            json!({"restriction": query}),
             None,
         )
         .await?;

@@ -14,6 +14,7 @@
 
 //! K8s auth instance: create.
 use axum::{Json, debug_handler, extract::State, http::StatusCode, response::IntoResponse};
+use serde_json::json;
 use validator::Validate;
 
 use openstack_keystone_api_types::k8s_auth::{
@@ -56,7 +57,7 @@ pub(super) async fn create(
         .enforce(
             "identity/k8s_auth/instance/create",
             &user_auth,
-            serde_json::to_value(&req.instance)?,
+            json!({"instance": req.instance}),
             None,
         )
         .await?;

@@ -17,6 +17,7 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
+use serde_json::json;
 use validator::Validate;
 
 use super::types::{RoleCreateRequest, RoleResponse};
@@ -50,7 +51,7 @@ pub(super) async fn create(
         .enforce(
             "identity/role/create",
             &user_auth,
-            serde_json::to_value(&payload.role)?,
+            json!({"role": payload.role}),
             None,
         )
         .await?;

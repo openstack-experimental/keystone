@@ -19,6 +19,7 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
+use serde_json::json;
 use validator::Validate;
 
 use crate::api::auth::Auth;
@@ -66,10 +67,10 @@ pub(super) async fn update(
     state
         .policy_enforcer
         .enforce(
-            "identity/identity_provider_update",
+            "identity/federation/identity_provider/update",
             &user_auth,
-            serde_json::to_value(&current)?,
-            Some(serde_json::to_value(&req.identity_provider)?),
+            json!({"identity_provider": current}),
+            Some(json!({"identity_provider": req.identity_provider})),
         )
         .await?;
 

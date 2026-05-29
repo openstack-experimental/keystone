@@ -17,6 +17,7 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
+use serde_json::json;
 use validator::Validate;
 
 use super::types::{Group, GroupList, GroupListParameters};
@@ -48,7 +49,7 @@ pub async fn list(
         .enforce(
             "identity/group/list",
             &user_auth,
-            serde_json::to_value(&query)?,
+            json!({"group": query}),
             None,
         )
         .await?;

@@ -17,6 +17,7 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
+use serde_json::json;
 
 use super::types::{Group, GroupResponse};
 use crate::api::auth::Auth;
@@ -51,7 +52,7 @@ pub async fn show(
         .enforce(
             "identity/group/show",
             &user_auth,
-            serde_json::to_value(&current)?,
+            json!({"group": current}),
             None,
         )
         .await?;

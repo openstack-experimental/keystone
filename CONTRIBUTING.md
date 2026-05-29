@@ -36,7 +36,11 @@ Here are some important resources:
   the error propagation.
 - **Async/Await**: The project is heavily asynchronous, built on top of `tokio`.
 - **Policy Enforcement**: Uses Open Policy Agent (OPA) logic, with `.rego` files
-  located in the `policy/` directory.
+  located in the `policy/` directory. The policy name passed to
+  `state.policy_enforcer.enforce()` corresponds to the policy's `package`
+  identifier with dots replaced by slashes. Policy documentation must include
+  the original Rust structure name (e.g., `UserCreate`) to facilitate future
+  updates.
 - Pass by reference when receiver is not supposed to take ownership.
 - Code should be reasonably commented.
 
@@ -81,6 +85,14 @@ Here are some important resources:
   - for authentication handlers:
     - at least one successful unittest.
 - Policy Enforcement rules (`state.policy_enforcement.enforce`):
+  - The policy name corresponds to the Rego `package` identifier (e.g.,
+    `identity.user.show` is found in `policy/identity/user/show.rego`) and
+    invoked from the API handler as `identity/user/show`.
+  - Input structures follow ADR-0002:
+    - Create: `input.target` = payload, `input.existing` = `null`.
+    - Update: `input.target` = patch, `input.existing` = stored resource.
+    - Show/Delete: `input.target` = stored resource, `input.existing` = `null`.
+    - List: `input.target` = query parameters, `input.existing` = `null`.
   - For create operation the new object is passed to enforcer before the
     creation.
   - For remove operation first the current state is fetched, it is then passed

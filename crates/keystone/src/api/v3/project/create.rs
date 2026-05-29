@@ -17,6 +17,7 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
+use serde_json::json;
 use validator::Validate;
 
 use super::types::{ProjectCreateRequest, ProjectResponse};
@@ -53,7 +54,7 @@ pub(super) async fn create(
         .enforce(
             "identity/project/create",
             &user_auth,
-            serde_json::to_value(&payload.project)?,
+            json!({"project": payload.project}),
             None,
         )
         .await?;

@@ -4,6 +4,13 @@ package identity.auth.project.list
 
 import data.identity
 
+# List projects the authentication have access to.
+#
+# The `input.target.project` contains query parameters (ProjectListParameters):
+#   (none)
+#
+# The `input.existing` is null
+#
 default allow := false
 
 allow if {

@@ -4,6 +4,15 @@ package identity.user.list
 
 import data.identity
 
+# List users.
+#
+# The `input.target.user` contains query parameters:
+#   domain_id: string (optional)  Filter users by Domain ID.
+#   name:      string (optional)  Filter users by Name.
+#   unique_id: string (optional)  Filter users by the federated unique ID.
+#
+# The `input.existing` is null
+#
 default allow := false
 
 allow if {

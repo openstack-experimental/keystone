@@ -19,6 +19,7 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
+use serde_json::json;
 
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
@@ -68,9 +69,9 @@ pub(super) async fn show(
     state
         .policy_enforcer
         .enforce(
-            "identity/mapping_show",
+            "identity/federation/mapping/show",
             &user_auth,
-            serde_json::to_value(&current)?,
+            json!({"mapping": current}),
             None,
         )
         .await?;

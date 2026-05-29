@@ -5,6 +5,13 @@ package identity.role.list
 
 import data.identity
 
+# List roles.
+#
+# The `input.target.role` contains query parameters:
+#   domain_id:    string|null   domain ID for filtering
+#
+# The `input.existing` is null
+#
 default allow := false
 
 # METADATA

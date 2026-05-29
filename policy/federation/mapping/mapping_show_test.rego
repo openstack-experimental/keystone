@@ -1,15 +1,15 @@
 package test_mapping_show
 
-import data.identity.mapping_show
+import data.identity.federation.mapping.show
 
 test_allowed if {
-	mapping_show.allow with input as {"credentials": {"roles": ["admin"]}}
-	mapping_show.allow with input as {"credentials": {"roles": ["reader"], "domain_id": "domain"}, "target": {"domain_id": "domain"}}
-	mapping_show.allow with input as {"credentials": {"roles": ["reader"]}, "target": {"domain_id": null}}
+	show.allow with input as {"credentials": {"roles": ["admin"]}}
+	show.allow with input as {"credentials": {"roles": ["reader"], "domain_id": "domain"}, "target": {"mapping": {"domain_id": "domain"}}}
+	show.allow with input as {"credentials": {"roles": ["reader"]}, "target": {"mapping": {"domain_id": null}}}
 }
 
 test_forbidden if {
-	not mapping_show.allow with input as {"credentials": {"roles": []}}
-	not mapping_show.allow with input as {"credentials": {"roles": ["reader"], "domain_id": "domain"}, "target": {"domain_id": "other_domain"}}
-	not mapping_show.allow with input as {"credentials": {"roles": ["member"], "domain_id": "domain"}, "target": {"domain_id": "other_domain"}}
+	not show.allow with input as {"credentials": {"roles": []}}
+	not show.allow with input as {"credentials": {"roles": ["reader"], "domain_id": "domain"}, "target": {"mapping": {"domain_id": "other_domain"}}}
+	not show.allow with input as {"credentials": {"roles": ["member"], "domain_id": "domain"}, "target": {"mapping": {"domain_id": "other_domain"}}}
 }

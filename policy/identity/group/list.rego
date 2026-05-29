@@ -4,6 +4,14 @@ package identity.group.list
 
 import data.identity
 
+# List identity groups.
+#
+# The `input.target.group` contains query parameters:
+#   domain_id: string (optional)  Filter users by Domain ID.
+#   name:      string (optional)  Filter users by Name.
+#
+# The `input.existing` is null
+#
 default allow := false
 
 allow if {

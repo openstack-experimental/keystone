@@ -19,7 +19,7 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
-use serde_json::to_value;
+use serde_json::json;
 use validator::Validate;
 
 use openstack_keystone_api_types::k8s_auth::*;
@@ -60,7 +60,7 @@ pub(super) async fn list(
         .enforce(
             "identity/k8s_auth/instance/list",
             &user_auth,
-            to_value(&query)?,
+            json!({"instance": query}),
             None,
         )
         .await?;

@@ -5,7 +5,13 @@ package identity.k8s_auth.instance.delete
 import data.identity
 
 # Delete k8s auth instance.
-
+#
+# The `input.target.instance` is the stored instance object (K8sAuthInstance):
+#   domain_id:    string        domain ID
+#   id:           string        instance ID
+#
+# The `input.existing` is null
+#
 default allow := false
 
 allow if {

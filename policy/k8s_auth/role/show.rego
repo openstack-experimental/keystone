@@ -5,7 +5,20 @@ package identity.k8s_auth.role.show
 import data.identity
 
 # Show k8s auth role.
-
+#
+# The `input.target.role` is the stored role object (K8sAuthRole):
+#   auth_instance_id:                string            ID of the K8s auth instance this role belongs to.
+#   bound_audience:                  string (optional)  Optional Audience claim to verify in the JWT.
+#   bound_service_account_names:     array              List of service account names able to access this role.
+#   bound_service_account_namespaces: array              List of namespaces allowed to access this role.
+#   domain_id:                       string            Domain ID owning the K8s auth role configuration.
+#   enabled:                         bool              If the role is enabled.
+#   id:                              string            K8s auth role ID.
+#   name:                            string            K8s auth role name.
+#   token_restriction_id:             string            A token restriction ID.
+#
+# The `input.existing` is null
+#
 default allow := false
 
 allow if {
@@ -13,7 +26,7 @@ allow if {
 }
 
 allow if {
-	identity.own_idp
+	identity.own_target
 	"reader" in input.credentials.roles
 }
 

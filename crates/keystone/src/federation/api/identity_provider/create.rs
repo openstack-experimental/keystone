@@ -14,6 +14,7 @@
 
 //! Identity providers: create IDP.
 use axum::{Json, debug_handler, extract::State, http::StatusCode, response::IntoResponse};
+use serde_json::json;
 use validator::Validate;
 
 use crate::api::auth::Auth;
@@ -53,9 +54,9 @@ pub(super) async fn create(
     state
         .policy_enforcer
         .enforce(
-            "identity/identity_provider_create",
+            "identity/federation/identity_provider/create",
             &user_auth,
-            serde_json::to_value(&req.identity_provider)?,
+            json!({"identity_provider": req.identity_provider}),
             None,
         )
         .await?;
