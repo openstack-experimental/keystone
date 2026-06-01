@@ -91,18 +91,18 @@ Here are some important resources:
   - Input structures follow ADR-0002:
     - Create: `input.target` = payload, `input.existing` = `null`.
     - Update: `input.target` = patch, `input.existing` = stored resource.
-    - Show/Delete: `input.target` = stored resource, `input.existing` = `null`.
+    - Show/Delete: `input.target` = `null`, `input.existing` = stored resource.
     - List: `input.target` = query parameters, `input.existing` = `null`.
-  - For create operation the new object is passed to enforcer before the
-    creation.
-  - For remove operation first the current state is fetched, it is then passed
-    to the policy enforcer followed by the real deletion.
-  - For list operation query parameters are passed to the enforcer before
+- For create operation the new object is passed to enforcer as `target` before the
+     creation.
+  - For remove operation first the current state is fetched, it is then passed to the
+    policy enforcer as `existing` followed by the real deletion.
+  - For list operation query parameters are passed to the enforcer as `target` before
     listing.
-  - For show operation current state is fetched and passed to the enforcer
+  - For show operation current state is fetched and passed to the enforcer as `existing`
     before returning the result.
   - For update operation current resource state and new state are passed to the
-    enforcer.
+    enforcer as `existing` and `target` respectively.
 
 ## Spec documents
 

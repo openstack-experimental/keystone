@@ -210,6 +210,24 @@ pub struct ProjectShortList {
     pub projects: Vec<ProjectShort>,
 }
 
+/// Project list parameters.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::IntoParams))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
+pub struct ProjectListParameters {
+    /// Filter projects by domain ID.
+    #[cfg_attr(feature = "validate", validate(length(max = 64)))]
+    pub domain_id: Option<String>,
+
+    /// Filter projects by the `id` attribute.
+    #[cfg_attr(feature = "validate", validate(length(min = 1, max = 64)))]
+    pub ids: Option<String>,
+
+    /// Filter projects by name.
+    #[cfg_attr(feature = "validate", validate(length(max = 255)))]
+    pub name: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     #[cfg(feature = "builder")]

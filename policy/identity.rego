@@ -36,6 +36,8 @@ foreign_target if {
 
 # Collect domain_id from any known wrapped resource key.
 # Used by own_target / foreign_target / domain_matches_domain_scope.
+# For create/list/update: resource is in input.target.
+# For show/delete: resource is in input.existing.
 any_domain_id := input.target.instance.domain_id if {
 	input.target.instance.domain_id
 }
@@ -62,6 +64,42 @@ any_domain_id := input.target.role.domain_id if {
 
 any_domain_id := input.target.token.domain_id if {
 	input.target.token.domain_id
+}
+
+any_domain_id := input.target.domain.id if {
+	input.target.domain.id
+}
+
+any_domain_id := input.existing.instance.domain_id if {
+	input.existing.instance.domain_id
+}
+
+any_domain_id := input.existing.user.domain_id if {
+	input.existing.user.domain_id
+}
+
+any_domain_id := input.existing.group.domain_id if {
+	input.existing.group.domain_id
+}
+
+any_domain_id := input.existing.restriction.domain_id if {
+	input.existing.restriction.domain_id
+}
+
+any_domain_id := input.existing.project.domain_id if {
+	input.existing.project.domain_id
+}
+
+any_domain_id := input.existing.role.domain_id if {
+	input.existing.role.domain_id
+}
+
+any_domain_id := input.existing.token.domain_id if {
+	input.existing.token.domain_id
+}
+
+any_domain_id := input.existing.domain.id if {
+	input.existing.domain.id
 }
 
 project_domain_matches_domain_scope if {

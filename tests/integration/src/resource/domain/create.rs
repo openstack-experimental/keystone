@@ -11,30 +11,27 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+//! Test domain creation.
 
 use eyre::Result;
-use reqwest::header::HeaderValue;
-use secrecy::{ExposeSecret, SecretString};
+use tracing_test::traced_test;
 
-mod password;
-mod revoke;
-#[allow(clippy::module_inception)]
-mod token;
-mod validate;
+use crate::common::get_state;
 
-use crate::common::*;
+#[traced_test]
+#[tokio::test]
+async fn test_create() -> Result<()> {
+    let (state, _tmp) = get_state().await?;
+    let name = uuid::Uuid::new_v4().to_string();
+    let domain = crate::resource::create_domain(
+        &state,
+        openstack_keystone_core_types::resource::DomainCreateBuilder::default()
+            .name(&name)
+            .build()?,
+    )
+    .await?;
 
-/// Perform token check request.
-pub async fn check_token(
-    tc: &TestClient,
-    subject_token: &SecretString,
-) -> Result<reqwest::Response> {
-    let mut hdr = HeaderValue::from_str(subject_token.expose_secret())?;
-    hdr.set_sensitive(true);
-    Ok(tc
-        .client
-        .get(tc.base_url.join("v3/auth/tokens")?)
-        .header("x-subject-token", hdr)
-        .send()
-        .await?)
+    assert_eq!(name, domain.name);
+    assert!(domain.enabled);
+    Ok(())
 }

@@ -19,6 +19,8 @@ use crate::keystone::ServiceState;
 
 mod create;
 mod delete;
+mod list;
+mod show;
 pub mod types;
 
 /// OpenApi specification for the project API.
@@ -47,4 +49,6 @@ pub(crate) fn openapi_router() -> OpenApiRouter<ServiceState> {
     OpenApiRouter::new()
         .routes(routes!(create::create))
         .routes(routes!(delete::remove))
+        .routes(routes!(list::list))
+        .routes(routes!(show::show))
 }

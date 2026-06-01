@@ -11,4 +11,73 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+//! Shared helpers for project and domain CRUD tests.
+use std::sync::Arc;
+
+use derive_builder::Builder;
+use eyre::Result;
+use openstack_sdk::config::CloudConfig;
+use secrecy::ExposeSecret;
+use serde::de::DeserializeOwned;
+
+use openstack_sdk::AsyncOpenStack;
+use openstack_sdk::api::QueryAsync;
+use openstack_sdk::api::rest_endpoint_prelude::*;
+
+use crate::common::get_password_auth;
+use openstack_keystone_api_types::scope::Domain as ScopeDomain;
+use openstack_keystone_api_types::scope::Scope;
+use openstack_keystone_api_types::scope::System;
+use openstack_keystone_api_types::v3::domain::*;
+use openstack_keystone_api_types::v3::project::*;
+
+use crate::common::*;
+use crate::guard::DeletableResource;
+use crate::resource::domain as domain_api;
+use crate::resource::project as project_api;
+
+pub mod domain;
 pub mod project;
+
+fn get_system_scope_config() -> Result<CloudConfig> {
+    let mut cfg = CloudConfig::from_env()?;
+    if let Some(ref mut auth) = cfg.auth {
+        auth.project_id = None;
+        auth.project_name = None;
+        auth.domain_id = None;
+        auth.domain_name = None;
+        auth.system_scope = Some("all".into());
+    }
+    Ok(cfg)
+}
+
+//
+// /// Rescope the client to the given domain.
+// pub async fn auth_domain(tc: &mut TestClient, domain_id: &str) -> Result<()> {
+//     tc.rescope(Some(Scope::Domain(ScopeDomain {
+//         id: Some(domain_id.to_string()),
+//         name: None,
+//     })))
+//     .await?;
+//     Ok(())
+// }
+//
+// /// Create a test domain with the current client.
+// pub async fn create_test_domain(tc: &TestClient) -> Result<Domain> {
+//     let name = format!("test-domain-{}", uuid::Uuid::new_v4());
+//     let domain = DomainCreateBuilder::default().name(&name).build()?;
+//     domain_api::create_domain(tc, domain).await
+// }
+//
+// /// Create a test domain + project, returning (domain, project) for explicit cleanup.
+// pub async fn create_test_project(tc: &TestClient) -> Result<(Domain, Project)> {
+//     let domain = create_test_domain(tc).await?;
+//     let mut domain_tc = TestClient::default()?;
+//     auth_domain(&mut domain_tc, &domain.id).await?;
+//     let project = ProjectCreateBuilder::default()
+//         .name(format!("test-project-{}", uuid::Uuid::new_v4()))
+//         .domain_id(&domain.id)
+//         .build()?;
+//     let proj = project_api::create_project_scoped(&domain_tc, project).await?;
+//     Ok((domain, proj))
+// }

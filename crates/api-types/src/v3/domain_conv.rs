@@ -11,18 +11,17 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-//! Project API types.
+//! Domain API types conversions.
 
 use std::collections::HashSet;
 
 use openstack_keystone_core_types::resource as provider_types;
 
-use crate::v3::project as api_types;
+use crate::v3::domain as api_types;
 
-impl From<provider_types::Project> for api_types::ProjectShort {
-    fn from(value: provider_types::Project) -> Self {
+impl From<provider_types::Domain> for api_types::DomainShort {
+    fn from(value: provider_types::Domain) -> Self {
         Self {
-            domain_id: value.domain_id,
             enabled: value.enabled,
             id: value.id,
             name: value.name,
@@ -30,10 +29,9 @@ impl From<provider_types::Project> for api_types::ProjectShort {
     }
 }
 
-impl From<&provider_types::Project> for api_types::ProjectShort {
-    fn from(value: &provider_types::Project) -> Self {
+impl From<&provider_types::Domain> for api_types::DomainShort {
+    fn from(value: &provider_types::Domain) -> Self {
         Self {
-            domain_id: value.domain_id.clone(),
             enabled: value.enabled,
             id: value.id.clone(),
             name: value.name.clone(),
@@ -41,40 +39,33 @@ impl From<&provider_types::Project> for api_types::ProjectShort {
     }
 }
 
-impl From<provider_types::Project> for api_types::Project {
-    fn from(value: provider_types::Project) -> Self {
+impl From<provider_types::Domain> for api_types::Domain {
+    fn from(value: provider_types::Domain) -> Self {
         Self {
             description: value.description,
-            domain_id: value.domain_id,
             enabled: value.enabled,
             extra: value.extra,
             id: value.id,
-            is_domain: value.is_domain,
             name: value.name,
-            parent_id: value.parent_id,
         }
     }
 }
 
-impl From<api_types::ProjectCreate> for provider_types::ProjectCreate {
-    fn from(value: api_types::ProjectCreate) -> Self {
+impl From<api_types::DomainCreate> for provider_types::DomainCreate {
+    fn from(value: api_types::DomainCreate) -> Self {
         Self {
             description: value.description,
-            domain_id: value.domain_id,
             enabled: value.enabled,
             extra: value.extra,
-            id: None,
-            is_domain: value.is_domain,
+            id: value.id,
             name: value.name,
-            parent_id: value.parent_id,
         }
     }
 }
 
-impl From<api_types::ProjectListParameters> for provider_types::ProjectListParameters {
-    fn from(value: api_types::ProjectListParameters) -> Self {
+impl From<api_types::DomainListParameters> for provider_types::DomainListParameters {
+    fn from(value: api_types::DomainListParameters) -> Self {
         Self {
-            domain_id: value.domain_id,
             ids: value.ids.map(|s| HashSet::from([s])),
             name: value.name,
         }

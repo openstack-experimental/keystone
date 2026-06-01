@@ -11,7 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-//! # Delete project API
+//! # Delete domain API
 use axum::{
     extract::{Path, State},
     http::StatusCode,
@@ -24,19 +24,19 @@ use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
 use crate::resource::ResourceApi;
 
-/// Delete project by ID.
+/// Delete domain by ID.
 #[utoipa::path(
     delete,
-    path = "/{project_id}",
+    path = "/{domain_id}",
     params(),
     responses(
         (status = 204, description = "Deleted"),
-        (status = 404, description = "Project not found", example = json!(KeystoneApiError::NotFound(String::from("id = 1"))))
+        (status = 404, description = "Domain not found", example = json!(KeystoneApiError::NotFound(String::from("id = 1"))))
     ),
-    tag="projects"
+    tag="domains"
 )]
-#[tracing::instrument(name = "api::v3::project::delete", level = "debug", skip(state))]
-pub async fn remove(
+#[tracing::instrument(name = "api::v3::domain::delete", level = "debug", skip(state))]
+pub(super) async fn remove(
     Auth(user_auth): Auth,
     Path(id): Path<String>,
     State(state): State<ServiceState>,
@@ -44,29 +44,30 @@ pub async fn remove(
     let current = state
         .provider
         .get_resource_provider()
-        .get_project(&state, &id)
+        .get_domain(&state, &id)
         .await?;
 
     state
         .policy_enforcer
         .enforce(
-            "identity/resource/project/delete",
+            "identity/resource/domain/delete",
             &user_auth,
             serde_json::Value::Null,
-            Some(json!({"project": current})),
+            Some(json!({"domain": current})),
         )
         .await?;
+
     match current {
         Some(_) => {
             state
                 .provider
                 .get_resource_provider()
-                .delete_project(&state, &id)
+                .delete_domain(&state, &id)
                 .await?;
             Ok((StatusCode::NO_CONTENT).into_response())
         }
         _ => Err(KeystoneApiError::NotFound {
-            resource: "project".to_string(),
+            resource: "domain".to_string(),
             identifier: id.clone(),
         }),
     }
@@ -78,11 +79,11 @@ mod tests {
         body::Body,
         http::{Request, StatusCode},
     };
-    use tower::ServiceExt; // for `call`, `oneshot`, and `ready`
+    use tower::ServiceExt;
     use tower_http::trace::TraceLayer;
     use tracing_test::traced_test;
 
-    use openstack_keystone_core_types::resource as provider_types;
+    use openstack_keystone_core_types::resource::Domain as ProviderDomain;
 
     use super::super::openapi_router;
     use crate::api::tests::{get_mocked_state, test_fixture_scoped};
@@ -94,19 +95,20 @@ mod tests {
     async fn test_delete() {
         let mut provider = Provider::mocked_builder();
         let mut mock = MockResourceProvider::default();
-        mock.expect_get_project()
+        mock.expect_get_domain()
             .withf(|_, id: &'_ str| id == "foo")
             .returning(|_, _| Ok(None));
-        mock.expect_get_project()
+        mock.expect_get_domain()
             .withf(|_, id: &'_ str| id == "bar")
             .returning(|_, _| {
-                Ok(Some(provider_types::Project {
+                Ok(Some(ProviderDomain {
                     id: "id".into(),
-                    domain_id: "did".into(),
+                    enabled: true,
+                    name: "domain_name".into(),
                     ..Default::default()
                 }))
             });
-        mock.expect_delete_project()
+        mock.expect_delete_domain()
             .withf(|_, id: &'_ str| id == "bar")
             .returning(|_, _| Ok(()));
 
@@ -153,7 +155,7 @@ mod tests {
     async fn test_delete_not_found_not_allowed() {
         let mut provider = Provider::mocked_builder();
         let mut mock = MockResourceProvider::default();
-        mock.expect_get_project()
+        mock.expect_get_domain()
             .withf(|_, id: &'_ str| id == "foo")
             .returning(|_, _| Ok(None));
 

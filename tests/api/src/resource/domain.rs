@@ -12,38 +12,40 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 use std::borrow::Cow;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use eyre::Result;
 use uuid::Uuid;
 
-use openstack_keystone_api_types::v3::project::*;
+use openstack_keystone_api_types::v3::domain::*;
+use openstack_sdk::api::QueryAsync;
 use openstack_sdk::api::rest_endpoint_prelude::*;
-use openstack_sdk::{AsyncOpenStack, api::QueryAsync};
 
 use crate::common::*;
 use crate::guard::*;
-use crate::resource::domain::create_test_domain;
 use crate::resource::*;
 
-/// Create request for project
+/// Create request for domain
+#[derive(Builder)]
+#[builder(setter(strip_option, into))]
 #[derive(Clone, Debug)]
-struct ProjectCreateRequest {
-    project: ProjectCreate,
+struct DomainCreateRequest {
+    domain: DomainCreate,
 }
 
-impl RestEndpoint for ProjectCreateRequest {
+impl RestEndpoint for DomainCreateRequest {
     fn method(&self) -> http::Method {
         http::Method::POST
     }
 
     fn endpoint(&self) -> Cow<'static, str> {
-        "projects".to_string().into()
+        "domains".to_string().into()
     }
 
     fn body(&self) -> Result<Option<(&'static str, Vec<u8>)>, BodyError> {
         let mut params = JsonBodyParams::default();
-        params.push("project", serde_json::to_value(&self.project)?);
+        params.push("domain", serde_json::to_value(&self.domain)?);
         params.into_body()
     }
 
@@ -52,7 +54,7 @@ impl RestEndpoint for ProjectCreateRequest {
     }
 
     fn response_key(&self) -> Option<Cow<'static, str>> {
-        Some("project".into())
+        Some("domain".into())
     }
 
     /// Returns required API version
@@ -61,29 +63,31 @@ impl RestEndpoint for ProjectCreateRequest {
     }
 }
 
-/// Create project (original API for AsyncOpenStack)
-pub async fn create_project(
+/// Create domain
+pub async fn create_domain(
     tc: &Arc<AsyncOpenStack>,
-    project: ProjectCreate,
-) -> Result<AsyncResourceGuard<Project>> {
-    let obj: Project = ProjectCreateRequest { project }
+    domain: DomainCreate,
+) -> Result<AsyncResourceGuard<Domain>> {
+    let obj: Domain = DomainCreateRequestBuilder::default()
+        .domain(domain)
+        .build()?
         .query_async(tc.as_ref())
         .await?;
     Ok(AsyncResourceGuard::new(obj, tc.clone()))
 }
 
-/// Create request for a project show
-struct ProjectShowRequest {
+/// Get request for a single domain
+struct DomainShowRequest {
     id: String,
 }
 
-impl RestEndpoint for ProjectShowRequest {
+impl RestEndpoint for DomainShowRequest {
     fn method(&self) -> http::Method {
         http::Method::GET
     }
 
     fn endpoint(&self) -> Cow<'static, str> {
-        format!("projects/{id}", id = self.id).into()
+        format!("domains/{id}", id = self.id).into()
     }
 
     fn service_type(&self) -> ServiceType {
@@ -91,7 +95,7 @@ impl RestEndpoint for ProjectShowRequest {
     }
 
     fn response_key(&self) -> Option<Cow<'static, str>> {
-        Some("project".into())
+        Some("domain".into())
     }
 
     /// Returns required API version
@@ -100,38 +104,34 @@ impl RestEndpoint for ProjectShowRequest {
     }
 }
 
-/// Get a single project by ID
-pub async fn get_project(tc: &Arc<AsyncOpenStack>, id: impl Into<String>) -> Result<Project> {
-    Ok(ProjectShowRequest { id: id.into() }
+/// Get a single domain by ID
+pub async fn get_domain(tc: &Arc<AsyncOpenStack>, id: impl Into<String>) -> Result<Option<Domain>> {
+    Ok(DomainShowRequest { id: id.into() }
         .query_async(tc.as_ref())
         .await?)
 }
 
-/// List request for projects
+/// List request for domains
 #[derive(Default)]
-pub struct ProjectListRequest {
-    /// Filter projects by domain ID.
-    pub domain_id: Option<String>,
-
-    /// Filter projects by the `id` attribute.
+pub struct DomainListRequest {
+    /// Filter domains by the `id` attribute.
     pub ids: Option<String>,
 
-    /// Filter projects by name.
+    /// Filter domains by the `name` attribute.
     pub name: Option<String>,
 }
 
-impl RestEndpoint for ProjectListRequest {
+impl RestEndpoint for DomainListRequest {
     fn method(&self) -> http::Method {
         http::Method::GET
     }
 
     fn endpoint(&self) -> Cow<'static, str> {
-        "projects".to_string().into()
+        "domains".to_string().into()
     }
 
     fn parameters(&self) -> QueryParams<'_> {
         let mut params = QueryParams::default();
-        params.push_opt("domain_id", self.domain_id.as_ref());
         params.push_opt("ids", self.ids.as_ref());
         params.push_opt("name", self.name.as_ref());
         params
@@ -142,7 +142,7 @@ impl RestEndpoint for ProjectListRequest {
     }
 
     fn response_key(&self) -> Option<Cow<'static, str>> {
-        Some("projects".into())
+        Some("domains".into())
     }
 
     /// Returns required API version
@@ -151,26 +151,26 @@ impl RestEndpoint for ProjectListRequest {
     }
 }
 
-/// List projects
-pub async fn list_projects(
+/// List domains
+pub async fn list_domains(
     tc: &Arc<AsyncOpenStack>,
-    params: ProjectListRequest,
-) -> Result<Vec<ProjectShort>> {
+    params: DomainListRequest,
+) -> Result<Vec<Domain>> {
     Ok(params.query_async(tc.as_ref()).await?)
 }
 
-/// Delete request for project
-struct ProjectDeleteRequest {
+/// Delete request for domain
+struct DomainDeleteRequest {
     id: String,
 }
 
-impl RestEndpoint for ProjectDeleteRequest {
+impl RestEndpoint for DomainDeleteRequest {
     fn method(&self) -> http::Method {
         http::Method::DELETE
     }
 
     fn endpoint(&self) -> Cow<'static, str> {
-        format!("projects/{id}", id = self.id).into()
+        format!("domains/{id}", id = self.id).into()
     }
 
     fn service_type(&self) -> ServiceType {
@@ -183,117 +183,113 @@ impl RestEndpoint for ProjectDeleteRequest {
     }
 }
 
-/// Delete a project
-pub async fn delete_project(tc: &Arc<AsyncOpenStack>, id: impl Into<String>) -> Result<()> {
-    Ok(
-        openstack_sdk::api::ignore(ProjectDeleteRequest { id: id.into() })
-            .query_async(tc.as_ref())
-            .await?,
-    )
-}
-
 #[async_trait::async_trait]
-impl DeletableResource for Project {
+impl DeletableResource for Domain {
     async fn delete(&self, state: &Arc<AsyncOpenStack>) -> Result<()> {
-        Ok(openstack_sdk::api::ignore(ProjectDeleteRequest {
-            id: self.id.clone(),
+        Ok(openstack_sdk::api::ignore(DomainDeleteRequest {
+            id: self.id.clone().into(),
         })
         .query_async(state.as_ref())
         .await?)
     }
 }
 
-#[tokio::test]
-async fn test_project_create() -> Result<()> {
-    let test_client = Arc::new(AsyncOpenStack::new(&get_system_scope_config()?).await?);
-    let domain = create_test_domain(&test_client).await?;
-    let project = create_project(
-        &test_client,
-        ProjectCreateBuilder::default()
+/// Delete a domain
+pub async fn delete_domain(tc: &Arc<AsyncOpenStack>, id: impl Into<String>) -> Result<()> {
+    Ok(
+        openstack_sdk::api::ignore(DomainDeleteRequest { id: id.into() })
+            .query_async(tc.as_ref())
+            .await?,
+    )
+}
+
+pub async fn create_test_domain(tc: &Arc<AsyncOpenStack>) -> Result<AsyncResourceGuard<Domain>> {
+    create_domain(
+        &tc,
+        DomainCreateBuilder::default()
             .name(Uuid::new_v4().to_string())
             .enabled(true)
-            .domain_id(domain.id.clone())
+            .build()?,
+    )
+    .await
+}
+
+#[tokio::test]
+async fn test_domain_create() -> Result<()> {
+    let test_client = Arc::new(AsyncOpenStack::new(&get_system_scope_config()?).await?);
+    let domain = create_domain(
+        &test_client,
+        DomainCreateBuilder::default()
+            .name(Uuid::new_v4().to_string())
+            .enabled(true)
             .build()?,
     )
     .await?;
-    assert!(!project.id.is_empty(), "project id should not be empty");
-    assert!(project.enabled, "project should be enabled by default");
-    assert_eq!(project.domain_id, domain.id);
-    project.delete().await?;
+    assert!(!domain.id.is_empty(), "domain id should not be empty");
+    assert!(domain.enabled, "domain should be enabled by default");
     domain.delete().await?;
     Ok(())
 }
 
 #[tokio::test]
-async fn test_project_show() -> Result<()> {
+async fn test_domain_show() -> Result<()> {
     let test_client = Arc::new(AsyncOpenStack::new(&get_system_scope_config()?).await?);
-    let domain = create_test_domain(&test_client).await?;
-    let project = create_project(
+    let domain = create_domain(
         &test_client,
-        ProjectCreateBuilder::default()
+        DomainCreateBuilder::default()
             .name(Uuid::new_v4().to_string())
             .enabled(true)
-            .domain_id(domain.id.clone())
             .build()?,
     )
     .await?;
-    let shown = get_project(&test_client, &project.id).await?;
-    assert_eq!(shown.id, project.id);
-    assert_eq!(shown.name, project.name);
-    assert_eq!(shown.domain_id, domain.id);
-    project.delete().await?;
+    let shown = get_domain(&test_client, &domain.id)
+        .await?
+        .expect("domain must be found");
+    assert_eq!(shown.id, domain.id);
+    assert_eq!(shown.name, domain.name);
     domain.delete().await?;
     Ok(())
 }
 
 #[tokio::test]
-async fn test_project_list() -> Result<()> {
+async fn test_domain_list() -> Result<()> {
     let test_client = Arc::new(AsyncOpenStack::new(&get_system_scope_config()?).await?);
-    let domain = create_test_domain(&test_client).await?;
-    let project = create_project(
+    let domain = create_domain(
         &test_client,
-        ProjectCreateBuilder::default()
+        DomainCreateBuilder::default()
             .name(Uuid::new_v4().to_string())
             .enabled(true)
-            .domain_id(domain.id.clone())
             .build()?,
     )
     .await?;
-    let mut tc = TestClient::default()?;
-    let params = ProjectListRequest {
-        domain_id: Some(domain.id.clone()),
-        ids: Some(project.id.clone()),
+    let params = DomainListRequest {
+        ids: Some(domain.id.clone()),
         name: None,
     };
-    let projects = list_projects(&test_client, params).await?;
+    let domains = list_domains(&test_client, params).await?;
     assert!(
-        !projects.is_empty(),
-        "project list should contain the created project"
+        !domains.is_empty(),
+        "domain list should contain the created domain"
     );
-    assert_eq!(projects[0].id, project.id);
-    project.delete().await?;
+    assert_eq!(domains[0].id, domain.id);
     domain.delete().await?;
     Ok(())
 }
 
 #[tokio::test]
-async fn test_project_delete() -> Result<()> {
+async fn test_domain_delete() -> Result<()> {
     let test_client = Arc::new(AsyncOpenStack::new(&get_system_scope_config()?).await?);
-    let domain = create_test_domain(&test_client).await?;
-    let project = create_project(
+    let domain = create_domain(
         &test_client,
-        ProjectCreateBuilder::default()
+        DomainCreateBuilder::default()
             .name(Uuid::new_v4().to_string())
             .enabled(true)
-            .domain_id(domain.id.clone())
             .build()?,
     )
     .await?;
-    delete_project(&test_client, &project.id).await?;
-    let result = get_project(&test_client, &project.id).await;
-    assert!(result.is_err(), "project should be deleted");
-
-    project.delete().await?;
+    delete_domain(&test_client, &domain.id).await?;
+    let result = get_domain(&test_client, &domain.id).await;
+    assert!(result.is_err(), "domain should be deleted");
     domain.delete().await?;
     Ok(())
 }

@@ -11,30 +11,24 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+//! Test project creation.
 
 use eyre::Result;
-use reqwest::header::HeaderValue;
-use secrecy::{ExposeSecret, SecretString};
+use tracing_test::traced_test;
 
-mod password;
-mod revoke;
-#[allow(clippy::module_inception)]
-mod token;
-mod validate;
+use crate::common::get_state;
+use crate::create_domain;
+use crate::create_project;
 
-use crate::common::*;
+#[traced_test]
+#[tokio::test]
+async fn test_create() -> Result<()> {
+    let (state, _tmp) = get_state().await?;
+    let domain = create_domain!(state)?;
+    let project = create_project!(state, domain.id.clone())?;
 
-/// Perform token check request.
-pub async fn check_token(
-    tc: &TestClient,
-    subject_token: &SecretString,
-) -> Result<reqwest::Response> {
-    let mut hdr = HeaderValue::from_str(subject_token.expose_secret())?;
-    hdr.set_sensitive(true);
-    Ok(tc
-        .client
-        .get(tc.base_url.join("v3/auth/tokens")?)
-        .header("x-subject-token", hdr)
-        .send()
-        .await?)
+    assert!(!project.name.is_empty());
+    assert_eq!(project.domain_id, domain.id);
+    assert!(project.enabled);
+    Ok(())
 }

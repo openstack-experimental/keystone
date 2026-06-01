@@ -11,7 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-//! # Create project API
+//! # Create domain API
 use axum::{
     extract::{Json, State},
     http::StatusCode,
@@ -20,31 +20,31 @@ use axum::{
 use serde_json::json;
 use validator::Validate;
 
-use super::types::{ProjectCreateRequest, ProjectResponse};
+use super::types::{DomainCreateRequest, DomainResponse};
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
 use crate::resource::ResourceApi;
 
-/// Create project.
+/// Create domain.
 ///
-/// Creates a project, where the project may act as a domain.
+/// Creates a domain, which is a container for projects and users.
 #[utoipa::path(
     post,
     path = "/",
-    request_body = ProjectCreateRequest,
+    request_body = DomainCreateRequest,
     responses(
-        (status = CREATED, description = "Project created", body = ProjectResponse),
+        (status = CREATED, description = "Domain created", body = DomainResponse),
         (status = 400, description = "Invalid input"),
         (status = 500, description = "Internal error")
     ),
-    tag="projects"
+    tag="domains"
 )]
-#[tracing::instrument(name = "api::v3::project_create", level = "debug", skip(state))]
+#[tracing::instrument(name = "api::v3::domain_create", level = "debug", skip(state))]
 pub(super) async fn create(
     Auth(user_auth): Auth,
     State(state): State<ServiceState>,
-    Json(payload): Json<ProjectCreateRequest>,
+    Json(payload): Json<DomainCreateRequest>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
     // Validate the request
     payload.validate()?;
@@ -52,25 +52,25 @@ pub(super) async fn create(
     state
         .policy_enforcer
         .enforce(
-            "identity/resource/project/create",
+            "identity/resource/domain/create",
             &user_auth,
-            json!({"project": payload.project}),
+            json!({"domain": payload.domain}),
             None,
         )
         .await?;
 
-    // Create the project
-    let created_project = state
+    // Create the domain
+    let created_domain = state
         .provider
         .get_resource_provider()
-        .create_project(&state, payload.project.into())
+        .create_domain(&state, payload.domain.into())
         .await?;
 
     // Return response with 201 CREATED status
     Ok((
         StatusCode::CREATED,
-        Json(ProjectResponse {
-            project: created_project.into(),
+        Json(DomainResponse {
+            domain: created_domain.into(),
         }),
     )
         .into_response())
@@ -82,16 +82,16 @@ mod tests {
         body::Body,
         http::{Request, StatusCode, header},
     };
-    use http_body_util::BodyExt; // for `collect`
-    use tower::ServiceExt; // for `call`, `oneshot`, and `ready`
+    use http_body_util::BodyExt;
+    use tower::ServiceExt;
     use tower_http::trace::TraceLayer;
     use tracing_test::traced_test;
 
-    use openstack_keystone_core_types::resource::Project as ProviderProject;
+    use openstack_keystone_core_types::resource::Domain as ProviderDomain;
 
     use super::super::openapi_router;
     use crate::api::tests::{get_mocked_state, test_fixture_scoped};
-    use crate::api::v3::project::types::*;
+    use crate::api::v3::domain::types::*;
     use crate::provider::Provider;
     use crate::resource::MockResourceProvider;
 
@@ -99,16 +99,13 @@ mod tests {
     #[tokio::test]
     async fn test_allowed() {
         let mut resource_mock = MockResourceProvider::default();
-        resource_mock.expect_create_project().returning(|_, _| {
-            Ok(ProviderProject {
-                description: Some("A new project".into()),
-                domain_id: "did".into(),
+        resource_mock.expect_create_domain().returning(|_, _| {
+            Ok(ProviderDomain {
+                description: Some("A new domain".into()),
                 enabled: true,
                 extra: std::collections::HashMap::new(),
-                id: "pid".into(),
-                is_domain: false,
-                name: "project_name".into(),
-                parent_id: Some("ppid".into()),
+                id: "did".into(),
+                name: "domain_name".into(),
             })
         });
 
@@ -120,12 +117,8 @@ mod tests {
             .layer(TraceLayer::new_for_http())
             .with_state(state.clone());
 
-        let req = ProjectCreateRequest {
-            project: ProjectCreateBuilder::default()
-                .name("name")
-                .domain_id("did")
-                .build()
-                .unwrap(),
+        let req = DomainCreateRequest {
+            domain: DomainCreateBuilder::default().name("name").build().unwrap(),
         };
 
         let response = api
@@ -146,19 +139,16 @@ mod tests {
 
         let body = response.into_body().collect().await.unwrap().to_bytes();
 
-        let res: ProjectResponse = serde_json::from_slice(&body).unwrap();
+        let res: DomainResponse = serde_json::from_slice(&body).unwrap();
         assert_eq!(
-            Project {
-                description: Some("A new project".into()),
-                domain_id: "did".into(),
+            Domain {
+                description: Some("A new domain".into()),
                 enabled: true,
                 extra: std::collections::HashMap::new(),
-                id: "pid".into(),
-                is_domain: false,
-                name: "project_name".into(),
-                parent_id: Some("ppid".into()),
+                id: "did".into(),
+                name: "domain_name".into(),
             },
-            res.project,
+            res.domain,
         );
     }
 
@@ -172,12 +162,8 @@ mod tests {
             .layer(TraceLayer::new_for_http())
             .with_state(state.clone());
 
-        let req = ProjectCreateRequest {
-            project: ProjectCreateBuilder::default()
-                .name("name")
-                .domain_id("did")
-                .build()
-                .unwrap(),
+        let req = DomainCreateRequest {
+            domain: DomainCreateBuilder::default().name("name").build().unwrap(),
         };
 
         let response = api

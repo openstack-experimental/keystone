@@ -22,7 +22,9 @@ use secrecy::{ExposeSecret, SecretString};
 use std::env;
 use url::Url;
 
-use openstack_keystone_api_types::scope::*;
+use openstack_keystone_api_types::scope::{
+    DomainBuilder, Scope, ScopeProjectBuilder, System as ScopeSystem,
+};
 use openstack_keystone_api_types::v3::auth::token::*;
 
 pub struct TestClient {
@@ -114,6 +116,32 @@ impl TestClient {
         Ok(new)
     }
 
+    #[expect(dead_code)]
+    pub async fn auth_admin_system(&mut self) -> Result<&mut Self> {
+        let new = self;
+        new.auth_password(
+            get_password_auth(
+                "admin",
+                env::var("OPENSTACK_ADMIN_PASSWORD").unwrap_or("password".to_string()),
+                "default",
+            )?,
+            Some(Scope::System(ScopeSystem { all: Some(true) })),
+        )
+        .await?;
+        Ok(new)
+    }
+
+    #[expect(dead_code)]
+    pub async fn auth_domain(&mut self, domain_id: &str) -> Result<&mut Self> {
+        let new = self;
+        new.rescope(Some(Scope::Domain(
+            DomainBuilder::default().id(domain_id).build()?,
+        )))
+        .await?;
+        Ok(new)
+    }
+
+    #[expect(dead_code)]
     pub async fn auth_token<S>(&mut self, token: S, scope: Option<Scope>) -> Result<&mut Self>
     where
         S: AsRef<str> + std::fmt::Display,

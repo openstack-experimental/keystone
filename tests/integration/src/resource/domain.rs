@@ -11,26 +11,8 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-//! # V3 API types
-pub mod auth;
-pub mod domain;
-pub mod group;
-pub mod project;
-pub mod role;
-pub mod role_assignment;
-pub mod user;
 
-#[cfg(feature = "conv")]
-mod auth_conv;
-#[cfg(feature = "conv")]
-mod domain_conv;
-#[cfg(feature = "conv")]
-mod group_conv;
-#[cfg(feature = "conv")]
-mod project_conv;
-#[cfg(feature = "conv")]
-mod role_assignment_conv;
-#[cfg(feature = "conv")]
-mod role_conv;
-#[cfg(feature = "conv")]
-mod user_conv;
+mod create;
+mod delete;
+mod get;
+mod list;

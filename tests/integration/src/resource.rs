@@ -12,6 +12,9 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+mod domain;
+mod project;
+
 use std::pin::Pin;
 use std::sync::Arc;
 

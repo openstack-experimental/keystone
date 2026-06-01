@@ -234,7 +234,11 @@ impl TryFrom<&ValidatedSecurityContext> for Credentials {
                     builder.project_id(project.id.clone());
                 }
                 ScopeInfo::System(system) => {
-                    builder.system(system.clone());
+                    if system == "system" {
+                        builder.system("all");
+                    } else {
+                        builder.system(system.clone());
+                    }
                 }
                 ScopeInfo::TrustProject(tpi) => {
                     builder.project_id(tpi.project.id.clone());
