@@ -37,6 +37,7 @@ extend-ignore-re = [
 [type.rust.extend-identifiers]
 flate2 = "flate2"
 wher = "wher"
+rule_ba = "rule_ba"
 
 [type.rust.extend-words]
 ro = "ro"

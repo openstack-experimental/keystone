@@ -29,6 +29,7 @@ use openstack_keystone_core_types::role::*;
 pub mod entity;
 mod implied_role;
 mod role;
+mod role_imply;
 
 #[derive(Default)]
 pub struct SqlBackend {}
@@ -115,6 +116,25 @@ impl RoleBackend for SqlBackend {
         Ok(role::create(&state.db, params).await?)
     }
 
+    /// Create a role imply rule.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `prior_role_id`: The ID of the prior role.
+    /// - `implied_role_id`: The ID of the implied role.
+    ///
+    /// # Returns
+    /// A `Result` containing the created `RoleImply`, or an `Error`.
+    #[tracing::instrument(level = "info", skip(self, state))]
+    async fn create_role_imply_rule<'a>(
+        &self,
+        state: &ServiceState,
+        prior_role_id: &'a str,
+        implied_role_id: &'a str,
+    ) -> Result<RoleImply, RoleProviderError> {
+        Ok(role_imply::create(&state.db, prior_role_id, implied_role_id).await?)
+    }
+
     /// Delete a role by the ID.
     ///
     /// # Parameters
@@ -131,22 +151,22 @@ impl RoleBackend for SqlBackend {
         Ok(role::delete(&state.db, id).await?)
     }
 
-    /// Get single role by ID.
+    /// Delete a role imply rule.
     ///
     /// # Parameters
     /// - `state`: The service state.
-    /// - `id`: The role ID.
+    /// - `prior_role_id`: The ID of the prior role.
+    /// - `implied_role_id`: The ID of the implied role.
     ///
     /// # Returns
-    /// A `Result` containing an `Option` with the `Role` if found, or an
-    /// `Error`.
-    #[tracing::instrument(level = "debug", skip(self, state))]
-    async fn get_role<'a>(
+    /// A `Result` indicating success or an `Error`.
+    async fn delete_role_imply_rule<'a>(
         &self,
         state: &ServiceState,
-        id: &'a str,
-    ) -> Result<Option<Role>, RoleProviderError> {
-        Ok(role::get(&state.db, id).await?)
+        prior_role_id: &'a str,
+        implied_role_id: &'a str,
+    ) -> Result<(), RoleProviderError> {
+        Ok(role_imply::delete(&state.db, prior_role_id, implied_role_id).await?)
     }
 
     /// Expand implied roles.
@@ -168,6 +188,44 @@ impl RoleBackend for SqlBackend {
         expand_implied_roles(&state.db, roles).await
     }
 
+    /// Get single role by ID.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `id`: The role ID.
+    ///
+    /// # Returns
+    /// A `Result` containing an `Option` with the `Role` if found, or an
+    /// `Error`.
+    #[tracing::instrument(level = "debug", skip(self, state))]
+    async fn get_role<'a>(
+        &self,
+        state: &ServiceState,
+        id: &'a str,
+    ) -> Result<Option<Role>, RoleProviderError> {
+        Ok(role::get(&state.db, id).await?)
+    }
+
+    /// Get a role imply rule.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `prior_role_id`: The ID of the prior role.
+    /// - `implied_role_id`: The ID of the implied role.
+    ///
+    /// # Returns
+    /// A `Result` containing an `Option` with the `RoleImply` if found, or an
+    /// `Error`.
+    #[tracing::instrument(level = "debug", skip(self, state))]
+    async fn get_role_imply_rule<'a>(
+        &self,
+        state: &ServiceState,
+        prior_role_id: &'a str,
+        implied_role_id: &'a str,
+    ) -> Result<Option<RoleImply>, RoleProviderError> {
+        Ok(role_imply::get(&state.db, prior_role_id, implied_role_id).await?)
+    }
+
     /// List role imply rules.
     ///
     /// # Parameters
@@ -183,6 +241,21 @@ impl RoleBackend for SqlBackend {
         resolve: bool,
     ) -> Result<BTreeMap<String, BTreeSet<String>>, RoleProviderError> {
         Ok(implied_role::list_rules(&state.db, resolve).await?)
+    }
+
+    /// List role imply rules.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    ///
+    /// # Returns
+    /// A `Result` containing a list of `RoleImply`, or an `Error`.
+    #[tracing::instrument(level = "debug", skip(self, state))]
+    async fn list_role_imply_rules(
+        &self,
+        state: &ServiceState,
+    ) -> Result<Vec<RoleImply>, RoleProviderError> {
+        Ok(role_imply::list(&state.db).await?)
     }
 
     /// List roles.

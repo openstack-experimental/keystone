@@ -25,6 +25,10 @@ pub enum RoleProviderError {
     #[error("backend driver error: {0}")]
     Driver(String),
 
+    /// Role imply not found.
+    #[error("role implication {0} not found")]
+    RoleImplyNotFound(String),
+
     /// Role not found.
     #[error("role {0} not found")]
     RoleNotFound(String),

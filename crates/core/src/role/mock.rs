@@ -31,10 +31,30 @@ mock! {
             params: RoleCreate,
         ) -> Result<Role, RoleProviderError>;
 
+        async fn create_role_imply_rule<'a>(
+            &self,
+            state: &ServiceState,
+            prior_role_id: &'a str,
+            implied_role_id: &'a str,
+        ) -> Result<RoleImply, RoleProviderError>;
+
         async fn delete_role<'a>(
             &self,
             state: &ServiceState,
             id: &'a str,
+        ) -> Result<(), RoleProviderError>;
+
+        async fn delete_role_imply_rule<'a>(
+            &self,
+            state: &ServiceState,
+            prior_role_id: &'a str,
+            implied_role_id: &'a str,
+        ) -> Result<(), RoleProviderError>;
+
+        async fn expand_implied_roles(
+            &self,
+            state: &ServiceState,
+            roles: &mut Vec<RoleRef>,
         ) -> Result<(), RoleProviderError>;
 
         async fn get_role<'a>(
@@ -43,17 +63,23 @@ mock! {
             id: &'a str,
         ) -> Result<Option<Role>, RoleProviderError>;
 
-        async fn expand_implied_roles(
+        async fn get_role_imply_rule<'a>(
             &self,
             state: &ServiceState,
-            roles: &mut Vec<RoleRef>,
-        ) -> Result<(), RoleProviderError>;
+            prior_role_id: &'a str,
+            implied_role_id: &'a str,
+        ) -> Result<Option<RoleImply>, RoleProviderError>;
 
         async fn list_imply_rules(
             &self,
             state: &ServiceState,
             resolve: bool
         ) -> Result<BTreeMap<String, BTreeSet<String>>, RoleProviderError>;
+
+        async fn list_role_imply_rules(
+            &self,
+            state: &ServiceState,
+        ) -> Result<Vec<RoleImply>, RoleProviderError>;
 
         async fn list_roles(
             &self,

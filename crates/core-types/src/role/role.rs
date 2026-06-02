@@ -134,3 +134,19 @@ pub struct RoleCreate {
     #[validate(length(min = 1, max = 255))]
     pub name: String,
 }
+
+/// Role inference (imply) data.
+#[derive(Builder, Clone, Debug, Default, PartialEq, Validate)]
+#[builder(build_fn(error = "BuilderError"))]
+#[builder(setter(strip_option, into))]
+pub struct RoleImply {
+    /// The role ID.
+    #[builder(default)]
+    #[validate(length(min = 1, max = 64))]
+    pub id: Option<String>,
+
+    /// The implied role ID.
+    #[builder(default)]
+    #[validate(length(min = 1, max = 64))]
+    pub implies_role_id: Option<String>,
+}

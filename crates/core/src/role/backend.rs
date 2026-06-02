@@ -34,6 +34,19 @@ pub trait RoleBackend: Send + Sync {
         params: RoleCreate,
     ) -> Result<Role, RoleProviderError>;
 
+    /// Create a role imply rule.
+    ///
+    /// # Arguments
+    /// * `state` - The current service state.
+    /// * `prior_role_id` - The ID of the prior role.
+    /// * `implied_role_id` - The ID of the implied role.
+    async fn create_role_imply_rule<'a>(
+        &self,
+        state: &ServiceState,
+        prior_role_id: &'a str,
+        implied_role_id: &'a str,
+    ) -> Result<RoleImply, RoleProviderError>;
+
     /// Delete a role by the ID.
     ///
     /// # Arguments
@@ -43,6 +56,19 @@ pub trait RoleBackend: Send + Sync {
         &self,
         state: &ServiceState,
         id: &'a str,
+    ) -> Result<(), RoleProviderError>;
+
+    /// Delete a role imply rule.
+    ///
+    /// # Arguments
+    /// * `state` - The current service state.
+    /// * `prior_role_id` - The ID of the prior role.
+    /// * `implied_role_id` - The ID of the implied role.
+    async fn delete_role_imply_rule<'a>(
+        &self,
+        state: &ServiceState,
+        prior_role_id: &'a str,
+        implied_role_id: &'a str,
     ) -> Result<(), RoleProviderError>;
 
     /// Expand implied roles.
@@ -69,6 +95,19 @@ pub trait RoleBackend: Send + Sync {
         id: &'a str,
     ) -> Result<Option<Role>, RoleProviderError>;
 
+    /// Get a role imply rule.
+    ///
+    /// # Arguments
+    /// * `state` - The current service state.
+    /// * `prior_role_id` - The ID of the prior role.
+    /// * `implied_role_id` - The ID of the implied role.
+    async fn get_role_imply_rule<'a>(
+        &self,
+        state: &ServiceState,
+        prior_role_id: &'a str,
+        implied_role_id: &'a str,
+    ) -> Result<Option<RoleImply>, RoleProviderError>;
+
     /// List role imply rules.
     ///
     /// # Arguments
@@ -79,6 +118,15 @@ pub trait RoleBackend: Send + Sync {
         state: &ServiceState,
         resolve: bool,
     ) -> Result<BTreeMap<String, BTreeSet<String>>, RoleProviderError>;
+
+    /// List role imply rules.
+    ///
+    /// # Arguments
+    /// * `state` - The current service state.
+    async fn list_role_imply_rules(
+        &self,
+        state: &ServiceState,
+    ) -> Result<Vec<RoleImply>, RoleProviderError>;
 
     /// List Roles.
     ///
