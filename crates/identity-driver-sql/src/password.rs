@@ -19,8 +19,12 @@ use openstack_keystone_core_types::identity::UserResponseBuilder;
 use crate::entity::password as db_password;
 
 mod create;
+mod list;
+mod set_new;
 
 pub use create::create;
+pub use list::list;
+pub use set_new::set_new_password;
 
 /// Verify whether the password has expired or not.
 ///

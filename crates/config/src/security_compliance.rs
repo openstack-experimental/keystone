@@ -11,7 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-use chrono::{NaiveDate, TimeDelta, Utc};
+use chrono::{DateTime, NaiveDate, TimeDelta, Utc};
 use serde::Deserialize;
 
 use crate::common::*;
@@ -172,6 +172,18 @@ impl SecurityComplianceProvider {
                     .checked_sub_signed(TimeDelta::days(inactive_after_days.into()))
                     .map(|val| val.date_naive())
             })
+    }
+
+    /// Calculate password expiration time.
+    ///
+    /// # Parameters
+    /// - `now`: The current time.
+    ///
+    /// # Returns
+    /// An `Option` with the expiration date, or `None` if password expiration is not configured.
+    pub fn get_password_expires_at(&self, now: DateTime<Utc>) -> Option<DateTime<Utc>> {
+        self.password_expires_days
+            .map(|days| now + chrono::TimeDelta::days(days as i64))
     }
 }
 

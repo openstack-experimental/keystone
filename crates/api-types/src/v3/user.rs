@@ -232,7 +232,7 @@ pub struct UserUpdate {
 pub struct UserUpdateRequest {
     /// User object.
     #[cfg_attr(feature = "validate", validate(nested))]
-    pub user: UserCreate,
+    pub user: UserUpdate,
 }
 
 /// User options.

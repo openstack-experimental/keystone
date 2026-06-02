@@ -528,6 +528,12 @@ fn get_fernet_timestamp(payload: &str) -> Result<DateTime<Utc>, FernetDriverErro
         })
 }
 
+/// Linkage anchor — see ADR-0018. Referenced by the `keystone` crate's
+/// `build.rs`-generated `_ANCHORS` static so the linker extracts `.rlib`
+/// members, keeping `inventory::submit!` sections visible at runtime.
+#[allow(dead_code)]
+pub fn anchor() {}
+
 #[cfg(feature = "bench_internals")]
 /// Conditionally expose the function when the 'bench_internals' feature is
 /// enabled.
@@ -938,9 +944,3 @@ pub mod tests {
         assert_eq!(token, dec_token);
     }
 }
-
-/// Linkage anchor — see ADR-0018. Referenced by the `keystone` crate's
-/// `build.rs`-generated `_ANCHORS` static so the linker extracts `.rlib`
-/// members, keeping `inventory::submit!` sections visible at runtime.
-#[allow(dead_code)]
-pub fn anchor() {}

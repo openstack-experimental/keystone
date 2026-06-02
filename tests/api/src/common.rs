@@ -228,3 +228,40 @@ where
         .build()
         .map_err(Into::into)
 }
+
+/// Test user authentication with name and password.
+///
+/// The openstack_sdk currently does heavy caching so that bypassing it on the regular interface is
+/// not possible. We need to ensure the call is done to verify the user password.
+pub async fn auth_user_by_password<U: AsRef<str>, D: AsRef<str>, P: AsRef<str>>(
+    username: U,
+    domain_id: D,
+    password: P,
+) -> Result<()> {
+    let password_auth = get_password_auth(username, password, domain_id)?;
+    let identity = IdentityBuilder::default()
+        .methods(vec!["password".into()])
+        .password(password_auth)
+        .build()?;
+    let auth_request = AuthRequest {
+        auth: AuthRequestInner {
+            identity,
+            scope: None,
+        },
+    };
+
+    let base_url: Url = env::var("KEYSTONE_URL")
+        .wrap_err("KEYSTONE_URL must be set")?
+        .parse()?;
+
+    let rsp = Client::new()
+        .post(base_url.join("v3/auth/tokens")?)
+        .json(&serde_json::to_value(auth_request)?)
+        .send()
+        .await?;
+
+    if !rsp.status().is_success() {
+        return Err(eyre!("Authentication failed with {}", rsp.status()));
+    }
+    Ok(())
+}

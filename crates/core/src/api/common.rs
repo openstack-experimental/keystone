@@ -188,6 +188,7 @@ pub async fn get_authz_info(
         }
         Some(ProviderScope::System(_scope)) => ScopeInfo::System("system".into()),
         // TODO: Trust scope should be handled here
+        Some(ProviderScope::Unscoped) => ScopeInfo::Unscoped,
         None => ScopeInfo::Unscoped,
     };
     authz_scope.validate()?;

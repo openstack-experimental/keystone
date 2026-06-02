@@ -533,6 +533,26 @@ impl IdentityBackend for SqlBackend {
         )
         .await?)
     }
+
+    /// Update user.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `user_id`: The ID of the user to update.
+    /// - `user`: The user details to update.
+    ///
+    /// # Returns
+    /// A `Result` containing the updated `UserResponse` if successful, or an `Error`.
+    #[tracing::instrument(skip(self, state))]
+    async fn update_user<'a>(
+        &self,
+        state: &ServiceState,
+        user_id: &'a str,
+        user: UserUpdate,
+    ) -> Result<UserResponse, IdentityProviderError> {
+        let config = state.config_manager.config.read().await;
+        Ok(user::update(&config, &state.db, user_id, user).await?)
+    }
 }
 
 #[async_trait]

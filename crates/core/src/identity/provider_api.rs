@@ -318,6 +318,19 @@ pub trait IdentityApi: Send + Sync {
         group_ids: HashSet<&'a str>,
     ) -> Result<(), IdentityProviderError>;
 
+    /// Update user.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `user_id`: The ID of the user to update.
+    /// - `user`: The user details to update.
+    async fn update_user<'a>(
+        &self,
+        state: &ServiceState,
+        user_id: &'a str,
+        user: UserUpdate,
+    ) -> Result<UserResponse, IdentityProviderError>;
+
     /// Set expiring group memberships of the user.
     ///
     /// # Parameters

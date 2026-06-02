@@ -90,6 +90,7 @@ impl From<api_types::Scope> for openstack_keystone_core_types::scope::Scope {
             api_types::Scope::Project(scope) => Self::Project(scope.into()),
             api_types::Scope::Domain(scope) => Self::Domain(scope.into()),
             api_types::Scope::System(scope) => Self::System(scope.into()),
+            api_types::Scope::Unscoped => Self::Unscoped,
         }
     }
 }

@@ -284,6 +284,26 @@ impl IdentityApi for IdentityProvider {
         }
     }
 
+    /// Update user.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `user_id`: The ID of the user to update.
+    /// - `user`: The user details to update.
+    #[tracing::instrument(skip(self, state))]
+    async fn update_user<'a>(
+        &self,
+        state: &ServiceState,
+        user_id: &'a str,
+        user: UserUpdate,
+    ) -> Result<UserResponse, IdentityProviderError> {
+        match self {
+            Self::Service(provider) => provider.update_user(state, user_id, user).await,
+            #[cfg(any(test, feature = "mock"))]
+            Self::Mock(provider) => provider.update_user(state, user_id, user).await,
+        }
+    }
+
     /// Get a service account by ID.
     ///
     /// # Parameters

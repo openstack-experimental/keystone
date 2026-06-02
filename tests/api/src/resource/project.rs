@@ -259,7 +259,7 @@ async fn test_project_list() -> Result<()> {
             .build()?,
     )
     .await?;
-    let mut tc = TestClient::default()?;
+    let _tc = TestClient::default()?;
     let params = ProjectListRequest {
         domain_id: Some(domain.id.clone()),
         ids: Some(project.id.clone()),

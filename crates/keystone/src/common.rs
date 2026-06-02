@@ -15,6 +15,8 @@
 use std::fmt;
 
 use axum::http::{Request, Response, StatusCode};
+use axum::{body::Body, extract::FromRequest, response::IntoResponse};
+use serde::de::DeserializeOwned;
 use tower_http::classify::{
     ClassifiedResponse, ClassifyResponse, MakeClassifier, NeverClassifyEos,
 };
@@ -83,5 +85,37 @@ impl MakeClassifier for KeystoneResponseClassifier {
     /// - `_request`: The request being processed.
     fn make_classifier<B>(&self, _request: &Request<B>) -> Self::Classifier {
         self.clone()
+    }
+}
+
+// Axum Json extractor logging the rejection reason
+pub(crate) struct TracedJson<T>(pub T);
+
+// Implement FromRequest for the latest Axum versions
+impl<S, T> FromRequest<S> for TracedJson<T>
+where
+    // T must implement Serde's DeserializeOwned
+    T: DeserializeOwned,
+    // S represents the application State (Send + Sync is required)
+    S: Send + Sync,
+{
+    type Rejection = axum::response::Response;
+
+    async fn from_request(req: Request<Body>, state: &S) -> Result<Self, Self::Rejection> {
+        // Delegate parsing to Axum's built-in Json extractor
+        match axum::Json::<T>::from_request(req, state).await {
+            Ok(axum::Json(value)) => Ok(TracedJson(value)),
+            Err(rejection) => {
+                // Log the exact error context behind the 422 Unprocessable Entity
+                tracing::debug!(
+                    error = %rejection.body_text(),
+                    status = %rejection.status().as_u16(),
+                    "JSON extraction validation failed"
+                );
+
+                // Convert the native rejection into a standard client response
+                Err(rejection.into_response())
+            }
+        }
     }
 }

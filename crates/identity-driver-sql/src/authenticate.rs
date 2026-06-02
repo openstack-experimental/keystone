@@ -81,6 +81,16 @@ pub async fn authenticate_by_password(
         return Err(AuthenticationError::UserLocked(local_user.user_id.clone()).into());
     }
 
+    // Verify user exists
+    let user_entry = user::get_main_entry(db, &local_user.user_id).await?.ok_or(
+        IdentityProviderError::NoMainUserEntry(local_user.user_id.clone()),
+    )?;
+
+    // Check if the user is disabled
+    if !user_entry.enabled.unwrap_or(false) {
+        return Err(AuthenticationError::UserDisabled(local_user.user_id.clone()).into());
+    }
+
     let passwords: Vec<db_password::Model> = password.into_iter().collect();
     let latest_password = passwords
         .first()
@@ -111,10 +121,6 @@ pub async fn authenticate_by_password(
             );
         }
     }
-
-    let user_entry = user::get_main_entry(db, &local_user.user_id).await?.ok_or(
-        IdentityProviderError::NoMainUserEntry(local_user.user_id.clone()),
-    )?;
 
     // Reset the last_active_at for the user that successfully authenticated.
     user::reset_last_active(db, &user_entry).await?;
@@ -207,7 +213,7 @@ async fn should_lock(
 #[cfg(test)]
 mod tests {
     use chrono::{DateTime, NaiveDateTime, TimeDelta, Utc};
-    use sea_orm::{DatabaseBackend, MockDatabase, Transaction};
+    use sea_orm::{DatabaseBackend, MockDatabase, MockExecResult, Transaction};
     use tracing_test::traced_test;
 
     use openstack_keystone_core_types::identity::UserOptions;
@@ -215,6 +221,7 @@ mod tests {
     use super::*;
     use crate::entity::local_user as db_local_user;
     use crate::local_user::tests::get_local_user_mock;
+    use crate::user::tests::get_user_mock;
 
     #[tokio::test]
     async fn test_should_lock_default_config() {
@@ -439,7 +446,9 @@ mod tests {
                 "user_id",
                 &UserOptions::default(),
             )])
+            // user::get_main_entry() for enabled check
             .append_query_results([vec![user::tests::get_user_mock("user_id")]])
+            // user update res for reset_last_active
             .append_query_results([vec![user::tests::get_user_mock("user_id")]])
             .into_connection();
         assert!(
@@ -556,6 +565,10 @@ mod tests {
                     .build()
                     .unwrap(),
             )]])
+            .append_exec_results([MockExecResult {
+                rows_affected: 1,
+                ..Default::default()
+            }])
             .append_query_results([user_option::tests::get_user_options_mock(
                 "user_id",
                 &UserOptions {
@@ -565,6 +578,10 @@ mod tests {
             )])
             .append_query_results([vec![user::tests::get_user_mock("user_id")]])
             .append_query_results([vec![user::tests::get_user_mock("user_id")]])
+            .append_exec_results([MockExecResult {
+                rows_affected: 1,
+                ..Default::default()
+            }])
             .into_connection();
         assert!(
             authenticate_by_password(
@@ -598,6 +615,8 @@ mod tests {
                 "user_id",
                 &UserOptions::default(),
             )])
+            // user::get_main_entry()
+            .append_query_results([vec![get_user_mock("user_id")]])
             .into_connection();
         match authenticate_by_password(
             &config,
@@ -642,6 +661,7 @@ mod tests {
                 "user_id",
                 &UserOptions::default(),
             )])
+            .append_query_results([vec![get_user_mock("user_id")]])
             .into_connection();
         match authenticate_by_password(
             &config,
