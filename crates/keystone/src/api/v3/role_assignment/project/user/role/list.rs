@@ -33,8 +33,6 @@ use crate::{
 };
 
 /// List the roles that a user has on a project.
-///
-/// List the roles that a user has on a project.
 #[utoipa::path(
     get,
     path = "/projects/{project_id}/users/{user_id}/roles",
@@ -56,22 +54,11 @@ use crate::{
     skip(state, user_auth),
     err(Debug)
 )]
-
 pub(super) async fn list(
     Auth(user_auth): Auth,
     Path((project_id, user_id)): Path<(String, String)>,
     State(state): State<ServiceState>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
-    state
-        .policy_enforcer
-        .enforce(
-            "identity/project/user/role/list",
-            &user_auth,
-            json!({"project_id": project_id, "user_id": user_id}),
-            None,
-        )
-        .await?;
-
     let query_params = RoleAssignmentListParameters {
         user_id: Some(user_id.clone()),
         project_id: Some(project_id.clone()),
@@ -96,7 +83,7 @@ pub(super) async fn list(
             .get_assignment_provider()
             .list_role_assignments(&state, &query_params)
     );
-    user?.ok_or_else(|| {
+    let user = user?.ok_or_else(|| {
         info!("User {} was not found", user_id);
         KeystoneApiError::NotFound {
             resource: "grant".into(),
@@ -104,13 +91,23 @@ pub(super) async fn list(
         }
     })?;
 
-    project?.ok_or_else(|| {
+    let project = project?.ok_or_else(|| {
         info!("Project {} was not found", project_id);
         KeystoneApiError::NotFound {
             resource: "grant".into(),
             identifier: "".into(),
         }
     })?;
+
+    state
+        .policy_enforcer
+        .enforce(
+            "identity/project/user/role/list",
+            &user_auth,
+            json!({"user": user, "project": project}),
+            None,
+        )
+        .await?;
 
     let roles: Vec<Role> = assignments?
         .into_iter()

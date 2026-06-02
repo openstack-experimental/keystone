@@ -5,6 +5,14 @@ package identity.project.user.role.list
 import data.identity
 import data.identity.assignment
 
+# List direct (non-effective) user roles on the project.
+#
+# The `input.target` contains resolved project and user objects:
+#   project:   `Project`   Resolved Project
+#   user:      `User`      Resolved User
+#
+# The `input.existing` is null
+#
 default allow := false
 
 allow if {

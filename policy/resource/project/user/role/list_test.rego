@@ -12,9 +12,11 @@ test_allowed if {
 test_forbidden if {
 	not list.allow with input as {"credentials": {"roles": []}}
 	not list.allow with input as {"credentials": {"roles": ["reader"], "system": "foo"}}
-	not list.allow with input as {"credentials": {"roles": ["reader"], "domain_id": "foo"}, "target": {"user": {"domain_id": "foo1"}, "project": {"domain_id": "foo"}, "role": {"domain_id": "foo"}}}
-	not list.allow with input as {"credentials": {"roles": ["reader"], "domain_id": "foo"}, "target": {"user": {"domain_id": "foo1"}, "project": {"domain_id": "foo1"}, "role": {"domain_id": "foo1"}}}
-	not list.allow with input as {"credentials": {"roles": ["reader"], "domain_id": "foo"}, "target": {"user": {"domain_id": "foo"}, "project": {"domain_id": "foo1"}, "role": {"domain_id": "foo1"}}}
-	not list.allow with input as {"credentials": {"roles": ["reader"], "domain_id": "foo"}, "target": {"user": {"domain_id": "foo1"}, "project": {"domain_id": "foo1"}, "role": {"domain_id": "foo1"}}}
-	not list.allow with input as {"credentials": {"roles": ["reader"], "domain_id": "foo"}, "target": {"project": {"domain_id": "foo"}, "role": {"domain_id": "foo"}}}
+	not list.allow with input as {"credentials": {"roles": ["reader"], "project_id": "foo"}, "target": {"user": {"domain_id": "bar"}, "project": {"domain_id": "foo"}}}
+	not list.allow with input as {"credentials": {"roles": ["reader"], "domain_id": "foo"}, "target": {"user": {"domain_id": "bar"}, "project": {"domain_id": "foo"}}}
+	not list.allow with input as {"credentials": {"roles": ["reader"], "domain_id": "foo"}, "target": {"user": {"domain_id": "bar"}, "project": {"domain_id": "bar"}}}
+	not list.allow with input as {"credentials": {"roles": ["reader"], "domain_id": "foo"}, "target": {"user": {"domain_id": "foo"}, "project": {"domain_id": "bar"}}}
+	not list.allow with input as {"credentials": {"roles": ["reader"], "domain_id": "foo"}, "target": {"user": {"domain_id": "bar"}, "project": {"domain_id": "bar"}}}
+	not list.allow with input as {"credentials": {"roles": ["reader"], "domain_id": "foo"}, "target": {"project": {"domain_id": "foo"}}}
+	not list.allow with input as {"credentials": {"roles": ["reader"], "domain_id": "foo"}, "target": {"user": {"domain_id": "foo"}}}
 }
