@@ -4003,6 +4003,7 @@ dependencies = [
  "openstack-keystone-core",
  "openstack-keystone-core-types",
  "sea-orm",
+ "secrecy",
  "serde",
  "serde_json",
  "tokio",

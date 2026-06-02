@@ -31,6 +31,7 @@ use crate::api::v3::auth::token::common::authenticate_request;
 use crate::api::v3::auth::token::types::{AuthRequest, CreateTokenParameters, TokenResponse};
 use crate::api::{Catalog, CatalogService, error::KeystoneApiError};
 use crate::catalog::CatalogApi;
+use crate::common::TracedJson;
 use crate::keystone::ServiceState;
 use crate::token::TokenApi;
 
@@ -49,7 +50,7 @@ use crate::token::TokenApi;
 pub(super) async fn create(
     Query(query): Query<CreateTokenParameters>,
     State(state): State<ServiceState>,
-    Json(req): Json<AuthRequest>,
+    TracedJson(req): TracedJson<AuthRequest>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
     req.validate()?;
     let auth_res = authenticate_request(&state, &req).await?;

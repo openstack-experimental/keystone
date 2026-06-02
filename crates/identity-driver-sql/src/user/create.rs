@@ -19,14 +19,11 @@ use sea_orm::{ConnectionTrait, TransactionTrait};
 use uuid::Uuid;
 
 use openstack_keystone_config::Config;
-use openstack_keystone_core::common::password_hashing;
 use openstack_keystone_core::error::DbContextExt;
 use openstack_keystone_core::identity::{IdentityProviderError, get_user_last_active_at};
 use openstack_keystone_core_types::identity::*;
 
-use crate::entity::{
-    federated_user as db_federated_user, password as db_password, user as db_user,
-};
+use crate::entity::{federated_user as db_federated_user, user as db_user};
 use crate::federated_user::MergeFederatedUserData;
 use crate::local_user::MergeLocalUserData;
 use crate::password::MergePasswordData;
@@ -192,19 +189,14 @@ pub async fn create(
         response_builder.merge_local_user_data(&local_user);
 
         if let Some(password) = &user.password {
-            let mut passwords: Vec<db_password::Model> = Vec::new();
-            let password_entry = password::create(
+            local_user::set_new_password(
                 &txn,
+                conf,
                 local_user.id,
-                password_hashing::hash_password(conf, password)
-                    .await
-                    .map_err(IdentityProviderError::password_hash)?,
-                None,
+                secrecy::SecretString::from(password.as_str()),
             )
             .await?;
-
-            passwords.push(password_entry);
-            response_builder.merge_passwords_data(passwords);
+            response_builder.merge_passwords_data(password::list(&txn, local_user.id).await?);
         }
     }
 
@@ -225,6 +217,7 @@ mod tests {
     };
 
     use super::*;
+    use crate::entity::password as db_password;
     use crate::{
         federated_user::tests::get_federated_user_mock, local_user::tests::get_local_user_mock,
         password::tests::get_password_mock, user::tests::get_user_mock,
@@ -406,6 +399,8 @@ mod tests {
                 ..Default::default()
             }])
             .append_query_results([vec![get_local_user_mock("1")]])
+            .append_query_results([Vec::<db_password::Model>::new()])
+            .append_query_results([vec![get_password_mock(1)]])
             .append_query_results([vec![get_password_mock(1)]])
             .into_connection();
         let req = UserCreateBuilder::default()

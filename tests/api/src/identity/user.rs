@@ -11,6 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+
 use std::borrow::Cow;
 use std::sync::Arc;
 
@@ -19,6 +20,9 @@ use eyre::Result;
 use openstack_keystone_api_types::v3::user::*;
 use openstack_sdk::api::rest_endpoint_prelude::*;
 use openstack_sdk::{AsyncOpenStack, api::QueryAsync};
+
+mod create;
+mod update;
 
 use crate::guard::*;
 
@@ -127,4 +131,53 @@ impl DeletableResource for User {
         .query_async(state.as_ref())
         .await?)
     }
+}
+
+#[derive(Clone, Debug)]
+struct UserUpdateRequest {
+    id: String,
+    user: UserUpdate,
+}
+
+impl RestEndpoint for UserUpdateRequest {
+    fn method(&self) -> http::Method {
+        http::Method::PUT
+    }
+
+    fn endpoint(&self) -> Cow<'static, str> {
+        format!("users/{id}", id = self.id).into()
+    }
+
+    fn body(&self) -> Result<Option<(&'static str, Vec<u8>)>, BodyError> {
+        let mut params = JsonBodyParams::default();
+        params.push("user", serde_json::to_value(&self.user)?);
+        params.into_body()
+    }
+
+    fn service_type(&self) -> ServiceType {
+        ServiceType::Identity
+    }
+
+    fn response_key(&self) -> Option<Cow<'static, str>> {
+        Some("user".into())
+    }
+
+    fn api_version(&self) -> Option<ApiVersion> {
+        Some(ApiVersion::new(3, 0))
+    }
+}
+
+/// Update user
+pub async fn update_user(
+    tc: &Arc<AsyncOpenStack>,
+    user_id: &str,
+    user: UserUpdate,
+) -> Result<User> {
+    let obj: User = UserUpdateRequest {
+        id: user_id.to_string(),
+        user,
+    }
+    .query_async(tc.as_ref())
+    .await?;
+    Ok(obj)
 }

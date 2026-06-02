@@ -12,7 +12,6 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 use std::borrow::Cow;
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use eyre::Result;
@@ -22,7 +21,6 @@ use openstack_keystone_api_types::v3::domain::*;
 use openstack_sdk::api::QueryAsync;
 use openstack_sdk::api::rest_endpoint_prelude::*;
 
-use crate::common::*;
 use crate::guard::*;
 use crate::resource::*;
 
@@ -187,7 +185,7 @@ impl RestEndpoint for DomainDeleteRequest {
 impl DeletableResource for Domain {
     async fn delete(&self, state: &Arc<AsyncOpenStack>) -> Result<()> {
         Ok(openstack_sdk::api::ignore(DomainDeleteRequest {
-            id: self.id.clone().into(),
+            id: self.id.clone(),
         })
         .query_async(state.as_ref())
         .await?)
@@ -205,7 +203,7 @@ pub async fn delete_domain(tc: &Arc<AsyncOpenStack>, id: impl Into<String>) -> R
 
 pub async fn create_test_domain(tc: &Arc<AsyncOpenStack>) -> Result<AsyncResourceGuard<Domain>> {
     create_domain(
-        &tc,
+        tc,
         DomainCreateBuilder::default()
             .name(Uuid::new_v4().to_string())
             .enabled(true)

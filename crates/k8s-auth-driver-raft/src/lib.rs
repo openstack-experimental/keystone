@@ -268,10 +268,10 @@ impl K8sAuthBackend for RaftBackend {
             .map(|x| x.data);
         if let Some(obj) = curr {
             let mutations = vec![
-                Mutation::remove(self.get_auth_instance_id_key_name(&id), None::<&str>)
+                Mutation::remove(self.get_auth_instance_id_key_name(id), None::<&str>)
                     .map_err(K8sAuthProviderError::raft)?,
                 Mutation::remove_index(
-                    self.get_auth_instance_domain_id_idx_key_name(&id, &obj.domain_id),
+                    self.get_auth_instance_domain_id_idx_key_name(id, &obj.domain_id),
                 )
                 .map_err(K8sAuthProviderError::raft)?,
             ];
@@ -635,11 +635,11 @@ impl K8sAuthBackend for RaftBackend {
     }
 }
 
-#[cfg(test)]
-mod tests {}
-
 /// Linkage anchor — see ADR-0018. Referenced by the `keystone` crate's
 /// `build.rs`-generated `_ANCHORS` static so the linker extracts `.rlib`
 /// members, keeping `inventory::submit!` sections visible at runtime.
 #[allow(dead_code)]
 pub fn anchor() {}
+
+#[cfg(test)]
+mod tests {}

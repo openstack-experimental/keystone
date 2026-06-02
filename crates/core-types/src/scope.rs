@@ -26,6 +26,8 @@ pub enum Scope {
     Domain(Domain),
     /// System scope.
     System(System),
+    /// Unscoped
+    Unscoped,
 }
 
 /// Project scope information.
@@ -73,6 +75,7 @@ impl Validate for Scope {
             Self::Project(x) => x.validate(),
             Self::Domain(x) => x.validate(),
             Self::System(x) => x.validate(),
+            Self::Unscoped => Ok(()),
         }
     }
 }

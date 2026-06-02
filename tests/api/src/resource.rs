@@ -12,29 +12,12 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //! Shared helpers for project and domain CRUD tests.
-use std::sync::Arc;
 
 use derive_builder::Builder;
 use eyre::Result;
 use openstack_sdk::config::CloudConfig;
-use secrecy::ExposeSecret;
-use serde::de::DeserializeOwned;
 
 use openstack_sdk::AsyncOpenStack;
-use openstack_sdk::api::QueryAsync;
-use openstack_sdk::api::rest_endpoint_prelude::*;
-
-use crate::common::get_password_auth;
-use openstack_keystone_api_types::scope::Domain as ScopeDomain;
-use openstack_keystone_api_types::scope::Scope;
-use openstack_keystone_api_types::scope::System;
-use openstack_keystone_api_types::v3::domain::*;
-use openstack_keystone_api_types::v3::project::*;
-
-use crate::common::*;
-use crate::guard::DeletableResource;
-use crate::resource::domain as domain_api;
-use crate::resource::project as project_api;
 
 pub mod domain;
 pub mod project;

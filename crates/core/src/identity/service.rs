@@ -527,6 +527,22 @@ impl IdentityApi for IdentityService {
             .await
     }
 
+    /// Update user.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `user_id`: The ID of the user to update.
+    /// - `user`: The user details to update.
+    async fn update_user<'a>(
+        &self,
+        state: &ServiceState,
+        user_id: &'a str,
+        user: UserUpdate,
+    ) -> Result<UserResponse, IdentityProviderError> {
+        user.validate()?;
+        self.backend_driver.update_user(state, user_id, user).await
+    }
+
     /// Set expiring group memberships for the user.
     ///
     /// # Parameters

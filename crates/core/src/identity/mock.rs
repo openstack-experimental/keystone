@@ -92,6 +92,13 @@ mock! {
             user_id: &'a str,
         ) -> Result<(), IdentityProviderError>;
 
+        async fn update_user<'a>(
+            &self,
+            state: &ServiceState,
+            user_id: &'a str,
+            user: UserUpdate,
+        ) -> Result<UserResponse, IdentityProviderError>;
+
         async fn get_group<'a>(
             &self,
             state: &ServiceState,

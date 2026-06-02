@@ -25,6 +25,7 @@ mod delete;
 mod get;
 mod list;
 mod set;
+mod update;
 
 pub use create::create;
 pub use delete::delete;
@@ -32,6 +33,7 @@ pub(super) use get::get_main_entry;
 pub use get::{get, get_user_domain_id};
 pub use list::list;
 pub use set::reset_last_active;
+pub use update::update;
 
 pub trait MergeUserData {
     fn merge_user_data(
@@ -74,6 +76,9 @@ impl MergeUserData for UserResponseBuilder {
     ) -> &mut Self {
         self.id(user.id.clone());
         self.domain_id(user.domain_id.clone());
+        if let Some(dp) = &user.default_project_id {
+            self.default_project_id(dp.clone());
+        }
         self.enabled(if user.enabled.is_some_and(|val| val) {
             // Only look at the last_activity when the user is enabled.
             if let (Some(last_active_at), Some(cutoff)) =

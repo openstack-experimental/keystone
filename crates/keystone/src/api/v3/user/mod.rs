@@ -22,11 +22,13 @@ mod groups;
 mod list;
 mod show;
 pub mod types;
+mod update;
 
 pub(super) fn openapi_router() -> OpenApiRouter<ServiceState> {
     OpenApiRouter::new()
         .routes(routes!(list::list, create::create))
         .routes(routes!(show::show, delete::delete))
+        .routes(routes!(update::update))
         .routes(routes!(groups::groups))
 }
 

@@ -12,9 +12,17 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use chrono::Utc;
+use sea_orm::ConnectionTrait;
+use secrecy::ExposeSecret;
+use secrecy::SecretString;
+
+use openstack_keystone_config::Config;
+use openstack_keystone_core::common::password_hashing;
 use openstack_keystone_core_types::identity::*;
 
 use crate::entity::local_user as db_local_user;
+use crate::entity::password as db_password;
 
 mod create;
 mod get;
@@ -25,6 +33,43 @@ pub use create::create;
 pub use load::load_local_user_with_passwords;
 pub use load::load_local_users_passwords;
 pub use set::reset_failed_auth;
+
+/// Set a new password for the local user.
+///
+/// - expire all existing passwords.
+/// - truncate number of old passwords to `unique_count`.
+/// - add a new record with a new password
+///
+/// # Parameters
+/// - `db`: The database connection.
+/// - `local_user_id`: The local user ID.
+/// - `unique_count`: Number of old passwords to keep for checking uniqueness.
+/// - `password`: The password to set.
+///
+/// # Returns
+/// A `Result` containing the created `password::Model` if successful, or an
+/// `Error`.
+pub async fn set_new_password<C: ConnectionTrait>(
+    db: &C,
+    conf: &Config,
+    local_user_id: i32,
+    password: SecretString,
+) -> Result<db_password::Model, IdentityProviderError> {
+    let now = Utc::now();
+    let unique_count = conf
+        .security_compliance
+        .unique_last_password_count
+        .unwrap_or(0);
+    // Hash the new password
+    let hashed_password = password_hashing::hash_password(conf, password.expose_secret())
+        .await
+        .map_err(IdentityProviderError::password_hash)?;
+
+    // Calculate password expiration time
+    let expires_at = conf.security_compliance.get_password_expires_at(now);
+    super::password::set_new_password(db, local_user_id, unique_count, hashed_password, expires_at)
+        .await
+}
 
 pub trait MergeLocalUserData {
     fn merge_local_user_data(&mut self, data: &db_local_user::Model) -> &mut Self;

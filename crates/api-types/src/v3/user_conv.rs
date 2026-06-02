@@ -117,7 +117,22 @@ impl From<api_types::UserListParameters> for provider_types::UserListParameters 
             domain_id: value.domain_id,
             name: value.name,
             unique_id: value.unique_id,
-            ..Default::default() //    limit: value.limit,
+            ..Default::default()
+        }
+    }
+}
+
+impl From<api_types::UserUpdateRequest> for provider_types::UserUpdate {
+    fn from(value: api_types::UserUpdateRequest) -> Self {
+        let user = value.user;
+        Self {
+            default_project_id: user.default_project_id,
+            enabled: user.enabled,
+            extra: user.extra,
+            federated: None,
+            name: user.name,
+            options: user.options.map(Into::into),
+            password: user.password,
         }
     }
 }

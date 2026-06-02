@@ -33,6 +33,8 @@ pub enum Scope {
     Domain(Domain),
     /// System scope.
     System(System),
+    /// Unscoped
+    Unscoped,
 }
 
 #[cfg(feature = "validate")]
@@ -42,6 +44,7 @@ impl validator::Validate for Scope {
             Self::Project(project) => project.validate(),
             Self::Domain(domain) => domain.validate(),
             Self::System(system) => system.validate(),
+            Self::Unscoped => Ok(()),
         }
     }
 }

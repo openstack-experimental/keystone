@@ -65,7 +65,7 @@ impl RaftBackend {
     /// # Returns
     /// The prefix key.
     fn get_binding_prefix(&self) -> String {
-        format!("spiffe:binding:svid:")
+        "spiffe:binding:svid:".to_string()
     }
 
     /// Get the prefix for listing bindings by the domain_id.
@@ -144,10 +144,10 @@ impl SpiffeBackend for RaftBackend {
             .map(|x| x.data);
         if let Some(obj) = curr {
             let mutations = vec![
-                Mutation::remove(self.get_binding_id_key_name(&svid), None::<&str>)
+                Mutation::remove(self.get_binding_id_key_name(svid), None::<&str>)
                     .map_err(SpiffeProviderError::raft)?,
                 Mutation::remove_index(
-                    self.get_binding_domain_id_idx_key_name(&svid, &obj.domain_id),
+                    self.get_binding_domain_id_idx_key_name(svid, &obj.domain_id),
                 )
                 .map_err(SpiffeProviderError::raft)?,
             ];
@@ -232,10 +232,9 @@ impl SpiffeBackend for RaftBackend {
                     .await
                     .map_err(SpiffeProviderError::raft)?
                     .map(|x| x.data)
+                    && post_filters.iter().all(|f| f.matches(&candidate))
                 {
-                    if post_filters.iter().all(|f| f.matches(&candidate)) {
-                        res.push(candidate);
-                    }
+                    res.push(candidate);
                 }
             }
         } else {
