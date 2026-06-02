@@ -84,9 +84,9 @@ openstack-keystone-appcred-driver-sql = { version = "0.1", path = "crates/appcre
 openstack-keystone-assignment-driver-sql = { version = "0.1", path = "crates/assignment-driver-sql/" }
 openstack-keystone-catalog-driver-sql = { version = "0.1", path = "crates/catalog-driver-sql/" }
 openstack-keystone-config = { version = "0.1.0", path = "crates/config"}
-openstack-keystone-core = { version = "0.1.0", path = "crates/core" }
-openstack-keystone-core-types = { version = "0.1.0", path = "crates/core-types" }
-openstack-keystone-distributed-storage = { version = "0.1.0", path = "crates/storage"}
+openstack-keystone-core = { version = "0.1.2", path = "crates/core" }
+openstack-keystone-core-types = { version = "0.1.1", path = "crates/core-types" }
+openstack-keystone-distributed-storage = { version = "0.1.1", path = "crates/storage"}
 openstack-keystone-federation-driver-sql = { version = "0.1", path = "crates/federation-driver-sql" }
 openstack-keystone-k8s-auth-driver-sql = { version = "0.1", path = "crates/k8s-auth-driver-sql/" }
 openstack-keystone-k8s-auth-driver-raft = { version = "0.1", path = "crates/k8s-auth-driver-raft/" }
@@ -96,7 +96,7 @@ openstack-keystone-resource-driver-sql = { version = "0.1", path = "crates/resou
 openstack-keystone-revoke-driver-sql = { version = "0.1", path = "crates/revoke-driver-sql/" }
 openstack-keystone-role-driver-sql = { version = "0.1", path = "crates/role-driver-sql/" }
 openstack-keystone-spiffe-driver-raft = { version = "0.1", path = "crates/spiffe-driver-raft/" }
-openstack-keystone-token-driver-fernet = { version = "0.1.0", path = "crates/token-driver-fernet" }
+openstack-keystone-token-driver-fernet = { version = "0.1.1", path = "crates/token-driver-fernet" }
 openstack-keystone-token-restriction-driver-sql = { version = "0.1", path = "crates/token-restriction-driver-sql/" }
 openstack-keystone-trust-driver-sql = { version = "0.1", path = "crates/trust-driver-sql/" }
 openstack-keystone-webauthn = { version = "0.1", path = "crates/webauthn/"}
