@@ -23,6 +23,11 @@ pub struct IdentityProvider {
     #[serde(default)]
     pub caching: bool,
 
+    /// A domain with this ID can optionally be created for you
+    /// by `keystone-manage bootstrap`.
+    #[serde(default = "default_domain_id")]
+    pub default_domain_id: String,
+
     /// Identity provider driver.
     #[serde(default = "default_sql_driver")]
     pub driver: String,
@@ -47,6 +52,7 @@ impl Default for IdentityProvider {
     fn default() -> Self {
         Self {
             caching: false,
+            default_domain_id: default_domain_id(),
             driver: default_sql_driver(),
             max_password_length: default_max_password_length(),
             password_hashing_algorithm: PasswordHashingAlgo::Bcrypt,
@@ -85,4 +91,8 @@ fn default_user_options_mapping() -> HashMap<String, String> {
 
 fn default_max_password_length() -> usize {
     4096
+}
+
+fn default_domain_id() -> String {
+    "default".into()
 }

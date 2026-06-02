@@ -38,7 +38,7 @@ use tower_http::{
     request_id::{MakeRequestId, PropagateRequestIdLayer, RequestId, SetRequestIdLayer},
     trace::{DefaultOnRequest, DefaultOnResponse, TraceLayer},
 };
-use tracing::{Level, debug, error, info, info_span, trace};
+use tracing::{Level, debug, error, info, info_span, trace, warn};
 use tracing_error::ErrorLayer;
 use tracing_subscriber::{
     Layer,
@@ -71,6 +71,7 @@ use openstack_keystone::token::TokenHook;
 use openstack_keystone::trust::TrustHook;
 use openstack_keystone::webauthn;
 use openstack_keystone::{api, common};
+use openstack_keystone_core::db::sync_schema;
 
 // Default body limit 256kB
 const DEFAULT_BODY_LIMIT: usize = 1024 * 256;
@@ -137,8 +138,7 @@ async fn main() -> Result<(), Report> {
             "openraft",
             match args.verbose {
                 0 | 1 => LevelFilter::WARN,
-                2 => LevelFilter::INFO,
-                _ => LevelFilter::DEBUG,
+                _ => LevelFilter::INFO,
             },
         )
         .with_target(
@@ -225,9 +225,15 @@ async fn main() -> Result<(), Report> {
         .to_owned();
 
     debug!("Establishing the database connection...");
-    let conn = Database::connect(opt)
+    let conn = Database::connect(opt.clone())
         .await
         .wrap_err("Database connection failed")?;
+    if opt.get_url() == "sqlite::memory:" {
+        warn!("The database connection represent in-memory SQLite Database.");
+        sync_schema(&conn)
+            .await
+            .wrap_err("failed to sync schema for in-memory database")?;
+    };
 
     let plugin_manager = PluginManager::with_config(&cfg);
     let provider = Provider::new(&cfg, &plugin_manager)?;

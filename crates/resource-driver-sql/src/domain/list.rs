@@ -21,6 +21,7 @@ use openstack_keystone_core::error::DbContextExt;
 use openstack_keystone_core::resource::ResourceProviderError;
 use openstack_keystone_core_types::resource::{Domain, DomainListParameters};
 
+use crate::domain::NULL_DOMAIN_ID;
 use crate::entity::{prelude::Project as DbProject, project as db_project};
 
 /// Prepare the paginated query for listing domains.
@@ -33,7 +34,9 @@ use crate::entity::{prelude::Project as DbProject, project as db_project};
 fn get_list_query(
     params: &DomainListParameters,
 ) -> Result<Cursor<SelectModel<db_project::Model>>, ResourceProviderError> {
-    let mut select = DbProject::find().filter(db_project::Column::IsDomain.eq(true));
+    let mut select = DbProject::find()
+        .filter(db_project::Column::IsDomain.eq(true))
+        .filter(db_project::Column::Id.ne(NULL_DOMAIN_ID));
 
     if let Some(val) = &params.name {
         select = select.filter(db_project::Column::Name.eq(val));
@@ -79,7 +82,7 @@ mod tests {
     #[tokio::test]
     async fn test_query_all() {
         assert_eq!(
-            r#"SELECT "project"."id", "project"."name", "project"."extra", "project"."description", "project"."enabled", "project"."domain_id", "project"."parent_id", "project"."is_domain" FROM "project" WHERE "project"."is_domain" = TRUE"#,
+            r#"SELECT "project"."id", "project"."name", "project"."extra", "project"."description", "project"."enabled", "project"."domain_id", "project"."parent_id", "project"."is_domain" FROM "project" WHERE "project"."is_domain" = TRUE AND "project"."id" <> '<<keystone.domain.root>>'"#,
             QueryOrder::query(&mut get_list_query(&DomainListParameters::default()).unwrap())
                 .to_string(PostgresQueryBuilder)
         );
@@ -137,8 +140,8 @@ mod tests {
             db.into_transaction_log(),
             [Transaction::from_sql_and_values(
                 DatabaseBackend::Postgres,
-                r#"SELECT "project"."id", "project"."name", "project"."extra", "project"."description", "project"."enabled", "project"."domain_id", "project"."parent_id", "project"."is_domain" FROM "project" WHERE "project"."is_domain" = $1 ORDER BY "project"."id" ASC"#,
-                [true.into()]
+                r#"SELECT "project"."id", "project"."name", "project"."extra", "project"."description", "project"."enabled", "project"."domain_id", "project"."parent_id", "project"."is_domain" FROM "project" WHERE "project"."is_domain" = $1 AND "project"."id" <> $2 ORDER BY "project"."id" ASC"#,
+                [true.into(), NULL_DOMAIN_ID.into()]
             ),]
         );
     }

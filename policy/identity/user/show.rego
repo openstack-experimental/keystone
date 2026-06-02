@@ -24,6 +24,10 @@ allow if {
 }
 
 allow if {
+	input.credentials.is_admin
+}
+
+allow if {
 	"reader" in input.credentials.roles
 	identity.domain_matches_domain_scope
 }

@@ -122,6 +122,8 @@ serde_bytes = { version = "0.11" }
 serde_json = { version = "1.0" }
 serde_urlencoded = { version = "0.7" }
 spiffe = { version = "0.16" }
+spiffe-rustls = { version = "0.7" }
+spiffe-rustls-tokio = { version = "0.4" }
 temp-env = { version = "0.3" }
 tempfile = { version = "3.27" }
 thiserror = { version = "2.0" }

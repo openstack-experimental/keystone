@@ -21,3 +21,7 @@ default allow := false
 allow if {
 	"admin" in input.credentials.roles
 }
+
+allow if {
+	input.credentials.is_admin
+}

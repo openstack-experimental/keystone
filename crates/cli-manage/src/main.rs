@@ -21,9 +21,11 @@ use color_eyre::Report;
 
 use openstack_keystone_config::Config;
 
+mod bootstrap;
 mod db;
 mod storage;
 
+use crate::bootstrap::*;
 use crate::db::*;
 use crate::storage::*;
 
@@ -49,6 +51,9 @@ struct Args {
 
 #[derive(Parser)]
 enum Command {
+    /// Bootstrap
+    Bootstrap(BootstrapCommand),
+
     /// Database management commands.
     Db(DbCommand),
 
@@ -67,6 +72,7 @@ async fn main() -> Result<(), Report> {
     let args = Args::parse();
     let cfg = Config::load_all(args.config)?;
     match args.command {
+        Command::Bootstrap(x) => x.take_action(&cfg).await?,
         Command::Db(x) => x.take_action(&cfg).await?,
         Command::Storage(x) => x.take_action(&cfg).await?,
     }

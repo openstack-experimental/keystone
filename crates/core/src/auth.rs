@@ -286,6 +286,7 @@ impl ValidatedSecurityContext {
         if let Some(authz) = ctx.authorization()
             && !matches!(authz.scope, ScopeInfo::Unscoped)
             && authz.effective_roles().is_none_or(|r| r.is_empty())
+            && !ctx.is_admin()
         {
             return Err(AuthenticationError::ActorHasNoRolesOnTarget);
         }
@@ -350,6 +351,7 @@ async fn calculate_effective_roles(
         AuthenticationContext::Mapping(_)
     ) && let Some(authz) = ctx.authorization()
         && let Some(roles) = authz.effective_roles()
+        && !ctx.is_admin()
     {
         return Ok(roles.to_vec());
     }
@@ -364,7 +366,7 @@ async fn calculate_effective_roles(
         ScopeInfo::Unscoped => Vec::new(),
     };
 
-    if !matches!(scope, ScopeInfo::Unscoped) && roles.is_empty() {
+    if !matches!(scope, ScopeInfo::Unscoped) && roles.is_empty() && !ctx.is_admin() {
         return Err(AuthenticationError::ActorHasNoRolesOnTarget);
     }
 

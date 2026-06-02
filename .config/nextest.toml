@@ -17,6 +17,9 @@ command = { command-line = [ "tools/teardown-db.sh" ] }
 [scripts.setup.raft-env]
 command = { command-line = [ "tools/raft-env.sh" ] }
 
+[scripts.setup.start-api]
+command = { command-line = [ "tools/start-api.sh" ] }
+
 # --- POSTGRES PROFILE ---
 [profile.postgres]
 
@@ -43,9 +46,17 @@ setup = "setup-mysql"
 filter = "binary(provider)"
 setup = "setup-mysql"
 
+# --- Raft based integration test ---
 [profile.raft]
 default-filter = "all()"
 
 [[profile.raft.scripts]]
 filter = "binary(integration)"
 setup = "raft-env"
+
+# --- API tests ---
+[profile.api]
+
+[[profile.api.scripts]]
+filter = "binary(integration_api_v3) + binary(integration_api_v4)"
+setup = "start-api"

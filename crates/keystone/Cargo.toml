@@ -28,6 +28,7 @@ eyre.workspace = true
 futures-util.workspace = true
 hyper-util.workspace = true
 hyper.workspace = true
+inventory.workspace = true
 openstack-keystone-api-types = { workspace = true, features = ["openapi", "validate", "conv"]}
 openstack-keystone-appcred-driver-sql.workspace = true
 openstack-keystone-assignment-driver-sql.workspace = true
@@ -58,8 +59,8 @@ serde.workspace = true
 serde_json.workspace = true
 serde_urlencoded.workspace = true
 spiffe = { workspace = true, features = ["x509-source"] }
-spiffe-rustls = "0.7"
-spiffe-rustls-tokio = "0.4"
+spiffe-rustls.workspace = true
+spiffe-rustls-tokio.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["fs", "macros", "process", "signal", "rt-multi-thread"] }
 tokio-rustls.workspace = true

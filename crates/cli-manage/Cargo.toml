@@ -21,13 +21,19 @@ color-eyre.workspace = true
 comfy-table = "7.2"
 eyre.workspace = true
 inventory.workspace = true
+openstack-keystone-api-types.workspace = true
 openstack-keystone = { version = "0.1", path = "../keystone" }
 openstack-keystone-config.workspace = true
 openstack-keystone-core.workspace = true
 openstack-keystone-distributed-storage.workspace = true
 sea-orm.workspace = true
 sea-orm-migration.workspace = true
+reqwest = { workspace = true, features = ["json", "rustls"] }
+rustls = { workspace = true, features = ["aws-lc-rs"] }
 secrecy = { workspace = true, features = ["serde"] }
+serde_json.workspace = true
+spiffe = { workspace = true, features = ["x509-source"] }
+spiffe-rustls = { workspace = true }
 tokio = { workspace = true, features = ["fs", "macros"] }
 tonic = { workspace = true, features = ["tls-aws-lc" ] }
 tracing.workspace = true
@@ -35,3 +41,8 @@ tracing-subscriber.workspace = true
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+httpmock = { version = "0.8", features = ["http2"] }
+serde.workspace = true
+temp-env.workspace = true

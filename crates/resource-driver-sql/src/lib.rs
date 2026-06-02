@@ -260,6 +260,31 @@ impl SqlDriver for SqlBackend {
         create_table(connection, schema, crate::entity::prelude::Project).await?;
         create_table(connection, schema, crate::entity::prelude::ProjectOption).await?;
         create_table(connection, schema, crate::entity::prelude::ProjectTag).await?;
+
+        if domain::get_domain_by_id(connection, domain::NULL_DOMAIN_ID)
+            .await
+            .map_err(|e| DatabaseError::Sql {
+                message: e.to_string(),
+                context: "checking for null domain during setup".to_string(),
+            })?
+            .is_none()
+        {
+            domain::create(
+                connection,
+                DomainCreate {
+                    description: None,
+                    extra: std::collections::HashMap::new(),
+                    enabled: false,
+                    id: Some(domain::NULL_DOMAIN_ID.into()),
+                    name: domain::NULL_DOMAIN_ID.into(),
+                },
+            )
+            .await
+            .map_err(|e| DatabaseError::Sql {
+                message: e.to_string(),
+                context: "creating null domain during setup".to_string(),
+            })?;
+        }
         Ok(())
     }
 }

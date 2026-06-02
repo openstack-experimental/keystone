@@ -40,9 +40,7 @@ use openstack_keystone_config::{
 };
 use openstack_keystone_core::policy::MockPolicy;
 use openstack_keystone_core::provider::Provider;
-use openstack_keystone_core::resource::ResourceApi;
 use openstack_keystone_core::{SqlDriverRegistration, keystone::Service};
-use openstack_keystone_core_types::resource::DomainCreate;
 
 /// Setup the database schema.
 ///
@@ -179,22 +177,6 @@ pub async fn get_state() -> Result<(Arc<Service>, TempDir)> {
         )
         .await?,
     );
-
-    state
-        .provider
-        .get_resource_provider()
-        .create_domain(
-            &state,
-            DomainCreate {
-                id: Some("<<keystone.domain.root>>".into()),
-                name: "<<keystone.domain.root>>".into(),
-                enabled: true,
-                extra: std::collections::HashMap::new(),
-                description: None,
-            },
-        )
-        .await
-        .unwrap();
 
     if let Some(store) = &state.storage {
         store

@@ -20,8 +20,30 @@ Here are some important resources:
   `cargo test -p openstack-keystone`).
 - **Run a specific test**: `cargo test -p <crate_name> <test_path>` (e.g.,
   `cargo test -p openstack-keystone test_module::some_function`)
-- Run integration tests: `cargo nextest run` (add e.g., `--profile postgres` to
-  use postgres for sql drivers, or `--profile raft` to enable raft storage).
+- **Teardown**: `./tools/teardown-api.sh` (stops the server but preserves logs)
+- Run integration tests:
+  - **API integration tests** (requires live server +
+    [SPIRE](https://github.com/spiffe/spiffe.io) installed):
+    `cargo nextest run --profile api`
+    - The `api` profile starts a live keystone server via `tools/start-api.sh`,
+      bootstraps it, and runs the `integration_api_v3` and `integration_api_v4`
+      test binaries.
+    - **Prerequisites**: `spire-server` and `spire-agent` must be on `$PATH`.
+    - **Server logs** are written to `/tmp/nextest/keystone/` (the `log_dir`
+      from `[DEFAULT]` in the auto-generated keystone.conf).
+    - **SPIRE logs** are located at `/tmp/spire-ci-test-harness/server.log` and
+      `/tmp/spire-ci-test-harness/agent.log`.
+    - **Server endpoints**:
+      - Public API: `http://localhost:8080`
+      - Admin socket: `/tmp/nextest/keystone/keystone.sock`
+      - Admin auth: `admin` / `password` (domain: `default`, project: `admin`)
+    - Note: Logs are preserved after test completion for debugging. Use
+      `./tools/teardown-api.sh` to stop the server and
+      `rm -rf /tmp/nextest/keystone /tmp/spire-ci-test-harness` to clean up
+      manually.
+  - **General integration tests**: `cargo nextest run` (you can pass additional
+    cargo nextest arguments, e.g., `--profile raft`).
+
 - **Linting**: `cargo clippy -p <crate_name> --fix --allow-dirty`
 - **Formatting**: `cargo fmt`
 
@@ -93,14 +115,14 @@ Here are some important resources:
     - Update: `input.target` = patch, `input.existing` = stored resource.
     - Show/Delete: `input.target` = `null`, `input.existing` = stored resource.
     - List: `input.target` = query parameters, `input.existing` = `null`.
-- For create operation the new object is passed to enforcer as `target` before the
-     creation.
-  - For remove operation first the current state is fetched, it is then passed to the
-    policy enforcer as `existing` followed by the real deletion.
-  - For list operation query parameters are passed to the enforcer as `target` before
-    listing.
-  - For show operation current state is fetched and passed to the enforcer as `existing`
-    before returning the result.
+- For create operation the new object is passed to enforcer as `target` before
+  the creation.
+  - For remove operation first the current state is fetched, it is then passed
+    to the policy enforcer as `existing` followed by the real deletion.
+  - For list operation query parameters are passed to the enforcer as `target`
+    before listing.
+  - For show operation current state is fetched and passed to the enforcer as
+    `existing` before returning the result.
   - For update operation current resource state and new state are passed to the
     enforcer as `existing` and `target` respectively.
 

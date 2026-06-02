@@ -17,10 +17,9 @@ use std::io;
 
 use async_trait::async_trait;
 use clap::{Parser, Subcommand};
-use color_eyre::{Report, eyre::WrapErr, eyre::eyre};
+use color_eyre::{Report, eyre::WrapErr};
 use eyre::Result;
 use sea_orm::ConnectOptions;
-use sea_orm::ConnectionTrait;
 use sea_orm::Database;
 use sea_orm::DatabaseConnection;
 use sea_orm_migration::MigrationTrait;
@@ -151,7 +150,9 @@ impl PerformAction for DbCommand {
 
         match self.command {
             DbCommands::Sync => {
-                sync_schema(&conn).await?;
+                openstack_keystone_core::db::sync_schema(&conn)
+                    .await
+                    .wrap_err("syncing schema")?;
                 println!("schema sync completed successfully");
                 Ok(())
             }
@@ -211,22 +212,4 @@ impl PerformAction for DbCommand {
             }
         }
     }
-}
-
-async fn sync_schema(db: &DatabaseConnection) -> Result<(), Report> {
-    let schema = sea_orm::Schema::new(db.get_database_backend());
-
-    for (i, driver) in inventory::iter::<SqlDriverRegistration>
-        .into_iter()
-        .enumerate()
-    {
-        info!("Setting up schema for driver {}", i + 1);
-        driver
-            .driver
-            .setup(db, &schema)
-            .await
-            .wrap_err_with(|| eyre!("failed to setup schema for SQL driver"))?;
-    }
-
-    Ok(())
 }

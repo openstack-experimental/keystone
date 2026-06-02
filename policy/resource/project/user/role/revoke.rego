@@ -14,6 +14,10 @@ allow if {
 }
 
 allow if {
+	input.credentials.is_admin
+}
+
+allow if {
 	"manager" in input.credentials.roles
 	assignment.project_role_domain_matches
 }

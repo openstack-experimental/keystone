@@ -20,6 +20,10 @@ allow if {
 	"admin" in input.credentials.roles
 }
 
+allow if {
+	input.credentials.is_admin
+}
+
 # METADATA
 # description: "`Manager` is allowed for global roles and roles belonging to the scope domain."
 allow if {

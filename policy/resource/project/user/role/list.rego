@@ -20,6 +20,10 @@ allow if {
 }
 
 allow if {
+	input.credentials.is_admin
+}
+
+allow if {
 	"reader" in input.credentials.roles
 	input.credentials.system == "all"
 }
