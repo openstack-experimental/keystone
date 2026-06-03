@@ -131,7 +131,7 @@ mod tests {
     use openstack_keystone_core_types::auth::*;
     use openstack_keystone_core_types::identity::UserPasswordAuthRequest;
     use openstack_keystone_core_types::resource::{Domain, DomainBuilder, Project};
-    use openstack_keystone_core_types::token::ProjectScopePayload;
+    use openstack_keystone_core_types::token::{ProjectScopePayload, TokenProviderError};
 
     use crate::api::v3::auth::token::types::*;
     use crate::assignment::MockAssignmentProvider;
@@ -371,6 +371,160 @@ mod tests {
         let body = response.into_body().collect().await.unwrap().to_bytes();
         let res: TokenResponse = serde_json::from_slice(&body).unwrap();
         assert_eq!(vec!["password"], res.token.methods);
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_post_explicit_empty_roles_unauthorized() {
+        let config = Config::default();
+        let project = Project {
+            id: "pid".into(),
+            domain_id: "pdid".into(),
+            enabled: true,
+            ..Default::default()
+        };
+        let user_domain = Domain {
+            id: "user_domain_id".into(),
+            enabled: true,
+            ..Default::default()
+        };
+        let project_domain = Domain {
+            id: "pdid".into(),
+            enabled: true,
+            ..Default::default()
+        };
+        let mut assignment_mock = MockAssignmentProvider::default();
+        assignment_mock
+            .expect_list_role_assignments()
+            .returning(|_, _| Ok(Vec::new()));
+
+        let auth = AuthenticationResultBuilder::default()
+            .context(AuthenticationContext::Password)
+            .principal(PrincipalInfo {
+                identity: IdentityInfo::User(
+                    UserIdentityInfoBuilder::default()
+                        .user_id("uid")
+                        .build()
+                        .unwrap(),
+                ),
+            })
+            .build()
+            .unwrap();
+
+        let mut identity_mock = MockIdentityProvider::default();
+        identity_mock
+            .expect_authenticate_by_password()
+            .withf(|_, req: &UserPasswordAuthRequest| {
+                req.id == Some("uid".to_string())
+                    && req.password == "pass"
+                    && req.name == Some("uname".to_string())
+            })
+            .returning(move |_, _| Ok(auth.clone()));
+        identity_mock.expect_get_user().returning(|_, _| {
+            use openstack_keystone_core_types::identity::UserResponse;
+            Ok(Some(UserResponse {
+                id: "uid".into(),
+                name: "uname".into(),
+                domain_id: "user_domain_id".into(),
+                enabled: true,
+                default_project_id: None,
+                extra: std::collections::HashMap::new(),
+                federated: None,
+                options: openstack_keystone_core_types::identity::UserOptions::default(),
+                password_expires_at: None,
+            }))
+        });
+
+        let mut resource_mock = MockResourceProvider::default();
+        resource_mock
+            .expect_get_project()
+            .withf(|_, id: &'_ str| id == "pid")
+            .returning(move |_, _| Ok(Some(project.clone())));
+        resource_mock
+            .expect_get_domain()
+            .withf(|_, id: &'_ str| id == "user_domain_id")
+            .returning(move |_, _| Ok(Some(user_domain.clone())));
+        resource_mock
+            .expect_get_domain()
+            .withf(|_, id: &'_ str| id == "pdid")
+            .returning(move |_, _| Ok(Some(project_domain.clone())));
+
+        let mut token_mock = MockTokenProvider::default();
+        token_mock
+            .expect_issue_token_context()
+            .returning(|_, _, _| {
+                Err(TokenProviderError::Authentication(
+                    AuthenticationError::ActorHasNoRolesOnTarget,
+                ))
+            });
+
+        let provider = Provider::mocked_builder()
+            .mock_assignment(assignment_mock)
+            .mock_identity(identity_mock)
+            .mock_resource(resource_mock)
+            .mock_token(token_mock)
+            .build()
+            .unwrap();
+
+        let state = Arc::new(
+            Service::new(
+                ConfigManager::not_watched(config),
+                DatabaseConnection::Disconnected,
+                provider,
+                Arc::new(MockPolicy::default()),
+            )
+            .await
+            .unwrap(),
+        );
+
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state.clone());
+
+        let response = api
+            .as_service()
+            .oneshot(
+                Request::builder()
+                    .uri("/")
+                    .method("POST")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::to_vec(&json!({
+                            "auth": {
+                                "identity": {
+                                    "methods": ["password"],
+                                    "password": {
+                                        "user": {
+                                            "id": "uid",
+                                            "name": "uname",
+                                            "domain": {
+                                                "id": "udid",
+                                                "name": "udname"
+                                            },
+                                            "password": "pass",
+                                        },
+                                    },
+                                },
+                                "scope": {
+                                    "project": {
+                                        "id": "pid",
+                                        "name": "pname",
+                                        "domain": {
+                                            "id": "pdid",
+                                            "name": "pdname"
+                                        }
+                                    }
+                                }
+                            }
+                        }))
+                        .unwrap(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
 
     #[tokio::test]

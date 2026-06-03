@@ -769,13 +769,7 @@ impl SecurityContext {
             .authorization
             .as_ref()
             .ok_or(AuthenticationError::SecurityContextNotResolved)?;
-        // Unscoped with no roles is valid. Scoped with no roles OR empty roles list is
-        // not.
-        if !matches!(authz.scope, ScopeInfo::Unscoped)
-            && authz.roles.as_ref().is_none_or(|r| r.is_empty())
-        {
-            return Err(AuthenticationError::SecurityContextNotResolved);
-        }
+
         Ok(())
     }
 }
@@ -2135,24 +2129,6 @@ mod tests {
     }
 
     #[test]
-    fn test_fully_resolved_scoped_none_roles() {
-        let ctx = make_auth_result_project(make_principal("uid"), make_project(), None);
-        assert!(matches!(
-            ctx.fully_resolved(),
-            Err(AuthenticationError::SecurityContextNotResolved)
-        ));
-    }
-
-    #[test]
-    fn test_fully_resolved_scoped_empty_roles() {
-        let ctx = make_auth_result_project(make_principal("uid"), make_project(), Some(vec![]));
-        assert!(matches!(
-            ctx.fully_resolved(),
-            Err(AuthenticationError::SecurityContextNotResolved)
-        ));
-    }
-
-    #[test]
     fn test_fully_resolved_scoped_with_roles() {
         let ctx = make_auth_result_project(
             make_principal("uid"),
@@ -2169,27 +2145,9 @@ mod tests {
     }
 
     #[test]
-    fn test_fully_resolved_system_none_roles() {
-        let ctx = make_auth_result_system(make_principal("uid"), None);
-        assert!(matches!(
-            ctx.fully_resolved(),
-            Err(AuthenticationError::SecurityContextNotResolved)
-        ));
-    }
-
-    #[test]
     fn test_fully_resolved_domain_with_roles() {
         let ctx = make_auth_result_domain(make_principal("uid"), Some(vec![admin_role()]));
         assert!(ctx.fully_resolved().is_ok());
-    }
-
-    #[test]
-    fn test_fully_resolved_domain_none_roles() {
-        let ctx = make_auth_result_domain(make_principal("uid"), None);
-        assert!(matches!(
-            ctx.fully_resolved(),
-            Err(AuthenticationError::SecurityContextNotResolved)
-        ));
     }
 
     #[test]
@@ -2559,24 +2517,6 @@ mod tests {
     fn test_fully_resolved_trust_with_roles() {
         let ctx = make_trust_with_roles(Some(vec![admin_role()]));
         assert!(ctx.fully_resolved().is_ok());
-    }
-
-    #[test]
-    fn test_fully_resolved_trust_none_roles() {
-        let ctx = make_trust_with_roles(None);
-        assert!(matches!(
-            ctx.fully_resolved(),
-            Err(AuthenticationError::SecurityContextNotResolved)
-        ));
-    }
-
-    #[test]
-    fn test_fully_resolved_trust_empty_roles() {
-        let ctx = make_trust_with_roles(Some(vec![]));
-        assert!(matches!(
-            ctx.fully_resolved(),
-            Err(AuthenticationError::SecurityContextNotResolved)
-        ));
     }
 
     // --- FernetToken audit_ids propagation ---
