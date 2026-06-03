@@ -17,6 +17,8 @@ use utoipa_axum::{router::OpenApiRouter, routes};
 use crate::keystone::ServiceState;
 
 mod create;
+mod delete;
+mod imply;
 mod list;
 mod show;
 pub mod types;
@@ -103,5 +105,6 @@ pub struct ApiDoc;
 pub(crate) fn openapi_router() -> OpenApiRouter<ServiceState> {
     OpenApiRouter::new()
         .routes(routes!(list::list, create::create))
-        .routes(routes!(show::show))
+        .routes(routes!(show::show, delete::delete))
+        .merge(imply::openapi_router())
 }

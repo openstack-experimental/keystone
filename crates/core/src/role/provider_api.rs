@@ -13,7 +13,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use async_trait::async_trait;
-use std::collections::{BTreeMap, BTreeSet};
 
 use openstack_keystone_core_types::role::*;
 
@@ -49,6 +48,19 @@ pub trait RoleApi: Send + Sync {
         prior_role_id: &'a str,
         implied_role_id: &'a str,
     ) -> Result<RoleImply, RoleProviderError>;
+
+    /// Check if a role imply rule exists.
+    ///
+    /// # Arguments
+    /// * `state` - The current service state.
+    /// * `prior_role_id` - The ID of the prior role.
+    /// * `implied_role_id` - The ID of the implied role.
+    async fn check_role_imply_rule<'a>(
+        &self,
+        state: &ServiceState,
+        prior_role_id: &'a str,
+        implied_role_id: &'a str,
+    ) -> Result<bool, RoleProviderError>;
 
     /// Delete a role by the ID.
     ///
@@ -115,20 +127,20 @@ pub trait RoleApi: Send + Sync {
     ///
     /// # Arguments
     /// * `state` - The current service state.
-    /// * `resolve` - Whether to resolve the imply rules.
-    async fn list_imply_rules(
-        &self,
-        state: &ServiceState,
-        resolve: bool,
-    ) -> Result<BTreeMap<String, BTreeSet<String>>, RoleProviderError>;
-
-    /// List role imply rules.
-    ///
-    /// # Arguments
-    /// * `state` - The current service state.
     async fn list_role_imply_rules(
         &self,
         state: &ServiceState,
+    ) -> Result<Vec<RoleImply>, RoleProviderError>;
+
+    /// List role imply rules for a specific prior role.
+    ///
+    /// # Arguments
+    /// * `state` - The current service state.
+    /// * `prior_role_id` - The ID of the prior role.
+    async fn list_role_imply_rules_by_prior<'a>(
+        &self,
+        state: &ServiceState,
+        prior_role_id: &'a str,
     ) -> Result<Vec<RoleImply>, RoleProviderError>;
 
     /// List Roles.

@@ -11,8 +11,8 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-//! OpenStack Keystone SQL driver for the role provider
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+//! # OpenStack Keystone SQL driver for the role provider
+use std::collections::HashSet;
 
 use async_trait::async_trait;
 
@@ -29,7 +29,7 @@ use openstack_keystone_core_types::role::*;
 pub mod entity;
 mod implied_role;
 mod role;
-mod role_imply;
+//mod role_imply;
 
 #[derive(Default)]
 pub struct SqlBackend {}
@@ -59,26 +59,21 @@ pub async fn expand_implied_roles(
     db: &DatabaseConnection,
     roles: &mut Vec<RoleRef>,
 ) -> Result<(), RoleProviderError> {
-    let rules = implied_role::list_rules(db, true).await?;
+    let rules = implied_role::get_inference_tree(db, true).await?;
     let mut role_ids: HashSet<String> =
         HashSet::from_iter(roles.iter().map(|role| role.id.clone()));
     let mut implied_roles: Vec<RoleRef> = Vec::new();
     // iterate over all implied role ids for every role in the initial list
-    for implied_role_id in roles
+    for implied_role in roles
         .iter()
         .filter_map(|role| rules.get(&role.id))
         .flat_map(|val| val.iter())
     {
         // Add the role that was not processed yet (present in the `role_ids` into the
         // temporary list and save the processed id.
-        if !role_ids.contains(implied_role_id) {
-            implied_roles.push(
-                role::get(db, implied_role_id)
-                    .await?
-                    .ok_or(RoleProviderError::RoleNotFound(implied_role_id.clone()))?
-                    .into(),
-            );
-            role_ids.insert(implied_role_id.clone());
+        if !role_ids.contains(&implied_role.id) {
+            implied_roles.push(implied_role.clone());
+            role_ids.insert(implied_role.id.clone());
         }
     }
     roles.extend(implied_roles);
@@ -132,7 +127,23 @@ impl RoleBackend for SqlBackend {
         prior_role_id: &'a str,
         implied_role_id: &'a str,
     ) -> Result<RoleImply, RoleProviderError> {
-        Ok(role_imply::create(&state.db, prior_role_id, implied_role_id).await?)
+        Ok(implied_role::create(&state.db, prior_role_id, implied_role_id).await?)
+    }
+
+    /// Check if a role imply rule exists.
+    ///
+    /// # Arguments
+    /// * `state` - The current service state.
+    /// * `prior_role_id` - The ID of the prior role.
+    /// * `implied_role_id` - The ID of the implied role.
+    #[tracing::instrument(level = "info", skip(self, state))]
+    async fn check_role_imply_rule<'a>(
+        &self,
+        state: &ServiceState,
+        prior_role_id: &'a str,
+        implied_role_id: &'a str,
+    ) -> Result<bool, RoleProviderError> {
+        Ok(implied_role::check(&state.db, prior_role_id, implied_role_id).await?)
     }
 
     /// Delete a role by the ID.
@@ -166,7 +177,7 @@ impl RoleBackend for SqlBackend {
         prior_role_id: &'a str,
         implied_role_id: &'a str,
     ) -> Result<(), RoleProviderError> {
-        Ok(role_imply::delete(&state.db, prior_role_id, implied_role_id).await?)
+        Ok(implied_role::delete(&state.db, prior_role_id, implied_role_id).await?)
     }
 
     /// Expand implied roles.
@@ -223,24 +234,7 @@ impl RoleBackend for SqlBackend {
         prior_role_id: &'a str,
         implied_role_id: &'a str,
     ) -> Result<Option<RoleImply>, RoleProviderError> {
-        Ok(role_imply::get(&state.db, prior_role_id, implied_role_id).await?)
-    }
-
-    /// List role imply rules.
-    ///
-    /// # Parameters
-    /// - `state`: The service state.
-    /// - `resolve`: Whether to resolve the rules recursively.
-    ///
-    /// # Returns
-    /// A `Result` containing the map of role imply rules, or an `Error`.
-    #[tracing::instrument(level = "debug", skip(self, state))]
-    async fn list_imply_rules(
-        &self,
-        state: &ServiceState,
-        resolve: bool,
-    ) -> Result<BTreeMap<String, BTreeSet<String>>, RoleProviderError> {
-        Ok(implied_role::list_rules(&state.db, resolve).await?)
+        Ok(implied_role::get(&state.db, prior_role_id, implied_role_id).await?)
     }
 
     /// List role imply rules.
@@ -255,7 +249,24 @@ impl RoleBackend for SqlBackend {
         &self,
         state: &ServiceState,
     ) -> Result<Vec<RoleImply>, RoleProviderError> {
-        Ok(role_imply::list(&state.db).await?)
+        Ok(implied_role::list(&state.db).await?)
+    }
+
+    /// List role imply rules for a specific prior role.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `prior_role_id`: The ID of the prior role.
+    ///
+    /// # Returns
+    /// A `Result` containing a list of `RoleImply`, or an `Error`.
+    #[tracing::instrument(level = "debug", skip(self, state))]
+    async fn list_role_imply_rules_by_prior<'a>(
+        &self,
+        state: &ServiceState,
+        prior_role_id: &'a str,
+    ) -> Result<Vec<RoleImply>, RoleProviderError> {
+        Ok(implied_role::list_by_prior(&state.db, prior_role_id).await?)
     }
 
     /// List roles.
@@ -303,10 +314,11 @@ impl SqlDriver for SqlBackend {
 
 #[cfg(test)]
 mod tests {
-    use sea_orm::{DatabaseBackend, MockDatabase};
+    use std::collections::BTreeMap;
 
-    use crate::entity::implied_role;
-    use crate::implied_role::tests::get_implied_role_mock;
+    use sea_orm::{DatabaseBackend, IntoMockRow, MockDatabase, MockRow};
+
+    use crate::role::NULL_DOMAIN_ID;
     use crate::role::tests::get_role_mock;
 
     use super::*;
@@ -322,10 +334,45 @@ mod tests {
         }
     }
 
+    fn mock_flat_imply_row(
+        prior_id: &str,
+        prior_name: &str,
+        prior_domain: &str,
+        implied_id: &str,
+        implied_name: &str,
+        implied_domain: &str,
+    ) -> MockRow {
+        BTreeMap::from([
+            ("prior_role_id", prior_id.into()),
+            ("prior_role_name", prior_name.into()),
+            ("prior_role_domain_id", prior_domain.into()),
+            ("implied_role_id", implied_id.into()),
+            ("implied_role_name", implied_name.into()),
+            ("implied_role_domain_id", implied_domain.into()),
+        ])
+        .into_mock_row()
+    }
+
+    fn mock_flat_imply(
+        prior_id: &str,
+        prior_name: &str,
+        implied_id: &str,
+        implied_name: &str,
+    ) -> MockRow {
+        mock_flat_imply_row(
+            prior_id,
+            prior_name,
+            NULL_DOMAIN_ID,
+            implied_id,
+            implied_name,
+            NULL_DOMAIN_ID,
+        )
+    }
+
     #[tokio::test]
     async fn test_expand_no_implies_no_domain_populates_name() {
         let db = MockDatabase::new(DatabaseBackend::Postgres)
-            .append_query_results([Vec::<implied_role::Model>::new()])
+            .append_query_results([Vec::<MockRow>::new()])
             .append_query_results([vec![get_role_mock("r1", "admin")]])
             .into_connection();
 
@@ -346,8 +393,7 @@ mod tests {
     #[tokio::test]
     async fn test_expand_adds_implied_roles_and_resolves_names() {
         let db = MockDatabase::new(DatabaseBackend::Postgres)
-            .append_query_results([vec![get_implied_role_mock("r1", "r2")]])
-            .append_query_results([vec![mock_role_with_domain("r2", "reader", "d1")]])
+            .append_query_results([vec![mock_flat_imply("r1", "admin", "r2", "reader")]])
             .append_query_results([vec![get_role_mock("r1", "admin")]])
             .into_connection();
 
@@ -365,18 +411,16 @@ mod tests {
         assert_eq!(roles[0].domain_id.as_deref(), Some("foo_domain"));
         assert_eq!(roles[1].id, "r2");
         assert_eq!(roles[1].name.as_deref(), Some("reader"));
-        assert_eq!(roles[1].domain_id.as_deref(), Some("d1"));
+        assert_eq!(roles[1].domain_id, None);
     }
 
     #[tokio::test]
     async fn test_expand_recursive_implied_roles_no_duplicates() {
         let db = MockDatabase::new(DatabaseBackend::Postgres)
             .append_query_results([vec![
-                get_implied_role_mock("r1", "r2"),
-                get_implied_role_mock("r2", "r3"),
+                mock_flat_imply("r1", "admin", "r2", "member"),
+                mock_flat_imply("r2", "member", "r3", "reader"),
             ]])
-            .append_query_results([vec![mock_role_with_domain("r2", "member", "d1")]])
-            .append_query_results([vec![mock_role_with_domain("r3", "reader", "d1")]])
             .append_query_results([vec![get_role_mock("r1", "admin")]])
             .into_connection();
 
@@ -391,6 +435,7 @@ mod tests {
         assert_eq!(roles.len(), 3);
         assert_eq!(roles[0].id, "r1");
         assert_eq!(roles[0].name.as_deref(), Some("admin"));
+        assert_eq!(roles[0].domain_id.as_deref(), Some("foo_domain"));
         assert_eq!(roles[1].id, "r2");
         assert_eq!(roles[1].name.as_deref(), Some("member"));
         assert_eq!(roles[2].id, "r3");
@@ -400,7 +445,7 @@ mod tests {
     #[tokio::test]
     async fn test_expand_preserves_existing_name() {
         let db = MockDatabase::new(DatabaseBackend::Postgres)
-            .append_query_results([Vec::<implied_role::Model>::new()])
+            .append_query_results([Vec::<MockRow>::new()])
             .into_connection();
 
         let mut roles = vec![
@@ -423,7 +468,7 @@ mod tests {
     #[tokio::test]
     async fn test_expand_empty_roles_list() {
         let db = MockDatabase::new(DatabaseBackend::Postgres)
-            .append_query_results([Vec::<implied_role::Model>::new()])
+            .append_query_results([Vec::<MockRow>::new()])
             .into_connection();
 
         let mut roles: Vec<RoleRef> = vec![];
@@ -436,7 +481,7 @@ mod tests {
     #[tokio::test]
     async fn test_expand_implied_role_not_in_rules_skipped() {
         let db = MockDatabase::new(DatabaseBackend::Postgres)
-            .append_query_results([vec![get_implied_role_mock("r2", "r3")]])
+            .append_query_results([vec![mock_flat_imply("r2", "member", "r3", "reader")]])
             .append_query_results([vec![get_role_mock("r1", "admin")]])
             .into_connection();
 
@@ -456,7 +501,7 @@ mod tests {
     #[tokio::test]
     async fn test_expand_global_role_has_no_domain_in_output() {
         let db = MockDatabase::new(DatabaseBackend::Postgres)
-            .append_query_results([Vec::<implied_role::Model>::new()])
+            .append_query_results([Vec::<MockRow>::new()])
             .append_query_results([vec![mock_role_with_domain("r1", "admin", "<<null>>")]])
             .into_connection();
 
@@ -476,8 +521,7 @@ mod tests {
     #[tokio::test]
     async fn test_expand_multiple_roles_with_mixed_name_states() {
         let db = MockDatabase::new(DatabaseBackend::Postgres)
-            .append_query_results([vec![get_implied_role_mock("r1", "r3")]])
-            .append_query_results([vec![mock_role_with_domain("r3", "viewer", "d1")]])
+            .append_query_results([vec![mock_flat_imply("r1", "admin", "r3", "viewer")]])
             .append_query_results([vec![get_role_mock("r1", "admin")]])
             .into_connection();
 
@@ -506,6 +550,5 @@ mod tests {
         assert_eq!(roles[1].domain_id.as_deref(), Some("d1"));
         assert_eq!(roles[2].id, "r3");
         assert_eq!(roles[2].name.as_deref(), Some("viewer"));
-        assert_eq!(roles[2].domain_id.as_deref(), Some("d1"));
     }
 }

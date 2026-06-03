@@ -32,6 +32,7 @@ pub mod group;
 pub mod project;
 pub mod role;
 pub mod role_assignment;
+pub mod role_inferences;
 pub mod user;
 
 use crate::api::types::*;
@@ -52,6 +53,7 @@ pub(super) fn openapi_router() -> OpenApiRouter<ServiceState> {
         .nest("/groups", group::openapi_router())
         .nest("/projects", project::openapi_router())
         .nest("/roles", role::openapi_router())
+        .nest("/role_inferences", role_inferences::openapi_router())
         .nest("/users", user::openapi_router())
         .merge(role_assignment::openapi_router())
         .routes(routes!(version))

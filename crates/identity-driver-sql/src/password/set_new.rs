@@ -142,8 +142,8 @@ mod tests {
 
     #[tokio::test]
     async fn unique_zero_existing_passwords_truncated_away() {
-        // 3 existing passwords, unique=0 → history_size=1 → keep 0 → all truncated, none kept.
-        // Truncated list is empty, so no UPDATE calls, only INSERT.
+        // 3 existing passwords, unique=0 → history_size=1 → keep 0 → all truncated,
+        // none kept. Truncated list is empty, so no UPDATE calls, only INSERT.
         let existing = vec![
             make_pwd(1, 300, false),
             make_pwd(2, 200, false),
@@ -197,8 +197,8 @@ mod tests {
     async fn unique_one_two_existing_truncate_excess() {
         // 2 existing (newest=200, older=100), unique=1 → keep 1 old.
         // existing.len() (2) > history_size-1 (1) → truncate to 1.
-        // The truncation reverses the DESC list (200,100 → 100,200) then take(1) → [100].
-        // Expire pw id=3 (created_at_int=100).
+        // The truncation reverses the DESC list (200,100 → 100,200) then take(1) →
+        // [100]. Expire pw id=3 (created_at_int=100).
         let existing = vec![
             make_pwd(2, 200, false), // newest first
             make_pwd(3, 100, false), // older
@@ -236,7 +236,8 @@ mod tests {
     #[tokio::test]
     async fn unique_two_five_existing_truncate_excess() {
         // 5 existing, unique=2 → keep 2 old, truncate 3.
-        // Order DESC: 500,400,300,200,100 → rev: 100,200,300,400,500 → take(2) → [100,200]
+        // Order DESC: 500,400,300,200,100 → rev: 100,200,300,400,500 → take(2) →
+        // [100,200]
         let existing = vec![
             make_pwd(1, 500, false),
             make_pwd(2, 400, false),

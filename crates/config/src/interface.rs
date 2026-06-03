@@ -46,12 +46,13 @@ pub struct PublicInterface {
 #[derive(Debug, Deserialize, Clone)]
 pub struct AdminInterface {
     /// SVID for the admin account. When specified, for a connection with a
-    /// matching SVID a corresponding dynamic SPIFFE Binding would be used with a
-    /// "is_system" flag set to true and an admin role on the system scope.
-    /// This is especially helpful for the bootstrapping activities.
+    /// matching SVID a corresponding dynamic SPIFFE Binding would be used with
+    /// a "is_system" flag set to true and an admin role on the system
+    /// scope. This is especially helpful for the bootstrapping activities.
     pub admin_svid: Option<String>,
 
-    /// Listener configuration. Admin interface can be only exposed through the unix socket.
+    /// Listener configuration. Admin interface can be only exposed through the
+    /// unix socket.
     #[serde(flatten)]
     pub listener: UnixSocketListener,
 }

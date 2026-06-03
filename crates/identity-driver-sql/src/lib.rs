@@ -542,7 +542,8 @@ impl IdentityBackend for SqlBackend {
     /// - `user`: The user details to update.
     ///
     /// # Returns
-    /// A `Result` containing the updated `UserResponse` if successful, or an `Error`.
+    /// A `Result` containing the updated `UserResponse` if successful, or an
+    /// `Error`.
     #[tracing::instrument(skip(self, state))]
     async fn update_user<'a>(
         &self,

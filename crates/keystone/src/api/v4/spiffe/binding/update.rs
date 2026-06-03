@@ -67,7 +67,8 @@ pub(super) async fn update(
         .get_binding(&state, &svid)
         .await?;
 
-    // Enrich the authorizations so that the policy is capable to do additional checks
+    // Enrich the authorizations so that the policy is capable to do additional
+    // checks
     let target_auths =
         super::enrich_authorizations_list(&state, req.binding.authorizations.clone()).await;
     let target = super::EnrichedSpiffeBindingUpdate {

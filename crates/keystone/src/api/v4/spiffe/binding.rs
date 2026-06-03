@@ -96,8 +96,9 @@ pub(super) struct EnrichedSpiffeBindingUpdate {
 ///
 /// Used by the create/update handlers to serialize the binding's authorizations
 /// together with the resolved Domain, Project, and Role objects for OPA policy
-/// evaluation. Resolved objects are `None` when the lookup fails or the resource
-/// does not exist, preventing information leakage about resource existence.
+/// evaluation. Resolved objects are `None` when the lookup fails or the
+/// resource does not exist, preventing information leakage about resource
+/// existence.
 ///
 /// The OPA policy receives both the raw string IDs and the optional resolved
 /// objects, allowing it to make nuanced authorization decisions without the
@@ -138,9 +139,9 @@ pub(super) enum EnrichedSpiffeAuthorization {
 /// resolved Domain, Project, and Role objects.
 ///
 /// Always succeeds and never returns an error. Unresolvable resources silently
-/// produce `None` for the corresponding resolved object (domain, project, role).
-/// This prevents information leakage: a missing resource and a provider error
-/// produce the same enrichment outcome.
+/// produce `None` for the corresponding resolved object (domain, project,
+/// role). This prevents information leakage: a missing resource and a provider
+/// error produce the same enrichment outcome.
 async fn enrich_authorizations_list(
     state: &ServiceState,
     authorizations: Option<Vec<SpiffeAuthorization>>,

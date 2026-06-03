@@ -106,7 +106,8 @@ pub trait PolicyEnforcer: Send + Sync {
     /// - `policy_name`: The name of the policy to enforce.
     /// - `credentials`: The credentials of the user requesting the action.
     /// - `target`: The object the action is acting upon (new object for create,
-    ///   patch for update, query params for list, `Value::Null` for show/delete).
+    ///   patch for update, query params for list, `Value::Null` for
+    ///   show/delete).
     /// - `existing`: The existing/stored object before the action (for update
     ///   operations), or `None` for create/list/show/delete.
     ///

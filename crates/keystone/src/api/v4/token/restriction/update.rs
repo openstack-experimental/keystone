@@ -61,7 +61,8 @@ pub(super) async fn update(
     Json(req): Json<TokenRestrictionUpdateRequest>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
     req.validate()?;
-    // Fetch the current resource to pass it as existing object into the policy evaluation
+    // Fetch the current resource to pass it as existing object into the policy
+    // evaluation
     let current = state
         .provider
         .get_token_provider()

@@ -8,8 +8,8 @@ import data.identity
 # Create role imply rule.
 #
 # The `input.target.role_imply_rule` is the new rule object (RoleImply):
-#   id:              string      The prior role ID.
-#   implies_role_id: string      The implied role ID.
+#   prior_role:       RoleRef    The prior role reference (id, name, domain_id).
+#   implied_role:     RoleRef    The implied role reference (id, name, domain_id).
 #
 # The `input.existing` is null
 #

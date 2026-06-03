@@ -17,11 +17,10 @@ use sea_orm::entity::*;
 
 use openstack_keystone_core::error::DbContextExt;
 use openstack_keystone_core::role::RoleProviderError;
-use openstack_keystone_core_types::role::RoleImply;
 
-use crate::entity::implied_role as db_implied_role;
+use crate::entity::prelude::ImpliedRole;
 
-/// Create a role imply rule.
+/// Delete a role imply rule.
 ///
 /// # Parameters
 /// - `db`: The database connection.
@@ -29,47 +28,41 @@ use crate::entity::implied_role as db_implied_role;
 /// - `implied_role_id`: The ID of the implied role.
 ///
 /// # Returns
-/// A `Result` containing the created `RoleImply`, or an `Error`.
-pub async fn create(
+/// A `Result` indicating success or an `Error`.
+pub async fn delete(
     db: &DatabaseConnection,
     prior_role_id: &str,
     implied_role_id: &str,
-) -> Result<RoleImply, RoleProviderError> {
-    db_implied_role::ActiveModel {
-        prior_role_id: Set(prior_role_id.into()),
-        implied_role_id: Set(implied_role_id.into()),
-    }
-    .insert(db)
-    .await
-    .context("creating role imply rule")?
-    .try_into()
+) -> Result<(), RoleProviderError> {
+    ImpliedRole::delete_by_id((prior_role_id.into(), implied_role_id.into()))
+        .exec(db)
+        .await
+        .context("deleting role imply rule")?;
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
-    use sea_orm::{DatabaseBackend, MockDatabase, Transaction};
+    use sea_orm::{DatabaseBackend, MockDatabase, MockExecResult, Transaction};
 
     use super::*;
 
     #[tokio::test]
-    async fn test_create() {
+    async fn test_delete() {
         let db = MockDatabase::new(DatabaseBackend::Postgres)
-            .append_query_results([vec![db_implied_role::Model {
-                prior_role_id: "admin".into(),
-                implied_role_id: "member".into(),
-            }]])
+            .append_exec_results([MockExecResult {
+                rows_affected: 1,
+                ..Default::default()
+            }])
             .into_connection();
 
-        let created = create(&db, "admin", "member").await.unwrap();
-
-        assert_eq!(created.id.as_deref(), Some("admin"));
-        assert_eq!(created.implies_role_id.as_deref(), Some("member"));
+        delete(&db, "admin", "member").await.unwrap();
 
         assert_eq!(
             db.into_transaction_log(),
             [Transaction::from_sql_and_values(
                 DatabaseBackend::Postgres,
-                r#"INSERT INTO "implied_role" ("prior_role_id", "implied_role_id") VALUES ($1, $2) RETURNING "prior_role_id", "implied_role_id""#,
+                r#"DELETE FROM "implied_role" WHERE "implied_role"."prior_role_id" = $1 AND "implied_role"."implied_role_id" = $2"#,
                 ["admin".into(), "member".into()]
             )]
         );

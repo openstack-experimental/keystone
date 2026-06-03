@@ -50,7 +50,9 @@ pub struct Role {
 }
 
 /// Short role representation (reference).
-#[derive(Builder, Clone, Debug, Deserialize, PartialEq, Serialize, Validate)]
+#[derive(
+    Builder, Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize, Validate,
+)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct RoleRef {
@@ -136,17 +138,13 @@ pub struct RoleCreate {
 }
 
 /// Role inference (imply) data.
-#[derive(Builder, Clone, Debug, Default, PartialEq, Validate)]
+#[derive(Builder, Clone, Debug, PartialEq, Serialize, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct RoleImply {
-    /// The role ID.
-    #[builder(default)]
-    #[validate(length(min = 1, max = 64))]
-    pub id: Option<String>,
+    /// The prior role that implies another role.
+    pub prior_role: RoleRef,
 
-    /// The implied role ID.
-    #[builder(default)]
-    #[validate(length(min = 1, max = 64))]
-    pub implies_role_id: Option<String>,
+    /// The role that is implied by the prior role.
+    pub implied_role: RoleRef,
 }

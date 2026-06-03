@@ -33,7 +33,7 @@ pub use list::list;
 
 use crate::entity::role as db_role;
 
-static NULL_DOMAIN_ID: &str = "<<null>>";
+pub(crate) static NULL_DOMAIN_ID: &str = "<<null>>";
 
 impl TryFrom<db_role::Model> for Role {
     type Error = RoleProviderError;

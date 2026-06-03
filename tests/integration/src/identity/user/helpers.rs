@@ -17,7 +17,8 @@ use chrono::{TimeDelta, Utc};
 
 use openstack_keystone::keystone::ServiceState;
 
-/// Assert that `password_expires_at` is approximately `now + days +/- 1 day tolerance`.
+/// Assert that `password_expires_at` is approximately `now + days +/- 1 day
+/// tolerance`.
 pub fn assert_expires_at_approx(
     actual: Option<&chrono::DateTime<Utc>>,
     now: chrono::DateTime<Utc>,

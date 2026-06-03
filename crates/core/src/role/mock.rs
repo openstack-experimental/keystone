@@ -13,7 +13,6 @@
 
 use async_trait::async_trait;
 use mockall::mock;
-use std::collections::{BTreeMap, BTreeSet};
 
 use openstack_keystone_core_types::role::*;
 
@@ -37,6 +36,13 @@ mock! {
             prior_role_id: &'a str,
             implied_role_id: &'a str,
         ) -> Result<RoleImply, RoleProviderError>;
+
+        async fn check_role_imply_rule<'a>(
+            &self,
+            state: &ServiceState,
+            prior_role_id: &'a str,
+            implied_role_id: &'a str,
+        ) -> Result<bool, RoleProviderError>;
 
         async fn delete_role<'a>(
             &self,
@@ -70,15 +76,15 @@ mock! {
             implied_role_id: &'a str,
         ) -> Result<Option<RoleImply>, RoleProviderError>;
 
-        async fn list_imply_rules(
-            &self,
-            state: &ServiceState,
-            resolve: bool
-        ) -> Result<BTreeMap<String, BTreeSet<String>>, RoleProviderError>;
-
         async fn list_role_imply_rules(
             &self,
             state: &ServiceState,
+        ) -> Result<Vec<RoleImply>, RoleProviderError>;
+
+        async fn list_role_imply_rules_by_prior<'a>(
+            &self,
+            state: &ServiceState,
+            prior_role_id: &'a str,
         ) -> Result<Vec<RoleImply>, RoleProviderError>;
 
         async fn list_roles(

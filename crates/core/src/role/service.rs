@@ -12,7 +12,6 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //! # Role provider
-use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -83,6 +82,23 @@ impl RoleApi for RoleService {
     ) -> Result<RoleImply, RoleProviderError> {
         self.backend_driver
             .create_role_imply_rule(state, prior_role_id, implied_role_id)
+            .await
+    }
+
+    /// Check if a role imply rule exists.
+    ///
+    /// # Arguments
+    /// * `state` - The current service state.
+    /// * `prior_role_id` - The ID of the prior role.
+    /// * `implied_role_id` - The ID of the implied role.
+    async fn check_role_imply_rule<'a>(
+        &self,
+        state: &ServiceState,
+        prior_role_id: &'a str,
+        implied_role_id: &'a str,
+    ) -> Result<bool, RoleProviderError> {
+        self.backend_driver
+            .check_role_imply_rule(state, prior_role_id, implied_role_id)
             .await
     }
 
@@ -173,24 +189,26 @@ impl RoleApi for RoleService {
     ///
     /// # Arguments
     /// * `state` - The current service state.
-    /// * `resolve` - Whether to resolve the imply rules.
-    async fn list_imply_rules(
-        &self,
-        state: &ServiceState,
-        resolve: bool,
-    ) -> Result<BTreeMap<String, BTreeSet<String>>, RoleProviderError> {
-        self.backend_driver.list_imply_rules(state, resolve).await
-    }
-
-    /// List role imply rules.
-    ///
-    /// # Arguments
-    /// * `state` - The current service state.
     async fn list_role_imply_rules(
         &self,
         state: &ServiceState,
     ) -> Result<Vec<RoleImply>, RoleProviderError> {
         self.backend_driver.list_role_imply_rules(state).await
+    }
+
+    /// List role imply rules for a specific prior role.
+    ///
+    /// # Arguments
+    /// * `state` - The current service state.
+    /// * `prior_role_id` - The ID of the prior role.
+    async fn list_role_imply_rules_by_prior<'a>(
+        &self,
+        state: &ServiceState,
+        prior_role_id: &'a str,
+    ) -> Result<Vec<RoleImply>, RoleProviderError> {
+        self.backend_driver
+            .list_role_imply_rules_by_prior(state, prior_role_id)
+            .await
     }
 
     /// List roles.
