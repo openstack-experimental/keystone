@@ -54,6 +54,7 @@ use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use serde::Deserialize;
 use tokio::sync::RwLock;
 use tracing::error;
+use validator::Validate;
 
 mod application_credentials;
 mod assignment;
@@ -108,7 +109,7 @@ pub use trust::*;
 pub use webauthn::*;
 
 /// Keystone configuration.
-#[derive(Debug, Default, Deserialize, Clone)]
+#[derive(Debug, Default, Deserialize, Clone, Validate)]
 pub struct Config {
     /// Application credentials provider configuration.
     #[serde(default)]
@@ -187,6 +188,7 @@ pub struct Config {
 
     /// Security compliance configuration.
     #[serde(default)]
+    #[validate(nested)]
     pub security_compliance: SecurityComplianceProvider,
 
     /// Spiffe provider configuration.
@@ -253,6 +255,8 @@ impl Config {
             tls.read_certs()
                 .wrap_err("reading distributed storage TLS configuration")?;
         }
+        // Validate the config after loading all the referred files.
+        cfg.validate().wrap_err("Configuration validation failed")?;
         Ok(cfg)
     }
 
@@ -647,5 +651,74 @@ mod tests {
             }
         }
         assert!(success, "Config did not update after file change");
+    }
+    #[tokio::test]
+    async fn test_invalid_security_compliance_validation() {
+        use std::io::Write;
+        use tempfile::NamedTempFile;
+
+        let config_file = NamedTempFile::with_suffix(".conf").unwrap();
+        let mut f = std::fs::File::create(config_file.path()).unwrap();
+        f.write_all(
+            r#"
+    [auth]
+    methods = []
+    
+    [database]
+    connection = "foo"
+    
+    [distributed_storage]
+    node_cluster_addr = "https://localhost:8310"
+    node_id = 1
+    path = "/keystone/storage"
+
+    [security_compliance]
+    password_expires_days = 0
+    disable_user_account_days_inactive = 0
+    lockout_failure_attempts = 0
+    invalid_password_hash_max_chars = 0
+            "#
+            .as_bytes(),
+        )
+        .unwrap();
+        f.sync_all().unwrap();
+
+        // 1. Attempt to load the configuration
+        let result = Config::load_all(config_file.path().to_path_buf());
+
+        // 2. Assert that it completely fails and catches our error
+        assert!(
+            result.is_err(),
+            "Expected configuration to be REJECTED because of 0 values, but it loaded successfully!"
+        );
+
+        let err_msg = format!("{:?}", result.unwrap_err());
+        assert!(
+            err_msg.contains("Configuration validation failed"),
+            "Expected a validation error, got: {}",
+            err_msg
+        );
+
+        // 3. FULL COVERAGE: Explicitly ensure the error message blames every single invalid field
+        assert!(
+            err_msg.contains("security_compliance.password_expires_days"),
+            "Error message should explicitly blame password_expires_days, but got: {}",
+            err_msg
+        );
+        assert!(
+            err_msg.contains("security_compliance.disable_user_account_days_inactive"),
+            "Error message should explicitly blame disable_user_account_days_inactive, but got: {}",
+            err_msg
+        );
+        assert!(
+            err_msg.contains("security_compliance.lockout_failure_attempts"),
+            "Error message should explicitly blame lockout_failure_attempts, but got: {}",
+            err_msg
+        );
+        assert!(
+            err_msg.contains("security_compliance.invalid_password_hash_max_chars"),
+            "Error message should explicitly blame invalid_password_hash_max_chars, but got: {}",
+            err_msg
+        );
     }
 }

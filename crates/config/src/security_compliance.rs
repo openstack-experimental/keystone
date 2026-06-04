@@ -11,13 +11,13 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+use crate::common::*;
 use chrono::{DateTime, NaiveDate, TimeDelta, Utc};
 use serde::Deserialize;
-
-use crate::common::*;
+use validator::Validate;
 
 /// Security compliance configuration.
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Clone, Validate)]
 pub struct SecurityComplianceProvider {
     /// The maximum number of days a user can go without authenticating before
     /// being considered "inactive" and automatically disabled (locked).
@@ -27,6 +27,7 @@ pub struct SecurityComplianceProvider {
     /// user's enabled attribute in the HTTP API may not match the value of
     /// the user's enabled column in the user table.
     #[serde(default)]
+    #[validate(range(min = 1))]
     pub disable_user_account_days_inactive: Option<u16>,
     /// Enabling this option requires users to change their password when the
     /// user is created, or upon administrative reset. Before accessing any
@@ -62,6 +63,7 @@ pub struct SecurityComplianceProvider {
     /// characters. It's recommended to use the least reasonable value however -
     /// it's the most effective measure to protect the hashes.
     #[serde(default)]
+    #[validate(range(min = 1))]
     pub invalid_password_hash_max_chars: Option<u8>,
 
     /// The maximum number of times that a user can fail to authenticate before
@@ -72,6 +74,7 @@ pub struct SecurityComplianceProvider {
     /// until the user is explicitly enabled via the API. This feature depends
     /// on the sql backend for the `[identity] driver`.
     #[serde(default)]
+    #[validate(range(min = 1))]
     pub lockout_failure_attempts: Option<u16>,
     /// The number of seconds a user account will be locked when the maximum
     /// number of failed authentication attempts (as specified by
@@ -101,6 +104,7 @@ pub struct SecurityComplianceProvider {
     /// however existing passwords would not be impacted. This feature depends
     /// on the sql backend for the `[identity] driver`.
     #[serde(default)]
+    #[validate(range(min = 1))]
     pub password_expires_days: Option<u64>,
     /// The regular expression used to validate password strength requirements.
     /// By default, the regular expression will match any password. The
