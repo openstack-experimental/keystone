@@ -35,6 +35,10 @@ pub enum CatalogProviderError {
     #[error("service {0} not found")]
     ServiceNotFound(String),
 
+    /// The region has not been found.
+    #[error("region {0} not found")]
+    RegionNotFound(String),
+
     /// Structures builder error.
     #[error(transparent)]
     StructBuilder {
@@ -46,4 +50,12 @@ pub enum CatalogProviderError {
     /// Unsupported driver.
     #[error("unsupported driver `{0}` for the catalog provider.")]
     UnsupportedDriver(String),
+
+    /// Validation error.
+    #[error("request validation error: {}", source)]
+    Validation {
+        /// The source of the error.
+        #[from]
+        source: validator::ValidationErrors,
+    },
 }

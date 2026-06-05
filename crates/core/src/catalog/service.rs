@@ -14,6 +14,7 @@
 //! # Catalog provider
 use async_trait::async_trait;
 use std::sync::Arc;
+use validator::Validate;
 
 use openstack_keystone_config::Config;
 use openstack_keystone_core_types::catalog::*;
@@ -49,21 +50,88 @@ impl CatalogService {
 
 #[async_trait]
 impl CatalogApi for CatalogService {
-    /// List services.
+    /// Create a new region.
     ///
     /// # Parameters
     /// - `state`: The current service state.
-    /// - `params`: Parameters for filtering the service list.
+    /// - `region`: The region creation parameters.
     ///
     /// # Returns
-    /// A `Result` containing a vector of `Service` objects or a
-    /// `CatalogProviderError`.
-    async fn list_services(
+    /// A `Result` containing the created `Region`, or a `CatalogProviderError`.
+    async fn create_region(
         &self,
         state: &ServiceState,
-        params: &ServiceListParameters,
-    ) -> Result<Vec<Service>, CatalogProviderError> {
-        self.backend_driver.list_services(state, params).await
+        region: RegionCreate,
+    ) -> Result<Region, CatalogProviderError> {
+        region.validate()?;
+        self.backend_driver.create_region(state, region).await
+    }
+
+    /// Delete a region by ID.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `id`: The unique identifier of the region.
+    ///
+    /// # Returns
+    /// A `Result` indicating success or a `CatalogProviderError`.
+    async fn delete_region<'a>(
+        &self,
+        state: &ServiceState,
+        id: &'a str,
+    ) -> Result<(), CatalogProviderError> {
+        self.backend_driver.delete_region(state, id).await
+    }
+
+    /// Get catalog.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `enabled`: Whether to return only enabled services.
+    ///
+    /// # Returns
+    /// A `Result` containing a vector of tuples of `Service` and its associated
+    /// `Endpoint`s, or a `CatalogProviderError`.
+    async fn get_catalog(
+        &self,
+        state: &ServiceState,
+        enabled: bool,
+    ) -> Result<Vec<(Service, Vec<Endpoint>)>, CatalogProviderError> {
+        self.backend_driver.get_catalog(state, enabled).await
+    }
+
+    /// Get single endpoint by ID.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `id`: The unique identifier of the endpoint.
+    ///
+    /// # Returns
+    /// A `Result` containing an `Option` with the endpoint if found, or an
+    /// `Error`.
+    async fn get_endpoint<'a>(
+        &self,
+        state: &ServiceState,
+        id: &'a str,
+    ) -> Result<Option<Endpoint>, CatalogProviderError> {
+        self.backend_driver.get_endpoint(state, id).await
+    }
+
+    /// Get single region by ID.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `id`: The unique identifier of the region.
+    ///
+    /// # Returns
+    /// A `Result` containing an `Option` with the region if found, or an
+    /// `Error`.
+    async fn get_region<'a>(
+        &self,
+        state: &ServiceState,
+        id: &'a str,
+    ) -> Result<Option<Region>, CatalogProviderError> {
+        self.backend_driver.get_region(state, id).await
     }
 
     /// Get single service by ID.
@@ -100,37 +168,57 @@ impl CatalogApi for CatalogService {
         self.backend_driver.list_endpoints(state, params).await
     }
 
-    /// Get single endpoint by ID.
+    /// List regions.
     ///
     /// # Parameters
     /// - `state`: The current service state.
-    /// - `id`: The unique identifier of the endpoint.
+    /// - `params`: Parameters for filtering the region list.
     ///
     /// # Returns
-    /// A `Result` containing an `Option` with the endpoint if found, or an
-    /// `Error`.
-    async fn get_endpoint<'a>(
+    /// A `Result` containing a vector of `Region` objects or a
+    /// `CatalogProviderError`.
+    async fn list_regions(
+        &self,
+        state: &ServiceState,
+        params: &RegionListParameters,
+    ) -> Result<Vec<Region>, CatalogProviderError> {
+        params.validate()?;
+        self.backend_driver.list_regions(state, params).await
+    }
+
+    /// List services.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `params`: Parameters for filtering the service list.
+    ///
+    /// # Returns
+    /// A `Result` containing a vector of `Service` objects or a
+    /// `CatalogProviderError`.
+    async fn list_services(
+        &self,
+        state: &ServiceState,
+        params: &ServiceListParameters,
+    ) -> Result<Vec<Service>, CatalogProviderError> {
+        self.backend_driver.list_services(state, params).await
+    }
+
+    /// Update an existing region.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `id`: The unique identifier of the region.
+    /// - `region`: The fields to change.
+    ///
+    /// # Returns
+    /// A `Result` containing the updated `Region`, or a `CatalogProviderError`.
+    async fn update_region<'a>(
         &self,
         state: &ServiceState,
         id: &'a str,
-    ) -> Result<Option<Endpoint>, CatalogProviderError> {
-        self.backend_driver.get_endpoint(state, id).await
-    }
-
-    /// Get catalog.
-    ///
-    /// # Parameters
-    /// - `state`: The current service state.
-    /// - `enabled`: Whether to return only enabled services.
-    ///
-    /// # Returns
-    /// A `Result` containing a vector of tuples of `Service` and its associated
-    /// `Endpoint`s, or a `CatalogProviderError`.
-    async fn get_catalog(
-        &self,
-        state: &ServiceState,
-        enabled: bool,
-    ) -> Result<Vec<(Service, Vec<Endpoint>)>, CatalogProviderError> {
-        self.backend_driver.get_catalog(state, enabled).await
+        region: RegionUpdate,
+    ) -> Result<Region, CatalogProviderError> {
+        region.validate()?;
+        self.backend_driver.update_region(state, id, region).await
     }
 }

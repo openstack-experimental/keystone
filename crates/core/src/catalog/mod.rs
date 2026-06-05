@@ -77,25 +77,111 @@ impl CatalogProvider {
 
 #[async_trait]
 impl CatalogApi for CatalogProvider {
-    /// List services.
+    /// Create a new region.
     ///
     /// # Parameters
     /// - `state`: The current service state.
-    /// - `params`: Parameters for filtering the service list.
+    /// - `region`: The region creation parameters.
     ///
     /// # Returns
-    /// A `Result` containing a vector of `Service` objects or a
-    /// `CatalogProviderError`.
+    /// A `Result` containing the created `Region`, or a `CatalogProviderError`.
     #[tracing::instrument(level = "info", skip(self, state))]
-    async fn list_services(
+    async fn create_region(
         &self,
         state: &ServiceState,
-        params: &ServiceListParameters,
-    ) -> Result<Vec<Service>, CatalogProviderError> {
+        region: RegionCreate,
+    ) -> Result<Region, CatalogProviderError> {
         match self {
-            Self::Service(provider) => provider.list_services(state, params).await,
+            Self::Service(provider) => provider.create_region(state, region).await,
             #[cfg(any(test, feature = "mock"))]
-            Self::Mock(provider) => provider.list_services(state, params).await,
+            Self::Mock(provider) => provider.create_region(state, region).await,
+        }
+    }
+
+    /// Delete a region by ID.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `id`: The unique identifier of the region.
+    ///
+    /// # Returns
+    /// A `Result` indicating success or a `CatalogProviderError`.
+    #[tracing::instrument(level = "info", skip(self, state))]
+    async fn delete_region<'a>(
+        &self,
+        state: &ServiceState,
+        id: &'a str,
+    ) -> Result<(), CatalogProviderError> {
+        match self {
+            Self::Service(provider) => provider.delete_region(state, id).await,
+            #[cfg(any(test, feature = "mock"))]
+            Self::Mock(provider) => provider.delete_region(state, id).await,
+        }
+    }
+
+    /// Get catalog.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `enabled`: Whether to return only enabled services.
+    ///
+    /// # Returns
+    /// A `Result` containing a vector of tuples of `Service` and its associated
+    /// `Endpoint`s, or a `CatalogProviderError`.
+    #[tracing::instrument(level = "info", skip(self, state))]
+    async fn get_catalog(
+        &self,
+        state: &ServiceState,
+        enabled: bool,
+    ) -> Result<Vec<(Service, Vec<Endpoint>)>, CatalogProviderError> {
+        match self {
+            Self::Service(provider) => provider.get_catalog(state, enabled).await,
+            #[cfg(any(test, feature = "mock"))]
+            Self::Mock(provider) => provider.get_catalog(state, enabled).await,
+        }
+    }
+
+    /// Get single endpoint by ID.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `id`: The unique identifier of the endpoint.
+    ///
+    /// # Returns
+    /// A `Result` containing an `Option` with the endpoint if found, or an
+    /// `Error`.
+    #[tracing::instrument(level = "info", skip(self, state))]
+    async fn get_endpoint<'a>(
+        &self,
+        state: &ServiceState,
+        id: &'a str,
+    ) -> Result<Option<Endpoint>, CatalogProviderError> {
+        match self {
+            Self::Service(provider) => provider.get_endpoint(state, id).await,
+            #[cfg(any(test, feature = "mock"))]
+            Self::Mock(provider) => provider.get_endpoint(state, id).await,
+        }
+    }
+
+    /// Get single region by ID.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `id`: The unique identifier of the region.
+    ///
+    /// # Returns
+    /// A `Result` containing an `Option` with the region if found, or an
+    /// `Error`.
+    #[tracing::instrument(level = "info", skip(self, state))]
+    async fn get_region<'a>(
+        &self,
+        state: &ServiceState,
+        id: &'a str,
+    ) -> Result<Option<Region>, CatalogProviderError> {
+        match self {
+            Self::Service(provider) => provider.get_region(state, id).await,
+            #[cfg(any(test, feature = "mock"))]
+            Self::Mock(provider) => provider.get_region(state, id).await,
         }
     }
 
@@ -143,47 +229,70 @@ impl CatalogApi for CatalogProvider {
         }
     }
 
-    /// Get single endpoint by ID.
+    /// List regions.
     ///
     /// # Parameters
     /// - `state`: The current service state.
-    /// - `id`: The unique identifier of the endpoint.
+    /// - `params`: Parameters for filtering the region list.
     ///
     /// # Returns
-    /// A `Result` containing an `Option` with the endpoint if found, or an
-    /// `Error`.
+    /// A `Result` containing a vector of `Region` objects or a
+    /// `CatalogProviderError`.
     #[tracing::instrument(level = "info", skip(self, state))]
-    async fn get_endpoint<'a>(
+    async fn list_regions(
         &self,
         state: &ServiceState,
-        id: &'a str,
-    ) -> Result<Option<Endpoint>, CatalogProviderError> {
+        params: &RegionListParameters,
+    ) -> Result<Vec<Region>, CatalogProviderError> {
         match self {
-            Self::Service(provider) => provider.get_endpoint(state, id).await,
+            Self::Service(provider) => provider.list_regions(state, params).await,
             #[cfg(any(test, feature = "mock"))]
-            Self::Mock(provider) => provider.get_endpoint(state, id).await,
+            Self::Mock(provider) => provider.list_regions(state, params).await,
         }
     }
 
-    /// Get catalog.
+    /// List services.
     ///
     /// # Parameters
     /// - `state`: The current service state.
-    /// - `enabled`: Whether to return only enabled services.
+    /// - `params`: Parameters for filtering the service list.
     ///
     /// # Returns
-    /// A `Result` containing a vector of tuples of `Service` and its associated
-    /// `Endpoint`s, or a `CatalogProviderError`.
+    /// A `Result` containing a vector of `Service` objects or a
+    /// `CatalogProviderError`.
     #[tracing::instrument(level = "info", skip(self, state))]
-    async fn get_catalog(
+    async fn list_services(
         &self,
         state: &ServiceState,
-        enabled: bool,
-    ) -> Result<Vec<(Service, Vec<Endpoint>)>, CatalogProviderError> {
+        params: &ServiceListParameters,
+    ) -> Result<Vec<Service>, CatalogProviderError> {
         match self {
-            Self::Service(provider) => provider.get_catalog(state, enabled).await,
+            Self::Service(provider) => provider.list_services(state, params).await,
             #[cfg(any(test, feature = "mock"))]
-            Self::Mock(provider) => provider.get_catalog(state, enabled).await,
+            Self::Mock(provider) => provider.list_services(state, params).await,
+        }
+    }
+
+    /// Update an existing region.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `id`: The unique identifier of the region.
+    /// - `region`: The fields to change.
+    ///
+    /// # Returns
+    /// A `Result` containing the updated `Region`, or a `CatalogProviderError`.
+    #[tracing::instrument(level = "info", skip(self, state))]
+    async fn update_region<'a>(
+        &self,
+        state: &ServiceState,
+        id: &'a str,
+        region: RegionUpdate,
+    ) -> Result<Region, CatalogProviderError> {
+        match self {
+            Self::Service(provider) => provider.update_region(state, id, region).await,
+            #[cfg(any(test, feature = "mock"))]
+            Self::Mock(provider) => provider.update_region(state, id, region).await,
         }
     }
 }

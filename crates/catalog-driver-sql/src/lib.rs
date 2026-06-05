@@ -35,6 +35,7 @@ use crate::entity::{
 
 mod endpoint;
 pub mod entity;
+mod region;
 mod service;
 
 #[derive(Default)]
@@ -54,22 +55,92 @@ inventory::submit! {
 
 #[async_trait]
 impl CatalogBackend for SqlBackend {
-    /// List services.
+    /// Create a new region.
     ///
     /// # Parameters
     /// - `state`: The service state containing the database connection.
-    /// - `params`: The parameters for listing services.
+    /// - `region_data`: The region creation parameters.
     ///
     /// # Returns
-    /// A `Result` containing a vector of `Service`s, or a
-    /// `CatalogProviderError`.
+    /// A `Result` containing the created `Region`, or a `CatalogProviderError`.
     #[tracing::instrument(level = "debug", skip(self, state))]
-    async fn list_services(
+    async fn create_region(
         &self,
         state: &ServiceState,
-        params: &ServiceListParameters,
-    ) -> Result<Vec<Service>, CatalogProviderError> {
-        Ok(service::list(&state.db, params).await?)
+        region_data: RegionCreate,
+    ) -> Result<Region, CatalogProviderError> {
+        Ok(region::create(&state.db, region_data).await?)
+    }
+
+    /// Delete a region by ID.
+    ///
+    /// # Parameters
+    /// - `state`: The service state containing the database connection.
+    /// - `id`: The ID of the region to delete.
+    ///
+    /// # Returns
+    /// A `Result` indicating success or a `CatalogProviderError`.
+    #[tracing::instrument(level = "debug", skip(self, state))]
+    async fn delete_region<'a>(
+        &self,
+        state: &ServiceState,
+        id: &'a str,
+    ) -> Result<(), CatalogProviderError> {
+        Ok(region::delete(&state.db, id).await?)
+    }
+
+    /// Get the catalog (services with endpoints).
+    ///
+    /// # Parameters
+    /// - `state`: The service state containing the database connection.
+    /// - `enabled`: Whether to return only enabled entries.
+    ///
+    /// # Returns
+    /// A `Result` containing a vector of tuples of `Service` and its associated
+    /// `Endpoint`s, or a `CatalogProviderError`.
+    #[tracing::instrument(level = "debug", skip(self, state))]
+    async fn get_catalog(
+        &self,
+        state: &ServiceState,
+        enabled: bool,
+    ) -> Result<Vec<(Service, Vec<Endpoint>)>, CatalogProviderError> {
+        Ok(get_catalog(&state.db, enabled).await?)
+    }
+
+    /// Get a single endpoint by ID.
+    ///
+    /// # Parameters
+    /// - `state`: The service state containing the database connection.
+    /// - `id`: The ID of the endpoint to retrieve.
+    ///
+    /// # Returns
+    /// A `Result` containing an `Option` with the `Endpoint` if found, or an
+    /// `Error`.
+    #[tracing::instrument(level = "debug", skip(self, state))]
+    async fn get_endpoint<'a>(
+        &self,
+        state: &ServiceState,
+        id: &'a str,
+    ) -> Result<Option<Endpoint>, CatalogProviderError> {
+        Ok(endpoint::get(&state.db, id).await?)
+    }
+
+    /// Get a single region by ID.
+    ///
+    /// # Parameters
+    /// - `state`: The service state containing the database connection.
+    /// - `id`: The ID of the region to retrieve.
+    ///
+    /// # Returns
+    /// A `Result` containing an `Option` with the `Region` if found, or an
+    /// `Error`.
+    #[tracing::instrument(level = "debug", skip(self, state))]
+    async fn get_region<'a>(
+        &self,
+        state: &ServiceState,
+        id: &'a str,
+    ) -> Result<Option<Region>, CatalogProviderError> {
+        Ok(region::get(&state.db, id).await?)
     }
 
     /// Get a single service by ID.
@@ -108,49 +179,58 @@ impl CatalogBackend for SqlBackend {
         Ok(endpoint::list(&state.db, params).await?)
     }
 
-    /// Get a single endpoint by ID.
+    /// List regions.
     ///
     /// # Parameters
     /// - `state`: The service state containing the database connection.
-    /// - `id`: The ID of the endpoint to retrieve.
+    /// - `params`: The parameters for listing regions.
     ///
     /// # Returns
-    /// A `Result` containing an `Option` with the `Endpoint` if found, or an
-    /// `Error`.
+    /// A `Result` containing a vector of `Region`s, or a `CatalogProviderError`.
     #[tracing::instrument(level = "debug", skip(self, state))]
-    async fn get_endpoint<'a>(
+    async fn list_regions(
+        &self,
+        state: &ServiceState,
+        params: &RegionListParameters,
+    ) -> Result<Vec<Region>, CatalogProviderError> {
+        Ok(region::list(&state.db, params).await?)
+    }
+
+    /// List services.
+    ///
+    /// # Parameters
+    /// - `state`: The service state containing the database connection.
+    /// - `params`: The parameters for listing services.
+    ///
+    /// # Returns
+    /// A `Result` containing a vector of `Service`s, or a
+    /// `CatalogProviderError`.
+    #[tracing::instrument(level = "debug", skip(self, state))]
+    async fn list_services(
+        &self,
+        state: &ServiceState,
+        params: &ServiceListParameters,
+    ) -> Result<Vec<Service>, CatalogProviderError> {
+        Ok(service::list(&state.db, params).await?)
+    }
+
+    /// Update an existing region.
+    ///
+    /// # Parameters
+    /// - `state`: The service state containing the database connection.
+    /// - `id`: The ID of the region to update.
+    /// - `region_data`: The fields to change.
+    ///
+    /// # Returns
+    /// A `Result` containing the updated `Region`, or a `CatalogProviderError`.
+    #[tracing::instrument(level = "debug", skip(self, state))]
+    async fn update_region<'a>(
         &self,
         state: &ServiceState,
         id: &'a str,
-    ) -> Result<Option<Endpoint>, CatalogProviderError> {
-        Ok(endpoint::get(&state.db, id).await?)
-    }
-
-    /// Get the catalog (services with endpoints).
-    ///
-    /// # Parameters
-    /// - `state`: The service state containing the database connection.
-    /// - `enabled`: Whether to return only enabled entries.
-    ///
-    /// # Returns
-    /// A `Result` containing a vector of tuples of `Service` and its associated
-    /// `Endpoint`s, or a `CatalogProviderError`.
-    #[tracing::instrument(level = "debug", skip(self, state))]
-    /// Get the catalog.
-    ///
-    /// # Parameters
-    /// - `db`: The database connection.
-    /// - `enabled`: Whether to return only enabled entries.
-    ///
-    /// # Returns
-    /// A `Result` containing a vector of tuples of `Service` and its associated
-    /// `Endpoint`s, or a `CatalogProviderError`.
-    async fn get_catalog(
-        &self,
-        state: &ServiceState,
-        enabled: bool,
-    ) -> Result<Vec<(Service, Vec<Endpoint>)>, CatalogProviderError> {
-        Ok(get_catalog(&state.db, enabled).await?)
+        region_data: RegionUpdate,
+    ) -> Result<Region, CatalogProviderError> {
+        Ok(region::update(&state.db, id, region_data).await?)
     }
 }
 

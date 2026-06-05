@@ -17,6 +17,7 @@
 
 mod application_credential;
 mod assignment;
+mod catalog;
 mod common;
 mod identity;
 mod k8s_auth;

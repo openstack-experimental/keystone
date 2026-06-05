@@ -26,11 +26,35 @@ mock! {
 
     #[async_trait]
     impl CatalogApi for CatalogProvider {
-        async fn list_services(
+        async fn create_region(
             &self,
             state: &ServiceState,
-            params: &ServiceListParameters
-        ) -> Result<Vec<Service>, CatalogProviderError>;
+            region: RegionCreate,
+        ) -> Result<Region, CatalogProviderError>;
+
+        async fn delete_region<'a>(
+            &self,
+            state: &ServiceState,
+            id: &'a str,
+        ) -> Result<(), CatalogProviderError>;
+
+        async fn get_catalog(
+            &self,
+            state: &ServiceState,
+            enabled: bool,
+        ) -> Result<Vec<(Service, Vec<Endpoint>)>, CatalogProviderError>;
+
+        async fn get_endpoint<'a>(
+            &self,
+            state: &ServiceState,
+            id: &'a str,
+        ) -> Result<Option<Endpoint>, CatalogProviderError>;
+
+        async fn get_region<'a>(
+            &self,
+            state: &ServiceState,
+            id: &'a str,
+        ) -> Result<Option<Region>, CatalogProviderError>;
 
         async fn get_service<'a>(
             &self,
@@ -44,17 +68,23 @@ mock! {
             params: &EndpointListParameters,
         ) -> Result<Vec<Endpoint>, CatalogProviderError>;
 
-        async fn get_endpoint<'a>(
+        async fn list_regions(
+            &self,
+            state: &ServiceState,
+            params: &RegionListParameters,
+        ) -> Result<Vec<Region>, CatalogProviderError>;
+
+        async fn list_services(
+            &self,
+            state: &ServiceState,
+            params: &ServiceListParameters
+        ) -> Result<Vec<Service>, CatalogProviderError>;
+
+        async fn update_region<'a>(
             &self,
             state: &ServiceState,
             id: &'a str,
-        ) -> Result<Option<Endpoint>, CatalogProviderError>;
-
-        async fn get_catalog(
-            &self,
-            state: &ServiceState,
-            enabled: bool,
-        ) -> Result<Vec<(Service, Vec<Endpoint>)>, CatalogProviderError>;
-
+            region: RegionUpdate,
+        ) -> Result<Region, CatalogProviderError>;
     }
 }

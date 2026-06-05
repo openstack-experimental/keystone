@@ -11,13 +11,9 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-//! # Catalog provider
-mod endpoint;
-mod error;
-mod region;
-mod service;
 
-pub use endpoint::*;
-pub use error::*;
-pub use region::*;
-pub use service::*;
+mod create;
+mod delete;
+mod get;
+mod list;
+mod update;
