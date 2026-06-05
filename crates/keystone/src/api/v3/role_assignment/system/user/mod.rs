@@ -11,6 +11,13 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+//! # System User role API
+use utoipa_axum::router::OpenApiRouter;
 
-mod project;
-mod system;
+use crate::keystone::ServiceState;
+
+mod role;
+
+pub(crate) fn openapi_router() -> OpenApiRouter<ServiceState> {
+    OpenApiRouter::new().merge(role::openapi_router())
+}

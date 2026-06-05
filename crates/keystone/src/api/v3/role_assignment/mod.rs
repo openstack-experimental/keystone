@@ -20,9 +20,11 @@ pub mod types;
 
 mod list;
 mod project;
+mod system;
 
 pub(crate) fn openapi_router() -> OpenApiRouter<ServiceState> {
     OpenApiRouter::new()
         .routes(routes!(list::list))
         .merge(project::openapi_router())
+        .merge(system::openapi_router())
 }
