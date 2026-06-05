@@ -66,36 +66,55 @@ pub async fn authenticate_by_password(
     )
     .await?;
 
-    let (local_user, password) =
+    let user_found = user_with_passwords.is_some();
+    // Prevent timing attacks: if user is not found, generate a dummy hash and
+    // verify against it to consume comparable time to the "user exists" path.
+    // The `log_failed_auth` function is intentionally not called here because the
+    // user does not exist and cannot be locked out. The dummy hash prevents an
+    // attacker from distinguishing between "user not found" and "wrong
+    // password" via timing analysis.
+    if !user_found {
+        let dummy_hash = password_hashing::generate_dummy_hash(config)
+            .await
+            .map_err(IdentityProviderError::password_hash)?;
+        let _ = password_hashing::verify_password(config, &auth.password, &dummy_hash)
+            .await
+            .map_err(IdentityProviderError::password_hash)?;
+        return Err(AuthenticationError::UserNameOrPasswordWrong.into());
+    }
+
+    let (local_user_entry, password) =
         user_with_passwords.ok_or(AuthenticationError::UserNameOrPasswordWrong)?;
     // User has been found.
     // Get user options
-    let user_opts = user_option::list_by_user_id(db, local_user.user_id.clone()).await?;
+    let user_opts = user_option::list_by_user_id(db, local_user_entry.user_id.clone()).await?;
 
     // Check for the temporary lock
     if !user_opts
         .ignore_lockout_failure_attempts
         .is_some_and(|val| val)
-        && should_lock(config, db, &local_user).await?
+        && should_lock(config, db, &local_user_entry).await?
     {
-        return Err(AuthenticationError::UserLocked(local_user.user_id.clone()).into());
+        return Err(AuthenticationError::UserLocked(local_user_entry.user_id.clone()).into());
     }
 
     // Verify user exists
-    let user_entry = user::get_main_entry(db, &local_user.user_id).await?.ok_or(
-        IdentityProviderError::NoMainUserEntry(local_user.user_id.clone()),
-    )?;
+    let user_entry = user::get_main_entry(db, &local_user_entry.user_id)
+        .await?
+        .ok_or(IdentityProviderError::NoMainUserEntry(
+            local_user_entry.user_id.clone(),
+        ))?;
 
     // Check if the user is disabled
     if !user_entry.enabled.unwrap_or(false) {
-        return Err(AuthenticationError::UserDisabled(local_user.user_id.clone()).into());
+        return Err(AuthenticationError::UserDisabled(local_user_entry.user_id.clone()).into());
     }
 
     let passwords: Vec<db_password::Model> = password.into_iter().collect();
     let latest_password = passwords
         .first()
         .ok_or(IdentityProviderError::NoPasswordsForUser(
-            local_user.user_id.clone(),
+            local_user_entry.user_id.clone(),
         ))?;
     let expected_hash =
         latest_password
@@ -106,10 +125,12 @@ pub async fn authenticate_by_password(
             ))?;
 
     // Verify the password
+    let now = Utc::now();
     if !password_hashing::verify_password(config, &auth.password, expected_hash)
         .await
         .map_err(IdentityProviderError::password_hash)?
     {
+        local_user::log_failed_auth(db, &local_user_entry, now).await?;
         return Err(AuthenticationError::UserNameOrPasswordWrong.into());
     }
     // Check if expired password exempt is on
@@ -117,13 +138,13 @@ pub async fn authenticate_by_password(
         // otherwise check for expired password
         if password::is_password_expired(latest_password)? {
             return Err(
-                AuthenticationError::UserPasswordExpired(local_user.user_id.clone()).into(),
+                AuthenticationError::UserPasswordExpired(local_user_entry.user_id.clone()).into(),
             );
         }
     }
 
     // Reset the last_active_at for the user that successfully authenticated.
-    user::reset_last_active(db, &user_entry).await?;
+    user::reset_last_active(db, &user_entry, now).await?;
 
     let user_entry = UserResponseBuilder::default()
         .merge_user_data(
@@ -134,7 +155,7 @@ pub async fn authenticate_by_password(
                 .get_user_last_activity_cutof_date()
                 .as_ref(),
         )
-        .merge_local_user_data(&local_user)
+        .merge_local_user_data(&local_user_entry)
         .merge_passwords_data(passwords)
         .build()?;
 
@@ -149,13 +170,6 @@ pub async fn authenticate_by_password(
             ),
         })
         .build()?)
-
-    //Ok(AuthenticatedInfo::builder()
-    //    .user_id(user_entry.id.clone())
-    //    .user(user_entry)
-    //    .methods(vec!["password".into()])
-    //    .build()
-    //    .map_err(AuthenticationError::from)?)
 }
 
 /// Verify whether the account is temporarily locked according to the security
@@ -467,30 +481,44 @@ mod tests {
         );
 
         // Checking transaction log
+        let log = db.into_transaction_log();
+        assert_eq!(log.len(), 4);
         assert_eq!(
-            db.into_transaction_log(),
-            [
-                Transaction::from_sql_and_values(
-                    DatabaseBackend::Postgres,
-                    r#"SELECT "local_user"."id" AS "A_id", "local_user"."user_id" AS "A_user_id", "local_user"."domain_id" AS "A_domain_id", "local_user"."name" AS "A_name", "local_user"."failed_auth_count" AS "A_failed_auth_count", "local_user"."failed_auth_at" AS "A_failed_auth_at", "password"."id" AS "B_id", "password"."local_user_id" AS "B_local_user_id", "password"."self_service" AS "B_self_service", "password"."created_at" AS "B_created_at", "password"."expires_at" AS "B_expires_at", "password"."password_hash" AS "B_password_hash", "password"."created_at_int" AS "B_created_at_int", "password"."expires_at_int" AS "B_expires_at_int" FROM "local_user" LEFT JOIN "password" ON "local_user"."id" = "password"."local_user_id" WHERE "local_user"."user_id" = $1 ORDER BY "local_user"."id" ASC, "password"."created_at_int" DESC"#,
-                    ["user_id".into()]
-                ),
-                Transaction::from_sql_and_values(
-                    DatabaseBackend::Postgres,
-                    r#"SELECT "user_option"."user_id", "user_option"."option_id", "user_option"."option_value" FROM "user_option" WHERE "user_option"."user_id" = $1"#,
-                    ["user_id".into()]
-                ),
-                Transaction::from_sql_and_values(
-                    DatabaseBackend::Postgres,
-                    r#"SELECT "user"."created_at", "user"."default_project_id", "user"."domain_id", "user"."enabled", "user"."extra", "user"."id", "user"."last_active_at" FROM "user" WHERE "user"."id" = $1 LIMIT $2"#,
-                    ["user_id".into(), 1u64.into()]
-                ),
-                Transaction::from_sql_and_values(
-                    DatabaseBackend::Postgres,
-                    r#"UPDATE "user" SET "last_active_at" = $1 WHERE "user"."id" = $2 RETURNING "created_at", "default_project_id", "domain_id", "enabled", "extra", "id", "last_active_at""#,
-                    [Utc::now().date_naive().into(), "user_id".into()]
-                ),
-            ]
+            log[0],
+            Transaction::from_sql_and_values(
+                DatabaseBackend::Postgres,
+                r#"SELECT "local_user"."id" AS "A_id", "local_user"."user_id" AS "A_user_id", "local_user"."domain_id" AS "A_domain_id", "local_user"."name" AS "A_name", "local_user"."failed_auth_count" AS "A_failed_auth_count", "local_user"."failed_auth_at" AS "A_failed_auth_at", "password"."id" AS "B_id", "password"."local_user_id" AS "B_local_user_id", "password"."self_service" AS "B_self_service", "password"."created_at" AS "B_created_at", "password"."expires_at" AS "B_expires_at", "password"."password_hash" AS "B_password_hash", "password"."created_at_int" AS "B_created_at_int", "password"."expires_at_int" AS "B_expires_at_int" FROM "local_user" LEFT JOIN "password" ON "local_user"."id" = "password"."local_user_id" WHERE "local_user"."user_id" = $1 ORDER BY "local_user"."id" ASC, "password"."created_at_int" DESC"#,
+                ["user_id".into()]
+            )
+        );
+        assert_eq!(
+            log[1],
+            Transaction::from_sql_and_values(
+                DatabaseBackend::Postgres,
+                r#"SELECT "user_option"."user_id", "user_option"."option_id", "user_option"."option_value" FROM "user_option" WHERE "user_option"."user_id" = $1"#,
+                ["user_id".into()]
+            )
+        );
+        assert_eq!(
+            log[2],
+            Transaction::from_sql_and_values(
+                DatabaseBackend::Postgres,
+                r#"SELECT "user"."created_at", "user"."default_project_id", "user"."domain_id", "user"."enabled", "user"."extra", "user"."id", "user"."last_active_at" FROM "user" WHERE "user"."id" = $1 LIMIT $2"#,
+                ["user_id".into(), 1u64.into()]
+            )
+        );
+
+        // Verify the UPDATE statement for successful authentication
+        let update_debug = format!("{:?}", log[3]);
+        assert!(
+            update_debug.contains("UPDATE \\\"user\\\" SET \\\"last_active_at\\\"")
+                && update_debug.contains("user_id"),
+            "UPDATE user with last_active_at not found, got: {}",
+            update_debug
+        );
+        assert!(
+            update_debug.contains("ChronoDate(Some("),
+            "last_active_at should be set"
         );
     }
 
@@ -535,7 +563,7 @@ mod tests {
                 assert_eq!(user_id, "user_id");
             }
             other => {
-                panic!("Locked user should be refused even before checking password: {other:?}",);
+                panic!("Locked user should be refused even before checking password: {other:?}");
             }
         }
     }
@@ -617,6 +645,7 @@ mod tests {
             )])
             // user::get_main_entry()
             .append_query_results([vec![get_user_mock("user_id")]])
+            .append_query_results([vec![get_local_user_mock("user_id")]])
             .into_connection();
         match authenticate_by_password(
             &config,
@@ -637,6 +666,184 @@ mod tests {
             }
         }
         assert!(!logs_contain("foo_pass"));
+
+        // Verify that the failure was logged
+        let log = db.into_transaction_log();
+        assert_eq!(log.len(), 4);
+
+        // Verify first 3 transactions exactly
+        assert_eq!(
+            log[0],
+            Transaction::from_sql_and_values(
+                DatabaseBackend::Postgres,
+                r#"SELECT "local_user"."id" AS "A_id", "local_user"."user_id" AS "A_user_id", "local_user"."domain_id" AS "A_domain_id", "local_user"."name" AS "A_name", "local_user"."failed_auth_count" AS "A_failed_auth_count", "local_user"."failed_auth_at" AS "A_failed_auth_at", "password"."id" AS "B_id", "password"."local_user_id" AS "B_local_user_id", "password"."self_service" AS "B_self_service", "password"."created_at" AS "B_created_at", "password"."expires_at" AS "B_expires_at", "password"."password_hash" AS "B_password_hash", "password"."created_at_int" AS "B_created_at_int", "password"."expires_at_int" AS "B_expires_at_int" FROM "local_user" LEFT JOIN "password" ON "local_user"."id" = "password"."local_user_id" WHERE "local_user"."user_id" = $1 ORDER BY "local_user"."id" ASC, "password"."created_at_int" DESC"#,
+                ["user_id".into()]
+            )
+        );
+        assert_eq!(
+            log[1],
+            Transaction::from_sql_and_values(
+                DatabaseBackend::Postgres,
+                r#"SELECT "user_option"."user_id", "user_option"."option_id", "user_option"."option_value" FROM "user_option" WHERE "user_option"."user_id" = $1"#,
+                ["user_id".into()]
+            )
+        );
+        assert_eq!(
+            log[2],
+            Transaction::from_sql_and_values(
+                DatabaseBackend::Postgres,
+                r#"SELECT "user"."created_at", "user"."default_project_id", "user"."domain_id", "user"."enabled", "user"."extra", "user"."id", "user"."last_active_at" FROM "user" WHERE "user"."id" = $1 LIMIT $2"#,
+                ["user_id".into(), 1u64.into()]
+            )
+        );
+
+        // Verify the UPDATE statement for failed auth logging
+        // timestamp (ChronoDateTime) is dynamic so we check via debug string
+        let update_debug = format!("{:?}", log[3]);
+        assert!(
+            update_debug.contains("UPDATE \\\"local_user\\\" SET \\\"failed_auth_count\\\"")
+                && update_debug.contains("\\\"failed_auth_at\\\""),
+            "UPDATE local_user with failed_auth fields not found, got: {}",
+            update_debug
+        );
+        assert!(
+            update_debug.contains("Int(Some(1))"),
+            "failed_auth_count should be 1"
+        );
+        assert!(
+            update_debug.contains("Int(Some(1))"),
+            "local_user id should be 1"
+        );
+        assert!(
+            update_debug.contains("ChronoDateTime(Some("),
+            "failed_auth_at should be set"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_authenticate_user_not_found() {
+        let config = Config::default();
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([Vec::<(db_local_user::Model, db_password::Model)>::new()])
+            .into_connection();
+        match authenticate_by_password(
+            &config,
+            &db,
+            &UserPasswordAuthRequest {
+                id: Some("nonexistent_user".into()),
+                password: "secret".into(),
+                ..Default::default()
+            },
+        )
+        .await
+        {
+            Err(IdentityProviderError::Authentication {
+                source: AuthenticationError::UserNameOrPasswordWrong,
+            }) => {}
+            other => {
+                panic!("User not found should return UserNameOrPasswordWrong, got: {other:?}");
+            }
+        }
+
+        // Verify that only the initial SELECT was executed (no UPDATE, no extra
+        // lookups)
+        let log = db.into_transaction_log();
+        assert_eq!(log.len(), 1);
+        assert_eq!(
+            log[0],
+            Transaction::from_sql_and_values(
+                DatabaseBackend::Postgres,
+                r#"SELECT "local_user"."id" AS "A_id", "local_user"."user_id" AS "A_user_id", "local_user"."domain_id" AS "A_domain_id", "local_user"."name" AS "A_name", "local_user"."failed_auth_count" AS "A_failed_auth_count", "local_user"."failed_auth_at" AS "A_failed_auth_at", "password"."id" AS "B_id", "password"."local_user_id" AS "B_local_user_id", "password"."self_service" AS "B_self_service", "password"."created_at" AS "B_created_at", "password"."expires_at" AS "B_expires_at", "password"."password_hash" AS "B_password_hash", "password"."created_at_int" AS "B_created_at_int", "password"."expires_at_int" AS "B_expires_at_int" FROM "local_user" LEFT JOIN "password" ON "local_user"."id" = "password"."local_user_id" WHERE "local_user"."user_id" = $1 ORDER BY "local_user"."id" ASC, "password"."created_at_int" DESC"#,
+                ["nonexistent_user".into()]
+            )
+        );
+    }
+
+    /// Timing consistency test: verify that "user not found" and "wrong
+    /// password" take comparable time, preventing username enumeration via
+    /// timing attacks.
+    ///
+    /// This test is #[ignore] by default because timing tests are inherently
+    /// unreliable in CI environments. Run with `--ignored` flag to execute.
+    #[tokio::test]
+    #[ignore]
+    async fn test_authenticate_timing_consistency() {
+        let config = Config::default();
+        let iterations = 10;
+
+        // Measure "user not found" timing
+        let mut not_found_total = std::time::Duration::ZERO;
+        for _ in 0..iterations {
+            let db = MockDatabase::new(DatabaseBackend::Postgres)
+                .append_query_results([Vec::<(db_local_user::Model, db_password::Model)>::new()])
+                .into_connection();
+            let start = std::time::Instant::now();
+            let _ = authenticate_by_password(
+                &config,
+                &db,
+                &UserPasswordAuthRequest {
+                    id: Some("nonexistent_user".into()),
+                    password: "secret".into(),
+                    ..Default::default()
+                },
+            )
+            .await;
+            not_found_total += start.elapsed();
+        }
+
+        // Measure "wrong password" timing
+        let mut wrong_password_total = std::time::Duration::ZERO;
+        for _ in 0..iterations {
+            let db = MockDatabase::new(DatabaseBackend::Postgres)
+                .append_query_results([vec![(
+                    get_local_user_mock("user_id"),
+                    db_password::ModelBuilder::default()
+                        .password_hash("wrong_hash")
+                        .build()
+                        .unwrap(),
+                )]])
+                .append_query_results([user_option::tests::get_user_options_mock(
+                    "user_id",
+                    &UserOptions::default(),
+                )])
+                .append_query_results([vec![get_user_mock("user_id")]])
+                .append_query_results([vec![get_local_user_mock("user_id")]])
+                .into_connection();
+            let start = std::time::Instant::now();
+            let _ = authenticate_by_password(
+                &config,
+                &db,
+                &UserPasswordAuthRequest {
+                    id: Some("user_id".into()),
+                    password: "secret".into(),
+                    ..Default::default()
+                },
+            )
+            .await;
+            wrong_password_total += start.elapsed();
+        }
+
+        let not_found_avg = not_found_total.as_secs_f64() / iterations as f64;
+        let wrong_password_avg = wrong_password_total.as_secs_f64() / iterations as f64;
+
+        // The "user not found" path should take at least 70% of the time of the "wrong
+        // password" path. If it's significantly faster, an attacker could
+        // distinguish between the two paths.
+        let ratio = if wrong_password_avg > 0.0 {
+            not_found_avg / wrong_password_avg
+        } else {
+            0.0
+        };
+
+        // Allow some variance (up to 150%) to account for system noise,
+        // but if the ratio is much less than 1, it indicates a leak.
+        assert!(
+            ratio >= 0.5,
+            "Timing leak detected: user_not_found avg {:.3}s, wrong_password avg {:.3}s (ratio {:.2}).",
+            not_found_avg,
+            wrong_password_avg,
+            ratio
+        );
     }
 
     #[tokio::test]

@@ -64,6 +64,42 @@ fn verify_length_and_trunc_password(password: &[u8], max_length: usize) -> &[u8]
     password
 }
 
+/// Generate a dummy password hash matching the configured algorithm.
+///
+/// Used for timing attack prevention: when a user is not found, a dummy hash
+/// is generated and verified against the provided password, so the response
+/// time is approximately the same as when the user exists but the password is
+/// wrong.
+///
+/// # Parameters
+/// - `conf`: The service configuration.
+///
+/// # Returns
+/// - `Ok(String)` - A dummy hash string matching the configured algorithm.
+/// - `Err(PasswordHashError)` - If hash generation failed.
+pub async fn generate_dummy_hash(conf: &Config) -> Result<String, PasswordHashError> {
+    match conf.identity.password_hashing_algorithm {
+        PasswordHashingAlgo::Bcrypt => {
+            let rounds = conf.identity.password_hash_rounds.unwrap_or(12);
+            // bcrypt dummy hash: "$2b$XX$" + 53 random base64 chars
+            // Generate a dummy hash with a random salt by hashing a random string
+            // with matching rounds, so verify_password takes the same time
+            let dummy_password = rand::random::<[u8; 16]>();
+            let hash =
+                task::spawn_blocking(move || bcrypt::hash(dummy_password, rounds as u32)).await??;
+            Ok(hash)
+        }
+        PasswordHashingAlgo::None => {
+            let dummy: [u8; 32] = rand::random();
+            Ok(dummy
+                .map(|b| b % 95 + 32 as u8)
+                .into_iter()
+                .map(|b| b as char)
+                .collect())
+        }
+    }
+}
+
 /// Calculate password hash with the configuration defaults.
 ///
 /// # Parameters
@@ -237,5 +273,52 @@ mod tests {
         assert!(!verify_password(&conf, &pass, "foobar").await.unwrap());
         assert!(!logs_contain("foobar"));
         assert!(!logs_contain(&pass));
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_generate_and_verify_dummy_hash_bcrypt() {
+        let builder = config::Config::builder()
+            .set_override("auth.methods", "")
+            .unwrap()
+            .set_override("database.connection", "dummy")
+            .unwrap();
+        let conf: Config = Config::try_from(builder).expect("can build a valid config");
+        let dummy_hash = generate_dummy_hash(&conf).await.unwrap();
+        // Dummy hash should be a valid bcrypt hash (starts with $2b$)
+        assert!(
+            dummy_hash.starts_with("$2b$"),
+            "Dummy hash should be a valid bcrypt hash"
+        );
+        // Verify should return false for any random password
+        let pass = Alphanumeric.sample_string(&mut rand::rng(), 32);
+        let result = verify_password(&conf, &pass, &dummy_hash).await.unwrap();
+        // Result should be false (password doesn't match dummy hash)
+        assert!(!result, "Dummy hash should not match random password");
+        assert!(!logs_contain(&pass));
+        assert!(!logs_contain(&dummy_hash));
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_generate_dummy_hash_none() {
+        let builder = config::Config::builder()
+            .set_override("auth.methods", "")
+            .unwrap()
+            .set_override("database.connection", "dummy")
+            .unwrap()
+            .set_override("identity.password_hashing_algorithm", "None")
+            .unwrap();
+        let conf: Config = Config::try_from(builder).expect("can build a valid config");
+        let dummy_hash = generate_dummy_hash(&conf).await.unwrap();
+        // Dummy hash should be a non-empty string
+        assert!(!dummy_hash.is_empty(), "Dummy hash should not be empty");
+        // Verify should return false for any random password
+        let pass = Alphanumeric.sample_string(&mut rand::rng(), 32);
+        let result = verify_password(&conf, &pass, &dummy_hash).await.unwrap();
+        // Result should almost certainly be false (random password unlikely to match)
+        assert!(!result, "Dummy hash should not match random password");
+        assert!(!logs_contain(&pass));
+        assert!(!logs_contain(&dummy_hash));
     }
 }

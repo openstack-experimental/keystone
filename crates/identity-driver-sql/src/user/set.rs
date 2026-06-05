@@ -13,7 +13,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Set user properties.
 
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use sea_orm::DatabaseConnection;
 use sea_orm::entity::*;
 
@@ -22,11 +22,12 @@ use openstack_keystone_core::identity::IdentityProviderError;
 
 use crate::entity::user as db_user;
 
-/// Reset the `user.last_active_at` to the current date.
+/// Reset the `user.last_active_at` to the specified date.
 ///
 /// # Parameters
 /// - `db`: The database connection.
-/// - `user`: The user model.
+/// - `user`: The user model to update.
+/// - `last_active_at`: The date to set as the user's last active date.
 ///
 /// # Returns
 /// A `Result` containing the updated `db_user::Model` if successful, or an
@@ -35,9 +36,11 @@ use crate::entity::user as db_user;
 pub async fn reset_last_active(
     db: &DatabaseConnection,
     user: &db_user::Model,
+    last_active_at: DateTime<Utc>,
 ) -> Result<db_user::Model, IdentityProviderError> {
     let mut update: db_user::ActiveModel = user.clone().into();
-    update.last_active_at = Set(Some(Utc::now().date_naive()));
+    update.last_active_at = Set(Some(last_active_at.date_naive()));
+
     Ok(update
         .update(db)
         .await
@@ -57,8 +60,9 @@ mod tests {
         let db = MockDatabase::new(DatabaseBackend::Postgres)
             .append_query_results([vec![get_user_mock("user_id")]])
             .into_connection();
+        let now = Utc::now();
         assert!(
-            reset_last_active(&db, &get_user_mock("user_id"))
+            reset_last_active(&db, &get_user_mock("user_id"), now)
                 .await
                 .is_ok()
         );
@@ -69,7 +73,7 @@ mod tests {
             [Transaction::from_sql_and_values(
                 DatabaseBackend::Postgres,
                 r#"UPDATE "user" SET "last_active_at" = $1 WHERE "user"."id" = $2 RETURNING "created_at", "default_project_id", "domain_id", "enabled", "extra", "id", "last_active_at""#,
-                [Utc::now().date_naive().into(), "user_id".into()]
+                [now.date_naive().into(), "user_id".into()]
             ),]
         );
     }
