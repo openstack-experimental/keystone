@@ -27,7 +27,6 @@ use openstack_keystone_core::resource::ResourceApi;
 use openstack_keystone_core::role::RoleApi;
 use openstack_keystone_core::{SqlDriver, SqlDriverRegistration};
 use openstack_keystone_core_types::assignment::*;
-use openstack_keystone_core_types::role::*;
 
 mod assignment;
 pub mod entity;
@@ -48,10 +47,88 @@ inventory::submit! {
 }
 
 impl SqlBackend {
-    /// List role assignments for multiple actors/targets.
+    /// Resolve implied roles for a set of assignments.
     ///
-    /// List all role assignments matching the parameters resolving the imply
-    /// rules and role names.
+    /// Fetches role imply rules, computes transitive closure, and generates
+    /// assignment entries for each implied role. Does NOT resolve role names
+    /// (that's the provider's responsibility).
+    ///
+    /// Returns a `Vec<Assignment>` containing both the original assignments
+    /// and any additionally generated implied role assignments.
+    #[tracing::instrument(level = "info", skip(self, state, assignments))]
+    async fn resolve_implied_roles(
+        &self,
+        state: &ServiceState,
+        assignments: Vec<Assignment>,
+    ) -> Result<Vec<Assignment>, AssignmentProviderError> {
+        let rules = state
+            .provider
+            .get_role_provider()
+            .list_role_imply_rules(state)
+            .await?;
+        let mut imply_rules: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+        for rule in &rules {
+            imply_rules
+                .entry(rule.prior_role.id.clone())
+                .or_default()
+                .insert(rule.implied_role.id.clone());
+        }
+        // Transitive expansion
+        let mut changed = true;
+        while changed {
+            changed = false;
+            let snapshot: Vec<(String, BTreeSet<String>)> = imply_rules
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect();
+            for (snapshot_role_id, snapshot_implied) in snapshot {
+                let to_add: BTreeSet<String> = snapshot_implied
+                    .iter()
+                    .filter_map(|implied_id| {
+                        imply_rules.get(implied_id).map(|further| {
+                            further
+                                .iter()
+                                .filter(|fid| {
+                                    !imply_rules.get(&snapshot_role_id).unwrap().contains(*fid)
+                                })
+                                .cloned()
+                                .collect::<BTreeSet<String>>()
+                        })
+                    })
+                    .flatten()
+                    .collect();
+                if !to_add.is_empty() {
+                    changed = true;
+                    for fid in to_add {
+                        imply_rules
+                            .entry(snapshot_role_id.clone())
+                            .or_default()
+                            .insert(fid);
+                    }
+                }
+            }
+        }
+
+        // Merge and apply role implies
+        let mut result_map: HashSet<Assignment> = HashSet::new();
+
+        for assignment in assignments {
+            result_map.insert(assignment.clone());
+
+            if let Some(implies) = imply_rules.get(&assignment.role_id) {
+                for implied_role_id in implies {
+                    let mut implied_assignment = assignment.clone();
+                    implied_assignment.role_id = implied_role_id.clone();
+                    implied_assignment.implied_via = Some(assignment.role_id.clone());
+                    result_map.insert(implied_assignment);
+                }
+            }
+        }
+
+        Ok(result_map.into_iter().collect())
+    }
+
+    /// List role assignments for multiple actors/targets.
     ///
     /// # Parameters
     ///
@@ -68,84 +145,14 @@ impl SqlBackend {
         state: &ServiceState,
         params: &RoleAssignmentListForMultipleActorTargetParameters,
     ) -> Result<Vec<Assignment>, AssignmentProviderError> {
-        let role_list_qp = RoleListParameters::default();
-        let (assignments_handle, imply_rules_handle, role_handle) = tokio::join!(
-            assignment::list_for_multiple_actors_and_targets(&state.db, params),
-            state
-                .provider
-                .get_role_provider()
-                .list_role_imply_rules(state),
-            state
-                .provider
-                .get_role_provider()
-                .list_roles(state, &role_list_qp)
-        );
-        let imply_rules = {
-            let rules = imply_rules_handle?;
-            let mut map: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-            for rule in &rules {
-                map.entry(rule.prior_role.id.clone())
-                    .or_default()
-                    .insert(rule.implied_role.id.clone());
-            }
-            // Transitive expansion
-            let mut changed = true;
-            while changed {
-                changed = false;
-                // Snapshot current state to avoid mutable borrow during iteration
-                let snapshot: Vec<(String, BTreeSet<String>)> =
-                    map.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-                for (snapshot_role_id, snapshot_implied) in snapshot {
-                    let to_add: BTreeSet<String> = snapshot_implied
-                        .iter()
-                        .filter_map(|implied_id| {
-                            map.get(implied_id).map(|further| {
-                                further
-                                    .iter()
-                                    .filter(|fid| {
-                                        !map.get(&snapshot_role_id).unwrap().contains(*fid)
-                                    })
-                                    .cloned()
-                                    .collect::<BTreeSet<String>>()
-                            })
-                        })
-                        .flatten()
-                        .collect();
-                    if !to_add.is_empty() {
-                        changed = true;
-                        for fid in to_add {
-                            map.entry(snapshot_role_id.clone()).or_default().insert(fid);
-                        }
-                    }
-                }
-            }
-            map
-        };
-        let roles: BTreeMap<String, Role> = role_handle?
-            .into_iter()
-            .map(|x| (x.id.clone(), x))
-            .collect();
+        let assignments =
+            assignment::list_for_multiple_actors_and_targets(&state.db, params).await?;
 
-        // Merge and apply role implies
-        let mut result_map: HashSet<Assignment> = HashSet::new();
-
-        for assignment in assignments_handle?.iter_mut() {
-            assignment.role_name = roles.get(&assignment.role_id).map(|role| role.name.clone());
-            result_map.insert(assignment.clone());
-
-            if let Some(implies) = imply_rules.get(&assignment.role_id) {
-                for implied_role_id in implies.iter() {
-                    let mut implied_assignment = assignment.clone();
-                    implied_assignment.role_id = implied_role_id.clone();
-                    implied_assignment.role_name =
-                        roles.get(implied_role_id).map(|role| role.name.clone());
-                    implied_assignment.implied_via = Some(assignment.role_id.clone());
-                    result_map.insert(implied_assignment);
-                }
-            }
+        if params.resolve_implied_roles {
+            self.resolve_implied_roles(state, assignments).await
+        } else {
+            Ok(assignments)
         }
-
-        Ok(result_map.into_iter().collect())
     }
 }
 
@@ -288,6 +295,7 @@ impl AssignmentBackend for SqlBackend {
         }
         request.targets(targets);
         request.actors(actors);
+        request.resolve_implied_roles(params.resolve_implied_roles);
         self.list_assignments_for_multiple_actors_and_targets(state, &request.build()?)
             .await
     }
@@ -315,7 +323,6 @@ impl AssignmentBackend for SqlBackend {
 #[cfg(test)]
 mod tests {
     use sea_orm::{DatabaseBackend, DatabaseConnection, MockDatabase};
-    use std::collections::{BTreeMap, BTreeSet};
     use std::sync::Arc;
 
     use openstack_keystone_config::{Config, ConfigManager};
@@ -323,7 +330,7 @@ mod tests {
     use openstack_keystone_core::policy::MockPolicy;
     use openstack_keystone_core::provider::Provider;
     use openstack_keystone_core::role::MockRoleProvider;
-    use openstack_keystone_core_types::role::{Role, RoleBuilder, RoleImplyBuilder, RoleRef};
+    use openstack_keystone_core_types::role::{RoleImplyBuilder, RoleRef};
 
     use super::assignment::tests::*;
     use super::*;
@@ -366,16 +373,6 @@ mod tests {
                     .unwrap(),
             ])
         });
-        role_mock
-            .expect_list_roles()
-            .withf(|_, _: &RoleListParameters| true)
-            .returning(|_, _| {
-                Ok(vec![
-                    RoleBuilder::default().id("1").name("r1").build().unwrap(),
-                    RoleBuilder::default().id("2").name("r2").build().unwrap(),
-                    RoleBuilder::default().id("3").name("r3").build().unwrap(),
-                ])
-            });
         let provider = Provider::mocked_builder()
             .mock_role(role_mock)
             .build()
@@ -387,7 +384,10 @@ mod tests {
         let res = sot
             .list_assignments_for_multiple_actors_and_targets(
                 &state,
-                &RoleAssignmentListForMultipleActorTargetParameters::default(),
+                &RoleAssignmentListForMultipleActorTargetParameters {
+                    resolve_implied_roles: true,
+                    ..Default::default()
+                },
             )
             .await
             .unwrap();
@@ -395,7 +395,7 @@ mod tests {
         assert_eq!(3, res.len(), "{:?}", res);
         assert!(res.contains(&Assignment {
             role_id: "1".into(),
-            role_name: Some("r1".into()),
+            role_name: None,
             actor_id: "actor".into(),
             target_id: "target".into(),
             r#type: AssignmentType::UserProject,
@@ -404,7 +404,7 @@ mod tests {
         }));
         assert!(res.contains(&Assignment {
             role_id: "2".into(),
-            role_name: Some("r2".into()),
+            role_name: None,
             actor_id: "actor".into(),
             target_id: "target".into(),
             r#type: AssignmentType::UserProject,
@@ -413,13 +413,62 @@ mod tests {
         }));
         assert!(res.contains(&Assignment {
             role_id: "3".into(),
-            role_name: Some("r3".into()),
+            role_name: None,
             actor_id: "actor".into(),
             target_id: "system".into(),
             r#type: AssignmentType::UserSystem,
             inherited: false,
             implied_via: None,
         }));
+    }
+
+    #[tokio::test]
+    async fn test_list_for_multiple_actor_no_implied_roles() {
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([vec![get_role_assignment_mock("1")]])
+            .append_query_results([vec![get_role_system_assignment_mock("3")]])
+            .into_connection();
+
+        let provider = Provider::mocked_builder().build().unwrap();
+
+        let state = get_mock_state(db, provider).await;
+
+        let sot = SqlBackend {};
+        let res = sot
+            .list_assignments_for_multiple_actors_and_targets(
+                &state,
+                &RoleAssignmentListForMultipleActorTargetParameters {
+                    resolve_implied_roles: false,
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(2, res.len(), "{:?}", res);
+        assert!(res.contains(&Assignment {
+            role_id: "1".into(),
+            role_name: None,
+            actor_id: "actor".into(),
+            target_id: "target".into(),
+            r#type: AssignmentType::UserProject,
+            inherited: false,
+            implied_via: None,
+        }));
+        assert!(res.contains(&Assignment {
+            role_id: "3".into(),
+            role_name: None,
+            actor_id: "actor".into(),
+            target_id: "system".into(),
+            r#type: AssignmentType::UserSystem,
+            inherited: false,
+            implied_via: None,
+        }));
+        // No implied role (role_id "2") should be present
+        assert!(
+            res.iter().all(|a| a.role_id != "2"),
+            "implied role should not be present"
+        );
     }
 
     #[tokio::test]
@@ -447,15 +496,6 @@ mod tests {
                     .unwrap(),
             ])
         });
-        role_mock
-            .expect_list_roles()
-            .withf(|_, _: &RoleListParameters| true)
-            .returning(|_, _| {
-                Ok(vec![
-                    RoleBuilder::default().id("1").name("r1").build().unwrap(),
-                    RoleBuilder::default().id("2").name("r2").build().unwrap(),
-                ])
-            });
         let provider = Provider::mocked_builder()
             .mock_role(role_mock)
             .build()
@@ -466,6 +506,7 @@ mod tests {
         let sot = SqlBackend {};
         let params = RoleAssignmentListForMultipleActorTargetParameters {
             actors: vec!["uid1".into()],
+            resolve_implied_roles: true,
             ..Default::default()
         };
         let res = sot
@@ -478,7 +519,7 @@ mod tests {
         assert!(
             res.contains(&Assignment {
                 role_id: "1".into(),
-                role_name: Some("r1".into()),
+                role_name: None,
                 actor_id: "actor".into(),
                 target_id: "target".into(),
                 r#type: AssignmentType::UserProject,
@@ -491,7 +532,7 @@ mod tests {
         assert!(
             res.contains(&Assignment {
                 role_id: "2".into(),
-                role_name: Some("r2".into()),
+                role_name: None,
                 actor_id: "actor".into(),
                 target_id: "target".into(),
                 r#type: AssignmentType::UserProject,
@@ -504,7 +545,7 @@ mod tests {
         assert!(
             res.contains(&Assignment {
                 role_id: "1".into(),
-                role_name: Some("r1".into()),
+                role_name: None,
                 actor_id: "actor".into(),
                 target_id: "system".into(),
                 r#type: AssignmentType::UserSystem,
@@ -517,7 +558,7 @@ mod tests {
         assert!(
             res.contains(&Assignment {
                 role_id: "2".into(),
-                role_name: Some("r2".into()),
+                role_name: None,
                 actor_id: "actor".into(),
                 target_id: "system".into(),
                 r#type: AssignmentType::UserSystem,

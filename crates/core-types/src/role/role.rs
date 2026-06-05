@@ -66,6 +66,7 @@ pub struct RoleRef {
     pub id: String,
 
     /// The role name.
+    #[builder(default)]
     #[validate(length(min = 1, max = 255))]
     pub name: Option<String>,
 }

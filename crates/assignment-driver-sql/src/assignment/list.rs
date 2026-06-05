@@ -224,6 +224,7 @@ mod tests {
                     inherited: None,
                 }],
                 role_id: Some("rid".into()),
+                resolve_implied_roles: false,
             },
         )
         .await
@@ -249,6 +250,7 @@ mod tests {
                     inherited: None,
                 }],
                 role_id: Some("rid".into()),
+                resolve_implied_roles: false,
             },
         )
         .await
@@ -317,6 +319,7 @@ mod tests {
                     },
                 ],
                 role_id: None,
+                resolve_implied_roles: false,
             },
         )
         .await
@@ -356,6 +359,7 @@ mod tests {
                 actors: vec![],
                 targets: vec![],
                 role_id: None,
+                resolve_implied_roles: false,
             },
         )
         .await
@@ -407,7 +411,8 @@ mod tests {
                             inherited: Some(true)
                         }
                     ],
-                    role_id: None
+                    role_id: None,
+                    resolve_implied_roles: false,
                 }
             )
             .await
@@ -450,6 +455,7 @@ mod tests {
                     },
                 ],
                 role_id: None,
+                resolve_implied_roles: false,
             },
         )
         .await

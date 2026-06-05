@@ -62,6 +62,7 @@ pub(super) async fn check(
         system_id: Some("system".into()),
         effective: Some(true),
         include_names: Some(false),
+        resolve_implied_roles: false,
         ..Default::default()
     };
     let (user, role, assignments) = tokio::join!(

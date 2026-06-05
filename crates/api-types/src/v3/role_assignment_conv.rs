@@ -100,6 +100,8 @@ impl TryFrom<api_types::RoleAssignmentListParameters>
         if let Some(val) = value.include_names {
             builder.include_names(val);
         }
+        // The /role_assignments API always resolves implied roles.
+        builder.resolve_implied_roles(true);
         Ok(builder.build()?)
     }
 }

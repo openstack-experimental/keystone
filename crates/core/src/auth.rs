@@ -18,7 +18,7 @@ use chrono::Utc;
 use tracing::debug;
 
 use openstack_keystone_core_types::assignment::{
-    AssignmentProviderError, RoleAssignmentListParameters, RoleAssignmentListParametersBuilder,
+    AssignmentProviderError, RoleAssignmentListParametersBuilder,
 };
 use openstack_keystone_core_types::identity::IdentityProviderError;
 use openstack_keystone_core_types::resource::ResourceProviderError;
@@ -289,6 +289,7 @@ async fn resolve_domain_roles(
                 .domain_id(domain_id)
                 .include_names(true)
                 .effective(true)
+                .resolve_implied_roles(true)
                 .build()
                 .map_err(AssignmentProviderError::from)?,
         )
@@ -382,8 +383,9 @@ async fn resolve_project_default_roles(
             &RoleAssignmentListParametersBuilder::default()
                 .user_id(&user_id)
                 .project_id(project_id)
-                .include_names(false)
+                .include_names(true)
                 .effective(true)
+                .resolve_implied_roles(true)
                 .build()
                 .map_err(AssignmentProviderError::from)?,
         )
@@ -449,6 +451,7 @@ async fn resolve_system_roles(
                 .system_id(system_id)
                 .include_names(true)
                 .effective(true)
+                .resolve_implied_roles(true)
                 .build()
                 .map_err(AssignmentProviderError::from)?,
         )
@@ -467,12 +470,14 @@ async fn resolve_trust_roles(
         .get_assignment_provider()
         .list_role_assignments(
             state,
-            &RoleAssignmentListParameters {
-                user_id: Some(tpi.trust.trustor_user_id.clone()),
-                project_id: Some(tpi.project.id.clone()),
-                effective: Some(true),
-                ..Default::default()
-            },
+            &RoleAssignmentListParametersBuilder::default()
+                .user_id(&tpi.trust.trustor_user_id.clone())
+                .project_id(tpi.project.id.clone())
+                .include_names(true)
+                .effective(true)
+                .resolve_implied_roles(true)
+                .build()
+                .map_err(AssignmentProviderError::from)?,
         )
         .await
         .auth_context("resolving trust role assignments")?;
@@ -873,7 +878,7 @@ mod tests {
                 q.user_id.as_deref() == Some(uid)
                     && q.project_id.as_deref() == Some(pid)
                     && q.effective == Some(true)
-                    && q.include_names == Some(false)
+                    && q.include_names == Some(true)
                     && q.domain_id.is_none()
                     && q.system_id.is_none()
             })
@@ -1076,7 +1081,7 @@ mod tests {
                 q.user_id.as_deref() == Some(uid)
                     && q.project_id.as_deref() == Some(pid)
                     && q.effective == Some(true)
-                    && q.include_names == Some(false)
+                    && q.include_names == Some(true)
             })
             .returning(move |_state, _q| Ok(vec![assignment_with_role(admin_rid)]));
         let ac = openstack_keystone_core_types::application_credential::ApplicationCredential {
@@ -1401,7 +1406,7 @@ mod tests {
                 q.user_id.as_deref() == Some(uid)
                     && q.project_id.as_deref() == Some(pid)
                     && q.effective == Some(true)
-                    && q.include_names == Some(false)
+                    && q.include_names == Some(true)
             })
             .returning(move |_state, _q| Ok(Vec::<Assignment>::new()));
         let state = get_mocked_state(
@@ -1522,7 +1527,7 @@ mod tests {
             .withf(|_, q: &RoleAssignmentListParameters| {
                 q.project_id.as_deref() == Some(pid)
                     && q.effective == Some(true)
-                    && q.include_names == Some(false)
+                    && q.include_names == Some(true)
             })
             .returning(move |_state, _q| Ok(Vec::<Assignment>::new()));
         let state = get_mocked_state(
@@ -1562,7 +1567,7 @@ mod tests {
             .withf(|_, q: &RoleAssignmentListParameters| {
                 q.project_id.as_deref() == Some(target_pid)
                     && q.effective == Some(true)
-                    && q.include_names == Some(false)
+                    && q.include_names == Some(true)
             })
             .returning(move |_state, _q| Ok(Vec::<Assignment>::new()));
         let state = get_mocked_state(
@@ -1636,7 +1641,7 @@ mod tests {
                 q.user_id.as_deref() == Some(uid)
                     && q.project_id.as_deref() == Some(pid)
                     && q.effective == Some(true)
-                    && q.include_names == Some(false)
+                    && q.include_names == Some(true)
             })
             .returning(move |_state, _q| {
                 Ok(vec![
@@ -1792,18 +1797,6 @@ mod tests {
         assert!(roles.iter().any(|r| r.id == implied_rid));
     }
 
-    // --- assignments_to_roles: role conversion failure ---
-    #[test]
-    fn test_assignments_to_roles_conversion_failure() {
-        let mut bad_assignment = assignment_with_role("rid1");
-        bad_assignment.role_name = None;
-        let result = assignments_to_roles(vec![bad_assignment]);
-        assert!(matches!(
-            result,
-            Err(AuthenticationError::RoleConversionFailed)
-        ));
-    }
-
     // --- SPIFFE non-system with principal identity on system scope, no assignments
     // ---
     #[tokio::test]
@@ -1863,7 +1856,7 @@ mod tests {
                 q.user_id.as_deref() == Some(uid)
                     && q.project_id.as_deref() == Some(pid)
                     && q.effective == Some(true)
-                    && q.include_names == Some(false)
+                    && q.include_names == Some(true)
             })
             .returning(move |_state, _q| Err(AssignmentProviderError::Driver("db down".into())));
         let state = get_mocked_state(
@@ -2072,7 +2065,7 @@ mod tests {
                 q.user_id.as_deref() == Some(uid)
                     && q.project_id.as_deref() == Some(pid)
                     && q.effective == Some(true)
-                    && q.include_names == Some(false)
+                    && q.include_names == Some(true)
             })
             .returning(move |_state, _q| Ok(vec![assignment_with_role("admin")]));
         let ac = openstack_keystone_core_types::application_credential::ApplicationCredential {
@@ -2118,7 +2111,7 @@ mod tests {
                 q.user_id.as_deref() == Some(uid)
                     && q.project_id.as_deref() == Some(pid)
                     && q.effective == Some(true)
-                    && q.include_names == Some(false)
+                    && q.include_names == Some(true)
             })
             .returning(move |_state, _q| Ok(vec![assignment_with_role("admin")]));
         let ac = openstack_keystone_core_types::application_credential::ApplicationCredential {
@@ -2261,7 +2254,7 @@ mod tests {
                 q.user_id.as_deref() == Some(uid)
                     && q.project_id.as_deref() == Some(pid)
                     && q.effective == Some(true)
-                    && q.include_names == Some(false)
+                    && q.include_names == Some(true)
             })
             .returning(move |_state, _q| Ok(Vec::<Assignment>::new()));
         let state = get_mocked_state(

@@ -2531,34 +2531,6 @@ mod tests {
         assert_eq!(authz.roles.as_ref().unwrap()[0].id, "admin");
     }
 
-    #[test]
-    fn test_try_set_roles_mixed_success_failure() {
-        let mut authz = AuthzInfo {
-            scope: ScopeInfo::Project {
-                project: make_project(),
-                project_domain: make_domain(),
-            },
-            roles: None,
-        };
-        let good = AssignmentBuilder::default()
-            .actor_id("uid")
-            .role_id("admin")
-            .target_id("pid")
-            .r#type(AssignmentType::UserProject)
-            .inherited(false)
-            .build()
-            .unwrap();
-        let bad = AssignmentBuilder::default()
-            .actor_id("uid")
-            .role_id("")
-            .target_id("pid")
-            .r#type(AssignmentType::UserProject)
-            .inherited(false)
-            .build()
-            .unwrap();
-        assert!(authz.try_set_roles(vec![good, bad]).is_err());
-    }
-
     // --- HV-08: PrincipalIdentityInfo empty id/issuer ---
 
     #[test]

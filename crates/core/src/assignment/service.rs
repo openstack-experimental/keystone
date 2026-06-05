@@ -225,6 +225,7 @@ mod tests {
                     &state,
                     &RoleAssignmentListParameters {
                         role_id: Some("rid".into()),
+                        resolve_implied_roles: false,
                         ..Default::default()
                     },
                 )
@@ -280,6 +281,7 @@ mod tests {
                 &RoleAssignmentListParameters {
                     role_id: Some("rid".into()),
                     include_names: Some(true),
+                    resolve_implied_roles: false,
                     ..Default::default()
                 },
             )

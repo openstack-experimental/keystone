@@ -171,6 +171,7 @@ mod tests {
                     role_id: Some("role".into()),
                     user_id: Some("user1".into()),
                     project_id: Some("project1".into()),
+                    resolve_implied_roles: true,
                     ..Default::default()
                 } == *qp
             })
@@ -193,6 +194,7 @@ mod tests {
                     role_id: Some("role".into()),
                     user_id: Some("user2".into()),
                     domain_id: Some("domain2".into()),
+                    resolve_implied_roles: true,
                     ..Default::default()
                 } == *qp
             })
@@ -214,6 +216,7 @@ mod tests {
                 RoleAssignmentListParameters {
                     group_id: Some("group3".into()),
                     project_id: Some("project3".into()),
+                    resolve_implied_roles: true,
                     ..Default::default()
                 } == *qp
             })

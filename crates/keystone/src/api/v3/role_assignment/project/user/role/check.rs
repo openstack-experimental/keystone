@@ -66,6 +66,7 @@ pub(super) async fn check(
         project_id: Some(project_id.clone()),
         effective: Some(true),
         include_names: Some(false),
+        resolve_implied_roles: false,
         ..Default::default()
     };
     // Use join instead of try_join to have more constant latency preventing timing

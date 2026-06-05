@@ -280,6 +280,12 @@ pub struct RoleAssignmentListParameters {
     /// will be interpreted as true.
     #[builder(default)]
     pub include_names: Option<bool>,
+
+    /// Whether to resolve implied roles. When false, only directly assigned
+    /// roles are returned. When true, roles implied by role inference rules
+    /// are also included in the results.
+    #[builder(default)]
+    pub resolve_implied_roles: bool,
 }
 
 /// Querying effective role assignments for list of actors (typically user with
@@ -303,6 +309,12 @@ pub struct RoleAssignmentListForMultipleActorTargetParameters {
     #[builder(default)]
     #[validate(nested)]
     pub targets: Vec<RoleAssignmentTarget>,
+
+    /// Whether to resolve implied roles. When false, only directly assigned
+    /// roles are returned. When true, roles implied by role inference rules
+    /// are also included in the results.
+    #[builder(default)]
+    pub resolve_implied_roles: bool,
 }
 
 /// Role assignment target which is either target_id or target_id with explicit

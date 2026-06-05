@@ -61,6 +61,7 @@ pub(super) async fn list(
                 user_id: Some(user_auth.principal().get_user_id().clone()),
                 effective: Some(true),
                 include_names: Some(false),
+                resolve_implied_roles: false,
                 ..Default::default()
             },
         )

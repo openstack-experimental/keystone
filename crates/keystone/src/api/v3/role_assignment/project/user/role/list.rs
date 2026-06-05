@@ -64,6 +64,7 @@ pub(super) async fn list(
         project_id: Some(project_id.clone()),
         effective: Some(false),
         include_names: Some(false),
+        resolve_implied_roles: false,
         ..Default::default()
     };
 
