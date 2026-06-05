@@ -63,6 +63,66 @@ pub struct RoleRef {
     pub name: String,
 }
 
+/// The role imply data.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
+pub struct RoleImply {
+    /// The prior role that implies another role.
+    #[cfg_attr(feature = "validate", validate(nested))]
+    pub prior_role: RoleRef,
+
+    /// The role that is implied by the prior role.
+    #[cfg_attr(feature = "validate", validate(nested))]
+    pub implied_role: RoleRef,
+}
+
+/// Response for a single role inference rule.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
+pub struct RoleImplyResponse {
+    /// The role inference rule.
+    #[serde(rename = "role_inference")]
+    #[cfg_attr(feature = "validate", validate(nested))]
+    pub role_inference: RoleImply,
+}
+
+/// Response for listing all role inference rules.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
+pub struct RoleInferencesList {
+    /// Collection of role inference rules.
+    #[serde(rename = "role_inferences")]
+    #[cfg_attr(feature = "validate", validate(nested))]
+    pub role_inferences: Vec<RoleImply>,
+}
+
+/// Grouped structure for listing implied roles of a specific prior role.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
+pub struct ImplyGroup {
+    /// The prior role.
+    #[cfg_attr(feature = "validate", validate(nested))]
+    pub prior_role: RoleRef,
+    /// List of roles that are implied by the prior role.
+    #[cfg_attr(feature = "validate", validate(nested))]
+    pub implies: Vec<RoleRef>,
+}
+
+/// Response for listing implied roles by prior role.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
+pub struct RoleImplyListByPrior {
+    /// The role inference group.
+    #[serde(rename = "role_inference")]
+    #[cfg_attr(feature = "validate", validate(nested))]
+    pub role_inference: ImplyGroup,
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[cfg_attr(feature = "validate", derive(validator::Validate))]

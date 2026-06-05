@@ -33,7 +33,6 @@
 //! interprets the user role set, and determines to which operations or
 //! resources each role grants access.
 use async_trait::async_trait;
-use std::collections::{BTreeMap, BTreeSet};
 
 use openstack_keystone_config::Config;
 use openstack_keystone_core_types::role::*;
@@ -117,6 +116,33 @@ impl RoleApi for RoleProvider {
             Self::Mock(provider) => {
                 provider
                     .create_role_imply_rule(state, prior_role_id, implied_role_id)
+                    .await
+            }
+        }
+    }
+
+    /// Check if a role imply rule exists.
+    ///
+    /// # Arguments
+    /// * `state` - The current service state.
+    /// * `prior_role_id` - The ID of the prior role.
+    /// * `implied_role_id` - The ID of the implied role.
+    async fn check_role_imply_rule<'a>(
+        &self,
+        state: &ServiceState,
+        prior_role_id: &'a str,
+        implied_role_id: &'a str,
+    ) -> Result<bool, RoleProviderError> {
+        match self {
+            Self::Service(provider) => {
+                provider
+                    .check_role_imply_rule(state, prior_role_id, implied_role_id)
+                    .await
+            }
+            #[cfg(any(test, feature = "mock"))]
+            Self::Mock(provider) => {
+                provider
+                    .check_role_imply_rule(state, prior_role_id, implied_role_id)
                     .await
             }
         }
@@ -237,23 +263,6 @@ impl RoleApi for RoleProvider {
     ///
     /// # Arguments
     /// * `state` - The current service state.
-    /// * `resolve` - Whether to resolve the imply rules.
-    async fn list_imply_rules(
-        &self,
-        state: &ServiceState,
-        resolve: bool,
-    ) -> Result<BTreeMap<String, BTreeSet<String>>, RoleProviderError> {
-        match self {
-            Self::Service(provider) => provider.list_imply_rules(state, resolve).await,
-            #[cfg(any(test, feature = "mock"))]
-            Self::Mock(provider) => provider.list_imply_rules(state, resolve).await,
-        }
-    }
-
-    /// List role imply rules.
-    ///
-    /// # Arguments
-    /// * `state` - The current service state.
     async fn list_role_imply_rules(
         &self,
         state: &ServiceState,
@@ -262,6 +271,31 @@ impl RoleApi for RoleProvider {
             Self::Service(provider) => provider.list_role_imply_rules(state).await,
             #[cfg(any(test, feature = "mock"))]
             Self::Mock(provider) => provider.list_role_imply_rules(state).await,
+        }
+    }
+
+    /// List role imply rules for a specific prior role.
+    ///
+    /// # Arguments
+    /// * `state` - The current service state.
+    /// * `prior_role_id` - The ID of the prior role.
+    async fn list_role_imply_rules_by_prior<'a>(
+        &self,
+        state: &ServiceState,
+        prior_role_id: &'a str,
+    ) -> Result<Vec<RoleImply>, RoleProviderError> {
+        match self {
+            Self::Service(provider) => {
+                provider
+                    .list_role_imply_rules_by_prior(state, prior_role_id)
+                    .await
+            }
+            #[cfg(any(test, feature = "mock"))]
+            Self::Mock(provider) => {
+                provider
+                    .list_role_imply_rules_by_prior(state, prior_role_id)
+                    .await
+            }
         }
     }
 

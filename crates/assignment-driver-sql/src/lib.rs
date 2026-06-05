@@ -13,7 +13,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! # Assignment driver to the OpenStack Keystone for the SQL database.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use async_trait::async_trait;
 use sea_orm::{DatabaseConnection, Schema};
@@ -74,13 +74,53 @@ impl SqlBackend {
             state
                 .provider
                 .get_role_provider()
-                .list_imply_rules(state, true),
+                .list_role_imply_rules(state),
             state
                 .provider
                 .get_role_provider()
                 .list_roles(state, &role_list_qp)
         );
-        let imply_rules = imply_rules_handle?;
+        let imply_rules = {
+            let rules = imply_rules_handle?;
+            let mut map: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+            for rule in &rules {
+                map.entry(rule.prior_role.id.clone())
+                    .or_default()
+                    .insert(rule.implied_role.id.clone());
+            }
+            // Transitive expansion
+            let mut changed = true;
+            while changed {
+                changed = false;
+                // Snapshot current state to avoid mutable borrow during iteration
+                let snapshot: Vec<(String, BTreeSet<String>)> =
+                    map.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+                for (snapshot_role_id, snapshot_implied) in snapshot {
+                    let to_add: BTreeSet<String> = snapshot_implied
+                        .iter()
+                        .filter_map(|implied_id| {
+                            map.get(implied_id).map(|further| {
+                                further
+                                    .iter()
+                                    .filter(|fid| {
+                                        !map.get(&snapshot_role_id).unwrap().contains(*fid)
+                                    })
+                                    .cloned()
+                                    .collect::<BTreeSet<String>>()
+                            })
+                        })
+                        .flatten()
+                        .collect();
+                    if !to_add.is_empty() {
+                        changed = true;
+                        for fid in to_add {
+                            map.entry(snapshot_role_id.clone()).or_default().insert(fid);
+                        }
+                    }
+                }
+            }
+            map
+        };
         let roles: BTreeMap<String, Role> = role_handle?
             .into_iter()
             .map(|x| (x.id.clone(), x))
@@ -283,7 +323,7 @@ mod tests {
     use openstack_keystone_core::policy::MockPolicy;
     use openstack_keystone_core::provider::Provider;
     use openstack_keystone_core::role::MockRoleProvider;
-    use openstack_keystone_core_types::role::RoleBuilder;
+    use openstack_keystone_core_types::role::{Role, RoleBuilder, RoleImplyBuilder, RoleRef};
 
     use super::assignment::tests::*;
     use super::*;
@@ -309,10 +349,23 @@ mod tests {
             .into_connection();
 
         let mut role_mock = MockRoleProvider::default();
-        role_mock
-            .expect_list_imply_rules()
-            .withf(|_, resolve: &bool| *resolve)
-            .returning(|_, _| Ok(BTreeMap::from([("1".into(), BTreeSet::from(["2".into()]))])));
+        role_mock.expect_list_role_imply_rules().returning(|_| {
+            Ok(vec![
+                RoleImplyBuilder::default()
+                    .prior_role(RoleRef {
+                        id: "1".into(),
+                        name: Some("r1".into()),
+                        domain_id: None,
+                    })
+                    .implied_role(RoleRef {
+                        id: "2".into(),
+                        name: Some("r2".into()),
+                        domain_id: None,
+                    })
+                    .build()
+                    .unwrap(),
+            ])
+        });
         role_mock
             .expect_list_roles()
             .withf(|_, _: &RoleListParameters| true)
@@ -377,10 +430,23 @@ mod tests {
             .into_connection();
 
         let mut role_mock = MockRoleProvider::default();
-        role_mock
-            .expect_list_imply_rules()
-            .withf(|_, resolve: &bool| *resolve)
-            .returning(|_, _| Ok(BTreeMap::from([("1".into(), BTreeSet::from(["2".into()]))])));
+        role_mock.expect_list_role_imply_rules().returning(|_| {
+            Ok(vec![
+                RoleImplyBuilder::default()
+                    .prior_role(RoleRef {
+                        id: "1".into(),
+                        name: Some("r1".into()),
+                        domain_id: None,
+                    })
+                    .implied_role(RoleRef {
+                        id: "2".into(),
+                        name: Some("r2".into()),
+                        domain_id: None,
+                    })
+                    .build()
+                    .unwrap(),
+            ])
+        });
         role_mock
             .expect_list_roles()
             .withf(|_, _: &RoleListParameters| true)

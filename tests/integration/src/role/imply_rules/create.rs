@@ -33,11 +33,12 @@ async fn test_create_imply_rule() -> Result<()> {
         .create_role_imply_rule(&state, &prior_role.id, &implied_role.id)
         .await?;
 
-    assert_eq!(rule.id.as_deref(), Some(prior_role.id.as_str()));
-    assert_eq!(
-        rule.implies_role_id.as_deref(),
-        Some(implied_role.id.as_str())
-    );
+    assert_eq!(rule.prior_role.id, prior_role.id);
+    assert_eq!(rule.prior_role.name, Some(prior_role.name.clone()));
+    assert_eq!(rule.prior_role.domain_id, prior_role.domain_id.clone());
+    assert_eq!(rule.implied_role.id, implied_role.id);
+    assert_eq!(rule.implied_role.name, Some(implied_role.name.clone()));
+    assert_eq!(rule.implied_role.domain_id, implied_role.domain_id.clone());
 
     Ok(())
 }
@@ -62,11 +63,12 @@ async fn test_create_imply_rule_with_domain_roles() -> Result<()> {
         .create_role_imply_rule(&state, &prior_role.id, &implied_role.id)
         .await?;
 
-    assert_eq!(rule.id.as_deref(), Some(prior_role.id.as_str()));
-    assert_eq!(
-        rule.implies_role_id.as_deref(),
-        Some(implied_role.id.as_str())
-    );
+    assert_eq!(rule.prior_role.id, prior_role.id);
+    assert_eq!(rule.prior_role.name, Some(prior_role.name.clone()));
+    assert_eq!(rule.prior_role.domain_id, prior_role.domain_id.clone());
+    assert_eq!(rule.implied_role.id, implied_role.id);
+    assert_eq!(rule.implied_role.name, Some(implied_role.name.clone()));
+    assert_eq!(rule.implied_role.domain_id, implied_role.domain_id.clone());
 
     Ok(())
 }
@@ -86,11 +88,12 @@ async fn test_create_imply_rule_global_roles() -> Result<()> {
         .create_role_imply_rule(&state, &prior_role.id, &implied_role.id)
         .await?;
 
-    assert_eq!(rule.id.as_deref(), Some(prior_role.id.as_str()));
-    assert_eq!(
-        rule.implies_role_id.as_deref(),
-        Some(implied_role.id.as_str())
-    );
+    assert_eq!(rule.prior_role.id, prior_role.id);
+    assert_eq!(rule.prior_role.name, Some(prior_role.name.clone()));
+    assert_eq!(rule.prior_role.domain_id, prior_role.domain_id.clone());
+    assert_eq!(rule.implied_role.id, implied_role.id);
+    assert_eq!(rule.implied_role.name, Some(implied_role.name.clone()));
+    assert_eq!(rule.implied_role.domain_id, implied_role.domain_id.clone());
 
     Ok(())
 }

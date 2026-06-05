@@ -10,8 +10,8 @@ import data.identity
 # The `input.target` is null
 #
 # The `input.existing.role_imply_rule` is the stored rule object (RoleImply):
-#   id:              string      The prior role ID.
-#   implies_role_id: string      The implied role ID.
+#   prior_role:       RoleRef    The prior role reference (id, name, domain_id).
+#   implied_role:     RoleRef    The implied role reference (id, name, domain_id).
 #
 default allow := false
 

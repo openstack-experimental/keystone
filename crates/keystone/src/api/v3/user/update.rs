@@ -49,7 +49,8 @@ pub(super) async fn update(
     // Validate the request
     req.validate()?;
 
-    // Fetch the current user to pass it as existing object into the policy evaluation
+    // Fetch the current user to pass it as existing object into the policy
+    // evaluation
     let current = state
         .provider
         .get_identity_provider()

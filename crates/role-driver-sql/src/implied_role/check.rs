@@ -14,15 +14,13 @@
 
 use sea_orm::DatabaseConnection;
 use sea_orm::entity::*;
-use sea_orm::query::*;
 
 use openstack_keystone_core::error::DbContextExt;
 use openstack_keystone_core::role::RoleProviderError;
-use openstack_keystone_core_types::role::RoleImply;
 
-use crate::entity::{implied_role as db_implied_role, prelude::ImpliedRole};
+use crate::entity::prelude::ImpliedRole;
 
-/// Get a role imply rule by prior and implied role IDs.
+/// Check a role imply rule by prior and implied role IDs.
 ///
 /// # Parameters
 /// - `db`: The database connection.
@@ -30,21 +28,19 @@ use crate::entity::{implied_role as db_implied_role, prelude::ImpliedRole};
 /// - `implied_role_id`: The ID of the implied role.
 ///
 /// # Returns
-/// A `Result` containing an `Option` with the `RoleImply` if found, or an `Error`.
-pub async fn get(
+/// A `Result` containing an `bool` identifying presence of the imply rule.
+pub async fn check(
     db: &DatabaseConnection,
     prior_role_id: &str,
     implied_role_id: &str,
-) -> Result<Option<RoleImply>, RoleProviderError> {
-    use crate::entity::implied_role::Column;
-
-    let entry: Option<db_implied_role::Model> = ImpliedRole::find()
-        .filter(Column::PriorRoleId.eq(prior_role_id))
-        .filter(Column::ImpliedRoleId.eq(implied_role_id))
-        .one(db)
-        .await
-        .context("fetching role imply rule")?;
-    entry.map(TryInto::try_into).transpose()
+) -> Result<bool, RoleProviderError> {
+    Ok(
+        ImpliedRole::find_by_id((prior_role_id.into(), implied_role_id.into()))
+            .one(db)
+            .await
+            .context("checking role imply rule")?
+            .is_some(),
+    )
 }
 
 #[cfg(test)]
@@ -61,15 +57,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_get_found() {
+    async fn test_check_exists() {
         let db = MockDatabase::new(DatabaseBackend::Postgres)
             .append_query_results([vec![get_implied_role_mock("admin", "member")]])
             .into_connection();
 
-        let result = get(&db, "admin", "member").await.unwrap().unwrap();
+        let result = check(&db, "admin", "member").await.unwrap();
 
-        assert_eq!(result.id.as_deref(), Some("admin"));
-        assert_eq!(result.implies_role_id.as_deref(), Some("member"));
+        assert!(result);
 
         assert_eq!(
             db.into_transaction_log(),
@@ -82,13 +77,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_get_not_found() {
+    async fn test_check_not_exists() {
         let db = MockDatabase::new(DatabaseBackend::Postgres)
             .append_query_results([Vec::<crate::entity::implied_role::Model>::new()])
             .into_connection();
 
-        let result = get(&db, "admin", "member").await.unwrap();
+        let result = check(&db, "admin", "member").await.unwrap();
 
-        assert!(result.is_none());
+        assert!(!result);
     }
 }

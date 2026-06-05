@@ -36,8 +36,8 @@ fn get_system_scope_config() -> Result<CloudConfig> {
 
 //
 // /// Rescope the client to the given domain.
-// pub async fn auth_domain(tc: &mut TestClient, domain_id: &str) -> Result<()> {
-//     tc.rescope(Some(Scope::Domain(ScopeDomain {
+// pub async fn auth_domain(tc: &mut TestClient, domain_id: &str) -> Result<()>
+// {     tc.rescope(Some(Scope::Domain(ScopeDomain {
 //         id: Some(domain_id.to_string()),
 //         name: None,
 //     })))
@@ -52,15 +52,15 @@ fn get_system_scope_config() -> Result<CloudConfig> {
 //     domain_api::create_domain(tc, domain).await
 // }
 //
-// /// Create a test domain + project, returning (domain, project) for explicit cleanup.
-// pub async fn create_test_project(tc: &TestClient) -> Result<(Domain, Project)> {
-//     let domain = create_test_domain(tc).await?;
+// /// Create a test domain + project, returning (domain, project) for explicit
+// cleanup. pub async fn create_test_project(tc: &TestClient) -> Result<(Domain,
+// Project)> {     let domain = create_test_domain(tc).await?;
 //     let mut domain_tc = TestClient::default()?;
 //     auth_domain(&mut domain_tc, &domain.id).await?;
 //     let project = ProjectCreateBuilder::default()
 //         .name(format!("test-project-{}", uuid::Uuid::new_v4()))
 //         .domain_id(&domain.id)
 //         .build()?;
-//     let proj = project_api::create_project_scoped(&domain_tc, project).await?;
-//     Ok((domain, proj))
+//     let proj = project_api::create_project_scoped(&domain_tc,
+// project).await?;     Ok((domain, proj))
 // }

@@ -180,7 +180,8 @@ impl SecurityComplianceProvider {
     /// - `now`: The current time.
     ///
     /// # Returns
-    /// An `Option` with the expiration date, or `None` if password expiration is not configured.
+    /// An `Option` with the expiration date, or `None` if password expiration
+    /// is not configured.
     pub fn get_password_expires_at(&self, now: DateTime<Utc>) -> Option<DateTime<Utc>> {
         self.password_expires_days
             .map(|days| now + chrono::TimeDelta::days(days as i64))

@@ -35,7 +35,7 @@ pub enum Relation {
         on_update = "NoAction",
         on_delete = "Cascade"
     )]
-    Role2,
+    ImpliedRole,
     #[sea_orm(
         belongs_to = "super::role::Entity",
         from = "Column::PriorRoleId",
@@ -44,7 +44,7 @@ pub enum Relation {
         on_update = "NoAction",
         on_delete = "Cascade"
     )]
-    Role1,
+    PriorRole,
 }
 
 impl ActiveModelBehavior for ActiveModel {}

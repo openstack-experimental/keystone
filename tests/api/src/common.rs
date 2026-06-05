@@ -231,8 +231,9 @@ where
 
 /// Test user authentication with name and password.
 ///
-/// The openstack_sdk currently does heavy caching so that bypassing it on the regular interface is
-/// not possible. We need to ensure the call is done to verify the user password.
+/// The openstack_sdk currently does heavy caching so that bypassing it on the
+/// regular interface is not possible. We need to ensure the call is done to
+/// verify the user password.
 pub async fn auth_user_by_password<U: AsRef<str>, D: AsRef<str>, P: AsRef<str>>(
     username: U,
     domain_id: D,

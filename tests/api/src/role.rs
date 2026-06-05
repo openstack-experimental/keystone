@@ -24,6 +24,8 @@ use openstack_sdk::{AsyncOpenStack, api::QueryAsync};
 use crate::guard::*;
 
 mod create;
+mod delete;
+mod imply;
 mod list;
 
 #[derive(Builder, Clone, Debug, Default)]
@@ -97,6 +99,19 @@ pub async fn list_roles(client: &Arc<AsyncOpenStack>) -> Result<Vec<Role>> {
     Ok(RoleListRequest::default()
         .query_async(client.as_ref())
         .await?)
+}
+
+/// Delete role.
+pub async fn delete_role(client: &Arc<AsyncOpenStack>, id: &str) -> Result<()> {
+    delete_role_internal(client, id).await
+}
+
+async fn delete_role_internal(client: &Arc<AsyncOpenStack>, id: &str) -> Result<()> {
+    Ok(
+        openstack_sdk::api::ignore(RoleDeleteRequest { id: id.to_string() })
+            .query_async(client.as_ref())
+            .await?,
+    )
 }
 
 struct RoleDeleteRequest {

@@ -24,10 +24,7 @@ use crate::common::get_state;
 use crate::create_role;
 
 fn rule_key(rule: &RoleImply) -> (String, String) {
-    (
-        rule.id.clone().unwrap_or_default(),
-        rule.implies_role_id.clone().unwrap_or_default(),
-    )
+    (rule.prior_role.id.clone(), rule.implied_role.id.clone())
 }
 
 #[tokio::test]
@@ -64,11 +61,8 @@ async fn test_list_imply_rules_single() -> Result<()> {
         .await?;
 
     assert_eq!(rules.len(), 1);
-    assert_eq!(rules[0].id.as_deref(), Some(prior_role.id.as_str()));
-    assert_eq!(
-        rules[0].implies_role_id.as_deref(),
-        Some(implied_role.id.as_str())
-    );
+    assert_eq!(rules[0].prior_role.id, prior_role.id);
+    assert_eq!(rules[0].implied_role.id, implied_role.id);
 
     Ok(())
 }
@@ -175,11 +169,8 @@ async fn test_list_imply_rules_with_domain_roles() -> Result<()> {
         .await?;
 
     assert_eq!(rules.len(), 1);
-    assert_eq!(rules[0].id.as_deref(), Some(prior_role.id.as_str()));
-    assert_eq!(
-        rules[0].implies_role_id.as_deref(),
-        Some(implied_role.id.as_str())
-    );
+    assert_eq!(rules[0].prior_role.id, prior_role.id);
+    assert_eq!(rules[0].implied_role.id, implied_role.id);
 
     Ok(())
 }

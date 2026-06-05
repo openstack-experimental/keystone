@@ -38,6 +38,15 @@ impl From<provider_types::RoleRef> for api_types::RoleRef {
     }
 }
 
+impl From<provider_types::RoleImply> for api_types::RoleImply {
+    fn from(value: provider_types::RoleImply) -> Self {
+        Self {
+            prior_role: value.prior_role.into(),
+            implied_role: value.implied_role.into(),
+        }
+    }
+}
+
 impl From<api_types::RoleListParameters> for provider_types::RoleListParameters {
     fn from(value: api_types::RoleListParameters) -> Self {
         Self {

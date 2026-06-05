@@ -13,7 +13,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //! # SPIFFE shared initialization
 //!
-//! Shared SPIFFE configuration setup used by both TCP and Unix socket listeners.
+//! Shared SPIFFE configuration setup used by both TCP and Unix socket
+//! listeners.
 
 use std::sync::Arc;
 
@@ -25,8 +26,8 @@ use tokio_util::sync::CancellationToken;
 /// Build the SPIFFE mTLS server configuration.
 ///
 /// Validates the `SPIFFE_ENDPOINT_SOCKET` environment variable, establishes the
-/// SPIFFE `X509Source`, and constructs a `ServerConfig` authorized for the given
-/// trust domains. Cancellation is respected during the SPIFFE source
+/// SPIFFE `X509Source`, and constructs a `ServerConfig` authorized for the
+/// given trust domains. Cancellation is respected during the SPIFFE source
 /// initialization. Returns `Ok(None)` if cancelled before the SPIFFE source
 /// was established.
 pub async fn build_spiffe_config(

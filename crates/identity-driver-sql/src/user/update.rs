@@ -36,7 +36,8 @@ use crate::local_user;
 /// - `user`: The user update request.
 ///
 /// # Returns
-/// A `Result` containing the updated `UserResponse` if successful, or an `Error`.
+/// A `Result` containing the updated `UserResponse` if successful, or an
+/// `Error`.
 #[tracing::instrument(skip(conf, db))]
 pub async fn update(
     conf: &Config,
@@ -60,7 +61,8 @@ pub async fn update(
     let mut update_model: db_user::ActiveModel = existing_user.clone().into();
 
     // Update default_project_id if provided in the patch
-    // user.default_project_id is Option<Option<String>> - inner None means clear, inner Some(val) means set
+    // user.default_project_id is Option<Option<String>> - inner None means clear,
+    // inner Some(val) means set
     if let Some(Some(default_project_id)) = &user.default_project_id {
         update_model.default_project_id = Set(Some(default_project_id.clone()));
     } else if let Some(None) = &user.default_project_id {

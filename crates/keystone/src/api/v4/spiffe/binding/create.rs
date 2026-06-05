@@ -52,7 +52,8 @@ pub(super) async fn create(
 ) -> Result<impl IntoResponse, KeystoneApiError> {
     req.validate()?;
 
-    // Enrich the authorizations so that the policy is capable to do additional checks
+    // Enrich the authorizations so that the policy is capable to do additional
+    // checks
     let auths = super::enrich_authorizations_list(&state, req.binding.authorizations.clone()).await;
 
     let target = super::EnrichedSpiffeBinding {
