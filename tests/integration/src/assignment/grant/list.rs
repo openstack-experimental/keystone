@@ -200,3 +200,98 @@ async fn test_list_user_roles() -> Result<()> {
     );
     Ok(())
 }
+#[traced_test]
+#[tokio::test]
+async fn test_list_role_assignments_by_user_same_role_multiple_scopes() -> Result<()> {
+    let (state, _) = get_state().await?;
+
+    let domain = create_domain!(state)?;
+    let project_1 = create_project!(state, domain.id.clone())?;
+    let project_2 = create_project!(state, domain.id.clone())?;
+    let user = create_user!(state, domain.id.clone())?;
+    let role = create_role!(state)?;
+
+    for assignment in [
+        AssignmentCreate::user_project(&user.id, &project_1.id, &role.id, false),
+        AssignmentCreate::user_project(&user.id, &project_2.id, &role.id, false),
+        AssignmentCreate::user_system(&user.id, "all", &role.id, false),
+    ] {
+        state
+            .provider
+            .get_assignment_provider()
+            .create_grant(&state, assignment)
+            .await?;
+    }
+
+    let assignments = state
+        .provider
+        .get_assignment_provider()
+        .list_role_assignments(
+            &state,
+            &RoleAssignmentListParametersBuilder::default()
+                .user_id(user.id.clone())
+                .build()?,
+        )
+        .await?;
+
+    assert_eq!(assignments.len(), 3);
+
+    let target_ids: BTreeSet<String> = assignments.iter().map(|a| a.target_id.clone()).collect();
+    assert!(target_ids.contains(&project_1.id));
+    assert!(target_ids.contains(&project_2.id));
+    assert!(target_ids.contains("all"));
+
+    Ok(())
+}
+
+#[traced_test]
+#[tokio::test]
+async fn test_list_role_assignments_by_role_id_same_role_multiple_scopes() -> Result<()> {
+    let (state, _) = get_state().await?;
+
+    let domain = create_domain!(state)?;
+    let project_1 = create_project!(state, domain.id.clone())?;
+    let project_2 = create_project!(state, domain.id.clone())?;
+    let user = create_user!(state, domain.id.clone())?;
+    let role = create_role!(state)?;
+
+    for assignment in [
+        AssignmentCreate::user_project(&user.id, &project_1.id, &role.id, false),
+        AssignmentCreate::user_project(&user.id, &project_2.id, &role.id, false),
+        AssignmentCreate::user_system(&user.id, "all", &role.id, false),
+    ] {
+        state
+            .provider
+            .get_assignment_provider()
+            .create_grant(&state, assignment)
+            .await?;
+    }
+
+    let assignments = state
+        .provider
+        .get_assignment_provider()
+        .list_role_assignments(
+            &state,
+            &RoleAssignmentListParametersBuilder::default()
+                .role_id(role.id.clone())
+                .build()?,
+        )
+        .await?;
+
+    let user_assignments: Vec<_> = assignments
+        .iter()
+        .filter(|a| a.actor_id == user.id)
+        .collect();
+
+    assert_eq!(user_assignments.len(), 3);
+
+    let target_ids: BTreeSet<String> = user_assignments
+        .iter()
+        .map(|a| a.target_id.clone())
+        .collect();
+    assert!(target_ids.contains(&project_1.id));
+    assert!(target_ids.contains(&project_2.id));
+    assert!(target_ids.contains("all"));
+
+    Ok(())
+}
