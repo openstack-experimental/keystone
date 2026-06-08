@@ -478,7 +478,7 @@ async fn resolve_trust_roles(
         .list_role_assignments(
             state,
             &RoleAssignmentListParametersBuilder::default()
-                .user_id(&tpi.trust.trustor_user_id.clone())
+                .user_id(tpi.trust.trustor_user_id.clone())
                 .project_id(tpi.project.id.clone())
                 .include_names(true)
                 .effective(true)

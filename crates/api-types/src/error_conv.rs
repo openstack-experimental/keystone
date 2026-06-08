@@ -203,6 +203,9 @@ impl From<IdentityProviderError> for KeystoneApiError {
                 resource: "group".into(),
                 identifier: x,
             },
+            ref err @ IdentityProviderError::SecurityCompliance(..) => {
+                Self::BadRequest(err.to_string())
+            }
             other => Self::InternalError(other.to_string()),
         }
     }

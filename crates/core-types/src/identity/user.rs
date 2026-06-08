@@ -127,7 +127,7 @@ pub struct UserCreate {
 
 #[derive(Builder, Clone, Debug, Default, PartialEq, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
-#[builder(setter(into))]
+#[builder(setter(strip_option, into))]
 pub struct UserUpdate {
     /// The ID of the default project for the user.
     #[builder(default)]

@@ -25,7 +25,7 @@ use openstack_keystone_core_types::identity::*;
 use crate::common::get_state;
 use crate::create_domain;
 
-use super::helpers::{assert_expires_at_approx, pwd, setup_test_config};
+use super::helpers::{assert_expires_at_approx, setup_test_config};
 
 #[tokio::test]
 #[traced_test]
@@ -64,9 +64,7 @@ async fn test_update_password_basic() -> Result<()> {
     prov.update_user(
         &state,
         &uid,
-        UserUpdateBuilder::default()
-            .password(pwd("new_pass"))
-            .build()?,
+        UserUpdateBuilder::default().password("new_pass").build()?,
     )
     .await?;
 
@@ -139,9 +137,7 @@ async fn test_update_password_with_expiry() -> Result<()> {
     prov.update_user(
         &state,
         &uid,
-        UserUpdateBuilder::default()
-            .password(pwd("new_pass"))
-            .build()?,
+        UserUpdateBuilder::default().password("new_pass").build()?,
     )
     .await?;
 
@@ -201,9 +197,7 @@ async fn test_update_password_no_expiry_configured() -> Result<()> {
     prov.update_user(
         &state,
         &uid,
-        UserUpdateBuilder::default()
-            .password(pwd("new_pass"))
-            .build()?,
+        UserUpdateBuilder::default().password("new_pass").build()?,
     )
     .await?;
 
@@ -256,9 +250,7 @@ async fn test_update_password_with_history() -> Result<()> {
     prov.update_user(
         &state,
         &uid,
-        UserUpdateBuilder::default()
-            .password(pwd("pass2"))
-            .build()?,
+        UserUpdateBuilder::default().password("pass2").build()?,
     )
     .await?;
 
@@ -324,8 +316,8 @@ async fn test_update_name_and_password_combined() -> Result<()> {
             &state,
             &uid,
             UserUpdateBuilder::default()
-                .name(pwd("new_name"))
-                .password(pwd("new_pass"))
+                .name("new_name")
+                .password("new_pass")
                 .build()?,
         )
         .await?;
@@ -392,9 +384,7 @@ async fn test_update_password_with_expiry_and_history() -> Result<()> {
     prov.update_user(
         &state,
         &uid,
-        UserUpdateBuilder::default()
-            .password(pwd("pass2"))
-            .build()?,
+        UserUpdateBuilder::default().password("pass2").build()?,
     )
     .await?;
 
@@ -471,9 +461,7 @@ async fn test_update_password_expiry_config_change() -> Result<()> {
     prov.update_user(
         &state,
         &uid,
-        UserUpdateBuilder::default()
-            .password(pwd("new_pass"))
-            .build()?,
+        UserUpdateBuilder::default().password("new_pass").build()?,
     )
     .await?;
 

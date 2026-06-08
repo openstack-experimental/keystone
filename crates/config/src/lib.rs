@@ -255,6 +255,10 @@ impl Config {
             tls.read_certs()
                 .wrap_err("reading distributed storage TLS configuration")?;
         }
+        // Compile password regex at load time.
+        cfg.security_compliance
+            .compile_regex()
+            .wrap_err("compiling password_regex")?;
         // Validate the config after loading all the referred files.
         cfg.validate().wrap_err("Configuration validation failed")?;
         Ok(cfg)

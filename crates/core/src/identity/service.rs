@@ -16,6 +16,7 @@
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use secrecy::SecretString;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -242,6 +243,12 @@ impl IdentityApi for IdentityService {
             mod_user.enabled = Some(true);
         }
         mod_user.validate()?;
+        // Validate password against configured regex pattern.
+        if let Some(ref password) = mod_user.password {
+            let cfg = state.config_manager.config.read().await;
+            cfg.security_compliance
+                .validate_password(&SecretString::from(password.as_str()))?;
+        }
         self.backend_driver.create_user(state, mod_user).await
     }
 
@@ -540,6 +547,12 @@ impl IdentityApi for IdentityService {
         user: UserUpdate,
     ) -> Result<UserResponse, IdentityProviderError> {
         user.validate()?;
+        // Validate password against configured regex pattern.
+        if let Some(ref password) = user.password {
+            let cfg = state.config_manager.config.read().await;
+            cfg.security_compliance
+                .validate_password(&SecretString::from(password.as_str()))?;
+        }
         self.backend_driver.update_user(state, user_id, user).await
     }
 
@@ -567,11 +580,22 @@ impl IdentityApi for IdentityService {
 
 #[cfg(test)]
 mod tests {
-    use openstack_keystone_core_types::identity::{UserCreateBuilder, UserResponseBuilder};
+    use openstack_keystone_config::Config;
+    use openstack_keystone_core_types::identity::{
+        UserCreateBuilder, UserResponseBuilder, UserUpdateBuilder,
+    };
 
     use super::*;
     use crate::identity::backend::MockIdentityBackend;
     use crate::tests::get_mocked_state;
+
+    fn get_config_with_password_regex(regex_str: &str) -> Config {
+        let mut config = Config::default();
+        config.security_compliance.password_regex = Some(regex_str.to_string());
+        // Compile the regex as Config::load_all would do.
+        config.security_compliance.compile_regex().unwrap();
+        config
+    }
 
     #[tokio::test]
     async fn test_create_user() {
@@ -696,5 +720,193 @@ mod tests {
         let provider = IdentityService::from_driver(backend);
 
         assert!(provider.delete_user(&state, "uid").await.is_ok());
+    }
+
+    /// Password regex rejects invalid password on user creation.
+    #[tokio::test]
+    async fn test_create_user_password_regex_rejected() {
+        let config = get_config_with_password_regex(r"^.{7,}$");
+        let state = get_mocked_state(Some(config), None).await;
+        let provider = IdentityService::from_driver(MockIdentityBackend::default());
+
+        let result = provider
+            .create_user(
+                &state,
+                UserCreateBuilder::default()
+                    .name("uname")
+                    .domain_id("did")
+                    .password("short")
+                    .build()
+                    .unwrap(),
+            )
+            .await;
+
+        assert!(
+            matches!(result, Err(IdentityProviderError::SecurityCompliance(..))),
+            "expected SecurityCompliance error for invalid password"
+        );
+    }
+
+    /// Password regex accepts valid password on user creation and backend is
+    /// invoked.
+    #[tokio::test]
+    async fn test_create_user_password_regex_accepted() {
+        let config = get_config_with_password_regex(r"^.{3,}$");
+        let state = get_mocked_state(Some(config), None).await;
+        let mut backend = MockIdentityBackend::default();
+        backend.expect_create_user().returning(|_, _| {
+            Ok(UserResponseBuilder::default()
+                .id("id")
+                .domain_id("domain_id")
+                .enabled(true)
+                .name("name")
+                .build()
+                .unwrap())
+        });
+        let provider = IdentityService::from_driver(backend);
+
+        assert!(
+            provider
+                .create_user(
+                    &state,
+                    UserCreateBuilder::default()
+                        .name("uname")
+                        .domain_id("did")
+                        .password("Abc1")
+                        .build()
+                        .unwrap(),
+                )
+                .await
+                .is_ok(),
+            "password matching regex should reach backend"
+        );
+    }
+
+    /// No password on user creation skips validation and backend is invoked.
+    #[tokio::test]
+    async fn test_create_user_no_password() {
+        let config = get_config_with_password_regex(r"^.{7,}$");
+        let state = get_mocked_state(Some(config), None).await;
+        let mut backend = MockIdentityBackend::default();
+        backend.expect_create_user().returning(|_, _| {
+            Ok(UserResponseBuilder::default()
+                .id("id")
+                .domain_id("domain_id")
+                .enabled(true)
+                .name("name")
+                .build()
+                .unwrap())
+        });
+        let provider = IdentityService::from_driver(backend);
+
+        assert!(
+            provider
+                .create_user(
+                    &state,
+                    UserCreateBuilder::default()
+                        .name("uname")
+                        .domain_id("did")
+                        .build()
+                        .unwrap(),
+                )
+                .await
+                .is_ok(),
+            "no password should skip validation"
+        );
+    }
+
+    /// Password regex rejects invalid password on user update.
+    #[tokio::test]
+    async fn test_update_user_password_regex_rejected() {
+        let config = get_config_with_password_regex(r"^.{7,}$");
+        let state = get_mocked_state(Some(config), None).await;
+        let provider = IdentityService::from_driver(MockIdentityBackend::default());
+
+        let result = provider
+            .update_user(
+                &state,
+                "uid",
+                UserUpdateBuilder::default()
+                    .password("short")
+                    .build()
+                    .unwrap(),
+            )
+            .await;
+
+        assert!(
+            matches!(result, Err(IdentityProviderError::SecurityCompliance(..))),
+            "expected SecurityCompliance error for invalid password on update"
+        );
+    }
+
+    /// Password regex accepts valid password on user update and backend is
+    /// invoked.
+    #[tokio::test]
+    async fn test_update_user_password_regex_accepted() {
+        let config = get_config_with_password_regex(r"^.{3,}$");
+        let state = get_mocked_state(Some(config), None).await;
+        let mut backend = MockIdentityBackend::default();
+        backend
+            .expect_update_user()
+            .returning(|_, _: &'_ str, _: UserUpdate| {
+                Ok(UserResponseBuilder::default()
+                    .id("id")
+                    .domain_id("domain_id")
+                    .enabled(true)
+                    .name("name")
+                    .build()
+                    .unwrap())
+            });
+        let provider = IdentityService::from_driver(backend);
+
+        assert!(
+            provider
+                .update_user(
+                    &state,
+                    "uid",
+                    UserUpdateBuilder::default()
+                        .password("Abc1")
+                        .build()
+                        .unwrap(),
+                )
+                .await
+                .is_ok(),
+            "password matching regex on update should reach backend"
+        );
+    }
+
+    /// No password on user update skips validation and backend is invoked.
+    #[tokio::test]
+    async fn test_update_user_no_password() {
+        let config = get_config_with_password_regex(r"^.{7,}$");
+        let state = get_mocked_state(Some(config), None).await;
+        let mut backend = MockIdentityBackend::default();
+        backend
+            .expect_update_user()
+            .returning(|_, _: &'_ str, _: UserUpdate| {
+                Ok(UserResponseBuilder::default()
+                    .id("id")
+                    .domain_id("domain_id")
+                    .enabled(true)
+                    .name("name")
+                    .build()
+                    .unwrap())
+            });
+        let provider = IdentityService::from_driver(backend);
+
+        assert!(
+            provider
+                .update_user(
+                    &state,
+                    "uid",
+                    UserUpdateBuilder::default()
+                        .name("new_name")
+                        .build()
+                        .unwrap(),
+                )
+                .await
+                .is_ok(),
+            "no password on update should skip validation"
+        );
     }
 }

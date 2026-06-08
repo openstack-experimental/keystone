@@ -13,8 +13,24 @@
 // SPDX-License-Identifier: Apache-2.0
 use crate::common::*;
 use chrono::{DateTime, NaiveDate, TimeDelta, Utc};
+use regex::Regex;
+use secrecy::{ExposeSecret, SecretString};
 use serde::Deserialize;
+use std::sync::Arc;
+use thiserror::Error;
 use validator::Validate;
+
+/// Security compliance configuration errors.
+#[derive(Debug, Error)]
+pub enum SecurityComplianceError {
+    /// Password does not match the configured policy.
+    #[error("password does not comply with policy: {0}")]
+    PasswordInvalid(String),
+
+    /// The configured password_regex is not a valid regular expression.
+    #[error("invalid password_regex configured: {0}")]
+    InvalidRegex(regex::Error),
+}
 
 /// Security compliance configuration.
 #[derive(Debug, Deserialize, Clone, Validate)]
@@ -120,6 +136,10 @@ pub struct SecurityComplianceProvider {
     /// their requested password was insufficient.
     #[serde(default)]
     pub password_regex_description: Option<String>,
+
+    /// Pre-compiled regex from `password_regex`, initialized at config load time.
+    #[serde(skip)]
+    pub password_regex_re: Option<Arc<Regex>>,
     /// This option has a sample default set, which means that its actual
     /// default value may vary from the one documented above.
     ///
@@ -156,6 +176,7 @@ impl Default for SecurityComplianceProvider {
             password_expires_days: None,
             password_regex: None,
             password_regex_description: None,
+            password_regex_re: None,
             report_invalid_password_hash: ReportInvalidPasswordHash::default(),
             unique_last_password_count: None,
         }
@@ -190,6 +211,38 @@ impl SecurityComplianceProvider {
         self.password_expires_days
             .map(|days| now + chrono::TimeDelta::days(days as i64))
     }
+
+    /// Compile the configured `password_regex` once at config load time.
+    ///
+    /// Must be called after the struct is deserialized. Returns an error if the
+    /// configured regex string is not valid.
+    pub fn compile_regex(&mut self) -> Result<(), SecurityComplianceError> {
+        if let Some(ref s) = self.password_regex {
+            let re = Regex::new(s).map_err(SecurityComplianceError::InvalidRegex)?;
+            self.password_regex_re = Some(Arc::new(re));
+        }
+        Ok(())
+    }
+
+    /// Validate a password against the configured regex pattern.
+    ///
+    /// Returns `Ok(())` when the password matches the configured pattern, or
+    /// when no pattern is configured. Returns `Err(SecurityComplianceError::PasswordInvalid)`
+    /// with the human-readable policy description on mismatch.
+    pub fn validate_password(
+        &self,
+        password: &SecretString,
+    ) -> Result<(), SecurityComplianceError> {
+        if let Some(ref re) = self.password_regex_re
+            && !re.is_match(password.expose_secret())
+        {
+            let description = self.password_regex_description.clone().unwrap_or_else(|| {
+                "password does not comply with the configured security policy".to_string()
+            });
+            return Err(SecurityComplianceError::PasswordInvalid(description));
+        }
+        Ok(())
+    }
 }
 
 struct AccountLockoutDuration {}
@@ -216,4 +269,139 @@ pub enum InvalidPasswordHashReport {
 pub enum InvalidPasswordHashMethod {
     #[default]
     Sha256,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_compile_regex_success() {
+        let mut sc = SecurityComplianceProvider {
+            password_regex: Some(r"^.{3,}$".to_string()),
+            ..Default::default()
+        };
+        assert!(sc.compile_regex().is_ok());
+        assert!(sc.password_regex_re.is_some());
+    }
+
+    #[test]
+    fn test_compile_regex_invalid() {
+        let mut sc = SecurityComplianceProvider {
+            password_regex: Some("[invalid_regex".to_string()),
+            ..Default::default()
+        };
+        let result = sc.compile_regex();
+        assert!(result.is_err());
+        assert!(matches!(
+            result,
+            Err(SecurityComplianceError::InvalidRegex(_))
+        ));
+    }
+
+    #[test]
+    fn test_compile_regex_none() {
+        let mut sc = SecurityComplianceProvider::default();
+        assert!(sc.compile_regex().is_ok());
+        assert!(sc.password_regex_re.is_none());
+    }
+
+    #[test]
+    fn test_validate_password_matches() {
+        let mut sc = SecurityComplianceProvider {
+            password_regex: Some(r"^.{3,}$".to_string()),
+            ..Default::default()
+        };
+        sc.compile_regex().unwrap();
+
+        assert!(sc.validate_password(&SecretString::from("Abc1")).is_ok());
+    }
+
+    #[test]
+    fn test_validate_password_fails_with_description() {
+        let mut sc = SecurityComplianceProvider {
+            password_regex: Some(r"^.{7,}$".to_string()),
+            password_regex_description: Some("must be at least 7 characters long".to_string()),
+            ..Default::default()
+        };
+        sc.compile_regex().unwrap();
+
+        let result = sc.validate_password(&SecretString::from("short"));
+        assert!(result.is_err());
+        match result {
+            Err(SecurityComplianceError::PasswordInvalid(msg)) => {
+                assert!(msg.contains("must be at least 7 characters"));
+            }
+            other => panic!("expected PasswordInvalid, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_validate_password_fails_without_description() {
+        let mut sc = SecurityComplianceProvider {
+            password_regex: Some(r"^.{10,}$".to_string()),
+            ..Default::default()
+        };
+        sc.compile_regex().unwrap();
+
+        let result = sc.validate_password(&SecretString::from("short"));
+        assert!(result.is_err());
+        match result {
+            Err(SecurityComplianceError::PasswordInvalid(msg)) => {
+                assert!(msg.contains("configured security policy"));
+            }
+            other => panic!("expected PasswordInvalid, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_validate_password_no_regex_always_passes() {
+        let sc = SecurityComplianceProvider::default();
+        assert!(sc.validate_password(&SecretString::from("a")).is_ok());
+    }
+
+    #[test]
+    fn test_validate_password_empty_string_fails() {
+        let mut sc = SecurityComplianceProvider {
+            password_regex: Some(r"^.{1,}$".to_string()),
+            ..Default::default()
+        };
+        sc.compile_regex().unwrap();
+
+        let result = sc.validate_password(&SecretString::from(""));
+        assert!(result.is_err());
+        assert!(matches!(
+            result,
+            Err(SecurityComplianceError::PasswordInvalid(_))
+        ));
+    }
+
+    #[test]
+    fn test_validate_password_complex_regex() {
+        let mut sc = SecurityComplianceProvider {
+            // Require: digit, letter, min 3 chars (using concatenation, not lookahead)
+            password_regex: Some(r"^.*[a-zA-Z].*[0-9].*$".to_string()),
+            ..Default::default()
+        };
+        sc.compile_regex().unwrap();
+
+        assert!(sc.validate_password(&SecretString::from("Abc1")).is_ok());
+        assert!(
+            sc.validate_password(&SecretString::from("allletters"))
+                .is_err()
+        );
+        assert!(
+            sc.validate_password(&SecretString::from("12345678"))
+                .is_err()
+        );
+    }
+
+    /// Integration-style test: simulate Config::load_all flow
+    #[test]
+    fn test_load_all_compiles_regex() {
+        let mut cfg = SecurityComplianceProvider::default();
+        // Default has no regex, so compile_regex is a no-op
+        assert!(cfg.compile_regex().is_ok());
+        assert!(cfg.password_regex_re.is_none());
+    }
 }

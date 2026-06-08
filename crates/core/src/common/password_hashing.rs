@@ -92,7 +92,7 @@ pub async fn generate_dummy_hash(conf: &Config) -> Result<String, PasswordHashEr
         PasswordHashingAlgo::None => {
             let dummy: [u8; 32] = rand::random();
             Ok(dummy
-                .map(|b| b % 95 + 32 as u8)
+                .map(|b| b % 95 + 32_u8)
                 .into_iter()
                 .map(|b| b as char)
                 .collect())

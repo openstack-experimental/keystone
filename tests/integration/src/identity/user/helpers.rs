@@ -45,8 +45,3 @@ pub async fn setup_test_config(
         cfg.security_compliance.unique_last_password_count = Some(v);
     }
 }
-
-/// Convenience wrapper to produce `Some(String)` for password/name fields.
-pub fn pwd<S: Into<String>>(s: S) -> Option<String> {
-    Some(s.into())
-}

@@ -14,6 +14,8 @@
 
 use thiserror::Error;
 
+use openstack_keystone_config::SecurityComplianceError;
+
 use crate::auth::AuthenticationError;
 use crate::error::BuilderError;
 use crate::resource::ResourceProviderError;
@@ -77,6 +79,10 @@ pub enum IdentityProviderError {
         #[from]
         source: ResourceProviderError,
     },
+
+    /// Security compliance validation error.
+    #[error(transparent)]
+    SecurityCompliance(#[from] SecurityComplianceError),
 
     /// (de)serialization error.
     #[error("data serialization error")]
