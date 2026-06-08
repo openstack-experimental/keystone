@@ -201,6 +201,13 @@ impl ValidatedSecurityContext {
             ctx.set_effective_roles(role_vec);
         }
 
+        if let Some(authz) = ctx.authorization() {
+            if !matches!(authz.scope, ScopeInfo::Unscoped)
+                && authz.effective_roles().is_none_or(|r| r.is_empty())
+            {
+                return Err(AuthenticationError::ActorHasNoRolesOnTarget);
+            }
+        }
         Ok(ValidatedSecurityContext(ctx))
     }
 
@@ -531,8 +538,9 @@ mod tests {
         Assignment, AssignmentProviderError, AssignmentType, RoleAssignmentListParameters,
     };
     use openstack_keystone_core_types::auth::{
-        AuthenticationContext, IdentityInfo, PrincipalIdentityInfo, PrincipalInfo, ScopeInfo,
-        SecurityContextTestingBuilder, TrustProjectInfo, UserIdentityInfo,
+        AuthenticationContext, AuthzInfoBuilder, IdentityInfo, PrincipalIdentityInfo,
+        PrincipalInfo, ScopeInfo, SecurityContextTestingBuilder, TrustProjectInfo,
+        UserIdentityInfo,
     };
     use openstack_keystone_core_types::identity::{UserOptions, UserResponse};
     use openstack_keystone_core_types::resource::Project;
@@ -1021,7 +1029,7 @@ mod tests {
                     && q.project_id.as_deref() == Some(pid)
                     && q.effective == Some(true)
             })
-            .returning(move |_state, _q| Ok(vec![assignment_with_role(rid1)]));
+            .returning(move |_state, _q| Ok(vec![assignment_with_role("rid1")]));
         let state = get_mocked_state(
             None,
             Some(Provider::mocked_builder().mock_assignment(assignment_mock)),
@@ -1708,6 +1716,43 @@ mod tests {
         ));
     }
 
+    #[tokio::test]
+    async fn test_new_for_scope_explicit_empty_roles_error() {
+        let uid = "uid";
+        let pid = "pid";
+        let mut assignment_mock = MockAssignmentProvider::default();
+        assignment_mock
+            .expect_list_role_assignments()
+            .withf(|_, q: &RoleAssignmentListParameters| {
+                q.user_id.as_deref() == Some(uid)
+                    && q.project_id.as_deref() == Some(pid)
+                    && q.effective == Some(true)
+                    && q.include_names == Some(true)
+            })
+            .returning(move |_state, _q| Ok(vec![]));
+        let state = get_mocked_state(
+            None,
+            Some(Provider::mocked_builder().mock_assignment(assignment_mock)),
+        )
+        .await;
+        let authz = AuthzInfoBuilder::default()
+            .scope(make_project_scope(pid))
+            .roles(Vec::new())
+            .build()
+            .unwrap();
+        let ctx = SecurityContextTestingBuilder::default()
+            .authentication_context(AuthenticationContext::Password)
+            .principal(make_user_identity(uid))
+            .authorization(authz)
+            .build();
+        let result =
+            ValidatedSecurityContext::new_for_scope(ctx, make_project_scope(pid), &state).await;
+        assert!(matches!(
+            result,
+            Err(AuthenticationError::ActorHasNoRolesOnTarget)
+        ));
+    }
+
     // --- Trust scope: expand_implied_roles adds an implied role, trustor has it
     // ---
     #[tokio::test]
@@ -2264,6 +2309,146 @@ mod tests {
         .await;
         let scope = make_project_scope(pid);
         let result = calculate_effective_roles(&state, &ctx, &scope).await;
+        assert!(matches!(
+            result,
+            Err(AuthenticationError::ActorHasNoRolesOnTarget)
+        ));
+    }
+
+    // Unscoped scope must succeed with zero effective roles.  The assignment
+    // provider must never be called (no mock needed).
+    #[tokio::test]
+    async fn test_new_for_scope_unscoped_success() {
+        let state = get_mocked_state(None, None).await;
+        // Build a context that already carries an Unscoped authorization so the
+        // scope-boundary check is skipped entirely (scopes are equal).
+        let authz = AuthzInfoBuilder::default()
+            .scope(ScopeInfo::Unscoped)
+            .roles(Vec::new())
+            .build()
+            .unwrap();
+        let ctx = SecurityContextTestingBuilder::default()
+            .authentication_context(AuthenticationContext::Password)
+            .principal(make_user_identity("uid"))
+            .authorization(authz)
+            .build();
+
+        let result =
+            ValidatedSecurityContext::new_for_scope(ctx, ScopeInfo::Unscoped, &state).await;
+
+        // Must succeed and carry zero effective roles — the Unscoped path in
+        // calculate_effective_roles returns Vec::new() and skips the
+        // ActorHasNoRolesOnTarget guard.
+        let validated = result.unwrap();
+
+        // Access the roles via the authorization state getter
+        let roles = validated.0.authorization().unwrap().effective_roles();
+        assert!(roles.is_none() || roles.unwrap().is_empty());
+    }
+
+    // Project-scoped context with a live assignment must succeed and surface
+    // exactly that one role as an effective role.
+    #[tokio::test]
+    async fn test_new_for_scope_project_scoped_success() {
+        let uid = "uid";
+        let pid = "pid";
+        let rid = "admin_role";
+
+        // Strict predicate: must be called once for this user+project combination
+        // with the exact flags used by resolve_project_default_roles.
+        let mut assignment_mock = MockAssignmentProvider::default();
+        assignment_mock
+            .expect_list_role_assignments()
+            .withf(|_, q: &RoleAssignmentListParameters| {
+                q.user_id.as_deref() == Some(uid)
+                    && q.project_id.as_deref() == Some(pid)
+                    && q.effective == Some(true)
+                    && q.include_names == Some(true)
+                    && q.domain_id.is_none()
+                    && q.system_id.is_none()
+            })
+            .returning(move |_state, _q| Ok(vec![assignment_with_role(rid)]));
+
+        let state = get_mocked_state(
+            None,
+            Some(Provider::mocked_builder().mock_assignment(assignment_mock)),
+        )
+        .await;
+
+        // Pre-set the same project scope so the boundary check is skipped.
+        let authz = AuthzInfoBuilder::default()
+            .scope(make_project_scope(pid))
+            .roles(Vec::new())
+            .build()
+            .unwrap();
+        let ctx = SecurityContextTestingBuilder::default()
+            .authentication_context(AuthenticationContext::Password)
+            .principal(make_user_identity(uid))
+            .authorization(authz)
+            .build();
+
+        let result =
+            ValidatedSecurityContext::new_for_scope(ctx, make_project_scope(pid), &state).await;
+
+        // Must succeed; effective roles must contain exactly the one role the
+        // assignment provider returned.
+        let validated = result.unwrap();
+
+        // Access the roles via the authorization state getter
+        let roles = validated
+            .0
+            .authorization()
+            .unwrap()
+            .effective_roles()
+            .unwrap();
+        assert_eq!(roles.len(), 1);
+        assert_eq!(roles[0].id, rid);
+    }
+
+    // Project-scoped context where the assignment provider returns nothing must
+    // fail with ActorHasNoRolesOnTarget.
+    #[tokio::test]
+    async fn test_new_for_scope_project_scoped_no_roles_fails() {
+        let uid = "uid";
+        let pid = "pid";
+
+        // Same strict predicate as Test 2 — the provider IS called but returns
+        // an empty list, triggering the ActorHasNoRolesOnTarget guard.
+        let mut assignment_mock = MockAssignmentProvider::default();
+        assignment_mock
+            .expect_list_role_assignments()
+            .withf(|_, q: &RoleAssignmentListParameters| {
+                q.user_id.as_deref() == Some(uid)
+                    && q.project_id.as_deref() == Some(pid)
+                    && q.effective == Some(true)
+                    && q.include_names == Some(true)
+                    && q.domain_id.is_none()
+                    && q.system_id.is_none()
+            })
+            .returning(|_, _| Ok(Vec::<Assignment>::new()));
+
+        let state = get_mocked_state(
+            None,
+            Some(Provider::mocked_builder().mock_assignment(assignment_mock)),
+        )
+        .await;
+
+        let authz = AuthzInfoBuilder::default()
+            .scope(make_project_scope(pid))
+            .roles(Vec::new())
+            .build()
+            .unwrap();
+        let ctx = SecurityContextTestingBuilder::default()
+            .authentication_context(AuthenticationContext::Password)
+            .principal(make_user_identity(uid))
+            .authorization(authz)
+            .build();
+
+        let result =
+            ValidatedSecurityContext::new_for_scope(ctx, make_project_scope(pid), &state).await;
+
+        // calculate_effective_roles sees an empty, non-Unscoped result and must
+        // return ActorHasNoRolesOnTarget.
         assert!(matches!(
             result,
             Err(AuthenticationError::ActorHasNoRolesOnTarget)
