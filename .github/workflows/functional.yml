@@ -111,12 +111,16 @@ jobs:
           TOKEN2=$(osc --os-cloud admin-rust auth login)
 
           echo "Use rust Keystone token against both Keystones"
-          curl http://localhost:8080/v3/auth/tokens -H "X-Auth-Token: ${TOKEN1}" -H "X-Subject-Token: ${TOKEN1}" | jq
           curl http://localhost:5001/v3/auth/tokens -H "X-Auth-Token: ${TOKEN1}" -H "X-Subject-Token: ${TOKEN1}" | jq
+          curl http://localhost:5001/v3/auth/tokens -H "X-Auth-Token: ${TOKEN1}" -H "X-Subject-Token: ${TOKEN2}" | jq
+          curl http://localhost:5001/v3/auth/tokens -H "X-Auth-Token: ${TOKEN2}" -H "X-Subject-Token: ${TOKEN1}" | jq
+          curl http://localhost:5001/v3/auth/tokens -H "X-Auth-Token: ${TOKEN2}" -H "X-Subject-Token: ${TOKEN2}" | jq
 
           echo "Use python Keystone token against both Keystones"
+          curl http://localhost:8080/v3/auth/tokens -H "X-Auth-Token: ${TOKEN1}" -H "X-Subject-Token: ${TOKEN1}" | jq
+          curl http://localhost:8080/v3/auth/tokens -H "X-Auth-Token: ${TOKEN1}" -H "X-Subject-Token: ${TOKEN2}" | jq
+          curl http://localhost:8080/v3/auth/tokens -H "X-Auth-Token: ${TOKEN2}" -H "X-Subject-Token: ${TOKEN1}" | jq
           curl http://localhost:8080/v3/auth/tokens -H "X-Auth-Token: ${TOKEN2}" -H "X-Subject-Token: ${TOKEN2}" | jq
-          curl http://localhost:5001/v3/auth/tokens -H "X-Auth-Token: ${TOKEN2}" -H "X-Subject-Token: ${TOKEN2}" | jq
 
       - name: Run api tests
         run: cargo test --test api

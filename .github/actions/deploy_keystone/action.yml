@@ -96,7 +96,6 @@ runs:
               project_name: admin
               user_domain_id: default
               project_domain_id: default
-            interface: public
 
           admin-rust:
             auth:
@@ -106,7 +105,6 @@ runs:
               project_name: admin
               user_domain_id: default
               project_domain_id: default
-            interface: internal
         EOF
 
     - name: Start open-policy-agent
