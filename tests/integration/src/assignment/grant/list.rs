@@ -200,3 +200,140 @@ async fn test_list_user_roles() -> Result<()> {
     );
     Ok(())
 }
+
+// Add these two tests at the BOTTOM of:
+// tests/integration/src/assignment/grant/list.rs
+// (paste before the last closing brace if any, or just at the end of the file)
+
+#[traced_test]
+#[tokio::test]
+async fn test_list_role_assignments_by_user_same_role_multiple_scopes() -> Result<()> {
+    // Regression test for issue #513:
+    // Assigning the same role to a user on multiple projects + system was
+    // mixing up assignments due to HashMap by role_id. This test verifies
+    // all assignments are returned correctly when listing by user_id only.
+    let (state, _) = get_state().await?;
+
+    let domain = create_domain!(state)?;
+    let project_1 = create_project!(state, domain.id.clone())?;
+    let project_2 = create_project!(state, domain.id.clone())?;
+    let user = create_user!(state, domain.id.clone())?;
+    let role = create_role!(state)?;
+
+    // Assign the SAME role to the user on two different projects AND system
+    for assignment in [
+        AssignmentCreate::user_project(&user.id, &project_1.id, &role.id, false),
+        AssignmentCreate::user_project(&user.id, &project_2.id, &role.id, false),
+        AssignmentCreate::user_system(&user.id, "all", &role.id, false),
+    ] {
+        state
+            .provider
+            .get_assignment_provider()
+            .create_grant(&state, assignment)
+            .await?;
+    }
+
+    // List assignments filtering by user_id ONLY (no target filter)
+    let assignments = state
+        .provider
+        .get_assignment_provider()
+        .list_role_assignments(
+            &state,
+            &RoleAssignmentListParametersBuilder::default()
+                .user_id(user.id.clone())
+                .build()?,
+        )
+        .await?;
+
+    // Should return exactly 3 assignments - one per scope
+    // (Before the fix, HashMap deduplicated by role_id and returned only 1)
+    assert_eq!(
+        assignments.len(),
+        3,
+        "Expected 3 role assignments (same role on project_1 + project_2 + system), got {}. \
+        This may indicate the HashMap bug from issue #513 is present.",
+        assignments.len()
+    );
+
+    // Verify both project targets are present
+    let target_ids: BTreeSet<String> = assignments.iter().map(|a| a.target_id.clone()).collect();
+    assert!(
+        target_ids.contains(&project_1.id),
+        "Assignment on project_1 should be present"
+    );
+    assert!(
+        target_ids.contains(&project_2.id),
+        "Assignment on project_2 should be present"
+    );
+
+    Ok(())
+}
+
+#[traced_test]
+#[tokio::test]
+async fn test_list_role_assignments_by_role_id_same_role_multiple_scopes() -> Result<()> {
+    // Regression test for issue #513:
+    // Listing by role_id should return all assignments for that role
+    // across different targets (project_1, project_2, system).
+    let (state, _) = get_state().await?;
+
+    let domain = create_domain!(state)?;
+    let project_1 = create_project!(state, domain.id.clone())?;
+    let project_2 = create_project!(state, domain.id.clone())?;
+    let user = create_user!(state, domain.id.clone())?;
+    let role = create_role!(state)?;
+
+    // Assign the SAME role on two projects and system
+    for assignment in [
+        AssignmentCreate::user_project(&user.id, &project_1.id, &role.id, false),
+        AssignmentCreate::user_project(&user.id, &project_2.id, &role.id, false),
+        AssignmentCreate::user_system(&user.id, "all", &role.id, false),
+    ] {
+        state
+            .provider
+            .get_assignment_provider()
+            .create_grant(&state, assignment)
+            .await?;
+    }
+
+    // List assignments filtering by role_id ONLY
+    let assignments = state
+        .provider
+        .get_assignment_provider()
+        .list_role_assignments(
+            &state,
+            &RoleAssignmentListParametersBuilder::default()
+                .role_id(role.id.clone())
+                .build()?,
+        )
+        .await?;
+
+    // Filter to only our test user's assignments
+    let user_assignments: Vec<_> = assignments
+        .iter()
+        .filter(|a| a.actor_id == user.id)
+        .collect();
+
+    // Should have all 3 assignments for this user+role combination
+    assert_eq!(
+        user_assignments.len(),
+        3,
+        "Expected 3 assignments when filtering by role_id, got {}. \
+        This may indicate the HashMap bug from issue #513 is present.",
+        user_assignments.len()
+    );
+
+    // Verify the correct targets are present
+    let target_ids: BTreeSet<String> =
+        user_assignments.iter().map(|a| a.target_id.clone()).collect();
+    assert!(
+        target_ids.contains(&project_1.id),
+        "Assignment on project_1 should be present when filtering by role_id"
+    );
+    assert!(
+        target_ids.contains(&project_2.id),
+        "Assignment on project_2 should be present when filtering by role_id"
+    );
+
+    Ok(())
+}
