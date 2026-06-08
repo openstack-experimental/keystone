@@ -24,7 +24,7 @@ openstack-keystone-trust-driver-sql = { version = "0.1", path = "../../crates/tr
 openstack-keystone-distributed-storage.workspace = true
 openstack-keystone = { version = "0.1", path = "../../crates/keystone/" }
 rcgen.workspace = true
-sea-orm = { workspace = true, features = ["sqlx-sqlite"] }
+sea-orm = { workspace = true, features = ["mock", "sqlx-sqlite", "sqlx-mysql", "sqlx-postgres", "runtime-tokio", "runtime-tokio-native-tls"] }
 secrecy = { workspace = true, features = ["serde"] }
 serde.workspace = true
 serde_json.workspace = true
