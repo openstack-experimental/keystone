@@ -110,7 +110,7 @@ rstest = { version = "0.26" }
 rustls = { version = "0.23" }
 schemars = { version = "1.2" }
 scopeguard = "1.2.0"
-sea-orm = { version = "1.1", features = ["debug-print", "sqlx-mysql", "sqlx-postgres", "runtime-tokio", "runtime-tokio-native-tls"] }
+sea-orm = { version = "1.1", features = ["debug-print", "sqlx-mysql", "sqlx-postgres", "sqlx-sqlite", "runtime-tokio", "runtime-tokio-native-tls", "mock"] }
 sea-orm-migration = { version = "1.1", features = ["sqlx-mysql", "sqlx-postgres", "runtime-tokio"] }
 secrecy = { version = "0.10" }
 serde = { version = "1.0" }

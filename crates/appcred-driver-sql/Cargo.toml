@@ -24,7 +24,7 @@ tracing.workspace = true
 uuid = { workspace = true, features = ["v4"] }
 
 [dev-dependencies]
-openstack-keystone-core = { version = "0.1", path = "../core", features = ["mock"] }
+openstack-keystone-core = { workspace = true, features = ["mock"] }
 sea-orm = { workspace = true, features = ["mock", "sqlx-sqlite" ]}
 
 [lints]

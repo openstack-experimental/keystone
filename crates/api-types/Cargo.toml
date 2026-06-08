@@ -22,7 +22,7 @@ chrono = { workspace = true, default-features = false, features = ["serde"] }
 derive_builder = { workspace = true, optional = true }
 eyre.workspace = true
 http = { workspace = true, optional = true }
-openstack-keystone-core-types = { version = "0.1", path = "../core-types/", optional = true }
+openstack-keystone-core-types = { workspace = true, optional = true }
 secrecy = { workspace = true, features = ["serde"] }
 serde.workspace = true
 serde_json.workspace = true

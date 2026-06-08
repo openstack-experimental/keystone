@@ -19,10 +19,10 @@ derive_builder.workspace = true
 eyre.workspace = true
 inventory.workspace = true
 jsonwebtoken = { version = "10.4", features = ["rust_crypto"] }
-openstack-keystone-api-types = { version = "0.1", path = "../api-types/", optional = true }
-openstack-keystone-core-types = { version = "0.1", path = "../core-types/" }
-openstack-keystone-config = { version = "0.1", path = "../config/" }
-openstack-keystone-distributed-storage = { version = "0.1", path = "../storage/"}
+openstack-keystone-api-types = { workspace = true, optional = true }
+openstack-keystone-core-types.workspace = true
+openstack-keystone-config.workspace = true
+openstack-keystone-distributed-storage.workspace = true
 mockall = { workspace = true, optional = true }
 rand.workspace = true
 reqwest = { workspace = true, features = ["json", "http2", "gzip", "deflate"] }
@@ -46,7 +46,7 @@ validator.workspace = true
 config = { workspace = true }
 httpmock = { version = "0.8", features = ["http2"] }
 mockall.workspace = true
-openstack-keystone-core-types = { version = "0.1", path = "../core-types/", features = ["mock"] }
+openstack-keystone-core-types = { workspace = true, features = ["mock"] }
 rstest.workspace = true
 tracing-test = { workspace = true, features = ["no-env-filter"] }
 url.workspace = true

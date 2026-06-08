@@ -28,7 +28,7 @@ uuid = { workspace = true, features = ["v4"] }
 [dev-dependencies]
 chrono = { workspace = true, features = ["now"] }
 derive_builder.workspace = true
-openstack-keystone-core = { version = "0.1", path = "../core", features = ["mock"] }
+openstack-keystone-core = { workspace = true, features = ["mock"] }
 sea-orm = { workspace = true, features = ["mock", "sqlx-sqlite" ]}
 serde.workspace = true
 serde_json.workspace = true
