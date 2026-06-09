@@ -53,7 +53,7 @@ async fn test_get() -> Result<()> {
     assert!(fetched.is_some());
     let fetched = fetched.unwrap();
     assert_eq!(fetched.id, "service-get");
-    assert_eq!(fetched.name.as_deref(), Some("glance"));
+    assert_eq!(fetched.name().as_deref(), Some("glance"));
     assert_eq!(fetched.r#type.as_deref(), Some("image"));
     Ok(())
 }

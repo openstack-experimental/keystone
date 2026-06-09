@@ -47,8 +47,8 @@ async fn test_create() -> Result<()> {
 
     // An ID is generated when none is provided.
     assert!(!service.id.is_empty());
-    // `name` round-trips out of the `extra` blob onto the read model.
-    assert_eq!(service.name.as_deref(), Some("nova"));
+    // `name` round-trips out of the `extra` blob via the accessor.
+    assert_eq!(service.name().as_deref(), Some("nova"));
     assert_eq!(service.r#type.as_deref(), Some("compute"));
     assert!(service.enabled);
     Ok(())

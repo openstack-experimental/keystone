@@ -57,9 +57,6 @@ impl TryFrom<db_service::Model> for Service {
         {
             match serde_json::from_str::<Value>(extra) {
                 Ok(val) => {
-                    if let Some(name) = val.get("name").and_then(|x| x.as_str()) {
-                        builder.name(name);
-                    }
                     builder.extra(val);
                 }
                 Err(e) => {

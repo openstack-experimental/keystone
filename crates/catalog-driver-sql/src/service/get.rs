@@ -66,7 +66,6 @@ mod tests {
                 id: "1".into(),
                 r#type: Some("type".into()),
                 enabled: true,
-                name: Some("srv".into()),
                 extra: Some(json!({"name": "srv"})),
             }
         );

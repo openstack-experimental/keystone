@@ -38,15 +38,25 @@ pub struct Service {
     #[validate(length(min = 1, max = 64))]
     pub id: String,
 
-    /// The service name.
-    #[builder(default)]
-    #[validate(length(max = 255))]
-    pub name: Option<String>,
-
     /// The service type.
     #[builder(default)]
     #[validate(length(max = 255))]
     pub r#type: Option<String>,
+}
+
+impl Service {
+    /// Returns the service name, if set.
+    ///
+    /// The name is not a dedicated database column; it is stored as the `name`
+    /// key inside the `extra` JSON blob, so it is read back out from there
+    /// rather than being a field on the model itself.
+    pub fn name(&self) -> Option<String> {
+        self.extra
+            .as_ref()
+            .and_then(|extra| extra.get("name"))
+            .and_then(|name| name.as_str())
+            .map(ToString::to_string)
+    }
 }
 
 /// Parameters for creating a new service.
@@ -72,7 +82,6 @@ pub struct ServiceCreate {
 #[builder(setter(strip_option, into))]
 pub struct ServiceListParameters {
     /// Filters the response by a service name.
-    #[validate(length(max = 255))]
     pub name: Option<String>,
 
     /// Filters the response by a service type. A valid value is compute, ec2,

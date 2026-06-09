@@ -70,7 +70,7 @@ mod tests {
 
         assert_eq!(created.id, "svc-1");
         // `name` is read back out of the `extra` blob.
-        assert_eq!(created.name.as_deref(), Some("nova"));
+        assert_eq!(created.name().as_deref(), Some("nova"));
         assert_eq!(created.r#type.as_deref(), Some("compute"));
         assert!(created.enabled);
     }
