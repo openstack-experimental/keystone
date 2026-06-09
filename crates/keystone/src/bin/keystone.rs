@@ -429,6 +429,8 @@ async fn main() -> Result<(), Report> {
         let rest_app = app.clone();
         let rest_cancel_token = token.clone();
         let rest_spiffe_trust_domains = admin_if.listener.trust_domains.clone();
+        let peer_uid = admin_if.listener.peer_uid;
+        let peer_gid = admin_if.listener.peer_gid;
 
         handles.spawn(async move {
             let cancel_token = rest_cancel_token.clone();
@@ -438,6 +440,8 @@ async fn main() -> Result<(), Report> {
                 rest_cancel_token,
                 rest_spiffe_trust_domains,
                 Interface::Admin,
+                peer_uid,
+                peer_gid,
             )
             .await
             {

@@ -77,6 +77,7 @@ utoipa-axum.workspace = true
 utoipa-swagger-ui = { workspace = true, features = ["axum", "vendored"] }
 uuid = { workspace = true, features = ["v4"] }
 validator = { workspace = true, features = ["derive"] }
+nix = { workspace = true, features = ["socket", "user"] }
 
 [build-dependencies]
 toml = { version = "1.1", default-features = false, features = ["parse", "serde"] }

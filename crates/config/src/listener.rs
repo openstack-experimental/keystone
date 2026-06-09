@@ -17,7 +17,7 @@ use std::path::PathBuf;
 
 use serde::Deserialize;
 
-use crate::common::csv;
+use crate::common::{csv, option_u32_from_str_or_int};
 
 /// Server listener configuration.
 #[derive(Debug, Default, Deserialize, Clone)]
@@ -47,6 +47,14 @@ pub struct UnixSocketListener {
     /// Trusted domains to accept SPIFFE certificates from clients.
     #[serde(deserialize_with = "csv")]
     pub trust_domains: Vec<String>,
+
+    /// If set, reject connections from clients whose UID does not match this value.
+    #[serde(deserialize_with = "option_u32_from_str_or_int", default)]
+    pub peer_uid: Option<u32>,
+
+    /// If set, reject connections from clients whose GID does not match this value.
+    #[serde(deserialize_with = "option_u32_from_str_or_int", default)]
+    pub peer_gid: Option<u32>,
 }
 
 fn default_socket_path() -> PathBuf {
@@ -95,7 +103,7 @@ trust_domains = "a,b,c"
             .add_source(File::from_str(
                 r#"
 type = spiffe
-trust_domains = ""
+trust_domains = "example.com"
 "#,
                 FileFormat::Ini,
             ))
@@ -103,13 +111,75 @@ trust_domains = ""
             .unwrap();
         let sot: ListenerConfig = c.try_deserialize().unwrap();
         if let ListenerConfig::Spiffe(s) = sot {
-            assert!(
-                s.trust_domains.is_empty(),
-                "must be empty, instead is {:?}",
-                s.trust_domains
-            );
+            assert!(s.trust_domains.contains(&"example.com".to_string()));
         } else {
             panic!("should be spiffe listener");
+        }
+    }
+
+    #[test]
+    fn test_unix_socket_peer_creds() {
+        let c = Config::builder()
+            .add_source(File::from_str(
+                r#"
+type = "unixsocket"
+trust_domains = "example.com"
+peer_uid = 42
+peer_gid = 100
+"#,
+                FileFormat::Ini,
+            ))
+            .build()
+            .unwrap();
+        let sot: ListenerConfig = c.try_deserialize().unwrap();
+        if let ListenerConfig::UnixSocket(us) = sot {
+            assert!(us.trust_domains.contains(&"example.com".to_string()));
+            assert_eq!(us.peer_uid, Some(42));
+            assert_eq!(us.peer_gid, Some(100));
+        } else {
+            panic!("should be UnixSocket listener");
+        }
+        let c = Config::builder()
+            .add_source(File::from_str(
+                r#"
+type = "unixsocket"
+trust_domains = "example.com"
+peer_uid = 42
+peer_gid = 100
+"#,
+                FileFormat::Toml,
+            ))
+            .build()
+            .unwrap();
+        let sot: ListenerConfig = c.try_deserialize().unwrap();
+        if let ListenerConfig::UnixSocket(us) = sot {
+            assert!(us.trust_domains.contains(&"example.com".to_string()));
+            assert_eq!(us.peer_uid, Some(42));
+            assert_eq!(us.peer_gid, Some(100));
+        } else {
+            panic!("should be UnixSocket listener");
+        }
+    }
+
+    #[test]
+    fn test_unix_socket_peer_creds_defaults() {
+        let c = Config::builder()
+            .add_source(File::from_str(
+                r#"
+type = "unixsocket"
+trust_domains = "example.com"
+"#,
+                FileFormat::Ini,
+            ))
+            .build()
+            .unwrap();
+        let sot: ListenerConfig = c.try_deserialize().unwrap();
+        if let ListenerConfig::UnixSocket(us) = sot {
+            assert!(us.trust_domains.contains(&"example.com".to_string()));
+            assert_eq!(us.peer_uid, None);
+            assert_eq!(us.peer_gid, None);
+        } else {
+            panic!("should be UnixSocket listener");
         }
     }
 }

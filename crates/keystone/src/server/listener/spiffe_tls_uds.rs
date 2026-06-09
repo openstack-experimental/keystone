@@ -32,16 +32,54 @@ use tracing::info;
 use crate::config::Interface;
 use crate::server::listener::spiffe_common;
 
+/// Verify peer credentials obtained via SO_PEERCRED against expected UID/GID.
+///
+/// Returns `Ok(())` when all configured checks pass, or `Err` if any configured
+/// value does not match the connecting process's credentials.
+fn verify_peer_credentials(
+    stream: &tokio::net::UnixStream,
+    expected_uid: Option<u32>,
+    expected_gid: Option<u32>,
+) -> Result<(), Report> {
+    use nix::sys::socket::{getsockopt, sockopt::PeerCredentials};
+
+    let creds = getsockopt(&stream, PeerCredentials)
+        .wrap_err("failed to get peer credentials via SO_PEERCRED")?;
+
+    if let Some(expected) = expected_uid {
+        if creds.uid() != expected {
+            return Err(color_eyre::eyre::eyre!(
+                "UDS peer UID {} does not match expected {}",
+                creds.uid(),
+                expected
+            ));
+        }
+    }
+    if let Some(expected) = expected_gid {
+        if creds.gid() != expected {
+            return Err(color_eyre::eyre::eyre!(
+                "UDS peer GID {} does not match expected {}",
+                creds.gid(),
+                expected
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Start the Axum REST api over the Unix Socket with the SPIFFE mTLS enabled.
 ///
 /// The TLS server is started requesting the client certificates verified using
-/// the SPIFFE workload API.
+/// the SPIFFE workload API. Socket peer credentials (SO_PEERCRED) are validated
+/// before the TLS handshake when `peer_uid` or `peer_gid` are configured.
 pub async fn start_axum_app(
     socket_path: &Path,
     app: Router,
     token: CancellationToken,
     trust_domains: Vec<String>,
     interface: Interface,
+    peer_uid: Option<u32>,
+    peer_gid: Option<u32>,
 ) -> Result<(), Report> {
     let spiffe_server_config =
         match spiffe_common::build_spiffe_config(token.clone(), trust_domains).await? {
@@ -66,6 +104,12 @@ pub async fn start_axum_app(
         tokio::select! {
             _ = token.cancelled() => break,
             Ok((stream, _peer_addr)) = listener.accept() => {
+                // SO_PEERCRED validation BEFORE TLS wrap (cheap kernel-level check)
+                if let Err(e) = verify_peer_credentials(&stream, peer_uid, peer_gid) {
+                    tracing::warn!("UDS connection rejected: peer credential mismatch: {}", e);
+                    continue;
+                }
+
                 let acceptor = acceptor.clone();
                 let app = app.clone();
                 let conn_token = token.clone();

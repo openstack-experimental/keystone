@@ -82,6 +82,72 @@ pub fn default_true() -> bool {
     true
 }
 
+/// Deserialize `Option<u32>` from either a string or an integer value.
+/// This handles both INI format (all values are strings) and TOML/JSON format
+/// (integers are passed as-is).
+pub fn option_u32_from_str_or_int<'de, D>(deserializer: D) -> Result<Option<u32>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    deserializer.deserialize_option(OptionU32Visitor)
+}
+
+struct OptionU32Visitor;
+
+impl<'de> serde::de::Visitor<'de> for OptionU32Visitor {
+    type Value = Option<u32>;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+        formatter.write_str("an optional u32, either as a string or integer")
+    }
+
+    fn visit_unit<E>(self) -> Result<Self::Value, E> {
+        Ok(None)
+    }
+
+    fn visit_none<E>(self) -> Result<Self::Value, E> {
+        Ok(None)
+    }
+
+    fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        deserializer.deserialize_any(U32StrOrIntVisitor).map(Some)
+    }
+}
+
+struct U32StrOrIntVisitor;
+
+impl<'de> serde::de::Visitor<'de> for U32StrOrIntVisitor {
+    type Value = u32;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+        formatter.write_str("a u32 as string or integer")
+    }
+
+    fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        v.parse().map_err(E::custom)
+    }
+
+    fn visit_u64<E>(self, v: u64) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        u32::try_from(v).map_err(|_| E::custom(format!("value {} out of range for u32", v)))
+    }
+
+    fn visit_i64<E>(self, v: i64) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        u32::try_from(v).map_err(|_| E::custom(format!("value {} out of range for u32", v)))
+    }
+}
+
 /// mTLS configuration for the server Listener cluster.
 #[derive(Builder, Clone, Debug, Default, Deserialize)]
 #[builder(setter(strip_option, into))]

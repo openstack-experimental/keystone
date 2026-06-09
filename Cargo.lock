@@ -3354,6 +3354,7 @@ dependencies = [
  "cfg-if",
  "cfg_aliases",
  "libc",
+ "memoffset",
 ]
 
 [[package]]
@@ -3708,6 +3709,7 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
+ "nix 0.31.3",
  "openidconnect",
  "openstack-keystone-api-types",
  "openstack-keystone-appcred-driver-sql",
