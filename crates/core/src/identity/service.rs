@@ -556,6 +556,27 @@ impl IdentityApi for IdentityService {
         self.backend_driver.update_user(state, user_id, user).await
     }
 
+    /// Update user password.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `user_id`: The ID of the user to update.
+    /// - `original_password`: The current password for verification.
+    /// - `new_password`: The new password to set.
+    async fn update_user_password<'a>(
+        &self,
+        state: &ServiceState,
+        user_id: &'a str,
+        original_password: SecretString,
+        new_password: SecretString,
+    ) -> Result<(), IdentityProviderError> {
+        let cfg = state.config_manager.config.read().await;
+        cfg.security_compliance.validate_password(&new_password)?;
+        self.backend_driver
+            .update_user_password(state, user_id, original_password, new_password)
+            .await
+    }
+
     /// Set expiring group memberships for the user.
     ///
     /// # Parameters

@@ -14,6 +14,7 @@
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use secrecy::SecretString;
 use std::collections::HashSet;
 
 use openstack_keystone_core_types::identity::*;
@@ -330,6 +331,24 @@ pub trait IdentityApi: Send + Sync {
         user_id: &'a str,
         user: UserUpdate,
     ) -> Result<UserResponse, IdentityProviderError>;
+
+    /// Update user password.
+    ///
+    /// Verifies the original password, checks password history for reuse,
+    /// then sets the new password.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `user_id`: The ID of the user to update.
+    /// - `original_password`: The current password for verification.
+    /// - `new_password`: The new password to set.
+    async fn update_user_password<'a>(
+        &self,
+        state: &ServiceState,
+        user_id: &'a str,
+        original_password: SecretString,
+        new_password: SecretString,
+    ) -> Result<(), IdentityProviderError>;
 
     /// Set expiring group memberships of the user.
     ///

@@ -15,6 +15,7 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use mockall::mock;
+use secrecy::SecretString;
 use std::collections::HashSet;
 
 use openstack_keystone_core_types::identity::*;
@@ -98,6 +99,14 @@ mock! {
             user_id: &'a str,
             user: UserUpdate,
         ) -> Result<UserResponse, IdentityProviderError>;
+
+        async fn update_user_password<'a>(
+            &self,
+            state: &ServiceState,
+            user_id: &'a str,
+            original_password: SecretString,
+            new_password: SecretString,
+        ) -> Result<(), IdentityProviderError>;
 
         async fn get_group<'a>(
             &self,

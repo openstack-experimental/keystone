@@ -15,20 +15,18 @@
 use chrono::{DateTime, Utc};
 use sea_orm::ConnectionTrait;
 use sea_orm::entity::*;
-use sea_orm::query::*;
 
 use openstack_keystone_core::error::DbContextExt;
 use openstack_keystone_core::identity::IdentityProviderError;
 
-use crate::entity::prelude::Password;
-
 use crate::entity::password;
 
-/// Set a new password for the local user.
+/// Set a new password for the local user using pre-loaded existing passwords.
 ///
-/// - expire all existing passwords.
-/// - truncate number of old passwords to `unique_count`.
-/// - add a new record with a new password
+/// - expire the newest `unique_count` passwords (kept as history for uniqueness
+///   checks).
+/// - delete older passwords beyond the history window.
+/// - add a new record with the new password.
 ///
 /// # Parameters
 /// - `db`: The database connection.
@@ -36,6 +34,7 @@ use crate::entity::password;
 /// - `unique_count`: Number of old passwords to keep for checking uniqueness.
 /// - `password_hash`: The hashed password.
 /// - `expires_at`: The password expiration date.
+/// - `existing_passwords`: Pre-loaded existing passwords sorted DESC by creation.
 ///
 /// # Returns
 /// A `Result` containing the created `password::Model` if successful, or an
@@ -47,38 +46,23 @@ pub async fn set_new_password<C: ConnectionTrait, S: AsRef<str>>(
     unique_count: u16,
     password_hash: S,
     expires_at: Option<DateTime<Utc>>,
+    existing_passwords: Vec<password::Model>,
 ) -> Result<password::Model, IdentityProviderError> {
     let now = Utc::now();
-    // Fetch existing passwords
-    let existing_passwords = Password::find()
-        .filter(password::Column::LocalUserId.eq(local_user_id))
-        .order_by(password::Column::CreatedAtInt, Order::Desc)
-        .all(db)
-        .await
-        .context("fetching existing passwords for user")?;
 
     // Determine history size: unique_last_password_count + 1 (for the new password)
-    // If unique_last_password_count is 0 or None, just keep 1 (the new password)
-    let history_size = if unique_count == 0 {
-        1
-    } else {
-        unique_count as usize + 1
-    };
+    // If unique_count is 0, don't keep any old passwords.
+    let keep_count = unique_count as usize;
 
-    // Truncate extra passwords by keeping only the last `history_size - 1` entries
-    let truncated_passwords: Vec<password::Model> = if existing_passwords.len() > history_size - 1 {
-        existing_passwords
-            .into_iter()
-            .rev()
-            .take(history_size - 1)
-            .collect()
-    } else {
-        existing_passwords
-    };
+    // existing_passwords is sorted DESC (newest first). Expire the newest
+    // `keep_count` passwords (kept as history), delete the rest (older ones
+    // beyond the history window).
+    let (to_expire, to_delete) =
+        existing_passwords.split_at(keep_count.min(existing_passwords.len()));
 
-    // Expire all previous passwords (set expires_at to now)
+    // Expire the most recent passwords (kept as history)
     let expires_now = now.naive_utc();
-    for pw in &truncated_passwords {
+    for pw in to_expire {
         let mut pw_active: password::ActiveModel = pw.clone().into();
         pw_active.expires_at = Set(Some(expires_now));
         pw_active.expires_at_int = Set(Some(now.timestamp_micros()));
@@ -88,13 +72,21 @@ pub async fn set_new_password<C: ConnectionTrait, S: AsRef<str>>(
             .context("expiring previous password")?;
     }
 
+    // Delete older passwords beyond the history window
+    for pw in to_delete {
+        password::Entity::delete_by_id(pw.id)
+            .exec(db)
+            .await
+            .context("deleting old password beyond history window")?;
+    }
+
     super::create(db, local_user_id, password_hash, expires_at).await
 }
 
 #[cfg(test)]
 mod tests {
     use chrono::{TimeDelta, Utc};
-    use sea_orm::{DatabaseBackend, MockDatabase};
+    use sea_orm::{DatabaseBackend, MockDatabase, MockExecResult};
 
     use super::*;
 
@@ -125,25 +117,24 @@ mod tests {
     }
 
     // ---------------------------------------------------------------------------
-    // unique_last_password_count = 0  →  history_size = 1, keep 0 old passwords
+    // unique_last_password_count = 0  ->  keep 0 old passwords, delete all
     // ---------------------------------------------------------------------------
 
     #[tokio::test]
     async fn unique_zero_no_existing() {
+        let existing = Vec::<password::Model>::new();
         let db = MockDatabase::new(DatabaseBackend::Postgres)
-            .append_query_results([Vec::<password::Model>::new()])
             // create → insert returns new record
             .append_query_results([vec![make_pwd(10, 999, false)]])
             .into_connection();
 
-        let res = set_new_password(&db, 1, 0, "hash", None).await;
+        let res = set_new_password(&db, 1, 0, "hash", None, existing).await;
         assert!(res.is_ok(), "should succeed with no existing passwords");
     }
 
     #[tokio::test]
     async fn unique_zero_existing_passwords_truncated_away() {
-        // 3 existing passwords, unique=0 → history_size=1 → keep 0 → all truncated,
-        // none kept. Truncated list is empty, so no UPDATE calls, only INSERT.
+        // 3 existing passwords, unique=0 → keep 0 → all deleted.
         let existing = vec![
             make_pwd(1, 300, false),
             make_pwd(2, 200, false),
@@ -151,30 +142,47 @@ mod tests {
         ];
 
         let db = MockDatabase::new(DatabaseBackend::Postgres)
-            .append_query_results([existing])
-            // No UPDATE because truncated list is empty
+            // Delete all 3
+            .append_exec_results([
+                MockExecResult {
+                    rows_affected: 1,
+                    ..Default::default()
+                },
+                MockExecResult {
+                    rows_affected: 1,
+                    ..Default::default()
+                },
+                MockExecResult {
+                    rows_affected: 1,
+                    ..Default::default()
+                },
+            ])
             .append_query_results([vec![make_pwd(10, 500, false)]])
             .into_connection();
 
-        let res = set_new_password(&db, 1, 0, "hash", None).await;
+        let res = set_new_password(&db, 1, 0, "hash", None, existing).await;
         assert!(
             res.is_ok(),
-            "unique=0 should truncate everything and insert new"
+            "unique=0 should delete everything and insert new"
         );
     }
 
     // ---------------------------------------------------------------------------
-    // unique_last_password_count = 1  →  history_size = 2, keep 1 old password
+    // unique_last_password_count = 1  ->  expire 1 old password, delete the rest
     // ---------------------------------------------------------------------------
 
     #[tokio::test]
     async fn unique_one_no_existing() {
+        let existing = Vec::<password::Model>::new();
         let db = MockDatabase::new(DatabaseBackend::Postgres)
-            .append_query_results([Vec::<password::Model>::new()])
             .append_query_results([vec![make_pwd(10, 999, false)]])
             .into_connection();
 
-        assert!(set_new_password(&db, 1, 1, "hash", None).await.is_ok());
+        assert!(
+            set_new_password(&db, 1, 1, "hash", None, existing)
+                .await
+                .is_ok()
+        );
     }
 
     #[tokio::test]
@@ -183,39 +191,47 @@ mod tests {
         let existing = vec![make_pwd(1, 100, false)];
 
         let db = MockDatabase::new(DatabaseBackend::Postgres)
-            .append_query_results([existing])
             // Expire the 1 kept password
             .append_query_results([vec![make_pwd(1, 100, true)]])
             // Insert new
             .append_query_results([vec![make_pwd(10, 999, false)]])
             .into_connection();
 
-        assert!(set_new_password(&db, 1, 1, "hash", None).await.is_ok());
+        assert!(
+            set_new_password(&db, 1, 1, "hash", None, existing)
+                .await
+                .is_ok()
+        );
     }
 
     #[tokio::test]
     async fn unique_one_two_existing_truncate_excess() {
-        // 2 existing (newest=200, older=100), unique=1 → keep 1 old.
-        // existing.len() (2) > history_size-1 (1) → truncate to 1.
-        // The truncation reverses the DESC list (200,100 → 100,200) then take(1) →
-        // [100]. Expire pw id=3 (created_at_int=100).
+        // 2 existing (newest=200, older=100), unique=1 → expire 1 (newest), delete 1 (older).
         let existing = vec![
             make_pwd(2, 200, false), // newest first
             make_pwd(3, 100, false), // older
         ];
 
         let db = MockDatabase::new(DatabaseBackend::Postgres)
-            .append_query_results([existing])
-            // Expire truncated list: [pw3 (int=100)]
-            .append_query_results([vec![make_pwd(3, 100, true)]])
+            // Expire newest: [pw2 (int=200)]
+            .append_query_results([vec![make_pwd(2, 200, true)]])
+            // Delete older: [pw3 (int=100)]
+            .append_exec_results([MockExecResult {
+                rows_affected: 1,
+                ..Default::default()
+            }])
             .append_query_results([vec![make_pwd(10, 999, false)]])
             .into_connection();
 
-        assert!(set_new_password(&db, 1, 1, "hash", None).await.is_ok());
+        assert!(
+            set_new_password(&db, 1, 1, "hash", None, existing)
+                .await
+                .is_ok()
+        );
     }
 
     // ---------------------------------------------------------------------------
-    // unique_last_password_count = 2  →  history_size = 3, keep 2 old passwords
+    // unique_last_password_count = 2  ->  expire 2 old passwords, delete the rest
     // ---------------------------------------------------------------------------
 
     #[tokio::test]
@@ -223,21 +239,22 @@ mod tests {
         let existing = vec![make_pwd(2, 200, false), make_pwd(3, 100, false)];
 
         let db = MockDatabase::new(DatabaseBackend::Postgres)
-            .append_query_results([existing])
             // Expire both
             .append_query_results([vec![make_pwd(2, 200, true)]])
             .append_query_results([vec![make_pwd(3, 100, true)]])
             .append_query_results([vec![make_pwd(10, 999, false)]])
             .into_connection();
 
-        assert!(set_new_password(&db, 1, 2, "hash", None).await.is_ok());
+        assert!(
+            set_new_password(&db, 1, 2, "hash", None, existing)
+                .await
+                .is_ok()
+        );
     }
 
     #[tokio::test]
     async fn unique_two_five_existing_truncate_excess() {
-        // 5 existing, unique=2 → keep 2 old, truncate 3.
-        // Order DESC: 500,400,300,200,100 → rev: 100,200,300,400,500 → take(2) →
-        // [100,200]
+        // 5 existing, unique=2 → expire 2 new (id=1,2), delete 3 old (id=3,4,5).
         let existing = vec![
             make_pwd(1, 500, false),
             make_pwd(2, 400, false),
@@ -247,24 +264,42 @@ mod tests {
         ];
 
         let db = MockDatabase::new(DatabaseBackend::Postgres)
-            .append_query_results([existing])
-            // Expire [pw5 (int=100), pw4 (int=200)]
-            .append_query_results([vec![make_pwd(5, 100, true)]])
-            .append_query_results([vec![make_pwd(4, 200, true)]])
+            // Expire newest 2: [pw1 (int=500), pw2 (int=400)]
+            .append_query_results([vec![make_pwd(1, 500, true)]])
+            .append_query_results([vec![make_pwd(2, 400, true)]])
+            // Delete older 3: [pw3, pw4, pw5]
+            .append_exec_results([
+                MockExecResult {
+                    rows_affected: 1,
+                    ..Default::default()
+                },
+                MockExecResult {
+                    rows_affected: 1,
+                    ..Default::default()
+                },
+                MockExecResult {
+                    rows_affected: 1,
+                    ..Default::default()
+                },
+            ])
             .append_query_results([vec![make_pwd(10, 999, false)]])
             .into_connection();
 
-        assert!(set_new_password(&db, 1, 2, "hash", None).await.is_ok());
+        assert!(
+            set_new_password(&db, 1, 2, "hash", None, existing)
+                .await
+                .is_ok()
+        );
     }
 
     // ---------------------------------------------------------------------------
-    // Mixed expired / active passwords — already expired still get expire call
+    // Mixed expired / active passwords — expire newest, delete older
     // ---------------------------------------------------------------------------
 
     #[tokio::test]
     async fn unique_two_mixed_expired_and_active() {
         // pw1 active, pw2 already expired, pw3 active
-        // DESC: 300,200,100 → rev: 100,200,300 → take(2) → [100,200] → expire pw3,pw2
+        // DESC: 300,200,100 -> expire pw1,pw2 (newest 2), delete pw3 (older)
         let existing = vec![
             make_pwd(1, 300, false),
             make_pwd(2, 200, true),
@@ -272,13 +307,22 @@ mod tests {
         ];
 
         let db = MockDatabase::new(DatabaseBackend::Postgres)
-            .append_query_results([existing])
-            .append_query_results([vec![make_pwd(3, 100, true)]])
+            // Expire newest 2: [pw1 (int=300), pw2 (int=200)]
+            .append_query_results([vec![make_pwd(1, 300, true)]])
             .append_query_results([vec![make_pwd(2, 200, true)]])
+            // Delete older: [pw3 (int=100)]
+            .append_exec_results([MockExecResult {
+                rows_affected: 1,
+                ..Default::default()
+            }])
             .append_query_results([vec![make_pwd(10, 999, false)]])
             .into_connection();
 
-        assert!(set_new_password(&db, 1, 2, "hash", None).await.is_ok());
+        assert!(
+            set_new_password(&db, 1, 2, "hash", None, existing)
+                .await
+                .is_ok()
+        );
     }
 
     // ---------------------------------------------------------------------------
@@ -289,12 +333,12 @@ mod tests {
     async fn new_password_with_expiration() {
         let expires = Utc::now() + TimeDelta::days(90);
 
+        let existing = Vec::<password::Model>::new();
         let db = MockDatabase::new(DatabaseBackend::Postgres)
-            .append_query_results([Vec::<password::Model>::new()])
             .append_query_results([vec![make_pwd(10, 999, false)]])
             .into_connection();
 
-        let res = set_new_password(&db, 1, 0, "hash", Some(expires)).await;
+        let res = set_new_password(&db, 1, 0, "hash", Some(expires), existing).await;
         assert!(res.is_ok());
         // The create() call uses the expires_at argument; mock doesn't validate,
         // but the fact that it succeeded means the flow is correct.
@@ -307,8 +351,7 @@ mod tests {
 
     #[tokio::test]
     async fn unique_five_exactly_six_existing_no_truncation() {
-        // unique=5 → history=6 → keep 5 old. 6 existing > 5 → truncate to 5.
-        // DESC: 600..100 → rev: 100..600 → take(5) → [100,200,300,400,500]
+        // unique=5, 6 existing -> expire 5 newest, delete 1 oldest.
         let existing = vec![
             make_pwd(1, 600, false),
             make_pwd(2, 500, false),
@@ -319,16 +362,24 @@ mod tests {
         ];
 
         let db = MockDatabase::new(DatabaseBackend::Postgres)
-            .append_query_results([existing])
-            // Expire the 5 kept (oldest 5 in rev order)
-            .append_query_results([vec![make_pwd(6, 100, true)]])
-            .append_query_results([vec![make_pwd(5, 200, true)]])
-            .append_query_results([vec![make_pwd(4, 300, true)]])
-            .append_query_results([vec![make_pwd(3, 400, true)]])
+            // Expire the 5 newest
+            .append_query_results([vec![make_pwd(1, 600, true)]])
             .append_query_results([vec![make_pwd(2, 500, true)]])
+            .append_query_results([vec![make_pwd(3, 400, true)]])
+            .append_query_results([vec![make_pwd(4, 300, true)]])
+            .append_query_results([vec![make_pwd(5, 200, true)]])
+            // Delete the 1 oldest
+            .append_exec_results([MockExecResult {
+                rows_affected: 1,
+                ..Default::default()
+            }])
             .append_query_results([vec![make_pwd(10, 999, false)]])
             .into_connection();
 
-        assert!(set_new_password(&db, 1, 5, "hash", None).await.is_ok());
+        assert!(
+            set_new_password(&db, 1, 5, "hash", None, existing)
+                .await
+                .is_ok()
+        );
     }
 }

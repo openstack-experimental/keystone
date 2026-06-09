@@ -12,19 +12,72 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 use chrono::{DateTime, Utc};
+use secrecy::ExposeSecret;
+use secrecy::SecretString;
 
+use openstack_keystone_config::Config;
+use openstack_keystone_core::common::password_hashing;
 use openstack_keystone_core::identity::IdentityProviderError;
 use openstack_keystone_core_types::identity::UserResponseBuilder;
 
 use crate::entity::password as db_password;
 
+mod check_history;
 mod create;
 mod list;
-mod set_new;
+mod set;
 
 pub use create::create;
 pub use list::list;
-pub use set_new::set_new_password;
+
+use sea_orm::ConnectionTrait;
+
+/// Set a new password for the local user using pre-loaded existing passwords.
+///
+/// - check password history for reuse (reject if match).
+/// - expire the newest `unique_count` passwords (kept as history).
+/// - delete older passwords beyond the history window.
+/// - hash and store the new password.
+///
+/// # Parameters
+/// - `db`: The database connection.
+/// - `conf`: The service configuration.
+/// - `local_user_id`: The local user ID.
+/// - `password`: The plaintext password to set.
+/// - `existing_passwords`: Pre-loaded existing passwords sorted DESC by creation.
+///
+/// # Returns
+/// A `Result` containing the created `db_password::Model` if successful, or an
+/// `Error`.
+pub async fn set_new_password<C: ConnectionTrait>(
+    db: &C,
+    conf: &Config,
+    local_user_id: i32,
+    password: SecretString,
+    existing_passwords: Vec<db_password::Model>,
+) -> Result<db_password::Model, IdentityProviderError> {
+    check_history::check_password_history(conf, &existing_passwords, &password).await?;
+
+    let now = Utc::now();
+    let unique_count = conf
+        .security_compliance
+        .unique_last_password_count
+        .unwrap_or(0);
+    let hashed_password = password_hashing::hash_password(conf, password.expose_secret())
+        .await
+        .map_err(IdentityProviderError::password_hash)?;
+
+    let expires_at = conf.security_compliance.get_password_expires_at(now);
+    set::set_new_password(
+        db,
+        local_user_id,
+        unique_count,
+        hashed_password,
+        expires_at,
+        existing_passwords,
+    )
+    .await
+}
 
 /// Verify whether the password has expired or not.
 ///

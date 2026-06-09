@@ -189,11 +189,12 @@ pub async fn create(
         response_builder.merge_local_user_data(&local_user);
 
         if let Some(password) = &user.password {
-            local_user::set_new_password(
+            password::set_new_password(
                 &txn,
                 conf,
                 local_user.id,
                 secrecy::SecretString::from(password.as_str()),
+                Vec::new(),
             )
             .await?;
             response_builder.merge_passwords_data(password::list(&txn, local_user.id).await?);
@@ -393,15 +394,26 @@ mod tests {
             ..Default::default()
         };
         let db = MockDatabase::new(DatabaseBackend::Postgres)
+            // Transaction queries:
+            // 1. Insert main user record
             .append_query_results([vec![get_user_mock("1")]])
+            // 2. Insert user option (ignore_password_expiry)
             .append_exec_results([MockExecResult {
                 rows_affected: 1,
                 ..Default::default()
             }])
+            // 3. Insert local_user record
             .append_query_results([vec![get_local_user_mock("1")]])
-            .append_query_results([Vec::<db_password::Model>::new()])
+            // 4. password::set_new_password with Vec::new() -> no expire, no delete
+            //    just insert new password record
             .append_query_results([vec![get_password_mock(1)]])
+            // 5. password::list after set_new_password
             .append_query_results([vec![get_password_mock(1)]])
+            // 6. Insert user option (ignore_password_expiry for user_options)
+            .append_exec_results([MockExecResult {
+                rows_affected: 1,
+                ..Default::default()
+            }])
             .into_connection();
         let req = UserCreateBuilder::default()
             .default_project_id("dpid")

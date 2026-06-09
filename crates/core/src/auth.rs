@@ -201,12 +201,11 @@ impl ValidatedSecurityContext {
             ctx.set_effective_roles(role_vec);
         }
 
-        if let Some(authz) = ctx.authorization() {
-            if !matches!(authz.scope, ScopeInfo::Unscoped)
-                && authz.effective_roles().is_none_or(|r| r.is_empty())
-            {
-                return Err(AuthenticationError::ActorHasNoRolesOnTarget);
-            }
+        if let Some(authz) = ctx.authorization()
+            && !matches!(authz.scope, ScopeInfo::Unscoped)
+            && authz.effective_roles().is_none_or(|r| r.is_empty())
+        {
+            return Err(AuthenticationError::ActorHasNoRolesOnTarget);
         }
         Ok(ValidatedSecurityContext(ctx))
     }

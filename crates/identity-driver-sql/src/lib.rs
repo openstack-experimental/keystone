@@ -17,6 +17,7 @@ use std::collections::HashSet;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sea_orm::{DatabaseConnection, Schema, sea_query::Index};
+use secrecy::SecretString;
 
 use openstack_keystone_core::auth::AuthenticationResult;
 use openstack_keystone_core::identity::IdentityProviderError;
@@ -553,6 +554,35 @@ impl IdentityBackend for SqlBackend {
     ) -> Result<UserResponse, IdentityProviderError> {
         let config = state.config_manager.config.read().await;
         Ok(user::update(&config, &state.db, user_id, user).await?)
+    }
+
+    /// Update user password.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `user_id`: The ID of the user to update.
+    /// - `original_password`: The current password for verification.
+    /// - `new_password`: The new password to set.
+    ///
+    /// # Returns
+    /// A `Result` containing `()` if successful, or an `Error`.
+    #[tracing::instrument(skip(self, state, original_password, new_password))]
+    async fn update_user_password<'a>(
+        &self,
+        state: &ServiceState,
+        user_id: &'a str,
+        original_password: SecretString,
+        new_password: SecretString,
+    ) -> Result<(), IdentityProviderError> {
+        let config = state.config_manager.config.read().await;
+        Ok(local_user::update_password(
+            &state.db,
+            &config,
+            user_id,
+            original_password,
+            new_password,
+        )
+        .await?)
     }
 }
 

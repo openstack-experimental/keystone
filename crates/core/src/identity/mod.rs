@@ -35,6 +35,7 @@
 
 use async_trait::async_trait;
 use chrono::{DateTime, NaiveDate, NaiveDateTime, Utc};
+use secrecy::SecretString;
 use std::collections::HashSet;
 
 use openstack_keystone_config::Config;
@@ -301,6 +302,36 @@ impl IdentityApi for IdentityProvider {
             Self::Service(provider) => provider.update_user(state, user_id, user).await,
             #[cfg(any(test, feature = "mock"))]
             Self::Mock(provider) => provider.update_user(state, user_id, user).await,
+        }
+    }
+
+    /// Update user password.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `user_id`: The ID of the user to update.
+    /// - `original_password`: The current password for verification.
+    /// - `new_password`: The new password to set.
+    #[tracing::instrument(skip(self, state, original_password, new_password))]
+    async fn update_user_password<'a>(
+        &self,
+        state: &ServiceState,
+        user_id: &'a str,
+        original_password: SecretString,
+        new_password: SecretString,
+    ) -> Result<(), IdentityProviderError> {
+        match self {
+            Self::Service(provider) => {
+                provider
+                    .update_user_password(state, user_id, original_password, new_password)
+                    .await
+            }
+            #[cfg(any(test, feature = "mock"))]
+            Self::Mock(provider) => {
+                provider
+                    .update_user_password(state, user_id, original_password, new_password)
+                    .await
+            }
         }
     }
 

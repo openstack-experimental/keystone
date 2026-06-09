@@ -16,16 +16,14 @@
 use sea_orm::DatabaseConnection;
 use sea_orm::TransactionTrait;
 use sea_orm::entity::*;
-use sea_orm::query::*;
 
 use openstack_keystone_config::Config;
 use openstack_keystone_core::error::DbContextExt;
 use openstack_keystone_core::identity::IdentityProviderError;
 use openstack_keystone_core_types::identity::{UserResponse, UserUpdate};
 
-use crate::entity::prelude::LocalUser;
-use crate::entity::{local_user as db_local_user, user as db_user};
-use crate::local_user;
+use crate::entity::{local_user as db_local_user, password as db_password, user as db_user};
+use crate::local_user::load_local_user_with_passwords;
 
 /// Update an existing user.
 ///
@@ -88,51 +86,33 @@ pub async fn update(
     // Only load local user if we need to update name or password
     if user.name.is_some() || user.password.is_some() {
         // Load local user for name and password updates
-        let mut local_user_result = LocalUser::find()
-            .filter(db_local_user::Column::UserId.eq(user_id))
-            .one(&txn)
-            .await
-            .context("fetching local user for update")?;
+        let (local_user, passwords) =
+            load_local_user_with_passwords(&txn, Some(user_id), None::<&str>, None::<&str>)
+                .await?
+                .ok_or(IdentityProviderError::UserNotFound(user_id.to_string()))?;
 
-        // If local_user doesn't exist, create one (name will be updated if provided)
-        if local_user_result.is_none() {
-            local_user_result = Some(
-                db_local_user::ActiveModel {
-                    id: NotSet,
-                    user_id: Set(user_id.to_string()),
-                    domain_id: Set(existing_user.domain_id.clone()),
-                    // Will be overwritten by the name update below if provided
-                    name: Set(user.name.clone().unwrap_or_default()),
-                    failed_auth_count: NotSet,
-                    failed_auth_at: NotSet,
-                }
-                .insert(&txn)
+        // Update name if provided in the patch
+        if let Some(ref name) = user.name {
+            let mut lu_active: db_local_user::ActiveModel = local_user.clone().into();
+            lu_active.name = Set(name.clone());
+            lu_active
+                .update(&txn)
                 .await
-                .context("inserting new local user record")?,
-            );
+                .context("updating local user entry")?;
         }
 
-        if let Some(local_user_model) = &local_user_result {
-            // Update name if provided in the patch
-            if let Some(ref name) = user.name {
-                let mut lu_active: db_local_user::ActiveModel = local_user_model.clone().into();
-                lu_active.name = Set(name.clone());
-                lu_active
-                    .update(&txn)
-                    .await
-                    .context("updating local user entry")?;
-            }
-
-            // Update password if provided in the patch
-            if let Some(ref new_password) = user.password {
-                local_user::set_new_password(
-                    &txn,
-                    conf,
-                    local_user_model.id,
-                    secrecy::SecretString::from(new_password.as_str()),
-                )
-                .await?;
-            }
+        // Update password if provided in the patch
+        if let Some(ref new_password) = user.password {
+            // Load existing passwords for history check and set_new_password_with_existing
+            let passwords_vec: Vec<db_password::Model> = passwords.into_iter().collect();
+            crate::password::set_new_password(
+                &txn,
+                conf,
+                local_user.id,
+                secrecy::SecretString::from(new_password.as_str()),
+                passwords_vec,
+            )
+            .await?;
         }
     }
 
@@ -150,7 +130,7 @@ pub async fn update(
 
 #[cfg(test)]
 mod tests {
-    use sea_orm::{DatabaseBackend, MockDatabase};
+    use sea_orm::{DatabaseBackend, MockDatabase, MockExecResult};
 
     use crate::entity::password as db_password;
     use crate::entity::user_option as db_user_option;
@@ -158,7 +138,9 @@ mod tests {
     use openstack_keystone_core_types::identity::UserUpdate;
 
     use super::*;
-    use crate::local_user::tests::{get_local_user_mock, get_local_user_with_password_mock};
+    use crate::local_user::tests::{
+        get_local_user_mock, get_local_user_with_password_mock, get_local_user_with_passwords_mock,
+    };
 
     use crate::user::tests::get_user_mock;
 
@@ -218,10 +200,11 @@ mod tests {
             .append_query_results([vec![get_user_mock("1")]])
             // 2. Update user entry returns updated user
             .append_query_results([vec![get_user_mock("1")]])
-            // 3. Fetch local_user for name update
-            .append_query_results([vec![get_local_user_mock("1")]])
+            // 3. load_local_user_with_passwords (for name update)
+            .append_query_results([get_local_user_with_password_mock("1", 1)])
             // 4. Update local_user entry returns updated local user
             .append_query_results([vec![get_local_user_mock("1")]])
+            // Commit
             // Post-transaction queries (user::get()):
             // 5. Fetch user by ID
             .append_query_results([vec![get_user_mock("1")]])
@@ -252,10 +235,14 @@ mod tests {
             .append_query_results([vec![get_user_mock("1")]])
             // 2. Update user entry (no-op but still issues UPDATE)
             .append_query_results([vec![get_user_mock("1")]])
-            // 3. Fetch local_user
-            .append_query_results([vec![get_local_user_mock("1")]])
-            // 4. Fetch existing passwords (empty)
-            .append_query_results([Vec::<db_password::Model>::new()])
+            // 3. load_local_user_with_passwords (local_user has 1 existing password)
+            .append_query_results([get_local_user_with_password_mock("1", 1)])
+            // 4. set_new_password -> check_history passes -> unique_count=0 -> keep_count=0
+            //    split_at(0, 1) = ([], [pw]) -> expire: 0, delete: 1
+            .append_exec_results([MockExecResult {
+                rows_affected: 1,
+                ..Default::default()
+            }])
             // 5. Insert new password
             .append_query_results([vec![make_pwd(10, 999, false)]])
             // Commit
@@ -279,10 +266,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_update_password_with_history_truncation() {
-        // Config: unique_last_password_count=1 means keep 1 old password
+        // Config: unique_last_password_count=1 means expire 1 newest, delete 2 older.
         let mut conf = Config::default();
-        // unique=1 → history=2 → keep 1 old. 3 existing → truncate oldest 2.
-        // Expire the 1 kept password, then insert new.
         conf.security_compliance.unique_last_password_count = Some(1);
 
         let existing = vec![
@@ -311,19 +296,28 @@ mod tests {
             .append_query_results([vec![get_user_mock("1")]])
             // 2. Update user entry
             .append_query_results([vec![get_user_mock("1")]])
-            // 3. Fetch local_user
-            .append_query_results([vec![get_local_user_mock("1")]])
-            // 4. Fetch existing passwords (3, DESC by created_at_int)
-            .append_query_results([existing])
-            // 5. Expire the 1 kept password (truncated list after rev+take(1))
+            // 3. load_local_user_with_passwords (LEFT JOIN returns pairs + existing passwords)
+            .append_query_results([get_local_user_with_passwords_mock("1", &existing)])
+            // 4. set_new_password -> check_history passes, expire 1 newest
             .append_query_results([vec![
                 db_password::ModelBuilder::default()
-                    .id(3)
-                    .created_at_int(100)
+                    .id(1)
+                    .created_at_int(300)
                     .local_user_id(1)
                     .build()
                     .unwrap(),
             ]])
+            // 5. Delete the 2 older passwords (id=2, id=3)
+            .append_exec_results([
+                MockExecResult {
+                    rows_affected: 1,
+                    ..Default::default()
+                },
+                MockExecResult {
+                    rows_affected: 1,
+                    ..Default::default()
+                },
+            ])
             // 6. Insert new password
             .append_query_results([vec![make_pwd(10, 999, false)]])
             // Post-transaction:
@@ -356,10 +350,13 @@ mod tests {
             .append_query_results([vec![get_user_mock("1")]])
             // 2. Update user entry
             .append_query_results([vec![get_user_mock("1")]])
-            // 3. Fetch local_user
-            .append_query_results([vec![get_local_user_mock("1")]])
-            // 4. Fetch existing passwords (empty)
-            .append_query_results([Vec::<db_password::Model>::new()])
+            // 3. load_local_user_with_passwords (with 1 existing password)
+            .append_query_results([get_local_user_with_password_mock("1", 1)])
+            // 4. set_new_password -> check_history passes -> unique=0 -> split_at -> delete 1
+            .append_exec_results([MockExecResult {
+                rows_affected: 1,
+                ..Default::default()
+            }])
             // 5. Insert new password (with expires_at set by config)
             .append_query_results([vec![
                 db_password::ModelBuilder::default()
@@ -397,12 +394,15 @@ mod tests {
             .append_query_results([vec![get_user_mock("1")]])
             // 2. Update user entry
             .append_query_results([vec![get_user_mock("1")]])
-            // 3. Fetch local_user
-            .append_query_results([vec![get_local_user_mock("1")]])
+            // 3. load_local_user_with_passwords (with 1 existing password)
+            .append_query_results([get_local_user_with_password_mock("1", 1)])
             // 4. Update local_user (name change)
             .append_query_results([vec![get_local_user_mock("1")]])
-            // 5. Fetch existing passwords (empty)
-            .append_query_results([Vec::<db_password::Model>::new()])
+            // 5. set_new_password -> check_history passes -> unique=0 -> delete 1 existing
+            .append_exec_results([MockExecResult {
+                rows_affected: 1,
+                ..Default::default()
+            }])
             // 6. Insert new password
             .append_query_results([vec![make_pwd(10, 999, false)]])
             // Post-transaction:
@@ -422,5 +422,61 @@ mod tests {
 
         let result = update(&conf, &db, "1", req).await;
         assert!(result.is_ok(), "update failed: {:?}", result.err());
+    }
+
+    #[tokio::test]
+    async fn test_update_password_history_reuse_rejected() {
+        // Config: unique_last_password_count=2, password history is checked
+        let mut conf = Config::default();
+        conf.security_compliance.unique_last_password_count = Some(2);
+        conf.identity.password_hashing_algorithm =
+            openstack_keystone_config::PasswordHashingAlgo::None;
+
+        let old_password = "old_password";
+        let new_password = "old_password"; // Same as an existing password in history
+
+        let existing = vec![
+            db_password::ModelBuilder::default()
+                .id(1)
+                .created_at_int(300)
+                .local_user_id(1)
+                .password_hash(old_password.to_string())
+                .build()
+                .unwrap(),
+            db_password::ModelBuilder::default()
+                .id(2)
+                .created_at_int(200)
+                .local_user_id(1)
+                .password_hash(old_password.to_string())
+                .build()
+                .unwrap(),
+        ];
+
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            // 1. Fetch existing user
+            .append_query_results([vec![get_user_mock("1")]])
+            // 2. Update user entry
+            .append_query_results([vec![get_user_mock("1")]])
+            // 3. load_local_user_with_passwords (with 2 existing passwords)
+            .append_query_results([get_local_user_with_passwords_mock("1", &existing)])
+            // set_new_password -> check_history rejects immediately, no further operations
+            .into_connection();
+
+        let req = UserUpdate {
+            password: Some(new_password.to_string()),
+            ..Default::default()
+        };
+
+        let result = update(&conf, &db, "1", req).await;
+        assert!(
+            matches!(
+                result,
+                Err(IdentityProviderError::SecurityCompliance(
+                    openstack_keystone_config::SecurityComplianceError::PasswordInvalid(_)
+                ))
+            ),
+            "reusing a password from history should be rejected, got: {:?}",
+            result
+        );
     }
 }

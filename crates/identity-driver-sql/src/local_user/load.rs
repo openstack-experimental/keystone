@@ -38,8 +38,13 @@ use crate::entity::{
 /// A `Result` containing an `Option` with the `(local_user::Model, impl
 /// IntoIterator<Item = password::Model>)` if found, or an `Error`.
 #[tracing::instrument(skip_all)]
-pub async fn load_local_user_with_passwords<S1: AsRef<str>, S2: AsRef<str>, S3: AsRef<str>>(
-    db: &DatabaseConnection,
+pub async fn load_local_user_with_passwords<
+    C: ConnectionTrait,
+    S1: AsRef<str>,
+    S2: AsRef<str>,
+    S3: AsRef<str>,
+>(
+    db: &C,
     user_id: Option<S1>,
     name: Option<S2>,
     domain_id: Option<S3>,
@@ -84,8 +89,11 @@ pub async fn load_local_user_with_passwords<S1: AsRef<str>, S2: AsRef<str>, S3: 
 /// # Returns
 /// A `Result` containing a list of optional password vectors, or an `Error`.
 #[tracing::instrument(skip_all)]
-pub async fn load_local_users_passwords<L: IntoIterator<Item = Option<i32>> + std::fmt::Debug>(
-    db: &DatabaseConnection,
+pub async fn load_local_users_passwords<
+    C: ConnectionTrait,
+    L: IntoIterator<Item = Option<i32>> + std::fmt::Debug,
+>(
+    db: &C,
     user_ids: L,
 ) -> Result<Vec<Option<Vec<password::Model>>>, IdentityProviderError> {
     let ids: Vec<Option<i32>> = user_ids.into_iter().collect();
