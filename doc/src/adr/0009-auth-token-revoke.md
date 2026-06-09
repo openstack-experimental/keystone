@@ -42,8 +42,8 @@ The table has following fields:
 
 ### Token revocation
 
-When a revocation of thecurrently valid token is being requested the record with
-the following information is being inserted into the database:
+When a revocation of a valid token is being requested the record with the
+following information is being inserted into the database:
 
 - `audit_id` is populated with the first entry of the token `audit_ids` list.
   When this list is empty an error is being returned.

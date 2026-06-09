@@ -28,6 +28,8 @@
     - [Distributed Storage](adr/0016-raft-storage.md)
     - [Security Context](adr/0017-security-context.md)
     - [Plugin linking](adr/0018-plugin-linking.md)
+    - [Credentials API](adr/0019-credentials.md)
+    - [Mapping Engine](adr/0020-mapping-engine.md)
 - [Policy enforcement](policy.md)
 - [Fernet token]()
   - [Token payloads]()
