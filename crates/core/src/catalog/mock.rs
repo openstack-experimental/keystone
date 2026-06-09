@@ -32,7 +32,19 @@ mock! {
             region: RegionCreate,
         ) -> Result<Region, CatalogProviderError>;
 
+        async fn create_service(
+            &self,
+            state: &ServiceState,
+            service: ServiceCreate,
+        ) -> Result<Service, CatalogProviderError>;
+
         async fn delete_region<'a>(
+            &self,
+            state: &ServiceState,
+            id: &'a str,
+        ) -> Result<(), CatalogProviderError>;
+
+        async fn delete_service<'a>(
             &self,
             state: &ServiceState,
             id: &'a str,
@@ -86,5 +98,12 @@ mock! {
             id: &'a str,
             region: RegionUpdate,
         ) -> Result<Region, CatalogProviderError>;
+
+        async fn update_service<'a>(
+            &self,
+            state: &ServiceState,
+            id: &'a str,
+            service: ServiceUpdate,
+        ) -> Result<Service, CatalogProviderError>;
     }
 }

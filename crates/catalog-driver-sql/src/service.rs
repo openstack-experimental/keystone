@@ -12,19 +12,27 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use sea_orm::entity::*;
 use serde_json::Value;
 use tracing::error;
+use uuid::Uuid;
 
 use openstack_keystone_core::catalog::CatalogProviderError;
 use openstack_keystone_core_types::catalog::*;
 
 use crate::entity::service as db_service;
 
+mod create;
+mod delete;
 mod get;
 mod list;
+mod update;
 
+pub use create::create;
+pub use delete::delete;
 pub use get::get;
 pub use list::list;
+pub use update::update;
 
 impl TryFrom<db_service::Model> for Service {
     type Error = CatalogProviderError;
@@ -49,9 +57,6 @@ impl TryFrom<db_service::Model> for Service {
         {
             match serde_json::from_str::<Value>(extra) {
                 Ok(val) => {
-                    if let Some(name) = val.get("name").and_then(|x| x.as_str()) {
-                        builder.name(name);
-                    }
                     builder.extra(val);
                 }
                 Err(e) => {
@@ -61,6 +66,29 @@ impl TryFrom<db_service::Model> for Service {
         }
 
         Ok(builder.build()?)
+    }
+}
+
+impl TryFrom<ServiceCreate> for db_service::ActiveModel {
+    type Error = CatalogProviderError;
+
+    /// Tries to convert service creation parameters into a database active
+    /// model.
+    ///
+    /// # Parameters
+    /// - `value`: The service creation parameters.
+    ///
+    /// # Returns
+    /// A `Result` containing the `ActiveModel`, or a `CatalogProviderError`.
+    fn try_from(value: ServiceCreate) -> Result<Self, Self::Error> {
+        Ok(Self {
+            id: Set(value
+                .id
+                .unwrap_or_else(|| Uuid::new_v4().simple().to_string())),
+            r#type: Set(value.r#type),
+            enabled: Set(value.enabled),
+            extra: Set(Some(serde_json::to_string(&value.extra)?)),
+        })
     }
 }
 

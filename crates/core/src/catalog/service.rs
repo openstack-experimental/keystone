@@ -67,6 +67,23 @@ impl CatalogApi for CatalogService {
         self.backend_driver.create_region(state, region).await
     }
 
+    /// Create a new service.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `service`: The service creation parameters.
+    ///
+    /// # Returns
+    /// A `Result` containing the created `Service`, or a `CatalogProviderError`.
+    async fn create_service(
+        &self,
+        state: &ServiceState,
+        service: ServiceCreate,
+    ) -> Result<Service, CatalogProviderError> {
+        service.validate()?;
+        self.backend_driver.create_service(state, service).await
+    }
+
     /// Delete a region by ID.
     ///
     /// # Parameters
@@ -81,6 +98,22 @@ impl CatalogApi for CatalogService {
         id: &'a str,
     ) -> Result<(), CatalogProviderError> {
         self.backend_driver.delete_region(state, id).await
+    }
+
+    /// Delete a service by ID.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `id`: The unique identifier of the service.
+    ///
+    /// # Returns
+    /// A `Result` indicating success or a `CatalogProviderError`.
+    async fn delete_service<'a>(
+        &self,
+        state: &ServiceState,
+        id: &'a str,
+    ) -> Result<(), CatalogProviderError> {
+        self.backend_driver.delete_service(state, id).await
     }
 
     /// Get catalog.
@@ -200,6 +233,7 @@ impl CatalogApi for CatalogService {
         state: &ServiceState,
         params: &ServiceListParameters,
     ) -> Result<Vec<Service>, CatalogProviderError> {
+        params.validate()?;
         self.backend_driver.list_services(state, params).await
     }
 
@@ -220,5 +254,24 @@ impl CatalogApi for CatalogService {
     ) -> Result<Region, CatalogProviderError> {
         region.validate()?;
         self.backend_driver.update_region(state, id, region).await
+    }
+
+    /// Update an existing service.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `id`: The unique identifier of the service.
+    /// - `service`: The fields to change.
+    ///
+    /// # Returns
+    /// A `Result` containing the updated `Service`, or a `CatalogProviderError`.
+    async fn update_service<'a>(
+        &self,
+        state: &ServiceState,
+        id: &'a str,
+        service: ServiceUpdate,
+    ) -> Result<Service, CatalogProviderError> {
+        service.validate()?;
+        self.backend_driver.update_service(state, id, service).await
     }
 }

@@ -35,6 +35,20 @@ pub trait CatalogApi: Send + Sync {
         region: RegionCreate,
     ) -> Result<Region, CatalogProviderError>;
 
+    /// Create a new service.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `service`: The service creation parameters.
+    ///
+    /// # Returns
+    /// A `Result` containing the created `Service`, or a `CatalogProviderError`.
+    async fn create_service(
+        &self,
+        state: &ServiceState,
+        service: ServiceCreate,
+    ) -> Result<Service, CatalogProviderError>;
+
     /// Delete a region by ID.
     ///
     /// # Parameters
@@ -44,6 +58,20 @@ pub trait CatalogApi: Send + Sync {
     /// # Returns
     /// A `Result` indicating success or a `CatalogProviderError`.
     async fn delete_region<'a>(
+        &self,
+        state: &ServiceState,
+        id: &'a str,
+    ) -> Result<(), CatalogProviderError>;
+
+    /// Delete a service by ID.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `id`: The unique identifier of the service.
+    ///
+    /// # Returns
+    /// A `Result` indicating success or a `CatalogProviderError`.
+    async fn delete_service<'a>(
         &self,
         state: &ServiceState,
         id: &'a str,
@@ -169,4 +197,20 @@ pub trait CatalogApi: Send + Sync {
         id: &'a str,
         region: RegionUpdate,
     ) -> Result<Region, CatalogProviderError>;
+
+    /// Update an existing service.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `id`: The unique identifier of the service.
+    /// - `service`: The fields to change.
+    ///
+    /// # Returns
+    /// A `Result` containing the updated `Service`, or a `CatalogProviderError`.
+    async fn update_service<'a>(
+        &self,
+        state: &ServiceState,
+        id: &'a str,
+        service: ServiceUpdate,
+    ) -> Result<Service, CatalogProviderError>;
 }

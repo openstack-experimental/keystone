@@ -98,6 +98,27 @@ impl CatalogApi for CatalogProvider {
         }
     }
 
+    /// Create a new service.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `service`: The service creation parameters.
+    ///
+    /// # Returns
+    /// A `Result` containing the created `Service`, or a `CatalogProviderError`.
+    #[tracing::instrument(level = "info", skip(self, state))]
+    async fn create_service(
+        &self,
+        state: &ServiceState,
+        service: ServiceCreate,
+    ) -> Result<Service, CatalogProviderError> {
+        match self {
+            Self::Service(provider) => provider.create_service(state, service).await,
+            #[cfg(any(test, feature = "mock"))]
+            Self::Mock(provider) => provider.create_service(state, service).await,
+        }
+    }
+
     /// Delete a region by ID.
     ///
     /// # Parameters
@@ -116,6 +137,27 @@ impl CatalogApi for CatalogProvider {
             Self::Service(provider) => provider.delete_region(state, id).await,
             #[cfg(any(test, feature = "mock"))]
             Self::Mock(provider) => provider.delete_region(state, id).await,
+        }
+    }
+
+    /// Delete a service by ID.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `id`: The unique identifier of the service.
+    ///
+    /// # Returns
+    /// A `Result` indicating success or a `CatalogProviderError`.
+    #[tracing::instrument(level = "info", skip(self, state))]
+    async fn delete_service<'a>(
+        &self,
+        state: &ServiceState,
+        id: &'a str,
+    ) -> Result<(), CatalogProviderError> {
+        match self {
+            Self::Service(provider) => provider.delete_service(state, id).await,
+            #[cfg(any(test, feature = "mock"))]
+            Self::Mock(provider) => provider.delete_service(state, id).await,
         }
     }
 
@@ -293,6 +335,29 @@ impl CatalogApi for CatalogProvider {
             Self::Service(provider) => provider.update_region(state, id, region).await,
             #[cfg(any(test, feature = "mock"))]
             Self::Mock(provider) => provider.update_region(state, id, region).await,
+        }
+    }
+
+    /// Update an existing service.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `id`: The unique identifier of the service.
+    /// - `service`: The fields to change.
+    ///
+    /// # Returns
+    /// A `Result` containing the updated `Service`, or a `CatalogProviderError`.
+    #[tracing::instrument(level = "info", skip(self, state))]
+    async fn update_service<'a>(
+        &self,
+        state: &ServiceState,
+        id: &'a str,
+        service: ServiceUpdate,
+    ) -> Result<Service, CatalogProviderError> {
+        match self {
+            Self::Service(provider) => provider.update_service(state, id, service).await,
+            #[cfg(any(test, feature = "mock"))]
+            Self::Mock(provider) => provider.update_service(state, id, service).await,
         }
     }
 }

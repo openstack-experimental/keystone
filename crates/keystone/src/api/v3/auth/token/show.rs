@@ -112,7 +112,7 @@ pub(super) async fn show(
                 .into_iter()
                 .map(|(s, es)| CatalogService {
                     id: s.id.clone(),
-                    name: s.name.clone(),
+                    name: s.name(),
                     r#type: s.r#type,
                     endpoints: es.into_iter().map(Into::into).collect(),
                 })

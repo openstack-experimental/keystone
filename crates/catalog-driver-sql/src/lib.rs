@@ -72,6 +72,23 @@ impl CatalogBackend for SqlBackend {
         Ok(region::create(&state.db, region_data).await?)
     }
 
+    /// Create a new service.
+    ///
+    /// # Parameters
+    /// - `state`: The service state containing the database connection.
+    /// - `service_data`: The service creation parameters.
+    ///
+    /// # Returns
+    /// A `Result` containing the created `Service`, or a `CatalogProviderError`.
+    #[tracing::instrument(level = "debug", skip(self, state))]
+    async fn create_service(
+        &self,
+        state: &ServiceState,
+        service_data: ServiceCreate,
+    ) -> Result<Service, CatalogProviderError> {
+        Ok(service::create(&state.db, service_data).await?)
+    }
+
     /// Delete a region by ID.
     ///
     /// # Parameters
@@ -87,6 +104,23 @@ impl CatalogBackend for SqlBackend {
         id: &'a str,
     ) -> Result<(), CatalogProviderError> {
         Ok(region::delete(&state.db, id).await?)
+    }
+
+    /// Delete a service by ID.
+    ///
+    /// # Parameters
+    /// - `state`: The service state containing the database connection.
+    /// - `id`: The ID of the service to delete.
+    ///
+    /// # Returns
+    /// A `Result` indicating success or a `CatalogProviderError`.
+    #[tracing::instrument(level = "debug", skip(self, state))]
+    async fn delete_service<'a>(
+        &self,
+        state: &ServiceState,
+        id: &'a str,
+    ) -> Result<(), CatalogProviderError> {
+        Ok(service::delete(&state.db, id).await?)
     }
 
     /// Get the catalog (services with endpoints).
@@ -232,6 +266,25 @@ impl CatalogBackend for SqlBackend {
     ) -> Result<Region, CatalogProviderError> {
         Ok(region::update(&state.db, id, region_data).await?)
     }
+
+    /// Update an existing service.
+    ///
+    /// # Parameters
+    /// - `state`: The service state containing the database connection.
+    /// - `id`: The ID of the service to update.
+    /// - `service_data`: The fields to change.
+    ///
+    /// # Returns
+    /// A `Result` containing the updated `Service`, or a `CatalogProviderError`.
+    #[tracing::instrument(level = "debug", skip(self, state))]
+    async fn update_service<'a>(
+        &self,
+        state: &ServiceState,
+        id: &'a str,
+        service_data: ServiceUpdate,
+    ) -> Result<Service, CatalogProviderError> {
+        Ok(service::update(&state.db, id, service_data).await?)
+    }
 }
 
 async fn get_catalog(
@@ -313,7 +366,6 @@ mod tests {
                     id: "1".into(),
                     r#type: Some("type".into()),
                     enabled: true,
-                    name: Some("srv".into()),
                     extra: Some(json!({"name": "srv"})),
                 },
                 vec![

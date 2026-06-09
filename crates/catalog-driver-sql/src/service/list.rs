@@ -40,13 +40,22 @@ pub async fn list(
         select = select.filter(db_service::Column::Type.eq(typ));
     }
 
-    select
+    let mut services: Vec<Service> = select
         .all(db)
         .await
         .context("fetching services")?
         .into_iter()
         .map(TryInto::<Service>::try_into)
-        .collect()
+        .collect::<Result<_, _>>()?;
+
+    // The service `name` is stored inside the `extra` JSON blob, so it cannot be
+    // filtered in the database query; apply it as a post-filter on the fetched
+    // rows instead.
+    if let Some(name) = &params.name {
+        services.retain(|service| service.name().as_deref() == Some(name.as_str()));
+    }
+
+    Ok(services)
 }
 
 #[cfg(test)]
@@ -64,24 +73,29 @@ mod tests {
             .append_query_results([vec![get_service_mock("1")]])
             .append_query_results([vec![get_service_mock("1")]])
             .into_connection();
-        assert!(list(&db, &ServiceListParameters::default()).await.is_ok());
+        assert_eq!(
+            list(&db, &ServiceListParameters::default()).await.unwrap(),
+            vec![Service {
+                id: "1".into(),
+                r#type: Some("type".into()),
+                enabled: true,
+                extra: Some(json!({"name": "srv"})),
+            }]
+        );
+        // The `type` filter is pushed down to the database query (see the
+        // transaction log below).
         assert_eq!(
             list(
                 &db,
                 &ServiceListParameters {
                     r#type: Some("type".into()),
-                    name: Some("service_name".into())
+                    name: None,
                 }
             )
             .await
-            .unwrap(),
-            vec![Service {
-                id: "1".into(),
-                r#type: Some("type".into()),
-                enabled: true,
-                name: Some("srv".into()),
-                extra: Some(json!({"name": "srv"})),
-            }]
+            .unwrap()
+            .len(),
+            1
         );
 
         // Checking transaction log
@@ -100,5 +114,39 @@ mod tests {
                 ),
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn test_list_filter_by_name() {
+        // Two services whose names are stored inside the `extra` blob.
+        let alpha = db_service::Model {
+            id: "1".into(),
+            r#type: Some("type".into()),
+            enabled: true,
+            extra: Some(r#"{"name":"alpha"}"#.into()),
+        };
+        let beta = db_service::Model {
+            id: "2".into(),
+            r#type: Some("type".into()),
+            enabled: true,
+            extra: Some(r#"{"name":"beta"}"#.into()),
+        };
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([vec![alpha, beta]])
+            .into_connection();
+
+        // Only the service named "alpha" should survive the post-filter.
+        let result = list(
+            &db,
+            &ServiceListParameters {
+                name: Some("alpha".into()),
+                r#type: None,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].id, "1");
+        assert_eq!(result[0].name().as_deref(), Some("alpha"));
     }
 }
