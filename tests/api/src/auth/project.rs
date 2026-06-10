@@ -20,6 +20,10 @@ use openstack_keystone_api_types::v3::project::ProjectShort;
 use openstack_sdk::api::rest_endpoint_prelude::*;
 use openstack_sdk::{AsyncOpenStack, api::QueryAsync, config::CloudConfig};
 
+use crate::common::{TestClient, get_password_auth};
+use crate::guard::ResourceGuard;
+use tracing_test::traced_test;
+
 #[derive(Clone, Debug)]
 struct AuthProjectsRequest {}
 
@@ -55,5 +59,57 @@ async fn test_list_user_projects() -> Result<()> {
     let test_client = Arc::new(AsyncOpenStack::new(&CloudConfig::from_env()?).await?);
     let projects = list_auth_projects(&test_client).await?;
     assert!(!projects.is_empty());
+    Ok(())
+}
+
+#[tokio::test]
+#[traced_test]
+async fn test_auth_projects_empty_for_user_without_roles() -> Result<()> {
+    use crate::identity::user::create_user;
+    use openstack_keystone_api_types::v3::user::UserCreateBuilder;
+    use uuid::Uuid;
+
+    let tc = Arc::new(AsyncOpenStack::new(&CloudConfig::from_env()?).await?);
+    let name = format!("usr_{}", Uuid::new_v4().simple());
+    let password = "TestPassword123!";
+
+    // Create a user with no role assignments
+    let guard = create_user(
+        &tc,
+        UserCreateBuilder::default()
+            .name(&name)
+            .domain_id("default")
+            .enabled(true)
+            .password(password)
+            .build()?,
+    )
+    .await?;
+
+    // Authenticate as the user with no scope
+    let mut user_client = TestClient::default()?;
+    user_client
+        .auth_password(
+            get_password_auth(&guard.name, password, &guard.domain_id)?,
+            None,
+        )
+        .await?;
+
+    // /auth/projects should return empty list since user has no roles
+    let rsp = user_client
+        .client
+        .get(user_client.base_url.join("v3/auth/projects")?)
+        .send()
+        .await?;
+
+    let body: serde_json::Value = rsp.json().await?;
+    let projects = body["projects"].as_array().map(|a| a.len()).unwrap_or(0);
+
+    assert_eq!(
+        projects, 0,
+        "Expected empty project list for user with no roles, got {}",
+        projects
+    );
+
+    guard.delete().await?;
     Ok(())
 }
