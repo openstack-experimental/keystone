@@ -48,11 +48,13 @@ pub struct UnixSocketListener {
     #[serde(deserialize_with = "csv")]
     pub trust_domains: Vec<String>,
 
-    /// If set, reject connections from clients whose UID does not match this value.
+    /// If set, reject connections from clients whose UID does not match this
+    /// value.
     #[serde(deserialize_with = "option_u32_from_str_or_int", default)]
     pub peer_uid: Option<u32>,
 
-    /// If set, reject connections from clients whose GID does not match this value.
+    /// If set, reject connections from clients whose GID does not match this
+    /// value.
     #[serde(deserialize_with = "option_u32_from_str_or_int", default)]
     pub peer_gid: Option<u32>,
 }

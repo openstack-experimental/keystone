@@ -11,31 +11,27 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+//! # Role provider hooks for inter-provider events.
 
-//! # OpenStack Keystone core provider types
+use crate::events::ProviderHooks;
+use crate::keystone::ServiceState;
+use async_trait::async_trait;
+use openstack_keystone_core_types::events::Event;
 
-#![allow(clippy::module_inception)]
-#![deny(clippy::unwrap_used)]
+/// Hook that subscribes the role provider to inter-provider events.
+pub struct RoleHook {
+    #[allow(unused)]
+    state: ServiceState,
+}
 
-pub mod application_credential;
-pub mod assignment;
-pub mod auth;
-pub mod catalog;
-pub mod error;
-pub mod events;
-pub mod federation;
-pub mod identity;
-pub mod identity_mapping;
-pub mod k8s_auth;
-pub mod resource;
-pub mod revoke;
-pub mod role;
-pub mod scope;
-pub mod spiffe;
-pub mod token;
-pub mod trust;
+impl RoleHook {
+    /// Create a new hook bound to the given service state.
+    pub fn new(state: ServiceState) -> Self {
+        Self { state }
+    }
+}
 
-/// Return `true` to be used as a positive default for the serde macros.
-pub fn default_true() -> bool {
-    true
+#[async_trait]
+impl ProviderHooks for RoleHook {
+    async fn on_event(&self, _event: &Event) {}
 }

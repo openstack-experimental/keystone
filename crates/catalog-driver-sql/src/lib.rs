@@ -79,7 +79,8 @@ impl CatalogBackend for SqlBackend {
     /// - `service_data`: The service creation parameters.
     ///
     /// # Returns
-    /// A `Result` containing the created `Service`, or a `CatalogProviderError`.
+    /// A `Result` containing the created `Service`, or a
+    /// `CatalogProviderError`.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn create_service(
         &self,
@@ -220,7 +221,8 @@ impl CatalogBackend for SqlBackend {
     /// - `params`: The parameters for listing regions.
     ///
     /// # Returns
-    /// A `Result` containing a vector of `Region`s, or a `CatalogProviderError`.
+    /// A `Result` containing a vector of `Region`s, or a
+    /// `CatalogProviderError`.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn list_regions(
         &self,
@@ -275,7 +277,8 @@ impl CatalogBackend for SqlBackend {
     /// - `service_data`: The fields to change.
     ///
     /// # Returns
-    /// A `Result` containing the updated `Service`, or a `CatalogProviderError`.
+    /// A `Result` containing the updated `Service`, or a
+    /// `CatalogProviderError`.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn update_service<'a>(
         &self,

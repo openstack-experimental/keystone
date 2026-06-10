@@ -54,8 +54,8 @@ pub async fn create_region(
     Ok(AsyncResourceGuard::new(res, state.clone()))
 }
 
-/// Create a service through the catalog provider, returning a guard that deletes
-/// it again when dropped.
+/// Create a service through the catalog provider, returning a guard that
+/// deletes it again when dropped.
 pub async fn create_service(
     state: &ServiceState,
     data: ServiceCreate,

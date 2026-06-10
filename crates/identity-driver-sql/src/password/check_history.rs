@@ -22,9 +22,9 @@ use crate::entity::password as db_password;
 
 /// Check if a new password matches any password in the history.
 ///
-/// Compares the new password against the most recent `unique_last_password_count`
-/// password hashes. Returns an error if the new password matches any hash in
-/// the history window.
+/// Compares the new password against the most recent
+/// `unique_last_password_count` password hashes. Returns an error if the new
+/// password matches any hash in the history window.
 ///
 /// # Parameters
 /// - `conf`: The service configuration.

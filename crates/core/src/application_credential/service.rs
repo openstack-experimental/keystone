@@ -24,6 +24,7 @@ use validator::Validate;
 
 use openstack_keystone_config::Config;
 use openstack_keystone_core_types::application_credential::*;
+use openstack_keystone_core_types::events::{Event, EventPayload, Operation};
 use openstack_keystone_core_types::role::{Role, RoleListParameters};
 
 use crate::application_credential::{
@@ -109,9 +110,23 @@ impl ApplicationCredentialApi for ApplicationCredentialService {
         if new_rec.secret.is_none() {
             new_rec.secret = Some(generate_secret());
         }
-        self.backend_driver
-            .create_application_credential(state, new_rec)
-            .await
+        let response = self
+            .backend_driver
+            .create_application_credential(state, new_rec.clone())
+            .await?;
+
+        state
+            .event_dispatcher
+            .emit(Event::new(
+                Operation::Create,
+                EventPayload::ApplicationCredential {
+                    id: new_rec.id.unwrap_or_default(),
+                    project_id: new_rec.project_id.clone(),
+                },
+            ))
+            .await;
+
+        Ok(response)
     }
 
     /// Get a single application credential by ID.

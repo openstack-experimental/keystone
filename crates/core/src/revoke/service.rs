@@ -110,6 +110,12 @@ mod tests {
     use crate::revoke::backend::MockRevokeBackend;
     use crate::tests::get_mocked_state;
 
+    fn create_revoke_provider(backend: MockRevokeBackend) -> RevokeService {
+        RevokeService {
+            backend_driver: Arc::new(backend),
+        }
+    }
+
     #[tokio::test]
     async fn test_create_revocation_event() {
         let state = get_mocked_state(None, None).await;
@@ -117,9 +123,7 @@ mod tests {
         backend
             .expect_create_revocation_event()
             .returning(|_, _| Ok(RevocationEvent::default()));
-        let provider = RevokeService {
-            backend_driver: Arc::new(backend),
-        };
+        let provider = create_revoke_provider(backend);
 
         assert!(
             provider

@@ -287,6 +287,12 @@ mod tests {
     use crate::tests::get_mocked_state;
     use crate::trust::backend::MockTrustBackend;
 
+    fn create_trust_service(backend: MockTrustBackend) -> TrustService {
+        TrustService {
+            backend_driver: Arc::new(backend),
+        }
+    }
+
     #[tokio::test]
     async fn test_get_trust() {
         let mut role_mock = MockRoleProvider::default();
@@ -313,9 +319,7 @@ mod tests {
                 }))
             });
 
-        let trust_provider = TrustService {
-            backend_driver: Arc::new(backend),
-        };
+        let trust_provider = create_trust_service(backend);
 
         let trust: Trust = trust_provider
             .get_trust(&state, "fake_trust")
@@ -358,9 +362,7 @@ mod tests {
                 ]))
             });
 
-        let trust_provider = TrustService {
-            backend_driver: Arc::new(backend),
-        };
+        let trust_provider = create_trust_service(backend);
 
         let chain = trust_provider
             .get_trust_delegation_chain(&state, "fake_trust")
@@ -396,9 +398,7 @@ mod tests {
                 }))
             });
 
-        let trust_provider = TrustService {
-            backend_driver: Arc::new(backend),
-        };
+        let trust_provider = create_trust_service(backend);
         let trust = trust_provider
             .get_trust(&state, "fake_trust")
             .await
@@ -452,9 +452,7 @@ mod tests {
                 ]))
             });
 
-        let trust_provider = TrustService {
-            backend_driver: Arc::new(backend),
-        };
+        let trust_provider = create_trust_service(backend);
         let trust = trust_provider
             .get_trust(&state, "redelegated_trust")
             .await
@@ -515,9 +513,7 @@ mod tests {
                 ]))
             });
 
-        let trust_provider = TrustService {
-            backend_driver: Arc::new(backend),
-        };
+        let trust_provider = create_trust_service(backend);
         let trust = trust_provider
             .get_trust(&state, "redelegated_trust2")
             .await
@@ -591,9 +587,7 @@ mod tests {
                 ]))
             });
 
-        let trust_provider = TrustService {
-            backend_driver: Arc::new(backend),
-        };
+        let trust_provider = create_trust_service(backend);
         let trust = trust_provider
             .get_trust(&state, "redelegated_trust")
             .await
@@ -658,9 +652,7 @@ mod tests {
                 ]))
             });
 
-        let trust_provider = TrustService {
-            backend_driver: Arc::new(backend),
-        };
+        let trust_provider = create_trust_service(backend);
         let trust = trust_provider
             .get_trust(&state, "redelegated_trust2")
             .await
@@ -765,9 +757,7 @@ mod tests {
                 ]))
             });
 
-        let trust_provider = TrustService {
-            backend_driver: Arc::new(backend),
-        };
+        let trust_provider = create_trust_service(backend);
         let trust = trust_provider
             .get_trust(&state, "redelegated_trust2")
             .await
@@ -835,9 +825,7 @@ mod tests {
                 ])
             });
 
-        let trust_provider = TrustService {
-            backend_driver: Arc::new(backend),
-        };
+        let trust_provider = create_trust_service(backend);
 
         let list = trust_provider
             .list_trusts(&state, &TrustListParameters::default())

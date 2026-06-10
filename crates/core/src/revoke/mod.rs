@@ -39,6 +39,7 @@ use async_trait::async_trait;
 
 pub mod backend;
 pub mod error;
+pub mod hook;
 #[cfg(any(test, feature = "mock"))]
 mod mock;
 mod provider_api;
@@ -55,6 +56,7 @@ use crate::plugin_manager::PluginManagerApi;
 use crate::revoke::service::RevokeService;
 
 pub use error::RevokeProviderError;
+pub use hook::RevokeHook;
 #[cfg(any(test, feature = "mock"))]
 pub use mock::MockRevokeProvider;
 pub use provider_api::RevokeApi;

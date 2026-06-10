@@ -86,6 +86,7 @@ pub mod catalog;
 pub mod common;
 pub mod db;
 pub mod error;
+pub mod events;
 pub mod federation;
 pub mod identity;
 pub mod identity_mapping;

@@ -137,7 +137,8 @@ pub struct SecurityComplianceProvider {
     #[serde(default)]
     pub password_regex_description: Option<String>,
 
-    /// Pre-compiled regex from `password_regex`, initialized at config load time.
+    /// Pre-compiled regex from `password_regex`, initialized at config load
+    /// time.
     #[serde(skip)]
     pub password_regex_re: Option<Arc<Regex>>,
     /// This option has a sample default set, which means that its actual
@@ -227,7 +228,8 @@ impl SecurityComplianceProvider {
     /// Validate a password against the configured regex pattern.
     ///
     /// Returns `Ok(())` when the password matches the configured pattern, or
-    /// when no pattern is configured. Returns `Err(SecurityComplianceError::PasswordInvalid)`
+    /// when no pattern is configured. Returns
+    /// `Err(SecurityComplianceError::PasswordInvalid)`
     /// with the human-readable policy description on mismatch.
     pub fn validate_password(
         &self,

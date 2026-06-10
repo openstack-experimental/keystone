@@ -24,6 +24,7 @@ use openstack_keystone_core_types::identity_mapping::*;
 
 pub mod backend;
 pub mod error;
+pub mod hook;
 #[cfg(any(test, feature = "mock"))]
 pub mod mock;
 mod provider_api;
@@ -34,6 +35,7 @@ use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManagerApi;
 
 pub use error::IdentityMappingProviderError;
+pub use hook::IdentityMappingHook;
 #[cfg(any(test, feature = "mock"))]
 pub use mock::MockIdentityMappingProvider;
 pub use provider_api::IdentityMappingApi;

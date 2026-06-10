@@ -39,6 +39,7 @@ use openstack_keystone_core_types::role::*;
 
 pub mod backend;
 pub mod error;
+pub mod hook;
 #[cfg(any(test, feature = "mock"))]
 mod mock;
 mod provider_api;
@@ -49,6 +50,7 @@ use crate::plugin_manager::PluginManagerApi;
 use crate::role::service::RoleService;
 
 pub use error::RoleProviderError;
+pub use hook::RoleHook;
 #[cfg(any(test, feature = "mock"))]
 pub use mock::MockRoleProvider;
 pub use provider_api::RoleApi;

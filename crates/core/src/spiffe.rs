@@ -22,17 +22,20 @@ mod mock;
 mod provider_api;
 pub mod service;
 
+pub mod hook;
+
 use openstack_keystone_config::Config;
 use openstack_keystone_core_types::spiffe::*;
 
 use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManagerApi;
 
-pub use crate::spiffe::service::SpiffeService;
 pub use error::SpiffeProviderError;
+pub use hook::SpiffeHook;
 #[cfg(any(test, feature = "mock"))]
 pub use mock::MockSpiffeProvider;
 pub use provider_api::SpiffeApi;
+pub use service::SpiffeService;
 
 /// Spiffe provider.
 pub enum SpiffeProvider {
@@ -42,15 +45,15 @@ pub enum SpiffeProvider {
 }
 
 impl SpiffeProvider {
-    /// Create a new `K8sAuthProvider`.
+    /// Create a new `SpiffeProvider`.
     ///
     /// # Arguments
     /// * `config` - Reference to the [`Config`].
     /// * `plugin_manager` - Reference to the [`PluginManagerApi`].
     ///
     /// # Returns
-    /// * Success with a new `K8sAuthProvider` instance.
-    /// * `K8sAuthProviderError` if the service could not be initialized.
+    /// * Success with a new `SpiffeProvider` instance.
+    /// * `SpiffeProviderError` if the service could not be initialized.
     pub fn new<P: PluginManagerApi>(
         config: &Config,
         plugin_manager: &P,

@@ -1613,7 +1613,7 @@ mod tests {
             .withf(|_, q: &RoleAssignmentListParameters| {
                 q.project_id.as_deref() == Some(pid)
                     && q.effective == Some(true)
-                    && q.include_names == Some(false)
+                    && q.include_names == Some(true)
             })
             .returning(move |_state, _q| Ok(Vec::<Assignment>::new()));
         let state = get_mocked_state(

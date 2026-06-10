@@ -17,6 +17,7 @@ use std::sync::Arc;
 
 use openstack_keystone_config::Config;
 use openstack_keystone_core_types::assignment::*;
+use openstack_keystone_core_types::events::{Event, EventPayload, Operation};
 use openstack_keystone_core_types::revoke::RevocationEventCreate;
 use openstack_keystone_core_types::role::{Role, RoleListParameters};
 
@@ -68,7 +69,49 @@ impl AssignmentApi for AssignmentService {
         state: &ServiceState,
         grant: AssignmentCreate,
     ) -> Result<Assignment, AssignmentProviderError> {
-        self.backend_driver.create_grant(state, grant).await
+        let assignment = self.backend_driver.create_grant(state, grant).await?;
+
+        state
+            .event_dispatcher
+            .emit(Event::new(
+                Operation::Create,
+                EventPayload::RoleAssignment {
+                    role_id: assignment.role_id.clone(),
+                    user_id: match &assignment.r#type {
+                        AssignmentType::UserDomain
+                        | AssignmentType::UserProject
+                        | AssignmentType::UserSystem => Some(assignment.actor_id.clone()),
+                        _ => None,
+                    },
+                    group_id: match &assignment.r#type {
+                        AssignmentType::GroupDomain
+                        | AssignmentType::GroupProject
+                        | AssignmentType::GroupSystem => Some(assignment.actor_id.clone()),
+                        _ => None,
+                    },
+                    domain_id: match &assignment.r#type {
+                        AssignmentType::UserDomain | AssignmentType::GroupDomain => {
+                            Some(assignment.target_id.clone())
+                        }
+                        _ => None,
+                    },
+                    project_id: match &assignment.r#type {
+                        AssignmentType::UserProject | AssignmentType::GroupProject => {
+                            Some(assignment.target_id.clone())
+                        }
+                        _ => None,
+                    },
+                    system_id: match &assignment.r#type {
+                        AssignmentType::UserSystem | AssignmentType::GroupSystem => {
+                            Some(assignment.target_id.clone())
+                        }
+                        _ => None,
+                    },
+                },
+            ))
+            .await;
+
+        Ok(assignment)
     }
 
     /// List role assignments.
@@ -161,6 +204,46 @@ impl AssignmentApi for AssignmentService {
             .get_revoke_provider()
             .create_revocation_event(state, revocation_event)
             .await?;
+
+        state
+            .event_dispatcher
+            .emit(Event::new(
+                Operation::Delete,
+                EventPayload::RoleAssignment {
+                    role_id: grant.role_id.clone(),
+                    user_id: match &grant.r#type {
+                        AssignmentType::UserDomain
+                        | AssignmentType::UserProject
+                        | AssignmentType::UserSystem => Some(grant.actor_id.clone()),
+                        _ => None,
+                    },
+                    group_id: match &grant.r#type {
+                        AssignmentType::GroupDomain
+                        | AssignmentType::GroupProject
+                        | AssignmentType::GroupSystem => Some(grant.actor_id.clone()),
+                        _ => None,
+                    },
+                    domain_id: match &grant.r#type {
+                        AssignmentType::UserDomain | AssignmentType::GroupDomain => {
+                            Some(grant.target_id.clone())
+                        }
+                        _ => None,
+                    },
+                    project_id: match &grant.r#type {
+                        AssignmentType::UserProject | AssignmentType::GroupProject => {
+                            Some(grant.target_id.clone())
+                        }
+                        _ => None,
+                    },
+                    system_id: match &grant.r#type {
+                        AssignmentType::UserSystem | AssignmentType::GroupSystem => {
+                            Some(grant.target_id.clone())
+                        }
+                        _ => None,
+                    },
+                },
+            ))
+            .await;
 
         Ok(())
     }

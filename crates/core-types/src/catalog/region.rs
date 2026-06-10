@@ -73,8 +73,8 @@ pub struct RegionListParameters {
 
 /// Fields that can be changed when updating a region.
 ///
-/// Each field is `None` when the caller did not provide it (leave unchanged) and
-/// `Some(..)` to set a new value.
+/// Each field is `None` when the caller did not provide it (leave unchanged)
+/// and `Some(..)` to set a new value.
 #[derive(Clone, Debug, Default, PartialEq, Validate)]
 pub struct RegionUpdate {
     /// New region description.

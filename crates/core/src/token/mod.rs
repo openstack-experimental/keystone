@@ -27,6 +27,7 @@ pub use openstack_keystone_core_types::token::*;
 
 pub mod backend;
 pub mod error;
+pub mod hook;
 #[cfg(any(test, feature = "mock"))]
 mod mock;
 mod provider_api;
@@ -37,6 +38,7 @@ use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManagerApi;
 use crate::token::service::TokenService;
 pub use error::TokenProviderError;
+pub use hook::TokenHook;
 pub use provider_api::TokenApi;
 
 #[cfg(any(test, feature = "mock"))]

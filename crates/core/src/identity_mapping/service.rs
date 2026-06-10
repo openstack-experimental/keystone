@@ -97,11 +97,17 @@ impl IdentityMappingApi for IdentityMappingService {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    // use std::sync::Arc;
 
     use super::*;
     use crate::identity_mapping::backend::MockIdentityMappingBackend;
     use crate::tests::get_mocked_state;
+
+    fn create_provider(backend: MockIdentityMappingBackend) -> IdentityMappingService {
+        IdentityMappingService {
+            backend_driver: Arc::new(backend),
+        }
+    }
 
     #[tokio::test]
     async fn test_get_by_local_id() {
@@ -120,9 +126,7 @@ mod tests {
                 lid == "lid" && did == "did"
             })
             .returning(move |_, _, _, _| Ok(Some(sot_clone.clone())));
-        let provider = IdentityMappingService {
-            backend_driver: Arc::new(backend),
-        };
+        let provider = create_provider(backend);
 
         let res: IdMapping = provider
             .get_by_local_id(&state, "lid", "did", IdMappingEntityType::User)
@@ -147,9 +151,7 @@ mod tests {
             .expect_get_by_public_id()
             .withf(|_, pid: &'_ str| pid == "pid")
             .returning(move |_, _| Ok(Some(sot_clone.clone())));
-        let provider = IdentityMappingService {
-            backend_driver: Arc::new(backend),
-        };
+        let provider = create_provider(backend);
 
         let res: IdMapping = provider
             .get_by_public_id(&state, "pid")

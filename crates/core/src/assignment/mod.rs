@@ -42,6 +42,7 @@ use openstack_keystone_core_types::assignment::*;
 
 pub mod backend;
 pub mod error;
+pub mod hook;
 #[cfg(any(test, feature = "mock"))]
 mod mock;
 mod provider_api;
@@ -52,6 +53,7 @@ use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManagerApi;
 
 pub use error::AssignmentProviderError;
+pub use hook::AssignmentHook;
 #[cfg(any(test, feature = "mock"))]
 pub use mock::MockAssignmentProvider;
 pub use provider_api::AssignmentApi;

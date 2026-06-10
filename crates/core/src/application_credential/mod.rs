@@ -118,6 +118,7 @@ use openstack_keystone_core_types::application_credential::*;
 
 pub mod backend;
 pub mod error;
+pub mod hook;
 #[cfg(any(test, feature = "mock"))]
 mod mock;
 mod provider_api;
@@ -128,6 +129,7 @@ use crate::plugin_manager::PluginManagerApi;
 use service::ApplicationCredentialService;
 
 pub use error::ApplicationCredentialProviderError;
+pub use hook::ApplicationCredentialHook;
 #[cfg(any(test, feature = "mock"))]
 pub use mock::MockApplicationCredentialProvider;
 pub use provider_api::ApplicationCredentialApi;

@@ -271,6 +271,13 @@ pub(crate) mod tests {
     use crate::k8s_auth::backend::MockK8sAuthBackend;
     use crate::tests::get_mocked_state;
 
+    fn create_k8s_auth_service(backend: MockK8sAuthBackend) -> K8sAuthService {
+        K8sAuthService {
+            backend_driver: Arc::new(backend),
+            http_client_pool: Box::new(HttpClientPool::default()),
+        }
+    }
+
     #[tokio::test]
     async fn test_create_auth_instance() {
         let state = get_mocked_state(None, None).await;
@@ -278,10 +285,7 @@ pub(crate) mod tests {
         backend
             .expect_create_auth_instance()
             .returning(|_, _| Ok(K8sAuthInstance::default()));
-        let provider = K8sAuthService {
-            backend_driver: Arc::new(backend),
-            http_client_pool: Box::new(HttpClientPool::default()),
-        };
+        let provider = create_k8s_auth_service(backend);
 
         assert!(
             provider
@@ -309,10 +313,7 @@ pub(crate) mod tests {
         backend
             .expect_create_auth_role()
             .returning(|_, _| Ok(K8sAuthRole::default()));
-        let provider = K8sAuthService {
-            backend_driver: Arc::new(backend),
-            http_client_pool: Box::new(HttpClientPool::default()),
-        };
+        let provider = create_k8s_auth_service(backend);
 
         assert!(
             provider

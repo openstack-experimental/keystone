@@ -18,6 +18,7 @@ use uuid::Uuid;
 use validator::Validate;
 
 use openstack_keystone_config::Config;
+use openstack_keystone_core_types::events::{Event, EventPayload, Operation};
 use openstack_keystone_core_types::resource::*;
 
 use crate::keystone::ServiceState;
@@ -91,7 +92,19 @@ impl ResourceApi for ResourceService {
             new_domain.id = Some(Uuid::new_v4().simple().to_string());
         }
         new_domain.validate()?;
-        self.backend_driver.create_domain(state, new_domain).await
+        let domain = self.backend_driver.create_domain(state, new_domain).await?;
+
+        state
+            .event_dispatcher
+            .emit(Event::new(
+                Operation::Create,
+                EventPayload::Domain {
+                    id: domain.id.clone(),
+                },
+            ))
+            .await;
+
+        Ok(domain)
     }
 
     /// Create a new project.
@@ -114,7 +127,22 @@ impl ResourceApi for ResourceService {
             new_project.id = Some(Uuid::new_v4().simple().to_string());
         }
         new_project.validate()?;
-        self.backend_driver.create_project(state, new_project).await
+        let project = self
+            .backend_driver
+            .create_project(state, new_project)
+            .await?;
+
+        state
+            .event_dispatcher
+            .emit(Event::new(
+                Operation::Create,
+                EventPayload::Project {
+                    id: project.id.clone(),
+                },
+            ))
+            .await;
+
+        Ok(project)
     }
 
     /// Delete a domain by the ID.
@@ -131,7 +159,17 @@ impl ResourceApi for ResourceService {
         state: &ServiceState,
         id: &'a str,
     ) -> Result<(), ResourceProviderError> {
-        self.backend_driver.delete_domain(state, id).await
+        self.backend_driver.delete_domain(state, id).await?;
+
+        state
+            .event_dispatcher
+            .emit(Event::new(
+                Operation::Delete,
+                EventPayload::Domain { id: id.to_string() },
+            ))
+            .await;
+
+        Ok(())
     }
 
     /// Delete a project by the ID.
@@ -148,7 +186,17 @@ impl ResourceApi for ResourceService {
         state: &ServiceState,
         id: &'a str,
     ) -> Result<(), ResourceProviderError> {
-        self.backend_driver.delete_project(state, id).await
+        self.backend_driver.delete_project(state, id).await?;
+
+        state
+            .event_dispatcher
+            .emit(Event::new(
+                Operation::Delete,
+                EventPayload::Project { id: id.to_string() },
+            ))
+            .await;
+
+        Ok(())
     }
 
     /// Get a single domain.

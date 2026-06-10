@@ -22,6 +22,7 @@ use openstack_keystone_config::ConfigManager;
 use openstack_keystone_distributed_storage::app::{Storage, init_storage};
 
 use crate::error::KeystoneError;
+use crate::events::EventDispatcher;
 use crate::policy::PolicyEnforcer;
 use crate::provider::Provider;
 
@@ -40,6 +41,9 @@ pub struct Service {
 
     /// Service/resource Provider.
     pub provider: Provider,
+
+    /// Event dispatcher for inter-provider notifications.
+    pub event_dispatcher: Arc<EventDispatcher>,
 
     /// Distributed storage.
     pub storage: Option<Storage>,
@@ -84,6 +88,7 @@ impl Service {
         Ok(Self {
             config_manager: cfg,
             provider,
+            event_dispatcher: EventDispatcher::production(),
             db,
             policy_enforcer,
             storage,

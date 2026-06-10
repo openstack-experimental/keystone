@@ -19,6 +19,7 @@ use uuid::Uuid;
 use validator::Validate;
 
 use openstack_keystone_config::Config;
+use openstack_keystone_core_types::events::{Event, EventPayload, Operation};
 use openstack_keystone_core_types::role::*;
 
 use crate::keystone::ServiceState;
@@ -65,7 +66,19 @@ impl RoleApi for RoleService {
         if new_params.id.is_none() {
             new_params.id = Some(Uuid::new_v4().simple().to_string());
         }
-        self.backend_driver.create_role(state, new_params).await
+        let role = self.backend_driver.create_role(state, new_params).await?;
+
+        state
+            .event_dispatcher
+            .emit(Event::new(
+                Operation::Create,
+                EventPayload::Role {
+                    id: role.id.clone(),
+                },
+            ))
+            .await;
+
+        Ok(role)
     }
 
     /// Create a role imply rule.
@@ -80,9 +93,23 @@ impl RoleApi for RoleService {
         prior_role_id: &'a str,
         implied_role_id: &'a str,
     ) -> Result<RoleImply, RoleProviderError> {
-        self.backend_driver
+        let rule = self
+            .backend_driver
             .create_role_imply_rule(state, prior_role_id, implied_role_id)
-            .await
+            .await?;
+
+        state
+            .event_dispatcher
+            .emit(Event::new(
+                Operation::Create,
+                EventPayload::RoleImply {
+                    prior_role_id: prior_role_id.to_string(),
+                    implied_role_id: implied_role_id.to_string(),
+                },
+            ))
+            .await;
+
+        Ok(rule)
     }
 
     /// Check if a role imply rule exists.
@@ -112,7 +139,17 @@ impl RoleApi for RoleService {
         state: &ServiceState,
         id: &'a str,
     ) -> Result<(), RoleProviderError> {
-        self.backend_driver.delete_role(state, id).await
+        self.backend_driver.delete_role(state, id).await?;
+
+        state
+            .event_dispatcher
+            .emit(Event::new(
+                Operation::Delete,
+                EventPayload::Role { id: id.to_string() },
+            ))
+            .await;
+
+        Ok(())
     }
 
     /// Delete a role imply rule.
@@ -129,7 +166,20 @@ impl RoleApi for RoleService {
     ) -> Result<(), RoleProviderError> {
         self.backend_driver
             .delete_role_imply_rule(state, prior_role_id, implied_role_id)
-            .await
+            .await?;
+
+        state
+            .event_dispatcher
+            .emit(Event::new(
+                Operation::Delete,
+                EventPayload::RoleImply {
+                    prior_role_id: prior_role_id.to_string(),
+                    implied_role_id: implied_role_id.to_string(),
+                },
+            ))
+            .await;
+
+        Ok(())
     }
 
     /// Expand implied roles.

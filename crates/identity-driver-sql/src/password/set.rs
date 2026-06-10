@@ -34,7 +34,8 @@ use crate::entity::password;
 /// - `unique_count`: Number of old passwords to keep for checking uniqueness.
 /// - `password_hash`: The hashed password.
 /// - `expires_at`: The password expiration date.
-/// - `existing_passwords`: Pre-loaded existing passwords sorted DESC by creation.
+/// - `existing_passwords`: Pre-loaded existing passwords sorted DESC by
+///   creation.
 ///
 /// # Returns
 /// A `Result` containing the created `password::Model` if successful, or an
@@ -206,7 +207,8 @@ mod tests {
 
     #[tokio::test]
     async fn unique_one_two_existing_truncate_excess() {
-        // 2 existing (newest=200, older=100), unique=1 → expire 1 (newest), delete 1 (older).
+        // 2 existing (newest=200, older=100), unique=1 → expire 1 (newest), delete 1
+        // (older).
         let existing = vec![
             make_pwd(2, 200, false), // newest first
             make_pwd(3, 100, false), // older

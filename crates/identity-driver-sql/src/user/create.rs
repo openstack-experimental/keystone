@@ -404,8 +404,8 @@ mod tests {
             }])
             // 3. Insert local_user record
             .append_query_results([vec![get_local_user_mock("1")]])
-            // 4. password::set_new_password with Vec::new() -> no expire, no delete
-            //    just insert new password record
+            // 4. password::set_new_password with Vec::new() -> no expire, no delete just insert new
+            //    password record
             .append_query_results([vec![get_password_mock(1)]])
             // 5. password::list after set_new_password
             .append_query_results([vec![get_password_mock(1)]])

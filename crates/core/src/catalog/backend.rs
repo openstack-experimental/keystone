@@ -43,7 +43,8 @@ pub trait CatalogBackend: Send + Sync {
     /// - `service`: The service creation parameters.
     ///
     /// # Returns
-    /// A `Result` containing the created `Service`, or a `CatalogProviderError`.
+    /// A `Result` containing the created `Service`, or a
+    /// `CatalogProviderError`.
     async fn create_service(
         &self,
         state: &ServiceState,
@@ -207,7 +208,8 @@ pub trait CatalogBackend: Send + Sync {
     /// - `service`: The fields to change.
     ///
     /// # Returns
-    /// A `Result` containing the updated `Service`, or a `CatalogProviderError`.
+    /// A `Result` containing the updated `Service`, or a
+    /// `CatalogProviderError`.
     async fn update_service<'a>(
         &self,
         state: &ServiceState,

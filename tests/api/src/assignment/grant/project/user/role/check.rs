@@ -58,8 +58,9 @@ async fn test_check_auth_roles() -> Result<()> {
             &role_id,
         )
         .await?;
-        // It is absolutely possible that all roles the user get in the authorization are granted
-        // indirectly (through inheritance, groups, etc). Only try to invoke check_grant without
+        // It is absolutely possible that all roles the user get in the
+        // authorization are granted indirectly (through inheritance,
+        // groups, etc). Only try to invoke check_grant without
         // relying on the result.
     }
     Ok(())

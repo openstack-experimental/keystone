@@ -703,7 +703,8 @@ mod tests {
             err_msg
         );
 
-        // 3. FULL COVERAGE: Explicitly ensure the error message blames every single invalid field
+        // 3. FULL COVERAGE: Explicitly ensure the error message blames every single
+        //    invalid field
         assert!(
             err_msg.contains("security_compliance.password_expires_days"),
             "Error message should explicitly blame password_expires_days, but got: {}",

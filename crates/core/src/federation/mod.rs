@@ -22,6 +22,7 @@ use openstack_keystone_core_types::federation::*;
 
 pub mod backend;
 pub mod error;
+pub mod hook;
 #[cfg(any(test, feature = "mock"))]
 pub mod mock;
 mod provider_api;
@@ -32,6 +33,7 @@ use crate::plugin_manager::PluginManagerApi;
 use service::FederationService;
 
 pub use crate::federation::error::FederationProviderError;
+pub use hook::FederationHook;
 #[cfg(any(test, feature = "mock"))]
 pub use mock::MockFederationProvider;
 pub use provider_api::FederationApi;

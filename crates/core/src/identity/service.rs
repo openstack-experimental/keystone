@@ -24,6 +24,7 @@ use uuid::Uuid;
 use validator::Validate;
 
 use openstack_keystone_config::Config;
+use openstack_keystone_core_types::events::{Event, EventPayload, Operation};
 use openstack_keystone_core_types::identity::*;
 
 use crate::auth::AuthenticationResult;
@@ -199,7 +200,19 @@ impl IdentityApi for IdentityService {
         if res.id.is_none() {
             res.id = Some(Uuid::new_v4().simple().to_string());
         }
-        self.backend_driver.create_group(state, res).await
+        let group = self.backend_driver.create_group(state, res).await?;
+
+        state
+            .event_dispatcher
+            .emit(Event::new(
+                Operation::Create,
+                EventPayload::Group {
+                    id: group.id.clone(),
+                },
+            ))
+            .await;
+
+        Ok(group)
     }
 
     /// Create service account.
@@ -249,7 +262,19 @@ impl IdentityApi for IdentityService {
             cfg.security_compliance
                 .validate_password(&SecretString::from(password.as_str()))?;
         }
-        self.backend_driver.create_user(state, mod_user).await
+        let user = self.backend_driver.create_user(state, mod_user).await?;
+
+        state
+            .event_dispatcher
+            .emit(Event::new(
+                Operation::Create,
+                EventPayload::User {
+                    id: user.id.clone(),
+                },
+            ))
+            .await;
+
+        Ok(user)
     }
 
     /// Delete group.
@@ -262,7 +287,19 @@ impl IdentityApi for IdentityService {
         state: &ServiceState,
         group_id: &'a str,
     ) -> Result<(), IdentityProviderError> {
-        self.backend_driver.delete_group(state, group_id).await
+        self.backend_driver.delete_group(state, group_id).await?;
+
+        state
+            .event_dispatcher
+            .emit(Event::new(
+                Operation::Delete,
+                EventPayload::Group {
+                    id: group_id.to_string(),
+                },
+            ))
+            .await;
+
+        Ok(())
     }
 
     /// Delete user.
@@ -279,6 +316,17 @@ impl IdentityApi for IdentityService {
         if self.caching {
             self.user_id_domain_id_cache.write().await.remove(user_id);
         }
+
+        state
+            .event_dispatcher
+            .emit(Event::new(
+                Operation::Delete,
+                EventPayload::User {
+                    id: user_id.to_string(),
+                },
+            ))
+            .await;
+
         Ok(())
     }
 
@@ -553,7 +601,22 @@ impl IdentityApi for IdentityService {
             cfg.security_compliance
                 .validate_password(&SecretString::from(password.as_str()))?;
         }
-        self.backend_driver.update_user(state, user_id, user).await
+        let user = self
+            .backend_driver
+            .update_user(state, user_id, user)
+            .await?;
+
+        state
+            .event_dispatcher
+            .emit(Event::new(
+                Operation::Update,
+                EventPayload::User {
+                    id: user_id.to_string(),
+                },
+            ))
+            .await;
+
+        Ok(user)
     }
 
     /// Update user password.

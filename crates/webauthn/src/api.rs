@@ -27,9 +27,11 @@ use openstack_keystone_core::error::KeystoneError;
 use openstack_keystone_core::keystone::ServiceState;
 
 mod auth;
+pub mod hook;
 mod register;
 pub mod types;
 
+use crate::api::hook::WebauthnHook;
 use crate::api::types::{CombinedExtensionState, ExtensionState};
 use crate::{WebauthnApi, WebauthnError, driver::*};
 
@@ -105,6 +107,11 @@ pub async fn init_extension_state(
         core: main_state,
         extension: extension_state,
     };
+    combined_state
+        .core
+        .event_dispatcher
+        .subscribe(Arc::new(WebauthnHook::new(combined_state.clone())))
+        .await;
     spawn(cleanup(cancellation_token, combined_state.clone()));
     Ok(combined_state)
 }

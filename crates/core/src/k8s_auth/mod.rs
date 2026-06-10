@@ -18,6 +18,7 @@ use async_trait::async_trait;
 mod auth;
 pub mod backend;
 pub mod error;
+pub mod hook;
 #[cfg(any(test, feature = "mock"))]
 mod mock;
 mod provider_api;
@@ -33,6 +34,7 @@ use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManagerApi;
 
 pub use error::K8sAuthProviderError;
+pub use hook::K8sAuthHook;
 #[cfg(any(test, feature = "mock"))]
 pub use mock::MockK8sAuthProvider;
 pub use provider_api::K8sAuthApi;

@@ -18,6 +18,7 @@ use validator::Validate;
 
 use openstack_keystone_config::Config;
 use openstack_keystone_core_types::catalog::*;
+use openstack_keystone_core_types::events::{Event, EventPayload, Operation};
 
 use crate::catalog::{CatalogApi, CatalogProviderError, backend::CatalogBackend};
 use crate::keystone::ServiceState;
@@ -64,7 +65,19 @@ impl CatalogApi for CatalogService {
         region: RegionCreate,
     ) -> Result<Region, CatalogProviderError> {
         region.validate()?;
-        self.backend_driver.create_region(state, region).await
+        let region = self.backend_driver.create_region(state, region).await?;
+
+        state
+            .event_dispatcher
+            .emit(Event::new(
+                Operation::Create,
+                EventPayload::Region {
+                    id: region.id.clone(),
+                },
+            ))
+            .await;
+
+        Ok(region)
     }
 
     /// Create a new service.
@@ -74,14 +87,27 @@ impl CatalogApi for CatalogService {
     /// - `service`: The service creation parameters.
     ///
     /// # Returns
-    /// A `Result` containing the created `Service`, or a `CatalogProviderError`.
+    /// A `Result` containing the created `Service`, or a
+    /// `CatalogProviderError`.
     async fn create_service(
         &self,
         state: &ServiceState,
         service: ServiceCreate,
     ) -> Result<Service, CatalogProviderError> {
         service.validate()?;
-        self.backend_driver.create_service(state, service).await
+        let service = self.backend_driver.create_service(state, service).await?;
+
+        state
+            .event_dispatcher
+            .emit(Event::new(
+                Operation::Create,
+                EventPayload::Service {
+                    id: service.id.clone(),
+                },
+            ))
+            .await;
+
+        Ok(service)
     }
 
     /// Delete a region by ID.
@@ -97,7 +123,17 @@ impl CatalogApi for CatalogService {
         state: &ServiceState,
         id: &'a str,
     ) -> Result<(), CatalogProviderError> {
-        self.backend_driver.delete_region(state, id).await
+        self.backend_driver.delete_region(state, id).await?;
+
+        state
+            .event_dispatcher
+            .emit(Event::new(
+                Operation::Delete,
+                EventPayload::Region { id: id.to_string() },
+            ))
+            .await;
+
+        Ok(())
     }
 
     /// Delete a service by ID.
@@ -113,7 +149,17 @@ impl CatalogApi for CatalogService {
         state: &ServiceState,
         id: &'a str,
     ) -> Result<(), CatalogProviderError> {
-        self.backend_driver.delete_service(state, id).await
+        self.backend_driver.delete_service(state, id).await?;
+
+        state
+            .event_dispatcher
+            .emit(Event::new(
+                Operation::Delete,
+                EventPayload::Service { id: id.to_string() },
+            ))
+            .await;
+
+        Ok(())
     }
 
     /// Get catalog.
@@ -253,7 +299,15 @@ impl CatalogApi for CatalogService {
         region: RegionUpdate,
     ) -> Result<Region, CatalogProviderError> {
         region.validate()?;
-        self.backend_driver.update_region(state, id, region).await
+        let updated = self.backend_driver.update_region(state, id, region).await?;
+        state
+            .event_dispatcher
+            .emit(Event::new(
+                Operation::Delete,
+                EventPayload::Region { id: id.to_string() },
+            ))
+            .await;
+        Ok(updated)
     }
 
     /// Update an existing service.
@@ -264,7 +318,8 @@ impl CatalogApi for CatalogService {
     /// - `service`: The fields to change.
     ///
     /// # Returns
-    /// A `Result` containing the updated `Service`, or a `CatalogProviderError`.
+    /// A `Result` containing the updated `Service`, or a
+    /// `CatalogProviderError`.
     async fn update_service<'a>(
         &self,
         state: &ServiceState,
@@ -272,6 +327,17 @@ impl CatalogApi for CatalogService {
         service: ServiceUpdate,
     ) -> Result<Service, CatalogProviderError> {
         service.validate()?;
-        self.backend_driver.update_service(state, id, service).await
+        let updated = self
+            .backend_driver
+            .update_service(state, id, service)
+            .await?;
+        state
+            .event_dispatcher
+            .emit(Event::new(
+                Operation::Delete,
+                EventPayload::Service { id: id.to_string() },
+            ))
+            .await;
+        Ok(updated)
     }
 }

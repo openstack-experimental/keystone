@@ -92,8 +92,8 @@ pub struct ServiceListParameters {
 
 /// Fields that can be changed when updating a service.
 ///
-/// Each field is `None` when the caller did not provide it (leave unchanged) and
-/// `Some(..)` to set a new value.
+/// Each field is `None` when the caller did not provide it (leave unchanged)
+/// and `Some(..)` to set a new value.
 #[derive(Clone, Debug, Default, PartialEq, Validate)]
 pub struct ServiceUpdate {
     /// New enabled flag.

@@ -47,6 +47,7 @@ pub mod error;
 pub mod mock;
 #[cfg(any(test, feature = "mock"))]
 pub use mock::MockIdentityProvider;
+mod hook;
 mod provider_api;
 mod service;
 
@@ -56,6 +57,7 @@ use crate::plugin_manager::PluginManagerApi;
 use service::IdentityService;
 
 pub use error::IdentityProviderError;
+pub use hook::IdentityHook;
 pub use provider_api::IdentityApi;
 
 /// Identity provider.

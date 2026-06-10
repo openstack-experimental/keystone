@@ -74,7 +74,8 @@ impl TryFrom<db_region::Model> for Region {
 impl TryFrom<RegionCreate> for db_region::ActiveModel {
     type Error = CatalogProviderError;
 
-    /// Tries to convert region creation parameters into a database active model.
+    /// Tries to convert region creation parameters into a database active
+    /// model.
     ///
     /// # Parameters
     /// - `value`: The region creation parameters.

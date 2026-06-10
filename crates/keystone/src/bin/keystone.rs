@@ -49,14 +49,27 @@ use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 use uuid::Uuid;
 
+use openstack_keystone::application_credential::ApplicationCredentialHook;
+use openstack_keystone::assignment::AssignmentHook;
+use openstack_keystone::catalog::CatalogHook;
 use openstack_keystone::config::{ConfigManager, Interface, ListenerConfig};
 use openstack_keystone::federation::FederationApi;
+use openstack_keystone::federation::FederationHook;
+use openstack_keystone::identity::IdentityHook;
+use openstack_keystone::identity_mapping::IdentityMappingHook;
+use openstack_keystone::k8s_auth::K8sAuthHook;
 use openstack_keystone::keystone::Service as KeystoneServiceState;
 use openstack_keystone::keystone::ServiceState;
 use openstack_keystone::plugin_manager::PluginManager;
 use openstack_keystone::policy::HttpPolicyEnforcer;
 use openstack_keystone::provider::Provider;
+use openstack_keystone::resource::ResourceHook;
+use openstack_keystone::revoke::RevokeHook;
+use openstack_keystone::role::RoleHook;
 use openstack_keystone::server::listener::{raft_grpc, spiffe_tls, spiffe_tls_uds};
+use openstack_keystone::spiffe::SpiffeHook;
+use openstack_keystone::token::TokenHook;
+use openstack_keystone::trust::TrustHook;
 use openstack_keystone::webauthn;
 use openstack_keystone::{api, common};
 
@@ -225,6 +238,61 @@ async fn main() -> Result<(), Report> {
         Arc::new(KeystoneServiceState::new(cfg_mgr, conn, provider, Arc::new(policy)).await?);
 
     spawn(cleanup(cloned_token, shared_state.clone()));
+
+    shared_state
+        .event_dispatcher
+        .subscribe(Arc::new(ApplicationCredentialHook::new(
+            shared_state.clone(),
+        )))
+        .await;
+    shared_state
+        .event_dispatcher
+        .subscribe(Arc::new(AssignmentHook::new(shared_state.clone())))
+        .await;
+    shared_state
+        .event_dispatcher
+        .subscribe(Arc::new(CatalogHook::new(shared_state.clone())))
+        .await;
+    shared_state
+        .event_dispatcher
+        .subscribe(Arc::new(FederationHook::new(shared_state.clone())))
+        .await;
+    shared_state
+        .event_dispatcher
+        .subscribe(Arc::new(IdentityHook::new(shared_state.clone())))
+        .await;
+    shared_state
+        .event_dispatcher
+        .subscribe(Arc::new(IdentityMappingHook::new(shared_state.clone())))
+        .await;
+    shared_state
+        .event_dispatcher
+        .subscribe(Arc::new(K8sAuthHook::new(shared_state.clone())))
+        .await;
+    shared_state
+        .event_dispatcher
+        .subscribe(Arc::new(ResourceHook::new(shared_state.clone())))
+        .await;
+    shared_state
+        .event_dispatcher
+        .subscribe(Arc::new(RevokeHook::new(shared_state.clone())))
+        .await;
+    shared_state
+        .event_dispatcher
+        .subscribe(Arc::new(RoleHook::new(shared_state.clone())))
+        .await;
+    shared_state
+        .event_dispatcher
+        .subscribe(Arc::new(SpiffeHook::new(shared_state.clone())))
+        .await;
+    shared_state
+        .event_dispatcher
+        .subscribe(Arc::new(TokenHook::new(shared_state.clone())))
+        .await;
+    shared_state
+        .event_dispatcher
+        .subscribe(Arc::new(TrustHook::new(shared_state.clone())))
+        .await;
 
     let x_request_id = HeaderName::from_static("x-openstack-request-id");
     let sensitive_headers: Arc<[_]> = vec![

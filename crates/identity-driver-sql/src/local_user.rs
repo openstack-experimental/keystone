@@ -157,7 +157,8 @@ pub mod tests {
             .map(|x| (lu.clone(), x.clone()))
             .collect()
     }
-    /// Create a mock local user with multiple passwords with specific IDs and created_at_int values.
+    /// Create a mock local user with multiple passwords with specific IDs and
+    /// created_at_int values.
     pub fn get_local_user_with_passwords_mock(
         user_id: &str,
         passwords: &[db_password::Model],

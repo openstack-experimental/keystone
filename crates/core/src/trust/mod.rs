@@ -57,6 +57,7 @@ use openstack_keystone_core_types::trust::*;
 
 pub mod backend;
 pub mod error;
+pub mod hook;
 #[cfg(any(test, feature = "mock"))]
 mod mock;
 mod provider_api;
@@ -68,6 +69,7 @@ use crate::trust::service::TrustService;
 use openstack_keystone_config::Config;
 
 pub use error::TrustProviderError;
+pub use hook::TrustHook;
 #[cfg(any(test, feature = "mock"))]
 pub use mock::MockTrustProvider;
 pub use provider_api::TrustApi;

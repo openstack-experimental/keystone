@@ -44,7 +44,8 @@ use sea_orm::ConnectionTrait;
 /// - `conf`: The service configuration.
 /// - `local_user_id`: The local user ID.
 /// - `password`: The plaintext password to set.
-/// - `existing_passwords`: Pre-loaded existing passwords sorted DESC by creation.
+/// - `existing_passwords`: Pre-loaded existing passwords sorted DESC by
+///   creation.
 ///
 /// # Returns
 /// A `Result` containing the created `db_password::Model` if successful, or an

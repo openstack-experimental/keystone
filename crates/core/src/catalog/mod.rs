@@ -37,6 +37,7 @@ use openstack_keystone_core_types::catalog::*;
 
 pub mod backend;
 pub mod error;
+pub mod hook;
 #[cfg(any(test, feature = "mock"))]
 mod mock;
 mod provider_api;
@@ -47,6 +48,7 @@ use crate::plugin_manager::PluginManagerApi;
 use service::CatalogService;
 
 pub use crate::catalog::error::CatalogProviderError;
+pub use hook::CatalogHook;
 #[cfg(any(test, feature = "mock"))]
 pub use mock::MockCatalogProvider;
 pub use provider_api::CatalogApi;
@@ -105,7 +107,8 @@ impl CatalogApi for CatalogProvider {
     /// - `service`: The service creation parameters.
     ///
     /// # Returns
-    /// A `Result` containing the created `Service`, or a `CatalogProviderError`.
+    /// A `Result` containing the created `Service`, or a
+    /// `CatalogProviderError`.
     #[tracing::instrument(level = "info", skip(self, state))]
     async fn create_service(
         &self,
@@ -346,7 +349,8 @@ impl CatalogApi for CatalogProvider {
     /// - `service`: The fields to change.
     ///
     /// # Returns
-    /// A `Result` containing the updated `Service`, or a `CatalogProviderError`.
+    /// A `Result` containing the updated `Service`, or a
+    /// `CatalogProviderError`.
     #[tracing::instrument(level = "info", skip(self, state))]
     async fn update_service<'a>(
         &self,

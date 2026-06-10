@@ -765,7 +765,7 @@ impl SecurityContext {
     #[must_use = "discarding the result allows incomplete contexts to pass through"]
     pub fn fully_resolved(&self) -> Result<(), AuthenticationError> {
         self.validate()?;
-        let authz = self
+        let _authz = self
             .authorization
             .as_ref()
             .ok_or(AuthenticationError::SecurityContextNotResolved)?;
