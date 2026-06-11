@@ -17,6 +17,7 @@ use sea_orm::DatabaseConnection;
 use sea_orm::entity::*;
 
 use openstack_keystone_core::catalog::CatalogProviderError;
+use openstack_keystone_core::db::merge_extra;
 use openstack_keystone_core::error::DbContextExt;
 use openstack_keystone_core_types::catalog::{Service, ServiceUpdate};
 
@@ -45,6 +46,7 @@ pub async fn update<I: AsRef<str>>(
         .context("fetching service for update")?
         .ok_or_else(|| CatalogProviderError::ServiceNotFound(id.as_ref().to_string()))?;
 
+    let existing_extra = existing.extra.clone();
     let mut update_model: db_service::ActiveModel = existing.into();
 
     if let Some(enabled) = service.enabled {
@@ -54,7 +56,7 @@ pub async fn update<I: AsRef<str>>(
         update_model.r#type = Set(Some(typ));
     }
     if let Some(extra) = service.extra {
-        update_model.extra = Set(Some(serde_json::to_string(&extra)?));
+        update_model.extra = Set(Some(merge_extra(existing_extra.as_deref(), &extra)?));
     }
 
     update_model
