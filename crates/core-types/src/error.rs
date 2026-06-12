@@ -24,6 +24,7 @@ use crate::federation::FederationProviderError;
 use crate::identity::IdentityProviderError;
 use crate::idmapping::IdMappingProviderError;
 use crate::k8s_auth::K8sAuthProviderError;
+use crate::mapping::MappingProviderError;
 use crate::resource::ResourceProviderError;
 use crate::revoke::RevokeProviderError;
 use crate::role::RoleProviderError;
@@ -115,6 +116,14 @@ pub enum KeystoneError {
         /// The source of the error.
         #[from]
         source: IdMappingProviderError,
+    },
+
+    /// Mapping provider.
+    #[error(transparent)]
+    Mapping {
+        /// The source of the error.
+        #[from]
+        source: MappingProviderError,
     },
 
     /// IO error.

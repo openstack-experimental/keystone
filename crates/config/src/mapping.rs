@@ -11,32 +11,22 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+use serde::Deserialize;
 
-//! # OpenStack Keystone core provider types
+use crate::common::default_raft_driver;
 
-#![allow(clippy::module_inception)]
-#![deny(clippy::unwrap_used)]
+/// Mapping provider.
+#[derive(Debug, Deserialize, Clone)]
+pub struct MappingProvider {
+    /// Mapping provider driver.
+    #[serde(default = "default_raft_driver")]
+    pub driver: String,
+}
 
-pub mod application_credential;
-pub mod assignment;
-pub mod auth;
-pub mod catalog;
-pub mod error;
-pub mod events;
-pub mod federation;
-pub mod identity;
-pub mod idmapping;
-pub mod k8s_auth;
-pub mod mapping;
-pub mod resource;
-pub mod revoke;
-pub mod role;
-pub mod scope;
-pub mod spiffe;
-pub mod token;
-pub mod trust;
-
-/// Return `true` to be used as a positive default for the serde macros.
-pub fn default_true() -> bool {
-    true
+impl Default for MappingProvider {
+    fn default() -> Self {
+        Self {
+            driver: default_raft_driver(),
+        }
+    }
 }

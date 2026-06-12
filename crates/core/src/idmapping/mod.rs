@@ -54,8 +54,7 @@ impl IdMappingProvider {
     /// - `plugin_manager`: The plugin manager.
     ///
     /// # Returns
-    /// - `Result<Self, IdMappingProviderError>` - The new provider or an
-    ///   error.
+    /// - `Result<Self, IdMappingProviderError>` - The new provider or an error.
     pub fn new<P: PluginManagerApi>(
         config: &Config,
         plugin_manager: &P,

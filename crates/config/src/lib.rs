@@ -71,6 +71,7 @@ mod idmapping;
 mod interface;
 mod k8s_auth;
 mod listener;
+mod mapping;
 mod policy;
 mod resource;
 mod revoke;
@@ -97,6 +98,7 @@ pub use idmapping::*;
 pub use interface::*;
 pub use k8s_auth::*;
 pub use listener::*;
+pub use mapping::*;
 pub use policy::*;
 pub use resource::*;
 pub use revoke::*;
@@ -161,6 +163,10 @@ pub struct Config {
     /// K8s Auth provider configuration.
     #[serde(default)]
     pub k8s_auth: K8sAuthProvider,
+
+    /// Mapping provider configuration.
+    #[serde(default)]
+    pub mapping: MappingProvider,
 
     /// Server listener configuration for the internal interface.
     #[serde(rename = "interface_internal", default)]
