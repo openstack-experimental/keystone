@@ -11,20 +11,20 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-//! # Identity mapping provider hooks for inter-provider events.
+//! # IdMapping provider hooks for inter-provider events.
 
 use crate::events::ProviderHooks;
 use crate::keystone::ServiceState;
 use async_trait::async_trait;
 use openstack_keystone_core_types::events::Event;
 
-/// Hook that subscribes the identity mapping provider to inter-provider events.
-pub struct IdentityMappingHook {
+/// Hook that subscribes the idmapping provider to inter-provider events.
+pub struct IdMappingHook {
     #[allow(unused)]
     state: ServiceState,
 }
 
-impl IdentityMappingHook {
+impl IdMappingHook {
     /// Create a new hook bound to the given service state.
     pub fn new(state: ServiceState) -> Self {
         Self { state }
@@ -32,6 +32,6 @@ impl IdentityMappingHook {
 }
 
 #[async_trait]
-impl ProviderHooks for IdentityMappingHook {
+impl ProviderHooks for IdMappingHook {
     async fn on_event(&self, _event: &Event) {}
 }

@@ -67,7 +67,7 @@ mod distributed_storage;
 mod federation;
 mod fernet_token;
 mod identity;
-mod identity_mapping;
+mod idmapping;
 mod interface;
 mod k8s_auth;
 mod listener;
@@ -93,7 +93,7 @@ pub use distributed_storage::*;
 pub use federation::*;
 pub use fernet_token::*;
 pub use identity::*;
-pub use identity_mapping::*;
+pub use idmapping::*;
 pub use interface::*;
 pub use k8s_auth::*;
 pub use listener::*;
@@ -154,9 +154,9 @@ pub struct Config {
     #[serde(default)]
     pub identity: IdentityProvider,
 
-    /// Identity mapping provider configuration.
+    /// IdMapping provider configuration.
     #[serde(default)]
-    pub identity_mapping: IdentityMappingProvider,
+    pub idmapping: IdMappingProvider,
 
     /// K8s Auth provider configuration.
     #[serde(default)]

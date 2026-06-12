@@ -56,7 +56,7 @@ use openstack_keystone::config::{ConfigManager, Interface, ListenerConfig};
 use openstack_keystone::federation::FederationApi;
 use openstack_keystone::federation::FederationHook;
 use openstack_keystone::identity::IdentityHook;
-use openstack_keystone::identity_mapping::IdentityMappingHook;
+use openstack_keystone::idmapping::IdMappingHook;
 use openstack_keystone::k8s_auth::K8sAuthHook;
 use openstack_keystone::keystone::Service as KeystoneServiceState;
 use openstack_keystone::keystone::ServiceState;
@@ -263,7 +263,7 @@ async fn main() -> Result<(), Report> {
         .await;
     shared_state
         .event_dispatcher
-        .subscribe(Arc::new(IdentityMappingHook::new(shared_state.clone())))
+        .subscribe(Arc::new(IdMappingHook::new(shared_state.clone())))
         .await;
     shared_state
         .event_dispatcher

@@ -17,9 +17,9 @@ use thiserror::Error;
 //use crate::api::error::KeystoneApiError;
 use crate::error::BuilderError;
 
-/// Identity mapping provider error.
+/// IdMapping provider error.
 #[derive(Error, Debug)]
-pub enum IdentityMappingProviderError {
+pub enum IdMappingProviderError {
     /// Conflict.
     #[error("conflict: {0}")]
     Conflict(String),
@@ -44,7 +44,7 @@ pub enum IdentityMappingProviderError {
     },
 
     /// Unsupported driver.
-    #[error("unsupported driver `{0}` for the identity mapping provider")]
+    #[error("unsupported driver `{0}` for the idmapping provider")]
     UnsupportedDriver(String),
 
     /// Request validation error.

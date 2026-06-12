@@ -303,7 +303,6 @@ impl From<KeystoneError> for KeystoneApiError {
             KeystoneError::Authentication { source } => source.into(),
             KeystoneError::CatalogProvider { source } => source.into(),
             KeystoneError::FederationProvider { source } => source.into(),
-            //KeystoneError::IdentityMapping { source } => source.into(),
             KeystoneError::Json { source } => source.into(),
             KeystoneError::K8sAuthProvider { source } => source.into(),
             KeystoneError::PolicyEnforcementNotAvailable => KeystoneApiError::internal(value),

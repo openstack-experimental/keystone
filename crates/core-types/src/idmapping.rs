@@ -12,7 +12,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! # Identity mapping provider
+//! # IdMapping provider
 
 mod error;
 mod id_mapping;

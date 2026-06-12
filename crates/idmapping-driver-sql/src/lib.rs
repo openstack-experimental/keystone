@@ -16,13 +16,13 @@ use async_trait::async_trait;
 
 use sea_orm::{DatabaseConnection, Schema};
 
-use openstack_keystone_core::identity_mapping::IdentityMappingProviderError;
-use openstack_keystone_core::identity_mapping::backend::IdentityMappingBackend;
+use openstack_keystone_core::idmapping::IdMappingProviderError;
+use openstack_keystone_core::idmapping::backend::IdMappingBackend;
 use openstack_keystone_core::keystone::ServiceState;
 use openstack_keystone_core::{
     SqlDriver, SqlDriverRegistration, db::create_table, error::DatabaseError,
 };
-use openstack_keystone_core_types::identity_mapping::*;
+use openstack_keystone_core_types::idmapping::*;
 
 pub mod entity;
 mod id_mapping;
@@ -43,7 +43,7 @@ inventory::submit! {
 }
 
 #[async_trait]
-impl IdentityMappingBackend for SqlBackend {
+impl IdMappingBackend for SqlBackend {
     /// Get the `IdMapping` by the local data.
     ///
     /// # Parameters
@@ -61,7 +61,7 @@ impl IdentityMappingBackend for SqlBackend {
         local_id: &'a str,
         domain_id: &'a str,
         entity_type: IdMappingEntityType,
-    ) -> Result<Option<IdMapping>, IdentityMappingProviderError> {
+    ) -> Result<Option<IdMapping>, IdMappingProviderError> {
         Ok(id_mapping::get_by_local_id(&state.db, local_id, domain_id, entity_type).await?)
     }
 
@@ -78,7 +78,7 @@ impl IdentityMappingBackend for SqlBackend {
         &self,
         state: &ServiceState,
         public_id: &'a str,
-    ) -> Result<Option<IdMapping>, IdentityMappingProviderError> {
+    ) -> Result<Option<IdMapping>, IdMappingProviderError> {
         Ok(id_mapping::get_by_public_id(&state.db, public_id).await?)
     }
 }

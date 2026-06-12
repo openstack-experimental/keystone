@@ -25,7 +25,7 @@ pub mod error;
 pub mod events;
 pub mod federation;
 pub mod identity;
-pub mod identity_mapping;
+pub mod idmapping;
 pub mod k8s_auth;
 pub mod resource;
 pub mod revoke;
