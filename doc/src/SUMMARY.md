@@ -30,6 +30,7 @@
     - [Plugin linking](adr/0018-plugin-linking.md)
     - [Credentials API](adr/0019-credentials.md)
     - [Mapping Engine](adr/0020-mapping-engine.md)
+    - [Api Key authentication for SCIM](adr/0021-api-key-scim.md)
 - [Policy enforcement](policy.md)
 - [Fernet token]()
   - [Token payloads]()
