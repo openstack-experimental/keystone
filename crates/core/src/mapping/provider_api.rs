@@ -94,9 +94,8 @@ pub trait MappingApi {
     /// - `user_id`: The deterministic ID of the virtual user to retrieve.
     ///
     /// # Returns
-    /// - `Result<Option<VirtualUser>, MappingProviderError>` - A
-    ///   `Result` containing an `Option` with the `VirtualUser` if
-    ///   found, or an error.
+    /// - `Result<Option<VirtualUser>, MappingProviderError>` - A `Result`
+    ///   containing an `Option` with the `VirtualUser` if found, or an error.
     async fn get_virtual_user<'a>(
         &self,
         state: &ServiceState,

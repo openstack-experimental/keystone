@@ -56,12 +56,55 @@ pub enum MappingProviderError {
     #[error("unsupported driver `{0}` for the mapping provider")]
     UnsupportedDriver(String),
 
-    /// Request validation error.
+    /// Request validation error (from `validator` crate).
     #[error("request validation error: {source}")]
     Validation {
         #[source]
         source: ValidationErrors,
     },
+
+    /// Regex pattern `{0}` is syntactically invalid.
+    #[error("regex pattern `{0}` is syntactically invalid")]
+    InvalidRegexSyntax(String),
+
+    /// Regex pattern `{0}` exceeds complexity limit (AST size > 4096).
+    #[error("regex pattern `{0}` exceeds complexity limit (AST size > 4096)")]
+    RegexTooComplex(String),
+
+    /// Regex pattern `{0}` fails write-time ReDoS safety check: `{1}`.
+    #[error("regex pattern `{0}` fails write-time ReDoS safety check: {1}")]
+    RegexSafetyViolation(String, String),
+
+    /// Template references reserved key `{0}`.
+    #[error("template references reserved key: {0}")]
+    SystemTokenShadowing(String),
+
+    /// Rule name `{0}` is not a valid identifier.
+    #[error("rule name '{0}' is not a valid identifier")]
+    InvalidRuleName(String),
+
+    /// Duplicate rule name `{0}` within ruleset.
+    #[error("duplicate rule name '{0}' within ruleset")]
+    DuplicateRuleName(String),
+
+    /// `ClaimsOnly` mode requires `user_domain_id` template with a claims
+    /// reference.
+    #[error(
+        "ClaimsOnly mode requires user_domain_id template with a claims interpolation reference"
+    )]
+    DomainClaimRequired,
+
+    /// `Fixed` mode does not allow claims templates in `user_domain_id`.
+    #[error("Fixed mode does not allow claims templates in user_domain_id")]
+    DomainOverrideInFixedMode,
+
+    /// Interpolated value exceeds 256 character limit.
+    #[error("interpolated value exceeds 256 character limit")]
+    InterpolatedValueTooLong,
+
+    /// Ruleset `{0}` contains `is_system` rules and is immutable.
+    #[error("mapping ruleset `{0}` is an immutable system mapping and cannot be modified")]
+    RulesetImmutable(String),
 }
 
 impl MappingProviderError {

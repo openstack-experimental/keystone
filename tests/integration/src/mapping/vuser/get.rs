@@ -11,22 +11,25 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-//! # Integration tests
-//!
-//! Test the functionality on the provider level (not through the API).
+//! Test virtual user retrieval.
 
-mod application_credential;
-mod assignment;
-mod catalog;
-mod common;
-mod identity;
-mod k8s_auth;
-mod mapping;
-mod resource;
-mod revoke;
-mod role;
-mod spiffe;
-mod token;
+use eyre::Result;
+use tracing_test::traced_test;
 
-#[macro_use]
-mod macros;
+use openstack_keystone_core::mapping::MappingApi;
+
+use crate::common::get_state;
+
+#[traced_test]
+#[tokio::test]
+async fn test_get_missing() -> Result<()> {
+    let (state, _) = get_state().await?;
+    let res = state
+        .provider
+        .get_mapping_provider()
+        .get_virtual_user(&state, &uuid::Uuid::new_v4().simple().to_string())
+        .await?;
+
+    assert!(res.is_none());
+    Ok(())
+}

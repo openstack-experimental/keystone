@@ -39,6 +39,7 @@ openstack-keystone-distributed-storage.workspace = true
 openstack-keystone-federation-driver-sql.workspace = true
 openstack-keystone-k8s-auth-driver-sql.workspace = true
 openstack-keystone-k8s-auth-driver-raft.workspace = true
+openstack-keystone-mapping-driver-raft.workspace = true
 openstack-keystone-identity-driver-sql.workspace = true
 openstack-keystone-idmapping-driver-sql.workspace = true
 openstack-keystone-resource-driver-sql.workspace = true

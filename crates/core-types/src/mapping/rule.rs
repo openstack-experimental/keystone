@@ -83,6 +83,39 @@ pub enum ClaimCondition {
     MatchesRegex { claim: String, regex: String },
 }
 
+impl ClaimCondition {
+    /// Extract the claim key referenced by this condition.
+    ///
+    /// # Returns
+    /// Reference to the claim name string.
+    pub fn claim_name(&self) -> &str {
+        match self {
+            Self::Equals { claim, .. } => claim,
+            Self::AnyOf { claim, .. } => claim,
+            Self::MatchesRegex { claim, .. } => claim,
+        }
+    }
+
+    /// Check if this condition uses a regex pattern.
+    ///
+    /// # Returns
+    /// `true` if this is a `MatchesRegex` variant.
+    pub fn is_regex(&self) -> bool {
+        matches!(self, Self::MatchesRegex { .. })
+    }
+
+    /// Extract the regex pattern if this is a `MatchesRegex` condition.
+    ///
+    /// # Returns
+    /// `Some(pattern)` for `MatchesRegex`, `None` otherwise.
+    pub fn regex_pattern(&self) -> Option<&str> {
+        match self {
+            Self::MatchesRegex { regex, .. } => Some(regex),
+            _ => None,
+        }
+    }
+}
+
 /// Identity binding configuration for a matched rule.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct IdentityBinding {
@@ -102,4 +135,45 @@ pub struct IdentityBinding {
 
 fn default_false() -> bool {
     false
+}
+
+// ---------------------------------------------------------------------------
+// Walker helpers
+// ---------------------------------------------------------------------------
+
+impl MatchCriteria {
+    /// Recursively collect all leaf `ClaimCondition` references within this
+    /// criteria tree, including nested groups.
+    ///
+    /// Used during write-time validation to scan every regex pattern and
+    /// verify template safety before persistence.
+    ///
+    /// # Returns
+    /// A vector of references to every `ClaimCondition` in the tree.
+    pub fn walk_all_claim_conditions(&self) -> Vec<&ClaimCondition> {
+        let mut result = Vec::new();
+        self.walk_into(&mut result);
+        result
+    }
+
+    fn walk_into<'a>(&'a self, out: &mut Vec<&'a ClaimCondition>) {
+        match self {
+            MatchCriteria::AllOf(conditions)
+            | MatchCriteria::AnyOf(conditions)
+            | MatchCriteria::AllOfStrict { conditions, .. } => {
+                for cond in conditions {
+                    cond.walk_into(out);
+                }
+            }
+        }
+    }
+}
+
+impl MatchCondition {
+    fn walk_into<'a>(&'a self, out: &mut Vec<&'a ClaimCondition>) {
+        match self {
+            MatchCondition::Condition(cc) => out.push(cc),
+            MatchCondition::Nested(criteria) => criteria.walk_into(out),
+        }
+    }
 }
