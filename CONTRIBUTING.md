@@ -21,7 +21,7 @@ Here are some important resources:
 - **Run a specific test**: `cargo test -p <crate_name> <test_path>` (e.g.,
   `cargo test -p openstack-keystone test_module::some_function`)
 - Run integration tests: `cargo nextest run` (add e.g., `--profile postgres` to
-  use postgres for sql drivers).
+  use postgres for sql drivers, or `--profile raft` to enable raft storage).
 - **Linting**: `cargo clippy -p <crate_name> --fix --allow-dirty`
 - **Formatting**: `cargo fmt`
 

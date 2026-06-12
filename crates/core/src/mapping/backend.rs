@@ -30,7 +30,7 @@ pub trait MappingBackend: Send + Sync {
     ///
     /// # Parameters
     /// - `state`: The service state.
-    /// - `ruleset`: The ruleset definition to create.
+    /// - `ruleset`: The ruleset to persist.
     ///
     /// # Returns
     /// - `Result<MappingRuleSet, MappingProviderError>` - The created
@@ -38,7 +38,7 @@ pub trait MappingBackend: Send + Sync {
     async fn create_ruleset(
         &self,
         state: &ServiceState,
-        ruleset: MappingRuleSetCreate,
+        ruleset: MappingRuleSet,
     ) -> Result<MappingRuleSet, MappingProviderError>;
 
     /// Create a virtual user shadow record.
@@ -107,9 +107,8 @@ pub trait MappingBackend: Send + Sync {
     /// - `user_id`: The deterministic ID of the virtual user to retrieve.
     ///
     /// # Returns
-    /// - `Result<Option<VirtualUser>, MappingProviderError>` - A
-    ///   `Result` containing an `Option` with the `VirtualUser` if
-    ///   found, or an error.
+    /// - `Result<Option<VirtualUser>, MappingProviderError>` - A `Result`
+    ///   containing an `Option` with the `VirtualUser` if found, or an error.
     async fn get_virtual_user<'a>(
         &self,
         state: &ServiceState,
@@ -146,23 +145,6 @@ pub trait MappingBackend: Send + Sync {
         params: &VirtualUserListParameters,
     ) -> Result<Vec<VirtualUser>, MappingProviderError>;
 
-    /// Mutate rules within a mapping ruleset imperatively.
-    ///
-    /// # Parameters
-    /// - `state`: The service state.
-    /// - `mapping_id`: The ID of the ruleset to mutate.
-    /// - `mutations`: The ordered batch of `RuleMutation` operations.
-    ///
-    /// # Returns
-    /// - `Result<MappingRuleSet, MappingProviderError>` - The updated
-    ///   `MappingRuleSet` with mutations applied, or an error.
-    async fn mutate_rules<'a>(
-        &self,
-        state: &ServiceState,
-        mapping_id: &'a str,
-        mutations: RuleMutations,
-    ) -> Result<MappingRuleSet, MappingProviderError>;
-
     /// Update a mapping ruleset.
     ///
     /// # Parameters
@@ -195,5 +177,40 @@ pub trait MappingBackend: Send + Sync {
         state: &ServiceState,
         user_id: &'a str,
         metadata: VirtualUser,
+    ) -> Result<VirtualUser, MappingProviderError>;
+
+    /// Disable a virtual user shadow record.
+    ///
+    /// Sets `enabled` to `false` using optimistic concurrency control.
+    /// Per ADR-0020 §10.12, this triggers the token revocation pipeline.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `user_id`: The deterministic ID of the virtual user to disable.
+    ///
+    /// # Returns
+    /// - `Result<VirtualUser, MappingProviderError>` - The disabled
+    ///   `VirtualUser` or an error.
+    async fn disable_virtual_user<'a>(
+        &self,
+        state: &ServiceState,
+        user_id: &'a str,
+    ) -> Result<VirtualUser, MappingProviderError>;
+
+    /// Enable (reactivate) a virtual user shadow record.
+    ///
+    /// Sets `enabled` to `true` using optimistic concurrency control.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `user_id`: The deterministic ID of the virtual user to enable.
+    ///
+    /// # Returns
+    /// - `Result<VirtualUser, MappingProviderError>` - The enabled
+    ///   `VirtualUser` or an error.
+    async fn enable_virtual_user<'a>(
+        &self,
+        state: &ServiceState,
+        user_id: &'a str,
     ) -> Result<VirtualUser, MappingProviderError>;
 }

@@ -28,6 +28,7 @@ use openstack_keystone_core_types::catalog::CatalogProviderError;
 use openstack_keystone_core_types::error::BuilderError;
 use openstack_keystone_core_types::error::KeystoneError;
 use openstack_keystone_core_types::identity::IdentityProviderError;
+use openstack_keystone_core_types::mapping::MappingProviderError;
 use openstack_keystone_core_types::resource::ResourceProviderError;
 use openstack_keystone_core_types::revoke::RevokeProviderError;
 use openstack_keystone_core_types::role::RoleProviderError;
@@ -246,6 +247,54 @@ impl From<SpiffeProviderError> for KeystoneApiError {
     }
 }
 
+impl From<MappingProviderError> for KeystoneApiError {
+    fn from(value: MappingProviderError) -> Self {
+        match value {
+            MappingProviderError::NotFound(x) => Self::NotFound {
+                resource: "mapping".into(),
+                identifier: x,
+            },
+            MappingProviderError::Conflict(x) => Self::Conflict(x),
+            MappingProviderError::Validation { source } => Self::BadRequest(source.to_string()),
+            MappingProviderError::InvalidRegexSyntax(x) => Self::BadRequest(x),
+            MappingProviderError::RegexTooComplex(x) => Self::BadRequest(x),
+            MappingProviderError::RegexSafetyViolation(x, msg) => {
+                Self::BadRequest(format!("regex safety violation: {x}: {msg}"))
+            }
+            MappingProviderError::SystemTokenShadowing(x) => Self::BadRequest(x),
+            MappingProviderError::InvalidRuleName(x) => Self::BadRequest(x),
+            MappingProviderError::DuplicateRuleName(x) => Self::BadRequest(x),
+            MappingProviderError::DomainClaimRequired => Self::BadRequest(
+                "ClaimsOnly mode requires user_domain_id template with a claims interpolation reference".to_string(),
+            ),
+            MappingProviderError::DomainOverrideInFixedMode => Self::BadRequest(
+                "Fixed mode does not allow claims templates in user_domain_id".to_string(),
+            ),
+            MappingProviderError::InterpolatedValueTooLong => Self::BadRequest(
+                "interpolated value exceeds 256 character limit".to_string(),
+            ),
+            MappingProviderError::RulesetImmutable(x) => Self::BadRequest(x),
+            MappingProviderError::RaftNotAvailable => Self::InternalError(
+                "raft storage is not available in the mapping provider".to_string(),
+            ),
+            MappingProviderError::RaftStoreError { source } => {
+                Self::InternalError(format!("raft storage error: {source}"))
+            }
+            MappingProviderError::Driver { source } => {
+                Self::InternalError(format!("backend driver error: {source}"))
+            }
+            MappingProviderError::UnsupportedDriver(x) => {
+                Self::InternalError(format!("unsupported driver `{x}`"))
+            }
+            MappingProviderError::StructBuilder(e) => {
+                Self::InternalError(format!("structure builder error: {e}"))
+            }
+            // MappingProviderError is non-exhaustive; catch any future variants
+            _ => Self::InternalError(value.to_string()),
+        }
+    }
+}
+
 impl From<TokenProviderError> for KeystoneApiError {
     fn from(value: TokenProviderError) -> Self {
         match value {
@@ -313,5 +362,175 @@ impl From<KeystoneError> for KeystoneApiError {
             KeystoneError::TrustProvider { source } => source.into(),
             _ => KeystoneApiError::internal(value),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::http::StatusCode;
+
+    #[test]
+    fn mapping_provider_not_found() {
+        let err = MappingProviderError::NotFound("test-id".to_string());
+        let api_err: KeystoneApiError = err.into();
+        assert!(matches!(
+            api_err,
+            KeystoneApiError::NotFound {
+                ref resource,
+                ref identifier
+            } if resource == "mapping" && identifier == "test-id"
+        ));
+        assert_eq!(
+            <KeystoneApiError as IntoResponse>::into_response(api_err).status(),
+            StatusCode::NOT_FOUND
+        );
+    }
+
+    #[test]
+    fn mapping_provider_conflict() {
+        let err = MappingProviderError::Conflict("reason".to_string());
+        let api_err: KeystoneApiError = err.into();
+        assert!(matches!(
+            api_err,
+            KeystoneApiError::Conflict(msg) if msg == "reason"
+        ));
+    }
+
+    #[test]
+    fn mapping_provider_invalid_regex() {
+        let err = MappingProviderError::InvalidRegexSyntax("(unclosed".to_string());
+        let api_err: KeystoneApiError = err.into();
+        assert!(matches!(
+            api_err,
+            KeystoneApiError::BadRequest(msg) if msg == "(unclosed"
+        ));
+    }
+
+    #[test]
+    fn mapping_provider_regex_too_complex() {
+        let err = MappingProviderError::RegexTooComplex("pattern".to_string());
+        let api_err: KeystoneApiError = err.into();
+        assert!(matches!(
+            api_err,
+            KeystoneApiError::BadRequest(msg) if msg == "pattern"
+        ));
+    }
+
+    #[test]
+    fn mapping_provider_regex_safety_violation() {
+        let err = MappingProviderError::RegexSafetyViolation(
+            "(a+)+".to_string(),
+            "nested quantifier".to_string(),
+        );
+        let api_err: KeystoneApiError = err.into();
+        assert!(matches!(
+            api_err,
+            KeystoneApiError::BadRequest(msg) if msg.contains("nested quantifier")
+        ));
+    }
+
+    #[test]
+    fn mapping_provider_system_token_shadowing() {
+        let err = MappingProviderError::SystemTokenShadowing("key".to_string());
+        let api_err: KeystoneApiError = err.into();
+        assert!(matches!(
+            api_err,
+            KeystoneApiError::BadRequest(msg) if msg == "key"
+        ));
+    }
+
+    #[test]
+    fn mapping_provider_invalid_rule_name() {
+        let err = MappingProviderError::InvalidRuleName("bad name".to_string());
+        let api_err: KeystoneApiError = err.into();
+        assert!(matches!(
+            api_err,
+            KeystoneApiError::BadRequest(msg) if msg == "bad name"
+        ));
+    }
+
+    #[test]
+    fn mapping_provider_duplicate_rule_name() {
+        let err = MappingProviderError::DuplicateRuleName("dup".to_string());
+        let api_err: KeystoneApiError = err.into();
+        assert!(matches!(
+            api_err,
+            KeystoneApiError::BadRequest(msg) if msg == "dup"
+        ));
+    }
+
+    #[test]
+    fn mapping_provider_domain_claim_required() {
+        let err = MappingProviderError::DomainClaimRequired;
+        let api_err: KeystoneApiError = err.into();
+        assert!(matches!(
+            api_err,
+            KeystoneApiError::BadRequest(msg) if !msg.is_empty()
+        ));
+    }
+
+    #[test]
+    fn mapping_provider_domain_override_in_fixed_mode() {
+        let err = MappingProviderError::DomainOverrideInFixedMode;
+        let api_err: KeystoneApiError = err.into();
+        assert!(matches!(
+            api_err,
+            KeystoneApiError::BadRequest(msg) if !msg.is_empty()
+        ));
+    }
+
+    #[test]
+    fn mapping_provider_interpolated_value_too_long() {
+        let err = MappingProviderError::InterpolatedValueTooLong;
+        let api_err: KeystoneApiError = err.into();
+        assert!(matches!(
+            api_err,
+            KeystoneApiError::BadRequest(msg) if !msg.is_empty()
+        ));
+    }
+
+    #[test]
+    fn mapping_provider_ruleset_immutable() {
+        let err = MappingProviderError::RulesetImmutable("test-id".to_string());
+        let api_err: KeystoneApiError = err.into();
+        assert!(matches!(
+            api_err,
+            KeystoneApiError::BadRequest(msg) if msg.contains("test-id")
+        ));
+    }
+
+    #[test]
+    fn mapping_provider_raft_not_available() {
+        let err = MappingProviderError::RaftNotAvailable;
+        let api_err: KeystoneApiError = err.into();
+        assert!(matches!(
+            api_err,
+            KeystoneApiError::InternalError(msg) if !msg.is_empty()
+        ));
+    }
+
+    #[test]
+    fn mapping_provider_unsupported_driver() {
+        let err = MappingProviderError::UnsupportedDriver("bad".to_string());
+        let api_err: KeystoneApiError = err.into();
+        assert!(matches!(
+            api_err,
+            KeystoneApiError::InternalError(msg) if msg.contains("bad")
+        ));
+    }
+
+    #[test]
+    fn mapping_provider_struct_builder() {
+        let err = MappingProviderError::StructBuilder(Box::new(
+            openstack_keystone_core_types::error::BuilderError::Validation(
+                "test error".to_string(),
+            ),
+        ));
+        let api_err: KeystoneApiError = err.into();
+        assert!(matches!(
+            api_err,
+            KeystoneApiError::InternalError(msg) if msg.contains("test error")
+        ));
     }
 }

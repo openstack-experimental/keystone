@@ -25,11 +25,13 @@ openstack-keystone-config.workspace = true
 openstack-keystone-distributed-storage.workspace = true
 mockall = { workspace = true, optional = true }
 rand.workspace = true
+regex-syntax.workspace = true
 reqwest = { workspace = true, features = ["json", "http2", "gzip", "deflate"] }
 #rustls.workspace = true
 sea-orm.workspace = true
 sea-orm-migration.workspace = true
 secrecy = { workspace = true, features = ["serde"] }
+sha2.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 serde_urlencoded.workspace = true

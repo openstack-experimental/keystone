@@ -105,3 +105,47 @@ pub struct MappingRuleSetListParameters {
     /// Page marker (ID of the last entry on the previous page).
     pub marker: Option<String>,
 }
+
+impl From<MappingRuleSetCreate> for MappingRuleSet {
+    fn from(value: MappingRuleSetCreate) -> Self {
+        Self {
+            mapping_id: value.mapping_id.unwrap_or_default(),
+            domain_id: value.domain_id,
+            source: value.source,
+            domain_resolution_mode: value.domain_resolution_mode,
+            enabled: value.enabled,
+            rules: value.rules,
+            ruleset_version: 0,
+        }
+    }
+}
+
+impl MappingRuleSet {
+    /// Apply the [`MappingRuleSetUpdate`] to the [`MappingRuleSet`] structure,
+    /// returning the new object.
+    pub fn with_update(self, update: MappingRuleSetUpdate) -> Self {
+        let domain_resolution_mode = match (&self.domain_resolution_mode, &update.allowed_domains) {
+            (DomainResolutionMode::ClaimsOrMapping { .. }, Some(domains)) => {
+                DomainResolutionMode::ClaimsOrMapping {
+                    allowed_domains: domains.clone(),
+                }
+            }
+            (DomainResolutionMode::ClaimsOnly { .. }, Some(domains)) => {
+                DomainResolutionMode::ClaimsOnly {
+                    allowed_domains: domains.clone(),
+                }
+            }
+            _ => self.domain_resolution_mode,
+        };
+
+        Self {
+            mapping_id: self.mapping_id,
+            domain_id: self.domain_id,
+            source: self.source,
+            domain_resolution_mode,
+            enabled: update.enabled.unwrap_or(self.enabled),
+            rules: update.rules.unwrap_or(self.rules),
+            ruleset_version: self.ruleset_version,
+        }
+    }
+}

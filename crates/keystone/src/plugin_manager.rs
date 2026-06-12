@@ -670,6 +670,10 @@ impl PluginManager {
             "raft",
             Arc::new(openstack_keystone_spiffe_driver_raft::RaftBackend::default()),
         );
+        slf.register_mapping_backend(
+            "raft",
+            Arc::new(openstack_keystone_mapping_driver_raft::RaftBackend::default()),
+        );
         slf
     }
 }

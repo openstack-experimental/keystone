@@ -21,10 +21,13 @@ use openstack_keystone_core_types::mapping::*;
 pub mod backend;
 pub mod error;
 pub mod hook;
+mod interpolation;
 #[cfg(any(test, feature = "mock"))]
 pub mod mock;
 mod provider_api;
 pub mod service;
+mod validation;
+mod version;
 
 use crate::keystone::ServiceState;
 use crate::mapping::service::MappingService;
@@ -36,6 +39,7 @@ pub use hook::MappingHook;
 #[cfg(any(test, feature = "mock"))]
 pub use mock::MockMappingProvider;
 pub use provider_api::MappingApi;
+pub use validation::{validate_regex, validate_ruleset_create, validate_ruleset_update};
 
 pub enum MappingProvider {
     Service(MappingService),
