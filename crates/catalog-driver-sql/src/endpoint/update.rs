@@ -17,7 +17,6 @@ use sea_orm::DatabaseConnection;
 use sea_orm::entity::*;
 
 use openstack_keystone_core::catalog::CatalogProviderError;
-use openstack_keystone_core::db::merge_extra;
 use openstack_keystone_core::error::DbContextExt;
 use openstack_keystone_core_types::catalog::{Endpoint, EndpointUpdate};
 
@@ -46,7 +45,6 @@ pub async fn update<I: AsRef<str>>(
         .context("fetching endpoint for update")?
         .ok_or_else(|| CatalogProviderError::EndpointNotFound(id.as_ref().to_string()))?;
 
-    let existing_extra = existing.extra.clone();
     let mut update_model: db_endpoint::ActiveModel = existing.into();
 
     if let Some(enabled) = endpoint.enabled {
@@ -64,8 +62,9 @@ pub async fn update<I: AsRef<str>>(
     if let Some(url) = endpoint.url {
         update_model.url = Set(url);
     }
+    // The provider has already merged `extra`; the driver only persists it.
     if let Some(extra) = endpoint.extra {
-        update_model.extra = Set(Some(merge_extra(existing_extra.as_deref(), &extra)?));
+        update_model.extra = Set(Some(serde_json::to_string(&extra)?));
     }
 
     update_model

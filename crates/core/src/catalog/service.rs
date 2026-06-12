@@ -21,6 +21,7 @@ use openstack_keystone_core_types::catalog::*;
 use openstack_keystone_core_types::events::{Event, EventPayload, Operation};
 
 use crate::catalog::{CatalogApi, CatalogProviderError, backend::CatalogBackend};
+use crate::db::merge_extra;
 use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManagerApi;
 
@@ -354,9 +355,19 @@ impl CatalogApi for CatalogService {
         &self,
         state: &ServiceState,
         id: &'a str,
-        endpoint: EndpointUpdate,
+        mut endpoint: EndpointUpdate,
     ) -> Result<Endpoint, CatalogProviderError> {
         endpoint.validate()?;
+        // Merge the supplied `extra` onto the stored one here, so the driver
+        // only has to persist the final value.
+        if let Some(extra) = endpoint.extra.take() {
+            let existing = self
+                .backend_driver
+                .get_endpoint(state, id)
+                .await?
+                .ok_or_else(|| CatalogProviderError::EndpointNotFound(id.to_string()))?;
+            endpoint.extra = Some(merge_extra(existing.extra.as_ref(), extra));
+        }
         let updated = self
             .backend_driver
             .update_endpoint(state, id, endpoint)
@@ -384,9 +395,19 @@ impl CatalogApi for CatalogService {
         &self,
         state: &ServiceState,
         id: &'a str,
-        region: RegionUpdate,
+        mut region: RegionUpdate,
     ) -> Result<Region, CatalogProviderError> {
         region.validate()?;
+        // Merge the supplied `extra` onto the stored one here, so the driver
+        // only has to persist the final value.
+        if let Some(extra) = region.extra.take() {
+            let existing = self
+                .backend_driver
+                .get_region(state, id)
+                .await?
+                .ok_or_else(|| CatalogProviderError::RegionNotFound(id.to_string()))?;
+            region.extra = Some(merge_extra(existing.extra.as_ref(), extra));
+        }
         let updated = self.backend_driver.update_region(state, id, region).await?;
         state
             .event_dispatcher
@@ -412,9 +433,19 @@ impl CatalogApi for CatalogService {
         &self,
         state: &ServiceState,
         id: &'a str,
-        service: ServiceUpdate,
+        mut service: ServiceUpdate,
     ) -> Result<Service, CatalogProviderError> {
         service.validate()?;
+        // Merge the supplied `extra` onto the stored one here, so the driver
+        // only has to persist the final value.
+        if let Some(extra) = service.extra.take() {
+            let existing = self
+                .backend_driver
+                .get_service(state, id)
+                .await?
+                .ok_or_else(|| CatalogProviderError::ServiceNotFound(id.to_string()))?;
+            service.extra = Some(merge_extra(existing.extra.as_ref(), extra));
+        }
         let updated = self
             .backend_driver
             .update_service(state, id, service)
