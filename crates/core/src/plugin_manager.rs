@@ -37,6 +37,8 @@ use crate::idmapping::IdMappingProviderError;
 use crate::idmapping::backend::IdMappingBackend;
 use crate::k8s_auth::K8sAuthProviderError;
 use crate::k8s_auth::backend::K8sAuthBackend;
+use crate::mapping::MappingBackend;
+use crate::mapping::MappingProviderError;
 use crate::resource::backend::ResourceBackend;
 use crate::resource::error::ResourceProviderError;
 use crate::revoke::RevokeProviderError;
@@ -130,6 +132,19 @@ pub trait PluginManagerApi {
         &self,
         name: S,
     ) -> Result<&Arc<dyn IdMappingBackend>, IdMappingProviderError>;
+
+    /// Get registered mapping backend.
+    ///
+    /// # Parameters
+    /// - `name`: The name of the backend to retrieve.
+    ///
+    /// # Returns
+    /// - `Ok(&Arc<dyn MappingBackend>)` if found, otherwise
+    ///   `Err(MappingProviderError)`.
+    fn get_mapping_backend<S: AsRef<str>>(
+        &self,
+        name: S,
+    ) -> Result<&Arc<dyn MappingBackend>, MappingProviderError>;
 
     /// Get registered k8s auth backend.
     ///
@@ -296,6 +311,13 @@ pub trait PluginManagerApi {
         name: S,
         plugin: Arc<dyn IdMappingBackend>,
     );
+
+    /// Register mapping backend.
+    ///
+    /// # Parameters
+    /// - `name`: The name to register the backend under.
+    /// - `plugin`: The backend implementation.
+    fn register_mapping_backend<S: AsRef<str>>(&mut self, name: S, plugin: Arc<dyn MappingBackend>);
 
     /// Register k8s_auth backend.
     ///

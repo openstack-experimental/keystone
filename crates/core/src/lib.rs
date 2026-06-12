@@ -92,6 +92,7 @@ pub mod identity;
 pub mod idmapping;
 pub mod k8s_auth;
 pub mod keystone;
+pub mod mapping;
 pub mod plugin_manager;
 pub mod policy;
 pub mod provider;

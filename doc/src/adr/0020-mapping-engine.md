@@ -1652,3 +1652,62 @@ the most complex claim profiles and legacy `token_restriction` patterns.
 - Deprecate legacy federation mapping code path.
 - **Deliverable:** All federation authentication fully mediated by the unified
   mapping engine; legacy `token_restriction` pattern eliminated.
+
+---
+
+## 13. Implementation Deviations from ADR Spec
+
+This section documents decisions made during implementation that deviate from
+the original specification.
+
+### D1. `MappingRuleSet` — `provider_id` field removed
+
+The `MappingRuleSet` struct does not carry a separate `provider_id` field. The
+ingress provider instance is identified through `source: IdentitySource`, which
+contains the relevant anchor (`idp_id`, `cluster_id`, `client_id`, or
+`trust_domain`) as its enum variant payload. The `provider_id` slug used in
+keyspace coordinates is derived from the `source` field at storage time.
+
+### D2. `DomainResolutionMode` — `allowed_domains` consolidated into enum variants
+
+The `allowed_domains` whitelist was moved from a separate field on
+`MappingRuleSet` into the `ClaimsOrMapping` and `ClaimsOnly` enum variants of
+`DomainResolutionMode`. This encodes the constraint "must be non-empty for
+ClaimsOnly/ClaimsOrMapping, must be empty for Fixed" into Rust's type system,
+eliminating cross-field runtime validation.
+
+### D3. `ResolvedGroupBinding` replaced with `GroupRef`
+
+The custom `ResolvedGroupBinding` struct was replaced with `GroupRef` (defined
+in `crate::identity::group`), mirroring the existing `RoleRef` pattern. The
+`strategy` field from the original `ResolvedGroupBinding` was dropped — group
+resolution strategy (`CreateOrGet`/`Get`) is encoded in `GroupAssignment` within
+the live ruleset, which the engine fetches during verification. The persisted
+shadow record only needs the group anchor (id + domain_id + name).
+
+### D4. `MappingRuleSetUpdate` — mode variant is immutable
+
+The `MappingRuleSetUpdate` type carries `allowed_domains` as a separate
+`Option<Vec<String>>` field rather than replacing the entire `DomainResolutionMode`.
+The service layer merges the new `allowed_domains` into the existing variant,
+preventing an operator from changing `Fixed` → `ClaimsOrMapping` (or vice versa)
+via update. The resolution mode variant itself is immutable after creation.
+
+### D5. `is_system: bool` — defaults to `false`
+
+The `is_system` field on `IdentityBinding` is typed as `bool` (not `Option<bool>`)
+with a `serde(default)` attribute that resolves missing JSON to `false`. This
+removes ambiguity — an omitted field means the operator did not grant system
+privileges.
+
+### D6. `GroupStrategy::CreateOrGet` — default for `GroupAssignment`
+
+The `strategy` field on `GroupAssignment` defaults to `CreateOrGet` rather than
+requiring explicit specification, as it is the more permissive operator-friendly
+default (fewer failures when groups are not pre-provisioned).
+
+### D7. `MappingRule` — `provider_id` not present
+
+`MappingRule` does not carry `provider_id`. It is nested within `MappingRuleSet`,
+which identifies the provider through `source: IdentitySource`. All rule-level
+context is inherited from the parent ruleset.

@@ -28,7 +28,8 @@ pub trait CatalogApi: Send + Sync {
     /// - `endpoint`: The endpoint creation parameters.
     ///
     /// # Returns
-    /// A `Result` containing the created `Endpoint`, or a `CatalogProviderError`.
+    /// A `Result` containing the created `Endpoint`, or a
+    /// `CatalogProviderError`.
     async fn create_endpoint(
         &self,
         state: &ServiceState,
@@ -219,7 +220,8 @@ pub trait CatalogApi: Send + Sync {
     /// - `endpoint`: The fields to change.
     ///
     /// # Returns
-    /// A `Result` containing the updated `Endpoint`, or a `CatalogProviderError`.
+    /// A `Result` containing the updated `Endpoint`, or a
+    /// `CatalogProviderError`.
     async fn update_endpoint<'a>(
         &self,
         state: &ServiceState,
