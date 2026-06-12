@@ -18,7 +18,7 @@ use webauthn_rs::prelude::{PasskeyAuthentication, PasskeyRegistration};
 
 use openstack_keystone_core::keystone::ServiceState;
 use openstack_keystone_distributed_storage::{
-    Metadata, StorageApi, StoreDataEnvelope, app::Storage,
+    Metadata, StorageApi, StoreDataEnvelope, StoreError, app::Storage,
 };
 
 use crate::{
@@ -133,6 +133,197 @@ impl RaftDriver {
     fn get_user_cred_list_prefix<S: AsRef<str>>(&self, user_id: S) -> String {
         format!("{}:cred", user_id.as_ref())
     }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    async fn create_user_webauthn_credential_impl(
+        &self,
+        storage: &impl StorageApi,
+        credential: &WebauthnCredential,
+    ) -> Result<WebauthnCredential, StoreError> {
+        storage
+            .set_value(
+                self.get_cred_key_name(&credential.user_id, &credential.credential_id),
+                StoreDataEnvelope {
+                    metadata: Metadata::new(),
+                    data: credential.clone(),
+                },
+                Some(DATA_KEYSPACE),
+                None,
+            )
+            .await?;
+        Ok(credential.clone())
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    async fn get_user_webauthn_credential_impl<'a>(
+        &self,
+        storage: &impl StorageApi,
+        user_id: &'a str,
+        credential_id: &'a str,
+    ) -> Result<Option<WebauthnCredential>, StoreError> {
+        let key = self.get_cred_key_name(user_id, credential_id);
+        Ok(storage
+            .get_by_key(key, Some(DATA_KEYSPACE))
+            .await?
+            .map(|x| x.data))
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    async fn delete_user_webauthn_credential_impl<'a>(
+        &self,
+        storage: &impl StorageApi,
+        user_id: &'a str,
+        credential_id: &'a str,
+    ) -> Result<(), StoreError> {
+        let key = self.get_cred_key_name(user_id, credential_id);
+        storage.remove(key, Some(DATA_KEYSPACE)).await?;
+        Ok(())
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    async fn list_user_webauthn_credentials_impl<'a>(
+        &self,
+        storage: &impl StorageApi,
+        user_id: &'a str,
+    ) -> Result<Vec<WebauthnCredential>, StoreError> {
+        let prefix = self.get_user_cred_list_prefix(user_id);
+        Ok(storage
+            .prefix(prefix, Some(DATA_KEYSPACE))
+            .await?
+            .into_iter()
+            .map(|(_, v)| v.data)
+            .collect())
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    async fn update_user_webauthn_credential_impl<'a>(
+        &self,
+        storage: &impl StorageApi,
+        user_id: &'a str,
+        credential_id: &'a str,
+        credential: &WebauthnCredential,
+    ) -> Result<WebauthnCredential, StoreError> {
+        let key = self.get_cred_key_name(user_id, credential_id);
+        if let Some(curr) = storage
+            .get_by_key::<WebauthnCredential, String, &str>(key, Some(DATA_KEYSPACE))
+            .await?
+        {
+            let new_meta = curr.metadata.new_revision();
+            let curr_revision = curr.metadata.revision;
+            storage
+                .set_value(
+                    self.get_cred_key_name(user_id, credential_id),
+                    StoreDataEnvelope {
+                        metadata: new_meta,
+                        data: credential,
+                    },
+                    Some(DATA_KEYSPACE),
+                    Some(curr_revision),
+                )
+                .await?;
+            Ok(credential.clone())
+        } else {
+            Err(StoreError::IO {
+                source: std::io::Error::new(std::io::ErrorKind::NotFound, "not found"),
+            })
+        }
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    async fn save_user_webauthn_credential_authentication_state_impl<'a>(
+        &self,
+        storage: &impl StorageApi,
+        user_id: &'a str,
+        auth_state: &PasskeyAuthentication,
+        state_keysapce: &str,
+    ) -> Result<(), StoreError> {
+        storage
+            .set_value(
+                self.get_user_cred_auth_state_key_name(user_id),
+                StoreDataEnvelope {
+                    metadata: Metadata::new(),
+                    data: auth_state,
+                },
+                Some(state_keysapce),
+                None,
+            )
+            .await?;
+        Ok(())
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    async fn get_user_webauthn_credential_authentication_state_impl<'a>(
+        &self,
+        storage: &impl StorageApi,
+        user_id: &'a str,
+        state_keysapce: &str,
+    ) -> Result<Option<PasskeyAuthentication>, StoreError> {
+        let key = self.get_user_cred_auth_state_key_name(user_id);
+        Ok(storage
+            .get_by_key(key, Some(state_keysapce))
+            .await?
+            .map(|x| x.data))
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    async fn delete_user_webauthn_credential_authentication_state_impl<'a>(
+        &self,
+        storage: &impl StorageApi,
+        user_id: &'a str,
+        state_keysapce: &str,
+    ) -> Result<(), StoreError> {
+        let key = self.get_user_cred_auth_state_key_name(user_id);
+        storage.remove(key, Some(state_keysapce)).await?;
+        Ok(())
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    async fn save_user_webauthn_credential_registration_state_impl<'a>(
+        &self,
+        storage: &impl StorageApi,
+        user_id: &'a str,
+        reg_state: &PasskeyRegistration,
+        state_keysapce: &str,
+    ) -> Result<(), StoreError> {
+        storage
+            .set_value(
+                self.get_user_cred_registration_state_key_name(user_id),
+                StoreDataEnvelope {
+                    metadata: Metadata::new(),
+                    data: reg_state,
+                },
+                Some(state_keysapce),
+                None,
+            )
+            .await?;
+        Ok(())
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    async fn get_user_webauthn_credential_registration_state_impl<'a>(
+        &self,
+        storage: &impl StorageApi,
+        user_id: &'a str,
+        state_keysapce: &str,
+    ) -> Result<Option<PasskeyRegistration>, StoreError> {
+        let key = self.get_user_cred_registration_state_key_name(user_id);
+        Ok(storage
+            .get_by_key(key, Some(state_keysapce))
+            .await?
+            .map(|x| x.data))
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    async fn delete_user_webauthn_credential_registration_state_impl<'a>(
+        &self,
+        storage: &impl StorageApi,
+        user_id: &'a str,
+        state_keysapce: &str,
+    ) -> Result<(), StoreError> {
+        let key = self.get_user_cred_registration_state_key_name(user_id);
+        storage.remove(key, Some(state_keysapce)).await?;
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -167,17 +358,9 @@ impl WebauthnApi for RaftDriver {
             .storage
             .as_ref()
             .ok_or(WebauthnError::RaftNotAvailable)?;
-        raft.set_value(
-            self.get_cred_key_name(&credential.user_id, &credential.credential_id),
-            StoreDataEnvelope {
-                metadata: Metadata::new(),
-                data: credential.clone(),
-            },
-            Some(DATA_KEYSPACE),
-            None,
-        )
-        .await?;
-        Ok(credential.clone())
+        self.create_user_webauthn_credential_impl(raft, credential)
+            .await
+            .map_err(|e| e.into())
     }
 
     /// Get webauthn credential of the user by the credential_id.
@@ -201,13 +384,9 @@ impl WebauthnApi for RaftDriver {
             .storage
             .as_ref()
             .ok_or(WebauthnError::RaftNotAvailable)?;
-        Ok(raft
-            .get_by_key(
-                self.get_cred_key_name(user_id, credential_id),
-                Some(DATA_KEYSPACE),
-            )
-            .await?
-            .map(|x| x.data))
+        self.get_user_webauthn_credential_impl(raft, user_id, credential_id)
+            .await
+            .map_err(|e| e.into())
     }
 
     /// Delete credential for the user.
@@ -230,12 +409,9 @@ impl WebauthnApi for RaftDriver {
             .storage
             .as_ref()
             .ok_or(WebauthnError::RaftNotAvailable)?;
-        raft.remove(
-            self.get_cred_key_name(user_id, credential_id),
-            Some(DATA_KEYSPACE),
-        )
-        .await?;
-        Ok(())
+        self.delete_user_webauthn_credential_impl(raft, user_id, credential_id)
+            .await
+            .map_err(|e| e.into())
     }
 
     /// Delete webauthn credential auth state for a user.
@@ -256,12 +432,14 @@ impl WebauthnApi for RaftDriver {
             .storage
             .as_ref()
             .ok_or(WebauthnError::RaftNotAvailable)?;
-        raft.remove(
-            self.get_user_cred_auth_state_key_name(user_id),
-            Some(self.get_current_state_keyspace_name(raft).await?),
+        let state_keysapce = self.get_current_state_keyspace_name(raft).await?;
+        self.delete_user_webauthn_credential_authentication_state_impl(
+            raft,
+            user_id,
+            &state_keysapce,
         )
-        .await?;
-        Ok(())
+        .await
+        .map_err(|e| e.into())
     }
 
     /// Delete webauthn credential registration state for the user.
@@ -282,12 +460,10 @@ impl WebauthnApi for RaftDriver {
             .storage
             .as_ref()
             .ok_or(WebauthnError::RaftNotAvailable)?;
-        raft.remove(
-            self.get_user_cred_registration_state_key_name(user_id),
-            Some(self.get_current_state_keyspace_name(raft).await?),
-        )
-        .await?;
-        Ok(())
+        let state_keysapce = self.get_current_state_keyspace_name(raft).await?;
+        self.delete_user_webauthn_credential_registration_state_impl(raft, user_id, &state_keysapce)
+            .await
+            .map_err(|e| e.into())
     }
 
     /// Get webauthn credential auth state.
@@ -309,13 +485,10 @@ impl WebauthnApi for RaftDriver {
             .storage
             .as_ref()
             .ok_or(WebauthnError::RaftNotAvailable)?;
-        Ok(raft
-            .get_by_key(
-                self.get_user_cred_auth_state_key_name(user_id),
-                Some(self.get_current_state_keyspace_name(raft).await?),
-            )
-            .await?
-            .map(|x| x.data))
+        let state_keysapce = self.get_current_state_keyspace_name(raft).await?;
+        self.get_user_webauthn_credential_authentication_state_impl(raft, user_id, &state_keysapce)
+            .await
+            .map_err(|e| e.into())
     }
 
     /// Get webauthn credential registration state.
@@ -337,13 +510,10 @@ impl WebauthnApi for RaftDriver {
             .storage
             .as_ref()
             .ok_or(WebauthnError::RaftNotAvailable)?;
-        Ok(raft
-            .get_by_key(
-                self.get_user_cred_registration_state_key_name(user_id),
-                Some(self.get_current_state_keyspace_name(raft).await?),
-            )
-            .await?
-            .map(|x| x.data))
+        let state_keysapce = self.get_current_state_keyspace_name(raft).await?;
+        self.get_user_webauthn_credential_registration_state_impl(raft, user_id, &state_keysapce)
+            .await
+            .map_err(|e| e.into())
     }
 
     /// List user webauthn credentials.
@@ -364,12 +534,9 @@ impl WebauthnApi for RaftDriver {
             .storage
             .as_ref()
             .ok_or(WebauthnError::RaftNotAvailable)?;
-        Ok(raft
-            .prefix(self.get_user_cred_list_prefix(user_id), Some(DATA_KEYSPACE))
-            .await?
-            .into_iter()
-            .map(|(_, v)| v.data)
-            .collect())
+        self.list_user_webauthn_credentials_impl(raft, user_id)
+            .await
+            .map_err(|e| e.into())
     }
 
     /// Save webauthn credential auth state.
@@ -392,17 +559,15 @@ impl WebauthnApi for RaftDriver {
             .storage
             .as_ref()
             .ok_or(WebauthnError::RaftNotAvailable)?;
-        raft.set_value(
-            self.get_user_cred_auth_state_key_name(user_id),
-            StoreDataEnvelope {
-                metadata: Metadata::new(),
-                data: auth_state,
-            },
-            Some(self.get_current_state_keyspace_name(raft).await?),
-            None,
+        let state_keysapce = self.get_current_state_keyspace_name(raft).await?;
+        self.save_user_webauthn_credential_authentication_state_impl(
+            raft,
+            user_id,
+            auth_state,
+            &state_keysapce,
         )
-        .await?;
-        Ok(())
+        .await
+        .map_err(|e| e.into())
     }
 
     /// Save webauthn credential registration state.
@@ -425,17 +590,15 @@ impl WebauthnApi for RaftDriver {
             .storage
             .as_ref()
             .ok_or(WebauthnError::RaftNotAvailable)?;
-        raft.set_value(
-            self.get_user_cred_registration_state_key_name(user_id),
-            StoreDataEnvelope {
-                metadata: Metadata::new(),
-                data: reg_state,
-            },
-            Some(self.get_current_state_keyspace_name(raft).await?),
-            None,
+        let state_keysapce = self.get_current_state_keyspace_name(raft).await?;
+        self.save_user_webauthn_credential_registration_state_impl(
+            raft,
+            user_id,
+            reg_state,
+            &state_keysapce,
         )
-        .await?;
-        Ok(())
+        .await
+        .map_err(|e| e.into())
     }
 
     /// Update credential data.
@@ -460,28 +623,201 @@ impl WebauthnApi for RaftDriver {
             .storage
             .as_ref()
             .ok_or(WebauthnError::RaftNotAvailable)?;
-        if let Some(curr) = raft
-            .get_by_key::<WebauthnCredential, String, &str>(
-                self.get_cred_key_name(user_id, credential_id),
-                Some(DATA_KEYSPACE),
-            )
-            .await?
-        {
-            let new_meta = curr.metadata.new_revision();
-            let curr_revision = curr.metadata.revision;
-            raft.set_value(
-                self.get_cred_key_name(user_id, credential_id),
+        self.update_user_webauthn_credential_impl(raft, user_id, credential_id, credential)
+            .await
+            .map_err(|e| {
+                if e.to_string().contains("NotFound") {
+                    WebauthnError::CredentialNotFound(credential_id.to_string())
+                } else {
+                    e.into()
+                }
+            })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use openstack_keystone_distributed_storage::mock::MockStorage;
+    use openstack_keystone_distributed_storage::{Metadata, StoreDataEnvelope};
+
+    const DATA_KEYSPACE_TEST: &str = "data";
+    const STATE_KEYSPACE: &str = "webauth_state_test";
+
+    #[tokio::test]
+    async fn test_credential_storage() {
+        let driver = RaftDriver::default();
+        let storage = MockStorage::default();
+
+        let cred_key = driver.get_cred_key_name("user-1", "cred-1");
+        let cred_value: String = "test-credential-data".to_string();
+
+        storage
+            .set_value(
+                &cred_key,
                 StoreDataEnvelope {
-                    metadata: new_meta,
-                    data: credential,
+                    metadata: Metadata::new(),
+                    data: cred_value.clone(),
                 },
-                Some(DATA_KEYSPACE),
-                Some(curr_revision),
+                Some(DATA_KEYSPACE_TEST),
+                None,
             )
-            .await?;
-            Ok(credential.clone())
-        } else {
-            return Err(WebauthnError::CredentialNotFound(credential_id.to_string()));
-        }
+            .await
+            .unwrap();
+
+        let found = storage
+            .get_by_key::<String, &str, &str>(&cred_key, Some(DATA_KEYSPACE_TEST))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(found.data, "test-credential-data");
+    }
+
+    #[tokio::test]
+    async fn test_credential_keys() {
+        let driver = RaftDriver::default();
+        assert_eq!(
+            driver.get_cred_key_name("user-1", "cred-1"),
+            "user-1:cred:cred-1"
+        );
+        assert_eq!(driver.get_user_cred_list_prefix("user-1"), "user-1:cred");
+    }
+
+    #[tokio::test]
+    async fn test_state_auth_key() {
+        let driver = RaftDriver::default();
+        assert_eq!(
+            driver.get_user_cred_auth_state_key_name("user-1"),
+            "user-1:auth"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_state_reg_key() {
+        let driver = RaftDriver::default();
+        assert_eq!(
+            driver.get_user_cred_registration_state_key_name("user-1"),
+            "user-1:registration"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_auth_state_save_and_get() {
+        let driver = RaftDriver::default();
+        let storage = MockStorage::default();
+
+        let auth_value: String = "auth-state-data".to_string();
+        let key = driver.get_user_cred_auth_state_key_name("user-1");
+
+        storage
+            .set_value(
+                &key,
+                StoreDataEnvelope {
+                    metadata: Metadata::new(),
+                    data: auth_value.clone(),
+                },
+                Some(STATE_KEYSPACE),
+                None,
+            )
+            .await
+            .unwrap();
+
+        let found = storage
+            .get_by_key::<String, &str, &str>(&key, Some(STATE_KEYSPACE))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(found.data, "auth-state-data");
+    }
+
+    #[tokio::test]
+    async fn test_reg_state_save_and_get() {
+        let driver = RaftDriver::default();
+        let storage = MockStorage::default();
+
+        let reg_value: String = "reg-state-data".to_string();
+        let key = driver.get_user_cred_registration_state_key_name("user-1");
+
+        storage
+            .set_value(
+                &key,
+                StoreDataEnvelope {
+                    metadata: Metadata::new(),
+                    data: reg_value.clone(),
+                },
+                Some(STATE_KEYSPACE),
+                None,
+            )
+            .await
+            .unwrap();
+
+        let found = storage
+            .get_by_key::<String, &str, &str>(&key, Some(STATE_KEYSPACE))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(found.data, "reg-state-data");
+    }
+
+    #[tokio::test]
+    async fn test_credential_deletion() {
+        let driver = RaftDriver::default();
+        let storage = MockStorage::default();
+
+        let cred_key = driver.get_cred_key_name("user-1", "cred-1");
+        storage
+            .set_value(
+                &cred_key,
+                StoreDataEnvelope {
+                    metadata: Metadata::new(),
+                    data: "test".to_string(),
+                },
+                Some(DATA_KEYSPACE_TEST),
+                None,
+            )
+            .await
+            .unwrap();
+
+        storage
+            .remove(cred_key.clone(), Some(DATA_KEYSPACE_TEST))
+            .await
+            .unwrap();
+
+        let found = storage
+            .get_by_key::<String, &str, &str>(&cred_key, Some(DATA_KEYSPACE_TEST))
+            .await
+            .unwrap();
+        assert!(found.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_state_deletion() {
+        let driver = RaftDriver::default();
+        let storage = MockStorage::default();
+
+        let key = driver.get_user_cred_auth_state_key_name("user-1");
+        storage
+            .set_value(
+                &key,
+                StoreDataEnvelope {
+                    metadata: Metadata::new(),
+                    data: "test".to_string(),
+                },
+                Some(STATE_KEYSPACE),
+                None,
+            )
+            .await
+            .unwrap();
+
+        storage
+            .remove(key.clone(), Some(STATE_KEYSPACE))
+            .await
+            .unwrap();
+
+        let found = storage
+            .get_by_key::<String, &str, &str>(&key, Some(STATE_KEYSPACE))
+            .await
+            .unwrap();
+        assert!(found.is_none());
     }
 }

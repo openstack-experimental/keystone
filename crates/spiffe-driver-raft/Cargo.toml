@@ -19,5 +19,10 @@ openstack-keystone-distributed-storage.workspace = true
 tracing.workspace = true
 uuid.workspace = true
 
+[dev-dependencies]
+openstack-keystone-distributed-storage = { workspace = true, features = ["mock"] }
+tokio = { workspace = true, features = ["rt"] }
+uuid = { workspace = true, features = ["v4"] }
+
 [lints]
 workspace = true

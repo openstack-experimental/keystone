@@ -19,7 +19,7 @@ inventory.workspace = true
 openstack-keystone-api-types = { workspace = true, features = ["openapi", "validate", "conv"] }
 openstack-keystone-core = { workspace = true, features = ["api"] }
 openstack-keystone-core-types.workspace = true
-openstack-keystone-distributed-storage.workspace = true
+openstack-keystone-distributed-storage = { workspace = true, features = ["mock"] }
 sea-orm = { workspace = true }
 sea-orm-migration = { workspace = true }
 serde.workspace = true

@@ -26,6 +26,8 @@ use openraft::RaftTypeConfig;
 pub mod api;
 pub mod app;
 pub mod grpc;
+#[cfg(feature = "mock")]
+pub mod mock;
 pub mod network;
 mod proto_impl;
 mod types;

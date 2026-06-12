@@ -4040,6 +4040,7 @@ dependencies = [
  "openstack-keystone-core",
  "openstack-keystone-core-types",
  "openstack-keystone-distributed-storage",
+ "tokio",
  "tracing",
  "uuid",
 ]
@@ -4113,6 +4114,7 @@ dependencies = [
  "openstack-keystone-core",
  "openstack-keystone-core-types",
  "openstack-keystone-distributed-storage",
+ "tokio",
  "tracing",
  "uuid",
 ]

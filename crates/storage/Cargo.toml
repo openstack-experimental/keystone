@@ -44,7 +44,6 @@ secrecy = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_bytes.workspace = true
 serde_json.workspace = true
-tempfile = { workspace = true, optional = true }
 thiserror.workspace = true
 tonic = { workspace = true, features = ["router", "_tls-any"] }
 tonic-prost.workspace = true
@@ -71,4 +70,4 @@ tonic-prost-build.workspace = true
 [features]
 default = []
 bench_internals = []
-mock = ["dep:tempfile"]
+mock = []
