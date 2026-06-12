@@ -14,14 +14,14 @@
 
 use async_trait::async_trait;
 
-use openstack_keystone_core_types::identity_mapping::*;
+use openstack_keystone_core_types::idmapping::*;
 
-use crate::identity_mapping::IdentityMappingProviderError;
+use crate::idmapping::IdMappingProviderError;
 use crate::keystone::ServiceState;
 
-#[cfg_attr(test, mockall::automock)]
+/// IdMapping provider API.
 #[async_trait]
-pub trait IdentityMappingBackend: Send + Sync {
+pub trait IdMappingApi {
     /// Get the `IdMapping` by the local data.
     ///
     /// # Parameters
@@ -31,7 +31,7 @@ pub trait IdentityMappingBackend: Send + Sync {
     /// - `entity_type`: The entity type.
     ///
     /// # Returns
-    /// - `Result<Option<IdMapping>, IdentityMappingProviderError>` - A `Result`
+    /// - `Result<Option<IdMapping>, IdMappingProviderError>` - A `Result`
     ///   containing an `Option` with the `IdMapping` if found, or an `Error`.
     async fn get_by_local_id<'a>(
         &self,
@@ -39,7 +39,7 @@ pub trait IdentityMappingBackend: Send + Sync {
         local_id: &'a str,
         domain_id: &'a str,
         entity_type: IdMappingEntityType,
-    ) -> Result<Option<IdMapping>, IdentityMappingProviderError>;
+    ) -> Result<Option<IdMapping>, IdMappingProviderError>;
 
     /// Get the `IdMapping` by the public identifier.
     ///
@@ -48,11 +48,11 @@ pub trait IdentityMappingBackend: Send + Sync {
     /// - `public_id`: The public identifier.
     ///
     /// # Returns
-    /// - `Result<Option<IdMapping>, IdentityMappingProviderError>` - A `Result`
+    /// - `Result<Option<IdMapping>, IdMappingProviderError>` - A `Result`
     ///   containing an `Option` with the `IdMapping` if found, or an `Error`.
     async fn get_by_public_id<'a>(
         &self,
         state: &ServiceState,
         public_id: &'a str,
-    ) -> Result<Option<IdMapping>, IdentityMappingProviderError>;
+    ) -> Result<Option<IdMapping>, IdMappingProviderError>;
 }

@@ -12,48 +12,46 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! # Identity mapping provider
+//! # IdMapping provider
 
 use async_trait::async_trait;
 use std::sync::Arc;
 
 use openstack_keystone_config::Config;
-use openstack_keystone_core_types::identity_mapping::*;
+use openstack_keystone_core_types::idmapping::*;
 
-use crate::identity_mapping::{
-    IdentityMappingApi, IdentityMappingProviderError, backend::IdentityMappingBackend,
-};
+use crate::idmapping::{IdMappingApi, IdMappingProviderError, backend::IdMappingBackend};
 use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManagerApi;
 
-pub struct IdentityMappingService {
+pub struct IdMappingService {
     /// Backend driver.
-    backend_driver: Arc<dyn IdentityMappingBackend>,
+    backend_driver: Arc<dyn IdMappingBackend>,
 }
 
-impl IdentityMappingService {
-    /// Create a new `IdentityMappingService`.
+impl IdMappingService {
+    /// Create a new `IdMappingService`.
     ///
     /// # Parameters
     /// - `config`: The configuration.
     /// - `plugin_manager`: The plugin manager.
     ///
     /// # Returns
-    /// - `Result<Self, IdentityMappingProviderError>` - The new service or an
+    /// - `Result<Self, IdMappingProviderError>` - The new service or an
     ///   error.
     pub fn new<P: PluginManagerApi>(
         config: &Config,
         plugin_manager: &P,
-    ) -> Result<Self, IdentityMappingProviderError> {
+    ) -> Result<Self, IdMappingProviderError> {
         let backend_driver = plugin_manager
-            .get_identity_mapping_backend(config.identity_mapping.driver.clone())?
+            .get_idmapping_backend(config.idmapping.driver.clone())?
             .clone();
         Ok(Self { backend_driver })
     }
 }
 
 #[async_trait]
-impl IdentityMappingApi for IdentityMappingService {
+impl IdMappingApi for IdMappingService {
     /// Get the `IdMapping` by the local data.
     ///
     /// # Parameters
@@ -63,7 +61,7 @@ impl IdentityMappingApi for IdentityMappingService {
     /// - `entity_type`: The entity type.
     ///
     /// # Returns
-    /// - `Result<Option<IdMapping>, IdentityMappingProviderError>` - A `Result`
+    /// - `Result<Option<IdMapping>, IdMappingProviderError>` - A `Result`
     ///   containing an `Option` with the `IdMapping` if found, or an `Error`.
     async fn get_by_local_id<'a>(
         &self,
@@ -71,7 +69,7 @@ impl IdentityMappingApi for IdentityMappingService {
         local_id: &'a str,
         domain_id: &'a str,
         entity_type: IdMappingEntityType,
-    ) -> Result<Option<IdMapping>, IdentityMappingProviderError> {
+    ) -> Result<Option<IdMapping>, IdMappingProviderError> {
         self.backend_driver
             .get_by_local_id(state, local_id, domain_id, entity_type)
             .await
@@ -84,13 +82,13 @@ impl IdentityMappingApi for IdentityMappingService {
     /// - `public_id`: The public identifier.
     ///
     /// # Returns
-    /// - `Result<Option<IdMapping>, IdentityMappingProviderError>` - A `Result`
+    /// - `Result<Option<IdMapping>, IdMappingProviderError>` - A `Result`
     ///   containing an `Option` with the `IdMapping` if found, or an `Error`.
     async fn get_by_public_id<'a>(
         &self,
         state: &ServiceState,
         public_id: &'a str,
-    ) -> Result<Option<IdMapping>, IdentityMappingProviderError> {
+    ) -> Result<Option<IdMapping>, IdMappingProviderError> {
         self.backend_driver.get_by_public_id(state, public_id).await
     }
 }
@@ -100,11 +98,11 @@ mod tests {
     // use std::sync::Arc;
 
     use super::*;
-    use crate::identity_mapping::backend::MockIdentityMappingBackend;
+    use crate::idmapping::backend::MockIdMappingBackend;
     use crate::tests::get_mocked_state;
 
-    fn create_provider(backend: MockIdentityMappingBackend) -> IdentityMappingService {
-        IdentityMappingService {
+    fn create_provider(backend: MockIdMappingBackend) -> IdMappingService {
+        IdMappingService {
             backend_driver: Arc::new(backend),
         }
     }
@@ -118,7 +116,7 @@ mod tests {
             domain_id: "did".into(),
             entity_type: IdMappingEntityType::User,
         };
-        let mut backend = MockIdentityMappingBackend::default();
+        let mut backend = MockIdMappingBackend::default();
         let sot_clone = sot.clone();
         backend
             .expect_get_by_local_id()
@@ -145,7 +143,7 @@ mod tests {
             domain_id: "did".into(),
             entity_type: IdMappingEntityType::User,
         };
-        let mut backend = MockIdentityMappingBackend::default();
+        let mut backend = MockIdMappingBackend::default();
         let sot_clone = sot.clone();
         backend
             .expect_get_by_public_id()

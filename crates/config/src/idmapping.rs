@@ -15,15 +15,15 @@ use serde::Deserialize;
 
 use crate::common::default_sql_driver;
 
-/// Identity mapping provider.
+/// IdMapping provider.
 #[derive(Debug, Deserialize, Clone)]
-pub struct IdentityMappingProvider {
-    /// Identity provider driver.
+pub struct IdMappingProvider {
+    /// IdMapping provider driver.
     #[serde(default = "default_sql_driver")]
     pub driver: String,
 }
 
-impl Default for IdentityMappingProvider {
+impl Default for IdMappingProvider {
     fn default() -> Self {
         Self {
             driver: default_sql_driver(),

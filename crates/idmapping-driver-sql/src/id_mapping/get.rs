@@ -17,8 +17,8 @@ use sea_orm::entity::*;
 use sea_orm::query::*;
 
 use openstack_keystone_core::error::DbContextExt;
-use openstack_keystone_core::identity_mapping::IdentityMappingProviderError;
-use openstack_keystone_core_types::identity_mapping::IdMapping;
+use openstack_keystone_core::idmapping::IdMappingProviderError;
+use openstack_keystone_core_types::idmapping::IdMapping;
 
 use crate::entity::{
     id_mapping, prelude::IdMapping as DbIdMapping, sea_orm_active_enums::EntityType,
@@ -36,7 +36,7 @@ use crate::entity::{
 pub async fn get_by_public_id<P: AsRef<str>>(
     db: &DatabaseConnection,
     public_id: P,
-) -> Result<Option<IdMapping>, IdentityMappingProviderError> {
+) -> Result<Option<IdMapping>, IdMappingProviderError> {
     Ok(DbIdMapping::find_by_id(public_id.as_ref())
         .one(db)
         .await
@@ -60,7 +60,7 @@ pub async fn get_by_local_id<L: AsRef<str>, D: AsRef<str>, E: Into<EntityType>>(
     local_id: L,
     domain_id: D,
     entity_type: E,
-) -> Result<Option<IdMapping>, IdentityMappingProviderError> {
+) -> Result<Option<IdMapping>, IdMappingProviderError> {
     Ok(DbIdMapping::find()
         .filter(id_mapping::Column::LocalId.eq(local_id.as_ref()))
         .filter(id_mapping::Column::DomainId.eq(domain_id.as_ref()))

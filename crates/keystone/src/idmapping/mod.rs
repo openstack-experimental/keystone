@@ -12,8 +12,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! # Identity mapping provider
+//! # IdMapping provider
 //!
-//! Identity mapping provider provides a mapping of the entity ID between
+//! IdMapping provider provides a mapping of the entity ID between
 //! Keystone and the remote system (i.e. LDAP, IdP, OpenFGA, SCIM, etc).
-pub use openstack_keystone_core::identity_mapping::*;
+pub use openstack_keystone_core::idmapping::*;

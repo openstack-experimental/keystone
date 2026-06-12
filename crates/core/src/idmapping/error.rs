@@ -11,16 +11,16 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-pub use openstack_keystone_core_types::identity_mapping::IdentityMappingProviderError;
+pub use openstack_keystone_core_types::idmapping::IdMappingProviderError;
 
-impl From<crate::error::DatabaseError> for IdentityMappingProviderError {
-    /// Convert a database error into an identity mapping provider error.
+impl From<crate::error::DatabaseError> for IdMappingProviderError {
+    /// Convert a database error into an idmapping provider error.
     ///
     /// # Parameters
     /// - `source`: The database error to convert.
     ///
     /// # Returns
-    /// - `Self` - The converted `IdentityMappingProviderError`.
+    /// - `Self` - The converted `IdMappingProviderError`.
     fn from(source: crate::error::DatabaseError) -> Self {
         match source {
             cfl @ crate::error::DatabaseError::Conflict { .. } => Self::Conflict(cfl.to_string()),

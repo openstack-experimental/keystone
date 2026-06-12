@@ -35,8 +35,8 @@ use openstack_keystone_core::federation::backend::FederationBackend;
 use openstack_keystone_core::federation::error::FederationProviderError;
 use openstack_keystone_core::identity::backend::IdentityBackend;
 use openstack_keystone_core::identity::error::IdentityProviderError;
-use openstack_keystone_core::identity_mapping::IdentityMappingProviderError;
-use openstack_keystone_core::identity_mapping::backend::IdentityMappingBackend;
+use openstack_keystone_core::idmapping::IdMappingProviderError;
+use openstack_keystone_core::idmapping::backend::IdMappingBackend;
 use openstack_keystone_core::k8s_auth::K8sAuthProviderError;
 use openstack_keystone_core::k8s_auth::backend::K8sAuthBackend;
 use openstack_keystone_core::resource::backend::ResourceBackend;
@@ -68,8 +68,8 @@ pub struct PluginManager {
     federation_backends: HashMap<String, Arc<dyn FederationBackend>>,
     /// Identity backend plugins.
     identity_backends: HashMap<String, Arc<dyn IdentityBackend>>,
-    /// Identity mapping backend plugins.
-    identity_mapping_backends: HashMap<String, Arc<dyn IdentityMappingBackend>>,
+    /// IdMapping backend plugins.
+    idmapping_backends: HashMap<String, Arc<dyn IdMappingBackend>>,
     /// K8s auth backend plugins.
     k8s_auth_backends: HashMap<String, Arc<dyn K8sAuthBackend>>,
     /// Resource backend plugins.
@@ -185,22 +185,24 @@ impl PluginManagerApi for PluginManager {
             ))
     }
 
-    /// Get registered identity mapping backend.
+    /// Get registered idmapping backend.
     ///
     /// # Parameters
     /// * `name` - The name of the backend to retrieve.
     ///
     /// # Returns
-    /// A `Result` containing a reference to the `IdentityMappingBackend` if
-    /// found, or an `IdentityMappingProviderError`.
+    /// A `Result` containing a reference to the `IdMappingBackend` if
+    /// found, or an `IdMappingProviderError`.
     #[allow(clippy::borrowed_box)]
-    fn get_identity_mapping_backend<S: AsRef<str>>(
+    fn get_idmapping_backend<S: AsRef<str>>(
         &self,
         name: S,
-    ) -> Result<&Arc<dyn IdentityMappingBackend>, IdentityMappingProviderError> {
-        self.identity_mapping_backends.get(name.as_ref()).ok_or(
-            IdentityMappingProviderError::UnsupportedDriver(name.as_ref().to_string()),
-        )
+    ) -> Result<&Arc<dyn IdMappingBackend>, IdMappingProviderError> {
+        self.idmapping_backends
+            .get(name.as_ref())
+            .ok_or(IdMappingProviderError::UnsupportedDriver(
+                name.as_ref().to_string(),
+            ))
     }
 
     /// Get registered k8s auth backend.
@@ -431,17 +433,17 @@ impl PluginManagerApi for PluginManager {
             .insert(name.as_ref().to_string(), plugin);
     }
 
-    /// Register identity mapping backend.
+    /// Register idmapping backend.
     ///
     /// # Parameters
     /// * `name` - The name of the backend to register.
     /// * `plugin` - The backend implementation to register.
-    fn register_identity_mapping_backend<S: AsRef<str>>(
+    fn register_idmapping_backend<S: AsRef<str>>(
         &mut self,
         name: S,
-        plugin: Arc<dyn IdentityMappingBackend>,
+        plugin: Arc<dyn IdMappingBackend>,
     ) {
-        self.identity_mapping_backends
+        self.idmapping_backends
             .insert(name.as_ref().to_string(), plugin);
     }
 
@@ -560,7 +562,7 @@ impl PluginManager {
             "sql",
             Arc::new(openstack_keystone_identity_driver_sql::SqlBackend::default()),
         );
-        self.register_identity_mapping_backend(
+        self.register_idmapping_backend(
             "sql",
             Arc::new(openstack_keystone_idmapping_driver_sql::SqlBackend::default()),
         );
@@ -604,7 +606,7 @@ impl PluginManager {
             catalog_backends: HashMap::new(),
             federation_backends: HashMap::new(),
             identity_backends: HashMap::new(),
-            identity_mapping_backends: HashMap::new(),
+            idmapping_backends: HashMap::new(),
             k8s_auth_backends: HashMap::new(),
             resource_backends: HashMap::new(),
             revoke_backends: HashMap::new(),

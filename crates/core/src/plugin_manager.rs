@@ -33,8 +33,8 @@ use crate::federation::backend::FederationBackend;
 use crate::federation::error::FederationProviderError;
 use crate::identity::backend::IdentityBackend;
 use crate::identity::error::IdentityProviderError;
-use crate::identity_mapping::IdentityMappingProviderError;
-use crate::identity_mapping::backend::IdentityMappingBackend;
+use crate::idmapping::IdMappingProviderError;
+use crate::idmapping::backend::IdMappingBackend;
 use crate::k8s_auth::K8sAuthProviderError;
 use crate::k8s_auth::backend::K8sAuthBackend;
 use crate::resource::backend::ResourceBackend;
@@ -118,18 +118,18 @@ pub trait PluginManagerApi {
         name: S,
     ) -> Result<&Arc<dyn IdentityBackend>, IdentityProviderError>;
 
-    /// Get registered identity mapping backend.
+    /// Get registered idmapping backend.
     ///
     /// # Parameters
     /// - `name`: The name of the backend to retrieve.
     ///
     /// # Returns
-    /// - `Ok(&Arc<dyn IdentityMappingBackend>)` if found, otherwise
-    ///   `Err(IdentityMappingProviderError)`.
-    fn get_identity_mapping_backend<S: AsRef<str>>(
+    /// - `Ok(&Arc<dyn IdMappingBackend>)` if found, otherwise
+    ///   `Err(IdMappingProviderError)`.
+    fn get_idmapping_backend<S: AsRef<str>>(
         &self,
         name: S,
-    ) -> Result<&Arc<dyn IdentityMappingBackend>, IdentityMappingProviderError>;
+    ) -> Result<&Arc<dyn IdMappingBackend>, IdMappingProviderError>;
 
     /// Get registered k8s auth backend.
     ///
@@ -286,15 +286,15 @@ pub trait PluginManagerApi {
         plugin: Arc<dyn IdentityBackend>,
     );
 
-    /// Register identity mapping backend.
+    /// Register idmapping backend.
     ///
     /// # Parameters
     /// - `name`: The name to register the backend under.
     /// - `plugin`: The backend implementation.
-    fn register_identity_mapping_backend<S: AsRef<str>>(
+    fn register_idmapping_backend<S: AsRef<str>>(
         &mut self,
         name: S,
-        plugin: Arc<dyn IdentityMappingBackend>,
+        plugin: Arc<dyn IdMappingBackend>,
     );
 
     /// Register k8s_auth backend.

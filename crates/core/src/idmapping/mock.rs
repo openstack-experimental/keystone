@@ -15,28 +15,28 @@
 use async_trait::async_trait;
 use mockall::mock;
 
-use openstack_keystone_core_types::identity_mapping::*;
+use openstack_keystone_core_types::idmapping::*;
 
-use crate::identity_mapping::{IdentityMappingApi, IdentityMappingProviderError};
+use crate::idmapping::{IdMappingApi, IdMappingProviderError};
 use crate::keystone::ServiceState;
 
 mock! {
-    pub IdentityMappingProvider {}
+    pub IdMappingProvider {}
 
     #[async_trait]
-    impl IdentityMappingApi for IdentityMappingProvider {
+    impl IdMappingApi for IdMappingProvider {
         async fn get_by_local_id<'a>(
             &self,
             state: &ServiceState,
             local_id: &'a str,
             domain_id: &'a str,
             entity_type: IdMappingEntityType,
-        ) -> Result<Option<IdMapping>, IdentityMappingProviderError>;
+        ) -> Result<Option<IdMapping>, IdMappingProviderError>;
 
         async fn get_by_public_id<'a>(
             &self,
             state: &ServiceState,
             public_id: &'a str,
-        ) -> Result<Option<IdMapping>, IdentityMappingProviderError>;
+        ) -> Result<Option<IdMapping>, IdMappingProviderError>;
     }
 }
