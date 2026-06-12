@@ -17,7 +17,6 @@ use sea_orm::DatabaseConnection;
 use sea_orm::entity::*;
 
 use openstack_keystone_core::catalog::CatalogProviderError;
-use openstack_keystone_core::db::merge_extra;
 use openstack_keystone_core::error::DbContextExt;
 use openstack_keystone_core_types::catalog::{Region, RegionUpdate};
 
@@ -48,7 +47,6 @@ pub async fn update<I: AsRef<str>>(
         .ok_or_else(|| CatalogProviderError::RegionNotFound(id.as_ref().to_string()))?;
 
     // Start from the existing row, then overwrite only the provided fields.
-    let existing_extra = existing.extra.clone();
     let mut update_model: db_region::ActiveModel = existing.into();
 
     if let Some(description) = region.description {
@@ -57,8 +55,9 @@ pub async fn update<I: AsRef<str>>(
     if let Some(parent_region_id) = region.parent_region_id {
         update_model.parent_region_id = Set(Some(parent_region_id));
     }
+    // The provider has already merged `extra`; the driver only persists it.
     if let Some(extra) = region.extra {
-        update_model.extra = Set(Some(merge_extra(existing_extra.as_deref(), &extra)?));
+        update_model.extra = Set(Some(serde_json::to_string(&extra)?));
     }
 
     update_model

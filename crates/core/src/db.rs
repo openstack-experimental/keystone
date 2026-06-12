@@ -20,48 +20,48 @@ use serde_json::Value;
 
 use crate::error::{DatabaseError, DbContextExt};
 
-/// Merge update `extra` properties into the currently stored `extra` blob,
-/// following the Python keystone semantics.
+/// Merge update `extra` properties onto the currently stored ones, following
+/// the Python keystone semantics.
 ///
-/// The `extra` field is a JSON object serialized as a string in the database.
-/// Rather than replacing it wholesale on update (which would drop every
-/// property the caller did not resend), the existing object is used as the base
-/// and the supplied `updates` are applied on top of it:
+/// `extra` is a free-form bag of additional properties. Rather than replacing
+/// it wholesale on update (which would drop every property the caller did not
+/// resend), the currently stored properties are used as the base and the
+/// supplied `updates` are applied on top of them:
 ///
 /// - a key with a non-null value overwrites (or adds) that key, and
 /// - a key whose new value is JSON `null` unsets (removes) that key.
 ///
-/// This preserves untouched properties while still allowing individual
-/// properties to be cleared.
+/// Properties the caller did not mention are left untouched.
+///
+/// This runs in the provider layer so the value handed to the backend driver
+/// (and recorded in traces) is exactly what gets persisted; the driver is only
+/// responsible for storing it.
 ///
 /// # Parameters
-/// - `existing`: The currently stored `extra` JSON string, if any.
+/// - `existing`: The currently stored `extra` value, if any. Anything that is
+///   not a JSON object is treated as an empty base.
 /// - `updates`: The `extra` properties supplied in the update request.
 ///
 /// # Returns
-/// A `Result` containing the merged `extra` serialized as a JSON string, or a
-/// `serde_json::Error` if the existing blob could not be parsed.
+/// The merged `extra` properties.
 pub fn merge_extra(
-    existing: Option<&str>,
-    updates: &HashMap<String, Value>,
-) -> Result<String, serde_json::Error> {
-    let mut merged: serde_json::Map<String, Value> = match existing {
-        Some(raw) if !raw.is_empty() && raw != "{}" => match serde_json::from_str::<Value>(raw)? {
-            Value::Object(map) => map,
-            _ => serde_json::Map::new(),
-        },
-        _ => serde_json::Map::new(),
+    existing: Option<&Value>,
+    updates: HashMap<String, Value>,
+) -> HashMap<String, Value> {
+    let mut merged: HashMap<String, Value> = match existing {
+        Some(Value::Object(map)) => map.clone().into_iter().collect(),
+        _ => HashMap::new(),
     };
 
     for (key, value) in updates {
         if value.is_null() {
-            merged.remove(key);
+            merged.remove(&key);
         } else {
-            merged.insert(key.clone(), value.clone());
+            merged.insert(key, value);
         }
     }
 
-    serde_json::to_string(&Value::Object(merged))
+    merged
 }
 
 /// Create the table in the database with directly related types and indexes.
@@ -112,53 +112,54 @@ mod tests {
     #[test]
     fn test_merge_extra_preserves_existing_keys() {
         // A key absent from the update must survive the merge.
-        let existing = r#"{"keep":"me","change":"old"}"#;
+        let existing = json!({"keep": "me", "change": "old"});
         let updates = HashMap::from([("change".to_string(), json!("new"))]);
 
-        let merged: Value =
-            serde_json::from_str(&merge_extra(Some(existing), &updates).unwrap()).unwrap();
-        assert_eq!(merged, json!({"keep": "me", "change": "new"}));
+        let merged = merge_extra(Some(&existing), updates);
+        assert_eq!(merged.get("keep"), Some(&json!("me")));
+        assert_eq!(merged.get("change"), Some(&json!("new")));
+        assert_eq!(merged.len(), 2);
     }
 
     #[test]
     fn test_merge_extra_adds_new_keys() {
-        let existing = r#"{"a":1}"#;
+        let existing = json!({"a": 1});
         let updates = HashMap::from([("b".to_string(), json!(2))]);
 
-        let merged: Value =
-            serde_json::from_str(&merge_extra(Some(existing), &updates).unwrap()).unwrap();
-        assert_eq!(merged, json!({"a": 1, "b": 2}));
+        let merged = merge_extra(Some(&existing), updates);
+        assert_eq!(merged.get("a"), Some(&json!(1)));
+        assert_eq!(merged.get("b"), Some(&json!(2)));
     }
 
     #[test]
     fn test_merge_extra_null_unsets_key() {
-        // A null value removes the key from the stored blob.
-        let existing = r#"{"drop":"me","keep":"yes"}"#;
+        // A null value removes the key from the stored properties.
+        let existing = json!({"drop": "me", "keep": "yes"});
         let updates = HashMap::from([("drop".to_string(), Value::Null)]);
 
-        let merged: Value =
-            serde_json::from_str(&merge_extra(Some(existing), &updates).unwrap()).unwrap();
-        assert_eq!(merged, json!({"keep": "yes"}));
+        let merged = merge_extra(Some(&existing), updates);
+        assert!(!merged.contains_key("drop"));
+        assert_eq!(merged.get("keep"), Some(&json!("yes")));
     }
 
     #[test]
     fn test_merge_extra_null_on_missing_key_is_noop() {
-        let existing = r#"{"a":1}"#;
+        let existing = json!({"a": 1});
         let updates = HashMap::from([("missing".to_string(), Value::Null)]);
 
-        let merged: Value =
-            serde_json::from_str(&merge_extra(Some(existing), &updates).unwrap()).unwrap();
-        assert_eq!(merged, json!({"a": 1}));
+        let merged = merge_extra(Some(&existing), updates);
+        assert_eq!(merged.get("a"), Some(&json!(1)));
+        assert_eq!(merged.len(), 1);
     }
 
     #[test]
-    fn test_merge_extra_handles_empty_or_missing_existing() {
-        let updates = HashMap::from([("a".to_string(), json!(1))]);
-
-        for existing in [None, Some(""), Some("{}")] {
-            let merged: Value =
-                serde_json::from_str(&merge_extra(existing, &updates).unwrap()).unwrap();
-            assert_eq!(merged, json!({"a": 1}));
+    fn test_merge_extra_handles_non_object_or_missing_existing() {
+        // Anything that is not a JSON object is treated as an empty base.
+        for existing in [None, Some(json!(null)), Some(json!("scalar"))] {
+            let updates = HashMap::from([("a".to_string(), json!(1))]);
+            let merged = merge_extra(existing.as_ref(), updates);
+            assert_eq!(merged.get("a"), Some(&json!(1)));
+            assert_eq!(merged.len(), 1);
         }
     }
 }

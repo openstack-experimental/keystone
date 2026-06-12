@@ -18,7 +18,6 @@ use sea_orm::TransactionTrait;
 use sea_orm::entity::*;
 
 use openstack_keystone_config::Config;
-use openstack_keystone_core::db::merge_extra;
 use openstack_keystone_core::error::DbContextExt;
 use openstack_keystone_core::identity::IdentityProviderError;
 use openstack_keystone_core_types::identity::{UserResponse, UserUpdate};
@@ -73,13 +72,9 @@ pub async fn update(
         update_model.enabled = Set(Some(enabled));
     }
 
-    // Update extra properties if provided in the patch. Existing properties are
-    // merged with the update (a null value unsets the key) rather than replaced.
+    // The provider has already merged `extra`; the driver only persists it.
     if !user.extra.is_empty() {
-        update_model.extra = Set(Some(merge_extra(
-            existing_user.extra.as_deref(),
-            &user.extra,
-        )?));
+        update_model.extra = Set(Some(serde_json::to_string(&user.extra)?));
     }
 
     // Update the main user record
