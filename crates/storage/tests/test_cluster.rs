@@ -282,15 +282,9 @@ async fn test_cluster_inner() -> Result<()> {
     println!("=== Transaction test");
 
     let mutations = vec![
-        Mutation::set("new_foo", "new_val", Metadata::new(), None::<&str>, Some(1))?,
-        Mutation::set(
-            "new_foo2",
-            "new_val2",
-            Metadata::new(),
-            None::<&str>,
-            Some(1),
-        )?,
-        Mutation::remove("foo1", Some("another_keyspace"))?,
+        Mutation::set("new_foo", "new_val", Metadata::new(), None::<&str>, None)?,
+        Mutation::set("new_foo2", "new_val2", Metadata::new(), None::<&str>, None)?,
+        Mutation::remove("foo1", Some("another_keyspace"), None)?,
     ];
     instance1.storage.transaction(mutations).await?;
     // wait for the log to be applied

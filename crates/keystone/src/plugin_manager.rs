@@ -39,6 +39,8 @@ use openstack_keystone_core::idmapping::IdMappingProviderError;
 use openstack_keystone_core::idmapping::backend::IdMappingBackend;
 use openstack_keystone_core::k8s_auth::K8sAuthProviderError;
 use openstack_keystone_core::k8s_auth::backend::K8sAuthBackend;
+use openstack_keystone_core::mapping::MappingBackend;
+use openstack_keystone_core::mapping::MappingProviderError;
 use openstack_keystone_core::resource::backend::ResourceBackend;
 use openstack_keystone_core::resource::error::ResourceProviderError;
 use openstack_keystone_core::revoke::RevokeProviderError;
@@ -70,6 +72,8 @@ pub struct PluginManager {
     identity_backends: HashMap<String, Arc<dyn IdentityBackend>>,
     /// IdMapping backend plugins.
     idmapping_backends: HashMap<String, Arc<dyn IdMappingBackend>>,
+    /// Mapping backend plugins.
+    mapping_backends: HashMap<String, Arc<dyn MappingBackend>>,
     /// K8s auth backend plugins.
     k8s_auth_backends: HashMap<String, Arc<dyn K8sAuthBackend>>,
     /// Resource backend plugins.
@@ -201,6 +205,26 @@ impl PluginManagerApi for PluginManager {
         self.idmapping_backends
             .get(name.as_ref())
             .ok_or(IdMappingProviderError::UnsupportedDriver(
+                name.as_ref().to_string(),
+            ))
+    }
+
+    /// Get registered mapping backend.
+    ///
+    /// # Parameters
+    /// * `name` - The name of the backend to retrieve.
+    ///
+    /// # Returns
+    /// A `Result` containing a reference to the `MappingBackend` if found, or a
+    /// `MappingProviderError`.
+    #[allow(clippy::borrowed_box)]
+    fn get_mapping_backend<S: AsRef<str>>(
+        &self,
+        name: S,
+    ) -> Result<&Arc<dyn MappingBackend>, MappingProviderError> {
+        self.mapping_backends
+            .get(name.as_ref())
+            .ok_or(MappingProviderError::UnsupportedDriver(
                 name.as_ref().to_string(),
             ))
     }
@@ -447,6 +471,20 @@ impl PluginManagerApi for PluginManager {
             .insert(name.as_ref().to_string(), plugin);
     }
 
+    /// Register mapping backend.
+    ///
+    /// # Parameters
+    /// * `name` - The name of the backend to register.
+    /// * `plugin` - The backend implementation to register.
+    fn register_mapping_backend<S: AsRef<str>>(
+        &mut self,
+        name: S,
+        plugin: Arc<dyn MappingBackend>,
+    ) {
+        self.mapping_backends
+            .insert(name.as_ref().to_string(), plugin);
+    }
+
     /// Register k8s_auth backend.
     ///
     /// # Parameters
@@ -607,6 +645,7 @@ impl PluginManager {
             federation_backends: HashMap::new(),
             identity_backends: HashMap::new(),
             idmapping_backends: HashMap::new(),
+            mapping_backends: HashMap::new(),
             k8s_auth_backends: HashMap::new(),
             resource_backends: HashMap::new(),
             revoke_backends: HashMap::new(),
@@ -630,6 +669,10 @@ impl PluginManager {
         slf.register_spiffe_backend(
             "raft",
             Arc::new(openstack_keystone_spiffe_driver_raft::RaftBackend::default()),
+        );
+        slf.register_mapping_backend(
+            "raft",
+            Arc::new(openstack_keystone_mapping_driver_raft::RaftBackend::default()),
         );
         slf
     }

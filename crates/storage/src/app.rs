@@ -306,7 +306,7 @@ impl StorageApi for Storage {
         S: Into<String> + Send,
     {
         let request = StoreCommand::Transaction(vec![MutationInner::convert(
-            Mutation::remove(key, keyspace)?,
+            Mutation::remove(key, keyspace, None)?,
             Nonce::default(),
         )?]);
         let payload = crate::pb::api::CommandRequest::try_from(request)?;
@@ -458,7 +458,17 @@ impl Storage {
         command: crate::pb::api::CommandRequest,
     ) -> Result<Response, StoreError> {
         match self.raft.client_write(command.clone()).await {
-            Ok(rsp) => Ok(rsp.data),
+            Ok(rsp) => {
+                let rsp = rsp.data;
+                // Check for violations (e.g., CAS conflicts)
+                if let Some(v) = rsp.violations.first() {
+                    return Err(StoreError::Conflict {
+                        subject: v.subject.clone(),
+                        description: v.description.clone(),
+                    });
+                }
+                Ok(rsp)
+            }
             Err(RaftError::APIError(ClientWriteError::ForwardToLeader(ForwardToLeader {
                 leader_id: Some(leader_id),
                 leader_node: Some(leader_node),
@@ -504,7 +514,17 @@ impl Storage {
             let result = client.command(command.clone()).await;
 
             match result {
-                Ok(resp) => return Ok(resp.into_inner()),
+                Ok(resp) => {
+                    let resp = resp.into_inner();
+                    // Check for violations
+                    if let Some(v) = resp.violations.first() {
+                        return Err(StoreError::Conflict {
+                            subject: v.subject.clone(),
+                            description: v.description.clone(),
+                        });
+                    }
+                    return Ok(resp);
+                }
                 Err(status) if status.code() == Code::Unavailable => {
                     // Extract leader endpoint from gRPC metadata
                     // TODO: teach the gRPC app to start exposing the headers.

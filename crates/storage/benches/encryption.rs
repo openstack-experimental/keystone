@@ -24,7 +24,7 @@ fn bench_encryption(c: &mut Criterion) {
 
     let remove_cmd = StoreCommand::Transaction(vec![
         MutationInner::convert(
-            Mutation::remove("foo", Some("bar")).unwrap(),
+            Mutation::remove("foo", Some("bar"), None).unwrap(),
             Nonce::default(),
         )
         .unwrap(),

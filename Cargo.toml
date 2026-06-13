@@ -13,6 +13,7 @@ members = [
   "crates/k8s-auth-driver-raft",
   "crates/k8s-auth-driver-sql",
   "crates/keystone",
+  "crates/mapping-driver-raft",
   "crates/resource-driver-sql",
   "crates/role-driver-sql",
   "crates/storage",
@@ -72,6 +73,7 @@ http-body-util = "0.1"
 http = { version = "1.4" }
 hyper = { version = "1.10" }
 hyper-util = { version = "0.1" }
+hmac = { version = "0.12" }
 inventory = { version = "0.3" }
 itertools = { version = "0.14" }
 mockall = { version = "0.14" }
@@ -90,6 +92,7 @@ openstack-keystone-distributed-storage = { version = "0.1.0", path = "crates/sto
 openstack-keystone-federation-driver-sql = { version = "0.1", path = "crates/federation-driver-sql" }
 openstack-keystone-k8s-auth-driver-sql = { version = "0.1", path = "crates/k8s-auth-driver-sql/" }
 openstack-keystone-k8s-auth-driver-raft = { version = "0.1", path = "crates/k8s-auth-driver-raft/" }
+openstack-keystone-mapping-driver-raft = { version = "0.1", path = "crates/mapping-driver-raft/" }
 openstack-keystone-identity-driver-sql = { version = "0.1", path = "crates/identity-driver-sql" }
 openstack-keystone-idmapping-driver-sql = { version = "0.1", path = "crates/idmapping-driver-sql" }
 openstack-keystone-resource-driver-sql = { version = "0.1", path = "crates/resource-driver-sql/" }
@@ -103,16 +106,19 @@ openstack-keystone-webauthn = { version = "0.1", path = "crates/webauthn/"}
 prost = { version = "0.14" }
 rand = { version = "0.10" }
 regex = { version = "1.12" }
+regex-syntax = "0.8"
 reqwest = { version = "0.13" }
 rcgen = { version = "0.14" }
 rmp = { version = "0.8" }
 rstest = { version = "0.26" }
+rmp-serde = "1.3"
 rustls = { version = "0.23" }
 schemars = { version = "1.2" }
 scopeguard = "1.2.0"
 sea-orm = { version = "1.1", features = ["debug-print", "sqlx-mysql", "sqlx-postgres", "sqlx-sqlite", "runtime-tokio", "runtime-tokio-native-tls", "mock"] }
 sea-orm-migration = { version = "1.1", features = ["sqlx-mysql", "sqlx-postgres", "runtime-tokio"] }
 secrecy = { version = "0.10" }
+sha2 = "0.10"
 serde = { version = "1.0" }
 serde_bytes = { version = "0.11" }
 serde_json = { version = "1.0" }

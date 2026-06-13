@@ -15,7 +15,7 @@
 use std::collections::HashMap;
 
 use derive_builder::Builder;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::error::BuilderError;
@@ -40,6 +40,19 @@ pub struct Group {
 
     /// The user name. Must be unique within the owning domain.
     pub name: String,
+}
+
+/// Short group representation (reference).
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+pub struct GroupRef {
+    /// The group domain_id.
+    pub domain_id: Option<String>,
+
+    /// The group ID.
+    pub id: String,
+
+    /// The group name.
+    pub name: Option<String>,
 }
 
 #[derive(Builder, Clone, Debug, Default, PartialEq)]

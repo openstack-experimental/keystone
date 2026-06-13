@@ -104,8 +104,8 @@ pub struct EndpointListParameters {
 
 /// Fields that can be changed when updating an endpoint.
 ///
-/// Each field is `None` when the caller did not provide it (leave unchanged) and
-/// `Some(..)` to set a new value.
+/// Each field is `None` when the caller did not provide it (leave unchanged)
+/// and `Some(..)` to set a new value.
 #[derive(Clone, Debug, Default, PartialEq, Validate)]
 pub struct EndpointUpdate {
     /// New enabled flag.

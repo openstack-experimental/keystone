@@ -24,6 +24,13 @@ pub enum StoreError {
     #[error("missing storage configuration")]
     ConfigMissing,
 
+    /// Concurrent modification conflict (revision mismatch).
+    #[error("concurrent modification conflict: {subject} — {description}")]
+    Conflict {
+        subject: String,
+        description: String,
+    },
+
     /// Database error.
     #[error(transparent)]
     Fjall {

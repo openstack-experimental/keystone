@@ -21,6 +21,7 @@ use openstack_keystone_core_types::assignment::{
     AssignmentProviderError, RoleAssignmentListParametersBuilder,
 };
 use openstack_keystone_core_types::identity::IdentityProviderError;
+use openstack_keystone_core_types::mapping::authorization::Authorization;
 use openstack_keystone_core_types::resource::ResourceProviderError;
 use openstack_keystone_core_types::role::*;
 use openstack_keystone_core_types::spiffe::*;
@@ -29,6 +30,7 @@ use openstack_keystone_core_types::token::FernetToken;
 use crate::assignment::AssignmentApi;
 use crate::identity::IdentityApi;
 use crate::keystone::ServiceState;
+use crate::mapping::MappingApi;
 use crate::resource::ResourceApi;
 use crate::role::RoleApi;
 use crate::trust::TrustApi;
@@ -93,8 +95,9 @@ impl ValidatedSecurityContext {
                 ctx.validate_scope_boundaries(&scope)?;
             }
         } else {
-            ctx.set_authorization_scope(scope)?;
+            ctx.set_authorization_scope(scope.clone())?;
         }
+        let scope_clone = scope;
 
         // Populate user_domain before validation, since validate() requires it
         if let IdentityInfo::User(user_info) = &ctx.principal().identity
@@ -192,6 +195,76 @@ impl ValidatedSecurityContext {
             }
             AuthenticationContext::Token(..) => {}
             AuthenticationContext::WebauthN => {}
+            AuthenticationContext::Mapping(mc) => {
+                // Read virtual user shadow record to get allowed authorizations
+                let vu = state
+                    .provider
+                    .get_mapping_provider()
+                    .get_virtual_user(state, &mc.virtual_user_id)
+                    .await
+                    .auth_context("fetching virtual user for scope resolution")?
+                    .ok_or(AuthenticationError::ActorHasNoRolesOnTarget)
+                    .auth_context("virtual user not found")?;
+
+                if vu.authorizations.is_empty() {
+                    // No authorizations - fall through with no scope
+                } else {
+                    // Find authorization matching the requested scope (by type + specific ID)
+                    let roles = match &scope_clone {
+                        ScopeInfo::Domain(domain) => vu.authorizations.iter().find_map(|a| {
+                            if let Authorization::Domain { domain_id, roles } = a
+                                && *domain_id == domain.id
+                            {
+                                Some(roles.clone())
+                            } else {
+                                None
+                            }
+                        }),
+                        ScopeInfo::Project {
+                            project,
+                            project_domain,
+                        } => vu.authorizations.iter().find_map(|a| {
+                            if let Authorization::Project {
+                                project_id,
+                                project_domain_id,
+                                roles,
+                            } = a
+                                && *project_id == project.id
+                                && *project_domain_id == project_domain.id
+                            {
+                                Some(roles.clone())
+                            } else {
+                                None
+                            }
+                        }),
+                        ScopeInfo::System(system_id) => vu.authorizations.iter().find_map(|a| {
+                            if let Authorization::System {
+                                system_id: s,
+                                roles,
+                            } = a
+                                && s.as_str() == system_id.as_str()
+                            {
+                                Some(roles.clone())
+                            } else {
+                                None
+                            }
+                        }),
+                        ScopeInfo::Unscoped | ScopeInfo::TrustProject(_) => None,
+                    };
+
+                    if let Some(roles) = roles {
+                        let authz =
+                            openstack_keystone_core_types::auth::AuthzInfoBuilder::default()
+                                .scope(scope_clone)
+                                .roles(roles)
+                                .build()
+                                .map_err(
+                                    openstack_keystone_core_types::auth::AuthenticationError::from,
+                                )?;
+                        ctx.set_authorization(authz);
+                    }
+                }
+            }
         }
         // TODO: Evaluate whether token revocation check should be done here - it is a
         // part of the authentication validation
@@ -260,6 +333,17 @@ async fn calculate_effective_roles(
     scope: &ScopeInfo,
 ) -> Result<Vec<RoleRef>, AuthenticationError> {
     scope.validate()?;
+
+    // Mapping engine pre-populates roles from the matched authorization.
+    // Skip assignment lookup since virtual users have no role assignments.
+    if matches!(
+        ctx.authentication_context(),
+        AuthenticationContext::Mapping(_)
+    ) && let Some(authz) = ctx.authorization()
+        && let Some(roles) = authz.effective_roles()
+    {
+        return Ok(roles.to_vec());
+    }
 
     let roles = match scope {
         ScopeInfo::Domain(domain) => resolve_domain_roles(state, ctx, &domain.id).await?,
@@ -542,6 +626,8 @@ mod tests {
         UserIdentityInfo,
     };
     use openstack_keystone_core_types::identity::{UserOptions, UserResponse};
+    use openstack_keystone_core_types::mapping::authorization::Authorization;
+    use openstack_keystone_core_types::mapping::{MappingContext, VirtualUser};
     use openstack_keystone_core_types::resource::Project;
     use openstack_keystone_core_types::role::{Role, RoleRef, RoleRefBuilder};
     use openstack_keystone_core_types::token::TokenRestriction;
@@ -549,6 +635,7 @@ mod tests {
     use std::collections::HashMap;
 
     use crate::assignment::MockAssignmentProvider;
+    use crate::mapping::mock::MockMappingProvider;
     use crate::provider::Provider;
     use crate::role::{MockRoleProvider, RoleProviderError};
     use crate::tests::get_mocked_state;
@@ -2448,6 +2535,396 @@ mod tests {
 
         // calculate_effective_roles sees an empty, non-Unscoped result and must
         // return ActorHasNoRolesOnTarget.
+        assert!(matches!(
+            result,
+            Err(AuthenticationError::ActorHasNoRolesOnTarget)
+        ));
+    }
+
+    // --- Mapping: domain scope match returns pre-populated roles ---
+    #[tokio::test]
+    async fn test_new_for_scope_mapping_domain_scope_match() {
+        let did = "domain-1";
+        let vir_id = "vu-1234567890abcdef1234567890abcdef";
+        let rid = "admin";
+        let roles = vec![role_ref(rid, "admin")];
+
+        let vu = VirtualUser {
+            user_id: vir_id.to_string(),
+            unique_workload_id: "workload-1".to_string(),
+            mapping_id: "map-1".to_string(),
+            matched_rule_name: "rule-1".to_string(),
+            domain_id: Some(did.to_string()),
+            resolved_user_name: "mapped_user".to_string(),
+            is_system: false,
+            resolved_group_bindings: vec![],
+            authorizations: vec![Authorization::Domain {
+                domain_id: did.to_string(),
+                roles: roles.clone(),
+            }],
+            ruleset_version: 1,
+            enabled: true,
+            created_at: 0,
+            last_authenticated_at: 0,
+        };
+
+        let mut mapping_mock = MockMappingProvider::new();
+        mapping_mock
+            .expect_get_virtual_user()
+            .returning(move |_state, id: &str| {
+                if id == vir_id {
+                    Ok(Some(vu.clone()))
+                } else {
+                    Ok(None)
+                }
+            });
+
+        let state = get_mocked_state(
+            None,
+            Some(Provider::mocked_builder().mock_mapping(mapping_mock)),
+        )
+        .await;
+
+        let mc = MappingContext {
+            mapping_id: "map-1".to_string(),
+            matched_rule_name: "rule-1".to_string(),
+            virtual_user_id: vir_id.to_string(),
+        };
+
+        let ctx = SecurityContextTestingBuilder::default()
+            .authentication_context(AuthenticationContext::Mapping(mc))
+            .principal(make_user_identity(vir_id))
+            .build();
+
+        let result =
+            ValidatedSecurityContext::new_for_scope(ctx, make_domain_scope(did), &state).await;
+
+        let validated = result.unwrap();
+        let eff = validated
+            .0
+            .authorization()
+            .unwrap()
+            .effective_roles()
+            .unwrap();
+        assert_eq!(eff.len(), 1);
+        assert_eq!(eff[0].id, rid);
+    }
+
+    // --- Mapping: project scope match returns pre-populated roles ---
+    #[tokio::test]
+    async fn test_new_for_scope_mapping_project_scope_match() {
+        let pid = "project-1";
+        let vir_id = "vu-abcdef1234567890abcdef1234567890";
+        let rid = "reader";
+        let roles = vec![role_ref(rid, "reader")];
+
+        let vu = VirtualUser {
+            user_id: vir_id.to_string(),
+            unique_workload_id: "workload-2".to_string(),
+            mapping_id: "map-1".to_string(),
+            matched_rule_name: "rule-1".to_string(),
+            domain_id: Some("d1".to_string()),
+            resolved_user_name: "mapped_user".to_string(),
+            is_system: false,
+            resolved_group_bindings: vec![],
+            authorizations: vec![Authorization::Project {
+                project_id: pid.to_string(),
+                project_domain_id: "d1".to_string(),
+                roles: roles.clone(),
+            }],
+            ruleset_version: 1,
+            enabled: true,
+            created_at: 0,
+            last_authenticated_at: 0,
+        };
+
+        let mut mapping_mock = MockMappingProvider::new();
+        mapping_mock
+            .expect_get_virtual_user()
+            .returning(move |_state, id: &str| {
+                if id == vir_id {
+                    Ok(Some(vu.clone()))
+                } else {
+                    Ok(None)
+                }
+            });
+
+        let state = get_mocked_state(
+            None,
+            Some(Provider::mocked_builder().mock_mapping(mapping_mock)),
+        )
+        .await;
+
+        let mc = MappingContext {
+            mapping_id: "map-1".to_string(),
+            matched_rule_name: "rule-1".to_string(),
+            virtual_user_id: vir_id.to_string(),
+        };
+
+        let ctx = SecurityContextTestingBuilder::default()
+            .authentication_context(AuthenticationContext::Mapping(mc))
+            .principal(make_user_identity(vir_id))
+            .build();
+
+        let result =
+            ValidatedSecurityContext::new_for_scope(ctx, make_project_scope(pid), &state).await;
+
+        let validated = result.unwrap();
+        let eff = validated
+            .0
+            .authorization()
+            .unwrap()
+            .effective_roles()
+            .unwrap();
+        assert_eq!(eff.len(), 1);
+        assert_eq!(eff[0].id, rid);
+    }
+
+    // --- Mapping: system scope match returns pre-populated roles ---
+    #[tokio::test]
+    async fn test_new_for_scope_mapping_system_scope_match() {
+        let sys = "all";
+        let vir_id = "vu-11111111111111111111111111111111";
+        let rid = "admin";
+        let roles = vec![role_ref(rid, "admin")];
+
+        let vu = VirtualUser {
+            user_id: vir_id.to_string(),
+            unique_workload_id: "workload-3".to_string(),
+            mapping_id: "map-1".to_string(),
+            matched_rule_name: "rule-1".to_string(),
+            domain_id: None,
+            resolved_user_name: "mapped_user".to_string(),
+            is_system: false,
+            resolved_group_bindings: vec![],
+            authorizations: vec![Authorization::System {
+                system_id: sys.to_string(),
+                roles: roles.clone(),
+            }],
+            ruleset_version: 1,
+            enabled: true,
+            created_at: 0,
+            last_authenticated_at: 0,
+        };
+
+        let mut mapping_mock = MockMappingProvider::new();
+        mapping_mock
+            .expect_get_virtual_user()
+            .returning(move |_state, id: &str| {
+                if id == vir_id {
+                    Ok(Some(vu.clone()))
+                } else {
+                    Ok(None)
+                }
+            });
+
+        let state = get_mocked_state(
+            None,
+            Some(Provider::mocked_builder().mock_mapping(mapping_mock)),
+        )
+        .await;
+
+        let mc = MappingContext {
+            mapping_id: "map-1".to_string(),
+            matched_rule_name: "rule-1".to_string(),
+            virtual_user_id: vir_id.to_string(),
+        };
+
+        let ctx = SecurityContextTestingBuilder::default()
+            .authentication_context(AuthenticationContext::Mapping(mc))
+            .principal(make_user_identity(vir_id))
+            .build();
+
+        let result = ValidatedSecurityContext::new_for_scope(
+            ctx,
+            ScopeInfo::System(sys.to_string()),
+            &state,
+        )
+        .await;
+
+        let validated = result.unwrap();
+        let eff = validated
+            .0
+            .authorization()
+            .unwrap()
+            .effective_roles()
+            .unwrap();
+        assert_eq!(eff.len(), 1);
+        assert_eq!(eff[0].id, rid);
+    }
+
+    // --- Mapping: scope mismatch (no matching authorization) fails ---
+    #[tokio::test]
+    async fn test_new_for_scope_mapping_scope_mismatch() {
+        let vir_id = "vu-aabbccdd11223344aabbccdd11223344";
+
+        let vu = VirtualUser {
+            user_id: vir_id.to_string(),
+            unique_workload_id: "workload-4".to_string(),
+            mapping_id: "map-1".to_string(),
+            matched_rule_name: "rule-1".to_string(),
+            domain_id: Some("d1".to_string()),
+            resolved_user_name: "mapped_user".to_string(),
+            is_system: false,
+            resolved_group_bindings: vec![],
+            // Authorization for a different project, so requested scope won't match
+            authorizations: vec![Authorization::Project {
+                project_id: "other-project".to_string(),
+                project_domain_id: "d1".to_string(),
+                roles: vec![role_ref("reader", "reader")],
+            }],
+            ruleset_version: 1,
+            enabled: true,
+            created_at: 0,
+            last_authenticated_at: 0,
+        };
+
+        let mut mapping_mock = MockMappingProvider::new();
+        mapping_mock
+            .expect_get_virtual_user()
+            .returning(move |_state, id: &str| {
+                if id == vir_id {
+                    Ok(Some(vu.clone()))
+                } else {
+                    Ok(None)
+                }
+            });
+
+        // Assignment fallback is triggered since no matching authorization
+        let mut assignment_mock = MockAssignmentProvider::default();
+        assignment_mock
+            .expect_list_role_assignments()
+            .returning(|_, _| Ok(Vec::<Assignment>::new()));
+
+        let state = get_mocked_state(
+            None,
+            Some(
+                Provider::mocked_builder()
+                    .mock_mapping(mapping_mock)
+                    .mock_assignment(assignment_mock),
+            ),
+        )
+        .await;
+
+        let mc = MappingContext {
+            mapping_id: "map-1".to_string(),
+            matched_rule_name: "rule-1".to_string(),
+            virtual_user_id: vir_id.to_string(),
+        };
+
+        let ctx = SecurityContextTestingBuilder::default()
+            .authentication_context(AuthenticationContext::Mapping(mc))
+            .principal(make_user_identity(vir_id))
+            .build();
+
+        let result = ValidatedSecurityContext::new_for_scope(
+            ctx,
+            make_project_scope("requested-project"),
+            &state,
+        )
+        .await;
+
+        assert!(matches!(
+            result,
+            Err(AuthenticationError::ActorHasNoRolesOnTarget)
+        ));
+    }
+
+    // --- Mapping: virtual user not found fails ---
+    #[tokio::test]
+    async fn test_new_for_scope_mapping_virtual_user_not_found() {
+        let vir_id = "vu-nonexistent0000000000000000000000";
+
+        let mut mapping_mock = MockMappingProvider::new();
+        mapping_mock
+            .expect_get_virtual_user()
+            .returning(move |_state, _| Ok(None::<VirtualUser>));
+
+        let state = get_mocked_state(
+            None,
+            Some(Provider::mocked_builder().mock_mapping(mapping_mock)),
+        )
+        .await;
+
+        let mc = MappingContext {
+            mapping_id: "map-1".to_string(),
+            matched_rule_name: "rule-1".to_string(),
+            virtual_user_id: vir_id.to_string(),
+        };
+
+        let ctx = SecurityContextTestingBuilder::default()
+            .authentication_context(AuthenticationContext::Mapping(mc))
+            .principal(make_user_identity(vir_id))
+            .build();
+
+        let result =
+            ValidatedSecurityContext::new_for_scope(ctx, make_project_scope("pid"), &state).await;
+
+        assert!(matches!(result, Err(AuthenticationError::Provider { .. })));
+    }
+
+    // --- Mapping: empty authorizations list fails ---
+    #[tokio::test]
+    async fn test_new_for_scope_mapping_empty_authorizations() {
+        let vir_id = "vu-eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
+
+        let vu = VirtualUser {
+            user_id: vir_id.to_string(),
+            unique_workload_id: "workload-5".to_string(),
+            mapping_id: "map-1".to_string(),
+            matched_rule_name: "rule-1".to_string(),
+            domain_id: Some("d1".to_string()),
+            resolved_user_name: "mapped_user".to_string(),
+            is_system: false,
+            resolved_group_bindings: vec![],
+            authorizations: vec![],
+            ruleset_version: 1,
+            enabled: true,
+            created_at: 0,
+            last_authenticated_at: 0,
+        };
+
+        let mut mapping_mock = MockMappingProvider::new();
+        mapping_mock
+            .expect_get_virtual_user()
+            .returning(move |_state, id: &str| {
+                if id == vir_id {
+                    Ok(Some(vu.clone()))
+                } else {
+                    Ok(None)
+                }
+            });
+
+        // Assignment fallback is triggered since no matching authorization
+        let mut assignment_mock = MockAssignmentProvider::default();
+        assignment_mock
+            .expect_list_role_assignments()
+            .returning(|_, _| Ok(Vec::<Assignment>::new()));
+
+        let state = get_mocked_state(
+            None,
+            Some(
+                Provider::mocked_builder()
+                    .mock_mapping(mapping_mock)
+                    .mock_assignment(assignment_mock),
+            ),
+        )
+        .await;
+
+        let mc = MappingContext {
+            mapping_id: "map-1".to_string(),
+            matched_rule_name: "rule-1".to_string(),
+            virtual_user_id: vir_id.to_string(),
+        };
+
+        let ctx = SecurityContextTestingBuilder::default()
+            .authentication_context(AuthenticationContext::Mapping(mc))
+            .principal(make_user_identity(vir_id))
+            .build();
+
+        let result =
+            ValidatedSecurityContext::new_for_scope(ctx, make_project_scope("pid"), &state).await;
+
         assert!(matches!(
             result,
             Err(AuthenticationError::ActorHasNoRolesOnTarget)

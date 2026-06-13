@@ -623,6 +623,7 @@ impl SecurityContext {
                         Err(AuthenticationError::ScopeNotAllowed)
                     }
                     AuthenticationContext::WebauthN => Ok(()),
+                    AuthenticationContext::Mapping(_) => Ok(()),
                 }
             }
             ScopeInfo::Project { project, .. } => {
@@ -654,6 +655,7 @@ impl SecurityContext {
                         Err(AuthenticationError::ScopeNotAllowed)
                     }
                     AuthenticationContext::WebauthN => Ok(()),
+                    AuthenticationContext::Mapping(_) => Ok(()),
                 }
             }
             ScopeInfo::TrustProject(_) => {
@@ -671,6 +673,7 @@ impl SecurityContext {
                     AuthenticationContext::Token(_) => Ok(()),
                     AuthenticationContext::Trust { .. } => Err(AuthenticationError::Forbidden),
                     AuthenticationContext::WebauthN => Err(AuthenticationError::ScopeNotAllowed),
+                    AuthenticationContext::Mapping(_) => Err(AuthenticationError::ScopeNotAllowed),
                 }
             }
             ScopeInfo::System(_system) => {
@@ -690,6 +693,7 @@ impl SecurityContext {
                         Err(AuthenticationError::ScopeNotAllowed)
                     }
                     AuthenticationContext::WebauthN => Ok(()),
+                    AuthenticationContext::Mapping(_) => Ok(()),
                 }
             }
             ScopeInfo::Unscoped => {
@@ -709,6 +713,7 @@ impl SecurityContext {
                         Err(AuthenticationError::ScopeNotAllowed)
                     }
                     AuthenticationContext::WebauthN => Ok(()),
+                    AuthenticationContext::Mapping(_) => Ok(()),
                 }
             }
         }
@@ -1141,6 +1146,8 @@ pub enum AuthenticationContext {
     },
     /// Login with WebauthN credentials.
     WebauthN,
+    /// Login via the unified mapping engine (virtual user).
+    Mapping(crate::mapping::MappingContext),
 }
 
 /// K8s auth context.
@@ -1182,6 +1189,7 @@ impl AuthenticationContext {
                 .collect(),
             Self::Trust { .. } => once("trust".to_string()).collect(),
             Self::WebauthN => once("x509".to_string()).collect(),
+            Self::Mapping(_) => once("mapped".to_string()).collect(),
         }
     }
 }

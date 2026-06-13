@@ -2,7 +2,7 @@ experimental = ["setup-scripts"]
 
 [profile.default]
 # exclude raft-only tests
-default-filter = 'not test(/spiffe/)'
+default-filter = 'not test(/spiffe/) and not test(/mapping/)'
 # Global default settings
 #
 [scripts.setup.setup-pg]
