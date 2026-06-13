@@ -36,6 +36,10 @@ use crate::mapping::interpolation::{contains_claims_template, extract_claims_key
 /// Maximum HIR string size for a regex before it is considered too complex.
 const MAX_REGEX_HIR_SIZE: usize = 4096;
 
+/// Maximum number of domain IDs in an `allowed_domains` whitelist.
+/// Prevents O(n) evaluation degradation on auth path.
+const MAX_ALLOWED_DOMAINS: usize = 256;
+
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
@@ -269,7 +273,7 @@ fn validate_domain_resolution_mode(
                 }
             }
         }
-        DomainResolutionMode::ClaimsOnly { .. } => {
+        DomainResolutionMode::ClaimsOnly { allowed_domains } => {
             // ClaimsOnly: at least one rule must have claim template in user_domain_id
             let has_claims_template = rules.iter().any(|r| {
                 r.identity
@@ -286,10 +290,23 @@ fn validate_domain_resolution_mode(
             if domain_id.is_some() {
                 return Err(MappingProviderError::DomainClaimRequired);
             }
+
+            // Enforce cardinality limit on allowed_domains whitelist
+            if allowed_domains.len() > MAX_ALLOWED_DOMAINS {
+                return Err(MappingProviderError::AllowedDomainsTooLarge(
+                    MAX_ALLOWED_DOMAINS,
+                ));
+            }
         }
-        DomainResolutionMode::ClaimsOrMapping { .. } => {
+        DomainResolutionMode::ClaimsOrMapping { allowed_domains } => {
             // Both claim templates and static values are permitted
             // No additional constraints beyond template safety
+            // Enforce cardinality limit on allowed_domains whitelist
+            if allowed_domains.len() > MAX_ALLOWED_DOMAINS {
+                return Err(MappingProviderError::AllowedDomainsTooLarge(
+                    MAX_ALLOWED_DOMAINS,
+                ));
+            }
         }
     }
 
@@ -315,6 +332,12 @@ fn validate_allowed_domains_update(
             // Claims-only modes require non-empty allowed_domains
             if allowed_domains.is_empty() {
                 return Err(MappingProviderError::DomainClaimRequired);
+            }
+            // Enforce cardinality limit to prevent O(n) evaluation degradation
+            if allowed_domains.len() > MAX_ALLOWED_DOMAINS {
+                return Err(MappingProviderError::AllowedDomainsTooLarge(
+                    MAX_ALLOWED_DOMAINS,
+                ));
             }
         }
     }
@@ -806,6 +829,56 @@ mod tests {
                 allowed_domains: vec!["d1".to_string()],
             },
             &["d1".to_string(), "d2".to_string()],
+        );
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn claims_only_rejects_allowed_domains_over_cardinality() {
+        let domains: Vec<String> = (0..257).map(|i| format!("domain-{i}")).collect();
+
+        let result = validate_allowed_domains_update(
+            &DomainResolutionMode::ClaimsOnly {
+                allowed_domains: domains.clone(),
+            },
+            &domains,
+        );
+
+        assert!(result.is_err());
+        assert!(matches!(
+            result,
+            Err(MappingProviderError::AllowedDomainsTooLarge(256))
+        ));
+    }
+
+    #[test]
+    fn claims_or_mapping_rejects_allowed_domains_over_cardinality() {
+        let domains: Vec<String> = (0..257).map(|i| format!("domain-{i}")).collect();
+
+        let result = validate_allowed_domains_update(
+            &DomainResolutionMode::ClaimsOrMapping {
+                allowed_domains: domains.clone(),
+            },
+            &domains,
+        );
+
+        assert!(result.is_err());
+        assert!(matches!(
+            result,
+            Err(MappingProviderError::AllowedDomainsTooLarge(256))
+        ));
+    }
+
+    #[test]
+    fn claims_only_accepts_exact_cardinality() {
+        let domains: Vec<String> = (0..256).map(|i| format!("domain-{i}")).collect();
+
+        let result = validate_allowed_domains_update(
+            &DomainResolutionMode::ClaimsOnly {
+                allowed_domains: domains.clone(),
+            },
+            &domains,
         );
 
         assert!(result.is_ok());

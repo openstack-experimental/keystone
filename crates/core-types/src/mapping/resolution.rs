@@ -61,3 +61,17 @@ pub enum IdentitySource {
         trust_domain: String,
     },
 }
+
+impl IdentitySource {
+    /// Returns a stable string representation for keyspace indexing.
+    ///
+    /// Format: `"<variant>:<id>"`, e.g. `"federation:okta-enterprise-idp"`,
+    /// `"k8s:eks-prod-cluster-01"`, `"spiffe:prod.keystone.internal"`.
+    pub fn to_string_key(&self) -> String {
+        match self {
+            Self::Federation { idp_id } => format!("federation:{idp_id}"),
+            Self::K8s { cluster_id } => format!("k8s:{cluster_id}"),
+            Self::Spiffe { trust_domain } => format!("spiffe:{trust_domain}"),
+        }
+    }
+}

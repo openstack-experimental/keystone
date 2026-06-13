@@ -218,7 +218,7 @@ impl RaftBackend {
             .map(|x| x.data);
         if let Some(obj) = curr {
             let mutations = vec![
-                Mutation::remove(self.get_auth_instance_id_key_name(id), None::<&str>)?,
+                Mutation::remove(self.get_auth_instance_id_key_name(id), None::<&str>, None)?,
                 Mutation::remove_index(
                     self.get_auth_instance_domain_id_idx_key_name(id, &obj.domain_id),
                 )?,
@@ -239,7 +239,7 @@ impl RaftBackend {
             .map(|x| x.data);
         if let Some(obj) = curr {
             let mutations = vec![
-                Mutation::remove(self.get_auth_role_id_key_name(&obj.id), None::<&str>)?,
+                Mutation::remove(self.get_auth_role_id_key_name(&obj.id), None::<&str>, None)?,
                 Mutation::remove_index(
                     self.get_auth_role_domain_id_idx_key_name(&obj.id, &obj.domain_id),
                 )?,
@@ -703,7 +703,7 @@ impl K8sAuthBackend for RaftBackend {
         id: &'a str,
         data: K8sAuthRoleUpdate,
     ) -> Result<K8sAuthRole, K8sAuthProviderError> {
-        let raft = state
+        let _raft = state
             .storage
             .as_ref()
             .ok_or(K8sAuthProviderError::RaftNotAvailable)?;

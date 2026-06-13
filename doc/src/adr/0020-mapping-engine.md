@@ -134,20 +134,7 @@ pub struct K8sClusterResource {
 
 ```
 
-### C. OAuth2-mTLS Certificate Authority (CA) Trust Anchor
-
-```rust
-pub struct TlsCaResource {
-    pub domain_id: String,
-    pub provider_id: String,           // Functional configuration slug anchor
-    pub client_ca_chain_pem: String,   // Trusted root/intermediate PEM bundle
-    pub ocsp_enabled: bool,            // Gating for real-time revocation checks
-    pub ocsp_servers: Vec<String>,     // Target OCSP responders
-}
-
-```
-
-### D. SPIFFE Trust Domain Resource
+### C. SPIFFE Trust Domain Resource
 
 ```rust
 pub struct SpiffeTrustResource {
@@ -184,7 +171,6 @@ pub enum DomainResolutionMode {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum IdentitySource {
     Federation { idp_id: String },
-    Mtls { client_id: String },
     K8s { cluster_id: String },
     Spiffe { trust_domain: String },
 }
@@ -906,94 +892,6 @@ authorization context from the shadow registry. The algorithm:
 }
 ```
 
-### Use Case 4: mTLS Client Certificate Federation
-
-- **Stored at:** `data:mapping:v1:domain_legacy:mtls-ca-trust`
-- **Context:** Authorizes legacy internal services using client X.509
-  certificates. Demonstrates `ClaimsOnly` domain resolution where domain is
-  extracted entirely from certificate CN claims, with no pre-bound domain at the
-  ruleset level. `Authorization` fields are static UUIDs — no template
-  interpolation is performed at runtime.
-
-```json
-{
-  "mapping_id": "c3d4e5f6-7890-12cd-ef01-3456789abcde",
-  "domain_id": null,
-  "provider_id": "mtls-ca-trust",
-  "source": {
-    "type": "mtls",
-    "client_id": "legacy-ca-trust-anchor"
-  },
-  "domain_resolution_mode": "claims_only",
-  "allowed_domains": [
-    "550e8400-e29b-41d4-a716-446655440040-domain",
-    "550e8400-e29b-41d4-a716-446655440041-domain"
-  ],
-  "enabled": true,
-  "rules": [
-    {
-      "name": "legacy-billing-service",
-      "description": "Map CN=billing-svc certificate to billing project domain",
-      "match": {
-        "all_of": [
-          {
-            "type": "matches_regex",
-            "claim": "ssl.client.cn",
-            "regex": "^_billing\\-svc.*$"
-          }
-        ]
-      },
-      "identity": {
-        "user_name": "svc-mtls-${claims.ssl.client.cn}",
-        "user_domain_id": "${claims.ssl.client.domain_uuid}"
-      },
-      "authorizations": [
-        {
-          "type": "project",
-          "project_id": "550e8400-e29b-41d4-a716-446655440040",
-          "project_domain_id": "550e8400-e29b-41d4-a716-446655440040-domain",
-          "roles": [{ "type": "system_role", "name": "_member_" }]
-        }
-      ],
-      "groups": [
-        {
-          "group_id": "550e8400-e29b-41d4-a716-446655440050",
-          "group_name": "Legacy-Billing-Services",
-          "group_domain_id": null,
-          "strategy": "create_or_get"
-        }
-      ]
-    },
-    {
-      "name": "any-cert-reader",
-      "description": "Fallback reader role for any valid CA-signed client certificate",
-      "match": {
-        "all_of": [
-          {
-            "type": "matches_regex",
-            "claim": "ssl.client.san_dns",
-            "regex": "^.*\\.internal\\.acme\\.com$"
-          }
-        ]
-      },
-      "identity": {
-        "user_name": "svc-mtls-${claims.ssl.client.san_dns}",
-        "user_domain_id": "${claims.ssl.client.domain_uuid}"
-      },
-      "authorizations": [
-        {
-          "type": "project",
-          "project_id": "550e8400-e29b-41d4-a716-446655440041",
-          "project_domain_id": "550e8400-e29b-41d4-a716-446655440041-domain",
-          "roles": [{ "type": "system_role", "name": "reader" }]
-        }
-      ],
-      "groups": []
-    }
-  ]
-}
-```
-
 ---
 
 ## 7. Runtime Mechanics & Token Lifecycle Roundtrips
@@ -1153,12 +1051,9 @@ single consolidated partition layer in FjallDB.
 | **Global Mapping ID Index**     | `index:mapping_id:<mapping_id>`                  | `{"domain_id": "...", "provider_id": "..."}`  |
 | **Global JWT Invariant Index**  | `index:auth:jwt:<sha256(iss+"\0"+aud)>`          | `{"domain_id": "...", "provider_id": "..."}`  |
 | **Global Client Index**         | `index:oauth2:client:<client_id>`                | `{"domain_id": "...", "provider_id": "..."}`  |
-| **OAuth2 Client Profiles**      | `data:client:<domain_id>:<client_id>`            | `OAuth2MtlsClient` (Struct object)            |
-| `**mTLS Crypto Resource**       | `data:tls:<domain_id>:<provider_id>`             | `TlsCaResource` (Struct object)               |
 | **Virtual User Shadow Records** | `data:user:virtual:<user_id_hmac>`               | `VirtualUserMetadata` (Struct object)         |
 | **OIDC Crypto Resource**        | `data:federation:oidc:<domain_id>:<provider_id>` | `OidcProviderResource` (Struct)               |
 | **K8s Crypto Resource**         | `data:k8s_auth:<domain_id>:<provider_id>`        | `K8sClusterResource` (Struct object)          |
-| **mTLS Crypto Resource**        | `data:tls:<domain_id>:<provider_id>`             | `TlsCaResource` (Struct object)               |
 | **SPIFFE Crypto Resource**      | `data:spiffe:<domain_id>:<provider_id>`          | `SpiffeTrustResource` (Struct object)         |
 | **Unified ABAC Ruleset**        | `data:mapping:<domain_id>:<provider_id>`         | `MappingRuleSet` (Contains named rule vector) |
 
@@ -1670,7 +1565,6 @@ the system notifier bus. The following event types are emitted:
 | Provider       | Source Data         | Flattening Convention                                                  | Unique Workload Key Invariant                                                                   |
 | -------------- | ------------------- | ---------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
 | **OIDC / JWT** | JWT ID token claims | Flat string mappings via dotted pathways (`email`, `user.profile.id`)  | Value string of the `sub` claim element                                                         |
-| **mTLS**       | X.509 cert metrics  | Prefixed configuration layouts (`ssl.client.cn`, `ssl.client.san_dns`) | The fully formatted static Distinguished Name (`subject_dn`) string                             |
 | **Kubernetes** | K8s TokenReview JWT | `k8s.serviceaccount.name`, `k8s.serviceaccount.namespace`, `k8s.aud`   | Formatted invariant: `<serviceaccount_name>:<serviceaccount_namespace>`                         |
 | **SPIFFE**     | SPIFFE SVID cert    | `spiffe.id`, `spiffe.trust_domain`                                     | Full raw URI format asset string (e.g., `spiffe://prod.keystone.internal/ns/openstack/sa/nova`) |
 
@@ -1772,7 +1666,7 @@ the original specification.
 
 The `MappingRuleSet` struct does not carry a separate `provider_id` field. The
 ingress provider instance is identified through `source: IdentitySource`, which
-contains the relevant anchor (`idp_id`, `cluster_id`, `client_id`, or
+contains the relevant anchor (`idp_id`, `cluster_id`, or
 `trust_domain`) as its enum variant payload. The `provider_id` slug used in
 keyspace coordinates is derived from the `source` field at storage time.
 

@@ -15,6 +15,7 @@
 //!
 //! Domain types for the unified mapping engine (ADR-0020).
 
+pub mod auth;
 pub mod authorization;
 pub mod error;
 pub mod mutation;
@@ -22,6 +23,9 @@ pub mod resolution;
 pub mod rule;
 pub mod ruleset;
 pub mod virtual_user;
+
+// Re-export auth types
+pub use auth::{MappingAuthRequest, MappingContext};
 
 // Re-export resolution types
 pub use resolution::{DomainResolutionMode, IdentitySource};

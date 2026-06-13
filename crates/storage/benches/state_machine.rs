@@ -61,7 +61,7 @@ fn bench_state_machine(c: &mut Criterion) {
     .unwrap();
     let remove_transaction = StoreCommand::Transaction(vec![
         MutationInner::convert(
-            Mutation::remove("foo", Some("data")).unwrap(),
+            Mutation::remove("foo", Some("data"), None).unwrap(),
             Nonce::default(),
         )
         .unwrap(),

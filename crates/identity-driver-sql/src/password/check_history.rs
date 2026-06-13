@@ -53,21 +53,20 @@ where
             if i >= check_count {
                 break;
             }
-            if let Some(ref check_hash) = check_password.password_hash {
-                if openstack_keystone_core::common::password_hashing::verify_password(
+            if let Some(ref check_hash) = check_password.password_hash
+                && openstack_keystone_core::common::password_hashing::verify_password(
                     conf,
                     new_password.expose_secret(),
                     check_hash,
                 )
                 .await
                 .is_ok_and(|x| x)
-                {
-                    return Err(IdentityProviderError::SecurityCompliance(
-                        openstack_keystone_config::SecurityComplianceError::PasswordInvalid(
-                            "new password matches a previous password in history".to_string(),
-                        ),
-                    ));
-                }
+            {
+                return Err(IdentityProviderError::SecurityCompliance(
+                    openstack_keystone_config::SecurityComplianceError::PasswordInvalid(
+                        "new password matches a previous password in history".to_string(),
+                    ),
+                ));
             }
         }
     }

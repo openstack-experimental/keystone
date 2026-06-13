@@ -73,6 +73,7 @@ http-body-util = "0.1"
 http = { version = "1.4" }
 hyper = { version = "1.10" }
 hyper-util = { version = "0.1" }
+hmac = { version = "0.12" }
 inventory = { version = "0.3" }
 itertools = { version = "0.14" }
 mockall = { version = "0.14" }

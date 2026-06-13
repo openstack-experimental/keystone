@@ -16,10 +16,15 @@
 use async_trait::async_trait;
 
 use openstack_keystone_config::Config;
-use openstack_keystone_core_types::mapping::*;
+use openstack_keystone_core_types::mapping::{
+    IdentitySource, MappingAuthRequest, MappingRuleSet, MappingRuleSetCreate,
+    MappingRuleSetListParameters, MappingRuleSetUpdate, RuleMutations, VirtualUser,
+};
 
 pub mod backend;
+pub mod engine;
 pub mod error;
+pub mod hmac;
 pub mod hook;
 mod interpolation;
 #[cfg(any(test, feature = "mock"))]
@@ -28,6 +33,11 @@ mod provider_api;
 pub mod service;
 mod validation;
 mod version;
+
+// Re-export core-types submodules for internal use by version.rs
+pub use openstack_keystone_core_types::mapping::resolution;
+pub use openstack_keystone_core_types::mapping::rule;
+pub use openstack_keystone_core_types::mapping::ruleset;
 
 use crate::keystone::ServiceState;
 use crate::mapping::service::MappingService;
@@ -111,6 +121,28 @@ impl MappingApi for MappingProvider {
         }
     }
 
+    /// Fetch a ruleset by its (domain_id, source) composite index.
+    async fn get_ruleset_by_source<'a>(
+        &self,
+        state: &ServiceState,
+        domain_id: &'a str,
+        source: &'a IdentitySource,
+    ) -> Result<Option<MappingRuleSet>, MappingProviderError> {
+        match self {
+            Self::Service(provider) => {
+                provider
+                    .get_ruleset_by_source(state, domain_id, source)
+                    .await
+            }
+            #[cfg(any(test, feature = "mock"))]
+            Self::Mock(provider) => {
+                provider
+                    .get_ruleset_by_source(state, domain_id, source)
+                    .await
+            }
+        }
+    }
+
     /// Fetch a virtual user shadow record by user ID.
     async fn get_virtual_user<'a>(
         &self,
@@ -188,6 +220,19 @@ impl MappingApi for MappingProvider {
             Self::Service(provider) => provider.enable_virtual_user(state, user_id).await,
             #[cfg(any(test, feature = "mock"))]
             Self::Mock(provider) => provider.enable_virtual_user(state, user_id).await,
+        }
+    }
+
+    /// Authenticate a principal through the unified mapping engine.
+    async fn authenticate_by_mapping(
+        &self,
+        state: &ServiceState,
+        req: &MappingAuthRequest,
+    ) -> Result<crate::auth::AuthenticationResult, MappingProviderError> {
+        match self {
+            Self::Service(provider) => provider.authenticate_by_mapping(state, req).await,
+            #[cfg(any(test, feature = "mock"))]
+            Self::Mock(provider) => provider.authenticate_by_mapping(state, req).await,
         }
     }
 }
