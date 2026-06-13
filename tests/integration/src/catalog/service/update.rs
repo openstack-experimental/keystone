@@ -124,3 +124,60 @@ async fn test_update_type_too_long() -> Result<()> {
     );
     Ok(())
 }
+
+#[traced_test]
+#[tokio::test]
+async fn test_update_extra_merges() -> Result<()> {
+    let (state, _tmp) = get_state().await?;
+    // Seed two extra properties.
+    let mut extra = HashMap::new();
+    extra.insert(
+        "keep".to_string(),
+        serde_json::Value::String("yes".to_string()),
+    );
+    extra.insert(
+        "drop".to_string(),
+        serde_json::Value::String("later".to_string()),
+    );
+    let service = create_service(
+        &state,
+        ServiceCreate {
+            enabled: true,
+            extra,
+            id: Some("svc-extra".to_string()),
+            r#type: Some("compute".to_string()),
+        },
+    )
+    .await?;
+
+    // Update: add one key, unset another with a null value, and leave the rest
+    // untouched.
+    let mut update_extra = HashMap::new();
+    update_extra.insert(
+        "add".to_string(),
+        serde_json::Value::String("new".to_string()),
+    );
+    update_extra.insert("drop".to_string(), serde_json::Value::Null);
+    let updated = state
+        .provider
+        .get_catalog_provider()
+        .update_service(
+            &state,
+            &service.id,
+            ServiceUpdate {
+                extra: Some(update_extra),
+                ..Default::default()
+            },
+        )
+        .await?;
+
+    let extra = updated.extra.expect("extra should be present");
+    // Untouched key survives, new key is added, null-valued key is unset.
+    assert_eq!(extra.get("keep").and_then(|v| v.as_str()), Some("yes"));
+    assert_eq!(extra.get("add").and_then(|v| v.as_str()), Some("new"));
+    assert!(
+        extra.get("drop").is_none(),
+        "a null value in the update should unset the key"
+    );
+    Ok(())
+}

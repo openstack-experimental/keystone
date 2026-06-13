@@ -72,7 +72,7 @@ pub async fn update(
         update_model.enabled = Set(Some(enabled));
     }
 
-    // Update extra properties if provided in the patch
+    // The provider has already merged `extra`; the driver only persists it.
     if !user.extra.is_empty() {
         update_model.extra = Set(Some(serde_json::to_string(&user.extra)?));
     }

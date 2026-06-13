@@ -17,6 +17,7 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use secrecy::SecretString;
+use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -28,6 +29,7 @@ use openstack_keystone_core_types::events::{Event, EventPayload, Operation};
 use openstack_keystone_core_types::identity::*;
 
 use crate::auth::AuthenticationResult;
+use crate::db::merge_extra;
 use crate::identity::{IdentityApi, IdentityProviderError, backend::IdentityBackend};
 use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManagerApi;
@@ -592,7 +594,7 @@ impl IdentityApi for IdentityService {
         &self,
         state: &ServiceState,
         user_id: &'a str,
-        user: UserUpdate,
+        mut user: UserUpdate,
     ) -> Result<UserResponse, IdentityProviderError> {
         user.validate()?;
         // Validate password against configured regex pattern.
@@ -600,6 +602,17 @@ impl IdentityApi for IdentityService {
             let cfg = state.config_manager.config.read().await;
             cfg.security_compliance
                 .validate_password(&SecretString::from(password.as_str()))?;
+        }
+        // Merge the supplied `extra` onto the stored one here, so the driver
+        // only has to persist the final value.
+        if !user.extra.is_empty() {
+            let existing = self
+                .backend_driver
+                .get_user(state, user_id)
+                .await?
+                .ok_or_else(|| IdentityProviderError::UserNotFound(user_id.to_string()))?;
+            let base = Value::Object(existing.extra.into_iter().collect());
+            user.extra = merge_extra(Some(&base), user.extra);
         }
         let user = self
             .backend_driver

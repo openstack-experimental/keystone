@@ -55,6 +55,7 @@ pub async fn update<I: AsRef<str>>(
     if let Some(parent_region_id) = region.parent_region_id {
         update_model.parent_region_id = Set(Some(parent_region_id));
     }
+    // The provider has already merged `extra`; the driver only persists it.
     if let Some(extra) = region.extra {
         update_model.extra = Set(Some(serde_json::to_string(&extra)?));
     }
