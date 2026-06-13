@@ -82,5 +82,19 @@ mock! {
             mapping_id: &'a str,
             data: MappingRuleSetUpdate,
         ) -> Result<MappingRuleSet, MappingProviderError>;
+
+        /// Disable a virtual user shadow record.
+        async fn disable_virtual_user<'a>(
+            &self,
+            state: &ServiceState,
+            user_id: &'a str,
+        ) -> Result<VirtualUser, MappingProviderError>;
+
+        /// Enable (reactivate) a virtual user shadow record.
+        async fn enable_virtual_user<'a>(
+            &self,
+            state: &ServiceState,
+            user_id: &'a str,
+        ) -> Result<VirtualUser, MappingProviderError>;
     }
 }
