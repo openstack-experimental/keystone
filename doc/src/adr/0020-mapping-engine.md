@@ -338,30 +338,43 @@ pub struct VirtualUserMetadata {
 
 ```
 
-### A. Shadow Record Lifecycle & PCI-DSS Enforcement
+### A. Shadow Record Lifecycle & Virtual User Deactivation
 
 Because the HMAC-SHA256-derived identifier is deterministic, repeated
 authentication by the same principal always resolves to the same `user_id`. On
 token issuance, the engine performs an upsert: if the shadow record already
 exists, it completely refreshes `matched_rule_name`, `resolved_group_bindings`,
-and `resolved_user_name`. The `is_system` flag is **intentionally preserved**
-from initial creation — on a subsequent upsert,
-`meta.is_system = meta.is_system` prevents the flag from being modified. This is
-a deliberate security measure: once a principal is granted system-level service
-privileges, those privileges cannot be escalated nor revoked through ruleset
-rule modification alone. Revoking `is_system` requires explicit `DELETE` of the
-shadow record followed by a fresh authentication lifecycle against a corrected
-ruleset.
+and `resolved_user_name`. Set `enabled: true` (a successful match indicates the
+principal is active; if previously deactivated, successful authentication
+reactivates). The `created_at` timestamp is immutably preserved from initial
+creation. The `is_system` flag is **intentionally preserved** from initial
+creation — on a subsequent upsert `meta.is_system = meta.is_system` prevents
+the flag from being modified. This is a deliberate security measure: once a
+principal is granted system-level service privileges, those privileges cannot be
+escalated nor revoked through ruleset modification alone. Revoking `is_system`
+requires setting `enabled: false` (deactivation) via the provider API, followed
+by a fresh authentication lifecycle against a corrected ruleset to re-evaluate
+privileges.
 
 To maintain PCI-DSS compliance, the field `last_authenticated_at` tracks
 real-time usage. A dedicated background janitor task range-scans the registry
 keyspace nightly; any virtual profile that has failed to log an authentication
-event for **more than 90 days** is automatically deleted, and all corresponding
-live authorizations are dropped until a fresh, verified login lifecycle
-re-establishes the record. This policy applies uniformly — including virtual
-users with `is_system: true`, which must re-attest within the 90-day window or
-be purged (SPIFFE control-plane daemons that authenticate periodically will
-naturally stay within this window).
+event for **more than 90 days** is deactivation-set (`enabled: false`), and all
+corresponding live authorizations are dropped. This policy applies uniformly —
+including virtual users with `is_system: true`, which must re-attest within the
+90-day window or be deactivated (SPIFFE control-plane daemons that authenticate
+periodically will naturally stay within this window).
+
+**Deactivation preferred over deletion.** The janitor sets `enabled: false`
+instead of deleting records, preserving forensic evidence (identity bindings,
+authorization snapshots, activity timestamps) for incident response and
+compliance auditing. A separate archive cleanup task permanently deletes
+deactivated records after a configurable retention period (default: 365 days,
+configurable via `[keystone] shadow_registry_archive_retention_days`). The CADF
+`maintenance` event type captures these archive deletions with the record's
+identity metadata in the attachment payload. The archive cleanup cadence is
+configurable (default: weekly, configurable via
+`[keystone] shadow_registry_archive_cleanup_interval`).
 
 ---
 
@@ -1080,19 +1093,22 @@ single database transaction:
    `user:v1:virtual:<user_id>`.
 
 4. **Merge or create.**
-   - **Update path (existing record):** Refresh `mapping_id`,
-     `matched_rule_name`, `resolved_user_name`, `resolved_group_bindings`, and
-     snapshotted `authorizations`. Update `ruleset_version` from the match
-     result and `last_authenticated_at` to current timestamp. The `is_system`
-     flag is **immutably preserved** from initial creation
-     (`meta.is_system = meta.is_system`) — once a principal is granted
-     system-level privileges, those privileges cannot be escalated nor revoked
-     through ruleset modification alone. Revoking `is_system` requires explicit
-     `DELETE` of the shadow record.
-   - **Insert path (new record):** Create a fresh `VirtualUserMetadata`
-     populated with all fields from the match result, the validated
-     `effective_domain`, and the current timestamp for `created_at` and
-     `last_authenticated_at`.
+    - **Update path (existing record):** Refresh `mapping_id`,
+      `matched_rule_name`, `resolved_user_name`, `resolved_group_bindings`, and
+      snapshotted `authorizations`. Update `ruleset_version` from the match
+      result and `last_authenticated_at` to current timestamp. Set `enabled:
+      true` — a successful match indicates the principal is active; if the
+      record was previously deactivated, successful authentication reactivates
+      it. The `created_at` timestamp is immutably preserved from initial
+      creation. The `is_system` flag is **immutably preserved** from initial
+      creation (`meta.is_system = meta.is_system`) — once a principal is granted
+      system-level privileges, those privileges cannot be escalated nor revoked
+      through ruleset modification alone. Revoking `is_system` requires setting
+      `enabled: false` (deactivation) via the provider API.
+    - **Insert path (new record):** Create a fresh `VirtualUserMetadata`
+      populated with all fields from the match result, the validated
+      `effective_domain`, `enabled: true`, and the current timestamp for
+      `created_at` and `last_authenticated_at`.
 
 5. **Persist.** Write the merged or new record atomically to the shadow
    keyspace.
@@ -1211,6 +1227,25 @@ single consolidated partition layer in FjallDB.
 - **Immutability Protection:** Throws an immediate HTTP
   `422 Unprocessable Entity` if the target is an Immutable System Mapping,
   ensuring no mutation deltas can manipulate control-plane assets.
+
+### F. Virtual User Lifecycle Management
+
+- **Disable Virtual User:**
+  - **HTTP Method / Path:** `PATCH /v4/virtual_users/{user_id}/disable`
+  - **Response:** `200 OK` — returns the deactivated `VirtualUser` record
+  - **Effect:** Sets `enabled: false`, triggers token revocation pipeline
+    (`revocation:v1:user:<user_id>`), preserves forensic record for audit trail
+
+- **Enable (Reactivate) Virtual User:**
+  - **HTTP Method / Path:** `PATCH /v4/virtual_users/{user_id}/enable`
+  - **Response:** `200 OK` — returns the reactivated `VirtualUser` record
+  - **Effect:** Sets `enabled: true`, re-activates the principal for future
+    authentication
+
+- **Get Virtual User Profile:**
+  - **HTTP Method / Path:** `GET /v4/virtual_users/{user_id}`
+  - **Response:** `200 OK` — returns full `VirtualUser` metadata including
+    snapshotted authorizations, resolved groups, and activity timestamps
 
 ---
 
@@ -1379,17 +1414,19 @@ fall back to `ruleset.domain_id` to prevent domain escape.
 
 ### 12. Real-Time Token Revocation Pipeline
 
-Any Raft proposal that deletes, disables, or alters a `MappingRuleSet` or flags
-a `VirtualUserMetadata` record to `enabled: false` will automatically append
-explicit token validation revocation objects directly into the global validation
-engine (ADR 0009 keyspace):
+Any Raft proposal that deactivates (`enabled: false`), deletes (archive
+cleanup), or alters a `MappingRuleSet` will automatically append explicit
+token validation revocation objects directly into the global validation engine
+(ADR 0009 keyspace):
 
 - `revocation:v1:mapping:<mapping_id>` $\rightarrow$ Timestamp
 - `revocation:v1:user:<virtual_user_id>` $\rightarrow$ Timestamp
 
 All token lookup evaluation tasks cross-reference this keyspace prefix layout;
 matching tokens drop validation sessions instantly upon Raft log entry
-application on the local node.
+application on the local node. The mapping provider triggers the revocation
+pipeline by calling the revocation provider on virtual user deactivation
+(admin-initiated or janitor-triggered).
 
 ### 13. Normative CADF Auditing Trail Specifications
 
@@ -1401,7 +1438,7 @@ the system notifier bus. The following event types are emitted:
 | ------------- | ---------------------------------------------------------------------- |
 | `control`     | Mapping CRUD operations (create, update, delete, mutate)               |
 | `access`      | Failed authentication attempts, `RulesetVersionMismatch` rejections    |
-| `maintenance` | Janitor shadow record deletions, token revocation pipeline activations |
+| `maintenance` | Janitor shadow record deactivations, archive cleanup deletions, virtual user enable/disable, token revocation pipeline activations |
 | `privileged`  | Admin Tier 1 bypass API invocations (`ctx.is_admin() == true` paths)   |
 
 #### Example: Control Event (Mapping Mutation)
@@ -1477,7 +1514,7 @@ the system notifier bus. The following event types are emitted:
 }
 ```
 
-#### Example: Maintenance Event (Janitor Purge)
+#### Example: Maintenance Event (Janitor Deactivation)
 
 ```json
 {
@@ -1485,7 +1522,7 @@ the system notifier bus. The following event types are emitted:
   "typeURI": "http://schemas.dmtf.org/cloud/audit/1.0/event",
   "eventType": "maintenance",
   "eventTime": "2026-06-11T03:00:00Z",
-  "action": "delete/identity/virtual-user/janitor",
+  "action": "disable/identity/virtual-user/janitor",
   "outcome": "success",
   "initiator": {
     "id": "janitor-task",
@@ -1503,6 +1540,76 @@ the system notifier bus. The following event types are emitted:
       "content": {
         "last_authenticated_days_ago": 124,
         "is_system": false
+      }
+    }
+  ]
+}
+```
+
+#### Example: Maintenance Event (Archive Cleanup Deletion)
+
+```json
+{
+  "id": "cadf-uuid-v4-event-id",
+  "typeURI": "http://schemas.dmtf.org/cloud/audit/1.0/event",
+  "eventType": "maintenance",
+  "eventTime": "2026-06-11T03:00:00Z",
+  "action": "delete/identity/virtual-user/archive-cleanup",
+  "outcome": "success",
+  "initiator": {
+    "id": "archive-cleanup-task",
+    "typeURI": "data/system/task"
+  },
+  "target": {
+    "id": "virtual-user-uuid",
+    "typeURI": "data/security/virtual-user",
+    "name": "svc-decommissioned-daemon"
+  },
+  "attachments": [
+    {
+      "name": "reason",
+      "contentType": "application/json",
+      "content": {
+        "deactivated_days_ago": 378,
+        "last_authenticated_at": 1718000000,
+        "is_system": false,
+        "mapping_id": "7c8d9e0f-1a2b-3c4d-5e6f-7a8b9c0d1e2f",
+        "resolved_user_name": "svc-decommissioned-daemon"
+      }
+    }
+  ]
+}
+```
+
+#### Example: Control Event (Virtual User Disable)
+
+```json
+{
+  "id": "cadf-uuid-v4-event-id",
+  "typeURI": "http://schemas.dmtf.org/cloud/audit/1.0/event",
+  "eventType": "control",
+  "eventTime": "2026-06-11T15:00:00Z",
+  "action": "disable/identity/virtual-user",
+  "outcome": "success",
+  "initiator": {
+    "id": "usr_uuid_of_admin_initiator",
+    "typeURI": "data/security/user",
+    "name": "cloud-admin-operator",
+    "domain_id": "default"
+  },
+  "target": {
+    "id": "virtual-user-uuid",
+    "typeURI": "data/security/virtual-user",
+    "name": "svc-compromised-agent"
+  },
+  "attachments": [
+    {
+      "name": "reason",
+      "contentType": "application/json",
+      "content": {
+        "enabled": false,
+        "is_system": false,
+        "revocation_triggered": true
       }
     }
   ]
@@ -1580,18 +1687,19 @@ and independently verifiable before advancing.
 ### Phase 1: Mapping Provider & Raft Driver
 
 Foundational layer to store, retrieve, and replicate `MappingRuleSet` objects
-across the Raft cluster. The mapping provider owns the keyspace prefix
-`data:mapping:v1:` and the index `index:mapping_id:`.
+and `VirtualUser` shadow records across the Raft cluster. The mapping provider
+owns the keyspace prefix `data:mapping:v1:` and the index `index:mapping_id:`.
 
 - Implement `MappingProvider` trait exposing `create`, `get`, `update`,
-  `delete`, and `list` operations against FjallDB.
+  `delete`, `enable`, `disable`, and `list` operations against FjallDB.
 - Implement the Raft driver for mapping mutations: serialize `MappingRuleSet`
   payloads, enforce Raft consensus ordering, and handle snapshot/compaction.
 - Implement write-time validation pipeline: regex ReDoS safety, rule name
   uniqueness, template safety, `allowed_domains` intersection checks.
 - Implement content-aware `ruleset_version` (SHA-256 first-16-bytes hasher).
-- **Deliverable:** Cluster-internal API for mapping CRUD, verifiable via unit
-  and integration tests.
+- Implement virtual user enable/disable with CAS-based toggle.
+- **Deliverable:** Cluster-internal API for mapping CRUD and virtual user
+  lifecycle, verifiable via unit and integration tests.
 
 ### Phase 2: Mapping CRUD & Evaluation API
 
@@ -1711,3 +1819,15 @@ default (fewer failures when groups are not pre-provisioned).
 `MappingRule` does not carry `provider_id`. It is nested within `MappingRuleSet`,
 which identifies the provider through `source: IdentitySource`. All rule-level
 context is inherited from the parent ruleset.
+
+### D8. Virtual user lifecycle — deactivation preferred over deletion
+
+The janitor task sets `enabled: false` instead of deleting records. A separate
+archive cleanup task permanently removes deactivated records after a configurable
+retention period (default: 365 days, configurable via
+`[keystone] shadow_registry_archive_retention_days`). This preserves forensic
+evidence (identity bindings, authorization snapshots, activity timestamps) for
+incident response and compliance auditing. The original spec specified immediate
+deletion. The provider interface is extended with explicit `enable_virtual_user`
+and `disable_virtual_user` methods. The mapping provider calls the revocation
+provider upon virtual user deactivation to trigger the token revocation pipeline.

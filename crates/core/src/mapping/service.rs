@@ -345,6 +345,28 @@ impl MappingApi for MappingService {
             ruleset_version: new_version,
         })
     }
+
+    /// Disable a virtual user shadow record.
+    async fn disable_virtual_user<'a>(
+        &self,
+        state: &ServiceState,
+        user_id: &'a str,
+    ) -> Result<VirtualUser, MappingProviderError> {
+        self.backend_driver
+            .disable_virtual_user(state, user_id)
+            .await
+    }
+
+    /// Enable (reactivate) a virtual user shadow record.
+    async fn enable_virtual_user<'a>(
+        &self,
+        state: &ServiceState,
+        user_id: &'a str,
+    ) -> Result<VirtualUser, MappingProviderError> {
+        self.backend_driver
+            .enable_virtual_user(state, user_id)
+            .await
+    }
 }
 
 #[cfg(test)]

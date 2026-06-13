@@ -52,12 +52,13 @@ pub trait MappingApi {
         mapping_id: &'a str,
     ) -> Result<(), MappingProviderError>;
 
-    /// Delete a virtual user shadow record.
+    /// Permanently delete a virtual user shadow record.
     ///
-    /// Revokes all derived privileges including immutably-preserved
-    /// `is_system`. Per ADR-0020 §4: the only way to revoke system-level
-    /// privileges is to delete the shadow record and force a fresh
-    /// authentication lifecycle.
+    /// Permanently removes the record from the shadow registry. Used by the
+    /// archive cleanup task after the retention period expires. For immediate
+    /// deactivation (preferred, preserves forensic evidence), use
+    /// `disable_virtual_user` instead. Per ADR-0020 §4 §D8: deactivation
+    /// (`enabled: false`) is preferred over deletion for auditability.
     ///
     /// # Parameters
     /// - `state`: The service state.
@@ -153,4 +154,39 @@ pub trait MappingApi {
         mapping_id: &'a str,
         data: MappingRuleSetUpdate,
     ) -> Result<MappingRuleSet, MappingProviderError>;
+
+    /// Disable a virtual user shadow record.
+    ///
+    /// Sets `enabled` to `false`. Per ADR-0020 §10.12, this triggers the token
+    /// revocation pipeline: `revocation:v1:user:<user_id>`.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `user_id`: The deterministic ID of the virtual user to disable.
+    ///
+    /// # Returns
+    /// - `Result<VirtualUser, MappingProviderError>` - The disabled
+    ///   `VirtualUser` or an error.
+    async fn disable_virtual_user<'a>(
+        &self,
+        state: &ServiceState,
+        user_id: &'a str,
+    ) -> Result<VirtualUser, MappingProviderError>;
+
+    /// Enable (reactivate) a virtual user shadow record.
+    ///
+    /// Sets `enabled` to `true`.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `user_id`: The deterministic ID of the virtual user to enable.
+    ///
+    /// # Returns
+    /// - `Result<VirtualUser, MappingProviderError>` - The enabled
+    ///   `VirtualUser` or an error.
+    async fn enable_virtual_user<'a>(
+        &self,
+        state: &ServiceState,
+        user_id: &'a str,
+    ) -> Result<VirtualUser, MappingProviderError>;
 }

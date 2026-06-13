@@ -703,6 +703,90 @@ impl RaftBackend {
             .await?;
         Ok(metadata)
     }
+
+    /// Disable a virtual user shadow record via CAS update.
+    ///
+    /// Reads the current record, sets `enabled: false`, and writes back with
+    /// a revision bump. The current revision is used as a CAS guard.
+    ///
+    /// # Parameters
+    /// - `storage`: The storage API implementation.
+    /// - `user_id`: The virtual user identifier to disable.
+    ///
+    /// # Returns
+    /// The disabled [`VirtualUser`].
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the record does not exist or the CAS check fails.
+    async fn disable_virtual_user_impl(
+        &self,
+        storage: &impl StorageApi,
+        user_id: &str,
+    ) -> Result<VirtualUser, StoreError> {
+        let curr: StoreDataEnvelope<VirtualUser> = storage
+            .get_by_key(self.get_vuser_id_key_name(user_id), None::<&str>)
+            .await?
+            .ok_or(StoreError::Other(eyre::eyre!(
+                "Virtual user not found: {user_id}"
+            )))?;
+        let new_meta = curr.metadata.new_revision();
+        let mut data = curr.data;
+        data.enabled = false;
+        storage
+            .set_value(
+                self.get_vuser_id_key_name(user_id),
+                StoreDataEnvelope {
+                    data: data.clone(),
+                    metadata: new_meta,
+                },
+                None::<&str>,
+                Some(curr.metadata.revision),
+            )
+            .await?;
+        Ok(data)
+    }
+
+    /// Enable (reactivate) a virtual user shadow record via CAS update.
+    ///
+    /// Reads the current record, sets `enabled: true`, and writes back with
+    /// a revision bump. The current revision is used as a CAS guard.
+    ///
+    /// # Parameters
+    /// - `storage`: The storage API implementation.
+    /// - `user_id`: The virtual user identifier to enable.
+    ///
+    /// # Returns
+    /// The enabled [`VirtualUser`].
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the record does not exist or the CAS check fails.
+    async fn enable_virtual_user_impl(
+        &self,
+        storage: &impl StorageApi,
+        user_id: &str,
+    ) -> Result<VirtualUser, StoreError> {
+        let curr: StoreDataEnvelope<VirtualUser> = storage
+            .get_by_key(self.get_vuser_id_key_name(user_id), None::<&str>)
+            .await?
+            .ok_or(StoreError::Other(eyre::eyre!(
+                "Virtual user not found: {user_id}"
+            )))?;
+        let new_meta = curr.metadata.new_revision();
+        let mut data = curr.data;
+        data.enabled = true;
+        storage
+            .set_value(
+                self.get_vuser_id_key_name(user_id),
+                StoreDataEnvelope {
+                    data: data.clone(),
+                    metadata: new_meta,
+                },
+                None::<&str>,
+                Some(curr.metadata.revision),
+            )
+            .await?;
+        Ok(data)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1061,6 +1145,82 @@ impl MappingBackend for RaftBackend {
             .as_ref()
             .ok_or(MappingProviderError::RaftNotAvailable)?;
         match self.update_virtual_user_impl(raft, user_id, metadata).await {
+            Ok(r) => Ok(r),
+            Err(e) => {
+                if e.to_string().contains("not found") {
+                    Err(MappingProviderError::NotFound(user_id.to_string()))
+                } else {
+                    Err(MappingProviderError::raft(e))
+                }
+            }
+        }
+    }
+
+    /// Disable a virtual user shadow record.
+    ///
+    /// Reads the current record, sets `enabled` to `false`, and writes back
+    /// with a revision bump using optimistic concurrency control.
+    ///
+    /// # Parameters
+    /// - `state`: The service state containing the Raft storage handle.
+    /// - `user_id`: The virtual user identifier to disable.
+    ///
+    /// # Returns
+    /// The disabled [`VirtualUser`].
+    ///
+    /// # Errors
+    /// Returns [`MappingProviderError::NotFound`] if the record does not exist,
+    /// [`MappingProviderError::RaftNotAvailable`] if the storage handle is missing,
+    /// or [`MappingProviderError::RaftStoreError`] if the CAS check fails.
+    #[tracing::instrument(level = "debug", skip(self, state))]
+    async fn disable_virtual_user<'a>(
+        &self,
+        state: &ServiceState,
+        user_id: &'a str,
+    ) -> Result<VirtualUser, MappingProviderError> {
+        let raft = state
+            .storage
+            .as_ref()
+            .ok_or(MappingProviderError::RaftNotAvailable)?;
+        match self.disable_virtual_user_impl(raft, user_id).await {
+            Ok(r) => Ok(r),
+            Err(e) => {
+                if e.to_string().contains("not found") {
+                    Err(MappingProviderError::NotFound(user_id.to_string()))
+                } else {
+                    Err(MappingProviderError::raft(e))
+                }
+            }
+        }
+    }
+
+    /// Enable (reactivate) a virtual user shadow record.
+    ///
+    /// Reads the current record, sets `enabled` to `true`, and writes back
+    /// with a revision bump using optimistic concurrency control.
+    ///
+    /// # Parameters
+    /// - `state`: The service state containing the Raft storage handle.
+    /// - `user_id`: The virtual user identifier to enable.
+    ///
+    /// # Returns
+    /// The enabled [`VirtualUser`].
+    ///
+    /// # Errors
+    /// Returns [`MappingProviderError::NotFound`] if the record does not exist,
+    /// [`MappingProviderError::RaftNotAvailable`] if the storage handle is missing,
+    /// or [`MappingProviderError::RaftStoreError`] if the CAS check fails.
+    #[tracing::instrument(level = "debug", skip(self, state))]
+    async fn enable_virtual_user<'a>(
+        &self,
+        state: &ServiceState,
+        user_id: &'a str,
+    ) -> Result<VirtualUser, MappingProviderError> {
+        let raft = state
+            .storage
+            .as_ref()
+            .ok_or(MappingProviderError::RaftNotAvailable)?;
+        match self.enable_virtual_user_impl(raft, user_id).await {
             Ok(r) => Ok(r),
             Err(e) => {
                 if e.to_string().contains("not found") {

@@ -164,4 +164,30 @@ impl MappingApi for MappingProvider {
             Self::Mock(provider) => provider.update_ruleset(state, mapping_id, data).await,
         }
     }
+
+    /// Disable a virtual user shadow record.
+    async fn disable_virtual_user<'a>(
+        &self,
+        state: &ServiceState,
+        user_id: &'a str,
+    ) -> Result<VirtualUser, MappingProviderError> {
+        match self {
+            Self::Service(provider) => provider.disable_virtual_user(state, user_id).await,
+            #[cfg(any(test, feature = "mock"))]
+            Self::Mock(provider) => provider.disable_virtual_user(state, user_id).await,
+        }
+    }
+
+    /// Enable (reactivate) a virtual user shadow record.
+    async fn enable_virtual_user<'a>(
+        &self,
+        state: &ServiceState,
+        user_id: &'a str,
+    ) -> Result<VirtualUser, MappingProviderError> {
+        match self {
+            Self::Service(provider) => provider.enable_virtual_user(state, user_id).await,
+            #[cfg(any(test, feature = "mock"))]
+            Self::Mock(provider) => provider.enable_virtual_user(state, user_id).await,
+        }
+    }
 }
