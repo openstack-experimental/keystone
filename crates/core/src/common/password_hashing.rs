@@ -18,6 +18,12 @@ use thiserror::Error;
 use tokio::task;
 use tracing::warn;
 
+use pbkdf2::Pbkdf2;
+use pbkdf2::password_hash::rand_core::OsRng;
+use pbkdf2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
+use scrypt::Scrypt;
+use sha2::Digest;
+
 use openstack_keystone_config::{Config, PasswordHashingAlgo};
 
 /// Password hashing related errors.
@@ -30,6 +36,10 @@ pub enum PasswordHashError {
         #[from]
         source: bcrypt::BcryptError,
     },
+
+    /// Crypto password-hash crate error (handles scrypt/pbkdf2 formatting).
+    #[error("Password hashing framework error: {0}")]
+    CryptoHash(String),
 
     /// Async task join error.
     #[error(transparent)]
@@ -58,8 +68,14 @@ pub enum PasswordHashError {
 /// - `&[u8]` - The password bytes, truncated if they exceeded `max_length`.
 fn verify_length_and_trunc_password(password: &[u8], max_length: usize) -> &[u8] {
     if password.len() > max_length {
+        let mut end = max_length;
+        // Step backward while the byte is a UTF-8 continuation byte.
+        // A continuation byte falls in the range 128..192.
+        while end > 0 && password[end] >= 128 && password[end] < 192 {
+            end -= 1;
+        }
         warn!("Truncating password to the specified value");
-        return &password[..max_length];
+        return &password[..end];
     }
     password
 }
@@ -89,6 +105,54 @@ pub async fn generate_dummy_hash(conf: &Config) -> Result<String, PasswordHashEr
                 task::spawn_blocking(move || bcrypt::hash(dummy_password, rounds as u32)).await??;
             Ok(hash)
         }
+
+        PasswordHashingAlgo::BcryptSha256 => {
+            let rounds = conf.identity.password_hash_rounds.unwrap_or(12);
+            let dummy_password = rand::random::<[u8; 16]>();
+            let hash = task::spawn_blocking(move || {
+                let digest = sha2::Sha256::digest(dummy_password);
+                let hex_digest = digest
+                    .iter()
+                    .map(|b| format!("{:02x}", b))
+                    .collect::<String>();
+                bcrypt::hash(hex_digest, rounds as u32)
+            })
+            .await??;
+            Ok(hash)
+        }
+
+        PasswordHashingAlgo::Scrypt => {
+            let dummy_password = rand::random::<[u8; 16]>();
+            let salt = SaltString::generate(&mut OsRng);
+            let hash = task::spawn_blocking(move || {
+                Scrypt
+                    .hash_password(&dummy_password, &salt)
+                    .map(|hash| hash.to_string())
+                    .map_err(|e| PasswordHashError::CryptoHash(e.to_string()))
+            })
+            .await??;
+            Ok(hash)
+        }
+
+        PasswordHashingAlgo::Pbkdf2Sha512 => {
+            let dummy_password = rand::random::<[u8; 16]>();
+            let salt = SaltString::generate(&mut OsRng);
+            let hash = task::spawn_blocking(move || {
+                Pbkdf2
+                    .hash_password_customized(
+                        &dummy_password,
+                        Some(pbkdf2::Algorithm::Pbkdf2Sha512.ident()),
+                        None,
+                        pbkdf2::Params::default(),
+                        &salt,
+                    )
+                    .map(|h| h.to_string())
+                    .map_err(|e| PasswordHashError::CryptoHash(e.to_string()))
+            })
+            .await??;
+            Ok(hash)
+        }
+
         PasswordHashingAlgo::None => {
             let dummy: [u8; 32] = rand::random();
             Ok(dummy
@@ -125,6 +189,58 @@ pub async fn hash_password<S: AsRef<[u8]>>(
                 task::spawn_blocking(move || bcrypt::hash(password_bytes, rounds as u32)).await??;
             Ok(hash)
         }
+
+        PasswordHashingAlgo::BcryptSha256 => {
+            let password_bytes = verify_length_and_trunc_password(
+                password.as_ref(),
+                max(conf.identity.max_password_length, 72),
+            )
+            .to_owned();
+            let rounds = conf.identity.password_hash_rounds.unwrap_or(12);
+            let hash = task::spawn_blocking(move || {
+                let digest = sha2::Sha256::digest(password_bytes);
+                let hex_digest = digest
+                    .iter()
+                    .map(|b| format!("{:02x}", b))
+                    .collect::<String>();
+                bcrypt::hash(hex_digest, rounds as u32)
+            })
+            .await??;
+            Ok(hash)
+        }
+
+        PasswordHashingAlgo::Scrypt => {
+            let password_bytes = password.as_ref().to_owned();
+            let salt = SaltString::generate(&mut OsRng);
+            let hash = task::spawn_blocking(move || {
+                Scrypt
+                    .hash_password(&password_bytes, &salt)
+                    .map(|hash| hash.to_string())
+                    .map_err(|e| PasswordHashError::CryptoHash(e.to_string()))
+            })
+            .await??;
+            Ok(hash)
+        }
+
+        PasswordHashingAlgo::Pbkdf2Sha512 => {
+            let password_bytes = password.as_ref().to_owned();
+            let salt = SaltString::generate(&mut OsRng);
+            let hash = task::spawn_blocking(move || {
+                Pbkdf2
+                    .hash_password_customized(
+                        &password_bytes,
+                        Some(pbkdf2::Algorithm::Pbkdf2Sha512.ident()),
+                        None,
+                        pbkdf2::Params::default(),
+                        &salt,
+                    )
+                    .map(|h| h.to_string())
+                    .map_err(|e| PasswordHashError::CryptoHash(e.to_string()))
+            })
+            .await??;
+            Ok(hash)
+        }
+
         //#[cfg(test)]
         PasswordHashingAlgo::None => Ok(str::from_utf8(password.as_ref())?.to_string()),
     }
@@ -169,6 +285,71 @@ pub async fn verify_password<P: AsRef<[u8]>, H: AsRef<str>>(
                 }
             }
         }
+
+        PasswordHashingAlgo::BcryptSha256 => {
+            let password_bytes = verify_length_and_trunc_password(
+                password.as_ref(),
+                max(conf.identity.max_password_length, 72),
+            )
+            .to_owned();
+            let password_hash = hash.as_ref().to_string();
+            // Do not block the main thread with a definitely long running call.
+            match task::spawn_blocking(move || {
+                let digest = sha2::Sha256::digest(password_bytes);
+                let hex_digest = digest
+                    .iter()
+                    .map(|b| format!("{:02x}", b))
+                    .collect::<String>();
+                bcrypt::verify(hex_digest, &password_hash)
+            })
+            .await?
+            {
+                Ok(res) => Ok(res),
+                Err(bcrypt::BcryptError::InvalidHash(..)) => {
+                    warn!("BcryptSha256 hash verification error: bad hash");
+                    Ok(false)
+                }
+                other => {
+                    warn!("BcryptSha256 hash verification error: {other:?}");
+                    Ok(false)
+                }
+            }
+        }
+
+        PasswordHashingAlgo::Scrypt => {
+            let password_bytes = password.as_ref().to_owned();
+            let password_hash = hash.as_ref().to_string();
+            // Do not block the main thread with a definitely long running call.
+            let res = task::spawn_blocking(move || {
+                let parsed_hash = PasswordHash::new(&password_hash)
+                    .map_err(|e| PasswordHashError::CryptoHash(e.to_string()))?;
+                Ok::<bool, PasswordHashError>(
+                    Scrypt
+                        .verify_password(&password_bytes, &parsed_hash)
+                        .is_ok(),
+                )
+            })
+            .await??;
+            Ok(res)
+        }
+
+        PasswordHashingAlgo::Pbkdf2Sha512 => {
+            let password_bytes = password.as_ref().to_owned();
+            let password_hash = hash.as_ref().to_string();
+            // Do not block the main thread with a definitely long running call.
+            let res = task::spawn_blocking(move || {
+                let parsed_hash = PasswordHash::new(&password_hash)
+                    .map_err(|e| PasswordHashError::CryptoHash(e.to_string()))?;
+                Ok::<bool, PasswordHashError>(
+                    Pbkdf2
+                        .verify_password(&password_bytes, &parsed_hash)
+                        .is_ok(),
+                )
+            })
+            .await??;
+            Ok(res)
+        }
+
         //#[cfg(test)]
         PasswordHashingAlgo::None => Ok(str::from_utf8(password.as_ref())?.eq(hash.as_ref())),
     }
@@ -320,5 +501,187 @@ mod tests {
         assert!(!result, "Dummy hash should not match random password");
         assert!(!logs_contain(&pass));
         assert!(!logs_contain(&dummy_hash));
+    }
+}
+#[cfg(test)]
+mod passlib_migration_tests {
+    use super::*; // Imports your hash_password / verify_password functions
+    use pbkdf2::Pbkdf2;
+    use pbkdf2::password_hash::{PasswordHash, PasswordVerifier};
+    use scrypt::Scrypt;
+
+    const TEST_PASSWORD: &str = "openstack123";
+
+    /// Custom verifier required for OpenStack database migrations.
+    /// Replicates Passlib's legacy quirk of base64-decoding the salt
+    /// (whereas the modern PHC standard uses the raw salt string directly).
+    pub fn verify_legacy_passlib_pbkdf2(password: &str, raw_python_hash: &str) -> bool {
+        let parts: Vec<&str> = raw_python_hash.split('$').collect();
+        if parts.len() != 5 || parts[1] != "pbkdf2-sha512" {
+            return false;
+        }
+
+        let rounds = parts[2];
+        let passlib_salt_ascii = parts[3];
+        let checksum_b64 = parts[4].replace('.', "+");
+
+        // Parse using Rust's standard crate just to easily decode the base64 checksum
+        let dummy_salt = passlib_salt_ascii.replace('.', "+");
+        let norm_str = format!(
+            "$pbkdf2-sha512$i={}${}${}",
+            rounds, dummy_salt, checksum_b64
+        );
+        let parsed = match pbkdf2::password_hash::PasswordHash::new(&norm_str) {
+            Ok(p) => p,
+            Err(_) => return false,
+        };
+
+        let iterations = parsed
+            .params
+            .get("i")
+            .and_then(|p| p.as_str().parse::<u32>().ok())
+            .unwrap_or(25000);
+
+        // Extract the target checksum bytes that Python generated
+        let hash_output = parsed.hash.unwrap();
+        let expected_bytes = hash_output.as_bytes();
+
+        // DECODE THE SALT (Passlib decodes the salt; standard Rust does not)
+        // This handles Passlib's adapted unpadded base64 (which uses '.' instead of '+')
+        let mut decoded_salt = Vec::new();
+        let mut buf = 0u32;
+        let mut bits = 0;
+        for &c in passlib_salt_ascii.as_bytes() {
+            let val = match c {
+                b'A'..=b'Z' => c - b'A',
+                b'a'..=b'z' => c - b'a' + 26,
+                b'0'..=b'9' => c - b'0' + 52,
+                b'+' | b'.' => 62,
+                b'/' => 63,
+                _ => continue, // Ignore padding or invalid chars
+            };
+            buf = (buf << 6) | (val as u32);
+            bits += 6;
+            if bits >= 8 {
+                bits -= 8;
+                decoded_salt.push((buf >> bits) as u8);
+            }
+        }
+
+        // Compute hash manually using the DECODED salt bytes
+        let mut computed_hash = vec![0u8; expected_bytes.len()];
+        pbkdf2::pbkdf2_hmac::<sha2::Sha512>(
+            password.as_bytes(),
+            &decoded_salt, // <-- The actual fix
+            iterations,
+            &mut computed_hash,
+        );
+
+        computed_hash == expected_bytes
+    }
+
+    /// Normalizes Python Passlib Scrypt hashes (which DO follow standards!)
+    fn normalize_scrypt_hash(passlib_hash: &str) -> String {
+        let parts: Vec<&str> = passlib_hash.split('$').collect();
+        if parts.len() != 5 || parts[1] != "scrypt" {
+            return passlib_hash.to_string();
+        }
+        let salt = parts[3].replace('.', "+");
+        let checksum = parts[4].replace('.', "+");
+        format!("$scrypt${}${}${}", parts[2], salt, checksum)
+    }
+
+    #[test]
+    fn test_roundtrip_pbkdf2() {
+        let salt =
+            pbkdf2::password_hash::SaltString::generate(pbkdf2::password_hash::rand_core::OsRng);
+        let hash = pbkdf2::password_hash::PasswordHasher::hash_password(
+            &Pbkdf2,
+            TEST_PASSWORD.as_bytes(),
+            &salt,
+        )
+        .unwrap();
+        let hash_string = hash.to_string();
+        let parsed_hash = PasswordHash::new(&hash_string).unwrap();
+        assert!(
+            Pbkdf2
+                .verify_password(TEST_PASSWORD.as_bytes(), &parsed_hash)
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn test_roundtrip_scrypt() {
+        let salt =
+            pbkdf2::password_hash::SaltString::generate(pbkdf2::password_hash::rand_core::OsRng);
+        let hash = pbkdf2::password_hash::PasswordHasher::hash_password(
+            &Scrypt,
+            TEST_PASSWORD.as_bytes(),
+            &salt,
+        )
+        .unwrap();
+        let hash_string = hash.to_string();
+        let parsed_hash = PasswordHash::new(&hash_string).unwrap();
+        assert!(
+            Scrypt
+                .verify_password(TEST_PASSWORD.as_bytes(), &parsed_hash)
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn test_rejection_wrong_password() {
+        let salt =
+            pbkdf2::password_hash::SaltString::generate(pbkdf2::password_hash::rand_core::OsRng);
+        let hash = pbkdf2::password_hash::PasswordHasher::hash_password(
+            &Pbkdf2,
+            TEST_PASSWORD.as_bytes(),
+            &salt,
+        )
+        .unwrap();
+        let hash_string = hash.to_string();
+        let parsed_hash = PasswordHash::new(&hash_string).unwrap();
+        assert!(
+            Pbkdf2
+                .verify_password(b"wrongpassword", &parsed_hash)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn test_rejection_empty_password() {
+        let salt =
+            pbkdf2::password_hash::SaltString::generate(pbkdf2::password_hash::rand_core::OsRng);
+        let hash = pbkdf2::password_hash::PasswordHasher::hash_password(
+            &Pbkdf2,
+            TEST_PASSWORD.as_bytes(),
+            &salt,
+        )
+        .unwrap();
+        let hash_string = hash.to_string();
+        let parsed_hash = PasswordHash::new(&hash_string).unwrap();
+        assert!(Pbkdf2.verify_password(b"", &parsed_hash).is_err());
+    }
+
+    #[test]
+    fn test_python_passlib_compatibility() {
+        let python_pbkdf2_hash = "$pbkdf2-sha512$25000$bo2REsLY.z9HCCFESEmJkQ$qX0JhkudwUVXpDKfMkDrWRgiP2AcYLbocxVkQrOmX4i0SGANHAB8KQUd1vbwVYJEBpbi4RvyvP5QJWZfIhnWTQ";
+        let python_scrypt_hash = "$scrypt$ln=16,r=8,p=1$FoLwnnPuvVdKqbWWEuK8lw$zaI+PjacJwDMwu4NoXmY9spmyrB4qnc8kGAJ4I6oABo";
+
+        // 1. Verify PBKDF2 using our OpenStack legacy manual verifier
+        assert!(
+            verify_legacy_passlib_pbkdf2(TEST_PASSWORD, python_pbkdf2_hash),
+            "Custom verifier rejected Python's legacy PBKDF2 hash!"
+        );
+
+        // 2. Verify SCRYPT using standard tools (Passlib Scrypt is fully standard compliant)
+        let norm_scrypt_str = normalize_scrypt_hash(python_scrypt_hash);
+        let parsed_scrypt = PasswordHash::new(&norm_scrypt_str).unwrap();
+        assert!(
+            Scrypt
+                .verify_password(TEST_PASSWORD.as_bytes(), &parsed_scrypt)
+                .is_ok(),
+            "Rust rejected Python's valid SCRYPT hash!"
+        );
     }
 }
