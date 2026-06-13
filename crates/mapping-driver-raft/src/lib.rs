@@ -19,10 +19,13 @@
 //!
 //! ## Architecture
 //!
-//! The driver implements the [`MappingBackend`](openstack_keystone_core::mapping::backend::MappingBackend)
+//! The driver implements the
+//! [`MappingBackend`](openstack_keystone_core::mapping::backend::MappingBackend)
 //! trait, delegating all mutations to the Raft consensus layer. Each operation
-//! constructs a set of [`Mutation`](openstack_keystone_distributed_storage::store_command::Mutation)
-//! commands and executes them atomically within a single distributed transaction.
+//! constructs a set of
+//! [`Mutation`](openstack_keystone_distributed_storage::store_command::Mutation)
+//! commands and executes them atomically within a single distributed
+//! transaction.
 //!
 //! ## Keyspace Layout
 //!
@@ -48,10 +51,10 @@
 //! ## Index Lifecycle
 //!
 //! Every create operation writes both the primary data entry and its secondary
-//! index entries within a single transaction. Every delete operation first reads
-//! the existing record to determine which index entries to clean up, then removes
-//! them atomically alongside the primary entry. This guarantees index consistency
-//! even under concurrent Raft proposals.
+//! index entries within a single transaction. Every delete operation first
+//! reads the existing record to determine which index entries to clean up, then
+//! removes them atomically alongside the primary entry. This guarantees index
+//! consistency even under concurrent Raft proposals.
 
 use std::collections::BTreeSet;
 
@@ -65,9 +68,11 @@ use openstack_keystone_distributed_storage::{
     Metadata, StorageApi, StoreDataEnvelope, StoreError, store_command::Mutation,
 };
 
-/// Raft-backed storage driver for mapping rulesets and virtual user shadow records.
+/// Raft-backed storage driver for mapping rulesets and virtual user shadow
+/// records.
 ///
-/// Implements the [`MappingBackend`](openstack_keystone_core::mapping::backend::MappingBackend)
+/// Implements the
+/// [`MappingBackend`](openstack_keystone_core::mapping::backend::MappingBackend)
 /// trait. All storage operations are delegated to the FjallDB Raft layer via
 /// [`StorageApi`](openstack_keystone_distributed_storage::StorageApi).
 ///
@@ -85,8 +90,8 @@ impl RaftBackend {
 
     /// Get the primary storage key for a ruleset by its `mapping_id`.
     ///
-    /// This is the canonical lookup key used for create, get, update, and delete
-    /// operations on rulesets.
+    /// This is the canonical lookup key used for create, get, update, and
+    /// delete operations on rulesets.
     ///
     /// # Parameters
     /// - `mapping_id`: The unique ruleset identifier.
@@ -142,14 +147,47 @@ impl RaftBackend {
         format!("mapping:ruleset:domain:{}:", domain_id.as_ref())
     }
 
-    // ----- Virtual user keys -----
-
-    /// Get the primary storage key for a virtual user shadow record by its `user_id`.
+    /// Get the composite index key for a ruleset scoped by `(domain_id,
+    /// source)`.
     ///
-    /// This is the canonical lookup key used for all virtual user CRUD operations.
+    /// This index enables efficient lookup of the single ruleset that matches
+    /// a specific ingress provider within a tenant domain, used by
+    /// `authenticate_by_mapping`.
     ///
     /// # Parameters
-    /// - `user_id`: The deterministic HMAC-SHA256-derived virtual user identifier.
+    /// - `mapping_id`: The ruleset identifier.
+    /// - `domain_id`: The owning domain identifier.
+    /// - `source_key`: The stable string representation of the identity source
+    ///   (e.g., `"federation:okta-enterprise-idp"`).
+    ///
+    /// # Returns
+    /// Key of the form
+    /// `mapping:ruleset:source:<domain_id>:<source_key>:<mapping_id>`.
+    fn get_ruleset_source_idx_key_name<I: AsRef<str>, D: AsRef<str>, S: AsRef<str>>(
+        &self,
+        mapping_id: I,
+        domain_id: D,
+        source_key: S,
+    ) -> String {
+        format!(
+            "mapping:ruleset:source:{}:{}:{}",
+            domain_id.as_ref(),
+            source_key.as_ref(),
+            mapping_id.as_ref()
+        )
+    }
+
+    // ----- Virtual user keys -----
+
+    /// Get the primary storage key for a virtual user shadow record by its
+    /// `user_id`.
+    ///
+    /// This is the canonical lookup key used for all virtual user CRUD
+    /// operations.
+    ///
+    /// # Parameters
+    /// - `user_id`: The deterministic HMAC-SHA256-derived virtual user
+    ///   identifier.
     ///
     /// # Returns
     /// Key of the form `mapping:vuser:id:<user_id>`.
@@ -159,8 +197,8 @@ impl RaftBackend {
 
     /// Get the prefix for scanning all virtual user entries.
     ///
-    /// Used by [`list_virtual_users_impl`](Self::list_virtual_users_impl) as a fallback
-    /// when no domain or mapping_id filter is specified.
+    /// Used by [`list_virtual_users_impl`](Self::list_virtual_users_impl) as a
+    /// fallback when no domain or mapping_id filter is specified.
     ///
     /// # Returns
     /// The constant prefix `mapping:vuser:id:`.
@@ -170,7 +208,8 @@ impl RaftBackend {
 
     /// Get the secondary index key for a virtual user scoped by `domain_id`.
     ///
-    /// This index enables efficient listing of virtual users within a tenant domain.
+    /// This index enables efficient listing of virtual users within a tenant
+    /// domain.
     ///
     /// # Parameters
     /// - `user_id`: The virtual user identifier.
@@ -243,11 +282,13 @@ impl RaftBackend {
     ///
     /// Executes a single distributed transaction containing:
     /// 1. `Mutation::set` for the primary data under `mapping:ruleset:id:`.
-    /// 2. `Mutation::set_index` for the domain lookup index (only if `domain_id` is present).
+    /// 2. `Mutation::set_index` for the domain lookup index (only if
+    ///    `domain_id` is present).
     ///
     /// # Parameters
     /// - `storage`: The storage API implementation.
-    /// - `ruleset`: The fully-populated ruleset with `mapping_id` and `ruleset_version` set.
+    /// - `ruleset`: The fully-populated ruleset with `mapping_id` and
+    ///   `ruleset_version` set.
     ///
     /// # Returns
     /// The persisted [`MappingRuleSet`].
@@ -271,17 +312,25 @@ impl RaftBackend {
             mutations.push(Mutation::set_index(
                 self.get_ruleset_domain_idx_key_name(&obj.mapping_id, did),
             )?);
+            // Composite source index: domain + identity source
+            mutations.push(Mutation::set_index(self.get_ruleset_source_idx_key_name(
+                &obj.mapping_id,
+                did,
+                obj.source.to_string_key(),
+            ))?);
         }
         storage.transaction(mutations).await?;
         Ok(obj)
     }
 
-    /// Atomically persist a new virtual user shadow record and its index entries.
+    /// Atomically persist a new virtual user shadow record and its index
+    /// entries.
     ///
     /// Executes a single distributed transaction containing:
     /// 1. `Mutation::set` for the primary data under `mapping:vuser:id:`.
     /// 2. `Mutation::set_index` for the mapping_id index (always present).
-    /// 3. `Mutation::set_index` for the domain lookup index (only if `domain_id` is present).
+    /// 3. `Mutation::set_index` for the domain lookup index (only if
+    ///    `domain_id` is present).
     ///
     /// # Parameters
     /// - `storage`: The storage API implementation.
@@ -318,7 +367,7 @@ impl RaftBackend {
         Ok(metadata)
     }
 
-    /// Atomically remove a ruleset and its domain index entry.
+    /// Atomically remove a ruleset and its indexes.
     ///
     /// First reads the existing record to determine which indexes to clean up,
     /// then removes all entries atomically within a single transaction. If the
@@ -335,18 +384,27 @@ impl RaftBackend {
         storage: &impl StorageApi,
         mapping_id: &str,
     ) -> Result<(), StoreError> {
-        let curr: Option<MappingRuleSet> = storage
+        let curr: Option<StoreDataEnvelope<MappingRuleSet>> = storage
             .get_by_key(self.get_ruleset_id_key_name(mapping_id), None::<&str>)
-            .await?
-            .map(|x| x.data);
-        if let Some(obj) = curr {
+            .await?;
+        if let Some(env) = curr {
+            let obj = &env.data;
+            let rev = env.metadata.revision;
             let mut mutations = vec![Mutation::remove(
                 self.get_ruleset_id_key_name(mapping_id),
                 None::<&str>,
+                Some(rev),
             )?];
             if let Some(ref did) = obj.domain_id {
                 mutations.push(Mutation::remove_index(
                     self.get_ruleset_domain_idx_key_name(mapping_id, did),
+                )?);
+                mutations.push(Mutation::remove_index(
+                    self.get_ruleset_source_idx_key_name(
+                        mapping_id,
+                        did,
+                        obj.source.to_string_key(),
+                    ),
                 )?);
             }
             storage.transaction(mutations).await?;
@@ -357,9 +415,9 @@ impl RaftBackend {
     /// Atomically remove a virtual user shadow record and its index entries.
     ///
     /// First reads the existing record to determine which indexes to clean up
-    /// (both the mapping_id index and the domain index if present), then removes
-    /// all entries atomically within a single transaction. If the record does not
-    /// already exist, this is a no-op.
+    /// (both the mapping_id index and the domain index if present), then
+    /// removes all entries atomically within a single transaction. If the
+    /// record does not already exist, this is a no-op.
     ///
     /// # Parameters
     /// - `storage`: The storage API implementation.
@@ -372,13 +430,14 @@ impl RaftBackend {
         storage: &impl StorageApi,
         user_id: &str,
     ) -> Result<(), StoreError> {
-        let curr: Option<VirtualUser> = storage
+        let curr: Option<StoreDataEnvelope<VirtualUser>> = storage
             .get_by_key(self.get_vuser_id_key_name(user_id), None::<&str>)
-            .await?
-            .map(|x| x.data);
-        if let Some(obj) = curr {
+            .await?;
+        if let Some(env) = curr {
+            let obj = &env.data;
+            let rev = env.metadata.revision;
             let mut mutations = vec![
-                Mutation::remove(self.get_vuser_id_key_name(user_id), None::<&str>)?,
+                Mutation::remove(self.get_vuser_id_key_name(user_id), None::<&str>, Some(rev))?,
                 Mutation::remove_index(
                     self.get_vuser_mapping_idx_key_name(user_id, &obj.mapping_id),
                 )?,
@@ -415,6 +474,47 @@ impl RaftBackend {
             .map(|x| x.data))
     }
 
+    /// Fetch a ruleset by its `(domain_id, source)` composite index.
+    ///
+    /// Used by `authenticate_by_mapping` to resolve the ruleset that matches
+    /// a specific ingress provider within a tenant domain.
+    ///
+    /// # Parameters
+    /// - `storage`: The storage API implementation.
+    /// - `domain_id`: The owning domain identifier.
+    /// - `source`: The identity source.
+    ///
+    /// # Returns
+    /// `Some(ruleset)` if found, `None` otherwise.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] if the read fails.
+    async fn get_ruleset_by_source_impl(
+        &self,
+        storage: &impl StorageApi,
+        domain_id: &str,
+        source: &IdentitySource,
+    ) -> Result<Option<MappingRuleSet>, StoreError> {
+        let source_key = source.to_string_key();
+        // Index key: mapping:ruleset:source:<domain_id>:<source_key>:<mapping_id>
+        let prefix = format!("mapping:ruleset:source:{}:{}:", domain_id, source_key);
+        let indexes = storage.prefix_index(&prefix).await?;
+        if indexes.is_empty() {
+            return Ok(None);
+        }
+        // Extract mapping_id from the index key (after the last ':')
+        let mapping_id = indexes[0]
+            .split(':')
+            .next_back()
+            .map(|s| s.to_string())
+            .ok_or_else(|| eyre::eyre!("malformed source index key: {}", indexes[0]))
+            .map_err(StoreError::from)?;
+        Ok(storage
+            .get_by_key(self.get_ruleset_id_key_name(mapping_id), None::<&str>)
+            .await?
+            .map(|x| x.data))
+    }
+
     /// Fetch a virtual user shadow record by its `user_id`.
     ///
     /// # Parameters
@@ -439,14 +539,16 @@ impl RaftBackend {
 
     /// List rulesets with optional filters.
     ///
-    /// Supports filtering by `domain_id` and `enabled` status. When a `domain_id`
-    /// filter is specified, the method uses the domain index key for efficient
-    /// prefix scanning. When no domain filter is present, it falls back to scanning
-    /// the full `mapping:ruleset:id:` prefix.
+    /// Supports filtering by `domain_id` and `enabled` status. When a
+    /// `domain_id` filter is specified, the method uses the domain index
+    /// key for efficient prefix scanning. When no domain filter is present,
+    /// it falls back to scanning the full `mapping:ruleset:id:` prefix.
     ///
     /// Filtering is applied in two stages:
-    /// 1. **Pre-filter** — domain index scan narrows candidate IDs (only when `domain_id` is set).
-    /// 2. **Post-filter** — remaining predicates (`enabled`) are evaluated against hydrated objects.
+    /// 1. **Pre-filter** — domain index scan narrows candidate IDs (only when
+    ///    `domain_id` is set).
+    /// 2. **Post-filter** — remaining predicates (`enabled`) are evaluated
+    ///    against hydrated objects.
     ///
     /// # Parameters
     /// - `storage`: The storage API implementation.
@@ -518,13 +620,15 @@ impl RaftBackend {
     /// List virtual user shadow records with optional filters.
     ///
     /// Supports filtering by `domain_id`, `mapping_id`, and `enabled` status.
-    /// When multiple indexable filters are present (`domain_id` and `mapping_id`),
-    /// the method intersects both index result sets via [`BTreeSet::retain`] before
-    /// hydrating candidate objects.
+    /// When multiple indexable filters are present (`domain_id` and
+    /// `mapping_id`), the method intersects both index result sets via
+    /// [`BTreeSet::retain`] before hydrating candidate objects.
     ///
     /// Filtering is applied in two stages:
-    /// 1. **Pre-filter** — domain and/or mapping_id index scan narrows candidate IDs.
-    /// 2. **Post-filter** — remaining predicates (`enabled`) are evaluated against hydrated objects.
+    /// 1. **Pre-filter** — domain and/or mapping_id index scan narrows
+    ///    candidate IDs.
+    /// 2. **Post-filter** — remaining predicates (`enabled`) are evaluated
+    ///    against hydrated objects.
     ///
     /// # Parameters
     /// - `storage`: The storage API implementation.
@@ -618,9 +722,10 @@ impl RaftBackend {
 
     /// Update an existing ruleset using optimistic concurrency control.
     ///
-    /// Reads the current record, applies the partial update via [`MappingRuleSet::with_update`],
-    /// then writes back with a revision bump. The `set_value` call includes the current
-    /// revision as a CAS guard: if another Raft proposal modified the record concurrently,
+    /// Reads the current record, applies the partial update via
+    /// [`MappingRuleSet::with_update`], then writes back with a revision
+    /// bump. The `set_value` call includes the current revision as a CAS
+    /// guard: if another Raft proposal modified the record concurrently,
     /// the write is rejected and the caller must retry.
     ///
     /// # Parameters
@@ -632,7 +737,8 @@ impl RaftBackend {
     /// The updated [`MappingRuleSet`].
     ///
     /// # Errors
-    /// Returns [`StoreError`] if the record does not exist or the CAS check fails.
+    /// Returns [`StoreError`] if the record does not exist or the CAS check
+    /// fails.
     async fn update_ruleset_impl(
         &self,
         storage: &impl StorageApi,
@@ -661,11 +767,13 @@ impl RaftBackend {
         Ok(new)
     }
 
-    /// Update an existing virtual user shadow record using optimistic concurrency control.
+    /// Update an existing virtual user shadow record using optimistic
+    /// concurrency control.
     ///
-    /// Reads the current record, replaces the data entirely, and bumps the revision.
-    /// The `set_value` call includes the current revision as a CAS guard: if another
-    /// Raft proposal modified the record concurrently, the write is rejected.
+    /// Reads the current record, replaces the data entirely, and bumps the
+    /// revision. The `set_value` call includes the current revision as a
+    /// CAS guard: if another Raft proposal modified the record
+    /// concurrently, the write is rejected.
     ///
     /// # Parameters
     /// - `storage`: The storage API implementation.
@@ -676,7 +784,8 @@ impl RaftBackend {
     /// The updated [`VirtualUser`].
     ///
     /// # Errors
-    /// Returns [`StoreError`] if the record does not exist or the CAS check fails.
+    /// Returns [`StoreError`] if the record does not exist or the CAS check
+    /// fails.
     async fn update_virtual_user_impl(
         &self,
         storage: &impl StorageApi,
@@ -717,7 +826,8 @@ impl RaftBackend {
     /// The disabled [`VirtualUser`].
     ///
     /// # Errors
-    /// Returns [`StoreError`] if the record does not exist or the CAS check fails.
+    /// Returns [`StoreError`] if the record does not exist or the CAS check
+    /// fails.
     async fn disable_virtual_user_impl(
         &self,
         storage: &impl StorageApi,
@@ -759,7 +869,8 @@ impl RaftBackend {
     /// The enabled [`VirtualUser`].
     ///
     /// # Errors
-    /// Returns [`StoreError`] if the record does not exist or the CAS check fails.
+    /// Returns [`StoreError`] if the record does not exist or the CAS check
+    /// fails.
     async fn enable_virtual_user_impl(
         &self,
         storage: &impl StorageApi,
@@ -793,10 +904,12 @@ impl RaftBackend {
 // Post-filter enums
 // ---------------------------------------------------------------------------
 
-/// Post-filter predicates applied to ruleset candidates during [`RaftBackend::list_rulesets_impl`].
+/// Post-filter predicates applied to ruleset candidates during
+/// [`RaftBackend::list_rulesets_impl`].
 ///
-/// These filters are evaluated against fully-hydrated [`MappingRuleSet`] objects
-/// after the pre-filter stage has narrowed the candidate set via index scan.
+/// These filters are evaluated against fully-hydrated [`MappingRuleSet`]
+/// objects after the pre-filter stage has narrowed the candidate set via index
+/// scan.
 enum MappingRuleSetFilter {
     /// Match rulesets assigned to a specific domain ID.
     Domain(String),
@@ -814,7 +927,8 @@ impl MappingRuleSetFilter {
     }
 }
 
-/// Post-filter predicates applied to virtual user candidates during [`RaftBackend::list_virtual_users_impl`].
+/// Post-filter predicates applied to virtual user candidates during
+/// [`RaftBackend::list_virtual_users_impl`].
 ///
 /// These filters are evaluated against fully-hydrated [`VirtualUser`] objects
 /// after the pre-filter stage has narrowed the candidate set via index scan.
@@ -857,8 +971,9 @@ impl MappingBackend for RaftBackend {
     /// The created [`MappingRuleSet`].
     ///
     /// # Errors
-    /// Returns [`MappingProviderError::RaftNotAvailable`] if the storage handle is missing,
-    /// or [`MappingProviderError::RaftStoreError`] if the transaction fails.
+    /// Returns [`MappingProviderError::RaftNotAvailable`] if the storage handle
+    /// is missing, or [`MappingProviderError::RaftStoreError`] if the
+    /// transaction fails.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn create_ruleset(
         &self,
@@ -877,7 +992,8 @@ impl MappingBackend for RaftBackend {
     /// Create a new virtual user shadow record.
     ///
     /// Persists the record atomically via a distributed Raft transaction,
-    /// creating the primary data entry and both the mapping_id and domain index entries.
+    /// creating the primary data entry and both the mapping_id and domain index
+    /// entries.
     ///
     /// # Parameters
     /// - `state`: The service state containing the Raft storage handle.
@@ -887,8 +1003,9 @@ impl MappingBackend for RaftBackend {
     /// The created [`VirtualUser`].
     ///
     /// # Errors
-    /// Returns [`MappingProviderError::RaftNotAvailable`] if the storage handle is missing,
-    /// or [`MappingProviderError::RaftStoreError`] if the transaction fails.
+    /// Returns [`MappingProviderError::RaftNotAvailable`] if the storage handle
+    /// is missing, or [`MappingProviderError::RaftStoreError`] if the
+    /// transaction fails.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn create_virtual_user(
         &self,
@@ -915,7 +1032,8 @@ impl MappingBackend for RaftBackend {
     /// - `mapping_id`: The ruleset identifier to delete.
     ///
     /// # Errors
-    /// Returns [`MappingProviderError::RaftNotAvailable`] if the storage handle is missing,
+    /// Returns [`MappingProviderError::RaftNotAvailable`] if the storage handle
+    /// is missing, [`MappingProviderError::CasConflict`] on CAS conflict,
     /// or [`MappingProviderError::RaftStoreError`] if the transaction fails.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn delete_ruleset<'a>(
@@ -927,23 +1045,32 @@ impl MappingBackend for RaftBackend {
             .storage
             .as_ref()
             .ok_or(MappingProviderError::RaftNotAvailable)?;
-        self.delete_ruleset_impl(raft, mapping_id)
-            .await
-            .map_err(MappingProviderError::raft)
+        match self.delete_ruleset_impl(raft, mapping_id).await {
+            Ok(()) => Ok(()),
+            Err(StoreError::Conflict {
+                subject,
+                description,
+            }) => Err(MappingProviderError::CasConflict {
+                subject,
+                description,
+            }),
+            Err(e) => Err(MappingProviderError::raft(e)),
+        }
     }
 
     /// Delete a virtual user shadow record.
     ///
     /// Reads the existing record to determine which index entries to clean up
-    /// (mapping_id index and domain index), then removes all entries atomically.
-    /// If the record does not exist, this is a no-op.
+    /// (mapping_id index and domain index), then removes all entries
+    /// atomically. If the record does not exist, this is a no-op.
     ///
     /// # Parameters
     /// - `state`: The service state containing the Raft storage handle.
     /// - `user_id`: The virtual user identifier to delete.
     ///
     /// # Errors
-    /// Returns [`MappingProviderError::RaftNotAvailable`] if the storage handle is missing,
+    /// Returns [`MappingProviderError::RaftNotAvailable`] if the storage handle
+    /// is missing, [`MappingProviderError::CasConflict`] on CAS conflict,
     /// or [`MappingProviderError::RaftStoreError`] if the transaction fails.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn delete_virtual_user<'a>(
@@ -955,9 +1082,17 @@ impl MappingBackend for RaftBackend {
             .storage
             .as_ref()
             .ok_or(MappingProviderError::RaftNotAvailable)?;
-        self.delete_virtual_user_impl(raft, user_id)
-            .await
-            .map_err(MappingProviderError::raft)
+        match self.delete_virtual_user_impl(raft, user_id).await {
+            Ok(()) => Ok(()),
+            Err(StoreError::Conflict {
+                subject,
+                description,
+            }) => Err(MappingProviderError::CasConflict {
+                subject,
+                description,
+            }),
+            Err(e) => Err(MappingProviderError::raft(e)),
+        }
     }
 
     /// Fetch a mapping ruleset by ID.
@@ -970,8 +1105,9 @@ impl MappingBackend for RaftBackend {
     /// `Some(ruleset)` if found, `None` otherwise.
     ///
     /// # Errors
-    /// Returns [`MappingProviderError::RaftNotAvailable`] if the storage handle is missing,
-    /// or [`MappingProviderError::RaftStoreError`] if the read fails.
+    /// Returns [`MappingProviderError::RaftNotAvailable`] if the storage handle
+    /// is missing, or [`MappingProviderError::RaftStoreError`] if the read
+    /// fails.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn get_ruleset<'a>(
         &self,
@@ -987,6 +1123,36 @@ impl MappingBackend for RaftBackend {
             .map_err(MappingProviderError::raft)
     }
 
+    /// Fetch a ruleset by its `(domain_id, source)` composite index.
+    ///
+    /// # Parameters
+    /// - `state`: The service state containing the Raft storage handle.
+    /// - `domain_id`: The owning domain identifier.
+    /// - `source`: The identity source.
+    ///
+    /// # Returns
+    /// `Some(ruleset)` if found, `None` otherwise.
+    ///
+    /// # Errors
+    /// Returns [`MappingProviderError::RaftNotAvailable`] if the storage handle
+    /// is missing, or [`MappingProviderError::RaftStoreError`] if the read
+    /// fails.
+    #[tracing::instrument(level = "debug", skip(self, state))]
+    async fn get_ruleset_by_source<'a>(
+        &self,
+        state: &ServiceState,
+        domain_id: &'a str,
+        source: &'a IdentitySource,
+    ) -> Result<Option<MappingRuleSet>, MappingProviderError> {
+        let raft = state
+            .storage
+            .as_ref()
+            .ok_or(MappingProviderError::RaftNotAvailable)?;
+        self.get_ruleset_by_source_impl(raft, domain_id, source)
+            .await
+            .map_err(MappingProviderError::raft)
+    }
+
     /// Fetch a virtual user shadow record by user ID.
     ///
     /// # Parameters
@@ -997,8 +1163,9 @@ impl MappingBackend for RaftBackend {
     /// `Some(user)` if found, `None` otherwise.
     ///
     /// # Errors
-    /// Returns [`MappingProviderError::RaftNotAvailable`] if the storage handle is missing,
-    /// or [`MappingProviderError::RaftStoreError`] if the read fails.
+    /// Returns [`MappingProviderError::RaftNotAvailable`] if the storage handle
+    /// is missing, or [`MappingProviderError::RaftStoreError`] if the read
+    /// fails.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn get_virtual_user<'a>(
         &self,
@@ -1016,8 +1183,9 @@ impl MappingBackend for RaftBackend {
 
     /// List mapping rulesets with optional filters.
     ///
-    /// Supports filtering by `domain_id` and `enabled` status. When a `domain_id`
-    /// filter is specified, uses the domain index for efficient prefix scanning.
+    /// Supports filtering by `domain_id` and `enabled` status. When a
+    /// `domain_id` filter is specified, uses the domain index for efficient
+    /// prefix scanning.
     ///
     /// # Parameters
     /// - `state`: The service state containing the Raft storage handle.
@@ -1027,8 +1195,9 @@ impl MappingBackend for RaftBackend {
     /// A vector of matching [`MappingRuleSet`] objects.
     ///
     /// # Errors
-    /// Returns [`MappingProviderError::RaftNotAvailable`] if the storage handle is missing,
-    /// or [`MappingProviderError::RaftStoreError`] if the scan fails.
+    /// Returns [`MappingProviderError::RaftNotAvailable`] if the storage handle
+    /// is missing, or [`MappingProviderError::RaftStoreError`] if the scan
+    /// fails.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn list_rulesets(
         &self,
@@ -1047,7 +1216,8 @@ impl MappingBackend for RaftBackend {
     /// List virtual user shadow records with optional filters.
     ///
     /// Supports filtering by `domain_id`, `mapping_id`, and `enabled` status.
-    /// When multiple indexable filters are present, intersects both index result sets.
+    /// When multiple indexable filters are present, intersects both index
+    /// result sets.
     ///
     /// # Parameters
     /// - `state`: The service state containing the Raft storage handle.
@@ -1057,8 +1227,9 @@ impl MappingBackend for RaftBackend {
     /// A vector of matching [`VirtualUser`] objects.
     ///
     /// # Errors
-    /// Returns [`MappingProviderError::RaftNotAvailable`] if the storage handle is missing,
-    /// or [`MappingProviderError::RaftStoreError`] if the scan fails.
+    /// Returns [`MappingProviderError::RaftNotAvailable`] if the storage handle
+    /// is missing, or [`MappingProviderError::RaftStoreError`] if the scan
+    /// fails.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn list_virtual_users(
         &self,
@@ -1076,9 +1247,10 @@ impl MappingBackend for RaftBackend {
 
     /// Update an existing mapping ruleset using optimistic concurrency control.
     ///
-    /// Reads the current record, applies the partial update via [`MappingRuleSet::with_update`],
-    /// then writes back with a revision bump. The current revision is passed as a CAS guard:
-    /// if another Raft proposal modified the record concurrently, the write is rejected.
+    /// Reads the current record, applies the partial update via
+    /// [`MappingRuleSet::with_update`], then writes back with a revision
+    /// bump. The current revision is passed as a CAS guard: if another Raft
+    /// proposal modified the record concurrently, the write is rejected.
     ///
     /// # Parameters
     /// - `state`: The service state containing the Raft storage handle.
@@ -1089,9 +1261,10 @@ impl MappingBackend for RaftBackend {
     /// The updated [`MappingRuleSet`].
     ///
     /// # Errors
-    /// Returns [`MappingProviderError::NotFound`] if the ruleset does not exist,
-    /// [`MappingProviderError::RaftNotAvailable`] if the storage handle is missing,
-    /// or [`MappingProviderError::RaftStoreError`] if the CAS check fails.
+    /// Returns [`MappingProviderError::NotFound`] if the ruleset does not
+    /// exist, [`MappingProviderError::RaftNotAvailable`] if the storage
+    /// handle is missing, or [`MappingProviderError::RaftStoreError`] if
+    /// the CAS check fails.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn update_ruleset<'a>(
         &self,
@@ -1115,11 +1288,13 @@ impl MappingBackend for RaftBackend {
         }
     }
 
-    /// Update an existing virtual user shadow record using optimistic concurrency control.
+    /// Update an existing virtual user shadow record using optimistic
+    /// concurrency control.
     ///
-    /// Reads the current record, replaces the data entirely, and bumps the revision.
-    /// The current revision is passed as a CAS guard: if another Raft proposal modified
-    /// the record concurrently, the write is rejected.
+    /// Reads the current record, replaces the data entirely, and bumps the
+    /// revision. The current revision is passed as a CAS guard: if another
+    /// Raft proposal modified the record concurrently, the write is
+    /// rejected.
     ///
     /// # Parameters
     /// - `state`: The service state containing the Raft storage handle.
@@ -1131,8 +1306,9 @@ impl MappingBackend for RaftBackend {
     ///
     /// # Errors
     /// Returns [`MappingProviderError::NotFound`] if the record does not exist,
-    /// [`MappingProviderError::RaftNotAvailable`] if the storage handle is missing,
-    /// or [`MappingProviderError::RaftStoreError`] if the CAS check fails.
+    /// [`MappingProviderError::RaftNotAvailable`] if the storage handle is
+    /// missing, or [`MappingProviderError::RaftStoreError`] if the CAS
+    /// check fails.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn update_virtual_user<'a>(
         &self,
@@ -1170,8 +1346,9 @@ impl MappingBackend for RaftBackend {
     ///
     /// # Errors
     /// Returns [`MappingProviderError::NotFound`] if the record does not exist,
-    /// [`MappingProviderError::RaftNotAvailable`] if the storage handle is missing,
-    /// or [`MappingProviderError::RaftStoreError`] if the CAS check fails.
+    /// [`MappingProviderError::RaftNotAvailable`] if the storage handle is
+    /// missing, or [`MappingProviderError::RaftStoreError`] if the CAS
+    /// check fails.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn disable_virtual_user<'a>(
         &self,
@@ -1208,8 +1385,9 @@ impl MappingBackend for RaftBackend {
     ///
     /// # Errors
     /// Returns [`MappingProviderError::NotFound`] if the record does not exist,
-    /// [`MappingProviderError::RaftNotAvailable`] if the storage handle is missing,
-    /// or [`MappingProviderError::RaftStoreError`] if the CAS check fails.
+    /// [`MappingProviderError::RaftNotAvailable`] if the storage handle is
+    /// missing, or [`MappingProviderError::RaftStoreError`] if the CAS
+    /// check fails.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn enable_virtual_user<'a>(
         &self,
@@ -1935,5 +2113,147 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(mapping_idx.len(), 0);
+    }
+
+    // ---------------------------------------------------------------------------
+    // get_ruleset_by_source tests
+    // ---------------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_get_ruleset_by_source_found() {
+        let backend = RaftBackend::default();
+        let storage = MockStorage::default();
+        let ruleset = make_ruleset("rs-src-1", Some("domain-src"), true);
+        backend
+            .create_ruleset_impl(&storage, ruleset.clone())
+            .await
+            .unwrap();
+        let source = IdentitySource::Federation {
+            idp_id: "idp-1".to_string(),
+        };
+        let result = backend
+            .get_ruleset_by_source_impl(&storage, "domain-src", &source)
+            .await;
+        assert!(result.is_ok());
+        let found = result.unwrap();
+        assert!(found.is_some());
+        assert_eq!(found.unwrap().mapping_id, "rs-src-1");
+    }
+
+    #[tokio::test]
+    async fn test_get_ruleset_by_source_not_found() {
+        let backend = RaftBackend::default();
+        let storage = MockStorage::default();
+        let ruleset = make_ruleset("rs-src-2", Some("domain-src"), true);
+        backend
+            .create_ruleset_impl(&storage, ruleset)
+            .await
+            .unwrap();
+        let source = IdentitySource::Federation {
+            idp_id: "idp-nonexistent".to_string(),
+        };
+        let result = backend
+            .get_ruleset_by_source_impl(&storage, "domain-src", &source)
+            .await;
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none());
+    }
+
+    // ---------------------------------------------------------------------------
+    // disable/enable virtual user tests
+    // ---------------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_disable_virtual_user_impl() {
+        let backend = RaftBackend::default();
+        let storage = MockStorage::default();
+        let vu = make_virtual_user("vu-disable", "rs-1", Some("domain-1"), true);
+        backend
+            .create_virtual_user_impl(&storage, vu)
+            .await
+            .unwrap();
+        let result = backend
+            .disable_virtual_user_impl(&storage, "vu-disable")
+            .await;
+        assert!(result.is_ok());
+        let disabled = result.unwrap();
+        assert!(!disabled.enabled);
+    }
+
+    #[tokio::test]
+    async fn test_enable_virtual_user_impl() {
+        let backend = RaftBackend::default();
+        let storage = MockStorage::default();
+        let vu = make_virtual_user("vu-enable", "rs-1", Some("domain-1"), false);
+        backend
+            .create_virtual_user_impl(&storage, vu)
+            .await
+            .unwrap();
+        let result = backend
+            .enable_virtual_user_impl(&storage, "vu-enable")
+            .await;
+        assert!(result.is_ok());
+        let enabled = result.unwrap();
+        assert!(enabled.enabled);
+    }
+
+    // ---------------------------------------------------------------------------
+    // list virtual users by enabled filter
+    // ---------------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_list_virtual_users_by_enabled() {
+        let backend = RaftBackend::default();
+        let storage = MockStorage::default();
+        backend
+            .create_virtual_user_impl(
+                &storage,
+                make_virtual_user("vu-en-1", "rs-1", Some("domain-1"), true),
+            )
+            .await
+            .unwrap();
+        backend
+            .create_virtual_user_impl(
+                &storage,
+                make_virtual_user("vu-en-2", "rs-2", Some("domain-2"), true),
+            )
+            .await
+            .unwrap();
+        backend
+            .create_virtual_user_impl(
+                &storage,
+                make_virtual_user("vu-en-3", "rs-1", Some("domain-1"), false),
+            )
+            .await
+            .unwrap();
+        let params = VirtualUserListParameters {
+            enabled: Some(true),
+            ..VirtualUserListParameters::default()
+        };
+        let result = backend.list_virtual_users_impl(&storage, &params).await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().len(), 2);
+    }
+
+    // ---------------------------------------------------------------------------
+    // create virtual user without domain
+    // ---------------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_create_virtual_user_without_domain() {
+        let backend = RaftBackend::default();
+        let storage = MockStorage::default();
+        let vu = make_virtual_user("vu-no-domain", "rs-11", None, true);
+        let result = backend.create_virtual_user_impl(&storage, vu.clone()).await;
+        assert!(result.is_ok());
+        let created = result.unwrap();
+        assert_eq!(created.user_id, "vu-no-domain");
+        assert!(created.domain_id.is_none());
+        let domain_idx = storage.prefix_index("mapping:vuser:domain:").await.unwrap();
+        assert!(
+            !domain_idx
+                .iter()
+                .any(|k: &String| k.contains("vu-no-domain"))
+        );
     }
 }

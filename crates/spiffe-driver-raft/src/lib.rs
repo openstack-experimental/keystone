@@ -112,7 +112,7 @@ impl RaftBackend {
             .map(|x| x.data);
         if let Some(obj) = curr {
             let mutations = vec![
-                Mutation::remove(self.get_binding_id_key_name(svid), None::<&str>)?,
+                Mutation::remove(self.get_binding_id_key_name(svid), None::<&str>, None)?,
                 Mutation::remove_index(
                     self.get_binding_domain_id_idx_key_name(svid, &obj.domain_id),
                 )?,

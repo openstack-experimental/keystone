@@ -100,6 +100,27 @@ pub trait MappingBackend: Send + Sync {
         mapping_id: &'a str,
     ) -> Result<Option<MappingRuleSet>, MappingProviderError>;
 
+    /// Fetch a mapping ruleset by its `(domain_id, source)` composite index.
+    ///
+    /// Used by `authenticate_by_mapping` to resolve the ruleset that matches
+    /// a specific ingress provider within a tenant domain.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `domain_id`: The owning domain identifier.
+    /// - `source`: The identity source.
+    ///
+    /// # Returns
+    /// - `Result<Option<MappingRuleSet>, MappingProviderError>` - A `Result`
+    ///   containing an `Option` with the `MappingRuleSet` if found, or an
+    ///   error.
+    async fn get_ruleset_by_source<'a>(
+        &self,
+        state: &ServiceState,
+        domain_id: &'a str,
+        source: &'a IdentitySource,
+    ) -> Result<Option<MappingRuleSet>, MappingProviderError>;
+
     /// Fetch a virtual user shadow record by user ID.
     ///
     /// # Parameters

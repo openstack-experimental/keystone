@@ -13,17 +13,25 @@
 // SPDX-License-Identifier: Apache-2.0
 //! # Mapping provider
 
+use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 use async_trait::async_trait;
+use chrono::Utc;
+use secrecy::ExposeSecret;
 use uuid::Uuid;
 
 use openstack_keystone_config::Config;
+use openstack_keystone_core_types::auth::{
+    AuthenticationContext, AuthenticationResult, AuthenticationResultBuilder, IdentityInfo,
+    PrincipalIdentityInfoBuilder, PrincipalInfo,
+};
 use openstack_keystone_core_types::mapping::*;
 
 use crate::keystone::ServiceState;
 use crate::mapping::{
-    MappingApi, MappingProviderError, backend::MappingBackend, validation, version,
+    MappingApi, MappingProviderError, backend::MappingBackend, engine, hmac, validation, version,
 };
 use crate::plugin_manager::PluginManagerApi;
 
@@ -54,6 +62,190 @@ impl MappingService {
         Self {
             backend_driver: Arc::new(driver),
         }
+    }
+
+    /// Authenticate a principal through the unified mapping engine.
+    ///
+    /// Evaluates claims against the ruleset, performs a shadow registry upsert,
+    /// and emits `AuthenticationResult`.
+    pub(super) async fn authenticate_by_mapping_internal(
+        &self,
+        state: &ServiceState,
+        req: &MappingAuthRequest,
+    ) -> Result<AuthenticationResult, MappingProviderError> {
+        let cfg = state.config_manager.config.read().await;
+        let salt = cfg
+            .mapping
+            .cluster_salt
+            .as_ref()
+            .map(|s| s.expose_secret().as_bytes().to_vec())
+            .filter(|b| !b.is_empty())
+            .ok_or_else(|| {
+                MappingProviderError::HmacDerivationFailed(
+                    "cluster_salt not configured".to_string(),
+                )
+            })?;
+
+        self.authenticate_by_mapping_with_salt(state, req, &salt)
+            .await
+    }
+
+    /// Authenticate a principal with an explicit salt.
+    pub(super) async fn authenticate_by_mapping_with_salt(
+        &self,
+        state: &ServiceState,
+        req: &MappingAuthRequest,
+        salt: &[u8],
+    ) -> Result<AuthenticationResult, MappingProviderError> {
+        // 1. Resolve ruleset by (domain_id, source) composite index
+        let domain_id = req.domain_id.as_deref().unwrap_or("global");
+        let ruleset = self
+            .backend_driver
+            .get_ruleset_by_source(state, domain_id, &req.source)
+            .await?
+            .ok_or(MappingProviderError::NoMatchingRule)?;
+
+        // 2. Enabled gate
+        if !ruleset.enabled {
+            return Err(MappingProviderError::DisabledRuleset);
+        }
+
+        // 3. Evaluate claims against ruleset — first match wins
+        let match_result =
+            engine::evaluate_ruleset(&ruleset, &req.claims, ruleset.domain_id.as_deref())?
+                .ok_or(MappingProviderError::NoMatchingRule)?;
+
+        // 4. Derive deterministic virtual user ID via HMAC-SHA256
+        let virtual_user_id =
+            hmac::derive_virtual_user_id(salt, &req.unique_workload_id, &req.source)?;
+
+        // 5. Upsert shadow registry record
+        let virtual_user = self
+            .upsert_virtual_user_shadow(
+                state,
+                &virtual_user_id,
+                &match_result,
+                &ruleset,
+                &req.unique_workload_id,
+            )
+            .await?;
+
+        // 6. Build AuthenticationResult with deferred scope resolution
+        let pinfo = if let Some(domain_id) = &virtual_user.domain_id {
+            PrincipalIdentityInfoBuilder::default()
+                .id(&virtual_user_id)
+                .issuer(req.source.to_string_key())
+                .domain(openstack_keystone_core_types::resource::Domain {
+                    id: domain_id.clone(),
+                    description: None,
+                    enabled: true,
+                    name: String::new(),
+                    extra: HashMap::new(),
+                })
+                .build()
+                .map_err(Box::new)?
+        } else {
+            PrincipalIdentityInfoBuilder::default()
+                .id(&virtual_user_id)
+                .issuer(req.source.to_string_key())
+                .build()
+                .map_err(Box::new)?
+        };
+
+        let principal = PrincipalInfo {
+            identity: IdentityInfo::Principal(pinfo),
+        };
+
+        Ok(AuthenticationResultBuilder::default()
+            .principal(principal)
+            .context(AuthenticationContext::Mapping(MappingContext {
+                mapping_id: ruleset.mapping_id.clone(),
+                matched_rule_name: match_result.rule_name.clone(),
+                virtual_user_id: virtual_user_id.clone(),
+            }))
+            .build()
+            .map_err(Box::new)?)
+    }
+
+    /// Upsert a virtual user shadow record with CAS-protected retry loop.
+    ///
+    /// If the record exists, refresh fields while preserving `created_at` and
+    /// `is_system` (immutable from initial creation). If new, create fresh.
+    /// Retries on `CasConflict` with exponential backoff.
+    pub(super) async fn upsert_virtual_user_shadow(
+        &self,
+        state: &ServiceState,
+        virtual_user_id: &str,
+        match_result: &MatchResult,
+        ruleset: &MappingRuleSet,
+        unique_workload_id: &str,
+    ) -> Result<VirtualUser, MappingProviderError> {
+        let now = Utc::now().timestamp();
+        let max_retries = 5u64;
+
+        for attempt in 0..max_retries {
+            let existing = self
+                .backend_driver
+                .get_virtual_user(state, virtual_user_id)
+                .await?;
+
+            let result = if let Some(mut vu) = existing {
+                // Update path: refresh fields, preserve created_at and is_system
+                vu.mapping_id = ruleset.mapping_id.clone();
+                vu.matched_rule_name = match_result.rule_name.clone();
+                vu.resolved_user_name = match_result.user_name.clone();
+                vu.resolved_group_bindings = match_result.resolved_group_bindings.clone();
+                vu.authorizations = match_result.authorizations.clone();
+                vu.ruleset_version = ruleset.ruleset_version;
+                vu.last_authenticated_at = now;
+                vu.enabled = true;
+                vu.domain_id = match_result.user_domain_id.clone();
+                // is_system is intentionally preserved from initial creation
+
+                // Persist updated record (CAS-protected at storage layer)
+                self.backend_driver
+                    .update_virtual_user(state, virtual_user_id, vu.clone())
+                    .await
+            } else {
+                // Insert path: create fresh record
+                let vu = VirtualUser {
+                    user_id: virtual_user_id.to_string(),
+                    unique_workload_id: unique_workload_id.to_string(),
+                    mapping_id: ruleset.mapping_id.clone(),
+                    matched_rule_name: match_result.rule_name.clone(),
+                    domain_id: match_result.user_domain_id.clone(),
+                    resolved_user_name: match_result.user_name.clone(),
+                    is_system: match_result.is_system,
+                    resolved_group_bindings: match_result.resolved_group_bindings.clone(),
+                    authorizations: match_result.authorizations.clone(),
+                    ruleset_version: ruleset.ruleset_version,
+                    enabled: true,
+                    created_at: now,
+                    last_authenticated_at: now,
+                };
+
+                self.backend_driver
+                    .create_virtual_user(state, vu.clone())
+                    .await
+            };
+
+            match result {
+                Ok(vu) => return Ok(vu),
+                Err(MappingProviderError::CasConflict { .. }) if attempt + 1 < max_retries => {
+                    let backoff_ms = 50 * (1u64 << attempt); // exponential: 50, 100, 200, 400, 800
+                    tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
+                    continue;
+                }
+                Err(e) => return Err(e),
+            }
+        }
+
+        Err(MappingProviderError::CasConflict {
+            subject: virtual_user_id.to_string(),
+            description: format!(
+                "CAS upsert exceeded {max_retries} retries with exponential backoff"
+            ),
+        })
     }
 }
 
@@ -115,16 +307,33 @@ impl MappingApi for MappingService {
         state: &ServiceState,
         mapping_id: &'a str,
     ) -> Result<(), MappingProviderError> {
-        // Check immutability: if ruleset contains `is_system` rules, reject
-        if let Some(existing) = self.backend_driver.get_ruleset(state, mapping_id).await?
-            && existing.rules.iter().any(|r| r.identity.is_system)
-        {
-            return Err(MappingProviderError::RulesetImmutable(
-                mapping_id.to_string(),
-            ));
-        }
+        let max_retries = 5u64;
+        for attempt in 0..max_retries {
+            // Check immutability: if ruleset contains `is_system` rules, reject
+            if let Some(existing) = self.backend_driver.get_ruleset(state, mapping_id).await?
+                && existing.rules.iter().any(|r| r.identity.is_system)
+            {
+                return Err(MappingProviderError::RulesetImmutable(
+                    mapping_id.to_string(),
+                ));
+            }
 
-        self.backend_driver.delete_ruleset(state, mapping_id).await
+            match self.backend_driver.delete_ruleset(state, mapping_id).await {
+                Ok(()) => return Ok(()),
+                Err(MappingProviderError::CasConflict { .. }) if attempt + 1 < max_retries => {
+                    let backoff_ms = 50 * (1u64 << attempt);
+                    tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
+                    continue;
+                }
+                Err(e) => return Err(e),
+            }
+        }
+        Err(MappingProviderError::CasConflict {
+            subject: mapping_id.to_string(),
+            description: format!(
+                "CAS delete exceeded {max_retries} retries with exponential backoff"
+            ),
+        })
     }
 
     /// Delete a virtual user shadow record.
@@ -133,9 +342,28 @@ impl MappingApi for MappingService {
         state: &ServiceState,
         user_id: &'a str,
     ) -> Result<(), MappingProviderError> {
-        self.backend_driver
-            .delete_virtual_user(state, user_id)
-            .await
+        let max_retries = 5u64;
+        for attempt in 0..max_retries {
+            match self
+                .backend_driver
+                .delete_virtual_user(state, user_id)
+                .await
+            {
+                Ok(()) => return Ok(()),
+                Err(MappingProviderError::CasConflict { .. }) if attempt + 1 < max_retries => {
+                    let backoff_ms = 50 * (1u64 << attempt);
+                    tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
+                    continue;
+                }
+                Err(e) => return Err(e),
+            }
+        }
+        Err(MappingProviderError::CasConflict {
+            subject: user_id.to_string(),
+            description: format!(
+                "CAS delete exceeded {max_retries} retries with exponential backoff"
+            ),
+        })
     }
 
     /// Fetch a mapping ruleset by ID.
@@ -145,6 +373,18 @@ impl MappingApi for MappingService {
         mapping_id: &'a str,
     ) -> Result<Option<MappingRuleSet>, MappingProviderError> {
         self.backend_driver.get_ruleset(state, mapping_id).await
+    }
+
+    /// Fetch a ruleset by its (domain_id, source) composite index.
+    async fn get_ruleset_by_source<'a>(
+        &self,
+        state: &ServiceState,
+        domain_id: &'a str,
+        source: &'a IdentitySource,
+    ) -> Result<Option<MappingRuleSet>, MappingProviderError> {
+        self.backend_driver
+            .get_ruleset_by_source(state, domain_id, source)
+            .await
     }
 
     /// Fetch a virtual user shadow record by user ID.
@@ -367,6 +607,15 @@ impl MappingApi for MappingService {
             .enable_virtual_user(state, user_id)
             .await
     }
+
+    /// Authenticate a principal through the unified mapping engine.
+    async fn authenticate_by_mapping(
+        &self,
+        state: &ServiceState,
+        req: &MappingAuthRequest,
+    ) -> Result<AuthenticationResult, MappingProviderError> {
+        self.authenticate_by_mapping_internal(state, req).await
+    }
 }
 
 #[cfg(test)]
@@ -374,6 +623,19 @@ mod tests {
     use super::*;
     use crate::mapping::backend::MockMappingBackend;
     use crate::tests::get_mocked_state;
+    use openstack_keystone_config::Config;
+    use openstack_keystone_core_types::mapping::rule::{
+        ClaimCondition, IdentityBinding, MappingRule, MatchCondition, MatchCriteria,
+    };
+    use secrecy::SecretString;
+    use serde_json::Value;
+
+    /// Helper to create mocked state with a configured cluster_salt.
+    async fn get_mocked_state_with_salt() -> ServiceState {
+        let mut cfg = Config::default();
+        cfg.mapping.cluster_salt = Some(SecretString::from("test-salt-for-hmac-derivation!"));
+        get_mocked_state(Some(cfg), None).await
+    }
 
     #[tokio::test]
     async fn test_get_ruleset() {
@@ -544,6 +806,114 @@ mod tests {
         let service = MappingService::from_driver(mock_backend);
 
         service.delete_virtual_user(&state, user_id).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_delete_ruleset_retries_on_cas_conflict() {
+        let mut mock_backend = MockMappingBackend::new();
+        let state = get_mocked_state(None, None).await;
+        let mapping_id = "test-id";
+
+        mock_backend
+            .expect_get_ruleset()
+            .withf(move |_, id| id == "test-id")
+            .times(5) // 5 retries with CAS conflict
+            .returning(move |_, _| {
+                Ok(Some(MappingRuleSet {
+                    mapping_id: "test-id".to_string(),
+                    domain_id: None,
+                    source: IdentitySource::Federation {
+                        idp_id: "test-idp".to_string(),
+                    },
+                    domain_resolution_mode: DomainResolutionMode::Fixed,
+                    enabled: true,
+                    rules: vec![],
+                    ruleset_version: 1,
+                }))
+            });
+
+        mock_backend
+            .expect_delete_ruleset()
+            .withf(move |_, id| id == "test-id")
+            .times(5) // 5 retries with CAS conflict
+            .returning(|_, _| {
+                Err(MappingProviderError::CasConflict {
+                    subject: "test-id".to_string(),
+                    description: "CAS conflict".to_string(),
+                })
+            });
+
+        let service = MappingService::from_driver(mock_backend);
+        let result = service.delete_ruleset(&state, mapping_id).await;
+
+        assert!(result.is_err());
+        assert!(matches!(
+            result,
+            Err(MappingProviderError::CasConflict { .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_delete_ruleset_succeeds_after_cas_retry() {
+        let mut mock_backend = MockMappingBackend::new();
+        let state = get_mocked_state(None, None).await;
+        let mapping_id = "test-id";
+
+        mock_backend
+            .expect_get_ruleset()
+            .withf(move |_, id| id == "test-id")
+            .times(1)
+            .returning(move |_, _| {
+                Ok(Some(MappingRuleSet {
+                    mapping_id: "test-id".to_string(),
+                    domain_id: None,
+                    source: IdentitySource::Federation {
+                        idp_id: "test-idp".to_string(),
+                    },
+                    domain_resolution_mode: DomainResolutionMode::Fixed,
+                    enabled: true,
+                    rules: vec![],
+                    ruleset_version: 1,
+                }))
+            });
+
+        mock_backend
+            .expect_delete_ruleset()
+            .withf(move |_, id| id == "test-id")
+            .times(1)
+            .returning(|_, _| Ok(()));
+
+        let service = MappingService::from_driver(mock_backend);
+        let result = service.delete_ruleset(&state, mapping_id).await;
+
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_delete_virtual_user_retries_on_cas_conflict() {
+        let mut mock_backend = MockMappingBackend::new();
+        let state = get_mocked_state(None, None).await;
+        let user_id = "user-1";
+
+        mock_backend
+            .expect_delete_virtual_user()
+            .withf(move |_, id| id == "user-1")
+            .times(5) // 5 retries with CAS conflict
+            .returning(|_, _| {
+                Err(MappingProviderError::CasConflict {
+                    subject: "user-1".to_string(),
+                    description: "CAS conflict".to_string(),
+                })
+            });
+
+        let service = MappingService::from_driver(mock_backend);
+        let result = service.delete_virtual_user(&state, user_id).await;
+
+        assert!(result.is_err());
+        assert!(matches!(
+            result,
+            Err(MappingProviderError::CasConflict { .. })
+        ));
     }
 
     #[tokio::test]
@@ -934,5 +1304,319 @@ mod tests {
             result.unwrap_err(),
             MappingProviderError::Conflict(_)
         ));
+    }
+
+    #[tokio::test]
+    async fn test_authenticate_by_mapping_no_matching_ruleset() {
+        let mut mock_backend = MockMappingBackend::new();
+        let state = get_mocked_state_with_salt().await;
+
+        let source = IdentitySource::Federation {
+            idp_id: "okta".to_string(),
+        };
+
+        mock_backend
+            .expect_get_ruleset_by_source()
+            .returning(move |_, _, _| Ok(None));
+
+        let service = MappingService::from_driver(mock_backend);
+
+        let result = service
+            .authenticate_by_mapping(
+                &state,
+                &MappingAuthRequest {
+                    domain_id: Some("default-domain".to_string()),
+                    source: source.clone(),
+                    unique_workload_id: "workload-1".to_string(),
+                    claims: HashMap::new(),
+                },
+            )
+            .await;
+
+        assert!(matches!(
+            result.unwrap_err(),
+            MappingProviderError::NoMatchingRule
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_authenticate_by_mapping_disabled_ruleset() {
+        let mut mock_backend = MockMappingBackend::new();
+        let state = get_mocked_state_with_salt().await;
+
+        let disabled_ruleset = MappingRuleSet {
+            mapping_id: "test-id".to_string(),
+            domain_id: Some("default-domain".to_string()),
+            source: IdentitySource::Federation {
+                idp_id: "okta".to_string(),
+            },
+            domain_resolution_mode: DomainResolutionMode::Fixed,
+            enabled: false,
+            rules: vec![],
+            ruleset_version: 1,
+        };
+
+        let disabled_ruleset_clone = disabled_ruleset.clone();
+        mock_backend
+            .expect_get_ruleset_by_source()
+            .returning(move |_, _, _| Ok(Some(disabled_ruleset_clone.clone())));
+
+        let service = MappingService::from_driver(mock_backend);
+
+        let result = service
+            .authenticate_by_mapping(
+                &state,
+                &MappingAuthRequest {
+                    domain_id: Some("default-domain".to_string()),
+                    source: IdentitySource::Federation {
+                        idp_id: "okta".to_string(),
+                    },
+                    unique_workload_id: "workload-1".to_string(),
+                    claims: HashMap::new(),
+                },
+            )
+            .await;
+
+        assert!(matches!(
+            result.unwrap_err(),
+            MappingProviderError::DisabledRuleset
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_authenticate_by_mapping_missing_salt() {
+        let mut mock_backend = MockMappingBackend::new();
+        let state = get_mocked_state(None, None).await;
+
+        let ruleset = MappingRuleSet {
+            mapping_id: "test-id".to_string(),
+            domain_id: Some("default-domain".to_string()),
+            source: IdentitySource::Federation {
+                idp_id: "okta".to_string(),
+            },
+            domain_resolution_mode: DomainResolutionMode::Fixed,
+            enabled: true,
+            rules: vec![],
+            ruleset_version: 1,
+        };
+
+        let ruleset_clone = ruleset.clone();
+        mock_backend
+            .expect_get_ruleset_by_source()
+            .returning(move |_, _, _| Ok(Some(ruleset_clone.clone())));
+
+        let service = MappingService::from_driver(mock_backend);
+
+        let result = service
+            .authenticate_by_mapping(
+                &state,
+                &MappingAuthRequest {
+                    domain_id: Some("default-domain".to_string()),
+                    source: IdentitySource::Federation {
+                        idp_id: "okta".to_string(),
+                    },
+                    unique_workload_id: "workload-1".to_string(),
+                    claims: HashMap::new(),
+                },
+            )
+            .await;
+
+        assert!(matches!(
+            result.unwrap_err(),
+            MappingProviderError::HmacDerivationFailed(_)
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_enable_virtual_user() {
+        let mut mock_backend = MockMappingBackend::new();
+        let state = get_mocked_state(None, None).await;
+        let user_id = "user-123";
+
+        let enabled_vu = VirtualUser {
+            user_id: user_id.to_string(),
+            unique_workload_id: "workload-1".to_string(),
+            mapping_id: "test-mapping".to_string(),
+            matched_rule_name: "test-rule".to_string(),
+            domain_id: None,
+            resolved_user_name: "test-user".to_string(),
+            is_system: false,
+            resolved_group_bindings: vec![],
+            authorizations: vec![],
+            ruleset_version: 1,
+            enabled: true,
+            created_at: 0,
+            last_authenticated_at: 0,
+        };
+
+        let enabled_vu_clone = enabled_vu.clone();
+        mock_backend
+            .expect_enable_virtual_user()
+            .withf(move |_, id| id == user_id)
+            .returning(move |_, _| Ok(enabled_vu_clone.clone()));
+
+        let service = MappingService::from_driver(mock_backend);
+
+        let result = service.enable_virtual_user(&state, user_id).await.unwrap();
+
+        assert_eq!(result.user_id, user_id);
+        assert!(result.enabled);
+    }
+
+    #[tokio::test]
+    async fn test_disable_virtual_user() {
+        let mut mock_backend = MockMappingBackend::new();
+        let state = get_mocked_state(None, None).await;
+        let user_id = "user-123";
+
+        let disabled_vu = VirtualUser {
+            user_id: user_id.to_string(),
+            unique_workload_id: "workload-1".to_string(),
+            mapping_id: "test-mapping".to_string(),
+            matched_rule_name: "test-rule".to_string(),
+            domain_id: None,
+            resolved_user_name: "test-user".to_string(),
+            is_system: false,
+            resolved_group_bindings: vec![],
+            authorizations: vec![],
+            ruleset_version: 1,
+            enabled: false,
+            created_at: 0,
+            last_authenticated_at: 0,
+        };
+
+        let disabled_vu_clone = disabled_vu.clone();
+        mock_backend
+            .expect_disable_virtual_user()
+            .withf(move |_, id| id == user_id)
+            .returning(move |_, _| Ok(disabled_vu_clone.clone()));
+
+        let service = MappingService::from_driver(mock_backend);
+
+        let result = service.disable_virtual_user(&state, user_id).await.unwrap();
+
+        assert_eq!(result.user_id, user_id);
+        assert!(!result.enabled);
+    }
+
+    #[tokio::test]
+    async fn test_get_ruleset_by_source() {
+        let mut mock_backend = MockMappingBackend::new();
+        let state = get_mocked_state(None, None).await;
+
+        let source = IdentitySource::Federation {
+            idp_id: "test-idp".to_string(),
+        };
+
+        let expected_ruleset = MappingRuleSet {
+            mapping_id: "test-mapping".to_string(),
+            domain_id: Some("default-domain".to_string()),
+            source: source.clone(),
+            domain_resolution_mode: DomainResolutionMode::Fixed,
+            enabled: true,
+            rules: vec![],
+            ruleset_version: 1,
+        };
+
+        let expected_ruleset_clone = expected_ruleset.clone();
+        mock_backend
+            .expect_get_ruleset_by_source()
+            .returning(move |_, _, _| Ok(Some(expected_ruleset_clone.clone())));
+
+        let service = MappingService::from_driver(mock_backend);
+
+        let result = service
+            .get_ruleset_by_source(&state, "default-domain", &source)
+            .await
+            .unwrap();
+
+        assert!(result.is_some());
+        let ruleset = result.unwrap();
+        assert_eq!(ruleset.mapping_id, "test-mapping");
+        assert_eq!(
+            ruleset.source,
+            IdentitySource::Federation {
+                idp_id: "test-idp".to_string()
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn test_authenticate_by_mapping_success() {
+        let mut mock_backend = MockMappingBackend::new();
+        let state = get_mocked_state_with_salt().await;
+
+        let mut claims = HashMap::new();
+        claims.insert("sub".to_string(), vec!["workload-123".to_string()]);
+
+        let source = IdentitySource::Federation {
+            idp_id: "okta".to_string(),
+        };
+
+        let rules = vec![MappingRule {
+            name: "matching-rule".to_string(),
+            description: None,
+            r#match: MatchCriteria::AllOf(vec![MatchCondition::Condition(
+                ClaimCondition::Equals {
+                    claim: "sub".to_string(),
+                    value: Value::String("workload-123".to_string()),
+                },
+            )]),
+            identity: IdentityBinding {
+                user_name: "${claims.sub}-mapped".to_string(),
+                user_id: None,
+                user_domain_id: None,
+                is_system: false,
+            },
+            authorizations: vec![],
+            groups: vec![],
+        }];
+
+        let matching_ruleset = MappingRuleSet {
+            mapping_id: "test-mapping".to_string(),
+            domain_id: Some("default-domain".to_string()),
+            source: source.clone(),
+            domain_resolution_mode: DomainResolutionMode::Fixed,
+            enabled: true,
+            rules,
+            ruleset_version: 1,
+        };
+
+        let matching_ruleset_clone = matching_ruleset.clone();
+
+        mock_backend
+            .expect_get_ruleset_by_source()
+            .returning(move |_, _, _| Ok(Some(matching_ruleset_clone.clone())));
+
+        mock_backend
+            .expect_get_virtual_user()
+            .returning(|_, _| Ok(None));
+
+        mock_backend
+            .expect_create_virtual_user()
+            .returning(move |_, vu: VirtualUser| Ok(vu));
+
+        let service = MappingService::from_driver(mock_backend);
+
+        let result = service
+            .authenticate_by_mapping(
+                &state,
+                &MappingAuthRequest {
+                    domain_id: Some("default-domain".to_string()),
+                    source: source.clone(),
+                    unique_workload_id: "workload-123".to_string(),
+                    claims: claims.clone(),
+                },
+            )
+            .await;
+
+        assert!(result.is_ok());
+        let auth_result = result.unwrap();
+        if let AuthenticationContext::Mapping(ctx) = auth_result.context {
+            assert_eq!(ctx.mapping_id, "test-mapping");
+            assert_eq!(ctx.matched_rule_name, "matching-rule");
+        } else {
+            panic!("Expected Mapping context");
+        }
     }
 }

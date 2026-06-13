@@ -38,7 +38,7 @@ use crate::idmapping::backend::IdMappingBackend;
 use crate::k8s_auth::K8sAuthProviderError;
 use crate::k8s_auth::backend::K8sAuthBackend;
 use crate::mapping::MappingBackend;
-use crate::mapping::MappingProviderError;
+use crate::mapping::error::MappingProviderError;
 use crate::resource::backend::ResourceBackend;
 use crate::resource::error::ResourceProviderError;
 use crate::revoke::RevokeProviderError;

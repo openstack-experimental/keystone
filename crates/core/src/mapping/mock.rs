@@ -15,6 +15,7 @@
 use async_trait::async_trait;
 use mockall::mock;
 
+use openstack_keystone_core_types::auth::AuthenticationResult;
 use openstack_keystone_core_types::mapping::*;
 
 use crate::keystone::ServiceState;
@@ -51,6 +52,14 @@ mock! {
             &self,
             state: &ServiceState,
             mapping_id: &'a str,
+        ) -> Result<Option<MappingRuleSet>, MappingProviderError>;
+
+        /// Fetch a ruleset by its (domain_id, source) composite index.
+        async fn get_ruleset_by_source<'a>(
+            &self,
+            state: &ServiceState,
+            domain_id: &'a str,
+            source: &'a IdentitySource,
         ) -> Result<Option<MappingRuleSet>, MappingProviderError>;
 
         /// Fetch a virtual user shadow record by user ID.
@@ -96,5 +105,12 @@ mock! {
             state: &ServiceState,
             user_id: &'a str,
         ) -> Result<VirtualUser, MappingProviderError>;
+
+        /// Authenticate a principal through the unified mapping engine.
+        async fn authenticate_by_mapping(
+            &self,
+            state: &ServiceState,
+            req: &MappingAuthRequest,
+        ) -> Result<AuthenticationResult, MappingProviderError>;
     }
 }

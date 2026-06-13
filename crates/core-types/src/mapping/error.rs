@@ -105,6 +105,29 @@ pub enum MappingProviderError {
     /// Ruleset `{0}` contains `is_system` rules and is immutable.
     #[error("mapping ruleset `{0}` is an immutable system mapping and cannot be modified")]
     RulesetImmutable(String),
+
+    /// No matching rule found for the provided claims.
+    #[error("no matching rule found for the provided claims")]
+    NoMatchingRule,
+
+    /// Target ruleset is disabled.
+    #[error("target mapping ruleset is disabled")]
+    DisabledRuleset,
+
+    /// Concurrent modification conflict (CAS/revision mismatch).
+    #[error("concurrent modification conflict: {subject} — {description}")]
+    CasConflict {
+        subject: String,
+        description: String,
+    },
+
+    /// HMAC-SHA256 derivation failed (salt unavailable or invalid).
+    #[error("HMAC-SHA256 virtual user ID derivation failed: {0}")]
+    HmacDerivationFailed(String),
+
+    /// `allowed_domains` list exceeds cardinality limit ({0}).
+    #[error("allowed_domains list exceeds cardinality limit of {0}")]
+    AllowedDomainsTooLarge(usize),
 }
 
 impl MappingProviderError {

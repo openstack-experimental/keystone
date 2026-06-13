@@ -46,23 +46,23 @@ fn verify_peer_credentials(
     let creds = getsockopt(&stream, PeerCredentials)
         .wrap_err("failed to get peer credentials via SO_PEERCRED")?;
 
-    if let Some(expected) = expected_uid {
-        if creds.uid() != expected {
-            return Err(color_eyre::eyre::eyre!(
-                "UDS peer UID {} does not match expected {}",
-                creds.uid(),
-                expected
-            ));
-        }
+    if let Some(expected) = expected_uid
+        && creds.uid() != expected
+    {
+        return Err(color_eyre::eyre::eyre!(
+            "UDS peer UID {} does not match expected {}",
+            creds.uid(),
+            expected
+        ));
     }
-    if let Some(expected) = expected_gid {
-        if creds.gid() != expected {
-            return Err(color_eyre::eyre::eyre!(
-                "UDS peer GID {} does not match expected {}",
-                creds.gid(),
-                expected
-            ));
-        }
+    if let Some(expected) = expected_gid
+        && creds.gid() != expected
+    {
+        return Err(color_eyre::eyre::eyre!(
+            "UDS peer GID {} does not match expected {}",
+            creds.gid(),
+            expected
+        ));
     }
     Ok(())
 }

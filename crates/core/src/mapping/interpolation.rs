@@ -383,4 +383,42 @@ mod tests {
         let keys = extract_claims_keys("no templates");
         assert!(keys.is_empty());
     }
+
+    #[test]
+    fn test_empty_claim_value_returns_empty_string() {
+        let mut claims = HashMap::new();
+        claims.insert("empty_claim".to_string(), vec![]);
+        let result = interpolate("${claims.empty_claim}", &claims, "default-domain").unwrap();
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn test_unknown_token_returns_literal() {
+        let claims = test_claims();
+        let result = interpolate("${some.unknown.token}", &claims, "default-domain").unwrap();
+        assert_eq!(result, "${some.unknown.token}");
+    }
+
+    #[test]
+    fn test_multiple_unresolved_tokens() {
+        let claims = test_claims();
+        let result = interpolate(
+            "${claims.a}-${claims.b}-${claims.c}",
+            &claims,
+            "default-domain",
+        )
+        .unwrap();
+        assert_eq!(result, "${claims.a}-${claims.b}-${claims.c}");
+    }
+
+    #[test]
+    fn test_claim_value_with_dollar_signs() {
+        let mut claims = HashMap::new();
+        claims.insert(
+            "dollar_claim".to_string(),
+            vec!["prefix${claims.fake}suffix".to_string()],
+        );
+        let result = interpolate("${claims.dollar_claim}", &claims, "default-domain").unwrap();
+        assert_eq!(result, "prefix${claims.fake}suffix");
+    }
 }

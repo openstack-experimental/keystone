@@ -34,7 +34,9 @@ use crate::mapping::ruleset::MappingRuleSetCreate;
 /// # Returns
 /// `u128` value representing the content hash of the ruleset.
 pub fn compute_ruleset_version(ruleset: &MappingRuleSetCreate) -> u128 {
-    // Serialize to canonical JSON with sorted keys for deterministic hashing
+    // Serialize to deterministic JSON (struct field order, not sorted) for hashing.
+    // The Rust `Serialize` impl preserves struct field order, which is stable for a
+    // given struct definition. Any struct change will produce a different hash.
     let serialized =
         serde_json::to_string(ruleset).expect("ruleset serialization should never fail");
     let hash = Sha256::digest(serialized.as_bytes());
@@ -68,18 +70,19 @@ pub fn compute_ruleset_version_from_parts(
     enabled: bool,
     rules: &[crate::mapping::rule::MappingRule],
 ) -> u128 {
-    let payload = serde_json::json!({
-        "mapping_id": mapping_id,
-        "domain_id": domain_id,
-        "source": source,
-        "domain_resolution_mode": domain_resolution_mode,
-        "enabled": enabled,
-        "rules": rules,
-    });
-    let hash = Sha256::digest(payload.to_string().as_bytes());
-    let mut bytes = [0u8; 16];
-    bytes.copy_from_slice(&hash[..16]);
-    u128::from_be_bytes(bytes)
+    let ruleset = MappingRuleSetCreate {
+        mapping_id: if mapping_id.is_empty() {
+            None
+        } else {
+            Some(mapping_id.to_string())
+        },
+        domain_id: domain_id.map(String::from),
+        source: source.clone(),
+        domain_resolution_mode: domain_resolution_mode.clone(),
+        enabled,
+        rules: rules.to_vec(),
+    };
+    compute_ruleset_version(&ruleset)
 }
 
 #[cfg(test)]
@@ -209,5 +212,94 @@ mod tests {
         let v2 = compute_ruleset_version(&rs);
 
         assert_ne!(v1, v2);
+    }
+
+    #[test]
+    fn test_compute_ruleset_version_from_parts_basic() {
+        let version = compute_ruleset_version_from_parts(
+            "test-123",
+            Some("test-domain"),
+            &IdentitySource::Federation {
+                idp_id: "idp-1".to_string(),
+            },
+            &DomainResolutionMode::Fixed,
+            true,
+            &[sample_ruleset_create().rules[0].clone()],
+        );
+        assert!(version > 0);
+    }
+
+    #[test]
+    fn test_version_from_parts_changes_when_domain_changes() {
+        let rule = sample_ruleset_create().rules[0].clone();
+        let v1 = compute_ruleset_version_from_parts(
+            "test-123",
+            Some("domain-a"),
+            &IdentitySource::Federation {
+                idp_id: "idp-1".to_string(),
+            },
+            &DomainResolutionMode::Fixed,
+            true,
+            &[rule.clone()],
+        );
+        let v2 = compute_ruleset_version_from_parts(
+            "test-123",
+            Some("domain-b"),
+            &IdentitySource::Federation {
+                idp_id: "idp-1".to_string(),
+            },
+            &DomainResolutionMode::Fixed,
+            true,
+            &[rule],
+        );
+        assert_ne!(v1, v2);
+    }
+
+    #[test]
+    fn test_version_from_parts_changes_when_source_changes() {
+        let rule = sample_ruleset_create().rules[0].clone();
+        let v1 = compute_ruleset_version_from_parts(
+            "test-123",
+            Some("test-domain"),
+            &IdentitySource::Federation {
+                idp_id: "idp-1".to_string(),
+            },
+            &DomainResolutionMode::Fixed,
+            true,
+            &[rule.clone()],
+        );
+        let v2 = compute_ruleset_version_from_parts(
+            "test-123",
+            Some("test-domain"),
+            &IdentitySource::K8s {
+                cluster_id: "k8s-cluster-1".to_string(),
+            },
+            &DomainResolutionMode::Fixed,
+            true,
+            &[rule],
+        );
+        assert_ne!(v1, v2);
+    }
+
+    #[test]
+    fn test_compute_ruleset_version_from_parts_matches_create() {
+        let ruleset = sample_ruleset_create();
+        let v_create = compute_ruleset_version(&ruleset);
+
+        let mapping_id = ruleset.mapping_id.as_deref().unwrap_or("");
+        let source = &ruleset.source;
+        let domain_resolution_mode = &ruleset.domain_resolution_mode;
+        let rules = &ruleset.rules;
+
+        let v_parts = compute_ruleset_version_from_parts(
+            mapping_id,
+            ruleset.domain_id.as_deref(),
+            source,
+            domain_resolution_mode,
+            ruleset.enabled,
+            rules,
+        );
+
+        assert_eq!(v_create, v_parts);
     }
 }

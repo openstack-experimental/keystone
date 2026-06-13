@@ -212,7 +212,7 @@ async fn test_remove(instances: &Vec<Arc<InstanceHolder>>) {
 fn bench_command_serde(c: &mut Criterion) {
     let delete_cmd = StoreCommand::Transaction(vec![
         MutationInner::convert(
-            Mutation::remove("foo", Some("bar")).unwrap(),
+            Mutation::remove("foo", Some("bar"), None).unwrap(),
             Nonce::default(),
         )
         .unwrap(),

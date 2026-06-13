@@ -36,6 +36,10 @@ use crate::mapping::interpolation::{contains_claims_template, extract_claims_key
 /// Maximum HIR string size for a regex before it is considered too complex.
 const MAX_REGEX_HIR_SIZE: usize = 4096;
 
+/// Maximum number of domain IDs in an `allowed_domains` whitelist.
+/// Prevents O(n) evaluation degradation on auth path.
+const MAX_ALLOWED_DOMAINS: usize = 256;
+
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
@@ -269,7 +273,7 @@ fn validate_domain_resolution_mode(
                 }
             }
         }
-        DomainResolutionMode::ClaimsOnly { .. } => {
+        DomainResolutionMode::ClaimsOnly { allowed_domains } => {
             // ClaimsOnly: at least one rule must have claim template in user_domain_id
             let has_claims_template = rules.iter().any(|r| {
                 r.identity
@@ -286,10 +290,23 @@ fn validate_domain_resolution_mode(
             if domain_id.is_some() {
                 return Err(MappingProviderError::DomainClaimRequired);
             }
+
+            // Enforce cardinality limit on allowed_domains whitelist
+            if allowed_domains.len() > MAX_ALLOWED_DOMAINS {
+                return Err(MappingProviderError::AllowedDomainsTooLarge(
+                    MAX_ALLOWED_DOMAINS,
+                ));
+            }
         }
-        DomainResolutionMode::ClaimsOrMapping { .. } => {
+        DomainResolutionMode::ClaimsOrMapping { allowed_domains } => {
             // Both claim templates and static values are permitted
             // No additional constraints beyond template safety
+            // Enforce cardinality limit on allowed_domains whitelist
+            if allowed_domains.len() > MAX_ALLOWED_DOMAINS {
+                return Err(MappingProviderError::AllowedDomainsTooLarge(
+                    MAX_ALLOWED_DOMAINS,
+                ));
+            }
         }
     }
 
@@ -315,6 +332,12 @@ fn validate_allowed_domains_update(
             // Claims-only modes require non-empty allowed_domains
             if allowed_domains.is_empty() {
                 return Err(MappingProviderError::DomainClaimRequired);
+            }
+            // Enforce cardinality limit to prevent O(n) evaluation degradation
+            if allowed_domains.len() > MAX_ALLOWED_DOMAINS {
+                return Err(MappingProviderError::AllowedDomainsTooLarge(
+                    MAX_ALLOWED_DOMAINS,
+                ));
             }
         }
     }
@@ -809,5 +832,200 @@ mod tests {
         );
 
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn claims_only_rejects_allowed_domains_over_cardinality() {
+        let domains: Vec<String> = (0..257).map(|i| format!("domain-{i}")).collect();
+
+        let result = validate_allowed_domains_update(
+            &DomainResolutionMode::ClaimsOnly {
+                allowed_domains: domains.clone(),
+            },
+            &domains,
+        );
+
+        assert!(result.is_err());
+        assert!(matches!(
+            result,
+            Err(MappingProviderError::AllowedDomainsTooLarge(256))
+        ));
+    }
+
+    #[test]
+    fn claims_or_mapping_rejects_allowed_domains_over_cardinality() {
+        let domains: Vec<String> = (0..257).map(|i| format!("domain-{i}")).collect();
+
+        let result = validate_allowed_domains_update(
+            &DomainResolutionMode::ClaimsOrMapping {
+                allowed_domains: domains.clone(),
+            },
+            &domains,
+        );
+
+        assert!(result.is_err());
+        assert!(matches!(
+            result,
+            Err(MappingProviderError::AllowedDomainsTooLarge(256))
+        ));
+    }
+
+    #[test]
+    fn claims_only_accepts_exact_cardinality() {
+        let domains: Vec<String> = (0..256).map(|i| format!("domain-{i}")).collect();
+
+        let result = validate_allowed_domains_update(
+            &DomainResolutionMode::ClaimsOnly {
+                allowed_domains: domains.clone(),
+            },
+            &domains,
+        );
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn claims_or_mapping_accepts_anything() {
+        let rules = vec![MappingRule {
+            name: "test".to_string(),
+            description: None,
+            r#match: MatchCriteria::AllOf(vec![]),
+            identity: IdentityBinding {
+                user_name: "user-${claims.sub}".to_string(),
+                user_id: None,
+                user_domain_id: Some("static-domain".to_string()),
+                is_system: false,
+            },
+            authorizations: Vec::new(),
+            groups: Vec::new(),
+        }];
+
+        let result = validate_domain_resolution_mode(
+            &DomainResolutionMode::ClaimsOrMapping {
+                allowed_domains: vec!["d1".to_string()],
+            },
+            &rules,
+            None,
+        );
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn claims_only_rejects_domain_id_set() {
+        let rules = vec![MappingRule {
+            name: "test".to_string(),
+            description: None,
+            r#match: MatchCriteria::AllOf(vec![]),
+            identity: IdentityBinding {
+                user_name: "user".to_string(),
+                user_id: None,
+                user_domain_id: Some("${claims.domain}".to_string()),
+                is_system: false,
+            },
+            authorizations: Vec::new(),
+            groups: Vec::new(),
+        }];
+
+        let result = validate_domain_resolution_mode(
+            &DomainResolutionMode::ClaimsOnly {
+                allowed_domains: vec!["d1".to_string()],
+            },
+            &rules,
+            Some("some-domain-id"),
+        );
+
+        assert!(matches!(
+            result,
+            Err(MappingProviderError::DomainClaimRequired)
+        ));
+    }
+
+    #[test]
+    fn claims_or_mapping_passes_validation() {
+        let rules = vec![
+            MappingRule {
+                name: "rule-1".to_string(),
+                description: None,
+                r#match: MatchCriteria::AllOf(vec![]),
+                identity: IdentityBinding {
+                    user_name: "user".to_string(),
+                    user_id: None,
+                    user_domain_id: Some("static-domain".to_string()),
+                    is_system: false,
+                },
+                authorizations: Vec::new(),
+                groups: Vec::new(),
+            },
+            MappingRule {
+                name: "rule-2".to_string(),
+                description: None,
+                r#match: MatchCriteria::AllOf(vec![]),
+                identity: IdentityBinding {
+                    user_name: "user-2".to_string(),
+                    user_id: None,
+                    user_domain_id: Some("${claims.domain}".to_string()),
+                    is_system: false,
+                },
+                authorizations: Vec::new(),
+                groups: Vec::new(),
+            },
+        ];
+
+        let result = validate_domain_resolution_mode(
+            &DomainResolutionMode::ClaimsOrMapping {
+                allowed_domains: vec!["d1".to_string()],
+            },
+            &rules,
+            None,
+        );
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn empty_rules_vector_is_valid() {
+        let rules: Vec<MappingRule> = vec![];
+        assert!(validate_rules(&rules).is_ok());
+    }
+
+    #[test]
+    fn validate_ruleset_update_with_new_rules_validates() {
+        let existing = MappingRuleSet {
+            mapping_id: "test-123".to_string(),
+            domain_id: Some("test-domain".to_string()),
+            source: IdentitySource::Federation {
+                idp_id: "idp-1".to_string(),
+            },
+            domain_resolution_mode: DomainResolutionMode::Fixed,
+            enabled: true,
+            rules: vec![simple_rule("existing-rule", "user-exists")],
+            ruleset_version: 0,
+        };
+
+        // Valid update with new rules
+        let update = MappingRuleSetUpdate {
+            rules: Some(vec![simple_rule("new-rule", "user-new")]),
+            enabled: None,
+            allowed_domains: None,
+        };
+
+        assert!(validate_ruleset_update(&existing, &update).is_ok());
+
+        // Invalid update with duplicate rule names
+        let update_invalid = MappingRuleSetUpdate {
+            rules: Some(vec![
+                simple_rule("dup-rule", "user-a"),
+                simple_rule("dup-rule", "user-b"),
+            ]),
+            enabled: None,
+            allowed_domains: None,
+        };
+
+        let result = validate_ruleset_update(&existing, &update_invalid);
+        assert!(matches!(
+            result,
+            Err(MappingProviderError::DuplicateRuleName(_))
+        ));
     }
 }

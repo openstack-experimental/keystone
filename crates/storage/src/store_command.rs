@@ -39,6 +39,9 @@ pub enum MutationInner {
 
         /// The `keyspace` of the key.
         keyspace: String,
+
+        /// Expected revision for CAS-protected delete.
+        expected_revision: Option<u64>,
     },
 
     /// Delete the entry from the index store.
@@ -55,6 +58,26 @@ pub enum MutationInner {
 
         /// Expected revision.
         expected_revision: Option<u64>,
+
+        /// The key to set.
+        key: Vec<u8>,
+
+        /// The `keyspace` of the key.
+        keyspace: String,
+
+        /// The resource metadata.
+        metadata: Metadata,
+
+        /// Nonce.
+        nonce: Nonce,
+    },
+
+    /// Set the value for the key only if the key does not already exist.
+    /// If the key exists, a CONFLICT violation is emitted and no write occurs.
+    CreateIfAbsent {
+        /// The value to set.
+        #[serde(with = "serde_bytes")]
+        cipher: Vec<u8>,
 
         /// The key to set.
         key: Vec<u8>,
@@ -90,7 +113,15 @@ impl MutationInner {
     /// A `Result` containing the `MutationInner`, or a `StoreError`.
     pub fn convert(value: Mutation, nonce: Nonce) -> Result<MutationInner, StoreError> {
         Ok(match value {
-            Mutation::Remove { key, keyspace } => MutationInner::Remove { key, keyspace },
+            Mutation::Remove {
+                key,
+                keyspace,
+                expected_revision,
+            } => MutationInner::Remove {
+                key,
+                keyspace,
+                expected_revision,
+            },
             Mutation::RemoveIndex { key } => MutationInner::RemoveIndex { key },
             Mutation::Set {
                 key,
@@ -107,6 +138,19 @@ impl MutationInner {
                 nonce,
                 expected_revision,
             },
+            Mutation::CreateIfAbsent {
+                key,
+                keyspace,
+                value,
+                metadata,
+            } => MutationInner::CreateIfAbsent {
+                key,
+                keyspace,
+                metadata,
+                // TODO: encrypt for at-rest
+                cipher: value,
+                nonce,
+            },
             Mutation::SetIndex { key } => MutationInner::SetIndex { key },
         })
     }
@@ -122,6 +166,9 @@ pub enum Mutation {
 
         /// The `keyspace` of the key.
         keyspace: String,
+
+        /// Expected revision for CAS-protected delete.
+        expected_revision: Option<u64>,
     },
 
     /// Delete the entry from the store.
@@ -149,6 +196,24 @@ pub enum Mutation {
         value: Vec<u8>,
     },
 
+    /// Set the value for the key in the store only if the key does not already
+    /// exist. If the key exists, a CONFLICT violation is emitted and no
+    /// write occurs.
+    CreateIfAbsent {
+        /// The key to set.
+        key: Vec<u8>,
+
+        /// The `keyspace` of the key.
+        keyspace: String,
+
+        /// The resource metadata.
+        metadata: Metadata,
+
+        /// The value to set.
+        #[serde(with = "serde_bytes")]
+        value: Vec<u8>,
+    },
+
     /// Set the value for the key in the store.
     SetIndex {
         /// The key to set.
@@ -162,10 +227,16 @@ impl Mutation {
     /// # Parameters
     /// - `key`: The key to remove.
     /// - `keyspace`: The keyspace for the key.
+    /// - `expected_revision`: Optional expected revision for CAS-protected
+    ///   delete.
     ///
     /// # Returns
     /// A `Result` containing the `Mutation`, or a `StoreError`.
-    pub fn remove<K, S>(key: K, keyspace: Option<S>) -> Result<Self, StoreError>
+    pub fn remove<K, S>(
+        key: K,
+        keyspace: Option<S>,
+        expected_revision: Option<u64>,
+    ) -> Result<Self, StoreError>
     where
         K: Into<Vec<u8>>,
         S: Into<String>,
@@ -173,6 +244,7 @@ impl Mutation {
         Ok(Self::Remove {
             key: key.into(),
             keyspace: keyspace.map(Into::into).unwrap_or("data".into()),
+            expected_revision,
         })
     }
 
@@ -222,6 +294,38 @@ impl Mutation {
         })
     }
 
+    /// Create a create-if-absent mutation.
+    ///
+    /// Sets the value only if the key does not already exist. If the key
+    /// exists, a CONFLICT violation is emitted and no write occurs.
+    ///
+    /// # Parameters
+    /// - `key`: The key to set.
+    /// - `value`: The value to set.
+    /// - `metadata`: The resource metadata.
+    /// - `keyspace`: The keyspace for the key.
+    ///
+    /// # Returns
+    /// A `Result` containing the `Mutation`, or a `StoreError`.
+    pub fn create_if_absent<K, V, S>(
+        key: K,
+        value: V,
+        metadata: Metadata,
+        keyspace: Option<S>,
+    ) -> Result<Self, StoreError>
+    where
+        K: Into<Vec<u8>>,
+        V: Serialize,
+        S: Into<String>,
+    {
+        Ok(Self::CreateIfAbsent {
+            key: key.into(),
+            value: rmp_serde::to_vec(&value)?,
+            keyspace: keyspace.map(Into::into).unwrap_or("data".into()),
+            metadata,
+        })
+    }
+
     /// Create a set index mutation.
     ///
     /// # Parameters
@@ -268,7 +372,7 @@ mod tests {
 
     #[test]
     fn test_delete_command() {
-        let mutation = Mutation::remove("foo", Some("bar")).unwrap();
+        let mutation = Mutation::remove("foo", Some("bar"), None).unwrap();
         let cmd = StoreCommand::Transaction(vec![
             MutationInner::convert(mutation, Nonce::default()).unwrap(),
         ]);
@@ -276,6 +380,27 @@ mod tests {
         let packed = cmd.pack().unwrap();
         let unpacked = StoreCommand::unpack(&packed).unwrap();
         assert_eq!(cmd, unpacked);
+    }
+
+    #[test]
+    fn test_delete_command_with_expected_revision() {
+        let mutation = Mutation::remove("foo", Some("bar"), Some(42)).unwrap();
+        let cmd = StoreCommand::Transaction(vec![
+            MutationInner::convert(mutation, Nonce::default()).unwrap(),
+        ]);
+
+        let packed = cmd.pack().unwrap();
+        let unpacked = StoreCommand::unpack(&packed).unwrap();
+        assert_eq!(cmd, unpacked);
+        if let StoreCommand::Transaction(data) = &unpacked
+            && let Some(MutationInner::Remove {
+                expected_revision, ..
+            }) = data.first()
+        {
+            assert_eq!(*expected_revision, Some(42));
+        } else {
+            panic!("expected Remove mutation with expected_revision");
+        }
     }
 
     #[test]
