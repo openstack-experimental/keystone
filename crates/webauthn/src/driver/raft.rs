@@ -134,7 +134,6 @@ impl RaftDriver {
         format!("{}:cred", user_id.as_ref())
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
     async fn create_user_webauthn_credential_impl(
         &self,
         storage: &impl StorageApi,
@@ -154,7 +153,6 @@ impl RaftDriver {
         Ok(credential.clone())
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
     async fn get_user_webauthn_credential_impl<'a>(
         &self,
         storage: &impl StorageApi,
@@ -168,7 +166,6 @@ impl RaftDriver {
             .map(|x| x.data))
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
     async fn delete_user_webauthn_credential_impl<'a>(
         &self,
         storage: &impl StorageApi,
@@ -180,7 +177,6 @@ impl RaftDriver {
         Ok(())
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
     async fn list_user_webauthn_credentials_impl<'a>(
         &self,
         storage: &impl StorageApi,
@@ -195,14 +191,13 @@ impl RaftDriver {
             .collect())
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
     async fn update_user_webauthn_credential_impl<'a>(
         &self,
         storage: &impl StorageApi,
         user_id: &'a str,
         credential_id: &'a str,
         credential: &WebauthnCredential,
-    ) -> Result<WebauthnCredential, StoreError> {
+    ) -> Result<Option<WebauthnCredential>, StoreError> {
         let key = self.get_cred_key_name(user_id, credential_id);
         if let Some(curr) = storage
             .get_by_key::<WebauthnCredential, String, &str>(key, Some(DATA_KEYSPACE))
@@ -221,15 +216,12 @@ impl RaftDriver {
                     Some(curr_revision),
                 )
                 .await?;
-            Ok(credential.clone())
+            Ok(Some(credential.clone()))
         } else {
-            Err(StoreError::IO {
-                source: std::io::Error::new(std::io::ErrorKind::NotFound, "not found"),
-            })
+            Ok(None)
         }
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
     async fn save_user_webauthn_credential_authentication_state_impl<'a>(
         &self,
         storage: &impl StorageApi,
@@ -251,7 +243,6 @@ impl RaftDriver {
         Ok(())
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
     async fn get_user_webauthn_credential_authentication_state_impl<'a>(
         &self,
         storage: &impl StorageApi,
@@ -265,7 +256,6 @@ impl RaftDriver {
             .map(|x| x.data))
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
     async fn delete_user_webauthn_credential_authentication_state_impl<'a>(
         &self,
         storage: &impl StorageApi,
@@ -277,7 +267,6 @@ impl RaftDriver {
         Ok(())
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
     async fn save_user_webauthn_credential_registration_state_impl<'a>(
         &self,
         storage: &impl StorageApi,
@@ -299,7 +288,6 @@ impl RaftDriver {
         Ok(())
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
     async fn get_user_webauthn_credential_registration_state_impl<'a>(
         &self,
         storage: &impl StorageApi,
@@ -313,7 +301,6 @@ impl RaftDriver {
             .map(|x| x.data))
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
     async fn delete_user_webauthn_credential_registration_state_impl<'a>(
         &self,
         storage: &impl StorageApi,
@@ -623,15 +610,14 @@ impl WebauthnApi for RaftDriver {
             .storage
             .as_ref()
             .ok_or(WebauthnError::RaftNotAvailable)?;
-        self.update_user_webauthn_credential_impl(raft, user_id, credential_id, credential)
+        match self
+            .update_user_webauthn_credential_impl(raft, user_id, credential_id, credential)
             .await
-            .map_err(|e| {
-                if e.to_string().contains("NotFound") {
-                    WebauthnError::CredentialNotFound(credential_id.to_string())
-                } else {
-                    e.into()
-                }
-            })
+        {
+            Ok(Some(c)) => Ok(c),
+            Ok(None) => Err(WebauthnError::CredentialNotFound(credential_id.to_string())),
+            Err(e) => Err(e.into()),
+        }
     }
 }
 

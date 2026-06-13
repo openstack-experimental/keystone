@@ -160,7 +160,6 @@ impl RaftBackend {
         format!("k8s_auth:role:instance:{}:", instance_id.as_ref(),)
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
     async fn create_auth_instance_impl(
         &self,
         storage: &impl StorageApi,
@@ -183,7 +182,6 @@ impl RaftBackend {
         Ok(obj)
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
     async fn create_auth_role_impl(
         &self,
         storage: &impl StorageApi,
@@ -209,7 +207,6 @@ impl RaftBackend {
         Ok(obj)
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
     async fn delete_auth_instance_impl(
         &self,
         storage: &impl StorageApi,
@@ -231,7 +228,6 @@ impl RaftBackend {
         Ok(())
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
     async fn delete_auth_role_impl(
         &self,
         storage: &impl StorageApi,
@@ -256,7 +252,6 @@ impl RaftBackend {
         Ok(())
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
     async fn get_auth_instance_impl(
         &self,
         storage: &impl StorageApi,
@@ -268,7 +263,6 @@ impl RaftBackend {
             .map(|x| x.data))
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
     async fn get_auth_role_impl(
         &self,
         storage: &impl StorageApi,
@@ -280,7 +274,6 @@ impl RaftBackend {
             .map(|x| x.data))
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
     async fn list_auth_instances_impl(
         &self,
         storage: &impl StorageApi,
@@ -342,7 +335,6 @@ impl RaftBackend {
         Ok(res)
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
     async fn list_auth_roles_impl(
         &self,
         storage: &impl StorageApi,
@@ -422,62 +414,62 @@ impl RaftBackend {
         Ok(res)
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
     async fn update_auth_instance_impl(
         &self,
         storage: &impl StorageApi,
         id: &str,
         data: K8sAuthInstanceUpdate,
-    ) -> Result<K8sAuthInstance, StoreError> {
-        let curr: StoreDataEnvelope<K8sAuthInstance> = storage
+    ) -> Result<Option<K8sAuthInstance>, StoreError> {
+        let curr: Option<StoreDataEnvelope<K8sAuthInstance>> = storage
             .get_by_key(self.get_auth_instance_id_key_name(id), None::<&str>)
-            .await?
-            .ok_or_else(|| StoreError::IO {
-                source: std::io::Error::new(std::io::ErrorKind::NotFound, "not found"),
-            })?;
-        let new = curr.data.with_update(data);
-        let new_meta = curr.metadata.new_revision();
-        storage
-            .set_value(
-                self.get_auth_instance_id_key_name(id),
-                StoreDataEnvelope {
-                    data: new.clone(),
-                    metadata: new_meta,
-                },
-                None::<&str>,
-                Some(curr.metadata.revision),
-            )
             .await?;
-        Ok(new)
+        if let Some(curr) = curr {
+            let new = curr.data.with_update(data);
+            let new_meta = curr.metadata.new_revision();
+            storage
+                .set_value(
+                    self.get_auth_instance_id_key_name(id),
+                    StoreDataEnvelope {
+                        data: new.clone(),
+                        metadata: new_meta,
+                    },
+                    None::<&str>,
+                    Some(curr.metadata.revision),
+                )
+                .await?;
+            Ok(Some(new))
+        } else {
+            Ok(None)
+        }
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
     async fn update_auth_role_impl(
         &self,
         storage: &impl StorageApi,
         id: &str,
         data: K8sAuthRoleUpdate,
-    ) -> Result<K8sAuthRole, StoreError> {
-        let curr: StoreDataEnvelope<K8sAuthRole> = storage
+    ) -> Result<Option<K8sAuthRole>, StoreError> {
+        let curr: Option<StoreDataEnvelope<K8sAuthRole>> = storage
             .get_by_key(self.get_auth_role_id_key_name(id), None::<&str>)
-            .await?
-            .ok_or_else(|| StoreError::IO {
-                source: std::io::Error::new(std::io::ErrorKind::NotFound, "not found"),
-            })?;
-        let new = curr.data.with_update(data);
-        let new_meta = curr.metadata.new_revision();
-        storage
-            .set_value(
-                self.get_auth_role_id_key_name(id),
-                StoreDataEnvelope {
-                    data: new.clone(),
-                    metadata: new_meta,
-                },
-                None::<&str>,
-                Some(curr.metadata.revision),
-            )
             .await?;
-        Ok(new)
+        if let Some(curr) = curr {
+            let new = curr.data.with_update(data);
+            let new_meta = curr.metadata.new_revision();
+            storage
+                .set_value(
+                    self.get_auth_role_id_key_name(id),
+                    StoreDataEnvelope {
+                        data: new.clone(),
+                        metadata: new_meta,
+                    },
+                    None::<&str>,
+                    Some(curr.metadata.revision),
+                )
+                .await?;
+            Ok(Some(new))
+        } else {
+            Ok(None)
+        }
     }
 }
 
@@ -498,7 +490,8 @@ impl K8sAuthBackend for RaftBackend {
         instance: K8sAuthInstanceCreate,
     ) -> Result<K8sAuthInstance, K8sAuthProviderError> {
         let raft = state
-            .get_storage()
+            .storage
+            .as_ref()
             .ok_or(K8sAuthProviderError::RaftNotAvailable)?;
         self.create_auth_instance_impl(raft, instance)
             .await
@@ -688,16 +681,10 @@ impl K8sAuthBackend for RaftBackend {
             .storage
             .as_ref()
             .ok_or(K8sAuthProviderError::RaftNotAvailable)?;
-        match self.update_auth_instance_impl(raft, id, data).await {
-            Ok(i) => Ok(i),
-            Err(e) => {
-                if e.to_string().contains("NotFound") {
-                    Err(K8sAuthProviderError::AuthInstanceNotFound(id.to_string()))
-                } else {
-                    Err(K8sAuthProviderError::raft(e))
-                }
-            }
-        }
+        self.update_auth_instance_impl(raft, id, data)
+            .await
+            .map_err(K8sAuthProviderError::raft)?
+            .ok_or_else(|| K8sAuthProviderError::AuthInstanceNotFound(id.to_string()))
     }
 
     /// Update K8s auth role.
@@ -720,16 +707,14 @@ impl K8sAuthBackend for RaftBackend {
             .storage
             .as_ref()
             .ok_or(K8sAuthProviderError::RaftNotAvailable)?;
-        match self.update_auth_role_impl(raft, id, data).await {
-            Ok(r) => Ok(r),
-            Err(e) => {
-                if e.to_string().contains("NotFound") {
-                    Err(K8sAuthProviderError::RoleNotFound(id.to_string()))
-                } else {
-                    Err(K8sAuthProviderError::raft(e))
-                }
-            }
-        }
+        let raft = state
+            .storage
+            .as_ref()
+            .ok_or(K8sAuthProviderError::RaftNotAvailable)?;
+        self.update_auth_role_impl(raft, id, data)
+            .await
+            .map_err(K8sAuthProviderError::raft)?
+            .ok_or_else(|| K8sAuthProviderError::RoleNotFound(id.to_string()))
     }
 }
 
@@ -950,7 +935,7 @@ mod tests {
             .update_auth_instance_impl(&storage, "inst-1", update)
             .await;
         assert!(result.is_ok());
-        assert!(!result.unwrap().enabled);
+        assert!(!result.unwrap().unwrap().enabled);
     }
 
     #[tokio::test]
@@ -962,7 +947,8 @@ mod tests {
         let result = backend
             .update_auth_instance_impl(&storage, "nonexistent", update)
             .await;
-        assert!(result.is_err());
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none());
     }
 
     #[tokio::test]
@@ -983,7 +969,7 @@ mod tests {
             .update_auth_role_impl(&storage, "role-1", update)
             .await;
         assert!(result.is_ok());
-        assert!(!result.unwrap().enabled);
+        assert!(!result.unwrap().unwrap().enabled);
     }
 
     #[tokio::test]

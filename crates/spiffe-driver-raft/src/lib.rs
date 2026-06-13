@@ -79,7 +79,6 @@ impl RaftBackend {
         format!("spiffe:binding:domain:{}:", domain_id.as_ref(),)
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
     async fn create_binding_impl(
         &self,
         storage: &impl StorageApi,
@@ -102,7 +101,6 @@ impl RaftBackend {
         Ok(obj)
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
     async fn delete_binding_impl(
         &self,
         storage: &impl StorageApi,
@@ -124,7 +122,6 @@ impl RaftBackend {
         Ok(())
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
     async fn get_binding_impl(
         &self,
         storage: &impl StorageApi,
@@ -136,7 +133,6 @@ impl RaftBackend {
             .map(|x| x.data))
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
     async fn list_bindings_impl(
         &self,
         storage: &impl StorageApi,
@@ -191,33 +187,33 @@ impl RaftBackend {
         Ok(res)
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
     async fn update_binding_impl(
         &self,
         storage: &impl StorageApi,
         svid: &str,
         data: SpiffeBindingUpdate,
-    ) -> Result<SpiffeBinding, StoreError> {
-        let curr: StoreDataEnvelope<SpiffeBinding> = storage
+    ) -> Result<Option<SpiffeBinding>, StoreError> {
+        let curr: Option<StoreDataEnvelope<SpiffeBinding>> = storage
             .get_by_key(self.get_binding_id_key_name(svid), None::<&str>)
-            .await?
-            .ok_or_else(|| StoreError::IO {
-                source: std::io::Error::new(std::io::ErrorKind::NotFound, "not found"),
-            })?;
-        let new = curr.data.with_update(data);
-        let new_meta = curr.metadata.new_revision();
-        storage
-            .set_value(
-                self.get_binding_id_key_name(svid),
-                StoreDataEnvelope {
-                    data: new.clone(),
-                    metadata: new_meta,
-                },
-                None::<&str>,
-                Some(curr.metadata.revision),
-            )
             .await?;
-        Ok(new)
+        if let Some(curr) = curr {
+            let new = curr.data.with_update(data);
+            let new_meta = curr.metadata.new_revision();
+            storage
+                .set_value(
+                    self.get_binding_id_key_name(svid),
+                    StoreDataEnvelope {
+                        data: new.clone(),
+                        metadata: new_meta,
+                    },
+                    None::<&str>,
+                    Some(curr.metadata.revision),
+                )
+                .await?;
+            Ok(Some(new))
+        } else {
+            Ok(None)
+        }
     }
 }
 
@@ -334,16 +330,10 @@ impl SpiffeBackend for RaftBackend {
             .storage
             .as_ref()
             .ok_or(SpiffeProviderError::RaftNotAvailable)?;
-        match self.update_binding_impl(raft, svid, data).await {
-            Ok(b) => Ok(b),
-            Err(e) => {
-                if e.to_string().contains("NotFound") {
-                    Err(SpiffeProviderError::BindingNotFound(svid.to_string()))
-                } else {
-                    Err(SpiffeProviderError::raft(e))
-                }
-            }
-        }
+        self.update_binding_impl(raft, svid, data)
+            .await
+            .map_err(SpiffeProviderError::raft)?
+            .ok_or_else(|| SpiffeProviderError::BindingNotFound(svid.to_string()))
     }
 }
 
@@ -538,7 +528,7 @@ mod tests {
             .update_binding_impl(&storage, "spiffe://example/test", update)
             .await;
         assert!(result.is_ok());
-        let binding = result.unwrap();
+        let binding = result.unwrap().unwrap();
         assert!(binding.authorizations.is_some());
         assert_eq!(binding.authorizations.unwrap().len(), 1);
     }
@@ -555,7 +545,8 @@ mod tests {
         let result = backend
             .update_binding_impl(&storage, "spiffe://example/nonexistent", update)
             .await;
-        assert!(result.is_err());
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none());
     }
 
     #[tokio::test]
