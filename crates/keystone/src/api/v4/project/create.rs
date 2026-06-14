@@ -78,6 +78,7 @@ pub(super) async fn create(
     )
         .into_response())
 }
+
 #[cfg(test)]
 mod tests {
     use axum::{
@@ -98,7 +99,6 @@ mod tests {
     use crate::provider::Provider;
     use crate::resource::MockResourceProvider;
 
-    // Test: basic project creation without providing an id
     #[traced_test]
     #[tokio::test]
     async fn test_allowed() {
@@ -153,11 +153,10 @@ mod tests {
         assert_eq!(res.project.id, "pid");
     }
 
-    // Test: project creation with a valid user-provided UUID
     #[traced_test]
     #[tokio::test]
     async fn test_allowed_with_custom_id() {
-        let custom_id = "550e8400-e29b-41d4-a716-446655440000";
+        let custom_id = "550e8400e29b41d4a716446655440000";
 
         let mut resource_mock = MockResourceProvider::default();
         resource_mock.expect_create_project().returning(|_, input| {
@@ -211,7 +210,42 @@ mod tests {
         assert_eq!(res.project.id, custom_id);
     }
 
-    // Test: invalid UUID should return 400
+    #[traced_test]
+    #[tokio::test]
+    async fn test_dashed_uuid_rejected() {
+        let vsc = test_fixture_scoped();
+        let state = get_mocked_state(Provider::mocked_builder(), true, None).await;
+
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state.clone());
+
+        let req = ProjectCreateRequest {
+            project: ProjectCreateBuilder::default()
+                .name("name")
+                .domain_id("did")
+                .id("550e8400-e29b-41d4-a716-446655440000")
+                .build()
+                .unwrap(),
+        };
+
+        let response = api
+            .as_service()
+            .oneshot(
+                Request::builder()
+                    .uri("/")
+                    .extension(vsc)
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .method("POST")
+                    .body(Body::from(serde_json::to_string(&req).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
     #[traced_test]
     #[tokio::test]
     async fn test_invalid_id() {
@@ -248,7 +282,78 @@ mod tests {
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 
-    // Test: policy enforcement failure should return 403
+    #[traced_test]
+    #[tokio::test]
+    async fn test_too_short_id_rejected() {
+        let vsc = test_fixture_scoped();
+        let state = get_mocked_state(Provider::mocked_builder(), true, None).await;
+
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state.clone());
+
+        let req = ProjectCreateRequest {
+            project: ProjectCreateBuilder::default()
+                .name("name")
+                .domain_id("did")
+                .id("550e8400e29b41d4a71644665544000") // 31 chars
+                .build()
+                .unwrap(),
+        };
+
+        let response = api
+            .as_service()
+            .oneshot(
+                Request::builder()
+                    .uri("/")
+                    .extension(vsc)
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .method("POST")
+                    .body(Body::from(serde_json::to_string(&req).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn test_too_long_id_rejected() {
+        let vsc = test_fixture_scoped();
+        let state = get_mocked_state(Provider::mocked_builder(), true, None).await;
+
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state.clone());
+
+        let req = ProjectCreateRequest {
+            project: ProjectCreateBuilder::default()
+                .name("name")
+                .domain_id("did")
+                .id("550e8400e29b41d4a7164466554400000") // 33 chars
+                .build()
+                .unwrap(),
+        };
+
+        let response = api
+            .as_service()
+            .oneshot(
+                Request::builder()
+                    .uri("/")
+                    .extension(vsc)
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .method("POST")
+                    .body(Body::from(serde_json::to_string(&req).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
     #[traced_test]
     #[tokio::test]
     async fn test_not_allowed() {
