@@ -12,8 +12,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //! Project API types.
-//!
-/// New project creation request.
+
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "validate")]
 use uuid::Uuid;
@@ -30,7 +29,7 @@ use validator::{Validate, ValidationError};
         setter(strip_option, into)
     )
 )]
-#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "openapi",derive(utoipa::ToSchema),schema(as = ProjectCreateV4))]
 #[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct ProjectCreate {
     /// The description of the project.
@@ -52,7 +51,6 @@ pub struct ProjectCreate {
     #[cfg_attr(feature = "builder", builder(default))]
     #[cfg_attr(feature = "openapi", schema(inline, additional_properties))]
     #[serde(flatten)]
-    //pub extra: ExtraFields,
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 
     // The ID of project
@@ -104,7 +102,7 @@ impl ProjectCreateBuilder {
 
 /// New project creation request.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema),schema(as = ProjectCreateRequestV4))]
 #[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct ProjectCreateRequest {
     /// Project object.
@@ -115,6 +113,13 @@ pub struct ProjectCreateRequest {
 // The Validator that check format of the project id if it given by user.
 #[cfg(feature = "validate")]
 fn validate_uuid(id: &str) -> Result<(), ValidationError> {
+    // Dashless UUIDs must be exactly 32 hex characters, no hyphens
+    let is_dashless = id.len() == 32 && !id.contains('-');
+
+    if !is_dashless {
+        return Err(ValidationError::new("invalid_uuid_format"));
+    }
+
     Uuid::parse_str(id).map_err(|_| ValidationError::new("invalid_uuid"))?;
     Ok(())
 }
