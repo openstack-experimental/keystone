@@ -200,4 +200,99 @@ impl ClusterAdminService for ClusterAdminServiceImpl {
         };
         Ok(Response::new(resp))
     }
+
+    /// Clears the read-only quarantine state triggered by repeated GCM tag
+    /// verification failures.
+    ///
+    /// # Parameters
+    /// - `request`: Empty request (no additional parameters).
+    ///
+    /// # Returns
+    /// A `Result` containing a `Response`, or a `Status` error.
+    ///
+    /// # Security
+    /// This operation is exposed only on the internal management network.
+    /// Access is controlled by network isolation and mTLS authentication
+    /// (SPIFFE SVID or operator-managed TLS).
+    #[tracing::instrument(level = "trace", skip(self))]
+    async fn clear_quarantine(
+        &self,
+        _request: Request<pb::raft::ClearQuarantineRequest>,
+    ) -> Result<Response<()>, Status> {
+        trace!("Clearing quarantine state");
+        // TODO: Implement quarantine clear logic.
+        // Must:
+        // 1. Reset the quarantine state counter.
+        // 2. Audit-log the invocation with timestamp and caller identity.
+        Ok(Response::new(()))
+    }
+
+    /// Triggers a Data Encryption Key rotation. When emergency is set, the
+    /// current DEK is immediately revoked (not retired).
+    ///
+    /// # Parameters
+    /// - `request`: Contains the `emergency` flag to control rotation type.
+    ///
+    /// # Returns
+    /// A `Result` containing a `Response` with rotation details, or a `Status`
+    /// error.
+    ///
+    /// # Security
+    /// This operation is exposed only on the internal management network.
+    /// Access is controlled by network isolation and mTLS authentication
+    /// (SPIFFE SVID or operator-managed TLS). Emergency rotations require
+    /// operator access and produce distinct audit events.
+    #[tracing::instrument(level = "trace", skip(self))]
+    async fn rotate_dek(
+        &self,
+        request: Request<pb::raft::RotateDekRequest>,
+    ) -> Result<Response<pb::raft::AdminResponse>, Status> {
+        let req = request.into_inner();
+
+        if req.emergency {
+            trace!("Emergency DEK rotation triggered");
+            // TODO: Implement emergency rotation per §6.2:
+            // 1. Generate fresh DEK, wrap under KEK, write as pending via Raft.
+            // 2. Mark current DEK as `revoked` (not retired).
+            // 3. Background re-encryption under new DEK.
+            // 4. Audit-log with DEK_EMERGENCY_ROTATION event type.
+        } else {
+            trace!("Standard DEK rotation triggered");
+            // TODO: Implement standard rotation (same as §6 live background rotation).
+        }
+
+        // TODO: Return committed log ID and any metadata.
+        Ok(Response::new(pb::raft::AdminResponse::default()))
+    }
+
+    /// Provides dual-control approval for a pending emergency DEK rotation.
+    ///
+    /// # Parameters
+    /// - `request`: Contains the `rotation_id` of the pending emergency rotation.
+    ///
+    /// # Returns
+    /// A `Result` containing a `Response` with confirmation details, or a `Status`
+    /// error.
+    ///
+    /// # Security
+    /// This operation requires a second `storage-operator` SVID and must be
+    /// invoked within 5 minutes of the initial `RotateDekRequest{emergency: true}`.
+    /// Both operator identities are recorded in the audit log.
+    #[tracing::instrument(level = "trace", skip(self))]
+    async fn confirm_rotate_dek(
+        &self,
+        request: Request<pb::raft::ConfirmRotateDekRequest>,
+    ) -> Result<Response<pb::raft::AdminResponse>, Status> {
+        let req = request.into_inner();
+
+        trace!("Confirming emergency DEK rotation for {}", req.rotation_id);
+        // TODO: Implement dual-control confirmation per C1-2:
+        // 1. Verify rotation_id matches a pending emergency rotation.
+        // 2. Verify request is within 5-minute window.
+        // 3. Verify caller is a different operator than the original request.
+        // 4. Record both operator identities in audit log.
+        // 5. Proceed with emergency rotation upon confirmed approval.
+
+        Ok(Response::new(pb::raft::AdminResponse::default()))
+    }
 }

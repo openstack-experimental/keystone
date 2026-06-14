@@ -223,5 +223,33 @@ service ClusterAdminService {
 
   // Metrics retrieves cluster metrics and status information.
   rpc Metrics(google.protobuf.Empty) returns (MetricsResponse) {}
+
+  // ClearQuarantine clears the read-only quarantine state triggered by
+  // repeated GCM tag verification failures. Requires operator access over
+  // the internal management network.
+  rpc ClearQuarantine(ClearQuarantineRequest) returns (google.protobuf.Empty) {}
+
+  // RotateDek triggers a Data Encryption Key rotation. When emergency is
+  // set, the current DEK is immediately revoked (not retired). Operator
+  // access over the internal management network is required.
+  rpc RotateDek(RotateDekRequest) returns (AdminResponse) {}
+
+  // ConfirmRotateDek provides dual-control approval for an pending emergency
+  // DEK rotation. Must be invoked within 5 minutes of the initial
+  // RotateDekRequest{emergency: true} by a second storage-operator.
+  rpc ConfirmRotateDek(ConfirmRotateDekRequest) returns (AdminResponse) {}
+}
+
+message ClearQuarantineRequest {}
+
+message RotateDekRequest {
+  // If true, the current DEK is revoked (not retired) and the rotation
+  // is recorded as an emergency event in the audit log.
+  bool emergency = 1;
+}
+
+message ConfirmRotateDekRequest {
+  // The rotation_id of the pending emergency rotation that requires confirmation.
+  string rotation_id = 1;
 }
 
