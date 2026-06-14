@@ -14,7 +14,6 @@
 
 use std::collections::HashMap;
 
-use sea_orm::DatabaseConnection;
 use sea_orm::entity::*;
 use sea_orm::query::*;
 

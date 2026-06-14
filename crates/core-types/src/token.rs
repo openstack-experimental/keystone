@@ -104,6 +104,9 @@ impl FernetToken {
                 AuthenticationContext::WebauthN => Ok(Self::DomainScope(
                     DomainScopePayload::from_security_context(ctx, domain, expires_at)?,
                 )),
+                AuthenticationContext::Mapping(_) => Ok(Self::DomainScope(
+                    DomainScopePayload::from_security_context(ctx, domain, expires_at)?,
+                )),
             },
             ScopeInfo::Project { project, .. } => match ctx.authentication_context() {
                 AuthenticationContext::ApplicationCredential {

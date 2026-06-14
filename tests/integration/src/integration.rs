@@ -21,6 +21,7 @@ mod catalog;
 mod common;
 mod identity;
 mod k8s_auth;
+mod mapping;
 mod resource;
 mod revoke;
 mod role;

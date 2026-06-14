@@ -413,22 +413,28 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
     where
         Strm: Stream<Item = Result<EntryResponder<TypeConfig>, io::Error>> + Unpin + OptionalSend,
     {
-        let mut last_applied_log = None;
         let mut last_membership = None;
-        let mut batch = self.db.batch();
 
-        // TODO: https://docs.rs/openraft/latest/openraft/raft/struct.Raft.html#method.client_write
         while let Some((entry, responder)) = entries.try_next().await? {
-            last_applied_log = Some(entry.log_id());
+            let last_applied_log = entry.log_id();
+            // Per-entry batch: mutations commit atomically or are discarded entirely on
+            // violations. last_applied_log is committed together with user data
+            // so that on crash recovery an entry is never replayed with a
+            // different CAS outcome.
+            let mut batch = self.db.batch();
+            let mut has_violations = false;
+
             let response = if let Some(store_req) = entry.app_data {
-                // Unpack the payload and apply the command
                 match StoreCommand::unpack(&store_req)? {
                     StoreCommand::Transaction(mutations) => {
                         let mut violations: Vec<Violation> = Vec::new();
                         for mutation in mutations {
                             match mutation {
-                                MutationInner::Remove { key, keyspace } => {
-                                    // Protect own data
+                                MutationInner::Remove {
+                                    key,
+                                    keyspace,
+                                    expected_revision,
+                                } => {
                                     if keyspace == "meta" && key == KEY_LAST_MEMBERSHIP
                                         || key == KEY_LAST_APPLIED_LOG
                                     {
@@ -436,29 +442,8 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                                             "not allowed to delete system data",
                                         ));
                                     }
-                                    let ks = &self.keyspace(keyspace)?;
-                                    batch.remove(ks, key.clone());
-                                    batch.remove(&self.meta, key.clone());
-                                }
-                                MutationInner::RemoveIndex { key } => {
-                                    batch.remove(&self.index, key.clone());
-                                }
-                                MutationInner::Set {
-                                    key,
-                                    keyspace,
-                                    cipher,
-                                    metadata,
-                                    nonce,
-                                    expected_revision,
-                                } => {
-                                    // Protect own data
-                                    if keyspace == "meta" && key == KEY_LAST_MEMBERSHIP
-                                        || key == KEY_LAST_APPLIED_LOG
-                                    {
-                                        return Err(io::Error::other(
-                                            "not allowed to overwrite system data",
-                                        ));
-                                    }
+
+                                    // Check expected_revision — if mismatch, record violation.
                                     if let Some(expected_revision) = expected_revision {
                                         let curr_meta = self
                                             .meta()
@@ -476,11 +461,89 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                                                 description: format!(
                                                     "Current revision is {:?} while {} was expected",
                                                     curr_meta.map(|x| x.revision),
-                                                    expected_revision
+                                                    expected_revision,
                                                 ),
                                             });
                                         }
                                     }
+
+                                    // Apply to batch — will be discarded if any violation occurs.
+                                    let ks = &self.keyspace(keyspace)?;
+                                    batch.remove(ks, key.clone());
+                                    batch.remove(&self.meta, key.clone());
+                                }
+                                MutationInner::RemoveIndex { key } => {
+                                    batch.remove(&self.index, key.clone());
+                                }
+                                MutationInner::Set {
+                                    key,
+                                    keyspace,
+                                    cipher,
+                                    metadata,
+                                    nonce,
+                                    expected_revision,
+                                } => {
+                                    if keyspace == "meta" && key == KEY_LAST_MEMBERSHIP
+                                        || key == KEY_LAST_APPLIED_LOG
+                                    {
+                                        return Err(io::Error::other(
+                                            "not allowed to overwrite system data",
+                                        ));
+                                    }
+
+                                    // Check expected_revision — if mismatch, record violation.
+                                    if let Some(expected_revision) = expected_revision {
+                                        let curr_meta = self
+                                            .meta()
+                                            .get(&key)
+                                            .map_err(|e| io::Error::other(e.to_string()))?
+                                            .map(|x| Metadata::unpack(x.as_ref()))
+                                            .transpose()?;
+                                        if curr_meta
+                                            .as_ref()
+                                            .is_none_or(|x| x.revision != expected_revision)
+                                        {
+                                            violations.push(Violation {
+                                                r#type: "CONFLICT".to_string(),
+                                                subject: String::from_utf8_lossy(&key).to_string(),
+                                                description: format!(
+                                                    "Current revision is {:?} while {} was expected",
+                                                    curr_meta.map(|x| x.revision),
+                                                    expected_revision,
+                                                ),
+                                            });
+                                        }
+                                    }
+
+                                    // Apply to batch — will be discarded if any violation occurs.
+                                    let ks = &self.keyspace(keyspace)?;
+                                    let inner_data =
+                                        StoreDataInnerEnvelope { cipher, nonce }.pack()?;
+                                    batch.insert(ks, key.clone(), inner_data);
+                                    batch.insert(&self.meta, key.clone(), metadata.pack()?);
+                                }
+                                MutationInner::CreateIfAbsent {
+                                    key,
+                                    keyspace,
+                                    cipher,
+                                    metadata,
+                                    nonce,
+                                } => {
+                                    let exists = self
+                                        .meta()
+                                        .get(&key)
+                                        .map_err(|e| io::Error::other(e.to_string()))?
+                                        .is_some();
+                                    if exists {
+                                        violations.push(Violation {
+                                            r#type: "CONFLICT".to_string(),
+                                            subject: String::from_utf8_lossy(&key).to_string(),
+                                            description: "key already exists (create_if_absent)"
+                                                .to_string(),
+                                        });
+                                    }
+
+                                    // Apply to batch — will be discarded if any violation occurs.
                                     let ks = &self.keyspace(keyspace)?;
                                     let inner_data =
                                         StoreDataInnerEnvelope { cipher, nonce }.pack()?;
@@ -492,18 +555,44 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                                 }
                             }
                         }
+                        has_violations = !violations.is_empty();
                         (None, violations)
                     }
                 }
             } else if let Some(mem) = entry.membership {
                 last_membership = Some(StoredMembershipOf::<TypeConfig>::new(
-                    last_applied_log,
+                    Some(last_applied_log),
                     mem.try_into()?,
                 ));
                 (None, vec![])
             } else {
                 (None, vec![])
             };
+
+            // Commit user data only if no violations for this entry.
+            if !has_violations {
+                batch
+                    .commit()
+                    .map_err(|e| io::Error::other(e.to_string()))?;
+            }
+            // else: user data mutations are discarded.
+
+            // Always persist last_applied_log per entry regardless of violations.
+            // A violating entry is a no-op that still advances the log pointer,
+            // preventing Raft from replaying it and producing a different outcome.
+            self.meta
+                .insert(
+                    KEY_LAST_APPLIED_LOG,
+                    rmp_serde::to_vec(&last_applied_log)
+                        .map_err(|e| io::Error::other(e.to_string()))?,
+                )
+                .map_err(|e| io::Error::other(e.to_string()))?;
+
+            // Persist after all writes, before sending response.
+            self.db
+                .persist(PersistMode::SyncAll)
+                .map_err(|e| io::Error::other(e.to_string()))?;
+
             if let Some(responder) = responder {
                 responder.send(pb::api::Response {
                     value: response.0,
@@ -511,22 +600,17 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                 });
             }
         }
+
+        // Bookkeeping batch for Raft membership state (always commits).
+        let mut meta_batch = self.db.batch();
         if let Some(val) = last_membership {
-            batch.insert(
+            meta_batch.insert(
                 &self.meta,
                 KEY_LAST_MEMBERSHIP,
                 rmp_serde::to_vec(&val).map_err(|e| io::Error::other(e.to_string()))?,
             );
         }
-        if let Some(val) = last_applied_log {
-            batch.insert(
-                &self.meta,
-                KEY_LAST_APPLIED_LOG,
-                rmp_serde::to_vec(&val).map_err(|e| io::Error::other(e.to_string()))?,
-            );
-        }
-
-        batch
+        meta_batch
             .commit()
             .map_err(|e| io::Error::other(e.to_string()))?;
 

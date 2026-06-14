@@ -17,6 +17,8 @@ bcrypt = { workspace = true, features = ["alloc"] }
 chrono = { workspace = true, default-features = false }
 derive_builder.workspace = true
 eyre.workspace = true
+hmac.workspace = true
+dashmap.workspace = true
 inventory.workspace = true
 jsonwebtoken = { version = "10.4", features = ["rust_crypto"] }
 openstack-keystone-api-types = { workspace = true, optional = true }
@@ -25,11 +27,14 @@ openstack-keystone-config.workspace = true
 openstack-keystone-distributed-storage.workspace = true
 mockall = { workspace = true, optional = true }
 rand.workspace = true
+regex.workspace = true
+regex-syntax.workspace = true
 reqwest = { workspace = true, features = ["json", "http2", "gzip", "deflate"] }
 #rustls.workspace = true
 sea-orm.workspace = true
 sea-orm-migration.workspace = true
 secrecy = { workspace = true, features = ["serde"] }
+sha2.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 serde_urlencoded.workspace = true

@@ -134,20 +134,7 @@ pub struct K8sClusterResource {
 
 ```
 
-### C. OAuth2-mTLS Certificate Authority (CA) Trust Anchor
-
-```rust
-pub struct TlsCaResource {
-    pub domain_id: String,
-    pub provider_id: String,           // Functional configuration slug anchor
-    pub client_ca_chain_pem: String,   // Trusted root/intermediate PEM bundle
-    pub ocsp_enabled: bool,            // Gating for real-time revocation checks
-    pub ocsp_servers: Vec<String>,     // Target OCSP responders
-}
-
-```
-
-### D. SPIFFE Trust Domain Resource
+### C. SPIFFE Trust Domain Resource
 
 ```rust
 pub struct SpiffeTrustResource {
@@ -184,7 +171,6 @@ pub enum DomainResolutionMode {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum IdentitySource {
     Federation { idp_id: String },
-    Mtls { client_id: String },
     K8s { cluster_id: String },
     Spiffe { trust_domain: String },
 }
@@ -338,30 +324,43 @@ pub struct VirtualUserMetadata {
 
 ```
 
-### A. Shadow Record Lifecycle & PCI-DSS Enforcement
+### A. Shadow Record Lifecycle & Virtual User Deactivation
 
 Because the HMAC-SHA256-derived identifier is deterministic, repeated
 authentication by the same principal always resolves to the same `user_id`. On
 token issuance, the engine performs an upsert: if the shadow record already
 exists, it completely refreshes `matched_rule_name`, `resolved_group_bindings`,
-and `resolved_user_name`. The `is_system` flag is **intentionally preserved**
-from initial creation — on a subsequent upsert,
-`meta.is_system = meta.is_system` prevents the flag from being modified. This is
-a deliberate security measure: once a principal is granted system-level service
-privileges, those privileges cannot be escalated nor revoked through ruleset
-rule modification alone. Revoking `is_system` requires explicit `DELETE` of the
-shadow record followed by a fresh authentication lifecycle against a corrected
-ruleset.
+and `resolved_user_name`. Set `enabled: true` (a successful match indicates the
+principal is active; if previously deactivated, successful authentication
+reactivates). The `created_at` timestamp is immutably preserved from initial
+creation. The `is_system` flag is **intentionally preserved** from initial
+creation — on a subsequent upsert `meta.is_system = meta.is_system` prevents
+the flag from being modified. This is a deliberate security measure: once a
+principal is granted system-level service privileges, those privileges cannot be
+escalated nor revoked through ruleset modification alone. Revoking `is_system`
+requires setting `enabled: false` (deactivation) via the provider API, followed
+by a fresh authentication lifecycle against a corrected ruleset to re-evaluate
+privileges.
 
 To maintain PCI-DSS compliance, the field `last_authenticated_at` tracks
 real-time usage. A dedicated background janitor task range-scans the registry
 keyspace nightly; any virtual profile that has failed to log an authentication
-event for **more than 90 days** is automatically deleted, and all corresponding
-live authorizations are dropped until a fresh, verified login lifecycle
-re-establishes the record. This policy applies uniformly — including virtual
-users with `is_system: true`, which must re-attest within the 90-day window or
-be purged (SPIFFE control-plane daemons that authenticate periodically will
-naturally stay within this window).
+event for **more than 90 days** is deactivation-set (`enabled: false`), and all
+corresponding live authorizations are dropped. This policy applies uniformly —
+including virtual users with `is_system: true`, which must re-attest within the
+90-day window or be deactivated (SPIFFE control-plane daemons that authenticate
+periodically will naturally stay within this window).
+
+**Deactivation preferred over deletion.** The janitor sets `enabled: false`
+instead of deleting records, preserving forensic evidence (identity bindings,
+authorization snapshots, activity timestamps) for incident response and
+compliance auditing. A separate archive cleanup task permanently deletes
+deactivated records after a configurable retention period (default: 365 days,
+configurable via `[keystone] shadow_registry_archive_retention_days`). The CADF
+`maintenance` event type captures these archive deletions with the record's
+identity metadata in the attachment payload. The archive cleanup cadence is
+configurable (default: weekly, configurable via
+`[keystone] shadow_registry_archive_cleanup_interval`).
 
 ---
 
@@ -893,94 +892,6 @@ authorization context from the shadow registry. The algorithm:
 }
 ```
 
-### Use Case 4: mTLS Client Certificate Federation
-
-- **Stored at:** `data:mapping:v1:domain_legacy:mtls-ca-trust`
-- **Context:** Authorizes legacy internal services using client X.509
-  certificates. Demonstrates `ClaimsOnly` domain resolution where domain is
-  extracted entirely from certificate CN claims, with no pre-bound domain at the
-  ruleset level. `Authorization` fields are static UUIDs — no template
-  interpolation is performed at runtime.
-
-```json
-{
-  "mapping_id": "c3d4e5f6-7890-12cd-ef01-3456789abcde",
-  "domain_id": null,
-  "provider_id": "mtls-ca-trust",
-  "source": {
-    "type": "mtls",
-    "client_id": "legacy-ca-trust-anchor"
-  },
-  "domain_resolution_mode": "claims_only",
-  "allowed_domains": [
-    "550e8400-e29b-41d4-a716-446655440040-domain",
-    "550e8400-e29b-41d4-a716-446655440041-domain"
-  ],
-  "enabled": true,
-  "rules": [
-    {
-      "name": "legacy-billing-service",
-      "description": "Map CN=billing-svc certificate to billing project domain",
-      "match": {
-        "all_of": [
-          {
-            "type": "matches_regex",
-            "claim": "ssl.client.cn",
-            "regex": "^_billing\\-svc.*$"
-          }
-        ]
-      },
-      "identity": {
-        "user_name": "svc-mtls-${claims.ssl.client.cn}",
-        "user_domain_id": "${claims.ssl.client.domain_uuid}"
-      },
-      "authorizations": [
-        {
-          "type": "project",
-          "project_id": "550e8400-e29b-41d4-a716-446655440040",
-          "project_domain_id": "550e8400-e29b-41d4-a716-446655440040-domain",
-          "roles": [{ "type": "system_role", "name": "_member_" }]
-        }
-      ],
-      "groups": [
-        {
-          "group_id": "550e8400-e29b-41d4-a716-446655440050",
-          "group_name": "Legacy-Billing-Services",
-          "group_domain_id": null,
-          "strategy": "create_or_get"
-        }
-      ]
-    },
-    {
-      "name": "any-cert-reader",
-      "description": "Fallback reader role for any valid CA-signed client certificate",
-      "match": {
-        "all_of": [
-          {
-            "type": "matches_regex",
-            "claim": "ssl.client.san_dns",
-            "regex": "^.*\\.internal\\.acme\\.com$"
-          }
-        ]
-      },
-      "identity": {
-        "user_name": "svc-mtls-${claims.ssl.client.san_dns}",
-        "user_domain_id": "${claims.ssl.client.domain_uuid}"
-      },
-      "authorizations": [
-        {
-          "type": "project",
-          "project_id": "550e8400-e29b-41d4-a716-446655440041",
-          "project_domain_id": "550e8400-e29b-41d4-a716-446655440041-domain",
-          "roles": [{ "type": "system_role", "name": "reader" }]
-        }
-      ],
-      "groups": []
-    }
-  ]
-}
-```
-
 ---
 
 ## 7. Runtime Mechanics & Token Lifecycle Roundtrips
@@ -1080,19 +991,22 @@ single database transaction:
    `user:v1:virtual:<user_id>`.
 
 4. **Merge or create.**
-   - **Update path (existing record):** Refresh `mapping_id`,
-     `matched_rule_name`, `resolved_user_name`, `resolved_group_bindings`, and
-     snapshotted `authorizations`. Update `ruleset_version` from the match
-     result and `last_authenticated_at` to current timestamp. The `is_system`
-     flag is **immutably preserved** from initial creation
-     (`meta.is_system = meta.is_system`) — once a principal is granted
-     system-level privileges, those privileges cannot be escalated nor revoked
-     through ruleset modification alone. Revoking `is_system` requires explicit
-     `DELETE` of the shadow record.
-   - **Insert path (new record):** Create a fresh `VirtualUserMetadata`
-     populated with all fields from the match result, the validated
-     `effective_domain`, and the current timestamp for `created_at` and
-     `last_authenticated_at`.
+    - **Update path (existing record):** Refresh `mapping_id`,
+      `matched_rule_name`, `resolved_user_name`, `resolved_group_bindings`, and
+      snapshotted `authorizations`. Update `ruleset_version` from the match
+      result and `last_authenticated_at` to current timestamp. Set `enabled:
+      true` — a successful match indicates the principal is active; if the
+      record was previously deactivated, successful authentication reactivates
+      it. The `created_at` timestamp is immutably preserved from initial
+      creation. The `is_system` flag is **immutably preserved** from initial
+      creation (`meta.is_system = meta.is_system`) — once a principal is granted
+      system-level privileges, those privileges cannot be escalated nor revoked
+      through ruleset modification alone. Revoking `is_system` requires setting
+      `enabled: false` (deactivation) via the provider API.
+    - **Insert path (new record):** Create a fresh `VirtualUserMetadata`
+      populated with all fields from the match result, the validated
+      `effective_domain`, `enabled: true`, and the current timestamp for
+      `created_at` and `last_authenticated_at`.
 
 5. **Persist.** Write the merged or new record atomically to the shadow
    keyspace.
@@ -1137,12 +1051,9 @@ single consolidated partition layer in FjallDB.
 | **Global Mapping ID Index**     | `index:mapping_id:<mapping_id>`                  | `{"domain_id": "...", "provider_id": "..."}`  |
 | **Global JWT Invariant Index**  | `index:auth:jwt:<sha256(iss+"\0"+aud)>`          | `{"domain_id": "...", "provider_id": "..."}`  |
 | **Global Client Index**         | `index:oauth2:client:<client_id>`                | `{"domain_id": "...", "provider_id": "..."}`  |
-| **OAuth2 Client Profiles**      | `data:client:<domain_id>:<client_id>`            | `OAuth2MtlsClient` (Struct object)            |
-| `**mTLS Crypto Resource**       | `data:tls:<domain_id>:<provider_id>`             | `TlsCaResource` (Struct object)               |
 | **Virtual User Shadow Records** | `data:user:virtual:<user_id_hmac>`               | `VirtualUserMetadata` (Struct object)         |
 | **OIDC Crypto Resource**        | `data:federation:oidc:<domain_id>:<provider_id>` | `OidcProviderResource` (Struct)               |
 | **K8s Crypto Resource**         | `data:k8s_auth:<domain_id>:<provider_id>`        | `K8sClusterResource` (Struct object)          |
-| **mTLS Crypto Resource**        | `data:tls:<domain_id>:<provider_id>`             | `TlsCaResource` (Struct object)               |
 | **SPIFFE Crypto Resource**      | `data:spiffe:<domain_id>:<provider_id>`          | `SpiffeTrustResource` (Struct object)         |
 | **Unified ABAC Ruleset**        | `data:mapping:<domain_id>:<provider_id>`         | `MappingRuleSet` (Contains named rule vector) |
 
@@ -1211,6 +1122,25 @@ single consolidated partition layer in FjallDB.
 - **Immutability Protection:** Throws an immediate HTTP
   `422 Unprocessable Entity` if the target is an Immutable System Mapping,
   ensuring no mutation deltas can manipulate control-plane assets.
+
+### F. Virtual User Lifecycle Management
+
+- **Disable Virtual User:**
+  - **HTTP Method / Path:** `PATCH /v4/virtual_users/{user_id}/disable`
+  - **Response:** `200 OK` — returns the deactivated `VirtualUser` record
+  - **Effect:** Sets `enabled: false`, triggers token revocation pipeline
+    (`revocation:v1:user:<user_id>`), preserves forensic record for audit trail
+
+- **Enable (Reactivate) Virtual User:**
+  - **HTTP Method / Path:** `PATCH /v4/virtual_users/{user_id}/enable`
+  - **Response:** `200 OK` — returns the reactivated `VirtualUser` record
+  - **Effect:** Sets `enabled: true`, re-activates the principal for future
+    authentication
+
+- **Get Virtual User Profile:**
+  - **HTTP Method / Path:** `GET /v4/virtual_users/{user_id}`
+  - **Response:** `200 OK` — returns full `VirtualUser` metadata including
+    snapshotted authorizations, resolved groups, and activity timestamps
 
 ---
 
@@ -1379,17 +1309,19 @@ fall back to `ruleset.domain_id` to prevent domain escape.
 
 ### 12. Real-Time Token Revocation Pipeline
 
-Any Raft proposal that deletes, disables, or alters a `MappingRuleSet` or flags
-a `VirtualUserMetadata` record to `enabled: false` will automatically append
-explicit token validation revocation objects directly into the global validation
-engine (ADR 0009 keyspace):
+Any Raft proposal that deactivates (`enabled: false`), deletes (archive
+cleanup), or alters a `MappingRuleSet` will automatically append explicit
+token validation revocation objects directly into the global validation engine
+(ADR 0009 keyspace):
 
 - `revocation:v1:mapping:<mapping_id>` $\rightarrow$ Timestamp
 - `revocation:v1:user:<virtual_user_id>` $\rightarrow$ Timestamp
 
 All token lookup evaluation tasks cross-reference this keyspace prefix layout;
 matching tokens drop validation sessions instantly upon Raft log entry
-application on the local node.
+application on the local node. The mapping provider triggers the revocation
+pipeline by calling the revocation provider on virtual user deactivation
+(admin-initiated or janitor-triggered).
 
 ### 13. Normative CADF Auditing Trail Specifications
 
@@ -1401,7 +1333,7 @@ the system notifier bus. The following event types are emitted:
 | ------------- | ---------------------------------------------------------------------- |
 | `control`     | Mapping CRUD operations (create, update, delete, mutate)               |
 | `access`      | Failed authentication attempts, `RulesetVersionMismatch` rejections    |
-| `maintenance` | Janitor shadow record deletions, token revocation pipeline activations |
+| `maintenance` | Janitor shadow record deactivations, archive cleanup deletions, virtual user enable/disable, token revocation pipeline activations |
 | `privileged`  | Admin Tier 1 bypass API invocations (`ctx.is_admin() == true` paths)   |
 
 #### Example: Control Event (Mapping Mutation)
@@ -1477,7 +1409,7 @@ the system notifier bus. The following event types are emitted:
 }
 ```
 
-#### Example: Maintenance Event (Janitor Purge)
+#### Example: Maintenance Event (Janitor Deactivation)
 
 ```json
 {
@@ -1485,7 +1417,7 @@ the system notifier bus. The following event types are emitted:
   "typeURI": "http://schemas.dmtf.org/cloud/audit/1.0/event",
   "eventType": "maintenance",
   "eventTime": "2026-06-11T03:00:00Z",
-  "action": "delete/identity/virtual-user/janitor",
+  "action": "disable/identity/virtual-user/janitor",
   "outcome": "success",
   "initiator": {
     "id": "janitor-task",
@@ -1503,6 +1435,76 @@ the system notifier bus. The following event types are emitted:
       "content": {
         "last_authenticated_days_ago": 124,
         "is_system": false
+      }
+    }
+  ]
+}
+```
+
+#### Example: Maintenance Event (Archive Cleanup Deletion)
+
+```json
+{
+  "id": "cadf-uuid-v4-event-id",
+  "typeURI": "http://schemas.dmtf.org/cloud/audit/1.0/event",
+  "eventType": "maintenance",
+  "eventTime": "2026-06-11T03:00:00Z",
+  "action": "delete/identity/virtual-user/archive-cleanup",
+  "outcome": "success",
+  "initiator": {
+    "id": "archive-cleanup-task",
+    "typeURI": "data/system/task"
+  },
+  "target": {
+    "id": "virtual-user-uuid",
+    "typeURI": "data/security/virtual-user",
+    "name": "svc-decommissioned-daemon"
+  },
+  "attachments": [
+    {
+      "name": "reason",
+      "contentType": "application/json",
+      "content": {
+        "deactivated_days_ago": 378,
+        "last_authenticated_at": 1718000000,
+        "is_system": false,
+        "mapping_id": "7c8d9e0f-1a2b-3c4d-5e6f-7a8b9c0d1e2f",
+        "resolved_user_name": "svc-decommissioned-daemon"
+      }
+    }
+  ]
+}
+```
+
+#### Example: Control Event (Virtual User Disable)
+
+```json
+{
+  "id": "cadf-uuid-v4-event-id",
+  "typeURI": "http://schemas.dmtf.org/cloud/audit/1.0/event",
+  "eventType": "control",
+  "eventTime": "2026-06-11T15:00:00Z",
+  "action": "disable/identity/virtual-user",
+  "outcome": "success",
+  "initiator": {
+    "id": "usr_uuid_of_admin_initiator",
+    "typeURI": "data/security/user",
+    "name": "cloud-admin-operator",
+    "domain_id": "default"
+  },
+  "target": {
+    "id": "virtual-user-uuid",
+    "typeURI": "data/security/virtual-user",
+    "name": "svc-compromised-agent"
+  },
+  "attachments": [
+    {
+      "name": "reason",
+      "contentType": "application/json",
+      "content": {
+        "enabled": false,
+        "is_system": false,
+        "revocation_triggered": true
       }
     }
   ]
@@ -1563,7 +1565,6 @@ the system notifier bus. The following event types are emitted:
 | Provider       | Source Data         | Flattening Convention                                                  | Unique Workload Key Invariant                                                                   |
 | -------------- | ------------------- | ---------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
 | **OIDC / JWT** | JWT ID token claims | Flat string mappings via dotted pathways (`email`, `user.profile.id`)  | Value string of the `sub` claim element                                                         |
-| **mTLS**       | X.509 cert metrics  | Prefixed configuration layouts (`ssl.client.cn`, `ssl.client.san_dns`) | The fully formatted static Distinguished Name (`subject_dn`) string                             |
 | **Kubernetes** | K8s TokenReview JWT | `k8s.serviceaccount.name`, `k8s.serviceaccount.namespace`, `k8s.aud`   | Formatted invariant: `<serviceaccount_name>:<serviceaccount_namespace>`                         |
 | **SPIFFE**     | SPIFFE SVID cert    | `spiffe.id`, `spiffe.trust_domain`                                     | Full raw URI format asset string (e.g., `spiffe://prod.keystone.internal/ns/openstack/sa/nova`) |
 
@@ -1580,18 +1581,19 @@ and independently verifiable before advancing.
 ### Phase 1: Mapping Provider & Raft Driver
 
 Foundational layer to store, retrieve, and replicate `MappingRuleSet` objects
-across the Raft cluster. The mapping provider owns the keyspace prefix
-`data:mapping:v1:` and the index `index:mapping_id:`.
+and `VirtualUser` shadow records across the Raft cluster. The mapping provider
+owns the keyspace prefix `data:mapping:v1:` and the index `index:mapping_id:`.
 
 - Implement `MappingProvider` trait exposing `create`, `get`, `update`,
-  `delete`, and `list` operations against FjallDB.
+  `delete`, `enable`, `disable`, and `list` operations against FjallDB.
 - Implement the Raft driver for mapping mutations: serialize `MappingRuleSet`
   payloads, enforce Raft consensus ordering, and handle snapshot/compaction.
 - Implement write-time validation pipeline: regex ReDoS safety, rule name
   uniqueness, template safety, `allowed_domains` intersection checks.
 - Implement content-aware `ruleset_version` (SHA-256 first-16-bytes hasher).
-- **Deliverable:** Cluster-internal API for mapping CRUD, verifiable via unit
-  and integration tests.
+- Implement virtual user enable/disable with CAS-based toggle.
+- **Deliverable:** Cluster-internal API for mapping CRUD and virtual user
+  lifecycle, verifiable via unit and integration tests.
 
 ### Phase 2: Mapping CRUD & Evaluation API
 
@@ -1652,3 +1654,74 @@ the most complex claim profiles and legacy `token_restriction` patterns.
 - Deprecate legacy federation mapping code path.
 - **Deliverable:** All federation authentication fully mediated by the unified
   mapping engine; legacy `token_restriction` pattern eliminated.
+
+---
+
+## 13. Implementation Deviations from ADR Spec
+
+This section documents decisions made during implementation that deviate from
+the original specification.
+
+### D1. `MappingRuleSet` — `provider_id` field removed
+
+The `MappingRuleSet` struct does not carry a separate `provider_id` field. The
+ingress provider instance is identified through `source: IdentitySource`, which
+contains the relevant anchor (`idp_id`, `cluster_id`, or
+`trust_domain`) as its enum variant payload. The `provider_id` slug used in
+keyspace coordinates is derived from the `source` field at storage time.
+
+### D2. `DomainResolutionMode` — `allowed_domains` consolidated into enum variants
+
+The `allowed_domains` whitelist was moved from a separate field on
+`MappingRuleSet` into the `ClaimsOrMapping` and `ClaimsOnly` enum variants of
+`DomainResolutionMode`. This encodes the constraint "must be non-empty for
+ClaimsOnly/ClaimsOrMapping, must be empty for Fixed" into Rust's type system,
+eliminating cross-field runtime validation.
+
+### D3. `ResolvedGroupBinding` replaced with `GroupRef`
+
+The custom `ResolvedGroupBinding` struct was replaced with `GroupRef` (defined
+in `crate::identity::group`), mirroring the existing `RoleRef` pattern. The
+`strategy` field from the original `ResolvedGroupBinding` was dropped — group
+resolution strategy (`CreateOrGet`/`Get`) is encoded in `GroupAssignment` within
+the live ruleset, which the engine fetches during verification. The persisted
+shadow record only needs the group anchor (id + domain_id + name).
+
+### D4. `MappingRuleSetUpdate` — mode variant is immutable
+
+The `MappingRuleSetUpdate` type carries `allowed_domains` as a separate
+`Option<Vec<String>>` field rather than replacing the entire `DomainResolutionMode`.
+The service layer merges the new `allowed_domains` into the existing variant,
+preventing an operator from changing `Fixed` → `ClaimsOrMapping` (or vice versa)
+via update. The resolution mode variant itself is immutable after creation.
+
+### D5. `is_system: bool` — defaults to `false`
+
+The `is_system` field on `IdentityBinding` is typed as `bool` (not `Option<bool>`)
+with a `serde(default)` attribute that resolves missing JSON to `false`. This
+removes ambiguity — an omitted field means the operator did not grant system
+privileges.
+
+### D6. `GroupStrategy::CreateOrGet` — default for `GroupAssignment`
+
+The `strategy` field on `GroupAssignment` defaults to `CreateOrGet` rather than
+requiring explicit specification, as it is the more permissive operator-friendly
+default (fewer failures when groups are not pre-provisioned).
+
+### D7. `MappingRule` — `provider_id` not present
+
+`MappingRule` does not carry `provider_id`. It is nested within `MappingRuleSet`,
+which identifies the provider through `source: IdentitySource`. All rule-level
+context is inherited from the parent ruleset.
+
+### D8. Virtual user lifecycle — deactivation preferred over deletion
+
+The janitor task sets `enabled: false` instead of deleting records. A separate
+archive cleanup task permanently removes deactivated records after a configurable
+retention period (default: 365 days, configurable via
+`[keystone] shadow_registry_archive_retention_days`). This preserves forensic
+evidence (identity bindings, authorization snapshots, activity timestamps) for
+incident response and compliance auditing. The original spec specified immediate
+deletion. The provider interface is extended with explicit `enable_virtual_user`
+and `disable_virtual_user` methods. The mapping provider calls the revocation
+provider upon virtual user deactivation to trigger the token revocation pipeline.

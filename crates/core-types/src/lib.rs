@@ -27,6 +27,7 @@ pub mod federation;
 pub mod identity;
 pub mod idmapping;
 pub mod k8s_auth;
+pub mod mapping;
 pub mod resource;
 pub mod revoke;
 pub mod role;

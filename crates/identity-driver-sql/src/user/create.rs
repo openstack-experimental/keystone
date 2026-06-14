@@ -218,7 +218,7 @@ mod tests {
     };
 
     use super::*;
-    use crate::entity::password as db_password;
+
     use crate::{
         federated_user::tests::get_federated_user_mock, local_user::tests::get_local_user_mock,
         password::tests::get_password_mock, user::tests::get_user_mock,
