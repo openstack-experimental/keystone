@@ -3741,7 +3741,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_urlencoded",
- "spiffe",
+ "spiffe 0.16.0",
  "spiffe-rustls",
  "spiffe-rustls-tokio",
  "thiserror 2.0.18",
@@ -3916,7 +3916,7 @@ dependencies = [
  "serde_json",
  "serde_urlencoded",
  "sha2",
- "spiffe",
+ "spiffe 0.16.0",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
@@ -6631,6 +6631,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "spiffe"
+version = "0.16.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "66b316e388514701f5c8aac295909a66f72f738b8ac632814d62692309877742"
+dependencies = [
+ "arc-swap",
+ "fastrand",
+ "futures",
+ "hyper-util",
+ "pkcs8",
+ "prost",
+ "prost-types",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-util",
+ "tonic",
+ "tonic-prost",
+ "tower",
+ "url",
+ "x509-parser 0.18.1",
+ "zeroize",
+]
+
+[[package]]
 name = "spiffe-rustls"
 version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6638,7 +6662,7 @@ checksum = "95476aeb683671ad4f1a5f1d6267b506d554cc7b789b6076597dff7e9d62132e"
 dependencies = [
  "oid-registry 0.8.1",
  "rustls",
- "spiffe",
+ "spiffe 0.15.1",
  "thiserror 2.0.18",
  "tokio",
  "tokio-util",
@@ -6652,7 +6676,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c49e6c45e64b8742ebda4eadf8589d713e847f4389983db52091578d6011ca08"
 dependencies = [
  "rustls",
- "spiffe",
+ "spiffe 0.15.1",
  "thiserror 2.0.18",
  "tokio",
  "tokio-rustls",
