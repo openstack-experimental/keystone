@@ -6604,22 +6604,18 @@ dependencies = [
 
 [[package]]
 name = "spiffe"
-version = "0.15.1"
+version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6d3f9e45e9e53f03cb452fe0f050101a9280ff4f4214e326037bc8275284d906"
+checksum = "66b316e388514701f5c8aac295909a66f72f738b8ac632814d62692309877742"
 dependencies = [
  "arc-swap",
- "base64ct",
  "fastrand",
  "futures",
  "hyper-util",
  "pkcs8",
  "prost",
  "prost-types",
- "serde",
- "serde_json",
  "thiserror 2.0.18",
- "time",
  "tokio",
  "tokio-util",
  "tonic",
@@ -6632,9 +6628,9 @@ dependencies = [
 
 [[package]]
 name = "spiffe-rustls"
-version = "0.6.2"
+version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "95476aeb683671ad4f1a5f1d6267b506d554cc7b789b6076597dff7e9d62132e"
+checksum = "381755b6d074750bbd6abea6b176f4bfa178fe9a3a725ae4b91e61f42713e97c"
 dependencies = [
  "oid-registry 0.8.1",
  "rustls",
@@ -6647,9 +6643,9 @@ dependencies = [
 
 [[package]]
 name = "spiffe-rustls-tokio"
-version = "0.3.0"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c49e6c45e64b8742ebda4eadf8589d713e847f4389983db52091578d6011ca08"
+checksum = "15087c8af793552477fed1d83861cad3f42f622ba49578d7ca60e6c293ae9bab"
 dependencies = [
  "rustls",
  "spiffe",
