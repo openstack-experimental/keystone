@@ -16,8 +16,11 @@ use utoipa_axum::router::OpenApiRouter;
 
 use crate::keystone::ServiceState;
 
+mod group;
 mod user;
 
 pub(crate) fn openapi_router() -> OpenApiRouter<ServiceState> {
-    OpenApiRouter::new().merge(user::openapi_router())
+    OpenApiRouter::new()
+        .merge(user::openapi_router())
+        .merge(group::openapi_router())
 }
