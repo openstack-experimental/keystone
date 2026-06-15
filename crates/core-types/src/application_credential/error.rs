@@ -25,6 +25,15 @@ pub enum ApplicationCredentialProviderError {
     #[error("more than one access rule matching the ID and parameters found")]
     AccessRuleConflict,
 
+    /// AccessRule is still referenced by an application credential and can not
+    /// be deleted.
+    #[error("access rule with id: {0} is still in use by an application credential")]
+    AccessRuleInUse(String),
+
+    /// AccessRule is not found.
+    #[error("access rule with id: {0} not found")]
+    AccessRuleNotFound(String),
+
     /// Application Credential used in the token is not found.
     #[error("application credential with id: {0} not found")]
     ApplicationCredentialNotFound(String),

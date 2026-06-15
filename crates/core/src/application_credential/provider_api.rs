@@ -68,4 +68,70 @@ pub trait ApplicationCredentialApi: Send + Sync {
         state: &ServiceState,
         params: &ApplicationCredentialListParameters,
     ) -> Result<Vec<ApplicationCredential>, ApplicationCredentialProviderError>;
+
+    /// Create a standalone access rule owned by a user.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `user_id`: The ID of the user owning the access rule.
+    /// - `rule`: The access rule to create.
+    ///
+    /// # Returns
+    /// - `Result<AccessRule, ApplicationCredentialProviderError>` - The created
+    ///   access rule or an error.
+    async fn create_access_rule<'a>(
+        &self,
+        state: &ServiceState,
+        user_id: &'a str,
+        rule: AccessRuleCreate,
+    ) -> Result<AccessRule, ApplicationCredentialProviderError>;
+
+    /// Get a user's access rule by its ID.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `user_id`: The ID of the user owning the access rule.
+    /// - `id`: The ID of the access rule.
+    ///
+    /// # Returns
+    /// - `Result<Option<AccessRule>, ApplicationCredentialProviderError>` - The
+    ///   access rule if found, or an error.
+    async fn get_access_rule<'a>(
+        &self,
+        state: &ServiceState,
+        user_id: &'a str,
+        id: &'a str,
+    ) -> Result<Option<AccessRule>, ApplicationCredentialProviderError>;
+
+    /// List all access rules owned by a user.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `user_id`: The ID of the user owning the access rules.
+    ///
+    /// # Returns
+    /// - `Result<Vec<AccessRule>, ApplicationCredentialProviderError>` - A list
+    ///   of access rules or an error.
+    async fn list_access_rules<'a>(
+        &self,
+        state: &ServiceState,
+        user_id: &'a str,
+    ) -> Result<Vec<AccessRule>, ApplicationCredentialProviderError>;
+
+    /// Delete a user's access rule by its ID.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `user_id`: The ID of the user owning the access rule.
+    /// - `id`: The ID of the access rule.
+    ///
+    /// # Returns
+    /// - `Result<(), ApplicationCredentialProviderError>` - Unit on success, or
+    ///   an error.
+    async fn delete_access_rule<'a>(
+        &self,
+        state: &ServiceState,
+        user_id: &'a str,
+        id: &'a str,
+    ) -> Result<(), ApplicationCredentialProviderError>;
 }

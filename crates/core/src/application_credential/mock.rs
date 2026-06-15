@@ -42,5 +42,32 @@ mock! {
             state: &ServiceState,
             params: &ApplicationCredentialListParameters,
         ) -> Result<Vec<ApplicationCredential>, ApplicationCredentialProviderError>;
+
+        async fn create_access_rule<'a>(
+            &self,
+            state: &ServiceState,
+            user_id: &'a str,
+            rule: AccessRuleCreate,
+        ) -> Result<AccessRule, ApplicationCredentialProviderError>;
+
+        async fn get_access_rule<'a>(
+            &self,
+            state: &ServiceState,
+            user_id: &'a str,
+            id: &'a str,
+        ) -> Result<Option<AccessRule>, ApplicationCredentialProviderError>;
+
+        async fn list_access_rules<'a>(
+            &self,
+            state: &ServiceState,
+            user_id: &'a str,
+        ) -> Result<Vec<AccessRule>, ApplicationCredentialProviderError>;
+
+        async fn delete_access_rule<'a>(
+            &self,
+            state: &ServiceState,
+            user_id: &'a str,
+            id: &'a str,
+        ) -> Result<(), ApplicationCredentialProviderError>;
     }
 }

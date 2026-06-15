@@ -97,6 +97,77 @@ impl ApplicationCredentialBackend for SqlBackend {
     ) -> Result<Vec<ApplicationCredential>, ApplicationCredentialProviderError> {
         Ok(application_credential::list(&state.db, params).await?)
     }
+
+    /// Create a standalone access rule owned by a user.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `user_id`: The ID of the user owning the access rule.
+    /// - `rule`: The access rule to create.
+    ///
+    /// # Returns
+    /// A `Result` containing the created `AccessRule` or an `Error`.
+    async fn create_access_rule<'a>(
+        &self,
+        state: &ServiceState,
+        user_id: &'a str,
+        rule: AccessRuleCreate,
+    ) -> Result<AccessRule, ApplicationCredentialProviderError> {
+        application_credential::access_rule::create(&state.db, user_id, rule).await
+    }
+
+    /// Get a user's access rule by its ID.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `user_id`: The ID of the user owning the access rule.
+    /// - `id`: The ID of the access rule.
+    ///
+    /// # Returns
+    /// A `Result` containing an `Option` with the `AccessRule` if found, or an
+    /// `Error`.
+    async fn get_access_rule<'a>(
+        &self,
+        state: &ServiceState,
+        user_id: &'a str,
+        id: &'a str,
+    ) -> Result<Option<AccessRule>, ApplicationCredentialProviderError> {
+        application_credential::access_rule::get(&state.db, user_id, id).await
+    }
+
+    /// List all access rules owned by a user.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `user_id`: The ID of the user owning the access rules.
+    ///
+    /// # Returns
+    /// A `Result` containing a `Vec` of `AccessRule` or an `Error`.
+    async fn list_access_rules<'a>(
+        &self,
+        state: &ServiceState,
+        user_id: &'a str,
+    ) -> Result<Vec<AccessRule>, ApplicationCredentialProviderError> {
+        application_credential::access_rule::list(&state.db, user_id).await
+    }
+
+    /// Delete a user's access rule by its ID.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `user_id`: The ID of the user owning the access rule.
+    /// - `id`: The ID of the access rule.
+    ///
+    /// # Returns
+    /// A `Result` containing `()` or an `Error`.
+    async fn delete_access_rule<'a>(
+        &self,
+        state: &ServiceState,
+        user_id: &'a str,
+        id: &'a str,
+    ) -> Result<(), ApplicationCredentialProviderError> {
+        application_credential::access_rule::delete(&state.db, user_id, id).await
+    }
 }
 
 #[async_trait]

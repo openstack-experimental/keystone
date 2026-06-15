@@ -24,6 +24,7 @@ use crate::entity::{
     application_credential_role as db_application_credential_role,
 };
 
+pub mod access_rule;
 mod create;
 mod get;
 mod list;
