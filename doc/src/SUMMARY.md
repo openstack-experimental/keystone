@@ -32,6 +32,7 @@
     - [Credentials API](adr/0019-credentials.md)
     - [Mapping Engine](adr/0020-mapping-engine.md)
     - [Api Key authentication for SCIM](adr/0021-api-key-scim.md)
+    - [Rate limiting](adr/0022-rate-limiting.md)
 - [Policy enforcement](policy.md)
 - [Fernet token]()
   - [Token payloads]()
