@@ -108,6 +108,47 @@ async fn test_update_allowed_domains() -> Result<()> {
 
 #[traced_test]
 #[tokio::test]
+async fn test_update_global() -> Result<()> {
+    let (state, _) = get_state().await?;
+    let ruleset = create_ruleset(&state, sample_ruleset_create(None::<String>)).await?;
+
+    let new_rule = MappingRule {
+        name: "updated-rule".into(),
+        description: None,
+        r#match: MatchCriteria::AllOf(vec![]),
+        identity: IdentityBinding {
+            user_name: "${username}".into(),
+            user_id: None,
+            user_domain_id: None,
+            is_system: false,
+        },
+        authorizations: Vec::new(),
+        groups: Vec::new(),
+    };
+
+    let req = MappingRuleSetUpdate {
+        enabled: Some(false),
+        allowed_domains: None,
+        rules: Some(vec![new_rule.clone()]),
+    };
+
+    let res = state
+        .provider
+        .get_mapping_provider()
+        .update_ruleset(&state, &ruleset.mapping_id, req)
+        .await?;
+
+    assert_eq!(ruleset.mapping_id, res.mapping_id);
+    assert!(res.domain_id.is_none());
+    assert!(!res.enabled);
+    assert_eq!(res.rules.len(), 1);
+    assert_eq!(res.rules[0].name, new_rule.name);
+
+    Ok(())
+}
+
+#[traced_test]
+#[tokio::test]
 async fn test_update_missing() -> Result<()> {
     let (state, _) = get_state().await?;
     let result = state

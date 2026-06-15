@@ -25,7 +25,9 @@ use openstack_keystone_core_types::mapping::*;
 mod create;
 mod delete;
 mod get;
+mod is_system;
 mod list;
+mod mutate;
 mod update;
 
 use crate::common::*;

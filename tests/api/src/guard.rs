@@ -62,9 +62,9 @@ where
 {
     async fn delete(mut self) -> Result<()> {
         if let Some(resource) = self.resource.take() {
-            let _result = resource.delete(&self.state).await;
-            // Mark as deleted regardless of success to prevent Drop panic
+            let result = resource.delete(&self.state).await;
             self.was_deleted = true;
+            result?;
         }
         Ok(())
     }

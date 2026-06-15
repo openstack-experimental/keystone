@@ -29,6 +29,7 @@ use rcgen::{
 use sea_orm::{
     ConnectOptions, ConnectionTrait, Database, DatabaseConnection, DbConn, schema::Schema,
 };
+use secrecy::SecretString;
 use tempfile::TempDir;
 use uuid::Uuid;
 
@@ -145,6 +146,11 @@ pub async fn get_state() -> Result<(Arc<Service>, TempDir)> {
     };
     cfg.federation.default_authorization_ttl = 20;
     fernet_utils.initialize_key_repository()?;
+    cfg.mapping.cluster_salt = Some(SecretString::new(
+        "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+            .to_string()
+            .into(),
+    ));
 
     if std::env::var("USE_RAFT").is_ok() {
         let tmp_db_dir = tmp_dir.path().join("certs");

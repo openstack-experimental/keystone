@@ -29,4 +29,3 @@ violation contains {"field": "system", "msg": "revoking a role from a user on th
 	"manager" in input.credentials.roles
 	input.credentials.system != "all"
 }
-

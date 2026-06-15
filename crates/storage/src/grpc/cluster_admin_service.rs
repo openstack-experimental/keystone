@@ -258,7 +258,8 @@ impl ClusterAdminService for ClusterAdminServiceImpl {
             // 4. Audit-log with DEK_EMERGENCY_ROTATION event type.
         } else {
             trace!("Standard DEK rotation triggered");
-            // TODO: Implement standard rotation (same as §6 live background rotation).
+            // TODO: Implement standard rotation (same as §6 live background
+            // rotation).
         }
 
         // TODO: Return committed log ID and any metadata.
@@ -268,16 +269,17 @@ impl ClusterAdminService for ClusterAdminServiceImpl {
     /// Provides dual-control approval for a pending emergency DEK rotation.
     ///
     /// # Parameters
-    /// - `request`: Contains the `rotation_id` of the pending emergency rotation.
+    /// - `request`: Contains the `rotation_id` of the pending emergency
+    ///   rotation.
     ///
     /// # Returns
-    /// A `Result` containing a `Response` with confirmation details, or a `Status`
-    /// error.
+    /// A `Result` containing a `Response` with confirmation details, or a
+    /// `Status` error.
     ///
     /// # Security
     /// This operation requires a second `storage-operator` SVID and must be
-    /// invoked within 5 minutes of the initial `RotateDekRequest{emergency: true}`.
-    /// Both operator identities are recorded in the audit log.
+    /// invoked within 5 minutes of the initial `RotateDekRequest{emergency:
+    /// true}`. Both operator identities are recorded in the audit log.
     #[tracing::instrument(level = "trace", skip(self))]
     async fn confirm_rotate_dek(
         &self,

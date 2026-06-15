@@ -17,6 +17,7 @@ mod auth;
 mod common;
 mod guard;
 mod identity;
+mod mapping;
 mod resource;
 mod role;
 mod spiffe;

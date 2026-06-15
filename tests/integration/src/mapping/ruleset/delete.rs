@@ -49,6 +49,28 @@ async fn test_delete() -> Result<()> {
 
 #[traced_test]
 #[tokio::test]
+async fn test_delete_global() -> Result<()> {
+    let (state, _) = get_state().await?;
+    let ruleset = create_ruleset(&state, sample_ruleset_create(None::<String>)).await?;
+
+    state
+        .provider
+        .get_mapping_provider()
+        .delete_ruleset(&state, &ruleset.mapping_id)
+        .await?;
+
+    let res = state
+        .provider
+        .get_mapping_provider()
+        .get_ruleset(&state, &ruleset.mapping_id)
+        .await?;
+
+    assert!(res.is_none());
+    Ok(())
+}
+
+#[traced_test]
+#[tokio::test]
 async fn test_delete_missing() -> Result<()> {
     let (state, _) = get_state().await?;
     state

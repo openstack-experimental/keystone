@@ -21,6 +21,7 @@ use openstack_keystone_core_types::mapping::VirtualUser;
 
 mod delete;
 mod get;
+mod lifecycle;
 
 use crate::common::*;
 

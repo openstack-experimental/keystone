@@ -85,6 +85,7 @@ pub mod identity;
 pub mod idmapping;
 pub mod k8s_auth;
 pub mod keystone;
+pub mod mapping;
 
 // Force inventory::submit! sections from each plugin crate to remain
 // linked. The build.rs script discovers all openstack-keystone-*

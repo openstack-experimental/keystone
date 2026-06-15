@@ -288,6 +288,5 @@ async fn test_domain_delete() -> Result<()> {
     delete_domain(&test_client, &domain.id).await?;
     let result = get_domain(&test_client, &domain.id).await;
     assert!(result.is_err(), "domain should be deleted");
-    domain.delete().await?;
     Ok(())
 }

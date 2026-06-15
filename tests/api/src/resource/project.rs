@@ -292,8 +292,6 @@ async fn test_project_delete() -> Result<()> {
     delete_project(&test_client, &project.id).await?;
     let result = get_project(&test_client, &project.id).await;
     assert!(result.is_err(), "project should be deleted");
-
-    project.delete().await?;
     domain.delete().await?;
     Ok(())
 }
