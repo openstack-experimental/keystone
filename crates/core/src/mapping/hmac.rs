@@ -21,7 +21,7 @@
 //! Per ADR-0020 §7.2: `HMAC-SHA256(cluster_salt, workload_id || provider_id)`,
 //! first 16 bytes formatted as a UUIDv4-compatible hex string.
 
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
 
 use openstack_keystone_core_types::mapping::IdentitySource;
@@ -57,7 +57,7 @@ pub fn derive_virtual_user_id(
     let source_key = source.to_string_key();
     let message = format!("{workload_id}:{source_key}");
 
-    let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(salt).map_err(|_| {
+    let mut mac = <Hmac<Sha256> as KeyInit>::new_from_slice(salt).map_err(|_| {
         MappingProviderError::HmacDerivationFailed("invalid key length".to_string())
     })?;
     mac.update(message.as_bytes());
