@@ -305,7 +305,7 @@ Operator-managed PKI for environments without SPIRE.
   node starts with a valid certificate but continues operating after expiry.
 - **Certificate Revocation:** CRL and OCSP are not implemented for the TLS
   fallback path. The compensating controls are: (1) the 30-day maximum leaf
-  certificate validity limits exposure from a stolen or mis-issued certificate;
+  certificate validity limits exposure from a stolen or miss-issued certificate;
   (2) prompt certificate replacement is required on compromise, enforced by the
   operator's PKI management procedures. This is acceptable for an internal
   cluster where the operator manages the Intermediate CA and has direct control
