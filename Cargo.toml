@@ -17,7 +17,6 @@ members = [
   "crates/resource-driver-sql",
   "crates/role-driver-sql",
   "crates/storage",
-  "crates/spiffe-driver-raft",
   "crates/token-driver-fernet",
   "crates/token-restriction-driver-sql",
   "crates/trust-driver-sql",
@@ -98,7 +97,6 @@ openstack-keystone-idmapping-driver-sql = { version = "0.1", path = "crates/idma
 openstack-keystone-resource-driver-sql = { version = "0.1", path = "crates/resource-driver-sql/" }
 openstack-keystone-revoke-driver-sql = { version = "0.1", path = "crates/revoke-driver-sql/" }
 openstack-keystone-role-driver-sql = { version = "0.1", path = "crates/role-driver-sql/" }
-openstack-keystone-spiffe-driver-raft = { version = "0.1", path = "crates/spiffe-driver-raft/" }
 openstack-keystone-token-driver-fernet = { version = "0.1.0", path = "crates/token-driver-fernet" }
 openstack-keystone-token-restriction-driver-sql = { version = "0.1", path = "crates/token-restriction-driver-sql/" }
 openstack-keystone-trust-driver-sql = { version = "0.1", path = "crates/trust-driver-sql/" }

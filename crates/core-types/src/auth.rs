@@ -38,7 +38,6 @@ use crate::error::BuilderError;
 use crate::identity::{Group, UserResponse};
 use crate::resource::{Domain, Project};
 use crate::role::RoleRef;
-use crate::spiffe::SpiffeBinding;
 use crate::token::{FernetToken, TokenRestriction};
 use crate::trust::Trust;
 
@@ -617,7 +616,7 @@ impl SecurityContext {
                     AuthenticationContext::Oidc { .. } => Ok(()),
                     AuthenticationContext::K8s(_) => Err(AuthenticationError::ScopeNotAllowed),
                     AuthenticationContext::Password => Ok(()),
-                    AuthenticationContext::Spiffe(_) => Ok(()),
+                    AuthenticationContext::Admin => Ok(()),
                     AuthenticationContext::Token(_) => Ok(()),
                     AuthenticationContext::Trust { .. } => {
                         Err(AuthenticationError::ScopeNotAllowed)
@@ -647,7 +646,7 @@ impl SecurityContext {
                     AuthenticationContext::Oidc { .. } => Ok(()),
                     AuthenticationContext::K8s(_) => Ok(()),
                     AuthenticationContext::Password => Ok(()),
-                    AuthenticationContext::Spiffe(_) => Ok(()),
+                    AuthenticationContext::Admin => Ok(()),
                     AuthenticationContext::Token(_) => Ok(()),
                     AuthenticationContext::Trust { .. } => {
                         // Trust authentication must use TrustProject scope. Rescoping to a plain
@@ -669,7 +668,7 @@ impl SecurityContext {
                     AuthenticationContext::Oidc { .. } => Err(AuthenticationError::ScopeNotAllowed),
                     AuthenticationContext::K8s(_) => Err(AuthenticationError::ScopeNotAllowed),
                     AuthenticationContext::Password => Ok(()),
-                    AuthenticationContext::Spiffe(_) => Err(AuthenticationError::ScopeNotAllowed),
+                    AuthenticationContext::Admin => Ok(()),
                     AuthenticationContext::Token(_) => Ok(()),
                     AuthenticationContext::Trust { .. } => Err(AuthenticationError::Forbidden),
                     AuthenticationContext::WebauthN => Err(AuthenticationError::ScopeNotAllowed),
@@ -687,7 +686,7 @@ impl SecurityContext {
                     AuthenticationContext::Oidc { .. } => Err(AuthenticationError::ScopeNotAllowed),
                     AuthenticationContext::K8s(_) => Err(AuthenticationError::ScopeNotAllowed),
                     AuthenticationContext::Password => Ok(()),
-                    AuthenticationContext::Spiffe(_) => Ok(()),
+                    AuthenticationContext::Admin => Ok(()),
                     AuthenticationContext::Token(_) => Ok(()),
                     AuthenticationContext::Trust { .. } => {
                         Err(AuthenticationError::ScopeNotAllowed)
@@ -707,7 +706,7 @@ impl SecurityContext {
                     AuthenticationContext::Oidc { .. } => Ok(()),
                     AuthenticationContext::K8s(_) => Err(AuthenticationError::ScopeNotAllowed),
                     AuthenticationContext::Password => Ok(()),
-                    AuthenticationContext::Spiffe(_) => Ok(()),
+                    AuthenticationContext::Admin => Ok(()),
                     AuthenticationContext::Token(_) => Ok(()),
                     AuthenticationContext::Trust { .. } => {
                         Err(AuthenticationError::ScopeNotAllowed)
@@ -1134,8 +1133,8 @@ pub enum AuthenticationContext {
     K8s(K8sContext),
     /// Login with password.
     Password,
-    /// SPIRE authentication.
-    Spiffe(SpiffeBinding),
+    /// Admin SVID authenticated via admin interface.
+    Admin,
     /// Login using regular fernet/jwt token.
     Token(FernetToken),
     /// Login consuming the trust.
@@ -1178,9 +1177,9 @@ impl AuthenticationContext {
                 once("application_credential".to_string()).collect()
             }
             Self::Oidc { .. } => once("openid".to_string()).collect(),
-            Self::Password => once("password".to_string()).collect(),
             Self::K8s(_) => once("mapped".to_string()).collect(),
-            Self::Spiffe(_) => once("x509".to_string()).collect(),
+            Self::Password => once("password".to_string()).collect(),
+            Self::Admin => once("admin".to_string()).collect(),
             Self::Token(token) => token
                 .methods()
                 .iter()

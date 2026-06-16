@@ -45,7 +45,6 @@ openstack-keystone-idmapping-driver-sql.workspace = true
 openstack-keystone-resource-driver-sql.workspace = true
 openstack-keystone-revoke-driver-sql.workspace = true
 openstack-keystone-role-driver-sql.workspace = true
-openstack-keystone-spiffe-driver-raft.workspace = true
 openstack-keystone-token-driver-fernet.workspace = true
 openstack-keystone-token-restriction-driver-sql.workspace = true
 openstack-keystone-trust-driver-sql.workspace = true

@@ -67,7 +67,6 @@ use openstack_keystone::resource::ResourceHook;
 use openstack_keystone::revoke::RevokeHook;
 use openstack_keystone::role::RoleHook;
 use openstack_keystone::server::listener::{raft_grpc, spiffe_tls, spiffe_tls_uds};
-use openstack_keystone::spiffe::SpiffeHook;
 use openstack_keystone::token::TokenHook;
 use openstack_keystone::trust::TrustHook;
 use openstack_keystone::webauthn;
@@ -280,10 +279,6 @@ async fn main() -> Result<(), Report> {
     shared_state
         .event_dispatcher
         .subscribe(Arc::new(RoleHook::new(shared_state.clone())))
-        .await;
-    shared_state
-        .event_dispatcher
-        .subscribe(Arc::new(SpiffeHook::new(shared_state.clone())))
         .await;
     shared_state
         .event_dispatcher

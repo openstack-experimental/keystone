@@ -77,7 +77,6 @@ mod resource;
 mod revoke;
 mod role;
 mod security_compliance;
-mod spiffe;
 mod token;
 mod token_restriction;
 mod trust;
@@ -104,7 +103,6 @@ pub use resource::*;
 pub use revoke::*;
 pub use role::*;
 pub use security_compliance::*;
-pub use spiffe::*;
 pub use token::*;
 pub use token_restriction::*;
 pub use trust::*;
@@ -196,10 +194,6 @@ pub struct Config {
     #[serde(default)]
     #[validate(nested)]
     pub security_compliance: SecurityComplianceProvider,
-
-    /// Spiffe provider configuration.
-    #[serde(default)]
-    pub spiffe: SpiffeProvider,
 
     /// Token provider configuration.
     #[serde(default)]

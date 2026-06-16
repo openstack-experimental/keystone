@@ -20,5 +20,4 @@ mod identity;
 mod mapping;
 mod resource;
 mod role;
-mod spiffe;
 mod webauthn;

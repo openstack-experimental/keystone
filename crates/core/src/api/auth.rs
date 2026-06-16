@@ -24,9 +24,9 @@ use spiffe::SpiffeId;
 use tracing::{debug, error};
 
 use openstack_keystone_config::Interface;
+use openstack_keystone_core_types::auth::*;
 use openstack_keystone_core_types::mapping::auth::MappingAuthRequest;
 use openstack_keystone_core_types::mapping::resolution::IdentitySource;
-use openstack_keystone_core_types::{auth::*, spiffe::SpiffeBindingBuilder};
 
 use crate::api::KeystoneApiError;
 use crate::auth::ValidatedSecurityContext;
@@ -61,8 +61,9 @@ where
     /// * `mTLS` - SPIFFE issued x509 certificate that is passed as an extension
     ///   by the mtls connection handler. The SVID is flattened into claims and
     ///   routed through the mapping engine for authentication. When matched,
-    ///   the `ValidatedSecurityContext` is instantiated as `ScopeInfo::Unscoped`
-    ///   scope. System principals (`is_system`) are overridden to `ScopeInfo::System`.
+    ///   the `ValidatedSecurityContext` is instantiated as
+    ///   `ScopeInfo::Unscoped` scope. System principals (`is_system`) are
+    ///   overridden to `ScopeInfo::System`.
     /// * `X-Auth-Token` - HTTP header is used as encoded `FernetToken` which is
     ///   decoded and used
     /// to instantiate the `ValidatedSecurityContext`. The `FernetToken` always
@@ -106,13 +107,7 @@ where
                 // The admin_svid was configured and it is it over the admin interface - short
                 // circuit the admin
                 let auth_result: AuthenticationResult = AuthenticationResultBuilder::default()
-                    .context(AuthenticationContext::Spiffe(
-                        SpiffeBindingBuilder::default()
-                            .svid(*admin_svid)
-                            .domain_id("")
-                            .is_system(true)
-                            .build()?,
-                    ))
+                    .context(AuthenticationContext::Admin)
                     .principal(
                         PrincipalInfoBuilder::default()
                             .identity(IdentityInfo::Principal(
@@ -136,7 +131,8 @@ where
                 return Ok(Auth(vsc));
             }
 
-            // Authenticate via mapping engine (SPIFFE bindings are deprecated — ADR-0020 Phase 3)
+            // Authenticate via mapping engine (SPIFFE bindings are deprecated — ADR-0020
+            // Phase 3)
             let result = state
                 .provider
                 .get_mapping_provider()
@@ -172,7 +168,8 @@ where
     }
 }
 
-/// Flattens SPIFFE SVID claims into a [`MappingAuthRequest`](crate::mapping::auth::MappingAuthRequest).
+/// Flattens SPIFFE SVID claims into a
+/// [`MappingAuthRequest`](crate::mapping::auth::MappingAuthRequest).
 ///
 /// Produces flattened claims with `spiffe.id` and `spiffe.trust_domain` keys.
 fn flat_spiffe_claims(svid: &SpiffeId) -> MappingAuthRequest {
@@ -202,7 +199,7 @@ mod tests {
     use crate::provider::Provider;
     use axum::http::request::Parts;
     use openstack_keystone_config::{AdminInterface, Config, ConfigManager};
-    
+
     use openstack_keystone_core_types::mapping::MappingProviderError;
     use spiffe::SpiffeId;
     use std::sync::Arc;
@@ -303,7 +300,8 @@ mod tests {
         let mut role_mock = MockRoleProvider::new();
         role_mock.expect_list_roles().returning(|_, params| {
             let name = params
-                .name.clone()
+                .name
+                .clone()
                 .unwrap_or_else(|| "unknown-role".to_string());
             Ok(vec![openstack_keystone_core_types::role::Role {
                 id: format!("{}-id", name),

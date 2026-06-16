@@ -33,7 +33,6 @@ pub mod group;
 pub mod mapping;
 pub mod role;
 pub mod role_assignment;
-pub mod spiffe;
 pub mod token;
 pub mod user;
 
@@ -47,7 +46,6 @@ use crate::api::types::*;
       (path = "k8s_auth", api = k8s_auth::ApiDoc),
       (path = "mappings", api = mapping::ApiDoc),
       (path = "tokens", api = token::ApiDoc),
-      (path = "spiffe", api = spiffe::ApiDoc),
     ),
 )]
 pub struct ApiDoc;
@@ -63,7 +61,6 @@ pub(super) fn openapi_router() -> OpenApiRouter<ServiceState> {
         .nest("/roles", role::openapi_router())
         .nest("/tokens", token::openapi_router())
         .nest("/users", user::openapi_router())
-        .nest("/spiffe", spiffe::openapi_router())
         .routes(routes!(version))
 }
 

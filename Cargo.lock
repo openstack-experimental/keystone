@@ -3779,7 +3779,6 @@ dependencies = [
  "openstack-keystone-resource-driver-sql",
  "openstack-keystone-revoke-driver-sql",
  "openstack-keystone-role-driver-sql",
- "openstack-keystone-spiffe-driver-raft",
  "openstack-keystone-token-driver-fernet",
  "openstack-keystone-token-restriction-driver-sql",
  "openstack-keystone-trust-driver-sql",
@@ -4174,20 +4173,6 @@ dependencies = [
  "openstack-keystone-core-types",
  "sea-orm",
  "serde_json",
- "tokio",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "openstack-keystone-spiffe-driver-raft"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "inventory",
- "openstack-keystone-core",
- "openstack-keystone-core-types",
- "openstack-keystone-distributed-storage",
  "tokio",
  "tracing",
  "uuid",

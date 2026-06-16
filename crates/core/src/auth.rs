@@ -24,7 +24,6 @@ use openstack_keystone_core_types::identity::IdentityProviderError;
 use openstack_keystone_core_types::mapping::authorization::Authorization;
 use openstack_keystone_core_types::resource::ResourceProviderError;
 use openstack_keystone_core_types::role::*;
-use openstack_keystone_core_types::spiffe::*;
 use openstack_keystone_core_types::token::FernetToken;
 
 use crate::assignment::AssignmentApi;
@@ -141,7 +140,7 @@ impl ValidatedSecurityContext {
             AuthenticationContext::Oidc { .. } => {}
             AuthenticationContext::K8s(..) => {}
             AuthenticationContext::Password => {}
-            AuthenticationContext::Spiffe(..) => {}
+            AuthenticationContext::Admin => {}
             AuthenticationContext::Trust { trust, .. } => {
                 // Validate the trust chain
                 state
@@ -410,16 +409,6 @@ async fn resolve_project_roles(
         return resolve_project_token_restriction_roles(state, restriction).await;
     }
 
-    if let Some(mut roles) = resolve_project_spiffe_roles(ctx, project_id) {
-        state
-            .provider
-            .get_role_provider()
-            .expand_implied_roles(state, &mut roles)
-            .await
-            .auth_context("expanding scope roles")?;
-        return Ok(roles);
-    }
-
     resolve_project_default_roles(state, ctx, project_id).await
 }
 
@@ -448,24 +437,6 @@ async fn resolve_project_token_restriction_roles(
         .await
         .auth_context("expanding token restriction roles")?;
     Ok(roles)
-}
-
-// Resolve roles from a SPIFFE binding for a given project scope.
-//
-// Returns `Some(Vec<RoleRef>)` if the binding contains a matching project
-// authorization with role IDs, `None` otherwise.  When `Some` is returned the
-// caller is responsible for expanding implied roles.
-fn resolve_project_spiffe_roles(ctx: &SecurityContext, project_id: &str) -> Option<Vec<RoleRef>> {
-    let binding = match ctx.authentication_context() {
-        AuthenticationContext::Spiffe(binding) => binding,
-        _ => return None,
-    };
-
-    let authz = binding.authorizations.as_ref()?.iter().find(|scope| {
-        matches!(scope, SpiffeAuthorization::Project { project_id: pid, .. } if *pid == project_id)
-    })?;
-
-    authz.role_refs()
 }
 
 // Resolve project-scoped roles using the default assignment-based logic.
@@ -517,27 +488,23 @@ async fn resolve_system_roles(
     ctx: &SecurityContext,
     system_id: &str,
 ) -> Result<Vec<RoleRef>, AuthenticationError> {
-    if let AuthenticationContext::Spiffe(binding) = ctx.authentication_context() {
-        if binding.is_system {
-            let roles = state
-                .provider
-                .get_role_provider()
-                .list_roles(
-                    state,
-                    &RoleListParameters {
-                        name: Some("reader".into()),
-                        ..Default::default()
-                    },
-                )
-                .await
-                .auth_context("searching reader role")?
-                .into_iter()
-                .map(|role| role.into())
-                .collect();
-            return Ok(roles);
-        } else {
-            return Ok(Vec::new());
-        }
+    if matches!(ctx.authentication_context(), AuthenticationContext::Admin) {
+        let roles = state
+            .provider
+            .get_role_provider()
+            .list_roles(
+                state,
+                &RoleListParameters {
+                    name: Some("reader".into()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .auth_context("searching reader role")?
+            .into_iter()
+            .map(|role| role.into())
+            .collect();
+        return Ok(roles);
     }
 
     let user_id = ctx.principal().get_user_id();
@@ -631,15 +598,14 @@ mod tests {
         Assignment, AssignmentProviderError, AssignmentType, RoleAssignmentListParameters,
     };
     use openstack_keystone_core_types::auth::{
-        AuthenticationContext, AuthzInfoBuilder, IdentityInfo, PrincipalIdentityInfo,
-        PrincipalInfo, ScopeInfo, SecurityContextTestingBuilder, TrustProjectInfo,
-        UserIdentityInfo,
+        AuthenticationContext, AuthzInfoBuilder, IdentityInfo, PrincipalInfo, ScopeInfo,
+        SecurityContextTestingBuilder, TrustProjectInfo, UserIdentityInfo,
     };
     use openstack_keystone_core_types::identity::{UserOptions, UserResponse};
     use openstack_keystone_core_types::mapping::authorization::Authorization;
     use openstack_keystone_core_types::mapping::{MappingContext, VirtualUser};
     use openstack_keystone_core_types::resource::Project;
-    use openstack_keystone_core_types::role::{Role, RoleRef, RoleRefBuilder};
+    use openstack_keystone_core_types::role::{RoleRef, RoleRefBuilder};
     use openstack_keystone_core_types::token::TokenRestriction;
     use openstack_keystone_core_types::trust::Trust;
     use std::collections::HashMap;
@@ -779,47 +745,6 @@ mod tests {
         let mut r = RoleRefBuilder::default().id(id).name(name).build().unwrap();
         r.domain_id = domain_id;
         r
-    }
-
-    fn make_spiffe_binding(
-        svid: impl Into<String>,
-        is_system: bool,
-        authorizations: Option<Vec<SpiffeAuthorization>>,
-    ) -> SpiffeBinding {
-        SpiffeBinding {
-            authorizations,
-            domain_id: "d1".to_string(),
-            svid: svid.into(),
-            is_system,
-            user_id: None,
-        }
-    }
-
-    fn make_spiffe_principal(svid: impl Into<String>, issuer: impl Into<String>) -> PrincipalInfo {
-        PrincipalInfo {
-            identity: IdentityInfo::Principal(PrincipalIdentityInfo {
-                id: svid.into(),
-                issuer: issuer.into(),
-                attributes: HashMap::new(),
-                domain: Some(openstack_keystone_core_types::resource::Domain {
-                    id: "d1".to_string(),
-                    description: None,
-                    enabled: true,
-                    name: "default".to_string(),
-                    extra: HashMap::new(),
-                }),
-            }),
-        }
-    }
-
-    fn make_role(id: impl Into<String>, name: impl Into<String>) -> Role {
-        Role {
-            id: id.into(),
-            name: name.into(),
-            description: None,
-            domain_id: None,
-            extra: HashMap::new(),
-        }
     }
 
     fn disabled_domain_scope(did: impl Into<String>) -> ScopeInfo {
@@ -1220,37 +1145,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_project_scope_spiffe_matching_authz() {
-        let pid = "pid";
-        let rid1 = "spiffe_role";
-        let binding = make_spiffe_binding(
-            "spiffe://domain/ns/workload",
-            false,
-            Some(vec![SpiffeAuthorization::Project {
-                project_id: pid.to_string(),
-                role_ids: Some(vec![rid1.to_string()]),
-            }]),
-        );
-        let principal = make_spiffe_principal("spiffe://domain/ns/workload", "spire-agent");
-        let mut role_mock = MockRoleProvider::default();
-        role_mock
-            .expect_expand_implied_roles()
-            .returning(|_state, _roles| Ok(()));
-        let state =
-            get_mocked_state(None, Some(Provider::mocked_builder().mock_role(role_mock))).await;
-        let ctx = SecurityContextTestingBuilder::default()
-            .authentication_context(AuthenticationContext::Spiffe(binding))
-            .principal(principal)
-            .build();
-        let scope = make_project_scope(pid);
-        let roles = calculate_effective_roles(&state, &ctx, &scope)
-            .await
-            .unwrap();
-        assert_eq!(roles.len(), 1);
-        assert_eq!(roles[0].id, rid1);
-    }
-
-    #[tokio::test]
     async fn test_project_scope_token_restriction_expand_role_ids() {
         let rid1 = "rid1";
         let rid2 = "rid2";
@@ -1562,174 +1456,6 @@ mod tests {
         ));
     }
 
-    // --- SPIFFE system: is_system = true, returns reader role ---
-    #[tokio::test]
-    async fn test_system_scope_spiffe_system_true() {
-        let reader_rid = "reader";
-        let binding = make_spiffe_binding(
-            "spiffe://domain/ns/system-workload",
-            true,
-            Some(vec![SpiffeAuthorization::System {
-                system_id: "all".to_string(),
-                role_ids: None,
-            }]),
-        );
-        let principal = make_spiffe_principal("spiffe://domain/ns/system-workload", "spire-agent");
-        let mut role_mock = MockRoleProvider::default();
-        role_mock
-            .expect_list_roles()
-            .returning(move |_state, _params| Ok(vec![make_role(reader_rid, "reader")]));
-        let state =
-            get_mocked_state(None, Some(Provider::mocked_builder().mock_role(role_mock))).await;
-        let ctx = SecurityContextTestingBuilder::default()
-            .authentication_context(AuthenticationContext::Spiffe(binding))
-            .principal(principal)
-            .build();
-        let scope = ScopeInfo::System("all".to_string());
-        let roles = calculate_effective_roles(&state, &ctx, &scope)
-            .await
-            .unwrap();
-        assert_eq!(roles.len(), 1);
-        assert_eq!(roles[0].id, reader_rid);
-    }
-
-    // --- SPIFFE system: is_system = false, returns empty → error ---
-    #[tokio::test]
-    async fn test_system_scope_spiffe_system_false() {
-        let binding = make_spiffe_binding(
-            "spiffe://domain/ns/workload",
-            false,
-            Some(vec![SpiffeAuthorization::System {
-                system_id: "all".to_string(),
-                role_ids: None,
-            }]),
-        );
-        let principal = make_spiffe_principal("spiffe://domain/ns/workload", "spire-agent");
-        let state = get_mocked_state(None, None).await;
-        let ctx = SecurityContextTestingBuilder::default()
-            .authentication_context(AuthenticationContext::Spiffe(binding))
-            .principal(principal)
-            .build();
-        let scope = ScopeInfo::System("all".to_string());
-        let result = calculate_effective_roles(&state, &ctx, &scope).await;
-        assert!(matches!(
-            result,
-            Err(AuthenticationError::ActorHasNoRolesOnTarget)
-        ));
-    }
-
-    // --- SPIFFE project: authorizations_none, falls through to default
-    //     (which with no assignments returns empty → error) ---
-    #[tokio::test]
-    async fn test_project_scope_spiffe_authorizations_none() {
-        let pid = "pid";
-        let binding = make_spiffe_binding("spiffe://domain/ns/workload", false, None);
-        let principal = make_spiffe_principal("spiffe://domain/ns/workload", "spire-agent");
-        let mut assignment_mock = MockAssignmentProvider::default();
-        assignment_mock
-            .expect_list_role_assignments()
-            .withf(|_, q: &RoleAssignmentListParameters| {
-                q.project_id.as_deref() == Some(pid)
-                    && q.effective == Some(true)
-                    && q.include_names == Some(true)
-            })
-            .returning(move |_state, _q| Ok(Vec::<Assignment>::new()));
-        let state = get_mocked_state(
-            None,
-            Some(Provider::mocked_builder().mock_assignment(assignment_mock)),
-        )
-        .await;
-        let ctx = SecurityContextTestingBuilder::default()
-            .authentication_context(AuthenticationContext::Spiffe(binding))
-            .principal(principal)
-            .build();
-        let scope = make_project_scope(pid);
-        let result = calculate_effective_roles(&state, &ctx, &scope).await;
-        assert!(matches!(
-            result,
-            Err(AuthenticationError::ActorHasNoRolesOnTarget)
-        ));
-    }
-
-    // --- SPIFFE project: no matching project_id, falls through to default ---
-    #[tokio::test]
-    async fn test_project_scope_spiffe_no_matching_project() {
-        let target_pid = "pid";
-        let other_pid = "other_pid";
-        let binding = make_spiffe_binding(
-            "spiffe://domain/ns/workload",
-            false,
-            Some(vec![SpiffeAuthorization::Project {
-                project_id: other_pid.to_string(),
-                role_ids: Some(vec!["spiffe_role".to_string()]),
-            }]),
-        );
-        let principal = make_spiffe_principal("spiffe://domain/ns/workload", "spire-agent");
-        let mut assignment_mock = MockAssignmentProvider::default();
-        assignment_mock
-            .expect_list_role_assignments()
-            .withf(|_, q: &RoleAssignmentListParameters| {
-                q.project_id.as_deref() == Some(target_pid)
-                    && q.effective == Some(true)
-                    && q.include_names == Some(true)
-            })
-            .returning(move |_state, _q| Ok(Vec::<Assignment>::new()));
-        let state = get_mocked_state(
-            None,
-            Some(Provider::mocked_builder().mock_assignment(assignment_mock)),
-        )
-        .await;
-        let ctx = SecurityContextTestingBuilder::default()
-            .authentication_context(AuthenticationContext::Spiffe(binding))
-            .principal(principal)
-            .build();
-        let scope = make_project_scope(target_pid);
-        let result = calculate_effective_roles(&state, &ctx, &scope).await;
-        assert!(matches!(
-            result,
-            Err(AuthenticationError::ActorHasNoRolesOnTarget)
-        ));
-    }
-
-    // --- SPIFFE project: role_ids_none, falls through to default ---
-    #[tokio::test]
-    async fn test_project_scope_spiffe_role_ids_none() {
-        let pid = "pid";
-        let binding = make_spiffe_binding(
-            "spiffe://domain/ns/workload",
-            false,
-            Some(vec![SpiffeAuthorization::Project {
-                project_id: pid.to_string(),
-                role_ids: None,
-            }]),
-        );
-        let principal = make_spiffe_principal("spiffe://domain/ns/workload", "spire-agent");
-        let mut assignment_mock = MockAssignmentProvider::default();
-        assignment_mock
-            .expect_list_role_assignments()
-            .withf(|_, q: &RoleAssignmentListParameters| {
-                q.project_id.as_deref() == Some(pid)
-                    && q.effective == Some(true)
-                    && q.include_names == Some(true)
-            })
-            .returning(move |_state, _q| Ok(Vec::<Assignment>::new()));
-        let state = get_mocked_state(
-            None,
-            Some(Provider::mocked_builder().mock_assignment(assignment_mock)),
-        )
-        .await;
-        let ctx = SecurityContextTestingBuilder::default()
-            .authentication_context(AuthenticationContext::Spiffe(binding))
-            .principal(principal)
-            .build();
-        let scope = make_project_scope(pid);
-        let result = calculate_effective_roles(&state, &ctx, &scope).await;
-        assert!(matches!(
-            result,
-            Err(AuthenticationError::ActorHasNoRolesOnTarget)
-        ));
-    }
-
     // --- AppCred: all roles pass filter ---
     #[tokio::test]
     async fn test_project_scope_appcred_all_roles_pass() {
@@ -1901,62 +1627,6 @@ mod tests {
         assert!(roles.iter().any(|r| r.id == implied_rid));
     }
 
-    // --- Project scope: expand_implied_roles adds an implied role for SPIFFE ---
-    #[tokio::test]
-    async fn test_project_scope_spiffe_implied_role_expansion() {
-        let pid = "pid";
-        let base_rid = "spiffe_role";
-        let implied_rid = "implied_role";
-        let binding = make_spiffe_binding(
-            "spiffe://domain/ns/workload",
-            false,
-            Some(vec![SpiffeAuthorization::Project {
-                project_id: pid.to_string(),
-                role_ids: Some(vec![base_rid.to_string()]),
-            }]),
-        );
-        let principal = make_spiffe_principal("spiffe://domain/ns/workload", "spire-agent");
-        let mut role_mock = MockRoleProvider::default();
-        role_mock
-            .expect_expand_implied_roles()
-            .returning(move |_state, roles| {
-                roles.push(role_ref(implied_rid, "implied"));
-                Ok(())
-            });
-        let state =
-            get_mocked_state(None, Some(Provider::mocked_builder().mock_role(role_mock))).await;
-        let ctx = SecurityContextTestingBuilder::default()
-            .authentication_context(AuthenticationContext::Spiffe(binding))
-            .principal(principal)
-            .build();
-        let scope = make_project_scope(pid);
-        let roles = calculate_effective_roles(&state, &ctx, &scope)
-            .await
-            .unwrap();
-        assert_eq!(roles.len(), 2);
-        assert!(roles.iter().any(|r| r.id == base_rid));
-        assert!(roles.iter().any(|r| r.id == implied_rid));
-    }
-
-    // --- SPIFFE non-system with principal identity on system scope, no assignments
-    // ---
-    #[tokio::test]
-    async fn test_system_scope_spiffe_non_system_no_assignments() {
-        let binding = make_spiffe_binding("spiffe://domain/ns/workload", false, None);
-        let principal = make_spiffe_principal("spiffe://domain/ns/workload", "spire-agent");
-        let ctx = SecurityContextTestingBuilder::default()
-            .authentication_context(AuthenticationContext::Spiffe(binding))
-            .principal(principal)
-            .build();
-        let state = get_mocked_state(None, None).await;
-        let scope = ScopeInfo::System("all".to_string());
-        let result = calculate_effective_roles(&state, &ctx, &scope).await;
-        assert!(matches!(
-            result,
-            Err(AuthenticationError::ActorHasNoRolesOnTarget)
-        ));
-    }
-
     // --- Provider error: domain scope list_role_assignments ---
     #[tokio::test]
     async fn test_domain_scope_provider_error() {
@@ -2071,34 +1741,6 @@ mod tests {
         assert!(matches!(result, Err(AuthenticationError::Provider { .. })));
     }
 
-    // --- Provider error: SPIFFE expand_implied_roles ---
-    #[tokio::test]
-    async fn test_project_scope_spiffe_expand_implied_error() {
-        let pid = "pid";
-        let binding = make_spiffe_binding(
-            "spiffe://domain/ns/workload",
-            false,
-            Some(vec![SpiffeAuthorization::Project {
-                project_id: pid.to_string(),
-                role_ids: Some(vec!["spiffe_role".to_string()]),
-            }]),
-        );
-        let principal = make_spiffe_principal("spiffe://domain/ns/workload", "spire-agent");
-        let mut role_mock = MockRoleProvider::default();
-        role_mock
-            .expect_expand_implied_roles()
-            .returning(move |_state, _roles| Err(RoleProviderError::Driver("db down".into())));
-        let state =
-            get_mocked_state(None, Some(Provider::mocked_builder().mock_role(role_mock))).await;
-        let ctx = SecurityContextTestingBuilder::default()
-            .authentication_context(AuthenticationContext::Spiffe(binding))
-            .principal(principal)
-            .build();
-        let scope = make_project_scope(pid);
-        let result = calculate_effective_roles(&state, &ctx, &scope).await;
-        assert!(matches!(result, Err(AuthenticationError::Provider { .. })));
-    }
-
     // --- Provider error: trust expand_implied_roles ---
     #[tokio::test]
     async fn test_trust_scope_expand_implied_error() {
@@ -2163,33 +1805,6 @@ mod tests {
         let state =
             get_mocked_state(None, Some(Provider::mocked_builder().mock_role(role_mock))).await;
         let scope = make_project_scope("pid");
-        let result = calculate_effective_roles(&state, &ctx, &scope).await;
-        assert!(matches!(result, Err(AuthenticationError::Provider { .. })));
-    }
-
-    // --- Provider error: SPIFFE system list_roles ---
-    #[tokio::test]
-    async fn test_system_scope_spiffe_list_roles_error() {
-        let binding = make_spiffe_binding(
-            "spiffe://domain/ns/system-workload",
-            true,
-            Some(vec![SpiffeAuthorization::System {
-                system_id: "all".to_string(),
-                role_ids: None,
-            }]),
-        );
-        let principal = make_spiffe_principal("spiffe://domain/ns/system-workload", "spire-agent");
-        let mut role_mock = MockRoleProvider::default();
-        role_mock
-            .expect_list_roles()
-            .returning(move |_state, _params| Err(RoleProviderError::Driver("db".into())));
-        let state =
-            get_mocked_state(None, Some(Provider::mocked_builder().mock_role(role_mock))).await;
-        let ctx = SecurityContextTestingBuilder::default()
-            .authentication_context(AuthenticationContext::Spiffe(binding))
-            .principal(principal)
-            .build();
-        let scope = ScopeInfo::System("all".to_string());
         let result = calculate_effective_roles(&state, &ctx, &scope).await;
         assert!(matches!(result, Err(AuthenticationError::Provider { .. })));
     }

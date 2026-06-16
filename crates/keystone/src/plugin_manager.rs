@@ -47,8 +47,6 @@ use openstack_keystone_core::revoke::RevokeProviderError;
 use openstack_keystone_core::revoke::backend::RevokeBackend;
 use openstack_keystone_core::role::RoleProviderError;
 use openstack_keystone_core::role::backend::RoleBackend;
-use openstack_keystone_core::spiffe::SpiffeProviderError;
-use openstack_keystone_core::spiffe::backend::SpiffeBackend;
 use openstack_keystone_core::token::TokenProviderError;
 use openstack_keystone_core::token::backend::{TokenBackend, TokenRestrictionBackend};
 use openstack_keystone_core::trust::TrustProviderError;
@@ -82,8 +80,6 @@ pub struct PluginManager {
     revoke_backends: HashMap<String, Arc<dyn RevokeBackend>>,
     /// Role backend plugins.
     role_backends: HashMap<String, Arc<dyn RoleBackend>>,
-    /// Spiffe backend plugins.
-    spiffe_backends: HashMap<String, Arc<dyn SpiffeBackend>>,
     /// Token backend plugins.
     token_backends: HashMap<String, Arc<dyn TokenBackend>>,
     /// Token restriction backend plugins.
@@ -309,26 +305,6 @@ impl PluginManagerApi for PluginManager {
             ))
     }
 
-    /// Get registered spiffe backend.
-    ///
-    /// # Parameters
-    /// * `name` - The name of the backend to retrieve.
-    ///
-    /// # Returns
-    /// A `Result` containing a reference to the `SpiffeBackend` if found, or a
-    /// `SpiffeProviderError`.
-    #[allow(clippy::borrowed_box)]
-    fn get_spiffe_backend<S: AsRef<str>>(
-        &self,
-        name: S,
-    ) -> Result<&Arc<dyn SpiffeBackend>, SpiffeProviderError> {
-        self.spiffe_backends
-            .get(name.as_ref())
-            .ok_or(SpiffeProviderError::UnsupportedDriver(
-                name.as_ref().to_string(),
-            ))
-    }
-
     /// Get registered token backend.
     ///
     /// # Parameters
@@ -532,16 +508,6 @@ impl PluginManagerApi for PluginManager {
         self.role_backends.insert(name.as_ref().to_string(), plugin);
     }
 
-    /// Register spiffe backend.
-    ///
-    /// # Parameters
-    /// * `name` - The name of the backend to register.
-    /// * `plugin` - The backend implementation to register.
-    fn register_spiffe_backend<S: AsRef<str>>(&mut self, name: S, plugin: Arc<dyn SpiffeBackend>) {
-        self.spiffe_backends
-            .insert(name.as_ref().to_string(), plugin);
-    }
-
     /// Register token backend.
     ///
     /// # Parameters
@@ -650,7 +616,6 @@ impl PluginManager {
             resource_backends: HashMap::new(),
             revoke_backends: HashMap::new(),
             role_backends: HashMap::new(),
-            spiffe_backends: HashMap::new(),
             token_backends: HashMap::new(),
             token_restriction_backends: HashMap::new(),
             trust_backends: HashMap::new(),
@@ -665,10 +630,6 @@ impl PluginManager {
         slf.register_k8s_auth_backend(
             "raft",
             Arc::new(openstack_keystone_k8s_auth_driver_raft::RaftBackend::default()),
-        );
-        slf.register_spiffe_backend(
-            "raft",
-            Arc::new(openstack_keystone_spiffe_driver_raft::RaftBackend::default()),
         );
         slf.register_mapping_backend(
             "raft",

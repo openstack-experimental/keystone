@@ -121,7 +121,8 @@ async fn test_spiffe_no_fallback_when_no_matching_rule() -> Result<()> {
     let (state, _tmp) = get_state().await?;
     let domain = create_domain!(state)?;
 
-    // No ruleset is created; authentication MUST fail without fallback to SpiffeBinding
+    // No ruleset is created; authentication MUST fail without fallback to
+    // SpiffeBinding
     let mut claims = HashMap::new();
     claims.insert(
         "spiffe.id".to_string(),

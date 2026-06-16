@@ -32,7 +32,6 @@ use openstack_keystone_core_types::mapping::MappingProviderError;
 use openstack_keystone_core_types::resource::ResourceProviderError;
 use openstack_keystone_core_types::revoke::RevokeProviderError;
 use openstack_keystone_core_types::role::RoleProviderError;
-use openstack_keystone_core_types::spiffe::SpiffeProviderError;
 use openstack_keystone_core_types::token::TokenProviderError;
 
 use crate::error::KeystoneApiError;
@@ -229,19 +228,6 @@ impl From<RevokeProviderError> for KeystoneApiError {
     fn from(value: RevokeProviderError) -> Self {
         match value {
             ref err @ RevokeProviderError::Conflict(..) => Self::BadRequest(err.to_string()),
-            other => Self::InternalError(other.to_string()),
-        }
-    }
-}
-
-impl From<SpiffeProviderError> for KeystoneApiError {
-    fn from(value: SpiffeProviderError) -> Self {
-        match value {
-            ref err @ SpiffeProviderError::Conflict(..) => Self::BadRequest(err.to_string()),
-            SpiffeProviderError::BindingNotFound(svid) => Self::NotFound {
-                resource: "spiffe binding".into(),
-                identifier: svid,
-            },
             other => Self::InternalError(other.to_string()),
         }
     }

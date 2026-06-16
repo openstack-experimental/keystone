@@ -45,8 +45,6 @@ use crate::revoke::RevokeProviderError;
 use crate::revoke::backend::RevokeBackend;
 use crate::role::RoleProviderError;
 use crate::role::backend::RoleBackend;
-use crate::spiffe::SpiffeProviderError;
-use crate::spiffe::backend::SpiffeBackend;
 use crate::token::TokenProviderError;
 use crate::token::backend::TokenBackend;
 use crate::token::backend::TokenRestrictionBackend;
@@ -198,19 +196,6 @@ pub trait PluginManagerApi {
         name: S,
     ) -> Result<&Arc<dyn RoleBackend>, RoleProviderError>;
 
-    /// Get registered spiffe backend.
-    ///
-    /// # Parameters
-    /// - `name`: The name of the backend to retrieve.
-    ///
-    /// # Returns
-    /// - `Ok(&Arc<dyn SpiffeBackend>)` if found, otherwise
-    ///   `Err(SpiffeProviderError)`.
-    fn get_spiffe_backend<S: AsRef<str>>(
-        &self,
-        name: S,
-    ) -> Result<&Arc<dyn SpiffeBackend>, SpiffeProviderError>;
-
     /// Get registered token backend.
     ///
     /// # Parameters
@@ -354,13 +339,6 @@ pub trait PluginManagerApi {
     /// - `name`: The name to register the backend under.
     /// - `plugin`: The backend implementation.
     fn register_role_backend<S: AsRef<str>>(&mut self, name: S, plugin: Arc<dyn RoleBackend>);
-
-    /// Register spiffe backend.
-    ///
-    /// # Parameters
-    /// - `name`: The name to register the backend under.
-    /// - `plugin`: The backend implementation.
-    fn register_spiffe_backend<S: AsRef<str>>(&mut self, name: S, plugin: Arc<dyn SpiffeBackend>);
 
     /// Register token backend.
     ///
