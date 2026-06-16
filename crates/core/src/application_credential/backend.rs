@@ -24,54 +24,6 @@ use crate::keystone::ServiceState;
 #[cfg_attr(test, mockall::automock)]
 #[async_trait]
 pub trait ApplicationCredentialBackend: Send + Sync {
-    /// Create a new application credential.
-    ///
-    /// # Parameters
-    /// - `state`: The current service state.
-    /// - `rec`: The application credential creation request.
-    ///
-    /// # Returns
-    /// - `Result<ApplicationCredentialCreateResponse,
-    ///   ApplicationCredentialProviderError>` - The creation response or an
-    ///   error.
-    async fn create_application_credential(
-        &self,
-        state: &ServiceState,
-        rec: ApplicationCredentialCreate,
-    ) -> Result<ApplicationCredentialCreateResponse, ApplicationCredentialProviderError>;
-
-    /// Get a single application credential by ID.
-    ///
-    /// # Parameters
-    /// - `state`: The current service state.
-    /// - `id`: The ID of the application credential.
-    ///
-    /// # Returns
-    /// - `Result<Option<ApplicationCredential>,
-    ///   ApplicationCredentialProviderError>` - The credential if found, or an
-    ///   error.
-    async fn get_application_credential<'a>(
-        &self,
-        state: &ServiceState,
-        id: &'a str,
-    ) -> Result<Option<ApplicationCredential>, ApplicationCredentialProviderError>;
-
-    /// List application credentials.
-    ///
-    /// # Parameters
-    /// - `state`: The current service state.
-    /// - `params`: Parameters for filtering the list of credentials.
-    ///
-    /// # Returns
-    /// - `Result<Vec<ApplicationCredential>,
-    ///   ApplicationCredentialProviderError>` - A list of application
-    ///   credentials or an error.
-    async fn list_application_credentials(
-        &self,
-        state: &ServiceState,
-        params: &ApplicationCredentialListParameters,
-    ) -> Result<Vec<ApplicationCredential>, ApplicationCredentialProviderError>;
-
     /// Create a standalone access rule owned by a user.
     ///
     /// # Parameters
@@ -88,6 +40,39 @@ pub trait ApplicationCredentialBackend: Send + Sync {
         user_id: &'a str,
         rule: AccessRuleCreate,
     ) -> Result<AccessRule, ApplicationCredentialProviderError>;
+
+    /// Create a new application credential.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `rec`: The application credential creation request.
+    ///
+    /// # Returns
+    /// - `Result<ApplicationCredentialCreateResponse,
+    ///   ApplicationCredentialProviderError>` - The creation response or an
+    ///   error.
+    async fn create_application_credential(
+        &self,
+        state: &ServiceState,
+        rec: ApplicationCredentialCreate,
+    ) -> Result<ApplicationCredentialCreateResponse, ApplicationCredentialProviderError>;
+
+    /// Delete a user's access rule by its ID.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `user_id`: The ID of the user owning the access rule.
+    /// - `id`: The ID of the access rule.
+    ///
+    /// # Returns
+    /// - `Result<(), ApplicationCredentialProviderError>` - Unit on success, or
+    ///   an error.
+    async fn delete_access_rule<'a>(
+        &self,
+        state: &ServiceState,
+        user_id: &'a str,
+        id: &'a str,
+    ) -> Result<(), ApplicationCredentialProviderError>;
 
     /// Get a user's access rule by its ID.
     ///
@@ -106,6 +91,22 @@ pub trait ApplicationCredentialBackend: Send + Sync {
         id: &'a str,
     ) -> Result<Option<AccessRule>, ApplicationCredentialProviderError>;
 
+    /// Get a single application credential by ID.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `id`: The ID of the application credential.
+    ///
+    /// # Returns
+    /// - `Result<Option<ApplicationCredential>,
+    ///   ApplicationCredentialProviderError>` - The credential if found, or an
+    ///   error.
+    async fn get_application_credential<'a>(
+        &self,
+        state: &ServiceState,
+        id: &'a str,
+    ) -> Result<Option<ApplicationCredential>, ApplicationCredentialProviderError>;
+
     /// List all access rules owned by a user.
     ///
     /// # Parameters
@@ -121,20 +122,19 @@ pub trait ApplicationCredentialBackend: Send + Sync {
         user_id: &'a str,
     ) -> Result<Vec<AccessRule>, ApplicationCredentialProviderError>;
 
-    /// Delete a user's access rule by its ID.
+    /// List application credentials.
     ///
     /// # Parameters
     /// - `state`: The current service state.
-    /// - `user_id`: The ID of the user owning the access rule.
-    /// - `id`: The ID of the access rule.
+    /// - `params`: Parameters for filtering the list of credentials.
     ///
     /// # Returns
-    /// - `Result<(), ApplicationCredentialProviderError>` - Unit on success, or
-    ///   an error.
-    async fn delete_access_rule<'a>(
+    /// - `Result<Vec<ApplicationCredential>,
+    ///   ApplicationCredentialProviderError>` - A list of application
+    ///   credentials or an error.
+    async fn list_application_credentials(
         &self,
         state: &ServiceState,
-        user_id: &'a str,
-        id: &'a str,
-    ) -> Result<(), ApplicationCredentialProviderError>;
+        params: &ApplicationCredentialListParameters,
+    ) -> Result<Vec<ApplicationCredential>, ApplicationCredentialProviderError>;
 }

@@ -164,6 +164,30 @@ impl ApplicationCredentialProvider {
 
 #[async_trait]
 impl ApplicationCredentialApi for ApplicationCredentialProvider {
+    /// Create a standalone access rule owned by a user.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `user_id`: The ID of the user owning the access rule.
+    /// - `rule`: The access rule to create.
+    ///
+    /// # Returns
+    /// - `Result<AccessRule, ApplicationCredentialProviderError>` - The created
+    ///   access rule or an error.
+    #[tracing::instrument(level = "info", skip(self, state))]
+    async fn create_access_rule<'a>(
+        &self,
+        state: &ServiceState,
+        user_id: &'a str,
+        rule: AccessRuleCreate,
+    ) -> Result<AccessRule, ApplicationCredentialProviderError> {
+        match self {
+            Self::Service(provider) => provider.create_access_rule(state, user_id, rule).await,
+            #[cfg(any(test, feature = "mock"))]
+            Self::Mock(provider) => provider.create_access_rule(state, user_id, rule).await,
+        }
+    }
+
     /// Create a new application credential.
     ///
     /// # Parameters
@@ -187,73 +211,27 @@ impl ApplicationCredentialApi for ApplicationCredentialProvider {
         }
     }
 
-    /// Get a single application credential by ID.
-    ///
-    /// # Parameters
-    /// - `state`: The current service state.
-    /// - `id`: The ID of the application credential.
-    ///
-    /// # Returns
-    /// - `Result<Option<ApplicationCredential>,
-    ///   ApplicationCredentialProviderError>` - A `Result` containing an
-    ///   `Option` with the application credential if found, or an `Error`.
-    #[tracing::instrument(level = "info", skip(self, state))]
-    async fn get_application_credential<'a>(
-        &self,
-        state: &ServiceState,
-        id: &'a str,
-    ) -> Result<Option<ApplicationCredential>, ApplicationCredentialProviderError> {
-        match self {
-            Self::Service(provider) => provider.get_application_credential(state, id).await,
-            #[cfg(any(test, feature = "mock"))]
-            Self::Mock(provider) => provider.get_application_credential(state, id).await,
-        }
-    }
-
-    /// List application credentials.
-    ///
-    /// # Parameters
-    /// - `state`: The current service state.
-    /// - `params`: Parameters for filtering the list of credentials.
-    ///
-    /// # Returns
-    /// - `Result<Vec<ApplicationCredential>,
-    ///   ApplicationCredentialProviderError>` - A list of application
-    ///   credentials or an error.
-    #[tracing::instrument(level = "info", skip(self, state))]
-    async fn list_application_credentials(
-        &self,
-        state: &ServiceState,
-        params: &ApplicationCredentialListParameters,
-    ) -> Result<Vec<ApplicationCredential>, ApplicationCredentialProviderError> {
-        match self {
-            Self::Service(provider) => provider.list_application_credentials(state, params).await,
-            #[cfg(any(test, feature = "mock"))]
-            Self::Mock(provider) => provider.list_application_credentials(state, params).await,
-        }
-    }
-
-    /// Create a standalone access rule owned by a user.
+    /// Delete a user's access rule by its ID.
     ///
     /// # Parameters
     /// - `state`: The current service state.
     /// - `user_id`: The ID of the user owning the access rule.
-    /// - `rule`: The access rule to create.
+    /// - `id`: The ID of the access rule.
     ///
     /// # Returns
-    /// - `Result<AccessRule, ApplicationCredentialProviderError>` - The created
-    ///   access rule or an error.
+    /// - `Result<(), ApplicationCredentialProviderError>` - Unit on success, or
+    ///   an error.
     #[tracing::instrument(level = "info", skip(self, state))]
-    async fn create_access_rule<'a>(
+    async fn delete_access_rule<'a>(
         &self,
         state: &ServiceState,
         user_id: &'a str,
-        rule: AccessRuleCreate,
-    ) -> Result<AccessRule, ApplicationCredentialProviderError> {
+        id: &'a str,
+    ) -> Result<(), ApplicationCredentialProviderError> {
         match self {
-            Self::Service(provider) => provider.create_access_rule(state, user_id, rule).await,
+            Self::Service(provider) => provider.delete_access_rule(state, user_id, id).await,
             #[cfg(any(test, feature = "mock"))]
-            Self::Mock(provider) => provider.create_access_rule(state, user_id, rule).await,
+            Self::Mock(provider) => provider.delete_access_rule(state, user_id, id).await,
         }
     }
 
@@ -281,6 +259,29 @@ impl ApplicationCredentialApi for ApplicationCredentialProvider {
         }
     }
 
+    /// Get a single application credential by ID.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `id`: The ID of the application credential.
+    ///
+    /// # Returns
+    /// - `Result<Option<ApplicationCredential>,
+    ///   ApplicationCredentialProviderError>` - A `Result` containing an
+    ///   `Option` with the application credential if found, or an `Error`.
+    #[tracing::instrument(level = "info", skip(self, state))]
+    async fn get_application_credential<'a>(
+        &self,
+        state: &ServiceState,
+        id: &'a str,
+    ) -> Result<Option<ApplicationCredential>, ApplicationCredentialProviderError> {
+        match self {
+            Self::Service(provider) => provider.get_application_credential(state, id).await,
+            #[cfg(any(test, feature = "mock"))]
+            Self::Mock(provider) => provider.get_application_credential(state, id).await,
+        }
+    }
+
     /// List all access rules owned by a user.
     ///
     /// # Parameters
@@ -303,27 +304,26 @@ impl ApplicationCredentialApi for ApplicationCredentialProvider {
         }
     }
 
-    /// Delete a user's access rule by its ID.
+    /// List application credentials.
     ///
     /// # Parameters
     /// - `state`: The current service state.
-    /// - `user_id`: The ID of the user owning the access rule.
-    /// - `id`: The ID of the access rule.
+    /// - `params`: Parameters for filtering the list of credentials.
     ///
     /// # Returns
-    /// - `Result<(), ApplicationCredentialProviderError>` - Unit on success, or
-    ///   an error.
+    /// - `Result<Vec<ApplicationCredential>,
+    ///   ApplicationCredentialProviderError>` - A list of application
+    ///   credentials or an error.
     #[tracing::instrument(level = "info", skip(self, state))]
-    async fn delete_access_rule<'a>(
+    async fn list_application_credentials(
         &self,
         state: &ServiceState,
-        user_id: &'a str,
-        id: &'a str,
-    ) -> Result<(), ApplicationCredentialProviderError> {
+        params: &ApplicationCredentialListParameters,
+    ) -> Result<Vec<ApplicationCredential>, ApplicationCredentialProviderError> {
         match self {
-            Self::Service(provider) => provider.delete_access_rule(state, user_id, id).await,
+            Self::Service(provider) => provider.list_application_credentials(state, params).await,
             #[cfg(any(test, feature = "mock"))]
-            Self::Mock(provider) => provider.delete_access_rule(state, user_id, id).await,
+            Self::Mock(provider) => provider.list_application_credentials(state, params).await,
         }
     }
 }
