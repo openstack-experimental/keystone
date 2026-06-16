@@ -355,8 +355,9 @@ impl CatalogApi for CatalogService {
         &self,
         state: &ServiceState,
         id: &'a str,
-        mut endpoint: EndpointUpdate,
+        endpoint: EndpointUpdate,
     ) -> Result<Endpoint, CatalogProviderError> {
+        let mut endpoint = endpoint;
         endpoint.validate()?;
         // Merge the supplied `extra` onto the stored one here, so the driver
         // only has to persist the final value.
@@ -395,8 +396,9 @@ impl CatalogApi for CatalogService {
         &self,
         state: &ServiceState,
         id: &'a str,
-        mut region: RegionUpdate,
+        region: RegionUpdate,
     ) -> Result<Region, CatalogProviderError> {
+        let mut region = region;
         region.validate()?;
         // Merge the supplied `extra` onto the stored one here, so the driver
         // only has to persist the final value.
@@ -433,8 +435,9 @@ impl CatalogApi for CatalogService {
         &self,
         state: &ServiceState,
         id: &'a str,
-        mut service: ServiceUpdate,
+        service: ServiceUpdate,
     ) -> Result<Service, CatalogProviderError> {
+        let mut service = service;
         service.validate()?;
         // Merge the supplied `extra` onto the stored one here, so the driver
         // only has to persist the final value.

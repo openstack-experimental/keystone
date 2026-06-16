@@ -594,8 +594,9 @@ impl IdentityApi for IdentityService {
         &self,
         state: &ServiceState,
         user_id: &'a str,
-        mut user: UserUpdate,
+        user: UserUpdate,
     ) -> Result<UserResponse, IdentityProviderError> {
+        let mut user = user;
         user.validate()?;
         // Validate password against configured regex pattern.
         if let Some(ref password) = user.password {
