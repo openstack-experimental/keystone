@@ -70,18 +70,11 @@ impl From<core::IdentitySource> for api::IdentitySource {
 impl From<api::ClaimCondition> for core::ClaimCondition {
     fn from(value: api::ClaimCondition) -> Self {
         match value {
-            api::ClaimCondition::Equals { value } => Self::Equals {
-                claim: String::new(),
-                value,
-            },
-            api::ClaimCondition::AnyOf { values } => Self::AnyOf {
-                claim: String::new(),
-                values,
-            },
-            api::ClaimCondition::MatchesRegex { regex } => Self::MatchesRegex {
-                claim: String::new(),
-                regex,
-            },
+            api::ClaimCondition::Equals { claim, value } => Self::Equals { claim, value },
+            api::ClaimCondition::AnyOf { claim, values } => Self::AnyOf { claim, values },
+            api::ClaimCondition::MatchesRegex { claim, regex } => {
+                Self::MatchesRegex { claim, regex }
+            }
         }
     }
 }
@@ -89,9 +82,11 @@ impl From<api::ClaimCondition> for core::ClaimCondition {
 impl From<core::ClaimCondition> for api::ClaimCondition {
     fn from(value: core::ClaimCondition) -> Self {
         match value {
-            core::ClaimCondition::Equals { value, .. } => Self::Equals { value },
-            core::ClaimCondition::AnyOf { values, .. } => Self::AnyOf { values },
-            core::ClaimCondition::MatchesRegex { regex, .. } => Self::MatchesRegex { regex },
+            core::ClaimCondition::Equals { claim, value, .. } => Self::Equals { claim, value },
+            core::ClaimCondition::AnyOf { claim, values, .. } => Self::AnyOf { claim, values },
+            core::ClaimCondition::MatchesRegex { claim, regex, .. } => {
+                Self::MatchesRegex { claim, regex }
+            }
         }
     }
 }

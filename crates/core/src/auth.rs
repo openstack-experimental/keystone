@@ -206,11 +206,21 @@ impl ValidatedSecurityContext {
                     .ok_or(AuthenticationError::ActorHasNoRolesOnTarget)
                     .auth_context("virtual user not found")?;
 
+                let resolved_scope = if vu.is_system && matches!(scope_clone, ScopeInfo::Unscoped) {
+                    // Override Unscoped -> System("all") for system principals.
+                    // The auth handler passes Unscoped for mapping engine principals;
+                    // this determines the correct scope from the shadow record.
+                    ctx.set_authorization_scope(ScopeInfo::System("all".into()))?;
+                    ScopeInfo::System("all".into())
+                } else {
+                    scope_clone.clone()
+                };
+
                 if vu.authorizations.is_empty() {
                     // No authorizations - fall through with no scope
                 } else {
-                    // Find authorization matching the requested scope (by type + specific ID)
-                    let roles = match &scope_clone {
+                    // Find authorization matching the resolved scope (by type + specific ID)
+                    let roles = match &resolved_scope {
                         ScopeInfo::Domain(domain) => vu.authorizations.iter().find_map(|a| {
                             if let Authorization::Domain { domain_id, roles } = a
                                 && *domain_id == domain.id
@@ -255,7 +265,7 @@ impl ValidatedSecurityContext {
                     if let Some(roles) = roles {
                         let authz =
                             openstack_keystone_core_types::auth::AuthzInfoBuilder::default()
-                                .scope(scope_clone)
+                                .scope(resolved_scope)
                                 .roles(roles)
                                 .build()
                                 .map_err(

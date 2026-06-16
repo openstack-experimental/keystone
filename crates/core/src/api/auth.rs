@@ -12,6 +12,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //! # API authentication handling
+use std::collections::HashMap;
 use std::ops::Deref;
 use std::sync::Arc;
 
@@ -23,12 +24,14 @@ use spiffe::SpiffeId;
 use tracing::{debug, error};
 
 use openstack_keystone_config::Interface;
+use openstack_keystone_core_types::mapping::auth::MappingAuthRequest;
+use openstack_keystone_core_types::mapping::resolution::IdentitySource;
 use openstack_keystone_core_types::{auth::*, spiffe::SpiffeBindingBuilder};
 
 use crate::api::KeystoneApiError;
 use crate::auth::ValidatedSecurityContext;
 use crate::keystone::ServiceState;
-use crate::spiffe::SpiffeApi;
+use crate::mapping::MappingApi;
 use crate::token::TokenApi;
 
 #[derive(Debug, Clone)]
@@ -36,6 +39,7 @@ pub struct Auth(pub ValidatedSecurityContext);
 
 impl Deref for Auth {
     type Target = ValidatedSecurityContext;
+
     fn deref(&self) -> &Self::Target {
         &self.0
     }
@@ -55,10 +59,10 @@ where
     /// the following information:
     ///
     /// * `mTLS` - SPIFFE issued x509 certificate that is passed as an extension
-    ///   by the mtls
-    /// connection handler. For the SVID a corresponding binding is looked up.
-    /// When present the `ValidatedSecurityContext` is attempted to be
-    /// instantiated as `ScopeInfo::Unscoped` scope.
+    ///   by the mtls connection handler. The SVID is flattened into claims and
+    ///   routed through the mapping engine for authentication. When matched,
+    ///   the `ValidatedSecurityContext` is instantiated as `ScopeInfo::Unscoped`
+    ///   scope. System principals (`is_system`) are overridden to `ScopeInfo::System`.
     /// * `X-Auth-Token` - HTTP header is used as encoded `FernetToken` which is
     ///   decoded and used
     /// to instantiate the `ValidatedSecurityContext`. The `FernetToken` always
@@ -131,47 +135,24 @@ where
                 .await?;
                 return Ok(Auth(vsc));
             }
-            if let Some(binding) = state
+
+            // Authenticate via mapping engine (SPIFFE bindings are deprecated — ADR-0020 Phase 3)
+            let result = state
                 .provider
-                .get_spiffe_provider()
-                .get_binding(&state, &svid.to_string())
-                .await?
-            {
-                let auth_result: AuthenticationResult = AuthenticationResultBuilder::default()
-                    .context(AuthenticationContext::Spiffe(binding.clone()))
-                    .principal(
-                        PrincipalInfoBuilder::default()
-                            .identity(IdentityInfo::Principal(
-                                PrincipalIdentityInfoBuilder::default()
-                                    .id(binding.svid.clone())
-                                    .issuer(svid.trust_domain_name())
-                                    .build()?,
-                            ))
-                            .build()?,
-                    )
-                    .build()?;
-                let ctx = SecurityContext::try_from(auth_result)?;
-                let vsc = ValidatedSecurityContext::new_for_scope(
-                    ctx,
-                    if binding.is_system {
-                        // For the "system" binding explicitly scope as system
-                        ScopeInfo::System("all".into())
-                    } else {
-                        ScopeInfo::Unscoped
-                    },
-                    &state,
-                )
+                .get_mapping_provider()
+                .authenticate_by_mapping(&state, &flat_spiffe_claims(svid))
                 .await?;
-                return Ok(Auth(vsc));
-            } else {
-                tracing::debug!("no binding for the svid present: {}", svid);
-            }
+            let ctx = SecurityContext::try_from(result)?;
+            let vsc =
+                ValidatedSecurityContext::new_for_scope(ctx, ScopeInfo::Unscoped, &state).await?;
+            return Ok(Auth(vsc));
         }
+
         // Now headers can be checked
         if let Some(auth_header) = parts
             .headers
             .get("X-Auth-Token")
-            .and_then(|header| header.to_str().ok())
+            .and_then(|h| h.to_str().ok())
         {
             tracing::debug!("authenticating request with the x-auth-token");
             let vsc = state
@@ -188,5 +169,172 @@ where
 
         debug!("No supported information has been provided.");
         Err(KeystoneApiError::UnauthorizedNoContext)
+    }
+}
+
+/// Flattens SPIFFE SVID claims into a [`MappingAuthRequest`](crate::mapping::auth::MappingAuthRequest).
+///
+/// Produces flattened claims with `spiffe.id` and `spiffe.trust_domain` keys.
+fn flat_spiffe_claims(svid: &SpiffeId) -> MappingAuthRequest {
+    let mut claims = HashMap::new();
+    claims.insert("spiffe.id".to_string(), vec![svid.to_string()]);
+    claims.insert(
+        "spiffe.trust_domain".to_string(),
+        vec![svid.trust_domain_name().to_string()],
+    );
+
+    MappingAuthRequest {
+        domain_id: None,
+        source: IdentitySource::Spiffe {
+            trust_domain: svid.trust_domain_name().to_string(),
+        },
+        unique_workload_id: svid.to_string(),
+        claims,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::keystone::Service;
+    use crate::mapping::MockMappingProvider;
+    use crate::policy::MockPolicy;
+    use crate::provider::Provider;
+    use axum::http::request::Parts;
+    use openstack_keystone_config::{AdminInterface, Config, ConfigManager};
+    
+    use openstack_keystone_core_types::mapping::MappingProviderError;
+    use spiffe::SpiffeId;
+    use std::sync::Arc;
+
+    async fn create_test_state(mapping_provider: MockMappingProvider) -> ServiceState {
+        let config = Config::default();
+        let config_manager = ConfigManager::not_watched(config);
+        let policy_enforcer = Arc::new(MockPolicy::default());
+        let db = sea_orm::Database::connect("sqlite::memory:").await.unwrap();
+        let provider = Provider::mocked_builder()
+            .mock_mapping(mapping_provider)
+            .build()
+            .unwrap();
+        let service = Service {
+            config_manager,
+            db,
+            policy_enforcer,
+            provider,
+            event_dispatcher: crate::events::EventDispatcher::production(),
+            storage: None,
+            shutdown: false,
+        };
+        Arc::new(service)
+    }
+
+    fn make_parts() -> Parts {
+        let (parts, _) = axum::http::Request::new(()).into_parts();
+        parts
+    }
+
+    #[tokio::test]
+    async fn test_spiffe_auth_success() {
+        let mut mapping_mock = MockMappingProvider::new();
+        mapping_mock
+            .expect_authenticate_by_mapping()
+            .once()
+            .returning(|_, _| {
+                Ok(AuthenticationResultBuilder::default()
+                    .context(AuthenticationContext::Password)
+                    .principal(
+                        PrincipalInfoBuilder::default()
+                            .identity(IdentityInfo::Principal(
+                                PrincipalIdentityInfoBuilder::default()
+                                    .id("test-user")
+                                    .issuer("test.domain")
+                                    .build()
+                                    .unwrap(),
+                            ))
+                            .build()
+                            .unwrap(),
+                    )
+                    .build()
+                    .unwrap())
+            });
+
+        let state = create_test_state(mapping_mock).await;
+        let mut parts = make_parts();
+        parts
+            .extensions
+            .insert(SpiffeId::new("spiffe://test.domain/test-workload").unwrap());
+
+        let result = Auth::from_request_parts(&mut parts, &state).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_spiffe_auth_failure_no_fallback() {
+        let mut mapping_mock = MockMappingProvider::new();
+        mapping_mock
+            .expect_authenticate_by_mapping()
+            .once()
+            .returning(|_, _| Err(MappingProviderError::NoMatchingRule));
+
+        let state = create_test_state(mapping_mock).await;
+        let mut parts = make_parts();
+        parts
+            .extensions
+            .insert(SpiffeId::new("spiffe://test.domain/test-workload").unwrap());
+
+        let result = Auth::from_request_parts(&mut parts, &state).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_spiffe_admin_shortcut() {
+        use crate::role::MockRoleProvider;
+
+        let mapping_mock = MockMappingProvider::new();
+        let config = Config {
+            interface_admin: Some(AdminInterface {
+                admin_svid: Some("spiffe://admin".to_string()),
+                listener: openstack_keystone_config::UnixSocketListener::default(),
+            }),
+            ..Default::default()
+        };
+        let config_manager = ConfigManager::not_watched(config);
+
+        let mut role_mock = MockRoleProvider::new();
+        role_mock.expect_list_roles().returning(|_, params| {
+            let name = params
+                .name.clone()
+                .unwrap_or_else(|| "unknown-role".to_string());
+            Ok(vec![openstack_keystone_core_types::role::Role {
+                id: format!("{}-id", name),
+                name,
+                description: None,
+                domain_id: None,
+                extra: Default::default(),
+            }])
+        });
+
+        let state = Arc::new(Service {
+            config_manager,
+            db: sea_orm::Database::connect("sqlite::memory:").await.unwrap(),
+            policy_enforcer: Arc::new(MockPolicy::default()),
+            provider: Provider::mocked_builder()
+                .mock_mapping(mapping_mock)
+                .mock_role(role_mock)
+                .build()
+                .unwrap(),
+            event_dispatcher: crate::events::EventDispatcher::production(),
+            storage: None,
+            shutdown: false,
+        });
+
+        let mut parts = make_parts();
+        parts
+            .extensions
+            .insert(SpiffeId::new("spiffe://admin").unwrap());
+        parts.extensions.insert(Interface::Admin);
+
+        let result = Auth::from_request_parts(&mut parts, &state).await;
+        assert!(result.is_ok());
     }
 }

@@ -14,4 +14,5 @@
 
 mod authenticate;
 mod ruleset;
+mod spiffe;
 mod vuser;

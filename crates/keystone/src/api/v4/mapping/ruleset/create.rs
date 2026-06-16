@@ -110,6 +110,7 @@ mod tests {
                 r#match: openstack_keystone_api_types::v4::mapping::MatchCriteria::AllOf(vec![
                     openstack_keystone_api_types::v4::mapping::MatchCondition::Condition(
                         openstack_keystone_api_types::v4::mapping::ClaimCondition::Equals {
+                            claim: "test_claim".into(),
                             value: serde_json::json!("test_value"),
                         },
                     ),

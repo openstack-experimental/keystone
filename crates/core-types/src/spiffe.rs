@@ -12,8 +12,11 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //! # SPIFFE managed identity
+//!
+//! **Deprecated:** SPIFFE bindings are deprecated per ADR-0020 Phase 3.
+//! Use the Mapping Engine with `IdentitySource::Spiffe` instead.
 
-mod binding;
+pub mod binding;
 mod error;
 
 pub use binding::*;

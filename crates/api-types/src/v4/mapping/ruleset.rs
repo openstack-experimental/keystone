@@ -81,16 +81,22 @@ pub enum IdentitySource {
 pub enum ClaimCondition {
     /// Match if the claim value equals any of the given values.
     AnyOf {
+        /// Claim key to evaluate against the claims map.
+        claim: String,
         /// Acceptable claim values.
         values: Vec<serde_json::Value>,
     },
     /// Match if the claim value equals the given value.
     Equals {
+        /// Claim key to evaluate against the claims map.
+        claim: String,
         /// Expected claim value.
         value: serde_json::Value,
     },
     /// Match if the claim value matches the given regex pattern.
     MatchesRegex {
+        /// Claim key to evaluate against the claims map.
+        claim: String,
         /// Regex pattern to match against the claim value.
         regex: String,
     },
@@ -98,7 +104,10 @@ pub enum ClaimCondition {
 
 impl Default for ClaimCondition {
     fn default() -> Self {
-        Self::Equals { value: Value::Null }
+        Self::Equals {
+            claim: String::new(),
+            value: Value::Null,
+        }
     }
 }
 
