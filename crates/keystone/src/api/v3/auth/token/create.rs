@@ -58,11 +58,6 @@ pub(super) async fn create(
     let provider_scope: Option<ProviderScope> = req.auth.scope.clone().map(Into::into);
     let authz_info = get_authz_info(&state, provider_scope.as_ref()).await?;
 
-    if let Some(bound) = ctx.authorization()
-        && bound.scope != authz_info
-    {
-        return Err(AuthenticationError::ScopeNotAllowed.into());
-    }
     // This is a new authentication/reauthentication. Check if that is allowed at
     // all
     if let Some(token_restriction) = ctx.token_restriction()
