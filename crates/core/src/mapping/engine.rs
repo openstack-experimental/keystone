@@ -918,4 +918,221 @@ mod tests {
         let match_result = result.unwrap();
         assert_eq!(match_result.user_id, Some("user-123-suffix".to_string()));
     }
+
+    // --- ClaimCondition::AnyOf ---
+    #[test]
+    fn test_claim_any_of_matches_first_value() {
+        let rules = vec![MappingRule {
+            name: "anyvalue".to_string(),
+            description: None,
+            r#match: MatchCriteria::AllOf(vec![MatchCondition::Condition(ClaimCondition::AnyOf {
+                claim: "sub".to_string(),
+                values: vec![
+                    serde_json::Value::String("not-this".to_string()),
+                    serde_json::Value::String("user-123".to_string()),
+                ],
+            })]),
+            identity: IdentityBinding {
+                user_name: "anyof-user".to_string(),
+                user_id: None,
+                user_domain_id: None,
+                is_system: false,
+            },
+            authorizations: vec![],
+            groups: vec![],
+        }];
+        let ruleset = build_ruleset(true, rules);
+        let result = evaluate_ruleset(&ruleset, &test_claims(), Some("default-domain")).unwrap();
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().rule_name, "anyvalue");
+    }
+
+    #[test]
+    fn test_claim_any_of_no_match() {
+        let rules = vec![MappingRule {
+            name: "anyvalue".to_string(),
+            description: None,
+            r#match: MatchCriteria::AllOf(vec![MatchCondition::Condition(ClaimCondition::AnyOf {
+                claim: "sub".to_string(),
+                values: vec![
+                    serde_json::Value::String("not-this".to_string()),
+                    serde_json::Value::String("also-wrong".to_string()),
+                ],
+            })]),
+            identity: IdentityBinding {
+                user_name: "anyof-user".to_string(),
+                user_id: None,
+                user_domain_id: None,
+                is_system: false,
+            },
+            authorizations: vec![],
+            groups: vec![],
+        }];
+        let ruleset = build_ruleset(true, rules);
+        let result = evaluate_ruleset(&ruleset, &test_claims(), Some("default-domain")).unwrap();
+        assert!(result.is_none());
+    }
+
+    // --- ClaimCondition::Equals with multiple claim values ---
+    #[test]
+    fn test_equals_matches_multi_value_claim_second_entry() {
+        let mut claims = test_claims();
+        claims.insert(
+            "group".to_string(),
+            vec!["group-a".to_string(), "admin".to_string()],
+        );
+        let rules = vec![MappingRule {
+            name: "multivalue".to_string(),
+            description: None,
+            r#match: MatchCriteria::AllOf(vec![MatchCondition::Condition(
+                ClaimCondition::Equals {
+                    claim: "group".to_string(),
+                    value: serde_json::Value::String("admin".to_string()),
+                },
+            )]),
+            identity: IdentityBinding {
+                user_name: "multivalue-user".to_string(),
+                user_id: None,
+                user_domain_id: None,
+                is_system: false,
+            },
+            authorizations: vec![],
+            groups: vec![],
+        }];
+        let ruleset = build_ruleset(true, rules);
+        let result = evaluate_ruleset(&ruleset, &claims, Some("default-domain")).unwrap();
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().rule_name, "multivalue");
+    }
+
+    // --- ClaimCondition::MatchesRegex invalid pattern ---
+    #[test]
+    fn test_regex_invalid_pattern_returns_no_match() {
+        let rules = vec![MappingRule {
+            name: "badregex".to_string(),
+            description: None,
+            r#match: MatchCriteria::AllOf(vec![MatchCondition::Condition(
+                ClaimCondition::MatchesRegex {
+                    claim: "preferred_username".to_string(),
+                    regex: "[invalid(regex".to_string(), // invalid: unclosed bracket
+                },
+            )]),
+            identity: IdentityBinding {
+                user_name: "badregex-user".to_string(),
+                user_id: None,
+                user_domain_id: None,
+                is_system: false,
+            },
+            authorizations: vec![],
+            groups: vec![],
+        }];
+        let ruleset = build_ruleset(true, rules);
+        let result = evaluate_ruleset(&ruleset, &test_claims(), Some("default-domain")).unwrap();
+        assert!(result.is_none());
+    }
+
+    // --- ClaimCondition::MatchesRegex oversized claim value ---
+    #[test]
+    fn test_regex_oversized_claim_value_ignored() {
+        let mut claims = test_claims();
+        claims.insert(
+            "large_claim".to_string(),
+            vec!["a".repeat(4097)], // exceeds 4 KiB limit
+        );
+        let rules = vec![MappingRule {
+            name: "large".to_string(),
+            description: None,
+            r#match: MatchCriteria::AllOf(vec![MatchCondition::Condition(
+                ClaimCondition::MatchesRegex {
+                    claim: "large_claim".to_string(),
+                    regex: "a+".to_string(),
+                },
+            )]),
+            identity: IdentityBinding {
+                user_name: "large-user".to_string(),
+                user_id: None,
+                user_domain_id: None,
+                is_system: false,
+            },
+            authorizations: vec![],
+            groups: vec![],
+        }];
+        let ruleset = build_ruleset(true, rules);
+        let result = evaluate_ruleset(&ruleset, &claims, Some("default-domain")).unwrap();
+        assert!(result.is_none());
+    }
+
+    // --- MatchesRegex with multiple claim values, one matches ---
+    #[test]
+    fn test_regex_matches_multi_value_claim_partial() {
+        let mut claims = test_claims();
+        claims.insert(
+            "tags".to_string(),
+            vec!["xyz-service".to_string(), "abc-allowed".to_string()],
+        );
+        let rules = vec![MappingRule {
+            name: "tagregex".to_string(),
+            description: None,
+            r#match: MatchCriteria::AllOf(vec![MatchCondition::Condition(
+                ClaimCondition::MatchesRegex {
+                    claim: "tags".to_string(),
+                    regex: "^abc-".to_string(),
+                },
+            )]),
+            identity: IdentityBinding {
+                user_name: "tagregex-user".to_string(),
+                user_id: None,
+                user_domain_id: None,
+                is_system: false,
+            },
+            authorizations: vec![],
+            groups: vec![],
+        }];
+        let ruleset = build_ruleset(true, rules);
+        let result = evaluate_ruleset(&ruleset, &claims, Some("default-domain")).unwrap();
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().rule_name, "tagregex");
+    }
+
+    // --- SPIFFE claims end-to-end evaluation ---
+    #[test]
+    fn test_spiffe_claims_evaluation() {
+        let mut claims = HashMap::new();
+        claims.insert(
+            "spiffe.id".to_string(),
+            vec!["spiffe://example.org/workload".to_string()],
+        );
+        claims.insert(
+            "spiffe.trust_domain".to_string(),
+            vec!["example.org".to_string()],
+        );
+        let rules = vec![MappingRule {
+            name: "spiffe-rule".to_string(),
+            description: None,
+            r#match: MatchCriteria::AllOf(vec![
+                MatchCondition::Condition(ClaimCondition::Equals {
+                    claim: "spiffe.id".to_string(),
+                    value: serde_json::Value::String("spiffe://example.org/workload".to_string()),
+                }),
+                MatchCondition::Condition(ClaimCondition::MatchesRegex {
+                    claim: "spiffe.trust_domain".to_string(),
+                    regex: "^example\\.".to_string(),
+                }),
+            ]),
+            identity: IdentityBinding {
+                user_name: "${claims.spiffe.trust_domain}-user".to_string(),
+                user_id: None,
+                user_domain_id: None,
+                is_system: false,
+            },
+            authorizations: vec![],
+            groups: vec![],
+        }];
+        let ruleset = build_ruleset(true, rules);
+        let result = evaluate_ruleset(&ruleset, &claims, Some("default-domain")).unwrap();
+        assert!(result.is_some());
+        let match_result = result.unwrap();
+        assert_eq!(match_result.rule_name, "spiffe-rule");
+        assert_eq!(match_result.user_name, "example.org-user");
+    }
 }

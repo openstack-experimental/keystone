@@ -2555,4 +2555,151 @@ mod tests {
             Err(AuthenticationError::ActorHasNoRolesOnTarget)
         ));
     }
+
+    // --- Mapping: is_system with Unscoped → System("all") scope override ---
+    #[tokio::test]
+    async fn test_new_for_scope_mapping_is_system_unscoped_override() {
+        let vir_id = "vu-system00000000000000000000000000";
+        let rid = "admin";
+        let roles = vec![role_ref(rid, "admin")];
+
+        let vu = VirtualUser {
+            user_id: vir_id.to_string(),
+            unique_workload_id: "workload-sys".to_string(),
+            mapping_id: "map-1".to_string(),
+            matched_rule_name: "system-rule".to_string(),
+            domain_id: None,
+            resolved_user_name: "system-user".to_string(),
+            is_system: true,
+            resolved_group_bindings: vec![],
+            authorizations: vec![Authorization::System {
+                system_id: "all".to_string(),
+                roles: roles.clone(),
+            }],
+            ruleset_version: 1,
+            enabled: true,
+            created_at: 0,
+            last_authenticated_at: 0,
+        };
+
+        let mut mapping_mock = MockMappingProvider::new();
+        mapping_mock
+            .expect_get_virtual_user()
+            .returning(move |_state, id: &str| {
+                if id == vir_id {
+                    Ok(Some(vu.clone()))
+                } else {
+                    Ok(None)
+                }
+            });
+
+        let state = get_mocked_state(
+            None,
+            Some(Provider::mocked_builder().mock_mapping(mapping_mock)),
+        )
+        .await;
+
+        let mc = MappingContext {
+            mapping_id: "map-1".to_string(),
+            matched_rule_name: "system-rule".to_string(),
+            virtual_user_id: vir_id.to_string(),
+        };
+
+        let ctx = SecurityContextTestingBuilder::default()
+            .authentication_context(AuthenticationContext::Mapping(mc))
+            .principal(make_user_identity(vir_id))
+            .build();
+
+        // Pass Unscoped - is_system should override to System("all")
+        let result =
+            ValidatedSecurityContext::new_for_scope(ctx, ScopeInfo::Unscoped, &state).await;
+
+        let validated = result.unwrap();
+        // Verify scope was upgraded to System
+        assert!(matches!(
+            validated.0.authorization().unwrap().scope,
+            ScopeInfo::System(ref s) if s == "all"
+        ));
+        let eff = validated
+            .0
+            .authorization()
+            .unwrap()
+            .effective_roles()
+            .unwrap();
+        assert_eq!(eff.len(), 1);
+        assert_eq!(eff[0].id, rid);
+    }
+
+    // --- Mapping: is_system with Unscoped and no matching System authorization fails ---
+    #[tokio::test]
+    async fn test_new_for_scope_mapping_is_system_no_system_auth() {
+        let vir_id = "vu-system00000000000000000000000001";
+
+        let vu = VirtualUser {
+            user_id: vir_id.to_string(),
+            unique_workload_id: "workload-sys-2".to_string(),
+            mapping_id: "map-1".to_string(),
+            matched_rule_name: "system-rule".to_string(),
+            domain_id: None,
+            resolved_user_name: "system-user".to_string(),
+            is_system: true,
+            resolved_group_bindings: vec![],
+            // Authorization for a domain, not system - mismatch after override
+            authorizations: vec![Authorization::Domain {
+                domain_id: "d1".to_string(),
+                roles: vec![role_ref("reader", "reader")],
+            }],
+            ruleset_version: 1,
+            enabled: true,
+            created_at: 0,
+            last_authenticated_at: 0,
+        };
+
+        let mut mapping_mock = MockMappingProvider::new();
+        mapping_mock
+            .expect_get_virtual_user()
+            .returning(move |_state, id: &str| {
+                if id == vir_id {
+                    Ok(Some(vu.clone()))
+                } else {
+                    Ok(None)
+                }
+            });
+
+        // Assignment fallback is triggered since no System authorization matches
+        let mut assignment_mock = MockAssignmentProvider::default();
+        assignment_mock
+            .expect_list_role_assignments()
+            .returning(|_, _| Ok(Vec::<Assignment>::new()));
+
+        let state = get_mocked_state(
+            None,
+            Some(
+                Provider::mocked_builder()
+                    .mock_mapping(mapping_mock)
+                    .mock_assignment(assignment_mock),
+            ),
+        )
+        .await;
+
+        let mc = MappingContext {
+            mapping_id: "map-1".to_string(),
+            matched_rule_name: "system-rule".to_string(),
+            virtual_user_id: vir_id.to_string(),
+        };
+
+        let ctx = SecurityContextTestingBuilder::default()
+            .authentication_context(AuthenticationContext::Mapping(mc))
+            .principal(make_user_identity(vir_id))
+            .build();
+
+        // Pass Unscoped - is_system overrides to System, but no system auth matches
+        let result =
+            ValidatedSecurityContext::new_for_scope(ctx, ScopeInfo::Unscoped, &state).await;
+
+        assert!(matches!(
+            result,
+            Err(AuthenticationError::ActorHasNoRolesOnTarget)
+        ));
+    }
 }

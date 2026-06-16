@@ -335,4 +335,218 @@ mod tests {
         let result = Auth::from_request_parts(&mut parts, &state).await;
         assert!(result.is_ok());
     }
+
+    #[test]
+    fn test_flat_spiffe_claims_structure() {
+        let svid = SpiffeId::new("spiffe://example.org/workload/test").unwrap();
+        let request = flat_spiffe_claims(&svid);
+
+        assert_eq!(
+            request.claims.get("spiffe.id").unwrap()[0],
+            "spiffe://example.org/workload/test"
+        );
+        assert_eq!(
+            request.claims.get("spiffe.trust_domain").unwrap()[0],
+            "example.org"
+        );
+        assert_eq!(
+            request.unique_workload_id,
+            "spiffe://example.org/workload/test"
+        );
+        assert!(matches!(
+            request.source,
+            IdentitySource::Spiffe { trust_domain } if trust_domain == "example.org"
+        ));
+        assert!(request.domain_id.is_none());
+    }
+
+    #[test]
+    fn test_flat_spiffe_claims_long_path() {
+        let svid = SpiffeId::new("spiffe://ns1.example.org/system/service/deployment/pod").unwrap();
+        let request = flat_spiffe_claims(&svid);
+
+        assert_eq!(
+            request.claims.get("spiffe.id").unwrap()[0],
+            "spiffe://ns1.example.org/system/service/deployment/pod"
+        );
+        assert_eq!(
+            request.claims.get("spiffe.trust_domain").unwrap()[0],
+            "ns1.example.org"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_admin_svid_on_public_interface_falls_to_mapping() {
+        let mut mapping_mock = MockMappingProvider::new();
+        mapping_mock
+            .expect_authenticate_by_mapping()
+            .once()
+            .returning(|_, _| {
+                Ok(AuthenticationResultBuilder::default()
+                    .context(AuthenticationContext::Password)
+                    .principal(
+                        PrincipalInfoBuilder::default()
+                            .identity(IdentityInfo::Principal(
+                                PrincipalIdentityInfoBuilder::default()
+                                    .id("test-user")
+                                    .issuer("test.domain")
+                                    .build()
+                                    .unwrap(),
+                            ))
+                            .build()
+                            .unwrap(),
+                    )
+                    .build()
+                    .unwrap())
+            });
+
+        let config = Config {
+            interface_admin: Some(AdminInterface {
+                admin_svid: Some("spiffe://admin".to_string()),
+                listener: openstack_keystone_config::UnixSocketListener::default(),
+            }),
+            ..Default::default()
+        };
+        let config_manager = ConfigManager::not_watched(config);
+        let db = sea_orm::Database::connect("sqlite::memory:").await.unwrap();
+        let provider = Provider::mocked_builder()
+            .mock_mapping(mapping_mock)
+            .build()
+            .unwrap();
+        let state = Arc::new(Service {
+            config_manager,
+            db,
+            policy_enforcer: Arc::new(MockPolicy::default()),
+            provider,
+            event_dispatcher: crate::events::EventDispatcher::production(),
+            storage: None,
+            shutdown: false,
+        });
+
+        let mut parts = make_parts();
+        parts
+            .extensions
+            .insert(SpiffeId::new("spiffe://admin").unwrap());
+        parts.extensions.insert(Interface::Public);
+
+        let result = Auth::from_request_parts(&mut parts, &state).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_admin_svid_mismatch_falls_to_mapping() {
+        use crate::role::MockRoleProvider;
+
+        // When admin_svid is configured and interface is Admin, the shortcut
+        // activates regardless of the client's actual SVID (security gap:
+        // SVID identity is not verified against the configured admin_svid).
+        // This test documents the current behavior.
+        let mapping_mock = MockMappingProvider::new();
+        let config = Config {
+            interface_admin: Some(AdminInterface {
+                admin_svid: Some("spiffe://admin".to_string()),
+                listener: openstack_keystone_config::UnixSocketListener::default(),
+            }),
+            ..Default::default()
+        };
+        let config_manager = ConfigManager::not_watched(config);
+
+        let mut role_mock = MockRoleProvider::new();
+        role_mock.expect_list_roles().returning(|_, params| {
+            let name = params
+                .name
+                .clone()
+                .unwrap_or_else(|| "unknown-role".to_string());
+            Ok(vec![openstack_keystone_core_types::role::Role {
+                id: format!("{}-id", name),
+                name,
+                description: None,
+                domain_id: None,
+                extra: Default::default(),
+            }])
+        });
+
+        let state = Arc::new(Service {
+            config_manager,
+            db: sea_orm::Database::connect("sqlite::memory:").await.unwrap(),
+            policy_enforcer: Arc::new(MockPolicy::default()),
+            provider: Provider::mocked_builder()
+                .mock_mapping(mapping_mock)
+                .mock_role(role_mock)
+                .build()
+                .unwrap(),
+            event_dispatcher: crate::events::EventDispatcher::production(),
+            storage: None,
+            shutdown: false,
+        });
+
+        // Different SVID than configured admin_svid, but on admin interface
+        let mut parts = make_parts();
+        parts
+            .extensions
+            .insert(SpiffeId::new("spiffe://other-domain/workload").unwrap());
+        parts.extensions.insert(Interface::Admin);
+
+        // Shortcut activates because admin_svid is configured + admin interface
+        // (security gap: SVID not compared to configured admin_svid)
+        let result = Auth::from_request_parts(&mut parts, &state).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_x_auth_token_without_svid_authorizes_via_token() {
+        use crate::token::MockTokenProvider;
+
+        let config = Config::default();
+        let config_manager = ConfigManager::not_watched(config);
+        let policy_enforcer = Arc::new(MockPolicy::default());
+        let db = sea_orm::Database::connect("sqlite::memory:").await.unwrap();
+
+        let mut token_mock = MockTokenProvider::new();
+        token_mock.expect_authorize_by_token().once().returning(
+            move |_state, _token, _allow_rescope, _restrict_to| {
+                let mut security_context = SecurityContextTestingBuilder::default()
+                    .authentication_context(AuthenticationContext::Password)
+                    .principal(
+                        PrincipalInfoBuilder::default()
+                            .identity(IdentityInfo::Principal(
+                                PrincipalIdentityInfoBuilder::default()
+                                    .id("token-user")
+                                    .issuer("test.domain")
+                                    .build()
+                                    .unwrap(),
+                            ))
+                            .build()
+                            .unwrap(),
+                    )
+                    .build();
+                // Fully resolve the context by setting authorization
+                security_context.set_authorization_scope(ScopeInfo::Unscoped)?;
+                Ok(ValidatedSecurityContext::test_new(security_context))
+            },
+        );
+
+        let provider = Provider::mocked_builder()
+            .mock_mapping(MockMappingProvider::new())
+            .mock_token(token_mock)
+            .build()
+            .unwrap();
+        let state = Arc::new(Service {
+            config_manager,
+            db,
+            policy_enforcer,
+            provider,
+            event_dispatcher: crate::events::EventDispatcher::production(),
+            storage: None,
+            shutdown: false,
+        });
+
+        let mut parts = make_parts();
+        parts
+            .headers
+            .insert("X-Auth-Token", "valid-token-string".parse().unwrap());
+
+        let result = Auth::from_request_parts(&mut parts, &state).await;
+        assert!(result.is_ok());
+    }
 }
