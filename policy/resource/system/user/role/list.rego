@@ -34,4 +34,3 @@ violation contains {"field": "system", "msg": "listing system-user-role assignme
 	"reader" in input.credentials.roles
 	input.credentials.system != "all"
 }
-

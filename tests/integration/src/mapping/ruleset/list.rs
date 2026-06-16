@@ -76,6 +76,43 @@ async fn test_list_domain() -> Result<()> {
 
 #[traced_test]
 #[tokio::test]
+async fn test_list_global() -> Result<()> {
+    let (state, _) = get_state().await?;
+
+    let ruleset1 = create_ruleset(&state, sample_ruleset_create(None::<String>)).await?;
+    let ruleset2 = create_ruleset(&state, sample_ruleset_create(None::<String>)).await?;
+
+    let res = state
+        .provider
+        .get_mapping_provider()
+        .list_rulesets(&state, &MappingRuleSetListParameters::default())
+        .await?;
+
+    assert!(res.contains(&ruleset1));
+    assert!(res.contains(&ruleset2));
+
+    // Filter by a non-empty domain_id should exclude global rulesets
+    let domain = create_domain!(state)?;
+    let res = state
+        .provider
+        .get_mapping_provider()
+        .list_rulesets(
+            &state,
+            &MappingRuleSetListParameters {
+                domain_id: Some(domain.id.clone()),
+                ..Default::default()
+            },
+        )
+        .await?;
+
+    assert!(!res.contains(&ruleset1));
+    assert!(!res.contains(&ruleset2));
+
+    Ok(())
+}
+
+#[traced_test]
+#[tokio::test]
 async fn test_list_enabled() -> Result<()> {
     let (state, _) = get_state().await?;
     let domain = create_domain!(state)?;

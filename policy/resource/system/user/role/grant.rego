@@ -29,4 +29,3 @@ violation contains {"field": "system", "msg": "granting a role to a user on the 
 	"manager" in input.credentials.roles
 	input.credentials.system != "all"
 }
-

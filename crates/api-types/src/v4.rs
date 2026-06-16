@@ -13,6 +13,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! # V4 API types
 pub mod auth;
+pub mod mapping;
 pub mod spiffe;
 pub mod token_restriction;
 pub mod user;

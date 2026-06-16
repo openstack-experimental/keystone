@@ -12,5 +12,6 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+mod authenticate;
 mod ruleset;
 mod vuser;

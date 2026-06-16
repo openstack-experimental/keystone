@@ -308,17 +308,18 @@ impl RaftBackend {
             None::<&str>,
             None,
         )?];
+        let idx_key = obj.domain_id.as_deref().unwrap_or("global");
         if let Some(ref did) = obj.domain_id {
             mutations.push(Mutation::set_index(
                 self.get_ruleset_domain_idx_key_name(&obj.mapping_id, did),
             )?);
-            // Composite source index: domain + identity source
-            mutations.push(Mutation::set_index(self.get_ruleset_source_idx_key_name(
-                &obj.mapping_id,
-                did,
-                obj.source.to_string_key(),
-            ))?);
         }
+        // Composite source index: domain + identity source
+        mutations.push(Mutation::set_index(self.get_ruleset_source_idx_key_name(
+            &obj.mapping_id,
+            idx_key,
+            obj.source.to_string_key(),
+        ))?);
         storage.transaction(mutations).await?;
         Ok(obj)
     }
