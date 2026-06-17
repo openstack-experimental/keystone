@@ -124,3 +124,62 @@ async fn test_update_type_too_long() -> Result<()> {
     );
     Ok(())
 }
+
+#[traced_test]
+#[tokio::test]
+async fn test_update_extra_overwrites() -> Result<()> {
+    let (state, _tmp) = get_state().await?;
+    // Seed two extra properties.
+    let mut extra = HashMap::new();
+    extra.insert(
+        "keep".to_string(),
+        serde_json::Value::String("yes".to_string()),
+    );
+    extra.insert(
+        "drop".to_string(),
+        serde_json::Value::String("later".to_string()),
+    );
+    let service = create_service(
+        &state,
+        ServiceCreate {
+            enabled: true,
+            extra,
+            id: Some("svc-extra".to_string()),
+            r#type: Some("compute".to_string()),
+        },
+    )
+    .await?;
+
+    // Update replaces `extra` wholesale with the supplied map; any previously
+    // stored keys are dropped (matching Python Keystone, which does not merge).
+    let mut update_extra = HashMap::new();
+    update_extra.insert(
+        "add".to_string(),
+        serde_json::Value::String("new".to_string()),
+    );
+    let updated = state
+        .provider
+        .get_catalog_provider()
+        .update_service(
+            &state,
+            &service.id,
+            ServiceUpdate {
+                extra: update_extra,
+                ..Default::default()
+            },
+        )
+        .await?;
+
+    let extra = updated.extra;
+    // Only the supplied key remains; previously stored keys are overwritten.
+    assert_eq!(extra.get("add").and_then(|v| v.as_str()), Some("new"));
+    assert!(
+        extra.get("keep").is_none(),
+        "update overwrites `extra` wholesale"
+    );
+    assert!(
+        extra.get("drop").is_none(),
+        "update overwrites `extra` wholesale"
+    );
+    Ok(())
+}

@@ -424,7 +424,7 @@ mod tests {
                     id: "1".into(),
                     r#type: Some("type".into()),
                     enabled: true,
-                    extra: Some(json!({"name": "srv"})),
+                    extra: [("name".to_string(), json!("srv"))].into(),
                 },
                 vec![
                     Endpoint {
@@ -434,7 +434,7 @@ mod tests {
                         region_id: Some("region".into()),
                         enabled: true,
                         url: "http://localhost".into(),
-                        extra: None
+                        extra: Default::default()
                     },
                     Endpoint {
                         id: "2".into(),
@@ -443,7 +443,7 @@ mod tests {
                         region_id: Some("region".into()),
                         enabled: true,
                         url: "http://localhost".into(),
-                        extra: None
+                        extra: Default::default()
                     }
                 ]
             )]

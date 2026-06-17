@@ -78,7 +78,7 @@ mod tests {
                 id: "1".into(),
                 description: Some("region description".into()),
                 parent_region_id: None,
-                extra: Some(json!({"key": "value"})),
+                extra: [("key".to_string(), json!("value"))].into(),
             }]
         );
 

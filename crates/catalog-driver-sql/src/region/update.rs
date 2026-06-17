@@ -55,9 +55,8 @@ pub async fn update<I: AsRef<str>>(
     if let Some(parent_region_id) = region.parent_region_id {
         update_model.parent_region_id = Set(Some(parent_region_id));
     }
-    if let Some(extra) = region.extra {
-        update_model.extra = Set(Some(serde_json::to_string(&extra)?));
-    }
+    // `extra` is overwritten wholesale with the supplied value.
+    update_model.extra = Set(Some(serde_json::to_string(&region.extra)?));
 
     update_model
         .update(db)

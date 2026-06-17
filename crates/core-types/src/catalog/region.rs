@@ -31,7 +31,7 @@ pub struct Region {
 
     /// Additional region properties.
     #[builder(default)]
-    pub extra: Option<Value>,
+    pub extra: HashMap<String, Value>,
 
     /// The ID of the region.
     #[validate(length(min = 1, max = 255))]
@@ -81,8 +81,8 @@ pub struct RegionUpdate {
     #[validate(length(max = 255))]
     pub description: Option<String>,
 
-    /// New additional region properties (replaces the existing `extra`).
-    pub extra: Option<HashMap<String, Value>>,
+    /// Additional region properties (replaces the existing `extra`).
+    pub extra: HashMap<String, Value>,
 
     /// New parent region ID.
     #[validate(length(max = 255))]

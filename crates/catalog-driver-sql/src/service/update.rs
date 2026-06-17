@@ -53,9 +53,8 @@ pub async fn update<I: AsRef<str>>(
     if let Some(typ) = service.r#type {
         update_model.r#type = Set(Some(typ));
     }
-    if let Some(extra) = service.extra {
-        update_model.extra = Set(Some(serde_json::to_string(&extra)?));
-    }
+    // `extra` is overwritten wholesale with the supplied value.
+    update_model.extra = Set(Some(serde_json::to_string(&service.extra)?));
 
     update_model
         .update(db)
