@@ -32,7 +32,7 @@ pub struct Service {
 
     /// Additional service properties.
     #[builder(default)]
-    pub extra: Option<Value>,
+    pub extra: HashMap<String, Value>,
 
     /// The ID of the service.
     #[validate(length(min = 1, max = 64))]
@@ -52,8 +52,7 @@ impl Service {
     /// rather than being a field on the model itself.
     pub fn name(&self) -> Option<String> {
         self.extra
-            .as_ref()
-            .and_then(|extra| extra.get("name"))
+            .get("name")
             .and_then(|name| name.as_str())
             .map(ToString::to_string)
     }
@@ -99,8 +98,8 @@ pub struct ServiceUpdate {
     /// New enabled flag.
     pub enabled: Option<bool>,
 
-    /// New additional service properties (replaces the existing `extra`).
-    pub extra: Option<HashMap<String, Value>>,
+    /// Additional service properties (replaces the existing `extra`).
+    pub extra: HashMap<String, Value>,
 
     /// New service type.
     #[validate(length(max = 255))]

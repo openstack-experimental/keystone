@@ -62,10 +62,8 @@ pub async fn update<I: AsRef<str>>(
     if let Some(url) = endpoint.url {
         update_model.url = Set(url);
     }
-    // The provider has already merged `extra`; the driver only persists it.
-    if let Some(extra) = endpoint.extra {
-        update_model.extra = Set(Some(serde_json::to_string(&extra)?));
-    }
+    // `extra` is overwritten wholesale with the supplied value.
+    update_model.extra = Set(Some(serde_json::to_string(&endpoint.extra)?));
 
     update_model
         .update(db)

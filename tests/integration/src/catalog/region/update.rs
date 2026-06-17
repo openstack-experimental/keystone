@@ -48,7 +48,7 @@ async fn test_update() -> Result<()> {
             RegionUpdate {
                 description: Some("new".to_string()),
                 parent_region_id: None,
-                extra: None,
+                extra: HashMap::new(),
             },
         )
         .await?;
@@ -78,7 +78,7 @@ async fn test_update_not_found() -> Result<()> {
             RegionUpdate {
                 description: Some("x".to_string()),
                 parent_region_id: None,
-                extra: None,
+                extra: HashMap::new(),
             },
         )
         .await;
@@ -114,7 +114,7 @@ async fn test_update_description_too_long() -> Result<()> {
             RegionUpdate {
                 description: Some(too_long),
                 parent_region_id: None,
-                extra: None,
+                extra: HashMap::new(),
             },
         )
         .await;

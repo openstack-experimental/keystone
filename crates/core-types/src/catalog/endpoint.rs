@@ -55,7 +55,7 @@ pub struct Endpoint {
     pub enabled: bool,
     /// Additional endpoint properties.
     #[builder(default)]
-    pub extra: Option<Value>,
+    pub extra: HashMap<String, Value>,
 }
 
 /// Parameters for creating a new endpoint.
@@ -111,8 +111,8 @@ pub struct EndpointUpdate {
     /// New enabled flag.
     pub enabled: Option<bool>,
 
-    /// New additional endpoint properties (replaces the existing `extra`).
-    pub extra: Option<HashMap<String, Value>>,
+    /// Additional endpoint properties (replaces the existing `extra`).
+    pub extra: HashMap<String, Value>,
 
     /// New interface type.
     #[validate(length(max = 8))]

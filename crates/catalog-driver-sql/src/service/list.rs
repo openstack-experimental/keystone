@@ -79,7 +79,7 @@ mod tests {
                 id: "1".into(),
                 r#type: Some("type".into()),
                 enabled: true,
-                extra: Some(json!({"name": "srv"})),
+                extra: [("name".to_string(), json!("srv"))].into(),
             }]
         );
         // The `type` filter is pushed down to the database query (see the

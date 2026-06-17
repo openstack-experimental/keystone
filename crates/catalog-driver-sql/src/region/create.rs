@@ -71,7 +71,10 @@ mod tests {
 
         assert_eq!(created.id, "region-1");
         assert_eq!(created.description.as_deref(), Some("Region One"));
-        assert_eq!(created.extra, Some(json!({"key": "value"})));
+        assert_eq!(
+            created.extra,
+            HashMap::from([("key".to_string(), json!("value"))])
+        );
     }
 
     #[tokio::test]

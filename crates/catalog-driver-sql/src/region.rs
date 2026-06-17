@@ -12,6 +12,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use std::collections::HashMap;
+
 use sea_orm::entity::*;
 use serde_json::Value;
 use tracing::error;
@@ -57,7 +59,7 @@ impl TryFrom<db_region::Model> for Region {
         if let Some(extra) = &value.extra
             && extra != "{}"
         {
-            match serde_json::from_str::<Value>(extra) {
+            match serde_json::from_str::<HashMap<String, Value>>(extra) {
                 Ok(val) => {
                     builder.extra(val);
                 }

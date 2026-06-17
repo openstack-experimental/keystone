@@ -127,7 +127,7 @@ async fn test_update_type_too_long() -> Result<()> {
 
 #[traced_test]
 #[tokio::test]
-async fn test_update_extra_merges() -> Result<()> {
+async fn test_update_extra_overwrites() -> Result<()> {
     let (state, _tmp) = get_state().await?;
     // Seed two extra properties.
     let mut extra = HashMap::new();
@@ -150,14 +150,13 @@ async fn test_update_extra_merges() -> Result<()> {
     )
     .await?;
 
-    // Update: add one key, unset another with a null value, and leave the rest
-    // untouched.
+    // Update replaces `extra` wholesale with the supplied map; any previously
+    // stored keys are dropped (matching Python Keystone, which does not merge).
     let mut update_extra = HashMap::new();
     update_extra.insert(
         "add".to_string(),
         serde_json::Value::String("new".to_string()),
     );
-    update_extra.insert("drop".to_string(), serde_json::Value::Null);
     let updated = state
         .provider
         .get_catalog_provider()
@@ -165,19 +164,22 @@ async fn test_update_extra_merges() -> Result<()> {
             &state,
             &service.id,
             ServiceUpdate {
-                extra: Some(update_extra),
+                extra: update_extra,
                 ..Default::default()
             },
         )
         .await?;
 
-    let extra = updated.extra.expect("extra should be present");
-    // Untouched key survives, new key is added, null-valued key is unset.
-    assert_eq!(extra.get("keep").and_then(|v| v.as_str()), Some("yes"));
+    let extra = updated.extra;
+    // Only the supplied key remains; previously stored keys are overwritten.
     assert_eq!(extra.get("add").and_then(|v| v.as_str()), Some("new"));
     assert!(
+        extra.get("keep").is_none(),
+        "update overwrites `extra` wholesale"
+    );
+    assert!(
         extra.get("drop").is_none(),
-        "a null value in the update should unset the key"
+        "update overwrites `extra` wholesale"
     );
     Ok(())
 }

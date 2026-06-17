@@ -69,7 +69,7 @@ mod tests {
                 region_id: Some("region".into()),
                 enabled: true,
                 url: "http://localhost".into(),
-                extra: None
+                extra: Default::default()
             }
         );
 
