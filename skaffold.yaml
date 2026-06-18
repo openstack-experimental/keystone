@@ -95,11 +95,34 @@ deploy:
         namespace: spire
 
 verify:
-  - name: "api-test"
+  - name: "api-test-v3"
     container:
       image: "keystone-tests"
-      name: "api-test"
-      command: ["/tests/test-api"]
+      name: "api-test-v3"
+      command: ["/tests/test-api-v3"]
+      env:
+        - name: "KEYSTONE_URL"
+          value: "http://keystone-rs.default.svc.cluster.local:8080"
+        - name: "OS_AUTH_URL"
+          value: "http://keystone-rs.default.svc.cluster.local:8080"
+        - name: "OS_USERNAME"
+          value: "admin"
+        - name: "OS_PASSWORD"
+          value: "password"
+        - name: "OS_USER_DOMAIN_ID"
+          value: "default"
+        - name: "OS_PROJECT_NAME"
+          value: "admin"
+        - name: "OS_PROJECT_DOMAIN_ID"
+          value: "default"
+    executionMode:
+      kubernetesCluster: {}
+
+  - name: "api-test-v4"
+    container:
+      image: "keystone-tests"
+      name: "api-test-v4"
+      command: ["/tests/test-api-v4"]
       env:
         - name: "KEYSTONE_URL"
           value: "http://keystone-rs.default.svc.cluster.local:8080"

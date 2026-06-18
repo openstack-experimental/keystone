@@ -23,10 +23,7 @@ use openstack_sdk::{AsyncOpenStack, api::QueryAsync};
 
 use crate::guard::*;
 
-mod create;
-mod delete;
-mod imply;
-mod list;
+pub mod imply;
 
 #[derive(Builder, Clone, Debug, Default)]
 #[builder(setter(strip_option, into))]

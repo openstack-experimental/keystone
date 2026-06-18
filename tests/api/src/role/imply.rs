@@ -23,13 +23,6 @@ use openstack_sdk::{AsyncOpenStack, api::QueryAsync};
 
 use crate::guard::*;
 
-mod check;
-mod create;
-mod delete;
-mod get;
-mod list;
-mod list_inferences;
-
 #[derive(Clone, Debug)]
 struct ImpliedRoleCreateRequest {
     prior_role_id: String,
@@ -123,7 +116,7 @@ pub async fn delete_implied_role(
 #[async_trait::async_trait]
 impl DeletableResource for RoleImply {
     async fn delete(&self, state: &Arc<AsyncOpenStack>) -> Result<()> {
-        delete_implied_role(state, &self.prior_role.id, &self.implied_role.id).await
+        delete_implied_role(state, &self.prior_role.id, &self.implies.id).await
     }
 }
 
@@ -238,10 +231,6 @@ impl RestEndpoint for ImpliedRoleListRequest {
         ServiceType::Identity
     }
 
-    fn response_key(&self) -> Option<Cow<'static, str>> {
-        Some("role_inference".into())
-    }
-
     fn api_version(&self) -> Option<ApiVersion> {
         Some(ApiVersion::new(3, 0))
     }
@@ -251,7 +240,7 @@ impl RestEndpoint for ImpliedRoleListRequest {
 pub async fn list_implied_role(
     client: &Arc<AsyncOpenStack>,
     prior_role_id: &str,
-) -> Result<ImplyGroup> {
+) -> Result<RoleInferenceRules> {
     Ok(ImpliedRoleListRequest {
         prior_role_id: prior_role_id.to_string(),
     }
@@ -285,7 +274,7 @@ impl RestEndpoint for RoleInferencesListRequest {
 }
 
 /// List all role inference rules.
-pub async fn list_role_inferences(client: &Arc<AsyncOpenStack>) -> Result<Vec<RoleImply>> {
+pub async fn list_role_inferences(client: &Arc<AsyncOpenStack>) -> Result<Vec<ImplyGroup>> {
     Ok(RoleInferencesListRequest::default()
         .query_async(client.as_ref())
         .await?)

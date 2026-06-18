@@ -21,9 +21,6 @@ use openstack_keystone_api_types::v3::user::*;
 use openstack_sdk::api::rest_endpoint_prelude::*;
 use openstack_sdk::{AsyncOpenStack, api::QueryAsync};
 
-mod create;
-mod update;
-
 use crate::guard::*;
 
 #[derive(Clone, Debug)]

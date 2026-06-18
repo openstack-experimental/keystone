@@ -22,7 +22,7 @@ use axum::{
 };
 use serde_json::json;
 
-use openstack_keystone_api_types::v3::role::{ImplyGroup, RoleImplyListByPrior};
+use openstack_keystone_api_types::v3::role::{ImplyGroup, RoleInferenceRules};
 
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
@@ -38,7 +38,7 @@ use crate::role::RoleApi;
         ("prior_role_id" = String, Path, description = "The prior role ID.")
     ),
     responses(
-        (status = OK, description = "List of role imply rules.", body = RoleImplyListByPrior),
+        (status = OK, description = "List of role imply rules.", body = RoleInferenceRules),
         (status = 401, description = "Unauthorized"),
         (status = 403, description = "Forbidden")
     ),
@@ -107,7 +107,7 @@ pub(super) async fn list(
 
     Ok((
         StatusCode::OK,
-        Json(RoleImplyListByPrior {
+        Json(RoleInferenceRules {
             role_inference: ImplyGroup {
                 prior_role,
                 implies,
@@ -127,11 +127,11 @@ mod tests {
     use tower::ServiceExt;
     use tower_http::trace::TraceLayer;
 
+    use openstack_keystone_api_types::v3::role::RoleInferenceRules;
     use openstack_keystone_core_types::role::{RoleImplyBuilder, RoleRefBuilder};
 
     use crate::api::tests::{get_mocked_state, test_fixture_scoped};
     use crate::api::v3::role::openapi_router;
-    use crate::api::v3::role::types::RoleImplyListByPrior;
     use crate::provider::Provider;
     use crate::role::MockRoleProvider;
 
@@ -203,9 +203,14 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
 
         let body = response.into_body().collect().await.unwrap().to_bytes();
-        let res: RoleImplyListByPrior = serde_json::from_slice(&body).unwrap();
+        let res: RoleInferenceRules = serde_json::from_slice(&body).unwrap();
         assert_eq!(res.role_inference.prior_role.id, "prior_id");
+        assert_eq!(res.role_inference.prior_role.name, "Prior");
         assert_eq!(res.role_inference.implies.len(), 2);
+        assert_eq!(res.role_inference.implies[0].id, "implied_id1");
+        assert_eq!(res.role_inference.implies[0].name, "Implied1");
+        assert_eq!(res.role_inference.implies[1].id, "implied_id2");
+        assert_eq!(res.role_inference.implies[1].name, "Implied2");
     }
 
     #[tokio::test]
@@ -250,7 +255,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
 
         let body = response.into_body().collect().await.unwrap().to_bytes();
-        let res: RoleImplyListByPrior = serde_json::from_slice(&body).unwrap();
+        let res: RoleInferenceRules = serde_json::from_slice(&body).unwrap();
         assert_eq!(res.role_inference.prior_role.id, "prior_id");
         assert_eq!(res.role_inference.prior_role.name, "Prior");
         assert_eq!(res.role_inference.implies.len(), 0);

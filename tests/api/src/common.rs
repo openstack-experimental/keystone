@@ -116,7 +116,6 @@ impl TestClient {
         Ok(new)
     }
 
-    #[expect(dead_code)]
     pub async fn auth_admin_system(&mut self) -> Result<&mut Self> {
         let new = self;
         new.auth_password(
@@ -131,7 +130,6 @@ impl TestClient {
         Ok(new)
     }
 
-    #[expect(dead_code)]
     pub async fn auth_domain(&mut self, domain_id: &str) -> Result<&mut Self> {
         let new = self;
         new.rescope(Some(Scope::Domain(
@@ -141,7 +139,6 @@ impl TestClient {
         Ok(new)
     }
 
-    #[expect(dead_code)]
     pub async fn auth_token<S>(&mut self, token: S, scope: Option<Scope>) -> Result<&mut Self>
     where
         S: AsRef<str> + std::fmt::Display,

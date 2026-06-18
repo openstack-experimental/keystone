@@ -12,5 +12,5 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-mod project;
-mod token;
+pub mod project;
+pub mod token;

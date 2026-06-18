@@ -22,7 +22,7 @@ use openstack_sdk::AsyncOpenStack;
 pub mod domain;
 pub mod project;
 
-fn get_system_scope_config() -> Result<CloudConfig> {
+pub fn get_system_scope_config() -> Result<CloudConfig> {
     let mut cfg = CloudConfig::from_env()?;
     if let Some(ref mut auth) = cfg.auth {
         auth.project_id = None;

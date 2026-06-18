@@ -160,7 +160,7 @@ mod tests {
         let body = response.into_body().collect().await.unwrap().to_bytes();
         let res: RoleImplyResponse = serde_json::from_slice(&body).unwrap();
         assert_eq!(res.role_inference.prior_role.id, "prior_id");
-        assert_eq!(res.role_inference.implied_role.id, "implied_id");
+        assert_eq!(res.role_inference.implies.id, "implied_id");
     }
 
     #[tokio::test]

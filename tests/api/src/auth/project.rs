@@ -18,7 +18,7 @@ use eyre::Result;
 
 use openstack_keystone_api_types::v3::project::ProjectShort;
 use openstack_sdk::api::rest_endpoint_prelude::*;
-use openstack_sdk::{AsyncOpenStack, api::QueryAsync, config::CloudConfig};
+use openstack_sdk::{AsyncOpenStack, api::QueryAsync};
 
 #[derive(Clone, Debug)]
 struct AuthProjectsRequest {}
@@ -48,12 +48,4 @@ impl RestEndpoint for AuthProjectsRequest {
 /// List projects available to the user
 pub async fn list_auth_projects(client: &Arc<AsyncOpenStack>) -> Result<Vec<ProjectShort>> {
     Ok(AuthProjectsRequest {}.query_async(client.as_ref()).await?)
-}
-
-#[tokio::test]
-async fn test_list_user_projects() -> Result<()> {
-    let test_client = Arc::new(AsyncOpenStack::new(&CloudConfig::from_env()?).await?);
-    let projects = list_auth_projects(&test_client).await?;
-    assert!(!projects.is_empty());
-    Ok(())
 }

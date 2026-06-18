@@ -14,11 +14,13 @@
 
 //! Role inferences (imply rules) global API.
 
+use std::collections::HashMap;
+
 use axum::{Json, extract::State, http::StatusCode, response::IntoResponse};
 use serde_json::json;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
-use openstack_keystone_api_types::v3::role::RoleInferencesList;
+use openstack_keystone_api_types::v3::role::{ImplyGroup, RoleInferencesList};
 
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
@@ -61,13 +63,33 @@ pub(super) async fn list(
         .list_role_imply_rules(&state)
         .await?;
 
-    Ok((
-        StatusCode::OK,
-        Json(RoleInferencesList {
-            role_inferences: all_rules.into_iter().map(|r| r.into()).collect(),
-        }),
-    )
-        .into_response())
+    // Group rules by prior role to build ImplyGroup entries
+    let mut groups: HashMap<
+        String,
+        (
+            openstack_keystone_api_types::v3::role::RoleRef,
+            Vec<openstack_keystone_api_types::v3::role::RoleRef>,
+        ),
+    > = HashMap::new();
+    for rule in all_rules {
+        let prior: openstack_keystone_api_types::v3::role::RoleRef = rule.prior_role.into();
+        let implied: openstack_keystone_api_types::v3::role::RoleRef = rule.implied_role.into();
+        let entry = groups
+            .entry(prior.id.clone())
+            .or_insert_with(|| (prior.clone(), Vec::new()));
+        entry.0 = prior;
+        entry.1.push(implied);
+    }
+
+    let role_inferences: Vec<ImplyGroup> = groups
+        .into_values()
+        .map(|(prior_role, implies)| ImplyGroup {
+            prior_role,
+            implies,
+        })
+        .collect();
+
+    Ok((StatusCode::OK, Json(RoleInferencesList { role_inferences })).into_response())
 }
 
 pub(crate) fn openapi_router() -> OpenApiRouter<ServiceState> {
@@ -159,6 +181,26 @@ mod tests {
         let body = response.into_body().collect().await.unwrap().to_bytes();
         let res: RoleInferencesList = serde_json::from_slice(&body).unwrap();
         assert_eq!(res.role_inferences.len(), 2);
+
+        let group1 = res
+            .role_inferences
+            .iter()
+            .find(|g| g.prior_role.id == "prior_id")
+            .unwrap();
+        assert_eq!(group1.prior_role.name, "Prior");
+        assert_eq!(group1.implies.len(), 1);
+        assert_eq!(group1.implies[0].id, "implied_id1");
+        assert_eq!(group1.implies[0].name, "Implied1");
+
+        let group2 = res
+            .role_inferences
+            .iter()
+            .find(|g| g.prior_role.id == "prior_id2")
+            .unwrap();
+        assert_eq!(group2.prior_role.name, "Prior2");
+        assert_eq!(group2.implies.len(), 1);
+        assert_eq!(group2.implies[0].id, "implied_id2");
+        assert_eq!(group2.implies[0].name, "Implied2");
     }
 
     #[tokio::test]

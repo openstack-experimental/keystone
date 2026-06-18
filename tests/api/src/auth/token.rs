@@ -16,12 +16,6 @@ use eyre::Result;
 use reqwest::header::HeaderValue;
 use secrecy::{ExposeSecret, SecretString};
 
-mod password;
-mod revoke;
-#[allow(clippy::module_inception)]
-mod token;
-mod validate;
-
 use crate::common::*;
 
 /// Perform token check request.

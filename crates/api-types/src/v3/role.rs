@@ -74,7 +74,7 @@ pub struct RoleImply {
 
     /// The role that is implied by the prior role.
     #[cfg_attr(feature = "validate", validate(nested))]
-    pub implied_role: RoleRef,
+    pub implies: RoleRef,
 }
 
 /// Response for a single role inference rule.
@@ -96,7 +96,7 @@ pub struct RoleInferencesList {
     /// Collection of role inference rules.
     #[serde(rename = "role_inferences")]
     #[cfg_attr(feature = "validate", validate(nested))]
-    pub role_inferences: Vec<RoleImply>,
+    pub role_inferences: Vec<ImplyGroup>,
 }
 
 /// Grouped structure for listing implied roles of a specific prior role.
@@ -116,7 +116,7 @@ pub struct ImplyGroup {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[cfg_attr(feature = "validate", derive(validator::Validate))]
-pub struct RoleImplyListByPrior {
+pub struct RoleInferenceRules {
     /// The role inference group.
     #[serde(rename = "role_inference")]
     #[cfg_attr(feature = "validate", validate(nested))]

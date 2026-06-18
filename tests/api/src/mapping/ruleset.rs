@@ -26,14 +26,6 @@ use openstack_sdk::{AsyncOpenStack, api::QueryAsync};
 
 use crate::guard::*;
 
-mod create;
-mod delete;
-mod is_system;
-mod list;
-mod mutate;
-mod show;
-mod update;
-
 // ---------------------------------------------------------------------------
 // REST Endpoint Implementations
 // ---------------------------------------------------------------------------

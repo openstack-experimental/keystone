@@ -9,6 +9,10 @@ repository.workspace = true
 [package.metadata.dist]
 dist = false
 
+[lib]
+name = "test_api"
+path = "src/lib.rs"
+
 [dependencies]
 base64.workspace = true
 bytes.workspace = true
@@ -31,11 +35,16 @@ uuid = { workspace = true, features = ["v4"] }
 async-trait.workspace = true
 
 [[test]]
-name = "integration_api"
-path = "src/api.rs"
+name = "integration_api_v3"
+path = "tests/api_v3.rs"
+test = false
+
+[[test]]
+name = "integration_api_v4"
+path = "tests/api_v4.rs"
 test = false
 
 [[test]]
 name = "k8s_auth"
-path = "src/k8s_auth.rs"
+path = "tests/k8s_auth.rs"
 test = false

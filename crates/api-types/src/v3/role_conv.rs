@@ -42,7 +42,7 @@ impl From<provider_types::RoleImply> for api_types::RoleImply {
     fn from(value: provider_types::RoleImply) -> Self {
         Self {
             prior_role: value.prior_role.into(),
-            implied_role: value.implied_role.into(),
+            implies: value.implied_role.into(),
         }
     }
 }

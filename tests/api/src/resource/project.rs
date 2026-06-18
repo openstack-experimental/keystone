@@ -15,16 +15,12 @@ use std::borrow::Cow;
 use std::sync::Arc;
 
 use eyre::Result;
-use uuid::Uuid;
 
 use openstack_keystone_api_types::v3::project::*;
 use openstack_sdk::api::rest_endpoint_prelude::*;
 use openstack_sdk::{AsyncOpenStack, api::QueryAsync};
 
-use crate::common::*;
 use crate::guard::*;
-use crate::resource::domain::create_test_domain;
-use crate::resource::*;
 
 /// Create request for project
 #[derive(Clone, Debug)]
@@ -191,7 +187,6 @@ pub async fn delete_project(tc: &Arc<AsyncOpenStack>, id: impl Into<String>) -> 
             .await?,
     )
 }
-
 #[async_trait::async_trait]
 impl DeletableResource for Project {
     async fn delete(&self, state: &Arc<AsyncOpenStack>) -> Result<()> {
@@ -201,97 +196,4 @@ impl DeletableResource for Project {
         .query_async(state.as_ref())
         .await?)
     }
-}
-
-#[tokio::test]
-async fn test_project_create() -> Result<()> {
-    let test_client = Arc::new(AsyncOpenStack::new(&get_system_scope_config()?).await?);
-    let domain = create_test_domain(&test_client).await?;
-    let project = create_project(
-        &test_client,
-        ProjectCreateBuilder::default()
-            .name(Uuid::new_v4().to_string())
-            .enabled(true)
-            .domain_id(domain.id.clone())
-            .build()?,
-    )
-    .await?;
-    assert!(!project.id.is_empty(), "project id should not be empty");
-    assert!(project.enabled, "project should be enabled by default");
-    assert_eq!(project.domain_id, domain.id);
-    project.delete().await?;
-    domain.delete().await?;
-    Ok(())
-}
-
-#[tokio::test]
-async fn test_project_show() -> Result<()> {
-    let test_client = Arc::new(AsyncOpenStack::new(&get_system_scope_config()?).await?);
-    let domain = create_test_domain(&test_client).await?;
-    let project = create_project(
-        &test_client,
-        ProjectCreateBuilder::default()
-            .name(Uuid::new_v4().to_string())
-            .enabled(true)
-            .domain_id(domain.id.clone())
-            .build()?,
-    )
-    .await?;
-    let shown = get_project(&test_client, &project.id).await?;
-    assert_eq!(shown.id, project.id);
-    assert_eq!(shown.name, project.name);
-    assert_eq!(shown.domain_id, domain.id);
-    project.delete().await?;
-    domain.delete().await?;
-    Ok(())
-}
-
-#[tokio::test]
-async fn test_project_list() -> Result<()> {
-    let test_client = Arc::new(AsyncOpenStack::new(&get_system_scope_config()?).await?);
-    let domain = create_test_domain(&test_client).await?;
-    let project = create_project(
-        &test_client,
-        ProjectCreateBuilder::default()
-            .name(Uuid::new_v4().to_string())
-            .enabled(true)
-            .domain_id(domain.id.clone())
-            .build()?,
-    )
-    .await?;
-    let _tc = TestClient::default()?;
-    let params = ProjectListRequest {
-        domain_id: Some(domain.id.clone()),
-        ids: Some(project.id.clone()),
-        name: None,
-    };
-    let projects = list_projects(&test_client, params).await?;
-    assert!(
-        !projects.is_empty(),
-        "project list should contain the created project"
-    );
-    assert_eq!(projects[0].id, project.id);
-    project.delete().await?;
-    domain.delete().await?;
-    Ok(())
-}
-
-#[tokio::test]
-async fn test_project_delete() -> Result<()> {
-    let test_client = Arc::new(AsyncOpenStack::new(&get_system_scope_config()?).await?);
-    let domain = create_test_domain(&test_client).await?;
-    let project = create_project(
-        &test_client,
-        ProjectCreateBuilder::default()
-            .name(Uuid::new_v4().to_string())
-            .enabled(true)
-            .domain_id(domain.id.clone())
-            .build()?,
-    )
-    .await?;
-    delete_project(&test_client, &project.id).await?;
-    let result = get_project(&test_client, &project.id).await;
-    assert!(result.is_err(), "project should be deleted");
-    domain.delete().await?;
-    Ok(())
 }

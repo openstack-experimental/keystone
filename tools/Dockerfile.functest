@@ -30,8 +30,10 @@ COPY Cargo.toml Cargo.toml
 COPY Cargo.lock Cargo.lock
 
 # Compile the specific functional test file
-RUN cargo test --test integration_api --no-run && \
-    cp $(find target/debug/deps -name "integration_api-*" -type f -executable) /app/test-api
+RUN cargo test --test integration_api_v3 --no-run && \
+    cp $(find target/debug/deps -name "integration_api_v3-*" -type f -executable) /app/test-api-v3
+RUN cargo test --test integration_api_v4 --no-run && \
+    cp $(find target/debug/deps -name "integration_api_v4-*" -type f -executable) /app/test-api-v4
 RUN cargo test --test k8s_auth --no-run && \
     cp $(find target/debug/deps -name "k8s_auth-*" -type f -executable) /app/test-k8s-auth
 RUN cargo test --test keycloak --no-run && \

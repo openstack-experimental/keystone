@@ -30,9 +30,6 @@ use openstack_sdk::{
 use openstack_sdk::{api::rest_endpoint_prelude::*, types::identity::v3::AuthResponse};
 use webauthn_authenticator_rs::{AuthenticatorBackend, WebauthnAuthenticator};
 
-mod register;
-mod roundtrip;
-
 #[derive(Builder, Default, Clone, Debug)]
 #[builder(setter(strip_option, into))]
 struct PasskeyRegisterStartRequest<'a> {
@@ -68,7 +65,7 @@ impl RestEndpoint for PasskeyRegisterStartRequest<'_> {
     }
 }
 
-async fn start_registration<U: AsRef<str>>(
+pub async fn start_registration<U: AsRef<str>>(
     client: &Arc<AsyncOpenStack>,
     user_id: U,
     req: PasskeyCreate,
@@ -119,7 +116,7 @@ impl RestEndpoint for PasskeyRegisterFinishRequest<'_> {
     }
 }
 
-async fn finish_registration<U: AsRef<str>>(
+pub async fn finish_registration<U: AsRef<str>>(
     client: &Arc<AsyncOpenStack>,
     user_id: U,
     req: UserPasskeyRegistrationFinishRequest,
@@ -162,7 +159,7 @@ impl RestEndpoint for PasskeyAuthStartRequest<'_> {
     }
 }
 
-async fn start_auth<U: AsRef<str>>(
+pub async fn start_auth<U: AsRef<str>>(
     client: &Arc<AsyncOpenStack>,
     user_id: U,
 ) -> Result<PasskeyAuthenticationStartResponse> {
@@ -206,7 +203,7 @@ impl RestEndpoint for PasskeyAuthFinishRequest {
     }
 }
 
-async fn finish_auth(
+pub async fn finish_auth(
     client: &Arc<AsyncOpenStack>,
     data: PasskeyAuthenticationFinishRequest,
 ) -> Result<http::Response<bytes::Bytes>> {
@@ -217,7 +214,7 @@ async fn finish_auth(
         .await?)
 }
 
-async fn register_user_passkey<B, U: AsRef<str>, D: Into<String>>(
+pub async fn register_user_passkey<B, U: AsRef<str>, D: Into<String>>(
     client: &Arc<AsyncOpenStack>,
     user_id: U,
     origin: Url,
@@ -253,7 +250,7 @@ where
     Ok(())
 }
 
-async fn auth_passkey<B: AuthenticatorBackend, U: AsRef<str>>(
+pub async fn auth_passkey<B: AuthenticatorBackend, U: AsRef<str>>(
     client: &Arc<AsyncOpenStack>,
     user_id: U,
     origin: Url,
