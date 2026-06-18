@@ -255,6 +255,31 @@ pub enum Authorization {
     },
 }
 
+#[cfg(feature = "validate")]
+impl validator::Validate for Authorization {
+    fn validate(&self) -> Result<(), validator::ValidationErrors> {
+        match self {
+            Self::Domain { roles, .. }
+            | Self::Project { roles, .. }
+            | Self::System { roles, .. } => {
+                let mut errors = validator::ValidationErrors::new();
+                for role in roles {
+                    if let Err(role_errors) = role.validate() {
+                        for (field, kind) in role_errors.into_errors() {
+                            errors.0.insert(field, kind);
+                        }
+                    }
+                }
+                if errors.is_empty() {
+                    Ok(())
+                } else {
+                    Err(errors)
+                }
+            }
+        }
+    }
+}
+
 /// Group resolution strategy.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
@@ -300,12 +325,14 @@ fn default_create_or_get() -> Option<GroupStrategy> {
 #[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct MappingRule {
     /// Role assignments granted when this rule matches.
+    #[cfg_attr(feature = "validate", validate(nested))]
     pub authorizations: Vec<Authorization>,
     /// Human-readable description of the rule purpose.
     #[cfg_attr(feature = "validate", validate(length(max = 512)))]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     /// Group assignments granted when this rule matches.
+    #[cfg_attr(feature = "validate", validate(nested))]
     pub groups: Vec<GroupAssignment>,
     /// Identity binding that defines the localized Keystone identity.
     #[cfg_attr(feature = "validate", validate(nested))]

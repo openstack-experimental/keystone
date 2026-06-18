@@ -40,6 +40,14 @@ pub struct MappingAuthRequest {
 
     /// Flattened claims map from the ingress adapter.
     pub claims: HashMap<String, Vec<String>>,
+
+    /// Optional rule name hint. When set, the engine evaluates this rule
+    /// first; if it matches, evaluation terminates immediately. If not set,
+    /// the standard first-match-wins iteration is used.
+    ///
+    /// This allows the K8s authenticator to pass a `rule_name` from the
+    /// client request for explicit rule targeting.
+    pub rule_name: Option<String>,
 }
 
 /// Authentication context for a mapped virtual user.

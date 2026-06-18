@@ -187,6 +187,7 @@ fn flat_spiffe_claims(svid: &SpiffeId) -> MappingAuthRequest {
         },
         unique_workload_id: svid.to_string(),
         claims,
+        rule_name: None,
     }
 }
 

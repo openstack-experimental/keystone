@@ -61,21 +61,21 @@ impl K8sAuthService {
 
 #[async_trait]
 impl K8sAuthApi for K8sAuthService {
-    /// Authenticate (exchange) the K8s Service account token.
+    /// Authenticate via K8s TokenReview + mapping engine.
     ///
     /// # Arguments
     /// * `state` - Service state.
     /// * `req` - A reference to the [`K8sAuthRequest`] to authenticate.
     ///
     /// # Returns
-    /// * Success with the [`AuthenticatedInfo`] and [`TokenRestriction`].
+    /// * Success with [`AuthenticationResult`] via mapping engine.
     /// * Error if authentication fails.
-    async fn authenticate_by_k8s_sa_token(
+    async fn authenticate_by_k8s_mapping(
         &self,
         state: &ServiceState,
         req: &K8sAuthRequest,
     ) -> Result<AuthenticationResult, K8sAuthProviderError> {
-        self.authenticate(state, req).await
+        self.authenticate_by_mapping(state, req).await
     }
 
     /// Register new K8s auth instance.
@@ -99,27 +99,6 @@ impl K8sAuthApi for K8sAuthService {
         self.backend_driver.create_auth_instance(state, new).await
     }
 
-    /// Register new K8s auth role.
-    ///
-    /// # Arguments
-    /// * `state` - Service state.
-    /// * `role` - [`K8sAuthRoleCreate`] data for the new role.
-    ///
-    /// # Returns
-    /// * Success with the created [`K8sAuthRole`].
-    /// * Error if the role could not be created.
-    async fn create_auth_role(
-        &self,
-        state: &ServiceState,
-        role: K8sAuthRoleCreate,
-    ) -> Result<K8sAuthRole, K8sAuthProviderError> {
-        let mut new = role;
-        if new.id.is_none() {
-            new.id = Some(uuid::Uuid::new_v4().simple().to_string());
-        }
-        self.backend_driver.create_auth_role(state, new).await
-    }
-
     /// Delete K8s auth provider.
     ///
     /// # Arguments
@@ -135,23 +114,6 @@ impl K8sAuthApi for K8sAuthService {
         id: &'a str,
     ) -> Result<(), K8sAuthProviderError> {
         self.backend_driver.delete_auth_instance(state, id).await
-    }
-
-    /// Delete K8s auth role.
-    ///
-    /// # Arguments
-    /// * `state` - Service state.
-    /// * `id` - The identifier of the role to delete.
-    ///
-    /// # Returns
-    /// * Success if the role was deleted.
-    /// * Error if the deletion failed.
-    async fn delete_auth_role<'a>(
-        &self,
-        state: &ServiceState,
-        id: &'a str,
-    ) -> Result<(), K8sAuthProviderError> {
-        self.backend_driver.delete_auth_role(state, id).await
     }
 
     /// Fetch auth instance.
@@ -171,23 +133,6 @@ impl K8sAuthApi for K8sAuthService {
         self.backend_driver.get_auth_instance(state, id).await
     }
 
-    /// Fetch auth role.
-    ///
-    /// # Arguments
-    /// * `state` - Service state.
-    /// * `id` - The identifier of the role to fetch.
-    ///
-    /// # Returns
-    /// A `Result` containing an `Option` with the [`K8sAuthRole`] if found, or
-    /// an `Error`.
-    async fn get_auth_role<'a>(
-        &self,
-        state: &ServiceState,
-        id: &'a str,
-    ) -> Result<Option<K8sAuthRole>, K8sAuthProviderError> {
-        self.backend_driver.get_auth_role(state, id).await
-    }
-
     /// List K8s auth instances.
     ///
     /// # Arguments
@@ -203,23 +148,6 @@ impl K8sAuthApi for K8sAuthService {
         params: &K8sAuthInstanceListParameters,
     ) -> Result<Vec<K8sAuthInstance>, K8sAuthProviderError> {
         self.backend_driver.list_auth_instances(state, params).await
-    }
-
-    /// List K8s auth roles.
-    ///
-    /// # Arguments
-    /// * `state` - Service state.
-    /// * `params` - [`K8sAuthRoleListParameters`] for filtering the list.
-    ///
-    /// # Returns
-    /// * Success with a list of [`K8sAuthRole`].
-    /// * Error if the listing failed.
-    async fn list_auth_roles(
-        &self,
-        state: &ServiceState,
-        params: &K8sAuthRoleListParameters,
-    ) -> Result<Vec<K8sAuthRole>, K8sAuthProviderError> {
-        self.backend_driver.list_auth_roles(state, params).await
     }
 
     /// Update K8s auth instance.
@@ -241,25 +169,6 @@ impl K8sAuthApi for K8sAuthService {
         self.backend_driver
             .update_auth_instance(state, id, data)
             .await
-    }
-
-    /// Update K8s auth role.
-    ///
-    /// # Arguments
-    /// * `state` - Service state.
-    /// * `id` - The identifier of the role to update.
-    /// * `data` - [`K8sAuthRoleUpdate`] data to apply.
-    ///
-    /// # Returns
-    /// * Success with the updated [`K8sAuthRole`].
-    /// * Error if the update failed.
-    async fn update_auth_role<'a>(
-        &self,
-        state: &ServiceState,
-        id: &'a str,
-        data: K8sAuthRoleUpdate,
-    ) -> Result<K8sAuthRole, K8sAuthProviderError> {
-        self.backend_driver.update_auth_role(state, id, data).await
     }
 }
 
@@ -299,36 +208,6 @@ pub(crate) mod tests {
                         host: "host".into(),
                         id: Some("id".into()),
                         name: Some("name".into()),
-                    }
-                )
-                .await
-                .is_ok()
-        );
-    }
-
-    #[tokio::test]
-    async fn test_create_auth_role() {
-        let state = get_mocked_state(None, None).await;
-        let mut backend = MockK8sAuthBackend::default();
-        backend
-            .expect_create_auth_role()
-            .returning(|_, _| Ok(K8sAuthRole::default()));
-        let provider = create_k8s_auth_service(backend);
-
-        assert!(
-            provider
-                .create_auth_role(
-                    &state,
-                    K8sAuthRoleCreate {
-                        auth_instance_id: "cid".into(),
-                        bound_audience: Some("aud".into()),
-                        bound_service_account_names: vec!["a".into(), "b".into()],
-                        bound_service_account_namespaces: vec!["na".into(), "nb".into()],
-                        domain_id: "did".into(),
-                        enabled: true,
-                        id: Some("id".into()),
-                        name: "name".into(),
-                        token_restriction_id: "trid".into(),
                     }
                 )
                 .await

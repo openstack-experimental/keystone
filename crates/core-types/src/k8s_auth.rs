@@ -16,9 +16,7 @@
 mod auth;
 mod error;
 mod instance;
-mod role;
 
 pub use auth::*;
 pub use error::*;
 pub use instance::*;
-pub use role::*;

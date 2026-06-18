@@ -1634,7 +1634,7 @@ Migrate the K8s TokenReview authenticator to the mapping engine.
 - Create K8s rulesets via the mapping provider, demonstrating nested match
   criteria and `AllOfStrict` guards.
 - Enable shadow registry upsert for K8s service account principals.
-- Deprecate legacy K8s_auth role.
+- Deprecate legacy `K8s_auth` role.
 - **Deliverable:** Kubernetes TokenReview authentication fully mediated by
   mapping engine.
 

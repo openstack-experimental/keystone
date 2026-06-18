@@ -1085,6 +1085,12 @@ pub struct PrincipalIdentityInfo {
     /// Domain the principal belongs to.
     #[builder(default)]
     pub domain: Option<crate::resource::Domain>,
+
+    /// Human-readable name resolved by the mapping engine (e.g., mapping rule's
+    /// user_name). Set when authentication goes through a mapping-based provider
+    /// (mapping, k8s_auth, etc.) and the matched rule specifies a user identity.
+    #[builder(default)]
+    pub resolved_user_name: Option<String>,
 }
 
 impl PrincipalIdentityInfo {

@@ -64,6 +64,7 @@ async fn test_authenticate_happy_path() -> Result<()> {
         },
         unique_workload_id: "workload-123".into(),
         claims,
+        rule_name: None,
     };
 
     let result = state
@@ -130,6 +131,7 @@ async fn test_authenticate_global_ruleset() -> Result<()> {
         },
         unique_workload_id: "global-workload".into(),
         claims,
+        rule_name: None,
     };
 
     let result = state

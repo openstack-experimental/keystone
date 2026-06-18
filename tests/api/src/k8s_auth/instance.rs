@@ -122,6 +122,55 @@ impl RestEndpoint for K8sAuthInstanceDeleteRequest<'_> {
         Some(ApiVersion::new(4, 0))
     }
 }
+
+struct K8sAuthInstanceUpdateRequest {
+    id: String,
+    instance: K8sAuthInstanceUpdate,
+}
+
+impl RestEndpoint for K8sAuthInstanceUpdateRequest {
+    fn method(&self) -> http::Method {
+        http::Method::PUT
+    }
+
+    fn endpoint(&self) -> Cow<'static, str> {
+        format!("k8s_auth/instances/{id}", id = self.id).into()
+    }
+
+    fn body(&self) -> Result<Option<(&'static str, Vec<u8>)>, BodyError> {
+        let mut params = JsonBodyParams::default();
+        params.push("instance", serde_json::to_value(&self.instance)?);
+        params.into_body()
+    }
+
+    fn service_type(&self) -> ServiceType {
+        ServiceType::Identity
+    }
+
+    fn response_key(&self) -> Option<Cow<'static, str>> {
+        Some("instance".into())
+    }
+
+    fn api_version(&self) -> Option<ApiVersion> {
+        Some(ApiVersion::new(4, 0))
+    }
+}
+
+pub async fn update_auth_instance(
+    tc: &Arc<AsyncOpenStack>,
+    instance_id: &str,
+    instance: K8sAuthInstanceUpdate,
+) -> Result<K8sAuthInstance> {
+    let mut res: K8sAuthInstance = K8sAuthInstanceUpdateRequest {
+        id: instance_id.into(),
+        instance,
+    }
+    .query_async(tc.as_ref())
+    .await?;
+
+    res.id = instance_id.to_string();
+    Ok(res)
+}
 #[async_trait::async_trait]
 impl DeletableResource for K8sAuthInstance {
     async fn delete(&self, state: &Arc<AsyncOpenStack>) -> Result<()> {

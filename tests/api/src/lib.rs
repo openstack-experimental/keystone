@@ -24,5 +24,4 @@ pub mod webauthn;
 pub mod k8s_auth {
     pub mod auth;
     pub mod instance;
-    pub mod role;
 }

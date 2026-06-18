@@ -85,6 +85,7 @@ async fn test_spiffe_happy_path() -> Result<()> {
         },
         unique_workload_id: "spiffe://example.org/workload".into(),
         claims,
+        rule_name: None,
     };
 
     let result = state
@@ -140,6 +141,7 @@ async fn test_spiffe_no_fallback_when_no_matching_rule() -> Result<()> {
         },
         unique_workload_id: "spiffe://example.org/workload".into(),
         claims,
+        rule_name: None,
     };
 
     let result = state
@@ -199,6 +201,7 @@ async fn test_spiffe_system_ruleset() -> Result<()> {
         },
         unique_workload_id: "spiffe://example.org/system".into(),
         claims,
+        rule_name: None,
     };
 
     let result = state
@@ -275,6 +278,7 @@ async fn test_spiffe_claim_condition_any_of() -> Result<()> {
         },
         unique_workload_id: "spiffe://example.org/workload-b".into(),
         claims,
+        rule_name: None,
     };
 
     let result = state
@@ -347,6 +351,7 @@ async fn test_spiffe_any_of_no_match() -> Result<()> {
         },
         unique_workload_id: "spiffe://example.org/workload-z".into(),
         claims,
+        rule_name: None,
     };
 
     let result = state
@@ -410,6 +415,7 @@ async fn test_spiffe_matches_regex() -> Result<()> {
         },
         unique_workload_id: "spiffe://example.org/workload".into(),
         claims,
+        rule_name: None,
     };
 
     let result = state
@@ -499,6 +505,7 @@ async fn test_spiffe_all_of_strict_with_auth() -> Result<()> {
         },
         unique_workload_id: "spiffe://example.org/strict-workload".into(),
         claims,
+        rule_name: None,
     };
 
     let result = state

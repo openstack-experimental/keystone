@@ -16,17 +16,12 @@
 use thiserror::Error;
 
 use crate::error::BuilderError;
-use crate::identity::IdentityProviderError;
 use crate::token::TokenProviderError;
 
 /// K8s auth provider error.
 #[derive(Error, Debug)]
 #[non_exhaustive]
 pub enum K8sAuthProviderError {
-    /// Role audience does not match.
-    #[error("role `bound_audience` does not match")]
-    AudienceMismatch,
-
     /// K8s auth instance disabled.
     #[error("k8s instance {0} not active")]
     AuthInstanceNotActive(String),
@@ -51,16 +46,6 @@ pub enum K8sAuthProviderError {
         source: Box<dyn std::error::Error + Send + Sync>,
     },
 
-    /// Service account name of the token not matching the
-    /// `bound_service_account_names`.
-    #[error("invalid service account name of the token")]
-    FailedBoundServiceAccountName(String),
-
-    /// Service account name of the token not matching the
-    /// `bound_service_account_namespaces`.
-    #[error("invalid service account namespace of the token")]
-    FailedBoundServiceAccountNamespace(String),
-
     /// JWT error.
     #[error("jwt validation error: {source}")]
     Jwt {
@@ -81,14 +66,6 @@ pub enum K8sAuthProviderError {
         source: Box<dyn std::error::Error + Send + Sync + 'static>,
     },
 
-    /// Identity provider error.
-    #[error(transparent)]
-    IdentityProvider {
-        /// The source of the error.
-        #[from]
-        source: Box<IdentityProviderError>,
-    },
-
     /// Insecure JWT signature algorithm.
     #[error("insecure jwt signature algorithm")]
     InsecureAlgorithm,
@@ -96,6 +73,10 @@ pub enum K8sAuthProviderError {
     /// Invalid token.
     #[error("invalid token")]
     InvalidToken,
+
+    /// Mapping engine error.
+    #[error("mapping engine error: {0}")]
+    MappingEngine(String),
 
     /// Invalid token review response.
     #[error("invalid token review response")]
@@ -113,18 +94,6 @@ pub enum K8sAuthProviderError {
         source: Box<dyn std::error::Error + Send + Sync + 'static>,
     },
 
-    /// K8s auth role not found.
-    #[error("k8s auth role {0} not found")]
-    RoleNotFound(String),
-
-    /// K8s auth role not active.
-    #[error("k8s auth role {0} not active")]
-    RoleNotActive(String),
-
-    /// Role is bound to the other configuration.
-    #[error("k8s auth role {0} belongs to the other instance")]
-    RoleInstanceOwnershipMismatch(String),
-
     /// Structures builder error.
     #[error(transparent)]
     StructBuilder {
@@ -141,29 +110,9 @@ pub enum K8sAuthProviderError {
         source: Box<TokenProviderError>,
     },
 
-    /// Token restriction not found.
-    #[error("token restriction {0} not found")]
-    TokenRestrictionNotFound(String),
-
-    /// Token restriction not found.
-    #[error("token restriction missing in the authentication result")]
-    TokenRestrictionMissing,
-
-    /// Token restriction MUST specify the `project_id`.
-    #[error("token restriction must specify `project_id`")]
-    TokenRestrictionMustSpecifyProjectId,
-
-    /// Token restriction MUST specify the `user_id`.
-    #[error("token restriction must specify `user_id`")]
-    TokenRestrictionMustSpecifyUserId,
-
     /// Unsupported driver.
     #[error("unsupported driver `{0}` for the k8s provider")]
     UnsupportedDriver(String),
-
-    /// User not found.
-    #[error("user {0} not found")]
-    UserNotFound(String),
 }
 
 impl K8sAuthProviderError {
@@ -207,14 +156,6 @@ impl From<TokenProviderError> for K8sAuthProviderError {
 impl From<BuilderError> for K8sAuthProviderError {
     fn from(value: BuilderError) -> Self {
         Self::StructBuilder {
-            source: Box::new(value),
-        }
-    }
-}
-
-impl From<IdentityProviderError> for K8sAuthProviderError {
-    fn from(value: IdentityProviderError) -> Self {
-        Self::IdentityProvider {
             source: Box::new(value),
         }
     }

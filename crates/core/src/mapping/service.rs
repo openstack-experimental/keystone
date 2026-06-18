@@ -110,10 +110,15 @@ impl MappingService {
             return Err(MappingProviderError::DisabledRuleset);
         }
 
-        // 3. Evaluate claims against ruleset — first match wins
-        let match_result =
-            engine::evaluate_ruleset(&ruleset, &req.claims, ruleset.domain_id.as_deref())?
-                .ok_or(MappingProviderError::NoMatchingRule)?;
+        // 3. Evaluate claims against ruleset — named rule hint is tried first,
+        // then standard first-match-wins iteration
+        let match_result = engine::evaluate_ruleset(
+            &ruleset,
+            &req.claims,
+            ruleset.domain_id.as_deref(),
+            req.rule_name.as_deref(),
+        )?
+        .ok_or(MappingProviderError::NoMatchingRule)?;
 
         // 4. Derive deterministic virtual user ID via HMAC-SHA256
         let virtual_user_id =
@@ -131,9 +136,11 @@ impl MappingService {
             .await?;
 
         // 6. Build AuthenticationResult with deferred scope resolution
+        let user_name = match_result.user_name.clone();
         let pinfo = if let Some(domain_id) = &virtual_user.domain_id {
             PrincipalIdentityInfoBuilder::default()
                 .id(&virtual_user_id)
+                .resolved_user_name(&user_name)
                 .issuer(req.source.to_string_key())
                 .domain(openstack_keystone_core_types::resource::Domain {
                     id: domain_id.clone(),
@@ -147,6 +154,7 @@ impl MappingService {
         } else {
             PrincipalIdentityInfoBuilder::default()
                 .id(&virtual_user_id)
+                .resolved_user_name(&user_name)
                 .issuer(req.source.to_string_key())
                 .build()
                 .map_err(Box::new)?
@@ -1329,6 +1337,7 @@ mod tests {
                     source: source.clone(),
                     unique_workload_id: "workload-1".to_string(),
                     claims: HashMap::new(),
+                    rule_name: None,
                 },
             )
             .await;
@@ -1373,6 +1382,7 @@ mod tests {
                     },
                     unique_workload_id: "workload-1".to_string(),
                     claims: HashMap::new(),
+                    rule_name: None,
                 },
             )
             .await;
@@ -1417,6 +1427,7 @@ mod tests {
                     },
                     unique_workload_id: "workload-1".to_string(),
                     claims: HashMap::new(),
+                    rule_name: None,
                 },
             )
             .await;
@@ -1606,6 +1617,7 @@ mod tests {
                     source: source.clone(),
                     unique_workload_id: "workload-123".to_string(),
                     claims: claims.clone(),
+                    rule_name: None,
                 },
             )
             .await;

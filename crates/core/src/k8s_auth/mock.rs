@@ -27,8 +27,8 @@ mock! {
     #[async_trait]
     impl K8sAuthApi for K8sAuthProvider {
 
-        /// Authenticate (exchange) the K8s Service account token.
-        async fn authenticate_by_k8s_sa_token(
+        /// Authenticate via K8s TokenReview + mapping engine.
+        async fn authenticate_by_k8s_mapping(
             &self,
             state: &ServiceState,
             req: &K8sAuthRequest,
@@ -41,22 +41,8 @@ mock! {
             config: K8sAuthInstanceCreate,
         ) -> Result<K8sAuthInstance, K8sAuthProviderError>;
 
-        /// Register new K8s auth role.
-        async fn create_auth_role(
-            &self,
-            state: &ServiceState,
-            role: K8sAuthRoleCreate,
-        ) -> Result<K8sAuthRole, K8sAuthProviderError>;
-
         /// Delete K8s auth instance.
         async fn delete_auth_instance<'a>(
-            &self,
-            state: &ServiceState,
-            id: &'a str,
-        ) -> Result<(), K8sAuthProviderError>;
-
-        /// Delete K8s auth role.
-        async fn delete_auth_role<'a>(
             &self,
             state: &ServiceState,
             id: &'a str,
@@ -69,26 +55,12 @@ mock! {
             id: &'a str,
         ) -> Result<Option<K8sAuthInstance>, K8sAuthProviderError>;
 
-        /// Fetch auth role.
-        async fn get_auth_role<'a>(
-            &self,
-            state: &ServiceState,
-            id: &'a str,
-        ) -> Result<Option<K8sAuthRole>, K8sAuthProviderError>;
-
         /// List K8s auth instances.
         async fn list_auth_instances(
             &self,
             state: &ServiceState,
             params: &K8sAuthInstanceListParameters,
         ) -> Result<Vec<K8sAuthInstance>, K8sAuthProviderError>;
-
-        /// List K8s auth roles.
-        async fn list_auth_roles(
-            &self,
-            state: &ServiceState,
-            params: &K8sAuthRoleListParameters,
-        ) -> Result<Vec<K8sAuthRole>, K8sAuthProviderError>;
 
         /// Update K8s auth instance.
         async fn update_auth_instance<'a>(
@@ -97,13 +69,5 @@ mock! {
             id: &'a str,
             data: K8sAuthInstanceUpdate,
         ) -> Result<K8sAuthInstance, K8sAuthProviderError>;
-
-        /// Update K8s auth role.
-        async fn update_auth_role<'a>(
-            &self,
-            state: &ServiceState,
-            id: &'a str,
-            data: K8sAuthRoleUpdate,
-        ) -> Result<K8sAuthRole, K8sAuthProviderError>;
     }
 }

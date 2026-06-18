@@ -62,6 +62,7 @@ async fn test_virtual_user_lifecycle() -> Result<()> {
         },
         unique_workload_id: "user-123".to_string(),
         claims,
+        rule_name: None,
     };
 
     let auth_result = state
@@ -150,6 +151,7 @@ async fn test_virtual_user_lifecycle_global() -> Result<()> {
         },
         unique_workload_id: "global-user-123".to_string(),
         claims,
+        rule_name: None,
     };
 
     let auth_result = state

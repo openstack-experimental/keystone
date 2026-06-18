@@ -80,8 +80,13 @@ fn fill_identity_info(
         IdentityInfo::Principal(principal) => {
             let mut user_builder = UserBuilder::default();
             user_builder.id(ctx.principal().get_user_id().clone());
-            // Use original ID as the user_name
-            user_builder.name(principal.id.clone());
+            // Use resolved user name from mapping rule if available, fall back to id
+            user_builder.name(
+                principal
+                    .resolved_user_name
+                    .clone()
+                    .unwrap_or_else(|| principal.id.clone()),
+            );
             let identity_domain: openstack_keystone_api_types::scope::Domain =
                 principal.domain.as_ref().map(Into::into).ok_or_else(|| {
                     BuilderError::Validation("principal identity: domain not populated".to_string())

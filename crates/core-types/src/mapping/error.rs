@@ -114,6 +114,10 @@ pub enum MappingProviderError {
     #[error("target mapping ruleset is disabled")]
     DisabledRuleset,
 
+    /// Requested mapping rule `{0}` was not found in the ruleset.
+    #[error("requested mapping rule '{0}' was not found")]
+    MappingRuleNotFound(String),
+
     /// Concurrent modification conflict (CAS/revision mismatch).
     #[error("concurrent modification conflict: {subject} — {description}")]
     CasConflict {

@@ -13,6 +13,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! # Kubernetes authentication.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 
@@ -24,20 +25,20 @@ use serde_json::{Value, json};
 use tokio::fs;
 use tracing::{debug, trace};
 
+use openstack_keystone_core_types::auth::AuthenticationResult;
 use openstack_keystone_core_types::k8s_auth::*;
+use openstack_keystone_core_types::mapping::auth::MappingAuthRequest;
+use openstack_keystone_core_types::mapping::resolution::IdentitySource;
 
-use crate::auth::*;
-use crate::identity::IdentityApi;
-use crate::k8s_auth::{
-    K8sAuthApi, K8sAuthProviderError, service::K8sAuthService, types::K8sClaims,
-};
+use super::K8sAuthApi;
+use super::types::K8sClaims;
+use crate::k8s_auth::{K8sAuthProviderError, service::K8sAuthService};
 use crate::keystone::ServiceState;
-use crate::token::TokenApi;
+use crate::mapping::MappingApi;
 
 /// Kubernetes cluster CA certificate location.
 static SERVICE_ACCOUNT_CERT_PATH_STR: &str = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt";
 static SERVICE_ACCOUNT_CERT_PATH: OnceLock<PathBuf> = OnceLock::new();
-//&str = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt";
 
 impl K8sAuthService {
     /// Get the [`Client`] for communication with the K8s.
@@ -102,29 +103,25 @@ impl K8sAuthService {
 
     /// Query the K8s Token Review endpoint.
     ///
+    /// Validates the JWT through the K8s TokenReview API. Audience and
+    /// expiry checks are performed pre-flight; namespace/name matching is
+    /// delegated to the mapping engine rules.
+    ///
     /// # Arguments
     /// * `token` - [`SecretString`] with the JWT token.
     /// * `instance` - reference to the [`K8sAuthInstance`].
-    /// * `role` - reference to the [`K8sAuthRole`].
     ///
     /// # Returns
     /// * Success with the TokenReview response as `Value`.
-    /// * `K8sAuthProviderError` if the token is invalid (expired, audience
-    ///   mismatch, kubernetes rejects the token).
+    /// * `K8sAuthProviderError` if the token is invalid.
     pub(super) async fn query_k8s_token_review(
         &self,
         token: &SecretString,
         instance: &K8sAuthInstance,
-        role: &K8sAuthRole,
     ) -> Result<Value, K8sAuthProviderError> {
-        // Pre-flight check to fail early on expired token of wrong audience
+        // Pre-flight: reject expired tokens early
         let claims = insecure_decode::<K8sClaims>(token.expose_secret())
             .map_err(K8sAuthProviderError::jwt)?;
-        if let Some(aud) = &role.bound_audience
-            && !claims.claims.aud.contains(aud)
-        {
-            return Err(K8sAuthProviderError::AudienceMismatch);
-        }
         if claims.claims.exp < Utc::now().timestamp() as u64 {
             return Err(K8sAuthProviderError::ExpiredToken);
         }
@@ -161,23 +158,22 @@ impl K8sAuthService {
         }
     }
 
-    /// Validate K8s Token Review response.
+    /// Validate K8s Token Review response and extract service account info.
+    ///
+    /// Returns `(namespace, service_account_name)` parsed from the username.
+    /// Does not check role bindings — that is handled by the mapping engine.
     ///
     /// # Arguments
-    /// * `token_review_data` - json representation of the TokenReview endpoint
-    ///   response.
-    /// * `role` - a reference to the required [`K8sAuthRole`].
+    /// * `token_review_data` - json representation of the TokenReview response.
     ///
     /// # Returns
-    /// * Success when the token data mapping is successful.
-    /// * `K8sAuthProviderError` when the kubernetes rejected the token, or when
-    ///   the necessary information cannot be retrieved, or when the
-    ///   serviceaccount name or namespace does not match.
-    pub(super) fn check_k8s_token_review_response(
+    /// * Success with `(namespace, service_account_name)`.
+    /// * `K8sAuthProviderError` when the token was not authenticated or the
+    ///   username format is invalid.
+    pub(super) fn extract_k8s_service_account(
         &self,
-        token_review_data: Value,
-        role: &K8sAuthRole,
-    ) -> Result<(), K8sAuthProviderError> {
+        token_review_data: &Value,
+    ) -> Result<(String, String), K8sAuthProviderError> {
         if !token_review_data["status"]["authenticated"]
             .as_bool()
             .unwrap_or(false)
@@ -185,7 +181,6 @@ impl K8sAuthService {
             if let Some(val) = token_review_data["status"]["error"].as_str() {
                 trace!("token validation error: {}", val);
             }
-
             return Err(K8sAuthProviderError::InvalidToken);
         }
 
@@ -193,53 +188,70 @@ impl K8sAuthService {
             .as_str()
             .ok_or(K8sAuthProviderError::InvalidTokenReviewResponse)?;
 
-        // Parse "system:serviceaccount:namespace:name"
         let parts: Vec<&str> = username.split(':').collect();
 
-        // Validation: Username must follow the pattern:
-        // "system:serviceaccount:<NS>:<SA>"
         match parts.as_slice() {
-            ["system", "serviceaccount", ns, sa] => {
-                // Verify role binds.
-                if !role.bound_service_account_names.is_empty()
-                    && !role.bound_service_account_names.iter().any(|x| x == sa)
-                {
-                    return Err(K8sAuthProviderError::FailedBoundServiceAccountName(
-                        sa.to_string(),
-                    ));
-                }
-                if !role.bound_service_account_namespaces.is_empty()
-                    && !role
-                        .bound_service_account_namespaces
-                        .iter()
-                        .any(|x| x == ns)
-                {
-                    return Err(K8sAuthProviderError::FailedBoundServiceAccountNamespace(
-                        ns.to_string(),
-                    ));
-                }
-                Ok(())
-            }
+            ["system", "serviceaccount", ns, sa] => Ok((ns.to_string(), sa.to_string())),
             _ => Err(K8sAuthProviderError::InvalidTokenReviewResponse),
         }
     }
 
-    /// Authenticate (exchange) the K8s Service account token.
+    /// Flatten TokenReview response into a claims map for the mapping engine.
+    ///
+    /// Per ADR-0020 §11.2, produces claims with keys:
+    /// - `k8s.serviceaccount.name`
+    /// - `k8s.serviceaccount.namespace`
+    /// - `k8s.aud` (from JWT claims, if present)
+    ///
+    /// # Arguments
+    /// * `token_review_data` - TokenReview JSON response.
+    /// * `jwt` - The original JWT (used to extract `aud` claim).
+    ///
+    /// # Returns
+    /// A flattened claims map and the JWT audience claim (optional).
+    pub(super) fn flatten_k8s_claims(
+        &self,
+        token_review_data: &Value,
+        jwt: &SecretString,
+    ) -> Result<(HashMap<String, Vec<String>>, Option<Vec<String>>), K8sAuthProviderError> {
+        let (namespace, sa_name) = self.extract_k8s_service_account(token_review_data)?;
+
+        let mut claims = HashMap::new();
+        claims.insert("k8s.serviceaccount.name".to_string(), vec![sa_name]);
+        claims.insert("k8s.serviceaccount.namespace".to_string(), vec![namespace]);
+
+        // Extract audience from JWT for inclusion in claims
+        let aud = insecure_decode::<K8sClaims>(jwt.expose_secret())
+            .map(|decoded| decoded.claims.aud)
+            .ok();
+
+        if let Some(auds) = &aud
+            && !auds.is_empty()
+        {
+            claims.insert("k8s.aud".to_string(), auds.iter().cloned().collect());
+        }
+
+        Ok((claims, aud))
+    }
+
+    /// Authenticate via K8s TokenReview + mapping engine.
+    ///
+    /// Validates the JWT through the K8s TokenReview API, flattens the
+    /// response into claims, and delegates to the unified mapping engine
+    /// for identity resolution and shadow registry upsert.
     ///
     /// # Arguments
     /// * `state` - Service state.
-    /// * `req` - A reference to the [`K8sAuthRequest`] to authenticate.
+    /// * `req` - A reference to the [`K8sAuthRequest`].
     ///
     /// # Returns
-    /// * Success with the [`AuthenticatedInfo`] and [`TokenRestriction`].
+    /// * Success with [`AuthenticationResult`] via mapping engine.
     /// * `K8sAuthProviderError` if authentication fails.
-    pub(super) async fn authenticate(
+    pub(super) async fn authenticate_by_mapping(
         &self,
         state: &ServiceState,
         req: &K8sAuthRequest,
     ) -> Result<AuthenticationResult, K8sAuthProviderError> {
-        let token_provider = state.provider.get_token_provider();
-        let identity_provider = state.provider.get_identity_provider();
         // Fetch k8s auth instance.
         let instance = self
             .get_auth_instance(state, &req.auth_instance_id)
@@ -252,81 +264,38 @@ impl K8sAuthService {
                 req.auth_instance_id.clone(),
             ));
         }
-        // Find the referred role.
-        let role_list_params = K8sAuthRoleListParameters {
+
+        // Call the TokenReview.
+        let token_review_data = self.query_k8s_token_review(&req.jwt, &instance).await?;
+
+        // Flatten TokenReview response into claims.
+        let (claims, _aud) = self.flatten_k8s_claims(&token_review_data, &req.jwt)?;
+
+        // Derive unique workload ID from claims: "<sa>:<ns>" per ADR-0020 §11.2.
+        let sa_name = &claims["k8s.serviceaccount.name"][0];
+        let namespace = &claims["k8s.serviceaccount.namespace"][0];
+        let unique_workload_id = format!("{sa_name}:{namespace}");
+
+        // Delegate to the unified mapping engine.
+        let mapping_req = MappingAuthRequest {
             domain_id: Some(instance.domain_id.clone()),
-            name: Some(req.role_name.clone()),
-            auth_instance_id: Some(req.auth_instance_id.clone()),
+            source: IdentitySource::K8s {
+                cluster_id: instance.id.clone(),
+            },
+            unique_workload_id,
+            claims,
+            rule_name: req.rule_name.clone(),
         };
-        let role = self
-            .list_auth_roles(state, &role_list_params)
-            .await?
-            .first()
-            .ok_or(K8sAuthProviderError::RoleNotFound(req.role_name.clone()))?
-            .clone();
-        validate_instance_and_role(&instance, &role)?;
 
-        // Call the TokenReview and check the response.
-        self.check_k8s_token_review_response(
-            self.query_k8s_token_review(&req.jwt, &instance, &role)
-                .await?,
-            &role,
-        )?;
+        let auth_result = state
+            .provider
+            .get_mapping_provider()
+            .authenticate_by_mapping(state, &mapping_req)
+            .await
+            .map_err(|e| K8sAuthProviderError::MappingEngine(e.to_string()))?;
 
-        // Find the token restriction.
-        let token_restriction = token_provider
-            .get_token_restriction(state, &role.token_restriction_id, true)
-            .await?
-            .ok_or(K8sAuthProviderError::TokenRestrictionNotFound(
-                role.token_restriction_id.clone(),
-            ))?;
-        let user_id = token_restriction
-            .user_id
-            .as_ref()
-            .ok_or(K8sAuthProviderError::TokenRestrictionMustSpecifyUserId)?;
-        let user = identity_provider
-            .get_user(state, user_id)
-            .await?
-            .ok_or(K8sAuthProviderError::UserNotFound(user_id.clone()))?;
-        Ok(AuthenticationResultBuilder::default()
-            .principal(PrincipalInfo {
-                identity: IdentityInfo::User(
-                    UserIdentityInfoBuilder::default()
-                        .user_id(user_id.clone())
-                        .user(user.clone())
-                        .build()?,
-                ),
-            })
-            .context(AuthenticationContext::K8s(K8sContext {
-                token_restriction_id: role.token_restriction_id.clone(),
-            }))
-            .token_restriction(token_restriction)
-            .build()?)
+        Ok(auth_result)
     }
-}
-
-/// Validate the K8s instance and role.
-///
-/// # Arguments
-/// * `instance` - reference to the [`K8sAuthInstance`].
-/// * `role` - reference to the [`K8sAuthRole`].
-///
-/// # Returns
-/// * Success if the instance and role are valid.
-/// * `K8sAuthProviderError` if validation fails.
-fn validate_instance_and_role(
-    instance: &K8sAuthInstance,
-    role: &K8sAuthRole,
-) -> Result<(), K8sAuthProviderError> {
-    if !role.enabled {
-        return Err(K8sAuthProviderError::RoleNotActive(role.id.clone()));
-    }
-    if role.auth_instance_id != instance.id {
-        return Err(K8sAuthProviderError::RoleInstanceOwnershipMismatch(
-            role.id.clone(),
-        ));
-    }
-    Ok(())
 }
 
 #[cfg(test)]
@@ -340,17 +309,9 @@ mod tests {
     use jsonwebtoken::{EncodingKey, Header, encode};
     use tempfile::NamedTempFile;
 
-    use openstack_keystone_core_types::identity::*;
-    use openstack_keystone_core_types::token::TokenRestriction;
-
     use super::super::backend::MockK8sAuthBackend;
     use super::*;
     use crate::common::HttpClientPool;
-    use crate::identity::MockIdentityProvider;
-    use crate::keystone::Service;
-    use crate::provider::Provider;
-    use crate::tests::get_mocked_state;
-    use crate::token::MockTokenProvider;
 
     /// fake cert valid till 2036
     static CA_CERT: &str = r#"
@@ -366,6 +327,7 @@ FPrC1HpT3dzIAiEAtEB0so+KoJb/2Opn1RycVzxke1CQrWgjS8ySnnFK5ok=
 -----END CERTIFICATE-----
 "#;
 
+    #[allow(dead_code)]
     async fn get_token_review_response_mock<'a, U: Into<String>>(
         mock_server: &'a MockServer,
         token: &SecretString,
@@ -399,76 +361,6 @@ FPrC1HpT3dzIAiEAtEB0so+KoJb/2Opn1RycVzxke1CQrWgjS8ySnnFK5ok=
             .await
     }
 
-    // Prepare the test data for the post token-exchange validations
-    async fn build_auth_test(
-        token_mock: MockTokenProvider,
-        identity_mock: MockIdentityProvider,
-    ) -> Result<(K8sAuthService, Arc<Service>, SecretString, MockServer)> {
-        let provider_mock = Provider::mocked_builder()
-            .mock_token(token_mock)
-            .mock_identity(identity_mock);
-        let mock_srv = MockServer::start_async().await;
-        let state = get_mocked_state(None, Some(provider_mock)).await;
-        let host = format!("http://{}:{}", mock_srv.host(), mock_srv.port());
-
-        let mut backend = MockK8sAuthBackend::default();
-        backend
-            .expect_get_auth_instance()
-            .withf(|_, id: &'_ str| id == "cid")
-            .returning(move |_, _| {
-                Ok(Some(K8sAuthInstance {
-                    ca_cert: None,
-                    disable_local_ca_jwt: true,
-                    domain_id: "did".into(),
-                    enabled: true,
-                    host: host.clone(),
-                    id: "cid".into(),
-                    name: Some("foo".into()),
-                }))
-            });
-        backend
-            .expect_list_auth_roles()
-            .withf(|_, params: &K8sAuthRoleListParameters| {
-                params.auth_instance_id == Some("cid".to_string())
-                    && params.domain_id == Some("did".to_string())
-                    && params.name == Some("rn".to_string())
-            })
-            .returning(|_, _| {
-                Ok(vec![K8sAuthRole {
-                    auth_instance_id: "cid".into(),
-                    bound_audience: Some("aud".into()),
-                    bound_service_account_names: Vec::new(),
-                    bound_service_account_namespaces: Vec::new(),
-                    domain_id: "did".into(),
-                    enabled: true,
-                    id: "rid".into(),
-                    name: "foo".into(),
-                    token_restriction_id: "trid".into(),
-                }])
-            });
-
-        let provider = K8sAuthService {
-            backend_driver: Arc::new(backend),
-            http_client_pool: Box::new(HttpClientPool::default()),
-        };
-
-        let token = SecretString::from(encode(
-            &Header {
-                nonce: Some(uuid::Uuid::new_v4().to_string()),
-                ..Default::default()
-            },
-            &K8sClaims {
-                aud: vec!["aud".into()],
-                exp: (Utc::now() + Duration::seconds(10)).timestamp() as u64,
-                sub: "system:serviceaccount:ns:san".into(),
-            },
-            &EncodingKey::from_secret("not_secret".as_ref()),
-        )?);
-        get_token_review_response_mock(&mock_srv, &token, true, "system:serviceaccount:ns:sa")
-            .await;
-        Ok((provider, state, token, mock_srv))
-    }
-
     #[tokio::test]
     async fn test_get_or_create_client_with_ca() -> Result<()> {
         let srv = K8sAuthService {
@@ -477,7 +369,7 @@ FPrC1HpT3dzIAiEAtEB0so+KoJb/2Opn1RycVzxke1CQrWgjS8ySnnFK5ok=
         };
         let instance = K8sAuthInstance {
             ca_cert: Some(CA_CERT.into()),
-            disable_local_ca_jwt: false,
+            disable_local_ca_jwt: true,
             domain_id: "did".into(),
             enabled: true,
             host: "127.0.0.1:6443".into(),
@@ -579,54 +471,6 @@ FPrC1HpT3dzIAiEAtEB0so+KoJb/2Opn1RycVzxke1CQrWgjS8ySnnFK5ok=
     }
 
     #[tokio::test]
-    async fn test_query_k8s_token_review_aud_mismatch() -> Result<()> {
-        let provider = K8sAuthService {
-            backend_driver: Arc::new(MockK8sAuthBackend::default()),
-            http_client_pool: Box::new(HttpClientPool::default()),
-        };
-        let instance = K8sAuthInstance {
-            ca_cert: None,
-            disable_local_ca_jwt: true,
-            domain_id: "did".into(),
-            enabled: true,
-            host: "http://127.0.0.1:6443".into(),
-            id: "cid".into(),
-            name: Some("foo".into()),
-        };
-        let role = K8sAuthRole {
-            auth_instance_id: "cid".into(),
-            bound_audience: Some("other_aud".into()),
-            bound_service_account_names: Vec::new(),
-            bound_service_account_namespaces: Vec::new(),
-            domain_id: "did".into(),
-            enabled: true,
-            id: "rid".into(),
-            name: "foo".into(),
-            token_restriction_id: "trid".into(),
-        };
-        let claims = K8sClaims {
-            aud: vec!["aud".into()],
-            exp: (Utc::now() + Duration::seconds(10)).timestamp() as u64,
-            sub: "system:serviceaccount:ns:san".into(),
-        };
-        let token = SecretString::from(encode(
-            &Header::default(),
-            &claims,
-            &EncodingKey::from_secret("not_secret".as_ref()),
-        )?);
-
-        if let Err(K8sAuthProviderError::AudienceMismatch) = provider
-            .query_k8s_token_review(&token, &instance, &role)
-            .await
-        {
-        } else {
-            panic!("should have raised an error");
-        }
-
-        Ok(())
-    }
-
-    #[tokio::test]
     async fn test_query_k8s_token_review_expired() -> Result<()> {
         let provider = K8sAuthService {
             backend_driver: Arc::new(MockK8sAuthBackend::default()),
@@ -641,17 +485,6 @@ FPrC1HpT3dzIAiEAtEB0so+KoJb/2Opn1RycVzxke1CQrWgjS8ySnnFK5ok=
             id: "cid".into(),
             name: Some("foo".into()),
         };
-        let role = K8sAuthRole {
-            auth_instance_id: "cid".into(),
-            bound_audience: Some("aud".into()),
-            bound_service_account_names: Vec::new(),
-            bound_service_account_namespaces: Vec::new(),
-            domain_id: "did".into(),
-            enabled: true,
-            id: "rid".into(),
-            name: "foo".into(),
-            token_restriction_id: "trid".into(),
-        };
         let claims = K8sClaims {
             aud: vec!["aud".into()],
             exp: (Utc::now() - Duration::seconds(10)).timestamp() as u64,
@@ -663,9 +496,8 @@ FPrC1HpT3dzIAiEAtEB0so+KoJb/2Opn1RycVzxke1CQrWgjS8ySnnFK5ok=
             &EncodingKey::from_secret("not_secret".as_ref()),
         )?);
 
-        if let Err(K8sAuthProviderError::ExpiredToken) = provider
-            .query_k8s_token_review(&token, &instance, &role)
-            .await
+        if let Err(K8sAuthProviderError::ExpiredToken) =
+            provider.query_k8s_token_review(&token, &instance).await
         {
         } else {
             panic!("should have raised an error");
@@ -689,17 +521,6 @@ FPrC1HpT3dzIAiEAtEB0so+KoJb/2Opn1RycVzxke1CQrWgjS8ySnnFK5ok=
             host: format!("http://{}:{}", mock_srv.host(), mock_srv.port()),
             id: "cid".into(),
             name: Some("foo".into()),
-        };
-        let role = K8sAuthRole {
-            auth_instance_id: "cid".into(),
-            bound_audience: Some("aud".into()),
-            bound_service_account_names: Vec::new(),
-            bound_service_account_namespaces: Vec::new(),
-            domain_id: "did".into(),
-            enabled: true,
-            id: "rid".into(),
-            name: "foo".into(),
-            token_restriction_id: "trid".into(),
         };
         let claims = K8sClaims {
             aud: vec!["aud".into()],
@@ -762,16 +583,13 @@ FPrC1HpT3dzIAiEAtEB0so+KoJb/2Opn1RycVzxke1CQrWgjS8ySnnFK5ok=
 
         assert_eq!(
             rsp,
-            provider
-                .query_k8s_token_review(&token, &instance, &role)
-                .await?,
+            provider.query_k8s_token_review(&token, &instance).await?,
             "response is just the whole json blob"
         );
         mock_ok.assert();
 
-        if let Err(K8sAuthProviderError::InvalidToken) = provider
-            .query_k8s_token_review(&token2, &instance, &role)
-            .await
+        if let Err(K8sAuthProviderError::InvalidToken) =
+            provider.query_k8s_token_review(&token2, &instance).await
         {
             mock_nok.assert();
         } else {
@@ -782,489 +600,42 @@ FPrC1HpT3dzIAiEAtEB0so+KoJb/2Opn1RycVzxke1CQrWgjS8ySnnFK5ok=
     }
 
     #[test]
-    fn test_check_k8s_token_review_response() {
+    fn test_extract_k8s_service_account() -> Result<()> {
         let provider = K8sAuthService {
             backend_driver: Arc::new(MockK8sAuthBackend::default()),
             http_client_pool: Box::new(HttpClientPool::default()),
         };
 
-        let role = K8sAuthRole {
-            auth_instance_id: "cid".into(),
-            bound_audience: Some("aud".into()),
-            bound_service_account_names: vec!["sa".to_string()],
-            bound_service_account_namespaces: vec!["ns".to_string()],
-            domain_id: "did".into(),
-            enabled: true,
-            id: "rid".into(),
-            name: "foo".into(),
-            token_restriction_id: "trid".into(),
-        };
-
-        if let Err(K8sAuthProviderError::InvalidToken) = provider
-            .check_k8s_token_review_response(json!({"status": {"authenticated": false}}), &role)
+        // Not authenticated
+        if let Err(K8sAuthProviderError::InvalidToken) =
+            provider.extract_k8s_service_account(&json!({"status": {"authenticated": false}}))
         {
         } else {
             panic!("not authenticated token should result in InvalidToken");
         }
-        if let Err(K8sAuthProviderError::InvalidTokenReviewResponse) = provider
-            .check_k8s_token_review_response(json!({"status": {"authenticated": true}}), &role)
+
+        // No user
+        if let Err(K8sAuthProviderError::InvalidTokenReviewResponse) =
+            provider.extract_k8s_service_account(&json!({"status": {"authenticated": true}}))
         {
         } else {
             panic!("no user should result in InvalidTokenReviewResponse");
         }
-        if let Err(K8sAuthProviderError::FailedBoundServiceAccountName(x)) = provider
-            .check_k8s_token_review_response(json!({"status": {"authenticated": true, "user": {"username": "system:serviceaccount:ns:sub"}}}), &role)
-        {
-            assert_eq!("sub", x);
-        } else {
-            panic!("mismatching bound_service_account_names should result in FailedBoundServiceAccountName");
-        }
-        if let Err(K8sAuthProviderError::FailedBoundServiceAccountNamespace(x)) = provider
-            .check_k8s_token_review_response(json!({"status": {"authenticated": true, "user": {"username": "system:serviceaccount:other_ns:sa"}}}), &role)
-        {
-            assert_eq!("other_ns", x);
-        } else {
-            panic!("mismatching bound_service_account_namespaces should result in FailedBoundServiceAccountNamespace");
-        }
+
+        // Wrong username pattern
         if let Err(K8sAuthProviderError::InvalidTokenReviewResponse) = provider
-            .check_k8s_token_review_response(
-                json!({"status": {"authenticated": true, "user": {"username": "system"}}}),
-                &role,
+            .extract_k8s_service_account(
+                &json!({"status": {"authenticated": true, "user": {"username": "system"}}}),
             )
         {
         } else {
-            panic!("wrong username pattern should result in FailedBoundServiceAccountName");
+            panic!("wrong username pattern should result in InvalidTokenReviewResponse");
         }
-        assert!(provider
-            .check_k8s_token_review_response(
-                json!({"status": {"authenticated": true, "user": {"username": "system:serviceaccount:ns:sa"}}}),
-                &K8sAuthRole {
-                    auth_instance_id: "cid".into(),
-                    bound_audience: Some("aud".into()),
-                    bound_service_account_names: Vec::new(),
-                    bound_service_account_namespaces: Vec::new(),
-                    domain_id: "did".into(),
-                    enabled: true,
-                    id: "rid".into(),
-                    name: "foo".into(),
-                    token_restriction_id: "trid".into(),
-                }
-            ).is_ok(), "role without binds should be ok");
-        assert!(provider
-            .check_k8s_token_review_response(
-                json!({"status": {"authenticated": true, "user": {"username": "system:serviceaccount:ns:sa"}}}),
-                &K8sAuthRole {
-                    auth_instance_id: "cid".into(),
-                    bound_audience: Some("aud".into()),
-                    bound_service_account_names: Vec::new(),
-                    bound_service_account_namespaces: vec!["ns".to_string()],
-                    domain_id: "did".into(),
-                    enabled: true,
-                    id: "rid".into(),
-                    name: "foo".into(),
-                    token_restriction_id: "trid".into(),
-                }
-            ).is_ok(), "role without bound_service_account_names should be ok");
-        assert!(provider
-            .check_k8s_token_review_response(
-                json!({"status": {"authenticated": true, "user": {"username": "system:serviceaccount:ns:sa"}}}),
-                &K8sAuthRole {
-                    auth_instance_id: "cid".into(),
-                    bound_audience: Some("aud".into()),
-                    bound_service_account_names: vec!["sa".to_string()],
-                    bound_service_account_namespaces: Vec::new(),
-                    domain_id: "did".into(),
-                    enabled: true,
-                    id: "rid".into(),
-                    name: "foo".into(),
-                    token_restriction_id: "trid".into(),
-                }
-            ).is_ok(), "role without bound_service_account_namespaces should be ok");
-    }
 
-    #[tokio::test]
-    async fn test_auth_conf_not_found() {
-        let state = get_mocked_state(None, None).await;
-        let mut backend = MockK8sAuthBackend::default();
-        backend
-            .expect_get_auth_instance()
-            .withf(|_, id: &'_ str| id == "cid")
-            .returning(|_, _| Ok(None));
-        let provider = K8sAuthService {
-            backend_driver: Arc::new(backend),
-            http_client_pool: Box::new(HttpClientPool::default()),
-        };
-
-        if let Err(K8sAuthProviderError::AuthInstanceNotFound(x)) = provider
-            .authenticate_by_k8s_sa_token(
-                &state,
-                &K8sAuthRequest {
-                    auth_instance_id: "cid".into(),
-                    jwt: SecretString::from("secret"),
-                    role_name: "rn".into(),
-                },
-            )
-            .await
-        {
-            assert_eq!("cid", x);
-        } else {
-            panic!("AuthInstanceNotFound expected");
-        };
-    }
-
-    #[tokio::test]
-    async fn test_auth_role_not_found() {
-        let state = get_mocked_state(None, None).await;
-        let mut backend = MockK8sAuthBackend::default();
-        backend
-            .expect_get_auth_instance()
-            .withf(|_, id: &'_ str| id == "cid")
-            .returning(|_, _| {
-                Ok(Some(K8sAuthInstance {
-                    ca_cert: None,
-                    disable_local_ca_jwt: true,
-                    domain_id: "did".into(),
-                    enabled: true,
-                    host: "http://foo:6443".into(),
-                    id: "cid".into(),
-                    name: Some("foo".into()),
-                }))
-            });
-        backend
-            .expect_list_auth_roles()
-            .withf(|_, params: &K8sAuthRoleListParameters| {
-                params.auth_instance_id == Some("cid".to_string())
-                    && params.domain_id == Some("did".to_string())
-                    && params.name == Some("rn".to_string())
-            })
-            .returning(|_, _| Ok(vec![]));
-
-        let provider = K8sAuthService {
-            backend_driver: Arc::new(backend),
-            http_client_pool: Box::new(HttpClientPool::default()),
-        };
-
-        if let Err(K8sAuthProviderError::RoleNotFound(x)) = provider
-            .authenticate_by_k8s_sa_token(
-                &state,
-                &K8sAuthRequest {
-                    auth_instance_id: "cid".into(),
-                    jwt: SecretString::from("secret"),
-                    role_name: "rn".into(),
-                },
-            )
-            .await
-        {
-            assert_eq!("rn", x);
-        } else {
-            panic!("RoleNotFound expected");
-        };
-    }
-
-    #[tokio::test]
-    async fn test_auth_conf_or_auth_role_disabled() {
-        let state = get_mocked_state(None, None).await;
-        let mut backend = MockK8sAuthBackend::default();
-        backend
-            .expect_get_auth_instance()
-            .withf(|_, id: &'_ str| id == "cid")
-            .returning(|_, _| {
-                Ok(Some(K8sAuthInstance {
-                    ca_cert: None,
-                    disable_local_ca_jwt: true,
-                    domain_id: "did".into(),
-                    enabled: true,
-                    host: "http://foo:6443".into(),
-                    id: "cid".into(),
-                    name: Some("foo".into()),
-                }))
-            });
-        backend
-            .expect_get_auth_instance()
-            .withf(|_, id: &'_ str| id == "cid_disabled")
-            .returning(|_, _| {
-                Ok(Some(K8sAuthInstance {
-                    ca_cert: None,
-                    disable_local_ca_jwt: true,
-                    domain_id: "did".into(),
-                    enabled: false,
-                    host: "http://foo:6443".into(),
-                    id: "cid_disabled".into(),
-                    name: Some("foo".into()),
-                }))
-            });
-        backend
-            .expect_list_auth_roles()
-            .withf(|_, params: &K8sAuthRoleListParameters| {
-                params.auth_instance_id == Some("cid".to_string())
-                    && params.domain_id == Some("did".to_string())
-                    && params.name == Some("rn".to_string())
-            })
-            .returning(|_, _| {
-                Ok(vec![K8sAuthRole {
-                    auth_instance_id: "cid_other".into(),
-                    bound_audience: Some("aud".into()),
-                    bound_service_account_names: vec!["sa".to_string()],
-                    bound_service_account_namespaces: Vec::new(),
-                    domain_id: "did".into(),
-                    enabled: true,
-                    id: "rid".into(),
-                    name: "foo".into(),
-                    token_restriction_id: "trid".into(),
-                }])
-            });
-        backend
-            .expect_list_auth_roles()
-            .withf(|_, params: &K8sAuthRoleListParameters| {
-                params.auth_instance_id == Some("cid".to_string())
-                    && params.domain_id == Some("did".to_string())
-                    && params.name == Some("rn_disabled".to_string())
-            })
-            .returning(|_, _| {
-                Ok(vec![K8sAuthRole {
-                    auth_instance_id: "cid".into(),
-                    bound_audience: Some("aud".into()),
-                    bound_service_account_names: vec!["sa".to_string()],
-                    bound_service_account_namespaces: Vec::new(),
-                    domain_id: "did".into(),
-                    enabled: false,
-                    id: "rid_disabled".into(),
-                    name: "foo".into(),
-                    token_restriction_id: "trid".into(),
-                }])
-            });
-
-        let provider = K8sAuthService {
-            backend_driver: Arc::new(backend),
-            http_client_pool: Box::new(HttpClientPool::default()),
-        };
-
-        // verify disabled configuration is checked
-        if let Err(K8sAuthProviderError::AuthInstanceNotActive(x)) = provider
-            .authenticate_by_k8s_sa_token(
-                &state,
-                &K8sAuthRequest {
-                    auth_instance_id: "cid_disabled".into(),
-                    jwt: SecretString::from("secret"),
-                    role_name: "rn".into(),
-                },
-            )
-            .await
-        {
-            assert_eq!("cid_disabled", x);
-        } else {
-            panic!("AuthInstanceNotActive expected");
-        };
-        // verify disabled role is checked
-        if let Err(K8sAuthProviderError::RoleNotActive(x)) = provider
-            .authenticate_by_k8s_sa_token(
-                &state,
-                &K8sAuthRequest {
-                    auth_instance_id: "cid".into(),
-                    jwt: SecretString::from("secret"),
-                    role_name: "rn_disabled".into(),
-                },
-            )
-            .await
-        {
-            assert_eq!("rid_disabled", x);
-        } else {
-            panic!("RoleNotActive expected");
-        };
-        // verify role.configuration_id = configuration.id is checked
-        if let Err(K8sAuthProviderError::RoleInstanceOwnershipMismatch(x)) = provider
-            .authenticate_by_k8s_sa_token(
-                &state,
-                &K8sAuthRequest {
-                    auth_instance_id: "cid".into(),
-                    jwt: SecretString::from("secret"),
-                    role_name: "rn".into(),
-                },
-            )
-            .await
-        {
-            assert_eq!("rid", x);
-        } else {
-            panic!("RoleInstanceOwnershipMismatch expected");
-        };
-    }
-
-    #[tokio::test]
-    async fn test_auth() -> Result<()> {
-        let mut token_mock = MockTokenProvider::default();
-        let tr = TokenRestriction {
-            id: "trid".into(),
-            domain_id: "did".into(),
-            project_id: Some("pid".into()),
-            user_id: Some("uid".into()),
-            ..Default::default()
-        };
-        let tr_clone = tr.clone();
-        token_mock
-            .expect_get_token_restriction()
-            .withf(|_, id: &'_ str, expand: &bool| id == "trid" && *expand)
-            .returning(move |_, _, _| Ok(Some(tr_clone.clone())));
-
-        let mut identity_mock = MockIdentityProvider::default();
-        identity_mock
-            .expect_get_user()
-            .withf(move |_, id: &'_ str| id == "uid")
-            .returning(|_, _| {
-                Ok(Some(
-                    UserResponseBuilder::default()
-                        .domain_id("did")
-                        .enabled(true)
-                        .name("name")
-                        .id("uid")
-                        .build()?,
-                ))
-            });
-
-        let (provider, state, token, _mock_server) =
-            build_auth_test(token_mock, identity_mock).await?;
-        let auth_res = provider
-            .authenticate_by_k8s_sa_token(
-                &state,
-                &K8sAuthRequest {
-                    auth_instance_id: "cid".into(),
-                    jwt: token.clone(),
-                    role_name: "rn".into(),
-                },
-            )
-            .await?;
-        match &auth_res.principal.identity {
-            IdentityInfo::User(user) => {
-                assert_eq!("uid", user.user_id);
-            }
-            _ => {
-                panic!("should result in a user");
-            }
-        }
-        assert_eq!(tr, auth_res.token_restriction.unwrap());
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_auth_tr_not_found() -> Result<()> {
-        let mut token_mock = MockTokenProvider::default();
-        token_mock
-            .expect_get_token_restriction()
-            .withf(|_, id: &'_ str, expand: &bool| id == "trid" && *expand)
-            .returning(|_, _, _| Ok(None));
-
-        let identity_mock = MockIdentityProvider::default();
-        let (provider, state, token, _mock_server) =
-            build_auth_test(token_mock, identity_mock).await?;
-
-        match provider
-            .authenticate_by_k8s_sa_token(
-                &state,
-                &K8sAuthRequest {
-                    auth_instance_id: "cid".into(),
-                    jwt: token.clone(),
-                    role_name: "rn".into(),
-                },
-            )
-            .await
-        {
-            Err(K8sAuthProviderError::TokenRestrictionNotFound(x)) => {
-                assert_eq!("trid", x);
-            }
-            other => {
-                panic!(
-                    "token restriction not found should return error and not {:?}",
-                    other
-                );
-            }
-        };
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_auth_trid_user_unset() -> Result<()> {
-        let mut token_mock = MockTokenProvider::default();
-        token_mock
-            .expect_get_token_restriction()
-            .withf(|_, id: &'_ str, expand: &bool| id == "trid" && *expand)
-            .returning(|_, _, _| {
-                Ok(Some(TokenRestriction {
-                    id: "trid".into(),
-                    domain_id: "did".into(),
-                    project_id: Some("pid".into()),
-                    user_id: None,
-                    ..Default::default()
-                }))
-            });
-        let identity_mock = MockIdentityProvider::default();
-
-        let (provider, state, token, _mock_server) =
-            build_auth_test(token_mock, identity_mock).await?;
-
-        match provider
-            .authenticate_by_k8s_sa_token(
-                &state,
-                &K8sAuthRequest {
-                    auth_instance_id: "cid".into(),
-                    jwt: token.clone(),
-                    role_name: "rn".into(),
-                },
-            )
-            .await
-        {
-            Err(K8sAuthProviderError::TokenRestrictionMustSpecifyUserId) => {}
-            _ => {
-                panic!("user must be specified in the TokenRestriction and");
-            }
-        };
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_auth_user_not_found() -> Result<()> {
-        let mut token_mock = MockTokenProvider::default();
-        token_mock
-            .expect_get_token_restriction()
-            .withf(|_, id: &'_ str, expand: &bool| id == "trid" && *expand)
-            .returning(|_, _, _| {
-                Ok(Some(TokenRestriction {
-                    id: "trid".into(),
-                    domain_id: "did".into(),
-                    project_id: Some("pid".into()),
-                    user_id: Some("uid".into()),
-                    ..Default::default()
-                }))
-            });
-
-        let mut identity_mock = MockIdentityProvider::default();
-        identity_mock
-            .expect_get_user()
-            .withf(|_, id: &'_ str| id == "uid")
-            .returning(|_, _| Ok(None));
-
-        let (provider, state, token, _mock_server) =
-            build_auth_test(token_mock, identity_mock).await?;
-
-        match provider
-            .authenticate_by_k8s_sa_token(
-                &state,
-                &K8sAuthRequest {
-                    auth_instance_id: "cid".into(),
-                    jwt: token.clone(),
-                    role_name: "rn".into(),
-                },
-            )
-            .await
-        {
-            Err(K8sAuthProviderError::UserNotFound(x)) => {
-                assert_eq!("uid", x);
-            }
-            other => {
-                panic!("user not found should return error and not {:?}", other);
-            }
-        };
+        // Valid
+        let (ns, sa) = provider.extract_k8s_service_account(&json!({"status": {"authenticated": true, "user": {"username": "system:serviceaccount:my_ns:my_sa"}}}))?;
+        assert_eq!(ns, "my_ns");
+        assert_eq!(sa, "my_sa");
 
         Ok(())
     }

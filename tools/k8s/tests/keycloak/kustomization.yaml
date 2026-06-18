@@ -4,4 +4,4 @@
 #    newTag: 26.3
 resources:
   #- deployment.yaml
-  - https://raw.githubusercontent.com/keycloak/keycloak-quickstarts/refs/heads/main/kubernetes/keycloak.yaml 
+  - https://raw.githubusercontent.com/keycloak/keycloak-quickstarts/refs/heads/main/kubernetes/keycloak.yaml

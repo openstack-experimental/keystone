@@ -14,7 +14,6 @@
 //! # Kubernetes auth API
 //!
 //! - AuthInstance
-//! - AuthRole
 //! - Auth
 use utoipa::OpenApi;
 use utoipa_axum::router::OpenApiRouter;
@@ -23,7 +22,6 @@ use crate::keystone::ServiceState;
 
 pub mod auth;
 pub mod instance;
-pub mod role;
 pub mod types;
 
 /// OpenApi specification for the K8s auth module.
@@ -32,11 +30,7 @@ pub mod types;
     tags(
         (name="k8s_auth_instance", description=r#"Kubernetes authentication instances (Kubernetes Clusters) API.
 
-Authentication Instance represents a remote Kubernetes cluster that issues the JWT token for the service account which could be exchanged for the Keystone token using the corresponding auth_role.
-"#),
-        (name="k8s_auth_role", description=r#"Kubernetes auth role API.
-
-K8s auth roles define how the JWT token of the Kubernetes pod running as a service account should be mapped to the local user during the token exchange.
+Authentication Instance represents a remote Kubernetes cluster that issues the JWT token for the service account which could be exchanged for the Keystone token using the unified mapping engine.
 "#),
     )
 )]
@@ -45,6 +39,5 @@ pub struct ApiDoc;
 pub fn openapi_router() -> OpenApiRouter<ServiceState> {
     OpenApiRouter::new()
         .nest("/instances", instance::openapi_router())
-        .merge(role::openapi_router())
         .merge(auth::openapi_router())
 }

@@ -54,6 +54,10 @@ use dashmap::DashMap;
 /// - `claims`: The flattened claims map from the ingress adapter.
 /// - `domain_id`: The enclosing ruleset domain ID (used for
 ///   `${enclosing_domain_id}`).
+/// - `rule_name`: Optional named rule hint. When set, the engine evaluates
+///   this rule first; if it matches, evaluation terminates immediately.
+///   If not set (or the named rule doesn't match), standard first-match-wins
+///   iteration proceeds.
 ///
 /// # Returns
 /// `Some(MatchResult)` on first match, `None` if no rule matches.
@@ -62,12 +66,49 @@ pub fn evaluate_ruleset(
     ruleset: &MappingRuleSet,
     claims: &HashMap<String, Vec<String>>,
     domain_id: Option<&str>,
+    rule_name: Option<&str>,
 ) -> Result<Option<MatchResult>, MappingProviderError> {
     if !ruleset.enabled {
         return Ok(None);
     }
 
     let enclosing = domain_id.unwrap_or("");
+
+    // If a rule name hint is provided, evaluate only that named rule.
+    // Return an error if the rule doesn't exist or doesn't match, to prevent
+    // enumeration attacks via fallback to first-match-wins.
+    if let Some(name) = rule_name {
+        if let Some(rule) = ruleset.rules.iter().find(|r| r.name == name) {
+            let matched = evaluate_match(&rule.r#match, claims);
+            if matched {
+                let user_name = interpolate_user_name(&rule.identity.user_name, claims, enclosing)
+                    .ok_or(MappingProviderError::InterpolatedValueTooLong)?;
+
+                if !user_name.is_empty() {
+                    let user_id = interpolate_user_id(&rule.identity.user_id, claims, enclosing)?;
+                    let user_domain_id =
+                        resolve_domain(&rule.identity.user_domain_id, claims, ruleset, enclosing)?;
+                    let resolved_group_bindings =
+                        interpolate_groups(&rule.groups, claims, ruleset, enclosing)?;
+
+                    return Ok(Some(MatchResult {
+                        rule_name: rule.name.clone(),
+                        user_name,
+                        user_id,
+                        user_domain_id,
+                        is_system: rule.identity.is_system,
+                        authorizations: rule.authorizations.clone(),
+                        resolved_group_bindings,
+                        ruleset_version: ruleset.ruleset_version,
+                    }));
+                }
+            }
+        }
+        // Named rule not found or did not match — error to prevent enumeration
+        return Err(MappingProviderError::MappingRuleNotFound(name.to_string()));
+    }
+
+    // Standard first-match-wins iteration
     for rule in &ruleset.rules {
         if !evaluate_match(&rule.r#match, claims) {
             continue;
@@ -399,7 +440,8 @@ mod tests {
             simple_rule("second", "sub", "user-123", "matched-second"),
         ];
         let ruleset = build_ruleset(true, rules);
-        let result = evaluate_ruleset(&ruleset, &test_claims(), Some("default-domain")).unwrap();
+        let result =
+            evaluate_ruleset(&ruleset, &test_claims(), Some("default-domain"), None).unwrap();
         assert!(result.is_some());
         assert_eq!(result.unwrap().rule_name, "first");
     }
@@ -408,7 +450,8 @@ mod tests {
     fn test_no_match_returns_none() {
         let rules = vec![simple_rule("nomatch", "sub", "user-999", "never-matched")];
         let ruleset = build_ruleset(true, rules);
-        let result = evaluate_ruleset(&ruleset, &test_claims(), Some("default-domain")).unwrap();
+        let result =
+            evaluate_ruleset(&ruleset, &test_claims(), Some("default-domain"), None).unwrap();
         assert!(result.is_none());
     }
 
@@ -416,7 +459,8 @@ mod tests {
     fn test_disabled_ruleset_returns_none() {
         let rules = vec![simple_rule("nomatch", "sub", "user-123", "matched")];
         let ruleset = build_ruleset(false, rules);
-        let result = evaluate_ruleset(&ruleset, &test_claims(), Some("default-domain")).unwrap();
+        let result =
+            evaluate_ruleset(&ruleset, &test_claims(), Some("default-domain"), None).unwrap();
         assert!(result.is_none());
     }
 
@@ -445,7 +489,8 @@ mod tests {
             groups: vec![],
         }];
         let ruleset = build_ruleset(true, rules);
-        let result = evaluate_ruleset(&ruleset, &test_claims(), Some("default-domain")).unwrap();
+        let result =
+            evaluate_ruleset(&ruleset, &test_claims(), Some("default-domain"), None).unwrap();
         assert!(result.is_some());
         assert_eq!(result.unwrap().rule_name, "allmatch");
     }
@@ -475,7 +520,8 @@ mod tests {
             groups: vec![],
         }];
         let ruleset = build_ruleset(true, rules);
-        let result = evaluate_ruleset(&ruleset, &test_claims(), Some("default-domain")).unwrap();
+        let result =
+            evaluate_ruleset(&ruleset, &test_claims(), Some("default-domain"), None).unwrap();
         assert!(result.is_none());
     }
 
@@ -504,7 +550,8 @@ mod tests {
             groups: vec![],
         }];
         let ruleset = build_ruleset(true, rules);
-        let result = evaluate_ruleset(&ruleset, &test_claims(), Some("default-domain")).unwrap();
+        let result =
+            evaluate_ruleset(&ruleset, &test_claims(), Some("default-domain"), None).unwrap();
         assert!(result.is_some());
         assert_eq!(result.unwrap().rule_name, "anymatch");
     }
@@ -530,7 +577,8 @@ mod tests {
             groups: vec![],
         }];
         let ruleset = build_ruleset(true, rules);
-        let result = evaluate_ruleset(&ruleset, &test_claims(), Some("default-domain")).unwrap();
+        let result =
+            evaluate_ruleset(&ruleset, &test_claims(), Some("default-domain"), None).unwrap();
         assert!(result.is_some());
         assert_eq!(result.unwrap().rule_name, "regexmatch");
     }
@@ -556,7 +604,8 @@ mod tests {
             groups: vec![],
         }];
         let ruleset = build_ruleset(true, rules);
-        let result = evaluate_ruleset(&ruleset, &test_claims(), Some("default-domain")).unwrap();
+        let result =
+            evaluate_ruleset(&ruleset, &test_claims(), Some("default-domain"), None).unwrap();
         assert!(result.is_none());
     }
 
@@ -588,7 +637,8 @@ mod tests {
             groups: vec![],
         }];
         let ruleset = build_ruleset(true, rules);
-        let result = evaluate_ruleset(&ruleset, &test_claims(), Some("default-domain")).unwrap();
+        let result =
+            evaluate_ruleset(&ruleset, &test_claims(), Some("default-domain"), None).unwrap();
         assert!(result.is_none());
     }
 
@@ -620,7 +670,8 @@ mod tests {
             groups: vec![],
         }];
         let ruleset = build_ruleset(true, rules);
-        let result = evaluate_ruleset(&ruleset, &test_claims(), Some("default-domain")).unwrap();
+        let result =
+            evaluate_ruleset(&ruleset, &test_claims(), Some("default-domain"), None).unwrap();
         assert!(result.is_none());
     }
 
@@ -645,7 +696,8 @@ mod tests {
             groups: vec![],
         }];
         let ruleset = build_ruleset(true, rules);
-        let result = evaluate_ruleset(&ruleset, &test_claims(), Some("default-domain")).unwrap();
+        let result =
+            evaluate_ruleset(&ruleset, &test_claims(), Some("default-domain"), None).unwrap();
         let match_result = result.unwrap();
         assert_eq!(
             match_result.user_domain_id,
@@ -684,7 +736,8 @@ mod tests {
             groups: vec![],
         }];
         let ruleset = build_ruleset(true, rules);
-        let result = evaluate_ruleset(&ruleset, &test_claims(), Some("default-domain")).unwrap();
+        let result =
+            evaluate_ruleset(&ruleset, &test_claims(), Some("default-domain"), None).unwrap();
         assert!(result.is_some());
         assert_eq!(result.unwrap().rule_name, "nested");
     }
@@ -710,7 +763,8 @@ mod tests {
             groups: vec![],
         }];
         let ruleset = build_ruleset(true, rules);
-        let result = evaluate_ruleset(&ruleset, &test_claims(), Some("default-domain")).unwrap();
+        let result =
+            evaluate_ruleset(&ruleset, &test_claims(), Some("default-domain"), None).unwrap();
         let match_result = result.unwrap();
         assert_eq!(match_result.user_name, "alice@mapped");
     }
@@ -743,7 +797,8 @@ mod tests {
             groups: vec![],
         }];
         let ruleset = build_ruleset(true, rules);
-        let result = evaluate_ruleset(&ruleset, &test_claims(), Some("default-domain")).unwrap();
+        let result =
+            evaluate_ruleset(&ruleset, &test_claims(), Some("default-domain"), None).unwrap();
         assert!(result.is_some());
         assert_eq!(result.unwrap().rule_name, "strictall");
     }
@@ -773,7 +828,8 @@ mod tests {
             groups: vec![],
         }];
         let ruleset = build_ruleset(true, rules);
-        let result = evaluate_ruleset(&ruleset, &test_claims(), Some("default-domain")).unwrap();
+        let result =
+            evaluate_ruleset(&ruleset, &test_claims(), Some("default-domain"), None).unwrap();
         assert!(result.is_none());
     }
 
@@ -815,7 +871,7 @@ mod tests {
             "domain_claim".to_string(),
             vec!["target-domain".to_string()],
         );
-        let result = evaluate_ruleset(&ruleset, &claims, Some("default-domain")).unwrap();
+        let result = evaluate_ruleset(&ruleset, &claims, Some("default-domain"), None).unwrap();
         let match_result = result.unwrap();
         assert_eq!(
             match_result.user_domain_id,
@@ -856,7 +912,8 @@ mod tests {
             rules,
             ruleset_version: 1,
         };
-        let result = evaluate_ruleset(&ruleset, &test_claims(), Some("default-domain")).unwrap();
+        let result =
+            evaluate_ruleset(&ruleset, &test_claims(), Some("default-domain"), None).unwrap();
         let match_result = result.unwrap();
         assert_eq!(
             match_result.user_domain_id,
@@ -888,7 +945,8 @@ mod tests {
             simple_rule("fallback", "aud", "my-app", "fallback-user"),
         ];
         let ruleset = build_ruleset(true, rules);
-        let result = evaluate_ruleset(&ruleset, &test_claims(), Some("default-domain")).unwrap();
+        let result =
+            evaluate_ruleset(&ruleset, &test_claims(), Some("default-domain"), None).unwrap();
         assert!(result.is_some());
         assert_eq!(result.unwrap().rule_name, "fallback");
     }
@@ -914,7 +972,8 @@ mod tests {
             groups: vec![],
         }];
         let ruleset = build_ruleset(true, rules);
-        let result = evaluate_ruleset(&ruleset, &test_claims(), Some("default-domain")).unwrap();
+        let result =
+            evaluate_ruleset(&ruleset, &test_claims(), Some("default-domain"), None).unwrap();
         let match_result = result.unwrap();
         assert_eq!(match_result.user_id, Some("user-123-suffix".to_string()));
     }
@@ -942,7 +1001,8 @@ mod tests {
             groups: vec![],
         }];
         let ruleset = build_ruleset(true, rules);
-        let result = evaluate_ruleset(&ruleset, &test_claims(), Some("default-domain")).unwrap();
+        let result =
+            evaluate_ruleset(&ruleset, &test_claims(), Some("default-domain"), None).unwrap();
         assert!(result.is_some());
         assert_eq!(result.unwrap().rule_name, "anyvalue");
     }
@@ -969,7 +1029,8 @@ mod tests {
             groups: vec![],
         }];
         let ruleset = build_ruleset(true, rules);
-        let result = evaluate_ruleset(&ruleset, &test_claims(), Some("default-domain")).unwrap();
+        let result =
+            evaluate_ruleset(&ruleset, &test_claims(), Some("default-domain"), None).unwrap();
         assert!(result.is_none());
     }
 
@@ -1000,7 +1061,7 @@ mod tests {
             groups: vec![],
         }];
         let ruleset = build_ruleset(true, rules);
-        let result = evaluate_ruleset(&ruleset, &claims, Some("default-domain")).unwrap();
+        let result = evaluate_ruleset(&ruleset, &claims, Some("default-domain"), None).unwrap();
         assert!(result.is_some());
         assert_eq!(result.unwrap().rule_name, "multivalue");
     }
@@ -1027,7 +1088,8 @@ mod tests {
             groups: vec![],
         }];
         let ruleset = build_ruleset(true, rules);
-        let result = evaluate_ruleset(&ruleset, &test_claims(), Some("default-domain")).unwrap();
+        let result =
+            evaluate_ruleset(&ruleset, &test_claims(), Some("default-domain"), None).unwrap();
         assert!(result.is_none());
     }
 
@@ -1058,7 +1120,7 @@ mod tests {
             groups: vec![],
         }];
         let ruleset = build_ruleset(true, rules);
-        let result = evaluate_ruleset(&ruleset, &claims, Some("default-domain")).unwrap();
+        let result = evaluate_ruleset(&ruleset, &claims, Some("default-domain"), None).unwrap();
         assert!(result.is_none());
     }
 
@@ -1089,7 +1151,7 @@ mod tests {
             groups: vec![],
         }];
         let ruleset = build_ruleset(true, rules);
-        let result = evaluate_ruleset(&ruleset, &claims, Some("default-domain")).unwrap();
+        let result = evaluate_ruleset(&ruleset, &claims, Some("default-domain"), None).unwrap();
         assert!(result.is_some());
         assert_eq!(result.unwrap().rule_name, "tagregex");
     }
@@ -1129,10 +1191,107 @@ mod tests {
             groups: vec![],
         }];
         let ruleset = build_ruleset(true, rules);
-        let result = evaluate_ruleset(&ruleset, &claims, Some("default-domain")).unwrap();
+        let result = evaluate_ruleset(&ruleset, &claims, Some("default-domain"), None).unwrap();
         assert!(result.is_some());
         let match_result = result.unwrap();
         assert_eq!(match_result.rule_name, "spiffe-rule");
         assert_eq!(match_result.user_name, "example.org-user");
+    }
+
+    // --- rule_name: named rule hint ---
+    #[test]
+    fn test_rule_name_match_terminates_early() {
+        let rules = vec![
+            simple_rule("first", "sub", "user-123", "matched-first"),
+            simple_rule("target", "sub", "user-123", "matched-target"),
+            simple_rule("third", "sub", "user-123", "matched-third"),
+        ];
+        let ruleset = build_ruleset(true, rules);
+        let result = evaluate_ruleset(
+            &ruleset,
+            &test_claims(),
+            Some("default-domain"),
+            Some("target"),
+        )
+        .unwrap();
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().rule_name, "target");
+    }
+
+    #[test]
+    fn test_rule_name_no_match_fails() {
+        let rules = vec![
+            simple_rule("first", "sub", "user-123", "matched-first"),
+            // "target" doesn't match claims (aud != "wrong")
+            MappingRule {
+                name: "target".to_string(),
+                description: None,
+                r#match: MatchCriteria::AllOf(vec![MatchCondition::Condition(
+                    ClaimCondition::Equals {
+                        claim: "aud".to_string(),
+                        value: serde_json::Value::String("wrong".to_string()),
+                    },
+                )]),
+                identity: IdentityBinding {
+                    user_name: "target-user".to_string(),
+                    user_id: None,
+                    user_domain_id: None,
+                    is_system: false,
+                },
+                authorizations: vec![],
+                groups: vec![],
+            },
+            simple_rule("third", "sub", "user-123", "matched-third"),
+        ];
+        let ruleset = build_ruleset(true, rules);
+        // "target" exists but doesn't match — should error, not fall back
+        let result = evaluate_ruleset(
+            &ruleset,
+            &test_claims(),
+            Some("default-domain"),
+            Some("target"),
+        );
+        assert!(
+            matches!(result, Err(MappingProviderError::MappingRuleNotFound(_))),
+            "named rule that doesn't match must return MappingRuleNotFound error, got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_rule_name_nonexistent_fails() {
+        let rules = vec![
+            simple_rule("first", "sub", "user-123", "matched-first"),
+            simple_rule("second", "sub", "user-123", "matched-second"),
+        ];
+        let ruleset = build_ruleset(true, rules);
+        let result = evaluate_ruleset(
+            &ruleset,
+            &test_claims(),
+            Some("default-domain"),
+            Some("does-not-exist"),
+        );
+        assert!(
+            result.unwrap_err().to_string().contains("was not found"),
+            "nonexistent named rule must return an error"
+        );
+    }
+
+    #[test]
+    fn test_rule_name_match_returns_second_user_name() {
+        let rules = vec![
+            simple_rule("first", "sub", "user-123", "matched-first"),
+            simple_rule("second-rule", "sub", "user-123", "matched-second"),
+        ];
+        let ruleset = build_ruleset(true, rules);
+        let result = evaluate_ruleset(
+            &ruleset,
+            &test_claims(),
+            Some("default-domain"),
+            Some("second-rule"),
+        )
+        .unwrap();
+        let match_result = result.unwrap();
+        assert_eq!(match_result.rule_name, "second-rule");
+        assert_eq!(match_result.user_name, "matched-second");
     }
 }

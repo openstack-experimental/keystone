@@ -43,48 +43,10 @@ impl MigrationTrait for Migration {
             )
             .await?;
 
-        manager
-            .create_table(
-                Table::create()
-                    .table(KubernetesAuthRole::Table)
-                    .if_not_exists()
-                    .col(string_len(KubernetesAuthRole::Id, 64).primary_key())
-                    .col(string_len(KubernetesAuthRole::DomainId, 64))
-                    .col(string_len(KubernetesAuthRole::AuthInstanceId, 64))
-                    .col(string_len(KubernetesAuthRole::Name, 255))
-                    .col(boolean(KubernetesAuthRole::Enabled))
-                    .col(text_null(KubernetesAuthRole::BoundServiceAccountNames))
-                    .col(text_null(KubernetesAuthRole::BoundServiceAccountNamespaces))
-                    .col(string_len_null(KubernetesAuthRole::BoundAudience, 128))
-                    .col(string_len(KubernetesAuthRole::TokenRestrictionId, 64))
-                    .foreign_key(
-                        ForeignKey::create()
-                            .name("fk-k8role-k8")
-                            .from(
-                                KubernetesAuthRole::Table,
-                                KubernetesAuthRole::AuthInstanceId,
-                            )
-                            .to(KubernetesAuthInstance::Table, KubernetesAuthInstance::Id)
-                            .on_delete(ForeignKeyAction::Cascade),
-                    )
-                    .index(
-                        Index::create()
-                            .unique()
-                            .nulls_not_distinct()
-                            .name("idx-k8role-domain-name")
-                            .col(KubernetesAuthRole::DomainId)
-                            .col(KubernetesAuthRole::Name),
-                    )
-                    .to_owned(),
-            )
-            .await?;
         Ok(())
     }
 
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
-        manager
-            .drop_table(Table::drop().table(KubernetesAuthRole::Table).to_owned())
-            .await?;
         manager
             .drop_table(
                 Table::drop()
@@ -106,18 +68,4 @@ enum KubernetesAuthInstance {
     Host,
     CaCert,
     DisableLocalCaJwt,
-}
-
-#[derive(DeriveIden)]
-enum KubernetesAuthRole {
-    Table,
-    Id,
-    DomainId,
-    AuthInstanceId,
-    Name,
-    Enabled,
-    BoundServiceAccountNames,
-    BoundServiceAccountNamespaces,
-    BoundAudience,
-    TokenRestrictionId,
 }

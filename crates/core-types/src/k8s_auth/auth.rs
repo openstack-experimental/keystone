@@ -19,6 +19,8 @@ use secrecy::SecretString;
 use crate::error::BuilderError;
 
 /// K8s authentication request.
+///
+/// Identity and authorization are resolved by the unified mapping engine.
 #[derive(Builder, Clone, Debug)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
@@ -28,5 +30,9 @@ pub struct K8sAuthRequest {
 
     pub jwt: SecretString,
 
-    pub role_name: String,
+    /// Optional rule name hint for the mapping-engine path. When set, the
+    /// mapping engine evaluates the named rule first; if it matches,
+    /// authentication succeeds immediately. If the rule does not match,
+    /// standard first-match-wins iteration proceeds.
+    pub rule_name: Option<String>,
 }

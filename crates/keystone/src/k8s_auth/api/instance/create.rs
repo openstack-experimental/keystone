@@ -159,4 +159,82 @@ mod tests {
         assert_eq!(res.instance.name, req.instance.name);
         assert_eq!(res.instance.domain_id, req.instance.domain_id);
     }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_create_forbidden() {
+        let provider = Provider::mocked_builder();
+        let vsc = test_fixture_scoped();
+
+        let state = get_mocked_state(provider, false, None).await;
+
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state.clone());
+
+        let req = K8sAuthInstanceCreateRequest {
+            instance: K8sAuthInstanceCreate {
+                ca_cert: Some("cert".into()),
+                disable_local_ca_jwt: None,
+                domain_id: "did".into(),
+                enabled: true,
+                host: "http://host:post".into(),
+                name: Some("name".into()),
+            },
+        };
+
+        let response = api
+            .as_service()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .uri("/")
+                    .extension(vsc)
+                    .body(Body::from(serde_json::to_string(&req).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_create_unauthorized() {
+        let provider = Provider::mocked_builder();
+
+        let state = get_mocked_state(provider, true, None).await;
+
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state.clone());
+
+        let req = K8sAuthInstanceCreateRequest {
+            instance: K8sAuthInstanceCreate {
+                ca_cert: Some("cert".into()),
+                disable_local_ca_jwt: None,
+                domain_id: "did".into(),
+                enabled: true,
+                host: "http://host:post".into(),
+                name: Some("name".into()),
+            },
+        };
+
+        let response = api
+            .as_service()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .uri("/")
+                    .body(Body::from(serde_json::to_string(&req).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
 }

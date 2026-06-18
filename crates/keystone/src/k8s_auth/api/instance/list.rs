@@ -262,6 +262,26 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
+    async fn test_list_unauthorized() {
+        let provider = Provider::mocked_builder();
+
+        let state = get_mocked_state(provider, true, None).await;
+
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        let response = api
+            .as_service()
+            .oneshot(Request::builder().uri("/").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    #[traced_test]
     async fn test_list_own_not_specified() {
         let mut provider = Provider::mocked_builder();
         let mut mock = MockK8sAuthProvider::default();

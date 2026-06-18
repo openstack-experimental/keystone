@@ -17,18 +17,20 @@ use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize, Serializer};
 
 /// K8s authentication request.
+///
+/// Identity and authorization are resolved by the unified mapping engine.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct K8sAuthRequest {
-    //#[cfg_attr(feature = "validate", validate(length(max = 64)))]
-    //pub auth_instance_id: String,
     #[cfg_attr(feature = "openapi", schema(value_type = String))]
     #[serde(serialize_with = "serialize_secret_string")]
     pub jwt: SecretString,
 
+    /// Optional rule name hint for the mapping-engine path. When set, the
+    /// mapping engine evaluates the named rule first.
     #[cfg_attr(feature = "validate", validate(length(max = 255)))]
-    pub role_name: String,
+    pub rule_name: Option<String>,
 }
 
 fn serialize_secret_string<S>(secret: &SecretString, serializer: S) -> Result<S::Ok, S::Error>

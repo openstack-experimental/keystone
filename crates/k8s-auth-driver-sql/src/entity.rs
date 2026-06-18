@@ -17,4 +17,3 @@
 pub mod prelude;
 
 pub mod kubernetes_auth_instance;
-pub mod kubernetes_auth_role;

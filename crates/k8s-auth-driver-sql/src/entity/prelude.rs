@@ -16,4 +16,3 @@
 #![allow(unused_imports)]
 
 pub use super::kubernetes_auth_instance::Entity as KubernetesAuthInstance;
-pub use super::kubernetes_auth_role::Entity as KubernetesAuthRole;

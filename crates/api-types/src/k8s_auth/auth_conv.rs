@@ -27,7 +27,7 @@ impl api_types::K8sAuthRequest {
         provider_types::K8sAuthRequest {
             auth_instance_id: instance_id,
             jwt: SecretString::from(self.jwt.expose_secret()),
-            role_name: self.role_name,
+            rule_name: self.rule_name,
         }
     }
 }

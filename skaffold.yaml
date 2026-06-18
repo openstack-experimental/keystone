@@ -111,7 +111,7 @@ deploy:
     flags:
       apply: ["--wait"]
     hooks:
-       before:
+      before:
         - host:
             # Delete keystone-bootstrap job before apply to avoid immutable job error
             command: ["kubectl", "delete", "job", "keystone-bootstrap", "--ignore-not-found", "--wait", "--timeout=30s"]

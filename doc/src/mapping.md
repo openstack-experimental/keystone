@@ -311,9 +311,9 @@ Prevents claim-suppression by requiring both claims to be present.
 
 1. **Configure SPIFFE Trust**: Ensure the Keystone service is configured to
    trust the SPIFFE trust domain.
-2. **Create Mapping Rules**: Create a mapping ruleset that targets `spiffe` source
-   type with the appropriate `trust_domain`. The rules should match against
-   `spiffe.id` or `spiffe.trust_domain` claims.
+2. **Create Mapping Rules**: Create a mapping ruleset that targets `spiffe`
+   source type with the appropriate `trust_domain`. The rules should match
+   against `spiffe.id` or `spiffe.trust_domain` claims.
 3. **Admin Shortcut**: To bypass the mapping engine for administrative tasks,
    configure `admin_svid` in the admin interface configuration. Requests
    presenting this SVID over the admin interface are granted system-admin
@@ -420,109 +420,158 @@ Resolve identities based on the `groups` claim.
 ### Kubernetes
 
 Kubernetes authentication validates service accounts via the Kubernetes API
-server's `TokenReview` endpoint.
+server's `TokenReview` endpoint and delegates identity resolution to the unified
+mapping engine. For detailed ingress flow, API, and configuration, see
+[Kubernetes TokenReview Authentication](k8s_auth.md).
 
-#### Concept
+The source type is `k8s`, identified by the `cluster_id` field.
 
-The ingress adapter verifies the Kubernetes bearer token by calling the
-cluster's `TokenReview` endpoint, extracts user/group claims from the response,
-and passes them to the mapping engine. The source type is `k8s`, identified by
-the `cluster_id` field.
+#### Authentication Flow
+
+The K8s authenticator validates the JWT via `TokenReview`, flattens claims,
+and delegates to the mapping engine for identity resolution, shadow registry
+upsert, and authorization. The optional `rule_name` field allows the client to
+target a specific rule within the ruleset.
 
 #### Claims Contract
 
-Common claims from Kubernetes TokenReview:
+The mapping-engine path produces the following claims from the `TokenReview`
+response and JWT payload:
 
-- `k8s.username`: Service account or user identity.
-- `k8s.groups`: Kubernetes group memberships.
-- `k8s.extra`: Extra attributes from the token.
+- **`k8s.serviceaccount.name`**: Service account name (e.g., `"build-runner"`).
+- **`k8s.serviceaccount.namespace`**: Kubernetes namespace (e.g.,
+  `"ci-pipeline"`).
+- **`k8s.aud`**: JWT audience claim, if present in the token.
+
+The unique workload ID invariant is
+`<serviceaccount_name>:<serviceaccount_namespace>`, used for deterministic
+virtual user ID derivation.
 
 #### Mapping Rule Examples
 
-**Example 1: Map Kubernetes Service Account by Cluster**
+**Example 1: Map by namespace and service account name**
 
-Map any service account from a specific cluster into a project.
+Grants access to a specific CI/CD pipeline service account.
 
 ```json
 {
-  "name": "k8s-cluster-mapping",
+  "name": "ci-pipeline-admin",
   "match": {
     "all_of": [
       {
         "type": "condition",
-        "matches_regex": {
-          "claim": "k8s.username",
-          "regex": "^system:serviceaccount:\\w+/\\w+$"
+        "equals": {
+          "claim": "k8s.serviceaccount.namespace",
+          "value": "ci-pipeline"
+        }
+      },
+      {
+        "type": "condition",
+        "any_of": {
+          "claim": "k8s.serviceaccount.name",
+          "values": ["build-runner", "deploy-agent"]
         }
       }
     ]
   },
   "identity": {
-    "user_name": "${claims.k8s.username}"
+    "user_name": "svc-k8s-${claims.k8s.serviceaccount.name}"
   },
   "authorizations": [
     {
       "type": "project",
       "project_domain_id": "default",
-      "project_id": "k8s-project",
-      "roles": [{ "id": "member", "name": "member" }]
+      "project_id": "infra-project",
+      "roles": [{ "id": "admin", "name": "admin" }]
     }
   ],
-  "groups": [
-    {
-      "group_id": "k8s-sa-group",
-      "group_name": "K8s Service Accounts",
-      "strategy": { "type": "create_or_get" }
-    }
-  ]
+  "groups": []
 }
 ```
 
-**Example 2: Namespace-scoped Service Account with Nested Criteria**
+**Example 2: Regex-based monitoring agents**
 
-Use nested boolean logic to match a specific namespace.
+Matches any Prometheus-related service account in the `monitoring` namespace.
 
 ```json
 {
-  "name": "k8s-namespace-scoped",
+  "name": "monitoring-reader",
   "match": {
     "all_of": [
       {
-        "type": "nested",
-        "any_of": [
-          {
-            "type": "condition",
-            "equals": {
-              "claim": "k8s.groups",
-              "value": "system:serviceaccounts:production"
-            }
-          },
-          {
-            "type": "condition",
-            "equals": {
-              "claim": "k8s.groups",
-              "value": "system:serviceaccounts:staging"
-            }
-          }
-        ]
+        "type": "condition",
+        "equals": {
+          "claim": "k8s.serviceaccount.namespace",
+          "value": "monitoring"
+        }
       },
       {
         "type": "condition",
         "matches_regex": {
-          "claim": "k8s.username",
-          "regex": "^system:serviceaccount:.*:api-server$"
+          "claim": "k8s.serviceaccount.name",
+          "regex": "^prometheus-.*$"
         }
       }
     ]
   },
   "identity": {
-    "user_name": "${claims.k8s.username}",
-    "is_system": true
+    "user_name": "svc-k8s-${claims.k8s.serviceaccount.name}"
   },
   "authorizations": [
     {
-      "type": "system",
-      "system_id": "all",
+      "type": "project",
+      "project_domain_id": "default",
+      "project_id": "monitoring-project",
+      "roles": [{ "id": "reader", "name": "reader" }]
+    }
+  ],
+  "groups": [
+    {
+      "group_id": "k8s-monitoring-group",
+      "group_name": "Monitoring-Agents",
+      "strategy": { "type": "get" }
+    }
+  ]
+}
+```
+
+**Example 3: AllOfStrict for namespace-scoped binding**
+
+Prevents claim-suppression attacks by requiring both namespace and name claims
+to be present.
+
+```json
+{
+  "name": "strict-k8s-binding",
+  "match": {
+    "all_of_strict": {
+      "conditions": [
+        {
+          "type": "condition",
+          "equals": {
+            "claim": "k8s.serviceaccount.namespace",
+            "value": "openstack"
+          }
+        },
+        {
+          "type": "condition",
+          "equals": {
+            "claim": "k8s.serviceaccount.name",
+            "value": "nova-compute"
+          }
+        }
+      ],
+      "require_all_keys": true
+    }
+  },
+  "identity": {
+    "user_name": "svc-nova-compute"
+  },
+  "authorizations": [
+    {
+      "type": "project",
+      "project_domain_id": "default",
+      "project_id": "compute-project",
       "roles": [{ "id": "admin", "name": "admin" }]
     }
   ],
@@ -541,7 +590,7 @@ The mapping engine is managed via the Keystone API (v4).
 | **Create** | `POST /v4/mapping`                | Create a new ruleset. Requires `source`, `domain_resolution_mode`, `enabled`, and `rules`.                                                                                   |
 | **List**   | `GET /v4/mapping`                 | List rulesets. Filterable by `domain_id`, `enabled`, `limit`, and `marker`.                                                                                                  |
 | **Show**   | `GET /v4/mapping/{mapping_id}`    | Get detailed rule definitions for a ruleset.                                                                                                                                 |
-| **Update** | `PATCH /v4/mapping/{mapping_id}`  | Toggle `enabled` state, update `allowed_domains`, or replace the entire `rules` array. Immutable fields (`domain_id`, `source`, `domain_resolution_mode`) cannot be changed. |
+| **Update** | `PUT /v4/mapping/{mapping_id}`  | Toggle `enabled` state, update `allowed_domains`, or replace the entire `rules` array. Immutable fields (`domain_id`, `source`, `domain_resolution_mode`) cannot be changed. |
 | **Delete** | `DELETE /v4/mapping/{mapping_id}` | Remove a ruleset.                                                                                                                                                            |
 
 ### Imperative Rule Mutation
@@ -613,3 +662,56 @@ To avoid replacing the entire rules array, the API supports atomic mutations:
 - **Regex Cache Limits**: Compiled regex patterns are cached with a 1024-entry
   cap and 100-entry LRU eviction to prevent adversarial cache partitioning.
   Regex evaluation is limited to claim values under 4 KiB.
+
+## Configuration
+
+### Cluster Salt (Required)
+
+The mapping engine requires `cluster_salt` to be configured before any
+authentication provider (SPIFFE, Kubernetes, Federation) can use the mapping
+engine. Without it, authentication requests that route through the mapping
+engine fail with:
+
+```
+MappingEngine("HMAC-SHA256 virtual user ID derivation failed: cluster_salt not configured")
+```
+
+#### Purpose
+
+The mapping engine derives **deterministic virtual user IDs** via
+`HMAC-SHA256(cluster_salt, workload_id || provider_id)`. This ensures that the
+same external workload (e.g., a Kubernetes service account or SPIFFE SVID)
+always maps to the same virtual user across Keystone service restarts and pod
+redeployments. The salt binds the virtual user namespace to a specific Keystone
+cluster — two clusters using the same salt would produce colliding virtual user
+IDs, which is why each cluster should use a unique value.
+
+#### How to Configure
+
+Set `mapping.cluster_salt` in the Keystone configuration (e.g., via ConfigMap,
+environment variable, or secrets manager):
+
+```yaml
+mapping:
+  cluster_salt: "<random-secret>"
+```
+
+Generate the salt with a cryptographically secure random value:
+
+```bash
+openssl rand -hex 32
+```
+
+#### Operational Notes
+
+- **Uniqueness**: Each Keystone cluster should use a distinct `cluster_salt` to
+  prevent virtual user ID collisions across clusters.
+- **Stability**: Changing `cluster_salt` after virtual users exist breaks ID
+  stability — workloads that previously authenticated successfully will be
+  assigned new virtual user IDs, orphaning existing shadow registry records. If
+  a change is necessary, plan for the impact on existing virtual users and their
+  role assignments.
+- **Secret Management**: Although `cluster_salt` is a salt rather than a
+  cryptographic key, it should be treated as a secret and managed through your
+  secret management infrastructure (e.g., Kubernetes Secrets, Vault) rather than
+  plain ConfigMaps.

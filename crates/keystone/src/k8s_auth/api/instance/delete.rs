@@ -170,4 +170,73 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::NO_CONTENT);
     }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_delete_forbidden() {
+        let mut provider = Provider::mocked_builder();
+        let vsc = test_fixture_scoped();
+        let mut mock = MockK8sAuthProvider::default();
+        mock.expect_get_auth_instance().returning(|_, _| {
+            Ok(Some(provider_types::K8sAuthInstance {
+                ca_cert: Some("cert".into()),
+                disable_local_ca_jwt: false,
+                domain_id: "did".into(),
+                enabled: true,
+                host: "http://host:post".into(),
+                id: "id".into(),
+                name: Some("name".into()),
+            }))
+        });
+        mock.expect_delete_auth_instance().returning(|_, _| Ok(()));
+        provider = provider.mock_k8s_auth(mock);
+
+        // Policy denies the request
+        let state = get_mocked_state(provider, false, None).await;
+
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state.clone());
+
+        let response = api
+            .as_service()
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri("/bar")
+                    .extension(vsc.clone())
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_delete_unauthorized() {
+        let provider = Provider::mocked_builder();
+
+        let state = get_mocked_state(provider, true, None).await;
+
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state.clone());
+
+        let response = api
+            .as_service()
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri("/bar")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
 }

@@ -25,12 +25,13 @@ use validator::Validate;
 use openstack_keystone_api_types::error::KeystoneApiError;
 use openstack_keystone_api_types::k8s_auth::K8sAuthRequest;
 use openstack_keystone_api_types::v3::auth::token::TokenBuilder;
-use openstack_keystone_core::api::common::get_authz_info;
-use openstack_keystone_core::k8s_auth::{K8sAuthApi, K8sAuthProviderError};
+use openstack_keystone_core::k8s_auth::K8sAuthApi;
 use openstack_keystone_core::keystone::ServiceState;
+use openstack_keystone_core::mapping::MappingApi;
 use openstack_keystone_core::token::TokenApi;
-use openstack_keystone_core_types::auth::*;
-use openstack_keystone_core_types::scope::{Project, Scope};
+use openstack_keystone_core_types::auth::{AuthenticationContext, ScopeInfo, SecurityContext};
+use openstack_keystone_core_types::mapping::authorization::Authorization;
+use openstack_keystone_core_types::resource::{Domain, Project};
 
 use crate::api::types::{Catalog, CatalogService};
 use crate::api::v4::auth::token::types::TokenResponse;
@@ -42,10 +43,8 @@ pub(super) fn openapi_router() -> OpenApiRouter<ServiceState> {
 
 /// Authenticate using the JWT token of the Kubernetes service account.
 ///
-/// This operation takes the JWT token of the Kubernetes service account, K8s
-/// auth instance and role name and exchanges them to the Keystone token with
-/// the user and scope information from the token restrictions bound with the
-/// k8s auth role.
+/// Validates the JWT via TokenReview, flattens claims, and delegates to the
+/// unified mapping engine for identity resolution and authorization.
 #[utoipa::path(
     post,
     path = "/instances/{instance_id}/auth",
@@ -77,41 +76,12 @@ pub async fn post(
 ) -> Result<impl IntoResponse, KeystoneApiError> {
     req.validate()?;
 
-    let auth_result = state
-        .provider
-        .get_k8s_auth_provider()
-        .authenticate_by_k8s_sa_token(&state, &req.to_provider_with_instance_id(instance_id))
-        .await?;
-    let token_restriction = auth_result
-        .token_restriction
-        .as_ref()
-        .ok_or(K8sAuthProviderError::TokenRestrictionMissing)?
-        .clone();
-
-    let mut ctx = SecurityContext::try_from(auth_result)?;
-    ctx.set_token_restriction(token_restriction.clone());
-
-    //authn_info.validate()?;
-    let authz_info = get_authz_info(
-        &state,
-        token_restriction
-            .project_id
-            .as_ref()
-            .map(|token_project_id| {
-                Scope::Project(Project {
-                    id: Some(token_project_id.to_string()),
-                    ..Default::default()
-                })
-            })
-            .as_ref(),
-    )
-    .await?;
-    authz_info.validate()?;
+    let (ctx, scope) = mapping_auth(&state, &req.to_provider_with_instance_id(instance_id)).await?;
 
     let vsc = state
         .provider
         .get_token_provider()
-        .issue_token_context(&state, &ctx, &authz_info)
+        .issue_token_context(&state, &ctx, &scope)
         .await?;
 
     let mut api_token = TokenResponse {
@@ -148,4 +118,177 @@ pub async fn post(
         Json(api_token),
     )
         .into_response())
+}
+
+/// Mapping-engine authentication path: delegates to the unified mapping engine
+/// for identity resolution and authorization.
+///
+/// Validates the JWT via TokenReview, flattens claims, and delegates to the
+/// mapping engine. The first authorization from the matched rule is used as the
+/// token scope.
+async fn mapping_auth(
+    state: &ServiceState,
+    req: &openstack_keystone_core_types::k8s_auth::K8sAuthRequest,
+) -> Result<(SecurityContext, ScopeInfo), KeystoneApiError> {
+    let auth_result = state
+        .provider
+        .get_k8s_auth_provider()
+        .authenticate_by_k8s_mapping(state, req)
+        .await?;
+
+    let ctx = SecurityContext::try_from(auth_result)?;
+
+    // Resolve scope from the first authorization in the matched rule.
+    // Mapping-engine authorizations are stored on the virtual user and carried
+    // in the authentication result's authorization field. If present, use that;
+    // otherwise fall back to unscoped.
+    let scope = if let Some(authz) = ctx.authorization() {
+        authz.scope.clone()
+    } else {
+        // Derive scope from the virtual user's authorizations via the
+        // mapping provider.
+        let mapping_ctx = match ctx.authentication_context() {
+            AuthenticationContext::Mapping(mc) => mc.clone(),
+            _ => unreachable!("mapping auth always produces Mapping context"),
+        };
+
+        let vu = state
+            .provider
+            .get_mapping_provider()
+            .get_virtual_user(state, &mapping_ctx.virtual_user_id)
+            .await?
+            .expect("virtual user should exist after mapping auth");
+
+        derive_scope_from_authorizations(&vu.authorizations)?
+    };
+    scope.validate()?;
+
+    Ok((ctx, scope))
+}
+
+/// Derive a [`ScopeInfo`] from the first authorization in the virtual user's
+/// authorization list.
+///
+/// If no authorizations are present, returns [`ScopeInfo::Unscoped`].
+fn derive_scope_from_authorizations(
+    authorizations: &[Authorization],
+) -> Result<ScopeInfo, KeystoneApiError> {
+    if let Some(first) = authorizations.first() {
+        match first {
+            Authorization::Project {
+                project_id,
+                project_domain_id,
+                ..
+            } => {
+                let domain = Domain {
+                    id: project_domain_id.clone(),
+                    name: String::new(),
+                    description: None,
+                    enabled: true,
+                    extra: Default::default(),
+                };
+                let project = Project {
+                    id: project_id.clone(),
+                    domain_id: project_domain_id.clone(),
+                    name: String::new(),
+                    description: None,
+                    enabled: true,
+                    is_domain: false,
+                    parent_id: None,
+                    extra: Default::default(),
+                };
+                Ok(ScopeInfo::Project {
+                    project,
+                    project_domain: domain,
+                })
+            }
+            Authorization::Domain { domain_id, .. } => {
+                let domain = Domain {
+                    id: domain_id.clone(),
+                    name: String::new(),
+                    description: None,
+                    enabled: true,
+                    extra: Default::default(),
+                };
+                Ok(ScopeInfo::Domain(domain))
+            }
+            Authorization::System { system_id, .. } => Ok(ScopeInfo::System(system_id.clone())),
+        }
+    } else {
+        Ok(ScopeInfo::Unscoped)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use axum::{
+        body::Body,
+        http::{Request, StatusCode},
+    };
+    use http_body_util::BodyExt;
+    use tower::ServiceExt;
+    use tower_http::trace::TraceLayer;
+    use tracing_test::traced_test;
+
+    use openstack_keystone_core_types::auth::ScopeInfo;
+    use openstack_keystone_core_types::mapping::authorization::Authorization;
+    use openstack_keystone_core_types::resource::Domain;
+    use openstack_keystone_core_types::role::RoleRef;
+
+    use super::*;
+
+    fn member_role() -> RoleRef {
+        RoleRef {
+            id: "member".into(),
+            name: Some("member".into()),
+            domain_id: None,
+        }
+    }
+
+    #[test]
+    fn test_derive_scope_project() {
+        let authz = Authorization::Project {
+            project_id: "proj-123".into(),
+            project_domain_id: "domain-1".into(),
+            roles: vec![member_role()],
+        };
+        let scope = derive_scope_from_authorizations(&[authz]).unwrap();
+        match scope {
+            ScopeInfo::Project {
+                project,
+                project_domain,
+            } => {
+                assert_eq!(project.id, "proj-123");
+                assert_eq!(project.domain_id, "domain-1");
+                assert_eq!(project_domain.id, "domain-1");
+            }
+            _ => panic!("expected Project scope"),
+        }
+    }
+
+    #[test]
+    fn test_derive_scope_domain() {
+        let authz = Authorization::Domain {
+            domain_id: "domain-1".into(),
+            roles: vec![member_role()],
+        };
+        let scope = derive_scope_from_authorizations(&[authz]).unwrap();
+        assert!(matches!(scope, ScopeInfo::Domain(_)));
+    }
+
+    #[test]
+    fn test_derive_scope_system() {
+        let authz = Authorization::System {
+            system_id: "all".into(),
+            roles: vec![member_role()],
+        };
+        let scope = derive_scope_from_authorizations(&[authz]).unwrap();
+        assert!(matches!(scope, ScopeInfo::System(_)));
+    }
+
+    #[test]
+    fn test_derive_scope_unscoped() {
+        let scope = derive_scope_from_authorizations(&[]).unwrap();
+        assert!(matches!(scope, ScopeInfo::Unscoped));
+    }
 }
