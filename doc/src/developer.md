@@ -68,6 +68,13 @@ skaffold deploy -a build.artifacts
 skaffold verify -a build.artifacts
 ```
 
+The skaffold config is split into 2 modules: `keystone` and `infra` allowing
+quicker redeployment of keystone only without touching the
+keycloak/dex/selenium and co (`skaffold deploy -a build.artifacts -m
+keystone`). This is required to workaround a "feature" of skaffold attaching
+tracking labels to all resources created from local manifests (including helm
+files).
+
 ## OpenStackClient (OSC)
 
 Deploying Keystone in the Kubernetes makes it also possible to verify the
@@ -79,7 +86,6 @@ reachable may differ. As described above corresponding names should be added
 into the `/etc/hosts` file.
 
 ```yaml
-
 clouds:
   keystone-skaff:
     auth:
