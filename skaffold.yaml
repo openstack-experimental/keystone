@@ -3,9 +3,58 @@
 # # Requirements:
 # * local registry running at `localhost:5000` when `local` profile is used
 #
+# # Modules:
+#
+# * `infra` - peripheral components: spire, certmanager, keycloak, dex, etc
+# * `keystone` - Keystone
+#
 # # Usage
 #
 # `skaffold run --cleanup=false -p local --default-repo localhost:5000
+#
+# * (re)deploy only keystone: `skaffold deploy -m keystone`
+# * delete only keystone resource: `skaffold delete -m keystone`
+#
+apiVersion: skaffold/v4beta13
+kind: Config
+metadata:
+  name: infra
+manifests:
+  kustomize:
+    paths:
+      - tools/k8s/tests/keycloak
+      - tools/k8s/tests/dex
+  rawYaml:
+    - tools/k8s/tests/selenium.yaml
+deploy:
+  statusCheck: true
+  statusCheckDeadlineSeconds: 300
+  tolerateFailuresUntilDeadline: true
+  helm:
+    releases:
+      - name: cloudnative-pg
+        repo: https://cloudnative-pg.github.io/charts
+        remoteChart: cloudnative-pg
+        createNamespace: true
+        namespace: cnpg
+      - name: cert-manager
+        repo: https://charts.jetstack.io
+        remoteChart: cert-manager
+        version: 1.20.2
+        createNamespace: true
+        namespace: cert-manager
+        setValues:
+          crds.enabled: true
+      - name: spire-crds
+        repo: https://spiffe.github.io/helm-charts-hardened
+        remoteChart: spire-crds
+        namespace: spire
+        createNamespace: true
+      - name: spire
+        repo: https://spiffe.github.io/helm-charts-hardened
+        remoteChart: spire
+        namespace: spire
+---
 apiVersion: skaffold/v4beta13
 kind: Config
 metadata:
@@ -49,11 +98,8 @@ manifests:
   kustomize:
     paths:
       - tools/k8s/keystone/overlays/dev
-      - tools/k8s/tests/keycloak
-      - tools/k8s/tests/dex
   rawYaml:
     - tools/k8s/tests/k8s-auth-test-sa.yaml
-    - tools/k8s/tests/selenium.yaml
     - tools/k8s/tests/cluster-issuer.yaml
     - tools/k8s/tests/keystone-ca.yaml
     - tools/k8s/tests/keystone-peer-cert.yaml
@@ -65,34 +111,14 @@ deploy:
     flags:
       apply: ["--wait"]
     hooks:
+       before:
+        - host:
+            # Delete keystone-bootstrap job before apply to avoid immutable job error
+            command: ["kubectl", "delete", "job", "keystone-bootstrap", "--ignore-not-found", "--wait", "--timeout=30s"]
       after:
         - host:
             # This command will block Skaffold until the bootstrap job hits 'Completed'
             command: ["kubectl", "wait", "--for=condition=complete", "job/keystone-bootstrap", "--timeout=180s"]
-  helm:
-    releases:
-      - name: cloudnative-pg
-        repo: https://cloudnative-pg.github.io/charts
-        remoteChart: cloudnative-pg
-        createNamespace: true
-        namespace: cnpg
-      - name: cert-manager
-        repo: https://charts.jetstack.io
-        remoteChart: cert-manager
-        version: 1.20.2
-        createNamespace: true
-        namespace: cert-manager
-        setValues:
-          crds.enabled: true
-      - name: spire-crds
-        repo: https://spiffe.github.io/helm-charts-hardened
-        remoteChart: spire-crds
-        namespace: spire
-        createNamespace: true
-      - name: spire
-        repo: https://spiffe.github.io/helm-charts-hardened
-        remoteChart: spire
-        namespace: spire
 
 verify:
   - name: "api-test-v3"
