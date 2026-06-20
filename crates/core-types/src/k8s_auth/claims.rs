@@ -11,13 +11,13 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-//! # K8s auth provider types definitions.
+//! # K8s JWT claims.
 use serde::{Deserialize, Serialize};
 
-/// K8s JWT claims.
+/// K8s JWT claims structure.
 #[derive(Debug, Deserialize, Serialize)]
-pub(crate) struct K8sClaims {
-    pub(crate) aud: Vec<String>,
-    pub(crate) exp: u64,
-    pub(crate) sub: String,
+pub struct K8sClaims {
+    pub aud: Vec<String>,
+    pub exp: u64,
+    pub sub: String,
 }

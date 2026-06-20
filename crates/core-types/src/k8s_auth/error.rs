@@ -54,6 +54,10 @@ pub enum K8sAuthProviderError {
         source: Box<dyn std::error::Error + Send + Sync + 'static>,
     },
 
+    /// JWT audience mismatch.
+    #[error("audience mismatch")]
+    AudienceMismatch,
+
     /// Expired token.
     #[error("expired token")]
     ExpiredToken,

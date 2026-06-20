@@ -21,8 +21,7 @@ use openstack_keystone_config::Config;
 use openstack_keystone_core_types::k8s_auth::*;
 
 use crate::auth::AuthenticationResult;
-use crate::common::{HttpClientPool, HttpClientProvider};
-use crate::k8s_auth::{K8sAuthApi, K8sAuthProviderError, backend::K8sAuthBackend};
+use crate::k8s_auth::{K8sAuthApi, K8sAuthProviderError, K8sHttpClient, backend::K8sAuthBackend};
 use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManagerApi;
 
@@ -31,8 +30,8 @@ pub struct K8sAuthService {
     /// Backend driver.
     pub(super) backend_driver: Arc<dyn K8sAuthBackend>,
 
-    /// Reqwest client.
-    pub(super) http_client_pool: Box<dyn HttpClientProvider>,
+    /// HTTP client for K8s API communication.
+    pub(super) http_client: Arc<dyn K8sHttpClient>,
 }
 
 impl K8sAuthService {
@@ -48,13 +47,14 @@ impl K8sAuthService {
     pub fn new<P: PluginManagerApi>(
         config: &Config,
         plugin_manager: &P,
+        http_client: Arc<dyn K8sHttpClient>,
     ) -> Result<Self, K8sAuthProviderError> {
         let backend_driver = plugin_manager
             .get_k8s_auth_backend(config.k8s_auth.driver.clone())?
             .clone();
         Ok(Self {
             backend_driver,
-            http_client_pool: Box::new(HttpClientPool::default()),
+            http_client,
         })
     }
 }
@@ -173,17 +173,34 @@ impl K8sAuthApi for K8sAuthService {
 }
 
 #[cfg(test)]
-pub(crate) mod tests {
+mod tests {
     use std::sync::Arc;
 
+    use serde_json::json;
+
     use super::*;
+    use crate::k8s_auth::K8sHttpClient;
     use crate::k8s_auth::backend::MockK8sAuthBackend;
     use crate::tests::get_mocked_state;
+
+    struct TestK8sHttpClient;
+
+    #[async_trait]
+    impl K8sHttpClient for TestK8sHttpClient {
+        async fn query_token_review(
+            &self,
+            _instance: &K8sAuthInstance,
+            _jwt: &str,
+            _bound_audience: Option<&str>,
+        ) -> Result<serde_json::Value, K8sAuthProviderError> {
+            Ok(json!({}))
+        }
+    }
 
     fn create_k8s_auth_service(backend: MockK8sAuthBackend) -> K8sAuthService {
         K8sAuthService {
             backend_driver: Arc::new(backend),
-            http_client_pool: Box::new(HttpClientPool::default()),
+            http_client: Arc::new(TestK8sHttpClient),
         }
     }
 

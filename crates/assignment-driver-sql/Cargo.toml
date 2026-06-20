@@ -16,7 +16,7 @@ inventory.workspace = true
 openstack-keystone-config.workspace = true
 openstack-keystone-core.workspace = true
 openstack-keystone-core-types.workspace = true
-sea-orm.workspace = true
+sea-orm = { workspace = true, features = ["default"] }
 tokio = { workspace = true, features = ["macros"] }
 tracing.workspace = true
 

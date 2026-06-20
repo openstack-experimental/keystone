@@ -59,10 +59,6 @@ pub enum PolicyError {
     #[error(transparent)]
     Json(#[from] serde_json::Error),
 
-    /// HTTP client error.
-    #[error(transparent)]
-    Reqwest(#[from] reqwest::Error),
-
     /// The security context must be resolved before the use.
     #[error("security context is not resolved")]
     SecurityContextNotResolved,

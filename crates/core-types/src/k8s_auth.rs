@@ -14,9 +14,11 @@
 //! # Kubernetes authentication.
 
 mod auth;
+mod claims;
 mod error;
 mod instance;
 
 pub use auth::*;
+pub use claims::*;
 pub use error::*;
 pub use instance::*;

@@ -74,7 +74,8 @@ impl PerformAction for BootstrapCommand {
     async fn take_action(self, config: &Config) -> Result<()> {
         setup_logging(self.verbose);
 
-        // Validate password (may come from --bootstrap-password or OS_BOOTSTRAP_PASSWORD)
+        // Validate password (may come from --bootstrap-password or
+        // OS_BOOTSTRAP_PASSWORD)
         if self.bootstrap_password.is_empty() {
             return Err(eyre!("--bootstrap-password must not be empty"));
         }
@@ -274,7 +275,8 @@ impl BootstrapCommand {
 
     /// Bootstrap the default user.
     ///
-    /// If the user already exists, ensure it is enabled and the password matches.
+    /// If the user already exists, ensure it is enabled and the password
+    /// matches.
     async fn bootstrap_user(
         &self,
         client: &Client,

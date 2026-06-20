@@ -13,7 +13,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Keystone API v3 functional tests.
 //!
-//! This suite can be executed against python Keystone to verify API compatibility.
+//! This suite can be executed against python Keystone to verify API
+//! compatibility.
 
 mod api_v3 {
     mod assignment;

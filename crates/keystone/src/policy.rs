@@ -53,7 +53,8 @@ impl HttpPolicyEnforcer {
                     .tcp_keepalive(std::time::Duration::from_secs(60))
                     .gzip(true)
                     .deflate(true)
-                    .build()?;
+                    .build()
+                    .map_err(|e| PolicyError::IO(std::io::Error::other(e)))?;
                 Ok(Self {
                     http_client: Arc::new(client),
                     base_url: url.join("/v1/data/")?,
@@ -62,7 +63,10 @@ impl HttpPolicyEnforcer {
             }
             "unix" => {
                 // Communication with OPA over the unix socket
-                let client = Client::builder().unix_socket(url.path()).build()?;
+                let client = Client::builder()
+                    .unix_socket(url.path())
+                    .build()
+                    .map_err(|e| PolicyError::IO(std::io::Error::other(e)))?;
                 Ok(Self {
                     http_client: Arc::new(client),
                     base_url: "http://localhost/v1/data/".parse()?,
@@ -125,9 +129,11 @@ impl PolicyEnforcer for HttpPolicyEnforcer {
             .post(url)
             .json(&json!({"input": input}))
             .send()
-            .await?
+            .await
+            .map_err(|e| PolicyError::IO(std::io::Error::other(e)))?
             .json::<OpaResponse>()
-            .await?
+            .await
+            .map_err(|e| PolicyError::IO(std::io::Error::other(e)))?
             .result;
 
         let elapsed = SystemTime::now().duration_since(start).unwrap_or_default();
@@ -148,8 +154,10 @@ impl PolicyEnforcer for HttpPolicyEnforcer {
         self.http_client
             .get(self.health_url.as_str())
             .send()
-            .await?
-            .error_for_status()?;
+            .await
+            .map_err(|e| PolicyError::IO(std::io::Error::other(e)))?
+            .error_for_status()
+            .map_err(|e| PolicyError::IO(std::io::Error::other(e)))?;
         Ok(())
     }
 }

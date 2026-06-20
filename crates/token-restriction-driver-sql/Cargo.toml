@@ -15,7 +15,7 @@ async-trait.workspace = true
 inventory.workspace = true
 openstack-keystone-core.workspace = true
 openstack-keystone-core-types.workspace = true
-sea-orm.workspace = true
+sea-orm = { workspace = true, features = ["default"] }
 sea-orm-migration.workspace = true
 tokio = { workspace = true, features = ["macros"] }
 tracing.workspace = true

@@ -2632,7 +2632,8 @@ mod tests {
         assert_eq!(eff[0].id, rid);
     }
 
-    // --- Mapping: is_system with Unscoped and no matching System authorization fails ---
+    // --- Mapping: is_system with Unscoped and no matching System authorization
+    // fails ---
     #[tokio::test]
     async fn test_new_for_scope_mapping_is_system_no_system_auth() {
         let vir_id = "vu-system00000000000000000000000001";
