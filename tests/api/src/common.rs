@@ -14,12 +14,14 @@
 //! Common functionality used in the functional tests.
 
 use eyre::{OptionExt, Result, WrapErr, eyre};
+use openstack_sdk::{AsyncOpenStack, config::CloudConfig};
 use reqwest::{
     Client, ClientBuilder, StatusCode,
     header::{HeaderMap, HeaderName, HeaderValue},
 };
 use secrecy::{ExposeSecret, SecretString};
 use std::env;
+use std::sync::Arc;
 use url::Url;
 
 use openstack_keystone_api_types::scope::{
@@ -262,4 +264,23 @@ pub async fn auth_user_by_password<U: AsRef<str>, D: AsRef<str>, P: AsRef<str>>(
         return Err(eyre!("Authentication failed with {}", rsp.status()));
     }
     Ok(())
+}
+
+/// Get AsyncOpenStack session for user by name, domain and password.
+pub async fn get_session_by_user_password<U: AsRef<str>, D: AsRef<str>, P: AsRef<str>>(
+    username: U,
+    domain_id: D,
+    password: P,
+) -> Result<Arc<AsyncOpenStack>> {
+    let config = CloudConfig {
+        auth: Some(openstack_sdk::config::Auth {
+            auth_url: Some(env::var("OS_AUTH_URL")?),
+            username: Some(username.as_ref().to_string()),
+            user_domain_id: Some(domain_id.as_ref().to_string()),
+            password: Some(password.as_ref().into()),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    Ok(Arc::new(AsyncOpenStack::new(&config).await?))
 }

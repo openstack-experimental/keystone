@@ -11,7 +11,7 @@ import data.identity
 #
 # The `input.existing` is null
 #
-default allow := false
+default allow := true
 
 allow if {
 	"admin" in input.credentials.roles

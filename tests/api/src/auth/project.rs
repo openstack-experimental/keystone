@@ -20,6 +20,10 @@ use openstack_keystone_api_types::v3::project::ProjectShort;
 use openstack_sdk::api::rest_endpoint_prelude::*;
 use openstack_sdk::{AsyncOpenStack, api::QueryAsync};
 
+use crate::common::get_session_by_user_password;
+use crate::guard::ResourceGuard;
+use tracing_test::traced_test;
+
 #[derive(Clone, Debug)]
 struct AuthProjectsRequest {}
 
@@ -48,4 +52,36 @@ impl RestEndpoint for AuthProjectsRequest {
 /// List projects available to the user
 pub async fn list_auth_projects(client: &Arc<AsyncOpenStack>) -> Result<Vec<ProjectShort>> {
     Ok(AuthProjectsRequest {}.query_async(client.as_ref()).await?)
+}
+
+#[tokio::test]
+#[traced_test]
+async fn test_auth_projects_empty_for_user_without_roles() -> Result<()> {
+    use crate::identity::user::create_user;
+    use openstack_keystone_api_types::v3::user::UserCreateBuilder;
+    use uuid::Uuid;
+
+    let tc = Arc::new(AsyncOpenStack::new(&CloudConfig::from_env()?).await?);
+    let name = format!("usr_{}", Uuid::new_v4().simple());
+    let password = "TestPassword123!";
+
+    let guard = create_user(
+        &tc,
+        UserCreateBuilder::default()
+            .name(&name)
+            .domain_id("default")
+            .enabled(true)
+            .password(password)
+            .build()?,
+    )
+    .await?;
+
+    let user_client =
+        get_session_by_user_password(&guard.name, &guard.domain_id, &password).await?;
+
+    let projects = list_auth_projects(&user_client).await?;
+    assert!(projects.is_empty());
+
+    guard.delete().await?;
+    Ok(())
 }
