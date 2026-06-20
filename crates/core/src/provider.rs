@@ -18,6 +18,7 @@
 //! providers that might need to call other providers while also allowing an
 //! easy injection of mocked providers.
 use derive_builder::Builder;
+use std::sync::Arc;
 
 use openstack_keystone_config::Config;
 
@@ -41,6 +42,7 @@ use crate::idmapping::IdMappingProvider;
 #[cfg(any(test, feature = "mock"))]
 use crate::idmapping::MockIdMappingProvider;
 use crate::k8s_auth::K8sAuthProvider;
+use crate::k8s_auth::K8sHttpClient;
 #[cfg(any(test, feature = "mock"))]
 use crate::k8s_auth::MockK8sAuthProvider;
 use crate::mapping::MappingProvider;
@@ -175,6 +177,7 @@ impl Provider {
     pub fn new<P: PluginManagerApi>(
         cfg: &Config,
         plugin_manager: &P,
+        k8s_http_client: Arc<dyn K8sHttpClient>,
     ) -> Result<Self, KeystoneError> {
         let application_credential_provider =
             ApplicationCredentialProvider::new(cfg, plugin_manager)?;
@@ -184,7 +187,8 @@ impl Provider {
         let identity_provider = IdentityProvider::new(cfg, plugin_manager)?;
         let idmapping_provider = IdMappingProvider::new(cfg, plugin_manager)?;
         let mapping_provider = MappingProvider::new(cfg, plugin_manager)?;
-        let k8s_auth_provider = K8sAuthProvider::new(cfg, plugin_manager)?;
+        let k8s_auth_provider = K8sAuthProvider::new(cfg, plugin_manager, k8s_http_client)
+            .map_err(|e| KeystoneError::K8sAuthProvider { source: e })?;
         let resource_provider = ResourceProvider::new(cfg, plugin_manager)?;
         let revoke_provider = RevokeProvider::new(cfg, plugin_manager)?;
         let role_provider = RoleProvider::new(cfg, plugin_manager)?;

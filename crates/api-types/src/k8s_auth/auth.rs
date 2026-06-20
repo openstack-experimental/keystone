@@ -25,6 +25,7 @@ use serde::{Deserialize, Serialize, Serializer};
 pub struct K8sAuthRequest {
     #[cfg_attr(feature = "openapi", schema(value_type = String))]
     #[serde(serialize_with = "serialize_secret_string")]
+    /// JWT service account token.
     pub jwt: SecretString,
 
     /// Optional rule name hint for the mapping-engine path. When set, the

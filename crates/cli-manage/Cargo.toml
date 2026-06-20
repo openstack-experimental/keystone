@@ -26,8 +26,12 @@ openstack-keystone = { version = "0.1", path = "../keystone" }
 openstack-keystone-config.workspace = true
 openstack-keystone-core.workspace = true
 openstack-keystone-distributed-storage.workspace = true
-sea-orm.workspace = true
-sea-orm-migration.workspace = true
+openstack-keystone-federation-driver-sql.workspace = true
+openstack-keystone-k8s-auth-driver-sql.workspace = true
+openstack-keystone-token-restriction-driver-sql.workspace = true
+openstack-keystone-webauthn.workspace = true
+sea-orm = { workspace = true, features = ["sqlx-mysql", "sqlx-postgres", "sqlx-sqlite", "runtime-tokio", "runtime-tokio-native-tls"] }
+sea-orm-migration = { workspace = true, features = ["sqlx-mysql", "sqlx-postgres", "sqlx-sqlite", "runtime-tokio", "runtime-tokio-native-tls"] }
 reqwest = { workspace = true, features = ["json", "rustls"] }
 rustls = { workspace = true, features = ["aws-lc-rs"] }
 secrecy = { workspace = true, features = ["serde"] }

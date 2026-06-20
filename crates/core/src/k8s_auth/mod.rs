@@ -15,29 +15,33 @@
 
 use async_trait::async_trait;
 
+use std::sync::Arc;
+
 mod auth;
 pub mod backend;
+mod client;
 pub mod error;
 pub mod hook;
 #[cfg(any(test, feature = "mock"))]
 mod mock;
 mod provider_api;
 pub mod service;
-mod types;
+
+pub use client::K8sHttpClient;
+pub use error::K8sAuthProviderError;
 
 use openstack_keystone_config::Config;
 use openstack_keystone_core_types::k8s_auth::*;
 
 use crate::auth::AuthenticationResult;
-use crate::k8s_auth::service::K8sAuthService;
 use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManagerApi;
-
-pub use error::K8sAuthProviderError;
 pub use hook::K8sAuthHook;
 #[cfg(any(test, feature = "mock"))]
 pub use mock::MockK8sAuthProvider;
 pub use provider_api::K8sAuthApi;
+
+use service::K8sAuthService;
 
 /// K8s Auth provider.
 pub enum K8sAuthProvider {
@@ -59,8 +63,13 @@ impl K8sAuthProvider {
     pub fn new<P: PluginManagerApi>(
         config: &Config,
         plugin_manager: &P,
+        http_client: Arc<dyn K8sHttpClient>,
     ) -> Result<Self, K8sAuthProviderError> {
-        Ok(Self::Service(K8sAuthService::new(config, plugin_manager)?))
+        Ok(Self::Service(K8sAuthService::new(
+            config,
+            plugin_manager,
+            http_client,
+        )?))
     }
 }
 

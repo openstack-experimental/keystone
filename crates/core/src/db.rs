@@ -61,8 +61,9 @@ where
 
 /// Run `SqlDriver::setup` for every registered SQL driver.
 ///
-/// This is the entry point used by the `keystone` binary and the `keystone-manage`
-/// CLI to create tables and seed data for an in-memory SQLite database.
+/// This is the entry point used by the `keystone` binary and the
+/// `keystone-manage` CLI to create tables and seed data for an in-memory SQLite
+/// database.
 ///
 /// # Parameters
 /// - `db`: The database connection.

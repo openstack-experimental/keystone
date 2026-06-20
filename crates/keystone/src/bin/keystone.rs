@@ -58,6 +58,7 @@ use openstack_keystone::federation::FederationHook;
 use openstack_keystone::identity::IdentityHook;
 use openstack_keystone::idmapping::IdMappingHook;
 use openstack_keystone::k8s_auth::K8sAuthHook;
+use openstack_keystone::k8s_auth_client::KeystoneK8sHttpClient;
 use openstack_keystone::keystone::Service as KeystoneServiceState;
 use openstack_keystone::keystone::ServiceState;
 use openstack_keystone::plugin_manager::PluginManager;
@@ -236,7 +237,9 @@ async fn main() -> Result<(), Report> {
     };
 
     let plugin_manager = PluginManager::with_config(&cfg);
-    let provider = Provider::new(&cfg, &plugin_manager)?;
+    let k8s_http_client: Arc<dyn openstack_keystone_core::k8s_auth::K8sHttpClient> =
+        Arc::new(KeystoneK8sHttpClient::new());
+    let provider = Provider::new(&cfg, &plugin_manager, k8s_http_client)?;
     let policy = HttpPolicyEnforcer::new(cfg.api_policy.opa_base_url.clone()).await?;
 
     let shared_state =

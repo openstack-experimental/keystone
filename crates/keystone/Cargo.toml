@@ -23,12 +23,15 @@ base64.workspace = true
 chrono.workspace = true
 clap = { workspace = true, features = ["derive"] }
 color-eyre.workspace = true
+dashmap.workspace = true
 derive_builder.workspace = true
 eyre.workspace = true
 futures-util.workspace = true
 hyper-util.workspace = true
 hyper.workspace = true
 inventory.workspace = true
+jsonwebtoken = { version = "10.4", features = ["rust_crypto"] }
+nix = { workspace = true, features = ["socket", "user"] }
 openstack-keystone-api-types = { workspace = true, features = ["openapi", "validate", "conv"]}
 openstack-keystone-appcred-driver-sql.workspace = true
 openstack-keystone-assignment-driver-sql.workspace = true
@@ -53,7 +56,7 @@ openstack-keystone-webauthn.workspace = true
 openidconnect.workspace = true
 reqwest = { workspace = true, features = ["json", "http2", "gzip", "deflate"] }
 rustls = { workspace = true, features = ["aws-lc-rs"] }
-sea-orm.workspace = true
+sea-orm = { workspace = true, features = ["sqlx-mysql", "sqlx-postgres", "sqlx-sqlite", "runtime-tokio", "runtime-tokio-native-tls"] }
 secrecy = { workspace = true, features = ["serde"] }
 serde.workspace = true
 serde_json.workspace = true
@@ -78,16 +81,17 @@ utoipa-axum.workspace = true
 utoipa-swagger-ui = { workspace = true, features = ["axum", "vendored"] }
 uuid = { workspace = true, features = ["v4"] }
 validator = { workspace = true, features = ["derive"] }
-nix = { workspace = true, features = ["socket", "user"] }
 
 [build-dependencies]
 toml = { version = "1.1", default-features = false, features = ["parse", "serde"] }
 
 [dev-dependencies]
 http-body-util.workspace = true
+httpmock = { version = "0.8", features = ["http2"] }
 openstack-keystone-core = { workspace = true, features = ["api", "mock"] }
 openstack-keystone-core-types = { workspace = true, features = ["mock"] }
 rstest.workspace = true
+secrecy = { workspace = true, features = ["serde"] }
 tokio = { workspace = true, features = ["process", "macros"] }
 tracing-test = { workspace = true, features = ["no-env-filter"] }
 url.workspace = true

@@ -16,7 +16,8 @@
 //! `openstack_sdk::RawQueryAsync` treats non-2xx responses as errors and
 //! returns `Err`, so tests that expect failure must match on the `Result`
 //! rather than using `.await?` — otherwise the assertion is never reached.
-//! See: `test_k8s_auth_invalid_jwt_format` and `test_k8s_auth_cannot_rescope_to_other_project`.
+//! See: `test_k8s_auth_invalid_jwt_format` and
+//! `test_k8s_auth_cannot_rescope_to_other_project`.
 
 use std::env;
 use std::sync::Arc;
@@ -214,7 +215,8 @@ async fn test_k8s_auth_invalid_jwt_format() -> Result<()> {
 
     let instance = setup_k8s_instance(&test_client).await?;
 
-    // Test with invalid JWT format - should fail with unauthorized/bad_request/forbidden
+    // Test with invalid JWT format - should fail with
+    // unauthorized/bad_request/forbidden
     let res = K8sAuthenticationRequestBuilder::default()
         .instance_id(&instance.id)
         .auth(K8sAuthRequest {

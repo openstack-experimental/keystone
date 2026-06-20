@@ -221,18 +221,10 @@ fn derive_scope_from_authorizations(
 
 #[cfg(test)]
 mod tests {
-    use axum::{
-        body::Body,
-        http::{Request, StatusCode},
-    };
-    use http_body_util::BodyExt;
-    use tower::ServiceExt;
-    use tower_http::trace::TraceLayer;
-    use tracing_test::traced_test;
 
     use openstack_keystone_core_types::auth::ScopeInfo;
     use openstack_keystone_core_types::mapping::authorization::Authorization;
-    use openstack_keystone_core_types::resource::Domain;
+
     use openstack_keystone_core_types::role::RoleRef;
 
     use super::*;

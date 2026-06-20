@@ -61,16 +61,16 @@ jobs:
         run: cargo nextest run
 
       - name: Run tests (sqlite)
-        run: cargo nextest run --test integration
+        run: cargo nextest run -p test_integration
 
       - name: Run tests (mysql)
-        run: cargo nextest run --test integration --profile mysql --no-capture
+        run: cargo nextest run -p test_integration --profile mysql --no-capture
 
       - name: Run tests for postgres
-        run: cargo nextest run --test integration --profile postgres --no-capture
+        run: cargo nextest run -p test_integration --profile postgres --no-capture
 
       - name: Run tests for raft drivers
-        run: cargo nextest run --test integration --profile raft --no-capture
+        run: cargo nextest run -p test_integration --profile raft --no-capture
 
       - name: Run Doc tests
         run: cargo test --doc

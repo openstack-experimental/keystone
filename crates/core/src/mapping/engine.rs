@@ -54,10 +54,10 @@ use dashmap::DashMap;
 /// - `claims`: The flattened claims map from the ingress adapter.
 /// - `domain_id`: The enclosing ruleset domain ID (used for
 ///   `${enclosing_domain_id}`).
-/// - `rule_name`: Optional named rule hint. When set, the engine evaluates
-///   this rule first; if it matches, evaluation terminates immediately.
-///   If not set (or the named rule doesn't match), standard first-match-wins
-///   iteration proceeds.
+/// - `rule_name`: Optional named rule hint. When set, the engine evaluates this
+///   rule first; if it matches, evaluation terminates immediately. If not set
+///   (or the named rule doesn't match), standard first-match-wins iteration
+///   proceeds.
 ///
 /// # Returns
 /// `Some(MatchResult)` on first match, `None` if no rule matches.

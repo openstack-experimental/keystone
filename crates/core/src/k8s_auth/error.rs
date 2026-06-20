@@ -12,31 +12,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //! # K8s Auth error
-pub use openstack_keystone_core_types::k8s_auth::K8sAuthProviderError;
 
-//impl From<jsonwebtoken::errors::Error> for K8sAuthProviderError {
-//    fn from(value: jsonwebtoken::errors::Error) -> Self {
-//        Self::Jwt {
-//            source: Box::new(value),
-//        }
-//    }
-//}
-//
-//impl From<IdentityProviderError> for K8sAuthProviderError {
-//    fn from(value: IdentityProviderError) -> Self {
-//        Self::IdentityProvider {
-//            source: Box::new(value),
-//        }
-//    }
-//}
-//
-//impl From<reqwest::Error> for K8sAuthProviderError {
-//    fn from(value: reqwest::Error) -> Self {
-//        Self::Http {
-//            source: Box::new(value),
-//        }
-//    }
-//}
+pub use openstack_keystone_core_types::k8s_auth::K8sAuthProviderError;
 
 impl From<crate::error::DatabaseError> for K8sAuthProviderError {
     /// Convert a database error into a K8s auth provider error.

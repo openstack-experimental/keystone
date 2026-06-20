@@ -14,98 +14,25 @@
 //! # Kubernetes authentication.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
-use std::sync::{Arc, OnceLock};
 
-use chrono::Utc;
-use jsonwebtoken::dangerous::insecure_decode;
-use reqwest::{Certificate, Client, StatusCode};
 use secrecy::{ExposeSecret, SecretString};
-use serde_json::{Value, json};
-use tokio::fs;
-use tracing::{debug, trace};
+use serde_json::Value;
 
 use openstack_keystone_core_types::auth::AuthenticationResult;
-use openstack_keystone_core_types::k8s_auth::*;
+use openstack_keystone_core_types::k8s_auth::{K8sAuthInstance, K8sAuthRequest};
 use openstack_keystone_core_types::mapping::auth::MappingAuthRequest;
 use openstack_keystone_core_types::mapping::resolution::IdentitySource;
 
 use super::K8sAuthApi;
-use super::types::K8sClaims;
 use crate::k8s_auth::{K8sAuthProviderError, service::K8sAuthService};
 use crate::keystone::ServiceState;
 use crate::mapping::MappingApi;
 
-/// Kubernetes cluster CA certificate location.
-static SERVICE_ACCOUNT_CERT_PATH_STR: &str = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt";
-static SERVICE_ACCOUNT_CERT_PATH: OnceLock<PathBuf> = OnceLock::new();
-
 impl K8sAuthService {
-    /// Get the [`Client`] for communication with the K8s.
-    ///
-    /// # Arguments
-    /// * `instance` - reference to the [`K8sAuthInstance`].
-    /// * `ca_path` - optional reference to the CA_CERT location.
-    ///
-    /// # Returns
-    /// * Success `Client` with the injected root CA certificate.
-    /// * `K8sAuthProviderError` when neither `ca_cert`, nor the `ca_path` (or
-    ///   the default certificate location
-    ///   (`/var/run/secrets/kubernetes.io/serviceaccount/ca.crt`) contain the
-    ///   certificate content while the `disable_local_ca_jwt` of the
-    ///   `AuthProvider` is not `true`.
-    async fn get_or_create_client(
-        &self,
-        instance: &K8sAuthInstance,
-        ca_path: Option<PathBuf>,
-    ) -> Result<Arc<Client>, K8sAuthProviderError> {
-        // Check if we already have a pooled client
-        if let Some(client) = self.http_client_pool.get_client(&instance.id).await {
-            return Ok(client);
-        }
-
-        // Create a new one
-        let mut client_builder = Client::builder()
-            .gzip(true)
-            // Optional: Set pool idle timeout or max connections
-            .pool_idle_timeout(std::time::Duration::from_secs(90));
-
-        // Determine the CA certificate for the K8 cluster
-        if let Some(val) = &instance.ca_cert {
-            client_builder = client_builder.add_root_certificate(
-                Certificate::from_pem(val.as_bytes()).map_err(K8sAuthProviderError::http)?,
-            );
-        } else if !instance.disable_local_ca_jwt {
-            client_builder = client_builder.add_root_certificate(
-                Certificate::from_pem(
-                    fs::read_to_string(ca_path.as_ref().unwrap_or_else(|| {
-                        SERVICE_ACCOUNT_CERT_PATH
-                            .get_or_init(|| PathBuf::from(SERVICE_ACCOUNT_CERT_PATH_STR))
-                    }))
-                    .await
-                    .map_err(|_| K8sAuthProviderError::CaCertificateUnknown)?
-                    .as_bytes(),
-                )
-                .map_err(K8sAuthProviderError::http)?,
-            );
-        };
-
-        // Build the client
-        let shared_client = Arc::new(client_builder.build().map_err(K8sAuthProviderError::http)?);
-
-        // Store it for future use
-        self.http_client_pool
-            .put_client(&instance.id, Arc::clone(&shared_client))
-            .await;
-
-        Ok(shared_client)
-    }
-
     /// Query the K8s Token Review endpoint.
     ///
-    /// Validates the JWT through the K8s TokenReview API. Audience and
-    /// expiry checks are performed pre-flight; namespace/name matching is
-    /// delegated to the mapping engine rules.
+    /// JWT decoding and validation is delegated to the [`K8sHttpClient`]
+    /// implementation.
     ///
     /// # Arguments
     /// * `token` - [`SecretString`] with the JWT token.
@@ -119,52 +46,20 @@ impl K8sAuthService {
         token: &SecretString,
         instance: &K8sAuthInstance,
     ) -> Result<Value, K8sAuthProviderError> {
-        // Pre-flight: reject expired tokens early
-        let claims = insecure_decode::<K8sClaims>(token.expose_secret())
-            .map_err(K8sAuthProviderError::jwt)?;
-        if claims.claims.exp < Utc::now().timestamp() as u64 {
-            return Err(K8sAuthProviderError::ExpiredToken);
-        }
+        let token_review_json = self
+            .http_client
+            .query_token_review(instance, token.expose_secret())
+            .await?;
 
-        let body = json!({
-            "api_version": "authentication.k8s.io/v1".to_string(),
-            "kind": "TokenReview".to_string(),
-            "spec": {
-                "token": token.expose_secret(),
-            },
-        });
-
-        let response = self
-            .get_or_create_client(instance, None)
-            .await?
-            .post(format!(
-                "{}/apis/authentication.k8s.io/v1/tokenreviews",
-                instance.host
-            ))
-            .header("Authorization", format!("Bearer {}", token.expose_secret()))
-            .json(&body)
-            .send()
-            .await
-            .map_err(K8sAuthProviderError::http)?;
-
-        match response.status() {
-            StatusCode::OK | StatusCode::CREATED => {
-                Ok(response.json().await.map_err(K8sAuthProviderError::http)?)
-            }
-            _ => {
-                debug!("Kubernetes returned {:?}", response);
-                Err(K8sAuthProviderError::InvalidToken)
-            }
-        }
+        Ok(token_review_json)
     }
 
     /// Validate K8s Token Review response and extract service account info.
     ///
     /// Returns `(namespace, service_account_name)` parsed from the username.
-    /// Does not check role bindings — that is handled by the mapping engine.
     ///
     /// # Arguments
-    /// * `token_review_data` - json representation of the TokenReview response.
+    /// * `token_review_data` - JSON representation of the TokenReview response.
     ///
     /// # Returns
     /// * Success with `(namespace, service_account_name)`.
@@ -178,9 +73,6 @@ impl K8sAuthService {
             .as_bool()
             .unwrap_or(false)
         {
-            if let Some(val) = token_review_data["status"]["error"].as_str() {
-                trace!("token validation error: {}", val);
-            }
             return Err(K8sAuthProviderError::InvalidToken);
         }
 
@@ -201,37 +93,27 @@ impl K8sAuthService {
     /// Per ADR-0020 §11.2, produces claims with keys:
     /// - `k8s.serviceaccount.name`
     /// - `k8s.serviceaccount.namespace`
-    /// - `k8s.aud` (from JWT claims, if present)
+    /// - `k8s.aud` (from `sub` claim of the service account token).
     ///
     /// # Arguments
     /// * `token_review_data` - TokenReview JSON response.
-    /// * `jwt` - The original JWT (used to extract `aud` claim).
     ///
     /// # Returns
-    /// A flattened claims map and the JWT audience claim (optional).
+    /// A flattened claims map.
     pub(super) fn flatten_k8s_claims(
         &self,
         token_review_data: &Value,
-        jwt: &SecretString,
-    ) -> Result<(HashMap<String, Vec<String>>, Option<Vec<String>>), K8sAuthProviderError> {
+    ) -> Result<HashMap<String, Vec<String>>, K8sAuthProviderError> {
         let (namespace, sa_name) = self.extract_k8s_service_account(token_review_data)?;
 
         let mut claims = HashMap::new();
-        claims.insert("k8s.serviceaccount.name".to_string(), vec![sa_name]);
-        claims.insert("k8s.serviceaccount.namespace".to_string(), vec![namespace]);
+        claims.insert("k8s.serviceaccount.name".to_string(), vec![sa_name.clone()]);
+        claims.insert(
+            "k8s.serviceaccount.namespace".to_string(),
+            vec![namespace.clone()],
+        );
 
-        // Extract audience from JWT for inclusion in claims
-        let aud = insecure_decode::<K8sClaims>(jwt.expose_secret())
-            .map(|decoded| decoded.claims.aud)
-            .ok();
-
-        if let Some(auds) = &aud
-            && !auds.is_empty()
-        {
-            claims.insert("k8s.aud".to_string(), auds.iter().cloned().collect());
-        }
-
-        Ok((claims, aud))
+        Ok(claims)
     }
 
     /// Authenticate via K8s TokenReview + mapping engine.
@@ -269,7 +151,7 @@ impl K8sAuthService {
         let token_review_data = self.query_k8s_token_review(&req.jwt, &instance).await?;
 
         // Flatten TokenReview response into claims.
-        let (claims, _aud) = self.flatten_k8s_claims(&token_review_data, &req.jwt)?;
+        let claims = self.flatten_k8s_claims(&token_review_data)?;
 
         // Derive unique workload ID from claims: "<sa>:<ns>" per ADR-0020 §11.2.
         let sa_name = &claims["k8s.serviceaccount.name"][0];
@@ -300,329 +182,64 @@ impl K8sAuthService {
 
 #[cfg(test)]
 mod tests {
-    use std::io::Write;
     use std::sync::Arc;
 
-    use chrono::{Duration, Utc};
-    use eyre::Result;
-    use httpmock::{Mock, MockServer};
-    use jsonwebtoken::{EncodingKey, Header, encode};
-    use tempfile::NamedTempFile;
+    use async_trait::async_trait;
+    use serde_json::json;
 
-    use super::super::backend::MockK8sAuthBackend;
     use super::*;
-    use crate::common::HttpClientPool;
+    use crate::k8s_auth::K8sHttpClient;
+    use crate::k8s_auth::backend::MockK8sAuthBackend;
+    use crate::tests::get_mocked_state;
 
-    /// fake cert valid till 2036
-    static CA_CERT: &str = r#"
------BEGIN CERTIFICATE-----
-MIIBeDCCAR2gAwIBAgIBADAKBggqhkjOPQQDAjAjMSEwHwYDVQQDDBhrM3Mtc2Vy
-dmVyLWNhQDE3NjgyOTE3MTEwHhcNMjYwMTEzMDgwODMxWhcNMzYwMTExMDgwODMx
-WjAjMSEwHwYDVQQDDBhrM3Mtc2VydmVyLWNhQDE3NjgyOTE3MTEwWTATBgcqhkjO
-PQIBBggqhkjOPQMBBwNCAARfFhTMwYXJNZrhtG3vYSYEuhkObCg46+WyGR1N/UWm
-WGbNsc/lv1CWf/ys6enoOfAZs9k/UZzq7ILzHAk6wfOfo0IwQDAOBgNVHQ8BAf8E
-BAMCAqQwDwYDVR0TAQH/BAUwAwEB/zAdBgNVHQ4EFgQU1FJnrnJcSrNHUxh1pyJO
-gPLqX1cwCgYIKoZIzj0EAwIDSQAwRgIhAO0kyD4tHt+hITHoBDrAspO3AmUNDX3v
-FPrC1HpT3dzIAiEAtEB0so+KoJb/2Opn1RycVzxke1CQrWgjS8ySnnFK5ok=
------END CERTIFICATE-----
-"#;
+    struct TestK8sHttpClient;
 
-    #[allow(dead_code)]
-    async fn get_token_review_response_mock<'a, U: Into<String>>(
-        mock_server: &'a MockServer,
-        token: &SecretString,
-        is_authenticated: bool,
-        uname: U,
-    ) -> Mock<'a> {
-        mock_server
-            .mock_async(|when, then| {
-                when.method("POST")
-                    .path("/apis/authentication.k8s.io/v1/tokenreviews")
-                    .header("authorization", format!("Bearer {}", token.expose_secret()))
-                    .json_body(json!({
-                        "api_version": "authentication.k8s.io/v1".to_string(),
-                        "kind": "TokenReview".to_string(),
-                        "spec": {
-                            "token": token.expose_secret(),
-                        },
-                    }));
-                if !is_authenticated {
-                    then.status(200)
-                        .header("content-type", "application/json")
-                        .json_body(json!({"status": {"authenticated": false, "user": {}}}))
-                } else {
-                    then.status(201)
-                        .header("content-type", "application/json")
-                        .json_body(
-                            json!({"status": {"authenticated": true, "user": {"username": uname.into()}}}),
-                        )
-                };
-            })
-            .await
-    }
-
-    #[tokio::test]
-    async fn test_get_or_create_client_with_ca() -> Result<()> {
-        let srv = K8sAuthService {
-            backend_driver: Arc::new(MockK8sAuthBackend::default()),
-            http_client_pool: Box::new(HttpClientPool::default()),
-        };
-        let instance = K8sAuthInstance {
-            ca_cert: Some(CA_CERT.into()),
-            disable_local_ca_jwt: true,
-            domain_id: "did".into(),
-            enabled: true,
-            host: "127.0.0.1:6443".into(),
-            id: "cid".into(),
-            name: Some("foo".into()),
-        };
-        srv.get_or_create_client(&instance, None).await?;
-        //  Ensure the connection is present in the pool
-        assert!(
-            srv.http_client_pool
-                .get_client(&instance.id)
-                .await
-                .is_some()
-        );
-        // Repeat the get, now it should be returned from the cache
-        srv.get_or_create_client(&instance, None).await?;
-
-        // Test with the CA and disable_local_ca_jwt
-        let instance = K8sAuthInstance {
-            ca_cert: Some(CA_CERT.into()),
-            disable_local_ca_jwt: true,
-            domain_id: "did".into(),
-            enabled: true,
-            host: "127.0.0.1:6443".into(),
-            id: "cid1".into(),
-            name: Some("foo".into()),
-        };
-        assert!(srv.get_or_create_client(&instance, None).await.is_ok());
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_get_or_create_client_k8s_ca() -> Result<()> {
-        let provider = K8sAuthService {
-            backend_driver: Arc::new(MockK8sAuthBackend::default()),
-            http_client_pool: Box::new(HttpClientPool::default()),
-        };
-        let instance = K8sAuthInstance {
-            ca_cert: None,
-            disable_local_ca_jwt: false,
-            domain_id: "did".into(),
-            enabled: true,
-            host: "127.0.0.1:6443".into(),
-            id: "cid".into(),
-            name: Some("foo".into()),
-        };
-        let mut file = NamedTempFile::new()?;
-        writeln!(file, "{}", CA_CERT)?;
-        assert!(
-            provider
-                .get_or_create_client(&instance, Some(file.path().to_path_buf()))
-                .await
-                .is_ok()
-        );
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_get_or_create_client_error_no_ca() -> Result<()> {
-        let provider = K8sAuthService {
-            backend_driver: Arc::new(MockK8sAuthBackend::default()),
-            http_client_pool: Box::new(HttpClientPool::default()),
-        };
-        let instance = K8sAuthInstance {
-            ca_cert: None,
-            disable_local_ca_jwt: false,
-            domain_id: "did".into(),
-            enabled: true,
-            host: "127.0.0.1:6443".into(),
-            id: "cid".into(),
-            name: Some("foo".into()),
-        };
-        if let Err(K8sAuthProviderError::CaCertificateUnknown) =
-            provider.get_or_create_client(&instance, None).await
-        {
-        } else {
-            panic!("should have raised an error");
+    #[async_trait]
+    impl K8sHttpClient for TestK8sHttpClient {
+        async fn query_token_review(
+            &self,
+            _instance: &K8sAuthInstance,
+            _jwt: &str,
+        ) -> Result<serde_json::Value, K8sAuthProviderError> {
+            Ok(json!({}))
         }
-        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_get_or_create_client_disable_local_ca_jwt() -> Result<()> {
-        let provider = K8sAuthService {
-            backend_driver: Arc::new(MockK8sAuthBackend::default()),
-            http_client_pool: Box::new(HttpClientPool::default()),
-        };
-        let instance = K8sAuthInstance {
-            ca_cert: None,
-            disable_local_ca_jwt: true,
-            domain_id: "did".into(),
-            enabled: true,
-            host: "127.0.0.1:6443".into(),
-            id: "cid".into(),
-            name: Some("foo".into()),
-        };
-        assert!(provider.get_or_create_client(&instance, None).await.is_ok());
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_query_k8s_token_review_expired() -> Result<()> {
-        let provider = K8sAuthService {
-            backend_driver: Arc::new(MockK8sAuthBackend::default()),
-            http_client_pool: Box::new(HttpClientPool::default()),
-        };
-        let instance = K8sAuthInstance {
-            ca_cert: None,
-            disable_local_ca_jwt: true,
-            domain_id: "did".into(),
-            enabled: true,
-            host: "http://127.0.0.1:6443".into(),
-            id: "cid".into(),
-            name: Some("foo".into()),
-        };
-        let claims = K8sClaims {
-            aud: vec!["aud".into()],
-            exp: (Utc::now() - Duration::seconds(10)).timestamp() as u64,
-            sub: "system:serviceaccount:ns:san".into(),
-        };
-        let token = SecretString::from(encode(
-            &Header::default(),
-            &claims,
-            &EncodingKey::from_secret("not_secret".as_ref()),
-        )?);
-
-        if let Err(K8sAuthProviderError::ExpiredToken) =
-            provider.query_k8s_token_review(&token, &instance).await
-        {
-        } else {
-            panic!("should have raised an error");
+    fn make_service(backend: MockK8sAuthBackend) -> K8sAuthService {
+        K8sAuthService {
+            backend_driver: Arc::new(backend),
+            http_client: Arc::new(TestK8sHttpClient),
         }
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_query_k8s_token_review() -> Result<()> {
-        let provider = K8sAuthService {
-            backend_driver: Arc::new(MockK8sAuthBackend::default()),
-            http_client_pool: Box::new(HttpClientPool::default()),
-        };
-        let mock_srv = MockServer::start_async().await;
-        let instance = K8sAuthInstance {
-            ca_cert: None,
-            disable_local_ca_jwt: true,
-            domain_id: "did".into(),
-            enabled: true,
-            host: format!("http://{}:{}", mock_srv.host(), mock_srv.port()),
-            id: "cid".into(),
-            name: Some("foo".into()),
-        };
-        let claims = K8sClaims {
-            aud: vec!["aud".into()],
-            exp: (Utc::now() + Duration::seconds(10)).timestamp() as u64,
-            sub: "system:serviceaccount:ns:san".into(),
-        };
-        let token = SecretString::from(encode(
-            &Header {
-                nonce: Some("foo".into()),
-                ..Default::default()
-            },
-            &claims,
-            &EncodingKey::from_secret("not_secret".as_ref()),
-        )?);
-        let token2 = SecretString::from(encode(
-            &Header {
-                nonce: Some("bar".into()),
-                ..Default::default()
-            },
-            &claims,
-            &EncodingKey::from_secret("not_secret".as_ref()),
-        )?);
-        assert!(token.expose_secret() != token2.expose_secret());
-        let rsp = json!({"foo": "bar"});
-        let mock_ok = mock_srv
-            .mock_async(|when, then| {
-                when.method("POST")
-                    .path("/apis/authentication.k8s.io/v1/tokenreviews")
-                    .header("authorization", format!("Bearer {}", token.expose_secret()))
-                    .json_body(json!({
-                        "api_version": "authentication.k8s.io/v1".to_string(),
-                        "kind": "TokenReview".to_string(),
-                        "spec": {
-                            "token": token.expose_secret(),
-                        },
-                    }));
-                then.status(200)
-                    .header("content-type", "application/json")
-                    .json_body(rsp.clone());
-            })
-            .await;
-        let mock_nok = mock_srv
-            .mock_async(|when, then| {
-                when.method("POST")
-                    .path("/apis/authentication.k8s.io/v1/tokenreviews")
-                    .header(
-                        "authorization",
-                        format!("Bearer {}", token2.expose_secret()),
-                    )
-                    .json_body(json!({
-                        "api_version": "authentication.k8s.io/v1".to_string(),
-                        "kind": "TokenReview".to_string(),
-                        "spec": {
-                            "token": token2.expose_secret(),
-                        },
-                    }));
-                then.status(401);
-            })
-            .await;
-
-        assert_eq!(
-            rsp,
-            provider.query_k8s_token_review(&token, &instance).await?,
-            "response is just the whole json blob"
-        );
-        mock_ok.assert();
-
-        if let Err(K8sAuthProviderError::InvalidToken) =
-            provider.query_k8s_token_review(&token2, &instance).await
-        {
-            mock_nok.assert();
-        } else {
-            panic!("K8 returning 401 should result in InvalidToken");
-        }
-
-        Ok(())
     }
 
     #[test]
-    fn test_extract_k8s_service_account() -> Result<()> {
-        let provider = K8sAuthService {
-            backend_driver: Arc::new(MockK8sAuthBackend::default()),
-            http_client_pool: Box::new(HttpClientPool::default()),
-        };
+    fn test_extract_k8s_service_account_not_authenticated() {
+        let provider = make_service(MockK8sAuthBackend::default());
 
-        // Not authenticated
         if let Err(K8sAuthProviderError::InvalidToken) =
             provider.extract_k8s_service_account(&json!({"status": {"authenticated": false}}))
         {
         } else {
             panic!("not authenticated token should result in InvalidToken");
         }
+    }
 
-        // No user
+    #[test]
+    fn test_extract_k8s_service_account_no_user() {
+        let provider = make_service(MockK8sAuthBackend::default());
+
         if let Err(K8sAuthProviderError::InvalidTokenReviewResponse) =
             provider.extract_k8s_service_account(&json!({"status": {"authenticated": true}}))
         {
         } else {
             panic!("no user should result in InvalidTokenReviewResponse");
         }
+    }
 
-        // Wrong username pattern
+    #[test]
+    fn test_extract_k8s_service_account_wrong_pattern() {
+        let provider = make_service(MockK8sAuthBackend::default());
+
         if let Err(K8sAuthProviderError::InvalidTokenReviewResponse) = provider
             .extract_k8s_service_account(
                 &json!({"status": {"authenticated": true, "user": {"username": "system"}}}),
@@ -631,12 +248,77 @@ FPrC1HpT3dzIAiEAtEB0so+KoJb/2Opn1RycVzxke1CQrWgjS8ySnnFK5ok=
         } else {
             panic!("wrong username pattern should result in InvalidTokenReviewResponse");
         }
+    }
 
-        // Valid
-        let (ns, sa) = provider.extract_k8s_service_account(&json!({"status": {"authenticated": true, "user": {"username": "system:serviceaccount:my_ns:my_sa"}}}))?;
+    #[test]
+    fn test_extract_k8s_service_account_valid() {
+        let provider = make_service(MockK8sAuthBackend::default());
+
+        let (ns, sa) = provider
+            .extract_k8s_service_account(&json!({
+                "status": {"authenticated": true, "user": {"username": "system:serviceaccount:my_ns:my_sa"}}
+            }))
+            .expect("valid token should succeed");
+
         assert_eq!(ns, "my_ns");
         assert_eq!(sa, "my_sa");
+    }
 
-        Ok(())
+    #[tokio::test]
+    async fn test_auth_instance_not_found() {
+        let state = get_mocked_state(None, None).await;
+        let mut backend = MockK8sAuthBackend::default();
+        backend
+            .expect_get_auth_instance()
+            .returning(|_, _| Ok(None));
+
+        let service = make_service(backend);
+        let result = service
+            .authenticate_by_mapping(
+                &state,
+                &K8sAuthRequest {
+                    auth_instance_id: "missing".into(),
+                    jwt: SecretString::new("jwt".into()),
+                    rule_name: Some("rule".into()),
+                },
+            )
+            .await;
+        assert!(matches!(
+            result,
+            Err(K8sAuthProviderError::AuthInstanceNotFound(x)) if x == "missing"
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_auth_instance_disabled() {
+        let state = get_mocked_state(None, None).await;
+        let mut backend = MockK8sAuthBackend::default();
+        backend.expect_get_auth_instance().returning(|_, _| {
+            Ok(Some(K8sAuthInstance {
+                ca_cert: None,
+                disable_local_ca_jwt: true,
+                domain_id: "did".into(),
+                enabled: false,
+                host: "http://localhost:6443".into(),
+                id: "cid".into(),
+                name: Some("t".into()),
+            }))
+        });
+
+        let service = make_service(backend);
+        let result = service
+            .authenticate_by_mapping(
+                &state,
+                &K8sAuthRequest {
+                    auth_instance_id: "cid".into(),
+                    jwt: SecretString::new("jwt".into()),
+                    rule_name: Some("r".into()),
+                },
+            )
+            .await;
+        assert!(matches!(
+            result,
+            Err(K8sAuthProviderError::AuthInstanceNotActive(x)) if x == "cid"
+        ));
     }
 }

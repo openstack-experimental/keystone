@@ -75,7 +75,6 @@
 
 use async_trait::async_trait;
 use sea_orm::{DatabaseConnection, Schema};
-use sea_orm_migration::MigrationTrait;
 
 #[cfg(feature = "api")]
 pub mod api;
@@ -129,7 +128,7 @@ pub trait SqlDriver: Send + Sync {
     ///
     /// # Returns
     /// - A vector of boxed migration trait objects managed by this driver.
-    fn migrations(&self) -> Vec<Box<dyn MigrationTrait>> {
+    fn migrations(&self) -> Vec<Box<dyn sea_orm_migration::MigrationTrait>> {
         Vec::new()
     }
 }

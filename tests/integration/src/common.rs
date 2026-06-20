@@ -166,7 +166,9 @@ pub async fn get_state() -> Result<(Arc<Service>, TempDir)> {
     }
 
     let plugin_manager = PluginManager::with_config(&cfg);
-    let provider = Provider::new(&cfg, &plugin_manager)?;
+    let k8s_http_client =
+        Arc::new(openstack_keystone::k8s_auth_client::MockK8sHttpClient::default());
+    let provider = Provider::new(&cfg, &plugin_manager, k8s_http_client)?;
 
     let state = Arc::new(
         Service::new(

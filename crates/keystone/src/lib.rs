@@ -84,6 +84,7 @@ pub mod federation;
 pub mod identity;
 pub mod idmapping;
 pub mod k8s_auth;
+pub mod k8s_auth_client;
 pub mod keystone;
 pub mod mapping;
 

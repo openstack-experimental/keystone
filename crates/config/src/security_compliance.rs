@@ -398,7 +398,6 @@ mod tests {
         );
     }
 
-    /// Integration-style test: simulate Config::load_all flow
     #[test]
     fn test_load_all_compiles_regex() {
         let mut cfg = SecurityComplianceProvider::default();

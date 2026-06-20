@@ -18,7 +18,7 @@ openstack-keystone-config.workspace = true
 openstack-keystone-core.workspace = true
 openstack-keystone-core-types.workspace = true
 secrecy.workspace = true
-sea-orm.workspace = true
+sea-orm = { workspace = true, features = ["default"] }
 tokio = { workspace = true, features = ["macros"] }
 tracing.workspace = true
 uuid = { workspace = true, features = ["v4"] }
