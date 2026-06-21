@@ -128,4 +128,7 @@ async fn version(
 #[cfg(test)]
 pub(crate) mod tests {
     pub use openstack_keystone_core::api::tests::{get_mocked_state, test_fixture_scoped};
+    pub fn mocked_builder() -> openstack_keystone_core::provider::ProviderBuilder {
+        openstack_keystone_core::provider::Provider::mocked_builder()
+    }
 }

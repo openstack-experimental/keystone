@@ -34,4 +34,6 @@
 //!
 //! Additionally the `token.issued_at` is compared to be lower than the
 //! `issued_before` field of the revocation record.
+#[cfg(test)]
+pub use openstack_keystone_core::revoke::MockRevokeProvider;
 pub use openstack_keystone_core::revoke::*;

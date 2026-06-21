@@ -102,9 +102,8 @@ mod tests {
         super::{openapi_router, tests::get_token_provider_mock_with_mocks},
         *,
     };
-    use crate::api::tests::{get_mocked_state, test_fixture_scoped};
+    use crate::api::tests::{get_mocked_state, mocked_builder, test_fixture_scoped};
     use crate::api::v3::role::types::RoleRef;
-    use crate::provider::Provider;
 
     #[tokio::test]
     async fn test_get() {
@@ -141,12 +140,7 @@ mod tests {
                 }))
             });
 
-        let state = get_mocked_state(
-            Provider::mocked_builder().mock_token(token_mock),
-            true,
-            None,
-        )
-        .await;
+        let state = get_mocked_state(mocked_builder().mock_token(token_mock), true, None).await;
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -237,12 +231,7 @@ mod tests {
                     ]),
                 }))
             });
-        let state = get_mocked_state(
-            Provider::mocked_builder().mock_token(token_mock),
-            false,
-            None,
-        )
-        .await;
+        let state = get_mocked_state(mocked_builder().mock_token(token_mock), false, None).await;
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())

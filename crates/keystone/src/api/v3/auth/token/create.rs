@@ -134,11 +134,12 @@ mod tests {
     use crate::identity::MockIdentityProvider;
     use crate::keystone::Service;
     use crate::policy::MockPolicy;
-    use crate::provider::Provider;
+
     use crate::resource::MockResourceProvider;
     use crate::token::MockTokenProvider;
 
     use super::super::openapi_router;
+    use crate::api::tests::mocked_builder;
 
     #[tokio::test]
     #[traced_test]
@@ -295,7 +296,7 @@ mod tests {
             .expect_get_catalog()
             .returning(|_, _| Ok(Vec::new()));
 
-        let provider = Provider::mocked_builder()
+        let provider = mocked_builder()
             .mock_assignment(assignment_mock)
             .mock_catalog(catalog_mock)
             .mock_identity(identity_mock)
@@ -453,7 +454,7 @@ mod tests {
                 ))
             });
 
-        let provider = Provider::mocked_builder()
+        let provider = mocked_builder()
             .mock_assignment(assignment_mock)
             .mock_identity(identity_mock)
             .mock_resource(resource_mock)
@@ -568,7 +569,7 @@ mod tests {
                 }))
             });
 
-        let provider = Provider::mocked_builder()
+        let provider = mocked_builder()
             .mock_identity(identity_mock)
             .mock_resource(resource_mock)
             .build()

@@ -14,3 +14,6 @@
 //! # Mapping engine provider re-export.
 
 pub use openstack_keystone_core::mapping::*;
+
+#[cfg(test)]
+pub use openstack_keystone_core::mapping::MockMappingProvider;

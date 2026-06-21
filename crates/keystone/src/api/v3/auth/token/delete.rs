@@ -101,8 +101,8 @@ mod tests {
     use tower_http::trace::TraceLayer;
 
     use super::super::openapi_router;
-    use crate::api::tests::{get_mocked_state, test_fixture_scoped};
-    use crate::provider::Provider;
+    use crate::api::tests::{get_mocked_state, mocked_builder, test_fixture_scoped};
+
     use crate::revoke::MockRevokeProvider;
     use crate::token::{FernetToken as ProviderToken, MockTokenProvider, TokenProviderError};
 
@@ -211,7 +211,7 @@ mod tests {
             .withf(move |_, token: &ProviderToken| *token == fernet_for_revoke)
             .returning(|_, _| Ok(()));
 
-        let provider = Provider::mocked_builder()
+        let provider = mocked_builder()
             .mock_token(token_mock)
             .mock_revoke(revoke_mock);
 
@@ -248,7 +248,7 @@ mod tests {
             .withf(|_, token: &'_ str, _, _| token == "baz")
             .returning(move |_, _, _, _| Err(TokenProviderError::Expired));
 
-        let provider = Provider::mocked_builder().mock_token(token_mock);
+        let provider = mocked_builder().mock_token(token_mock);
 
         let vsc = test_fixture_scoped();
         let state = get_mocked_state(provider, true, None).await;
@@ -283,7 +283,7 @@ mod tests {
             .withf(|_, token: &'_ str, _, _| token == "baz")
             .returning(move |_, _, _, _| Err(TokenProviderError::TokenRevoked));
 
-        let provider = Provider::mocked_builder().mock_token(token_mock);
+        let provider = mocked_builder().mock_token(token_mock);
         let vsc = test_fixture_scoped();
         let state = get_mocked_state(provider, true, None).await;
 

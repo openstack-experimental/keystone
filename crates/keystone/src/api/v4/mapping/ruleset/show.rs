@@ -94,9 +94,8 @@ mod tests {
     use openstack_keystone_core_types::mapping as provider_types;
 
     use super::super::openapi_router;
-    use crate::api::tests::{get_mocked_state, test_fixture_scoped};
+    use crate::api::tests::{get_mocked_state, mocked_builder, test_fixture_scoped};
     use crate::mapping::MockMappingProvider;
-    use crate::provider::Provider;
 
     fn sample_ruleset_core() -> provider_types::MappingRuleSet {
         provider_types::MappingRuleSet {
@@ -115,7 +114,7 @@ mod tests {
     #[tokio::test]
     async fn test_show() {
         let vsc = test_fixture_scoped();
-        let mut provider = Provider::mocked_builder();
+        let mut provider = mocked_builder();
         let mut mock = MockMappingProvider::default();
         mock.expect_get_ruleset()
             .returning(|_, _| Ok(Some(sample_ruleset_core())));
@@ -149,7 +148,7 @@ mod tests {
     #[tokio::test]
     async fn test_show_policy_denied() {
         let vsc = test_fixture_scoped();
-        let mut provider = Provider::mocked_builder();
+        let mut provider = mocked_builder();
         let mut mock = MockMappingProvider::default();
         mock.expect_get_ruleset()
             .returning(|_, _| Ok(Some(sample_ruleset_core())));
@@ -178,7 +177,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_show_unauthorized() {
-        let state = get_mocked_state(Provider::mocked_builder(), true, None).await;
+        let state = get_mocked_state(mocked_builder(), true, None).await;
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())

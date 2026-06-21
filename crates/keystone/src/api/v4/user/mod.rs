@@ -201,7 +201,7 @@ mod tests {
     use openstack_keystone_core_types::identity::*;
 
     use super::openapi_router;
-    use crate::api::tests::{get_mocked_state, test_fixture_scoped};
+    use crate::api::tests::{get_mocked_state, mocked_builder, test_fixture_scoped};
     use crate::api::v3::group::types::{GroupBuilder as ApiGroupBuilder, GroupList};
     use crate::api::v3::user::types::{
         UserBuilder as ApiUser, UserCreateBuilder as ApiUserCreate, UserCreateRequest, UserList,
@@ -212,7 +212,6 @@ mod tests {
         error::IdentityProviderError,
         //    types::{Group, UserCreate, UserListParameters, UserResponseBuilder},
     };
-    use crate::provider::Provider;
 
     #[tokio::test]
     async fn test_list() {
@@ -233,12 +232,8 @@ mod tests {
                 ])
             });
 
-        let state = get_mocked_state(
-            Provider::mocked_builder().mock_identity(identity_mock),
-            true,
-            None,
-        )
-        .await;
+        let state =
+            get_mocked_state(mocked_builder().mock_identity(identity_mock), true, None).await;
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -289,12 +284,8 @@ mod tests {
             })
             .returning(|_, _| Ok(Vec::new()));
 
-        let state = get_mocked_state(
-            Provider::mocked_builder().mock_identity(identity_mock),
-            true,
-            None,
-        )
-        .await;
+        let state =
+            get_mocked_state(mocked_builder().mock_identity(identity_mock), true, None).await;
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -320,7 +311,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_list_unauth() {
-        let state = get_mocked_state(Provider::mocked_builder(), false, None).await;
+        let state = get_mocked_state(mocked_builder(), false, None).await;
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -352,12 +343,8 @@ mod tests {
                     .unwrap())
             });
 
-        let state = get_mocked_state(
-            Provider::mocked_builder().mock_identity(identity_mock),
-            true,
-            None,
-        )
-        .await;
+        let state =
+            get_mocked_state(mocked_builder().mock_identity(identity_mock), true, None).await;
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -417,12 +404,8 @@ mod tests {
                 ))
             });
 
-        let state = get_mocked_state(
-            Provider::mocked_builder().mock_identity(identity_mock),
-            true,
-            None,
-        )
-        .await;
+        let state =
+            get_mocked_state(mocked_builder().mock_identity(identity_mock), true, None).await;
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -484,12 +467,8 @@ mod tests {
             .withf(|_, id: &'_ str| id == "bar")
             .returning(|_, _| Ok(()));
 
-        let state = get_mocked_state(
-            Provider::mocked_builder().mock_identity(identity_mock),
-            true,
-            None,
-        )
-        .await;
+        let state =
+            get_mocked_state(mocked_builder().mock_identity(identity_mock), true, None).await;
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -542,12 +521,8 @@ mod tests {
                 }])
             });
 
-        let state = get_mocked_state(
-            Provider::mocked_builder().mock_identity(identity_mock),
-            true,
-            None,
-        )
-        .await;
+        let state =
+            get_mocked_state(mocked_builder().mock_identity(identity_mock), true, None).await;
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())

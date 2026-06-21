@@ -129,8 +129,8 @@ mod tests {
     use openstack_keystone_core_types::resource::Domain;
 
     use super::*;
-    use crate::api::tests::get_mocked_state;
-    use crate::provider::Provider;
+    use crate::api::tests::{get_mocked_state, mocked_builder};
+
     use crate::resource::MockResourceProvider;
 
     #[tokio::test]
@@ -157,12 +157,8 @@ mod tests {
                 }))
             });
 
-        let state = get_mocked_state(
-            Provider::mocked_builder().mock_resource(resource_mock),
-            true,
-            None,
-        )
-        .await;
+        let state =
+            get_mocked_state(mocked_builder().mock_resource(resource_mock), true, None).await;
 
         assert_eq!(
             "domain_id",

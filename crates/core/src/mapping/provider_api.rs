@@ -23,7 +23,7 @@ use crate::mapping::error::MappingProviderError;
 
 /// Mapping provider interface.
 #[async_trait]
-pub trait MappingApi {
+pub trait MappingApi: Send + Sync {
     /// Create a mapping ruleset.
     ///
     /// # Parameters

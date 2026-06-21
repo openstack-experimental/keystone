@@ -85,9 +85,9 @@ mod tests {
     use openstack_keystone_core_types::role::{RoleBuilder, RoleCreate};
 
     use super::super::openapi_router;
-    use crate::api::tests::{get_mocked_state, test_fixture_scoped};
+    use crate::api::tests::{get_mocked_state, mocked_builder, test_fixture_scoped};
     use crate::api::v3::role::types::{Role as ApiRole, RoleResponse};
-    use crate::provider::Provider;
+
     use crate::role::MockRoleProvider;
 
     #[tokio::test]
@@ -112,8 +112,7 @@ mod tests {
             });
 
         let vsc = test_fixture_scoped();
-        let state =
-            get_mocked_state(Provider::mocked_builder().mock_role(role_mock), true, None).await;
+        let state = get_mocked_state(mocked_builder().mock_role(role_mock), true, None).await;
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())

@@ -148,11 +148,11 @@ mod tests {
     use openstack_keystone_core_types::resource::*;
     use openstack_keystone_core_types::role::*;
 
-    use crate::api::tests::{get_mocked_state, test_fixture_scoped};
+    use crate::api::tests::{get_mocked_state, mocked_builder, test_fixture_scoped};
     use crate::api::v3::role_assignment::openapi_router;
     use crate::assignment::MockAssignmentProvider;
     use crate::identity::MockIdentityProvider;
-    use crate::provider::Provider;
+
     use crate::resource::MockResourceProvider;
     use crate::role::MockRoleProvider;
 
@@ -222,7 +222,7 @@ mod tests {
                     ..Default::default()
                 }))
             });
-        let provider_builder = Provider::mocked_builder()
+        let provider_builder = mocked_builder()
             .mock_assignment(assignment_mock)
             .mock_identity(identity_mock)
             .mock_resource(resource_mock)
@@ -315,7 +315,7 @@ mod tests {
                     ..Default::default()
                 }))
             });
-        let provider_builder = Provider::mocked_builder()
+        let provider_builder = mocked_builder()
             .mock_assignment(assignment_mock)
             .mock_identity(identity_mock)
             .mock_resource(resource_mock)
@@ -408,7 +408,7 @@ mod tests {
                     ..Default::default()
                 }))
             });
-        let provider_builder = Provider::mocked_builder()
+        let provider_builder = mocked_builder()
             .mock_assignment(assignment_mock)
             .mock_identity(identity_mock)
             .mock_resource(resource_mock)
@@ -481,7 +481,7 @@ mod tests {
                     ..Default::default()
                 }))
             });
-        let provider_builder = Provider::mocked_builder()
+        let provider_builder = mocked_builder()
             .mock_assignment(assignment_mock)
             .mock_identity(identity_mock)
             .mock_resource(resource_mock)
@@ -558,7 +558,7 @@ mod tests {
             .expect_get_project()
             .withf(|_, pid: &'_ str| pid == "project_id")
             .returning(|_, _| Ok(None));
-        let provider_builder = Provider::mocked_builder()
+        let provider_builder = mocked_builder()
             .mock_assignment(assignment_mock)
             .mock_identity(identity_mock)
             .mock_resource(resource_mock)
@@ -633,7 +633,7 @@ mod tests {
                     ..Default::default()
                 }))
             });
-        let provider_builder = Provider::mocked_builder()
+        let provider_builder = mocked_builder()
             .mock_assignment(assignment_mock)
             .mock_identity(identity_mock)
             .mock_resource(resource_mock)

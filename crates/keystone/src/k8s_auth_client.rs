@@ -100,11 +100,10 @@ impl KeystoneK8sHttpClient {
             insecure_decode::<K8sClaims>(jwt).map_err(|_| K8sAuthProviderError::InvalidToken)?;
         let claims = token_data.claims;
 
-        if let Some(expected_aud) = bound_audience {
-            if !claims.aud.iter().any(|a| a == expected_aud) {
+        if let Some(expected_aud) = bound_audience
+            && !claims.aud.iter().any(|a| a == expected_aud) {
                 return Err(K8sAuthProviderError::AudienceMismatch);
             }
-        }
 
         if claims.exp < Utc::now().timestamp() as u64 {
             return Err(K8sAuthProviderError::ExpiredToken);
@@ -188,11 +187,10 @@ impl K8sHttpClient for MockK8sHttpClient {
         let claims = token_data.claims;
 
         // Validate audience
-        if let Some(expected_aud) = bound_audience {
-            if !claims.aud.iter().any(|a| a == expected_aud) {
+        if let Some(expected_aud) = bound_audience
+            && !claims.aud.iter().any(|a| a == expected_aud) {
                 return Err(K8sAuthProviderError::AudienceMismatch);
             }
-        }
 
         // Validate expiration
         if claims.exp < Utc::now().timestamp() as u64 {

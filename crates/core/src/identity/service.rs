@@ -31,7 +31,7 @@ use crate::auth::AuthenticationResult;
 use crate::identity::{IdentityApi, IdentityProviderError, backend::IdentityBackend};
 use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManagerApi;
-use crate::resource::{ResourceApi, error::ResourceProviderError};
+use crate::resource::error::ResourceProviderError;
 
 /// Identity provider.
 pub struct IdentityService {

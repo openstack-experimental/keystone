@@ -26,7 +26,6 @@ use openstack_keystone_core_types::mapping::resolution::IdentitySource;
 use super::K8sAuthApi;
 use crate::k8s_auth::{K8sAuthProviderError, service::K8sAuthService};
 use crate::keystone::ServiceState;
-use crate::mapping::MappingApi;
 
 impl K8sAuthService {
     /// Query the K8s Token Review endpoint.
@@ -107,10 +106,7 @@ impl K8sAuthService {
         let (namespace, sa_name) = self.extract_k8s_service_account(token_review_data)?;
 
         let mut claims = HashMap::new();
-        claims.insert(
-            "k8s.serviceaccount.name".to_string(),
-            vec![sa_name.clone()],
-        );
+        claims.insert("k8s.serviceaccount.name".to_string(), vec![sa_name.clone()]);
         claims.insert(
             "k8s.serviceaccount.namespace".to_string(),
             vec![namespace.clone()],
@@ -191,8 +187,8 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::k8s_auth::backend::MockK8sAuthBackend;
     use crate::k8s_auth::K8sHttpClient;
+    use crate::k8s_auth::backend::MockK8sAuthBackend;
     use crate::tests::get_mocked_state;
 
     struct TestK8sHttpClient;

@@ -17,4 +17,6 @@
 //! federation.
 pub mod api;
 
+#[cfg(test)]
+pub use openstack_keystone_core::federation::MockFederationProvider;
 pub use openstack_keystone_core::federation::*;

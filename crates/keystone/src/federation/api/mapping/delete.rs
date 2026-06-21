@@ -95,9 +95,8 @@ mod tests {
     use openstack_keystone_core_types::federation as provider_types;
 
     use super::super::openapi_router;
-    use crate::api::tests::{get_mocked_state, test_fixture_scoped};
+    use crate::api::tests::{get_mocked_state, mocked_builder, test_fixture_scoped};
     use crate::federation::MockFederationProvider;
-    use crate::provider::Provider;
 
     #[tokio::test]
     #[traced_test]
@@ -126,7 +125,7 @@ mod tests {
         let vsc = test_fixture_scoped();
 
         let state = get_mocked_state(
-            Provider::mocked_builder().mock_federation(federation_mock),
+            mocked_builder().mock_federation(federation_mock),
             true,
             None,
         )

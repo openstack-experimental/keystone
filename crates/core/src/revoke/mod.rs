@@ -35,8 +35,6 @@
 //! Additionally the `token.issued_at` is compared to be lower than the
 //! `issued_before` field of the revocation record.
 
-use async_trait::async_trait;
-
 pub mod backend;
 pub mod error;
 pub mod hook;
@@ -46,109 +44,16 @@ mod provider_api;
 pub mod service;
 //pub mod types;
 
-use openstack_keystone_config::Config;
 use openstack_keystone_core_types::revoke::*;
 use openstack_keystone_core_types::token::FernetToken;
 
 use crate::auth::*;
-use crate::keystone::ServiceState;
-use crate::plugin_manager::PluginManagerApi;
-use crate::revoke::service::RevokeService;
-
 pub use error::RevokeProviderError;
 pub use hook::RevokeHook;
 #[cfg(any(test, feature = "mock"))]
 pub use mock::MockRevokeProvider;
 pub use provider_api::RevokeApi;
-
-/// Revoke provider.
-pub enum RevokeProvider {
-    Service(RevokeService),
-    #[cfg(any(test, feature = "mock"))]
-    Mock(MockRevokeProvider),
-}
-
-impl RevokeProvider {
-    /// Create a new RevokeProvider.
-    ///
-    /// # Arguments
-    /// * `config` - The configuration for the provider.
-    /// * `plugin_manager` - The plugin manager used to load the backend driver.
-    pub fn new<P: PluginManagerApi>(
-        config: &Config,
-        plugin_manager: &P,
-    ) -> Result<Self, RevokeProviderError> {
-        Ok(Self::Service(RevokeService::new(config, plugin_manager)?))
-    }
-}
-
-#[async_trait]
-impl RevokeApi for RevokeProvider {
-    /// Create revocation event.
-    ///
-    /// # Arguments
-    /// * `state` - The current service state.
-    /// * `event` - The revocation event to create.
-    async fn create_revocation_event(
-        &self,
-        state: &ServiceState,
-        event: RevocationEventCreate,
-    ) -> Result<RevocationEvent, RevokeProviderError> {
-        match self {
-            Self::Service(provider) => provider.create_revocation_event(state, event).await,
-            #[cfg(any(test, feature = "mock"))]
-            Self::Mock(provider) => provider.create_revocation_event(state, event).await,
-        }
-    }
-
-    /// Check whether the token has been revoked or not.
-    ///
-    /// Checks revocation events matching the token parameters and return
-    /// `false` if their count is more than `0`.
-    ///
-    /// # Arguments
-    /// * `state` - The current service state.
-    /// * `token` - The token to check.
-    async fn is_token_revoked(
-        &self,
-        state: &ServiceState,
-        token_security_context: &ValidatedSecurityContext,
-    ) -> Result<bool, RevokeProviderError> {
-        match self {
-            Self::Service(provider) => {
-                provider
-                    .is_token_revoked(state, token_security_context)
-                    .await
-            }
-            #[cfg(any(test, feature = "mock"))]
-            Self::Mock(provider) => {
-                provider
-                    .is_token_revoked(state, token_security_context)
-                    .await
-            }
-        }
-    }
-
-    /// Revoke the token.
-    ///
-    /// Mark the token as revoked to prohibit from being used even while not
-    /// expired.
-    ///
-    /// # Arguments
-    /// * `state` - The current service state.
-    /// * `token` - The token to revoke.
-    async fn revoke_token(
-        &self,
-        state: &ServiceState,
-        token: &FernetToken,
-    ) -> Result<(), RevokeProviderError> {
-        match self {
-            Self::Service(provider) => provider.revoke_token(state, token).await,
-            #[cfg(any(test, feature = "mock"))]
-            Self::Mock(provider) => provider.revoke_token(state, token).await,
-        }
-    }
-}
+pub use service::RevokeService;
 
 ///// Convert Token into the revocation events listing parameters following the
 ///// <https://openstack-experimental.github.io/keystone/adr/0009-auth-token-revoke.html#revocation-check>.

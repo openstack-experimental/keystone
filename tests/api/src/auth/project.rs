@@ -18,7 +18,7 @@ use eyre::Result;
 
 use openstack_keystone_api_types::v3::project::ProjectShort;
 use openstack_sdk::api::rest_endpoint_prelude::*;
-use openstack_sdk::{AsyncOpenStack, api::QueryAsync};
+use openstack_sdk::{AsyncOpenStack, api::QueryAsync, config::CloudConfig};
 
 use crate::common::get_session_by_user_password;
 use crate::guard::ResourceGuard;

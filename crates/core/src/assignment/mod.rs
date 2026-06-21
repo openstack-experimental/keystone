@@ -35,10 +35,6 @@
 //! itself. This way for an assignment on the domain level the actor
 //! will get the role on the every project of the domain, but not the domain
 //! itself.
-use async_trait::async_trait;
-
-use openstack_keystone_config::Config;
-use openstack_keystone_core_types::assignment::*;
 
 pub mod backend;
 pub mod error;
@@ -48,108 +44,9 @@ mod mock;
 mod provider_api;
 pub mod service;
 
-use crate::assignment::service::AssignmentService;
-use crate::keystone::ServiceState;
-use crate::plugin_manager::PluginManagerApi;
-
 pub use error::AssignmentProviderError;
 pub use hook::AssignmentHook;
 #[cfg(any(test, feature = "mock"))]
 pub use mock::MockAssignmentProvider;
 pub use provider_api::AssignmentApi;
-
-pub enum AssignmentProvider {
-    Service(AssignmentService),
-    #[cfg(any(test, feature = "mock"))]
-    Mock(MockAssignmentProvider),
-}
-
-impl AssignmentProvider {
-    /// Create a new instance of `AssignmentProvider`.
-    ///
-    /// # Parameters
-    /// - `config`: The system configuration.
-    /// - `plugin_manager`: The plugin manager used to resolve the assignment
-    ///   backend.
-    ///
-    /// # Returns
-    /// - `Result<Self, AssignmentProviderError>` - The new provider instance or
-    ///   an error.
-    pub fn new<P: PluginManagerApi>(
-        config: &Config,
-        plugin_manager: &P,
-    ) -> Result<Self, AssignmentProviderError> {
-        Ok(Self::Service(AssignmentService::new(
-            config,
-            plugin_manager,
-        )?))
-    }
-}
-
-#[async_trait]
-impl AssignmentApi for AssignmentProvider {
-    /// Create assignment grant.
-    ///
-    /// # Parameters
-    /// - `state`: The current service state.
-    /// - `grant`: The assignment creation parameters.
-    ///
-    /// # Returns
-    /// - `Result<Assignment, AssignmentProviderError>` - The created assignment
-    ///   or an error.
-    #[tracing::instrument(level = "info", skip(self, state))]
-    async fn create_grant(
-        &self,
-        state: &ServiceState,
-        grant: AssignmentCreate,
-    ) -> Result<Assignment, AssignmentProviderError> {
-        match self {
-            Self::Service(provider) => provider.create_grant(state, grant).await,
-            #[cfg(any(test, feature = "mock"))]
-            Self::Mock(provider) => provider.create_grant(state, grant).await,
-        }
-    }
-
-    /// List role assignments.
-    ///
-    /// # Parameters
-    /// - `state`: The current service state.
-    /// - `params`: The parameters for listing assignments.
-    ///
-    /// # Returns
-    /// - `Result<Vec<Assignment>, AssignmentProviderError>` - A list of
-    ///   assignments or an error.
-    #[tracing::instrument(level = "info", skip(self, state))]
-    async fn list_role_assignments(
-        &self,
-        state: &ServiceState,
-        params: &RoleAssignmentListParameters,
-    ) -> Result<Vec<Assignment>, AssignmentProviderError> {
-        match self {
-            Self::Service(provider) => provider.list_role_assignments(state, params).await,
-            #[cfg(any(test, feature = "mock"))]
-            Self::Mock(provider) => provider.list_role_assignments(state, params).await,
-        }
-    }
-
-    /// Revoke grant.
-    ///
-    /// # Parameters
-    /// - `state`: The current service state.
-    /// - `grant`: The assignment to revoke.
-    ///
-    /// # Returns
-    /// - `Result<(), AssignmentProviderError>` - Ok on success, or an error.
-    #[tracing::instrument(level = "info", skip(self, state))]
-    async fn revoke_grant(
-        &self,
-        state: &ServiceState,
-        grant: Assignment,
-    ) -> Result<(), AssignmentProviderError> {
-        match self {
-            Self::Service(provider) => provider.revoke_grant(state, grant).await,
-            #[cfg(any(test, feature = "mock"))]
-            Self::Mock(provider) => provider.revoke_grant(state, grant).await,
-        }
-    }
-}
+pub use service::AssignmentService;

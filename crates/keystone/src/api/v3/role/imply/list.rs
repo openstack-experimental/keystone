@@ -130,9 +130,9 @@ mod tests {
     use openstack_keystone_api_types::v3::role::RoleInferenceRules;
     use openstack_keystone_core_types::role::{RoleImplyBuilder, RoleRefBuilder};
 
-    use crate::api::tests::{get_mocked_state, test_fixture_scoped};
+    use crate::api::tests::{get_mocked_state, mocked_builder, test_fixture_scoped};
     use crate::api::v3::role::openapi_router;
-    use crate::provider::Provider;
+
     use crate::role::MockRoleProvider;
 
     #[tokio::test]
@@ -181,8 +181,7 @@ mod tests {
             });
 
         let vsc = test_fixture_scoped();
-        let state =
-            get_mocked_state(Provider::mocked_builder().mock_role(role_mock), true, None).await;
+        let state = get_mocked_state(mocked_builder().mock_role(role_mock), true, None).await;
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -233,8 +232,7 @@ mod tests {
             });
 
         let vsc = test_fixture_scoped();
-        let state =
-            get_mocked_state(Provider::mocked_builder().mock_role(role_mock), true, None).await;
+        let state = get_mocked_state(mocked_builder().mock_role(role_mock), true, None).await;
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -269,8 +267,7 @@ mod tests {
             .returning(|_, _| Ok(vec![]));
 
         let vsc = test_fixture_scoped();
-        let state =
-            get_mocked_state(Provider::mocked_builder().mock_role(role_mock), false, None).await;
+        let state = get_mocked_state(mocked_builder().mock_role(role_mock), false, None).await;
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -293,7 +290,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_list_unauthorized() {
-        let state = get_mocked_state(Provider::mocked_builder(), true, None).await;
+        let state = get_mocked_state(mocked_builder(), true, None).await;
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())

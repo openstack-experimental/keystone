@@ -32,4 +32,6 @@
 //! interprets the user role set, and determines to which operations or
 //! resources each role grants access.
 
+#[cfg(test)]
+pub use openstack_keystone_core::role::MockRoleProvider;
 pub use openstack_keystone_core::role::*;

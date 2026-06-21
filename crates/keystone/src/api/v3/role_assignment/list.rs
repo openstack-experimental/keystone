@@ -91,13 +91,12 @@ mod tests {
     };
 
     use super::super::openapi_router;
-    use crate::api::tests::{get_mocked_state, test_fixture_scoped};
+    use crate::api::tests::{get_mocked_state, mocked_builder, test_fixture_scoped};
     use crate::api::v3::role_assignment::types::{
         Assignment as ApiAssignment, AssignmentList as ApiAssignmentList, Project, Role, Scope,
         User,
     };
     use crate::assignment::MockAssignmentProvider;
-    use crate::provider::Provider;
 
     #[tokio::test]
     async fn test_list() {
@@ -119,7 +118,7 @@ mod tests {
 
         let vsc = test_fixture_scoped();
         let state = get_mocked_state(
-            Provider::mocked_builder().mock_assignment(assignment_mock),
+            mocked_builder().mock_assignment(assignment_mock),
             true,
             None,
         )
@@ -234,7 +233,7 @@ mod tests {
 
         let vsc = test_fixture_scoped();
         let state = get_mocked_state(
-            Provider::mocked_builder().mock_assignment(assignment_mock),
+            mocked_builder().mock_assignment(assignment_mock),
             true,
             None,
         )

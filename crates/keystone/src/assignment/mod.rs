@@ -35,4 +35,6 @@
 //! itself. This way for an assignment on the domain level the actor
 //! will get the role on the every project of the domain, but not the domain
 //! itself.
+#[cfg(test)]
+pub use openstack_keystone_core::assignment::MockAssignmentProvider;
 pub use openstack_keystone_core::assignment::*;

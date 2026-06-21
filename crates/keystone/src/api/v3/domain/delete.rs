@@ -86,14 +86,14 @@ mod tests {
     use openstack_keystone_core_types::resource::Domain as ProviderDomain;
 
     use super::super::openapi_router;
-    use crate::api::tests::{get_mocked_state, test_fixture_scoped};
-    use crate::provider::Provider;
+    use crate::api::tests::{get_mocked_state, mocked_builder, test_fixture_scoped};
+
     use crate::resource::MockResourceProvider;
 
     #[tokio::test]
     #[traced_test]
     async fn test_delete() {
-        let mut provider = Provider::mocked_builder();
+        let mut provider = mocked_builder();
         let mut mock = MockResourceProvider::default();
         mock.expect_get_domain()
             .withf(|_, id: &'_ str| id == "foo")
@@ -153,7 +153,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_delete_not_found_not_allowed() {
-        let mut provider = Provider::mocked_builder();
+        let mut provider = mocked_builder();
         let mut mock = MockResourceProvider::default();
         mock.expect_get_domain()
             .withf(|_, id: &'_ str| id == "foo")

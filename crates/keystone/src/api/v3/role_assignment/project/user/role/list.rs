@@ -139,11 +139,11 @@ mod tests {
     use openstack_keystone_core_types::identity::*;
     use openstack_keystone_core_types::resource::*;
 
-    use crate::api::tests::{get_mocked_state, test_fixture_scoped};
+    use crate::api::tests::{get_mocked_state, mocked_builder, test_fixture_scoped};
     use crate::api::v3::role_assignment::openapi_router;
     use crate::assignment::MockAssignmentProvider;
     use crate::identity::MockIdentityProvider;
-    use crate::provider::Provider;
+
     use crate::resource::MockResourceProvider;
 
     fn user_mock(mock: &mut MockIdentityProvider) {
@@ -196,7 +196,7 @@ mod tests {
         assignment_mock_empty(&mut assignment_mock);
 
         let state = get_mocked_state(
-            Provider::mocked_builder()
+            mocked_builder()
                 .mock_identity(identity_mock)
                 .mock_resource(resource_mock)
                 .mock_assignment(assignment_mock),
@@ -236,7 +236,7 @@ mod tests {
         assignment_mock_empty(&mut assignment_mock);
 
         let state = get_mocked_state(
-            Provider::mocked_builder()
+            mocked_builder()
                 .mock_identity(identity_mock)
                 .mock_resource(resource_mock)
                 .mock_assignment(assignment_mock),
@@ -267,7 +267,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_list_unauthorized() {
-        let state = get_mocked_state(Provider::mocked_builder(), true, None).await;
+        let state = get_mocked_state(mocked_builder(), true, None).await;
 
         let response = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -303,7 +303,7 @@ mod tests {
         assignment_mock_empty(&mut assignment_mock);
 
         let state = get_mocked_state(
-            Provider::mocked_builder()
+            mocked_builder()
                 .mock_identity(identity_mock)
                 .mock_resource(resource_mock)
                 .mock_assignment(assignment_mock),
@@ -348,7 +348,7 @@ mod tests {
         assignment_mock_empty(&mut assignment_mock);
 
         let state = get_mocked_state(
-            Provider::mocked_builder()
+            mocked_builder()
                 .mock_identity(identity_mock)
                 .mock_resource(resource_mock)
                 .mock_assignment(assignment_mock),
@@ -435,7 +435,7 @@ mod tests {
             });
 
         let state = get_mocked_state(
-            Provider::mocked_builder()
+            mocked_builder()
                 .mock_identity(identity_mock)
                 .mock_resource(resource_mock)
                 .mock_assignment(assignment_mock),

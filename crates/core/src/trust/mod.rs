@@ -51,10 +51,6 @@
 //! Trusts can also be chained, meaning, a trust can be created by using a trust
 //! scoped token.
 
-use async_trait::async_trait;
-
-use openstack_keystone_core_types::trust::*;
-
 pub mod backend;
 pub mod error;
 pub mod hook;
@@ -63,127 +59,9 @@ mod mock;
 mod provider_api;
 pub mod service;
 
-use crate::keystone::ServiceState;
-use crate::plugin_manager::PluginManagerApi;
-use crate::trust::service::TrustService;
-use openstack_keystone_config::Config;
-
 pub use error::TrustProviderError;
 pub use hook::TrustHook;
 #[cfg(any(test, feature = "mock"))]
 pub use mock::MockTrustProvider;
 pub use provider_api::TrustApi;
-
-/// Trust provider.
-pub enum TrustProvider {
-    Service(TrustService),
-    #[cfg(any(test, feature = "mock"))]
-    Mock(MockTrustProvider),
-}
-
-impl TrustProvider {
-    pub fn new<P: PluginManagerApi>(
-        config: &Config,
-        plugin_manager: &P,
-    ) -> Result<Self, TrustProviderError> {
-        Ok(Self::Service(TrustService::new(config, plugin_manager)?))
-    }
-}
-
-#[async_trait]
-impl TrustApi for TrustProvider {
-    /// Get trust by ID.
-    ///
-    /// # Parameters
-    /// - `state`: The current service state.
-    /// - `id`: The ID of the trust to retrieve.
-    ///
-    /// # Returns
-    /// - `Result<Option<Trust>, TrustProviderError>` - A `Result` containing an
-    ///   `Option` with the trust if found, or an `Error`.
-    #[tracing::instrument(level = "debug", skip(self, state))]
-    async fn get_trust<'a>(
-        &self,
-        state: &ServiceState,
-        id: &'a str,
-    ) -> Result<Option<Trust>, TrustProviderError> {
-        match self {
-            Self::Service(provider) => provider.get_trust(state, id).await,
-            #[cfg(any(test, feature = "mock"))]
-            Self::Mock(provider) => provider.get_trust(state, id).await,
-        }
-    }
-
-    /// Resolve trust delegation chain by the trust ID.
-    ///
-    /// # Parameters
-    /// - `state`: The current service state.
-    /// - `id`: The ID of the trust to resolve the chain for.
-    ///
-    /// # Returns
-    /// - `Result<Option<Vec<Trust>>, TrustProviderError>` - A `Result`
-    ///   containing an `Option` with the trust delegation chain if found, or an
-    ///   `Error`.
-    #[tracing::instrument(level = "debug", skip(self, state))]
-    async fn get_trust_delegation_chain<'a>(
-        &self,
-        state: &ServiceState,
-        id: &'a str,
-    ) -> Result<Option<Vec<Trust>>, TrustProviderError> {
-        match self {
-            Self::Service(provider) => provider.get_trust_delegation_chain(state, id).await,
-            #[cfg(any(test, feature = "mock"))]
-            Self::Mock(provider) => provider.get_trust_delegation_chain(state, id).await,
-        }
-    }
-
-    /// List trusts.
-    ///
-    /// # Parameters
-    /// - `state`: The current service state.
-    /// - `params`: Parameters for listing trusts.
-    ///
-    /// # Returns
-    /// - `Result<Vec<Trust>, TrustProviderError>` - A list of trusts or an
-    ///   error.
-    #[tracing::instrument(level = "debug", skip(self, state))]
-    async fn list_trusts(
-        &self,
-        state: &ServiceState,
-        params: &TrustListParameters,
-    ) -> Result<Vec<Trust>, TrustProviderError> {
-        match self {
-            Self::Service(provider) => provider.list_trusts(state, params).await,
-            #[cfg(any(test, feature = "mock"))]
-            Self::Mock(provider) => provider.list_trusts(state, params).await,
-        }
-    }
-
-    /// Validate trust delegation chain.
-    ///
-    /// - redelegation deepness cannot exceed the global limit.
-    /// - redelegated trusts must not specify use limit.
-    /// - validate redelegated trust expiration is not later than of the
-    ///   original.
-    /// - redelegated trust must not add new roles.
-    ///
-    /// # Parameters
-    /// - `state`: The current service state.
-    /// - `trust`: The trust to validate.
-    ///
-    /// # Returns
-    /// - `Result<bool, TrustProviderError>` - Ok(true) if the chain is valid,
-    ///   or an error.
-    #[tracing::instrument(level = "debug", skip(self, state))]
-    async fn validate_trust_delegation_chain(
-        &self,
-        state: &ServiceState,
-        trust: &Trust,
-    ) -> Result<bool, TrustProviderError> {
-        match self {
-            Self::Service(provider) => provider.validate_trust_delegation_chain(state, trust).await,
-            #[cfg(any(test, feature = "mock"))]
-            Self::Mock(provider) => provider.validate_trust_delegation_chain(state, trust).await,
-        }
-    }
-}
+pub use service::TrustService;

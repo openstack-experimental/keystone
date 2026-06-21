@@ -40,6 +40,7 @@ base64urlsafedata.workspace = true
 mockall.workspace = true
 openstack-keystone-config.workspace = true
 openstack-keystone-core = { workspace = true, features = ["mock"] }
+openstack-keystone-core-types = { workspace = true, features = ["mock"] }
 openstack-keystone-token-driver-fernet.workspace = true
 rcgen.workspace = true
 reqwest.workspace = true

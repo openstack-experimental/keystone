@@ -119,14 +119,13 @@ mod tests {
     use openstack_keystone_core_types::k8s_auth as provider_types;
 
     use super::{super::openapi_router, *};
-    use crate::api::tests::{get_mocked_state, test_fixture_scoped};
+    use crate::api::tests::{get_mocked_state, mocked_builder, test_fixture_scoped};
     use crate::k8s_auth::MockK8sAuthProvider;
-    use crate::provider::Provider;
 
     #[tokio::test]
     #[traced_test]
     async fn test_list() {
-        let mut provider = Provider::mocked_builder();
+        let mut provider = mocked_builder();
         let mut mock = MockK8sAuthProvider::default();
         mock.expect_list_auth_instances()
             .withf(|_, _: &provider_types::K8sAuthInstanceListParameters| true)
@@ -184,7 +183,7 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_list_qp() {
-        let mut provider = Provider::mocked_builder();
+        let mut provider = mocked_builder();
         let mut mock = MockK8sAuthProvider::default();
         mock.expect_list_auth_instances()
             .withf(|_, qp: &provider_types::K8sAuthInstanceListParameters| {
@@ -236,7 +235,7 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_list_forbidden() {
-        let provider = Provider::mocked_builder();
+        let provider = mocked_builder();
         let vsc = test_fixture_scoped();
         // skip_default_token_provider=true since we inject VSC via extension
         let state = get_mocked_state(provider, false, None).await;
@@ -263,7 +262,7 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_list_unauthorized() {
-        let provider = Provider::mocked_builder();
+        let provider = mocked_builder();
 
         let state = get_mocked_state(provider, true, None).await;
 
@@ -283,7 +282,7 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_list_own_not_specified() {
-        let mut provider = Provider::mocked_builder();
+        let mut provider = mocked_builder();
         let mut mock = MockK8sAuthProvider::default();
         mock.expect_list_auth_instances()
             .withf(|_, qp: &provider_types::K8sAuthInstanceListParameters| {
@@ -337,7 +336,7 @@ mod tests {
     async fn test_list_all() {
         // Test listing ALL configs when the user does not specify the domain_id and is
         // allowed to see configs of other domains (admin)
-        let mut provider = Provider::mocked_builder();
+        let mut provider = mocked_builder();
         let mut mock = MockK8sAuthProvider::default();
         mock.expect_list_auth_instances()
             .withf(|_, qp: &provider_types::K8sAuthInstanceListParameters| {

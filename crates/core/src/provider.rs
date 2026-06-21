@@ -22,48 +22,35 @@ use std::sync::Arc;
 
 use openstack_keystone_config::Config;
 
-use crate::application_credential::ApplicationCredentialProvider;
-#[cfg(any(test, feature = "mock"))]
-use crate::application_credential::MockApplicationCredentialProvider;
-use crate::assignment::AssignmentProvider;
-#[cfg(any(test, feature = "mock"))]
-use crate::assignment::MockAssignmentProvider;
-use crate::catalog::CatalogProvider;
-#[cfg(any(test, feature = "mock"))]
-use crate::catalog::MockCatalogProvider;
+use crate::application_credential::ApplicationCredentialApi;
+use crate::application_credential::ApplicationCredentialService;
+use crate::assignment::AssignmentApi;
+use crate::assignment::AssignmentService;
+use crate::catalog::CatalogApi;
+use crate::catalog::CatalogService;
 use crate::error::KeystoneError;
-use crate::federation::FederationProvider;
-#[cfg(any(test, feature = "mock"))]
-use crate::federation::MockFederationProvider;
-use crate::identity::IdentityProvider;
-#[cfg(any(test, feature = "mock"))]
-use crate::identity::MockIdentityProvider;
-use crate::idmapping::IdMappingProvider;
-#[cfg(any(test, feature = "mock"))]
-use crate::idmapping::MockIdMappingProvider;
-use crate::k8s_auth::K8sAuthProvider;
+use crate::federation::FederationApi;
+use crate::federation::FederationService;
+use crate::identity::IdentityApi;
+use crate::identity::IdentityService;
+use crate::idmapping::IdMappingApi;
+use crate::idmapping::IdMappingService;
+use crate::k8s_auth::K8sAuthApi;
+use crate::k8s_auth::K8sAuthService;
 use crate::k8s_auth::K8sHttpClient;
-#[cfg(any(test, feature = "mock"))]
-use crate::k8s_auth::MockK8sAuthProvider;
-use crate::mapping::MappingProvider;
-#[cfg(any(test, feature = "mock"))]
-use crate::mapping::MockMappingProvider;
+use crate::mapping::MappingApi;
+use crate::mapping::MappingService;
 use crate::plugin_manager::PluginManagerApi;
-#[cfg(any(test, feature = "mock"))]
-use crate::resource::MockResourceProvider;
-use crate::resource::ResourceProvider;
-#[cfg(any(test, feature = "mock"))]
-use crate::revoke::MockRevokeProvider;
-use crate::revoke::RevokeProvider;
-#[cfg(any(test, feature = "mock"))]
-use crate::role::MockRoleProvider;
-use crate::role::RoleProvider;
-#[cfg(any(test, feature = "mock"))]
-use crate::token::MockTokenProvider;
-use crate::token::TokenProvider;
-#[cfg(any(test, feature = "mock"))]
-use crate::trust::MockTrustProvider;
-use crate::trust::TrustProvider;
+use crate::resource::ResourceApi;
+use crate::resource::ResourceService;
+use crate::revoke::RevokeApi;
+use crate::revoke::RevokeService;
+use crate::role::RoleApi;
+use crate::role::RoleService;
+use crate::token::TokenApi;
+use crate::token::TokenService;
+use crate::trust::TrustApi;
+use crate::trust::TrustService;
 
 /// Global provider manager.
 #[derive(Builder)]
@@ -72,102 +59,104 @@ use crate::trust::TrustProvider;
 #[builder(pattern = "owned")]
 pub struct Provider {
     /// Application credential provider.
-    application_credential: ApplicationCredentialProvider,
+    application_credential: Box<dyn ApplicationCredentialApi>,
     /// Assignment provider.
-    assignment: AssignmentProvider,
+    assignment: Box<dyn AssignmentApi>,
     /// Catalog provider.
-    catalog: CatalogProvider,
+    catalog: Box<dyn CatalogApi>,
     /// Federation provider.
-    federation: FederationProvider,
+    federation: Box<dyn FederationApi>,
     /// Identity provider.
-    identity: IdentityProvider,
+    identity: Box<dyn IdentityApi>,
     /// IdMapping provider.
-    idmapping: IdMappingProvider,
+    idmapping: Box<dyn IdMappingApi>,
     /// Mapping provider.
-    mapping: MappingProvider,
+    mapping: Box<dyn MappingApi>,
     /// K8s auth provider.
-    k8s_auth: K8sAuthProvider,
+    k8s_auth: Box<dyn K8sAuthApi>,
     /// Resource provider.
-    resource: ResourceProvider,
+    resource: Box<dyn ResourceApi>,
     /// Revoke provider.
-    revoke: RevokeProvider,
+    revoke: Box<dyn RevokeApi>,
     /// Role provider.
-    role: RoleProvider,
+    role: Box<dyn RoleApi>,
     /// Token provider.
-    token: TokenProvider,
+    token: Box<dyn TokenApi>,
     /// Trust provider.
-    trust: TrustProvider,
+    trust: Box<dyn TrustApi>,
 }
 
-#[cfg(any(test, feature = "mock"))]
 impl ProviderBuilder {
-    pub fn mock_application_credential(self, value: MockApplicationCredentialProvider) -> Self {
+    pub fn mock_application_credential(
+        self,
+        value: impl ApplicationCredentialApi + 'static,
+    ) -> Self {
         let mut new = self;
-        new.application_credential = Some(ApplicationCredentialProvider::Mock(value));
+        new.application_credential = Some(Box::new(value));
         new
     }
 
-    pub fn mock_assignment(self, value: MockAssignmentProvider) -> Self {
+    pub fn mock_assignment(self, value: impl AssignmentApi + 'static) -> Self {
         let mut new = self;
-        new.assignment = Some(AssignmentProvider::Mock(value));
+        new.assignment = Some(Box::new(value));
         new
     }
 
-    pub fn mock_catalog(self, value: MockCatalogProvider) -> Self {
+    pub fn mock_catalog(self, value: impl CatalogApi + 'static) -> Self {
         let mut new = self;
-        new.catalog = Some(CatalogProvider::Mock(value));
+        new.catalog = Some(Box::new(value));
         new
     }
 
-    pub fn mock_federation(self, value: MockFederationProvider) -> Self {
+    pub fn mock_federation(self, value: impl FederationApi + 'static) -> Self {
         let mut new = self;
-        new.federation = Some(FederationProvider::Mock(value));
+        new.federation = Some(Box::new(value));
         new
     }
 
-    pub fn mock_identity(self, value: MockIdentityProvider) -> Self {
+    pub fn mock_identity(self, value: impl IdentityApi + 'static) -> Self {
         let mut new = self;
-        new.identity = Some(IdentityProvider::Mock(value));
+        new.identity = Some(Box::new(value));
         new
     }
-    pub fn mock_idmapping(self, value: MockIdMappingProvider) -> Self {
+    pub fn mock_idmapping(self, value: impl IdMappingApi + 'static) -> Self {
         let mut new = self;
-        new.idmapping = Some(IdMappingProvider::Mock(value));
+        new.idmapping = Some(Box::new(value));
         new
     }
-    pub fn mock_mapping(self, value: MockMappingProvider) -> Self {
+    pub fn mock_mapping(self, value: impl MappingApi + 'static) -> Self {
         let mut new = self;
-        new.mapping = Some(MappingProvider::Mock(value));
+        new.mapping = Some(Box::new(value));
         new
     }
-    pub fn mock_k8s_auth(self, value: MockK8sAuthProvider) -> Self {
+    pub fn mock_k8s_auth(self, value: impl K8sAuthApi + 'static) -> Self {
         let mut new = self;
-        new.k8s_auth = Some(K8sAuthProvider::Mock(value));
+        new.k8s_auth = Some(Box::new(value));
         new
     }
-    pub fn mock_resource(self, value: MockResourceProvider) -> Self {
+    pub fn mock_resource(self, value: impl ResourceApi + 'static) -> Self {
         let mut new = self;
-        new.resource = Some(ResourceProvider::Mock(value));
+        new.resource = Some(Box::new(value));
         new
     }
-    pub fn mock_revoke(self, value: MockRevokeProvider) -> Self {
+    pub fn mock_revoke(self, value: impl RevokeApi + 'static) -> Self {
         let mut new = self;
-        new.revoke = Some(RevokeProvider::Mock(value));
+        new.revoke = Some(Box::new(value));
         new
     }
-    pub fn mock_role(self, value: MockRoleProvider) -> Self {
+    pub fn mock_role(self, value: impl RoleApi + 'static) -> Self {
         let mut new = self;
-        new.role = Some(RoleProvider::Mock(value));
+        new.role = Some(Box::new(value));
         new
     }
-    pub fn mock_token(self, value: MockTokenProvider) -> Self {
+    pub fn mock_token(self, value: impl TokenApi + 'static) -> Self {
         let mut new = self;
-        new.token = Some(TokenProvider::Mock(value));
+        new.token = Some(Box::new(value));
         new
     }
-    pub fn mock_trust(self, value: MockTrustProvider) -> Self {
+    pub fn mock_trust(self, value: impl TrustApi + 'static) -> Self {
         let mut new = self;
-        new.trust = Some(TrustProvider::Mock(value));
+        new.trust = Some(Box::new(value));
         new
     }
 }
@@ -179,135 +168,149 @@ impl Provider {
         plugin_manager: &P,
         k8s_http_client: Arc<dyn K8sHttpClient>,
     ) -> Result<Self, KeystoneError> {
-        let application_credential_provider =
-            ApplicationCredentialProvider::new(cfg, plugin_manager)?;
-        let assignment_provider = AssignmentProvider::new(cfg, plugin_manager)?;
-        let catalog_provider = CatalogProvider::new(cfg, plugin_manager)?;
-        let federation_provider = FederationProvider::new(cfg, plugin_manager)?;
-        let identity_provider = IdentityProvider::new(cfg, plugin_manager)?;
-        let idmapping_provider = IdMappingProvider::new(cfg, plugin_manager)?;
-        let mapping_provider = MappingProvider::new(cfg, plugin_manager)?;
-        let k8s_auth_provider = K8sAuthProvider::new(cfg, plugin_manager, k8s_http_client)
+        let application_credential = ApplicationCredentialService::new(cfg, plugin_manager)
+            .map_err(|e| KeystoneError::ApplicationCredential { source: e })?;
+        let assignment = AssignmentService::new(cfg, plugin_manager)
+            .map_err(|e| KeystoneError::AssignmentProvider { source: e })?;
+        let catalog = CatalogService::new(cfg, plugin_manager)
+            .map_err(|e| KeystoneError::CatalogProvider { source: e })?;
+        let federation = FederationService::new(cfg, plugin_manager)
+            .map_err(|e| KeystoneError::FederationProvider { source: e })?;
+        let identity = IdentityService::new(cfg, plugin_manager)
+            .map_err(|e| KeystoneError::IdentityProvider { source: e })?;
+        let idmapping = IdMappingService::new(cfg, plugin_manager)
+            .map_err(|e| KeystoneError::IdMapping { source: e })?;
+        let mapping = MappingService::new(cfg, plugin_manager)
+            .map_err(|e| KeystoneError::Mapping { source: e })?;
+        let k8s_auth = K8sAuthService::new(cfg, plugin_manager, k8s_http_client)
             .map_err(|e| KeystoneError::K8sAuthProvider { source: e })?;
-        let resource_provider = ResourceProvider::new(cfg, plugin_manager)?;
-        let revoke_provider = RevokeProvider::new(cfg, plugin_manager)?;
-        let role_provider = RoleProvider::new(cfg, plugin_manager)?;
-        let token_provider = TokenProvider::new(cfg, plugin_manager)?;
-        let trust_provider = TrustProvider::new(cfg, plugin_manager)?;
+        let resource = ResourceService::new(cfg, plugin_manager)
+            .map_err(|e| KeystoneError::ResourceProvider { source: e })?;
+        let revoke = RevokeService::new(cfg, plugin_manager)
+            .map_err(|e| KeystoneError::RevokeProvider { source: e })?;
+        let role = RoleService::new(cfg, plugin_manager)
+            .map_err(|e| KeystoneError::RoleProvider { source: e })?;
+        let token = TokenService::new(cfg, plugin_manager)
+            .map_err(|e| KeystoneError::TokenProvider { source: e })?;
+        let trust = TrustService::new(cfg, plugin_manager)
+            .map_err(|e| KeystoneError::TrustProvider { source: e })?;
 
         Ok(Self {
-            application_credential: application_credential_provider,
-            assignment: assignment_provider,
-            catalog: catalog_provider,
-            federation: federation_provider,
-            identity: identity_provider,
-            idmapping: idmapping_provider,
-            mapping: mapping_provider,
-            k8s_auth: k8s_auth_provider,
-            resource: resource_provider,
-            revoke: revoke_provider,
-            role: role_provider,
-            token: token_provider,
-            trust: trust_provider,
+            application_credential: Box::new(application_credential),
+            assignment: Box::new(assignment),
+            catalog: Box::new(catalog),
+            federation: Box::new(federation),
+            identity: Box::new(identity),
+            idmapping: Box::new(idmapping),
+            mapping: Box::new(mapping),
+            k8s_auth: Box::new(k8s_auth),
+            resource: Box::new(resource),
+            revoke: Box::new(revoke),
+            role: Box::new(role),
+            token: Box::new(token),
+            trust: Box::new(trust),
         })
     }
 
-    /// Create a mocked Provider builder.
-    #[cfg(any(test, feature = "mock"))]
-    pub fn mocked_builder() -> ProviderBuilder {
-        let application_credential_mock =
-            crate::application_credential::MockApplicationCredentialProvider::default();
-        let assignment_mock = crate::assignment::MockAssignmentProvider::default();
-        let catalog_mock = crate::catalog::MockCatalogProvider::default();
-        let identity_mock = crate::identity::MockIdentityProvider::default();
-        let idmapping_mock = crate::idmapping::MockIdMappingProvider::default();
-        let mapping_mock = crate::mapping::MockMappingProvider::default();
-        let federation_mock = crate::federation::MockFederationProvider::default();
-        let k8s_auth_mock = crate::k8s_auth::MockK8sAuthProvider::default();
-        let resource_mock = crate::resource::MockResourceProvider::default();
-        let revoke_mock = crate::revoke::MockRevokeProvider::default();
-        let role_mock = crate::role::MockRoleProvider::default();
-        let token_mock = crate::token::MockTokenProvider::default();
-        let trust_mock = crate::trust::MockTrustProvider::default();
-
-        ProviderBuilder::default()
-            .mock_application_credential(application_credential_mock)
-            .mock_assignment(assignment_mock)
-            .mock_catalog(catalog_mock)
-            .mock_identity(identity_mock)
-            .mock_idmapping(idmapping_mock)
-            .mock_mapping(mapping_mock)
-            .mock_federation(federation_mock)
-            .mock_k8s_auth(k8s_auth_mock)
-            .mock_resource(resource_mock)
-            .mock_revoke(revoke_mock)
-            .mock_role(role_mock)
-            .mock_token(token_mock)
-            .mock_trust(trust_mock)
-    }
-
     /// Get the application credential provider.
-    pub fn get_application_credential_provider(&self) -> &ApplicationCredentialProvider {
-        &self.application_credential
+    pub fn get_application_credential_provider(&self) -> &dyn ApplicationCredentialApi {
+        &*self.application_credential
     }
 
     /// Get the assignment provider.
-    pub fn get_assignment_provider(&self) -> &AssignmentProvider {
-        &self.assignment
+    pub fn get_assignment_provider(&self) -> &dyn AssignmentApi {
+        &*self.assignment
     }
 
     /// Get the catalog provider.
-    pub fn get_catalog_provider(&self) -> &CatalogProvider {
-        &self.catalog
+    pub fn get_catalog_provider(&self) -> &dyn CatalogApi {
+        &*self.catalog
     }
 
     /// Get the federation provider.
-    pub fn get_federation_provider(&self) -> &FederationProvider {
-        &self.federation
+    pub fn get_federation_provider(&self) -> &dyn FederationApi {
+        &*self.federation
     }
 
     /// Get the identity provider.
-    pub fn get_identity_provider(&self) -> &IdentityProvider {
-        &self.identity
+    pub fn get_identity_provider(&self) -> &dyn IdentityApi {
+        &*self.identity
     }
 
     /// Get the idmapping provider.
-    pub fn get_idmapping_provider(&self) -> &IdMappingProvider {
-        &self.idmapping
+    pub fn get_idmapping_provider(&self) -> &dyn IdMappingApi {
+        &*self.idmapping
     }
 
     /// Get the mapping provider.
-    pub fn get_mapping_provider(&self) -> &MappingProvider {
-        &self.mapping
+    pub fn get_mapping_provider(&self) -> &dyn MappingApi {
+        &*self.mapping
     }
 
     /// Get the K8s auth provider.
-    pub fn get_k8s_auth_provider(&self) -> &K8sAuthProvider {
-        &self.k8s_auth
+    pub fn get_k8s_auth_provider(&self) -> &dyn K8sAuthApi {
+        &*self.k8s_auth
     }
 
     /// Get the resource provider.
-    pub fn get_resource_provider(&self) -> &ResourceProvider {
-        &self.resource
+    pub fn get_resource_provider(&self) -> &dyn ResourceApi {
+        &*self.resource
     }
 
     /// Get the revocation provider.
-    pub fn get_revoke_provider(&self) -> &RevokeProvider {
-        &self.revoke
+    pub fn get_revoke_provider(&self) -> &dyn RevokeApi {
+        &*self.revoke
     }
 
     /// Get the role provider.
-    pub fn get_role_provider(&self) -> &RoleProvider {
-        &self.role
+    pub fn get_role_provider(&self) -> &dyn RoleApi {
+        &*self.role
     }
 
     /// Get the token provider.
-    pub fn get_token_provider(&self) -> &TokenProvider {
-        &self.token
+    pub fn get_token_provider(&self) -> &dyn TokenApi {
+        &*self.token
     }
 
     /// Get the trust provider.
-    pub fn get_trust_provider(&self) -> &TrustProvider {
-        &self.trust
+    pub fn get_trust_provider(&self) -> &dyn TrustApi {
+        &*self.trust
+    }
+
+    /// Returns a `ProviderBuilder` pre-configured with default mock providers
+    /// for all 13 provider slots. Each slot is set to `Box::new(MockXxx::default())`.
+    ///
+    /// Individual providers can be overridden by chaining `.mock_xxx((custom_mock))`
+    /// calls on the returned builder.
+    #[cfg(any(test, feature = "mock"))]
+    pub fn mocked_builder() -> ProviderBuilder {
+        use crate::application_credential::MockApplicationCredentialProvider;
+        use crate::assignment::MockAssignmentProvider;
+        use crate::catalog::MockCatalogProvider;
+        use crate::federation::MockFederationProvider;
+        use crate::identity::MockIdentityProvider;
+        use crate::idmapping::MockIdMappingProvider;
+        use crate::k8s_auth::MockK8sAuthProvider;
+        use crate::mapping::MockMappingProvider;
+        use crate::resource::MockResourceProvider;
+        use crate::revoke::MockRevokeProvider;
+        use crate::role::MockRoleProvider;
+        use crate::token::MockTokenProvider;
+        use crate::trust::MockTrustProvider;
+
+        ProviderBuilder::default()
+            .application_credential(Box::new(MockApplicationCredentialProvider::default()))
+            .assignment(Box::new(MockAssignmentProvider::default()))
+            .catalog(Box::new(MockCatalogProvider::default()))
+            .federation(Box::new(MockFederationProvider::default()))
+            .identity(Box::new(MockIdentityProvider::default()))
+            .idmapping(Box::new(MockIdMappingProvider::default()))
+            .mapping(Box::new(MockMappingProvider::default()))
+            .k8s_auth(Box::new(MockK8sAuthProvider::default()))
+            .resource(Box::new(MockResourceProvider::default()))
+            .revoke(Box::new(MockRevokeProvider::default()))
+            .role(Box::new(MockRoleProvider::default()))
+            .token(Box::new(MockTokenProvider::default()))
+            .trust(Box::new(MockTrustProvider::default()))
     }
 }

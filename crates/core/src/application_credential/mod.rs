@@ -111,10 +111,6 @@
 //!     }
 //! ]
 //! ```
-use async_trait::async_trait;
-
-use openstack_keystone_config::Config;
-use openstack_keystone_core_types::application_credential::*;
 
 pub mod backend;
 pub mod error;
@@ -124,112 +120,9 @@ mod mock;
 mod provider_api;
 pub mod service;
 
-use crate::keystone::ServiceState;
-use crate::plugin_manager::PluginManagerApi;
-use service::ApplicationCredentialService;
-
 pub use error::ApplicationCredentialProviderError;
 pub use hook::ApplicationCredentialHook;
 #[cfg(any(test, feature = "mock"))]
 pub use mock::MockApplicationCredentialProvider;
 pub use provider_api::ApplicationCredentialApi;
-
-/// Application Credential Provider.
-pub enum ApplicationCredentialProvider {
-    Service(ApplicationCredentialService),
-    #[cfg(any(test, feature = "mock"))]
-    Mock(MockApplicationCredentialProvider),
-}
-
-impl ApplicationCredentialProvider {
-    /// Create a new application credential provider.
-    ///
-    /// # Parameters
-    /// - `config`: The service configuration.
-    /// - `plugin_manager`: The plugin manager to retrieve the backend driver.
-    ///
-    /// # Returns
-    /// - `Result<Self, ApplicationCredentialProviderError>` - The created
-    ///   provider or an error.
-    pub fn new<P: PluginManagerApi>(
-        config: &Config,
-        plugin_manager: &P,
-    ) -> Result<Self, ApplicationCredentialProviderError> {
-        Ok(Self::Service(ApplicationCredentialService::new(
-            config,
-            plugin_manager,
-        )?))
-    }
-}
-
-#[async_trait]
-impl ApplicationCredentialApi for ApplicationCredentialProvider {
-    /// Create a new application credential.
-    ///
-    /// # Parameters
-    /// - `state`: The current service state.
-    /// - `rec`: The application credential creation request.
-    ///
-    /// # Returns
-    /// - `Result<ApplicationCredentialCreateResponse,
-    ///   ApplicationCredentialProviderError>` - The creation response or an
-    ///   error.
-    #[tracing::instrument(level = "info", skip(self, state))]
-    async fn create_application_credential(
-        &self,
-        state: &ServiceState,
-        rec: ApplicationCredentialCreate,
-    ) -> Result<ApplicationCredentialCreateResponse, ApplicationCredentialProviderError> {
-        match self {
-            Self::Service(provider) => provider.create_application_credential(state, rec).await,
-            #[cfg(any(test, feature = "mock"))]
-            Self::Mock(provider) => provider.create_application_credential(state, rec).await,
-        }
-    }
-
-    /// Get a single application credential by ID.
-    ///
-    /// # Parameters
-    /// - `state`: The current service state.
-    /// - `id`: The ID of the application credential.
-    ///
-    /// # Returns
-    /// - `Result<Option<ApplicationCredential>,
-    ///   ApplicationCredentialProviderError>` - A `Result` containing an
-    ///   `Option` with the application credential if found, or an `Error`.
-    #[tracing::instrument(level = "info", skip(self, state))]
-    async fn get_application_credential<'a>(
-        &self,
-        state: &ServiceState,
-        id: &'a str,
-    ) -> Result<Option<ApplicationCredential>, ApplicationCredentialProviderError> {
-        match self {
-            Self::Service(provider) => provider.get_application_credential(state, id).await,
-            #[cfg(any(test, feature = "mock"))]
-            Self::Mock(provider) => provider.get_application_credential(state, id).await,
-        }
-    }
-
-    /// List application credentials.
-    ///
-    /// # Parameters
-    /// - `state`: The current service state.
-    /// - `params`: Parameters for filtering the list of credentials.
-    ///
-    /// # Returns
-    /// - `Result<Vec<ApplicationCredential>,
-    ///   ApplicationCredentialProviderError>` - A list of application
-    ///   credentials or an error.
-    #[tracing::instrument(level = "info", skip(self, state))]
-    async fn list_application_credentials(
-        &self,
-        state: &ServiceState,
-        params: &ApplicationCredentialListParameters,
-    ) -> Result<Vec<ApplicationCredential>, ApplicationCredentialProviderError> {
-        match self {
-            Self::Service(provider) => provider.list_application_credentials(state, params).await,
-            #[cfg(any(test, feature = "mock"))]
-            Self::Mock(provider) => provider.list_application_credentials(state, params).await,
-        }
-    }
-}
+pub use service::ApplicationCredentialService;

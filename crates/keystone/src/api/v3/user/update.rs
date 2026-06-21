@@ -103,12 +103,11 @@ mod tests {
     use openstack_keystone_core_types::identity::UserResponseBuilder;
 
     use super::super::openapi_router;
-    use crate::api::tests::{get_mocked_state, test_fixture_scoped};
+    use crate::api::tests::{get_mocked_state, mocked_builder, test_fixture_scoped};
     use crate::api::v3::user::types::{
         UserResponse as ApiUserResponse, UserUpdateBuilder as ApiUserUpdate, UserUpdateRequest,
     };
     use crate::identity::MockIdentityProvider;
-    use crate::provider::Provider;
 
     #[tokio::test]
     async fn test_update() {
@@ -149,12 +148,8 @@ mod tests {
             });
 
         let vsc = test_fixture_scoped();
-        let state = get_mocked_state(
-            Provider::mocked_builder().mock_identity(identity_mock),
-            true,
-            None,
-        )
-        .await;
+        let state =
+            get_mocked_state(mocked_builder().mock_identity(identity_mock), true, None).await;
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -197,12 +192,8 @@ mod tests {
             .returning(|_, _| Ok(None));
 
         let vsc = test_fixture_scoped();
-        let state = get_mocked_state(
-            Provider::mocked_builder().mock_identity(identity_mock),
-            true,
-            None,
-        )
-        .await;
+        let state =
+            get_mocked_state(mocked_builder().mock_identity(identity_mock), true, None).await;
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -251,7 +242,7 @@ mod tests {
 
         let vsc = test_fixture_scoped();
         let state = get_mocked_state(
-            Provider::mocked_builder().mock_identity(identity_mock),
+            mocked_builder().mock_identity(identity_mock),
             false, // policy denied
             None,
         )
@@ -284,7 +275,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_update_unauth() {
-        let state = get_mocked_state(Provider::mocked_builder(), false, None).await;
+        let state = get_mocked_state(mocked_builder(), false, None).await;
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())

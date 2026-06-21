@@ -85,10 +85,9 @@ mod tests {
     use openstack_keystone_core_types::identity::UserResponseBuilder;
 
     use super::super::openapi_router;
-    use crate::api::tests::{get_mocked_state, test_fixture_scoped};
+    use crate::api::tests::{get_mocked_state, mocked_builder, test_fixture_scoped};
     use crate::api::v3::user::types::{UserBuilder as ApiUser, UserResponse as ApiUserResponse};
     use crate::identity::MockIdentityProvider;
-    use crate::provider::Provider;
 
     #[tokio::test]
     async fn test_get() {
@@ -114,12 +113,8 @@ mod tests {
             });
 
         let vsc = test_fixture_scoped();
-        let state = get_mocked_state(
-            Provider::mocked_builder().mock_identity(identity_mock),
-            true,
-            None,
-        )
-        .await;
+        let state =
+            get_mocked_state(mocked_builder().mock_identity(identity_mock), true, None).await;
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())

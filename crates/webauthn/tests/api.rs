@@ -32,7 +32,6 @@ use webauthn_authenticator_rs::softtoken::SoftToken;
 use openstack_keystone_api_types::webauthn::*;
 use openstack_keystone_core::assignment::MockAssignmentProvider;
 use openstack_keystone_core::identity::MockIdentityProvider;
-use openstack_keystone_core::provider::{Provider, ProviderBuilder};
 use openstack_keystone_core::resource::MockResourceProvider;
 use openstack_keystone_core::token::MockTokenProvider;
 use openstack_keystone_core_types::assignment::*;
@@ -46,8 +45,8 @@ use openstack_keystone_webauthn::api::init_extension;
 mod common;
 use common::get_state;
 
-fn get_provider_mocks(user_id: &Uuid) -> ProviderBuilder {
-    let provider_builder = Provider::mocked_builder();
+fn get_provider_mocks(user_id: &Uuid) -> openstack_keystone_core::provider::ProviderBuilder {
+    let _provider_builder = openstack_keystone_core::provider::Provider::mocked_builder();
     let mut token_mock = MockTokenProvider::default();
     let uid = user_id.to_string().clone();
     let user = UserResponseBuilder::default()
@@ -191,7 +190,7 @@ fn get_provider_mocks(user_id: &Uuid) -> ProviderBuilder {
         .withf(|_, id: &'_ str| id == "project_domain_id")
         .returning(move |_, _| Ok(Some(project_domain.clone())));
 
-    provider_builder
+    openstack_keystone_core::provider::Provider::mocked_builder()
         .mock_assignment(assignment_mock)
         .mock_token(token_mock)
         .mock_identity(identity_mock)

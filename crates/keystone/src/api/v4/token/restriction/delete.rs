@@ -98,8 +98,8 @@ mod tests {
     use openstack_keystone_core_types::token as provider_types;
 
     use super::super::{openapi_router, tests::get_token_provider_mock_with_mocks};
-    use crate::api::tests::{get_mocked_state, test_fixture_scoped};
-    use crate::provider::Provider;
+    use crate::api::tests::{get_mocked_state, mocked_builder, test_fixture_scoped};
+
     use crate::token::TokenProviderError;
 
     #[tokio::test]
@@ -146,12 +146,7 @@ mod tests {
             .withf(|_, id: &'_ str| id == "bar")
             .returning(|_, _| Ok(()));
 
-        let state = get_mocked_state(
-            Provider::mocked_builder().mock_token(token_mock),
-            true,
-            None,
-        )
-        .await;
+        let state = get_mocked_state(mocked_builder().mock_token(token_mock), true, None).await;
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())

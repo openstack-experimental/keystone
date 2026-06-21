@@ -75,9 +75,9 @@ mod tests {
     use super::super::types::*;
     use super::*;
     use crate::api::KeystoneApiError;
-    use crate::api::tests::get_mocked_state;
+    use crate::api::tests::{get_mocked_state, mocked_builder};
     use crate::identity::MockIdentityProvider;
-    use crate::provider::Provider;
+
     use crate::token::MockTokenProvider;
 
     #[tokio::test]
@@ -105,7 +105,7 @@ mod tests {
             })
             .returning(move |_, _| Ok(auth_clone.clone()));
 
-        let provider = Provider::mocked_builder().mock_identity(identity_mock);
+        let provider = mocked_builder().mock_identity(identity_mock);
 
         let state = get_mocked_state(provider, true, None).await;
 
@@ -187,7 +187,7 @@ mod tests {
             .withf(|_, id: &'_ str| id == "uid")
             .returning(move |_, _| Ok(Some(user.clone())));
 
-        let provider = Provider::mocked_builder()
+        let provider = mocked_builder()
             .mock_identity(identity_mock)
             .mock_token(token_mock);
 
@@ -217,7 +217,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_authenticate_request_unsupported() {
-        let state = get_mocked_state(Provider::mocked_builder(), true, None).await;
+        let state = get_mocked_state(mocked_builder(), true, None).await;
 
         let rsp = authenticate_request(
             &state,

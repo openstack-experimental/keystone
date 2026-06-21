@@ -30,4 +30,6 @@
 //! A container that groups or isolates resources or identity objects. Depending
 //! on the service operator, a project might map to a customer, account,
 //! organization, or tenant.
+#[cfg(test)]
+pub use openstack_keystone_core::resource::MockResourceProvider;
 pub use openstack_keystone_core::resource::*;

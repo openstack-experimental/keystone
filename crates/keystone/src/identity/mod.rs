@@ -32,4 +32,6 @@
 //! login and can access resources by using assigned tokens. Users can be
 //! directly assigned to a particular project and behave as if they are
 //! contained in that project.
+#[cfg(test)]
+pub use openstack_keystone_core::identity::MockIdentityProvider;
 pub use openstack_keystone_core::identity::*;

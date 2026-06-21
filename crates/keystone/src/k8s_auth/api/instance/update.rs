@@ -104,14 +104,13 @@ mod tests {
     use openstack_keystone_core_types::k8s_auth as provider_types;
 
     use super::{super::openapi_router, *};
-    use crate::api::tests::{get_mocked_state, test_fixture_scoped};
+    use crate::api::tests::{get_mocked_state, mocked_builder, test_fixture_scoped};
     use crate::k8s_auth::MockK8sAuthProvider;
-    use crate::provider::Provider;
 
     #[tokio::test]
     #[traced_test]
     async fn test_update() {
-        let mut provider = Provider::mocked_builder();
+        let mut provider = mocked_builder();
         let mut mock = MockK8sAuthProvider::default();
         mock.expect_get_auth_instance()
             .withf(|_, id: &'_ str| id == "1")
@@ -189,7 +188,7 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_update_forbidden() {
-        let mut provider = Provider::mocked_builder();
+        let mut provider = mocked_builder();
         let vsc = test_fixture_scoped();
         let mut mock = MockK8sAuthProvider::default();
         mock.expect_get_auth_instance().returning(|_, _| {
@@ -242,7 +241,7 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_update_unauthorized() {
-        let provider = Provider::mocked_builder();
+        let provider = mocked_builder();
 
         let state = get_mocked_state(provider, true, None).await;
 

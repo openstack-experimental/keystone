@@ -18,4 +18,6 @@
 //! valid for a finite duration. OpenStack Identity is an integration service
 //! that does not aspire to be a full-fledged identity store and management
 //! solution.
+#[cfg(test)]
+pub use openstack_keystone_core::token::MockTokenProvider;
 pub use openstack_keystone_core::token::*;

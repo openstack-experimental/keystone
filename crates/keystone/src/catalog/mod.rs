@@ -30,4 +30,6 @@
 //! An OpenStack service, such as Compute (nova), Object Storage (swift), or
 //! Image service (glance), that provides one or more endpoints through which
 //! users can access resources and perform operations.
+#[cfg(test)]
+pub use openstack_keystone_core::catalog::MockCatalogProvider;
 pub use openstack_keystone_core::catalog::*;

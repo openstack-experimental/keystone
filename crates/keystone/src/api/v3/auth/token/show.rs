@@ -136,10 +136,10 @@ mod tests {
     use tower_http::trace::TraceLayer;
 
     use super::super::openapi_router;
-    use crate::api::tests::{get_mocked_state, test_fixture_scoped};
+    use crate::api::tests::{get_mocked_state, mocked_builder, test_fixture_scoped};
     use crate::api::v3::auth::token::types::*;
     use crate::catalog::MockCatalogProvider;
-    use crate::provider::Provider;
+
     use crate::resource::MockResourceProvider;
     use crate::token::{MockTokenProvider, TokenProviderError};
 
@@ -206,7 +206,7 @@ mod tests {
                 }))
             });
 
-        let provider = Provider::mocked_builder()
+        let provider = mocked_builder()
             .mock_resource(resource_mock)
             .mock_token(token_mock)
             .mock_catalog(catalog_mock);
@@ -318,7 +318,7 @@ mod tests {
                 }))
             });
 
-        let provider = Provider::mocked_builder()
+        let provider = mocked_builder()
             .mock_resource(resource_mock)
             .mock_token(token_mock)
             .mock_catalog(catalog_mock);
@@ -354,7 +354,7 @@ mod tests {
             .withf(|_, token: &'_ str, _, _| token == "baz")
             .returning(|_, _, _, _| Err(TokenProviderError::Expired));
 
-        let provider = Provider::mocked_builder().mock_token(token_mock);
+        let provider = mocked_builder().mock_token(token_mock);
         let vsc = test_fixture_scoped();
         let state = get_mocked_state(provider, true, None).await;
 
@@ -386,7 +386,7 @@ mod tests {
             .withf(|_, token: &'_ str, _, _| token == "baz")
             .returning(|_, _, _, _| Err(TokenProviderError::TokenRevoked));
 
-        let provider = Provider::mocked_builder().mock_token(token_mock);
+        let provider = mocked_builder().mock_token(token_mock);
 
         let vsc = test_fixture_scoped();
         let state = get_mocked_state(provider, true, None).await;
@@ -413,7 +413,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_unauth() {
-        let state = get_mocked_state(Provider::mocked_builder(), false, None).await;
+        let state = get_mocked_state(mocked_builder(), false, None).await;
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())

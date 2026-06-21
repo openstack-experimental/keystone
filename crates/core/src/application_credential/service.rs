@@ -33,7 +33,6 @@ use crate::application_credential::{
 };
 use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManagerApi;
-use crate::role::RoleApi;
 
 /// Application Credential Provider.
 pub struct ApplicationCredentialService {

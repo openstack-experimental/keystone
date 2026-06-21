@@ -116,10 +116,10 @@ mod tests {
         Project as ProviderProject, ProjectListParameters,
     };
 
-    use crate::api::tests::{get_mocked_state, test_fixture_scoped};
+    use crate::api::tests::{get_mocked_state, mocked_builder, test_fixture_scoped};
     use crate::api::v3::project::types::ProjectShort;
     use crate::assignment::MockAssignmentProvider;
-    use crate::provider::Provider;
+
     use crate::resource::MockResourceProvider;
 
     use super::super::openapi_router;
@@ -200,7 +200,7 @@ mod tests {
                 ])
             });
 
-        let provider_builder = Provider::mocked_builder()
+        let provider_builder = mocked_builder()
             .mock_assignment(assignment_mock)
             .mock_resource(resource_mock);
         let vsc = test_fixture_scoped();

@@ -90,9 +90,8 @@ mod tests {
     use openstack_keystone_core_types::mapping as provider_types;
 
     use super::super::openapi_router;
-    use crate::api::tests::{get_mocked_state, test_fixture_scoped};
+    use crate::api::tests::{get_mocked_state, mocked_builder, test_fixture_scoped};
     use crate::mapping::MockMappingProvider;
-    use crate::provider::Provider;
 
     fn sample_ruleset_core() -> provider_types::MappingRuleSet {
         provider_types::MappingRuleSet {
@@ -111,7 +110,7 @@ mod tests {
     #[tokio::test]
     async fn test_delete() {
         let vsc = test_fixture_scoped();
-        let mut provider = Provider::mocked_builder();
+        let mut provider = mocked_builder();
         let mut mock = MockMappingProvider::default();
         mock.expect_get_ruleset()
             .returning(|_, _| Ok(Some(sample_ruleset_core())));
@@ -143,7 +142,7 @@ mod tests {
     #[tokio::test]
     async fn test_delete_policy_denied() {
         let vsc = test_fixture_scoped();
-        let mut provider = Provider::mocked_builder();
+        let mut provider = mocked_builder();
         let mut mock = MockMappingProvider::default();
         mock.expect_get_ruleset()
             .returning(|_, _| Ok(Some(sample_ruleset_core())));
@@ -174,7 +173,7 @@ mod tests {
     #[tokio::test]
     async fn test_delete_unauthorized() {
         let state = get_mocked_state(
-            Provider::mocked_builder().mock_mapping(MockMappingProvider::default()),
+            mocked_builder().mock_mapping(MockMappingProvider::default()),
             true,
             None,
         )

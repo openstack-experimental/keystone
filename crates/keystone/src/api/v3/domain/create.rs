@@ -90,9 +90,9 @@ mod tests {
     use openstack_keystone_core_types::resource::Domain as ProviderDomain;
 
     use super::super::openapi_router;
-    use crate::api::tests::{get_mocked_state, test_fixture_scoped};
+    use crate::api::tests::{get_mocked_state, mocked_builder, test_fixture_scoped};
     use crate::api::v3::domain::types::*;
-    use crate::provider::Provider;
+
     use crate::resource::MockResourceProvider;
 
     #[traced_test]
@@ -109,7 +109,7 @@ mod tests {
             })
         });
 
-        let provider_builder = Provider::mocked_builder().mock_resource(resource_mock);
+        let provider_builder = mocked_builder().mock_resource(resource_mock);
         let vsc = test_fixture_scoped();
         let state = get_mocked_state(provider_builder, true, None).await;
 
@@ -156,7 +156,7 @@ mod tests {
     #[tokio::test]
     async fn test_not_allowed() {
         let vsc = test_fixture_scoped();
-        let state = get_mocked_state(Provider::mocked_builder(), false, None).await;
+        let state = get_mocked_state(mocked_builder(), false, None).await;
 
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())

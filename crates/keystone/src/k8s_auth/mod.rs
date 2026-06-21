@@ -15,3 +15,6 @@
 pub use openstack_keystone_core::k8s_auth::*;
 
 pub mod api;
+
+#[cfg(test)]
+pub use openstack_keystone_core::k8s_auth::MockK8sAuthProvider;
