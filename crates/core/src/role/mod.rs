@@ -37,13 +37,12 @@ pub mod backend;
 pub mod error;
 pub mod hook;
 #[cfg(any(test, feature = "mock"))]
-mod mock;
 mod provider_api;
 pub mod service;
 
 pub use error::RoleProviderError;
 pub use hook::RoleHook;
 #[cfg(any(test, feature = "mock"))]
-pub use mock::MockRoleProvider;
+pub use crate::mocks::MockRoleProvider;
 pub use provider_api::RoleApi;
 pub use service::RoleService;

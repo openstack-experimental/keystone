@@ -20,13 +20,12 @@ pub mod backend;
 pub mod error;
 pub mod hook;
 #[cfg(any(test, feature = "mock"))]
-pub mod mock;
 mod provider_api;
 pub mod service;
 
 pub use error::IdMappingProviderError;
 pub use hook::IdMappingHook;
 #[cfg(any(test, feature = "mock"))]
-pub use mock::MockIdMappingProvider;
+pub use crate::mocks::MockIdMappingProvider;
 pub use provider_api::IdMappingApi;
 pub use service::IdMappingService;

@@ -19,7 +19,6 @@ mod client;
 pub mod error;
 pub mod hook;
 #[cfg(any(test, feature = "mock"))]
-mod mock;
 mod provider_api;
 pub mod service;
 
@@ -27,7 +26,7 @@ pub use client::K8sHttpClient;
 pub use error::K8sAuthProviderError;
 pub use hook::K8sAuthHook;
 #[cfg(any(test, feature = "mock"))]
-pub use mock::MockK8sAuthProvider;
+pub use crate::mocks::MockK8sAuthProvider;
 pub use openstack_keystone_core_types::k8s_auth::*;
 pub use provider_api::K8sAuthApi;
 pub use service::K8sAuthService;

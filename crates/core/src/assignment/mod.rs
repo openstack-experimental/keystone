@@ -40,13 +40,12 @@ pub mod backend;
 pub mod error;
 pub mod hook;
 #[cfg(any(test, feature = "mock"))]
-mod mock;
 mod provider_api;
 pub mod service;
 
 pub use error::AssignmentProviderError;
 pub use hook::AssignmentHook;
 #[cfg(any(test, feature = "mock"))]
-pub use mock::MockAssignmentProvider;
+pub use crate::mocks::MockAssignmentProvider;
 pub use provider_api::AssignmentApi;
 pub use service::AssignmentService;

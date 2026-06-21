@@ -40,9 +40,8 @@ use openstack_keystone_config::Config;
 pub mod backend;
 pub mod error;
 #[cfg(any(test, feature = "mock"))]
-pub mod mock;
 #[cfg(any(test, feature = "mock"))]
-pub use mock::MockIdentityProvider;
+pub use crate::mocks::MockIdentityProvider;
 mod hook;
 mod provider_api;
 pub mod service;

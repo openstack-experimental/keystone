@@ -20,7 +20,6 @@ pub mod hmac;
 pub mod hook;
 mod interpolation;
 #[cfg(any(test, feature = "mock"))]
-pub mod mock;
 mod provider_api;
 pub mod service;
 mod validation;
@@ -35,7 +34,7 @@ pub use backend::MappingBackend;
 pub use error::MappingProviderError;
 pub use hook::MappingHook;
 #[cfg(any(test, feature = "mock"))]
-pub use mock::MockMappingProvider;
+pub use crate::mocks::MockMappingProvider;
 pub use provider_api::MappingApi;
 pub use service::MappingService;
 pub use validation::{validate_regex, validate_ruleset_create, validate_ruleset_update};

@@ -39,7 +39,6 @@ pub mod backend;
 pub mod error;
 pub mod hook;
 #[cfg(any(test, feature = "mock"))]
-mod mock;
 mod provider_api;
 pub mod service;
 //pub mod types;
@@ -51,7 +50,7 @@ use crate::auth::*;
 pub use error::RevokeProviderError;
 pub use hook::RevokeHook;
 #[cfg(any(test, feature = "mock"))]
-pub use mock::MockRevokeProvider;
+pub use crate::mocks::MockRevokeProvider;
 pub use provider_api::RevokeApi;
 pub use service::RevokeService;
 

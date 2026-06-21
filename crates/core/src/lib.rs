@@ -140,3 +140,6 @@ pub struct SqlDriverRegistration {
 
 // Essential: This creates the global registry for this specific struct
 inventory::collect!(SqlDriverRegistration);
+
+#[cfg(any(test, feature = "mock"))]
+pub mod mocks;

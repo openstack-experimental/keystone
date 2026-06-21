@@ -20,13 +20,12 @@ pub mod backend;
 pub mod error;
 pub mod hook;
 #[cfg(any(test, feature = "mock"))]
-pub mod mock;
 mod provider_api;
 pub mod service;
 
 pub use crate::federation::error::FederationProviderError;
 pub use hook::FederationHook;
 #[cfg(any(test, feature = "mock"))]
-pub use mock::MockFederationProvider;
+pub use crate::mocks::MockFederationProvider;
 pub use provider_api::FederationApi;
 pub use service::FederationService;

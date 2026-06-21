@@ -55,13 +55,12 @@ pub mod backend;
 pub mod error;
 pub mod hook;
 #[cfg(any(test, feature = "mock"))]
-mod mock;
 mod provider_api;
 pub mod service;
 
 pub use error::TrustProviderError;
 pub use hook::TrustHook;
 #[cfg(any(test, feature = "mock"))]
-pub use mock::MockTrustProvider;
+pub use crate::mocks::MockTrustProvider;
 pub use provider_api::TrustApi;
 pub use service::TrustService;

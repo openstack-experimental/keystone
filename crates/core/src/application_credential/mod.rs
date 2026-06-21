@@ -116,13 +116,12 @@ pub mod backend;
 pub mod error;
 pub mod hook;
 #[cfg(any(test, feature = "mock"))]
-mod mock;
 mod provider_api;
 pub mod service;
 
 pub use error::ApplicationCredentialProviderError;
 pub use hook::ApplicationCredentialHook;
 #[cfg(any(test, feature = "mock"))]
-pub use mock::MockApplicationCredentialProvider;
+pub use crate::mocks::MockApplicationCredentialProvider;
 pub use provider_api::ApplicationCredentialApi;
 pub use service::ApplicationCredentialService;

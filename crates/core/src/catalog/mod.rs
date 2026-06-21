@@ -35,13 +35,12 @@ pub mod backend;
 pub mod error;
 pub mod hook;
 #[cfg(any(test, feature = "mock"))]
-mod mock;
 mod provider_api;
 pub mod service;
 
 pub use error::CatalogProviderError;
 pub use hook::CatalogHook;
 #[cfg(any(test, feature = "mock"))]
-pub use mock::MockCatalogProvider;
+pub use crate::mocks::MockCatalogProvider;
 pub use provider_api::CatalogApi;
 pub use service::CatalogService;

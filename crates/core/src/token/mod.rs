@@ -25,14 +25,13 @@ pub mod backend;
 pub mod error;
 pub mod hook;
 #[cfg(any(test, feature = "mock"))]
-mod mock;
 mod provider_api;
 pub mod service;
 
 pub use error::TokenProviderError;
 pub use hook::TokenHook;
 #[cfg(any(test, feature = "mock"))]
-pub use mock::MockTokenProvider;
+pub use crate::mocks::MockTokenProvider;
 pub use provider_api::TokenApi;
 pub use service::TokenService;
 

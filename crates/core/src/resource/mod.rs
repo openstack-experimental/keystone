@@ -35,13 +35,12 @@ pub mod backend;
 pub mod error;
 pub mod hook;
 #[cfg(any(test, feature = "mock"))]
-mod mock;
 mod provider_api;
 pub mod service;
 
 pub use error::ResourceProviderError;
 pub use hook::ResourceHook;
 #[cfg(any(test, feature = "mock"))]
-pub use mock::MockResourceProvider;
+pub use crate::mocks::MockResourceProvider;
 pub use provider_api::ResourceApi;
 pub use service::ResourceService;
