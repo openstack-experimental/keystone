@@ -309,28 +309,6 @@ pub struct UserListParameters {
     /// Filter users by the federated unique ID.
     #[cfg_attr(feature = "validate", validate(length(max = 64)))]
     pub unique_id: Option<String>,
-
-    /// Filter users by type (`local`, `federated`, `nonlocal`, `all`).
-    #[serde(rename = "type")]
-    pub user_type: Option<UserType>,
-}
-
-/// User type filter for listing users.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-#[serde(rename_all = "lowercase")]
-pub enum UserType {
-    /// All users (default behavior).
-    All,
-    /// Federated users only.
-    Federated,
-    /// Local users only.
-    Local,
-    /// Non-local users only.
-    NonLocal,
-    /// Service account users only.
-    #[serde(rename = "service_account")]
-    ServiceAccount,
 }
 
 #[cfg(test)]

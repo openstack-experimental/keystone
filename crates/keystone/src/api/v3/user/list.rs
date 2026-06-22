@@ -75,9 +75,7 @@ mod tests {
     use tower::ServiceExt; // for `call`, `oneshot`, and `ready`
     use tower_http::trace::TraceLayer;
 
-    use openstack_keystone_core_types::identity::{
-        UserListParameters, UserResponseBuilder, UserType,
-    };
+    use openstack_keystone_core_types::identity::{UserListParameters, UserResponseBuilder};
 
     use super::super::openapi_router;
     use crate::api::tests::{get_mocked_state, test_fixture_scoped};
@@ -187,41 +185,6 @@ mod tests {
 
         let body = response.into_body().collect().await.unwrap().to_bytes();
         let _res: UserList = serde_json::from_slice(&body).unwrap();
-    }
-
-    #[tokio::test]
-    async fn test_list_qp_type() {
-        let mut identity_mock = MockIdentityProvider::default();
-        identity_mock
-            .expect_list_users()
-            .withf(|_, qp: &UserListParameters| qp.user_type == Some(UserType::Local))
-            .returning(|_, _| Ok(Vec::new()));
-
-        let vsc = test_fixture_scoped();
-        let state = get_mocked_state(
-            Provider::mocked_builder().mock_identity(identity_mock),
-            true,
-            None,
-        )
-        .await;
-
-        let mut api = openapi_router()
-            .layer(TraceLayer::new_for_http())
-            .with_state(state);
-
-        let response = api
-            .as_service()
-            .oneshot(
-                Request::builder()
-                    .uri("/?type=local")
-                    .extension(vsc)
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(response.status(), StatusCode::OK);
     }
 
     #[tokio::test]

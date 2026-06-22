@@ -111,25 +111,13 @@ impl From<provider_types::FederationProtocol> for api_types::FederationProtocol 
     }
 }
 
-impl From<api_types::UserType> for provider_types::UserType {
-    fn from(value: api_types::UserType) -> Self {
-        match value {
-            api_types::UserType::All => Self::All,
-            api_types::UserType::Federated => Self::Federated,
-            api_types::UserType::Local => Self::Local,
-            api_types::UserType::NonLocal => Self::NonLocal,
-            api_types::UserType::ServiceAccount => Self::ServiceAccount,
-        }
-    }
-}
-
 impl From<api_types::UserListParameters> for provider_types::UserListParameters {
     fn from(value: api_types::UserListParameters) -> Self {
         Self {
             domain_id: value.domain_id,
             name: value.name,
             unique_id: value.unique_id,
-            user_type: value.user_type.map(Into::into),
+            ..Default::default()
         }
     }
 }
