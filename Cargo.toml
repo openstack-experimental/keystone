@@ -58,7 +58,7 @@ base64 = { version = "0.22" }
 base64urlsafedata = "0.5"
 bcrypt = { version = "0.19" }
 byteorder = { version = "1.5" }
-bytes = { version = "1.11" }
+bytes = { version = "1.12" }
 chrono = { version = "0.4", default-features = false }
 clap = { version = "4.6" }
 color-eyre = { version = "0.6" }
