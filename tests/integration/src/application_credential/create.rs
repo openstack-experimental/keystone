@@ -42,6 +42,7 @@ async fn test_create_basic() -> Result<(), Report> {
             path: Some("path1".into()),
             method: Some("method".into()),
             service: Some("service".into()),
+            user_id: user.id.clone(),
         }]),
         description: Some("description".into()),
         name: Uuid::new_v4().to_string(),

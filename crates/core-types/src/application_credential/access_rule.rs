@@ -48,7 +48,11 @@ pub struct AccessRule {
     #[builder(default)]
     #[validate(length(min = 1, max = 64))]
     pub service: Option<String>,
+
+    /// The ID of the user who owns the access rule.
     // TODO: modify DB so that user_id is not nullable
+    #[validate(length(min = 1, max = 64))]
+    pub user_id: String,
 }
 
 /// The application credential access rule object to be created.
@@ -81,5 +85,9 @@ pub struct AccessRuleCreate {
     #[builder(default)]
     #[validate(length(min = 1, max = 64))]
     pub service: Option<String>,
+
+    /// The ID of the user who owns the access rule.
     // TODO: modify DB so that user_id is not nullable
+    #[validate(length(min = 1, max = 64))]
+    pub user_id: String,
 }

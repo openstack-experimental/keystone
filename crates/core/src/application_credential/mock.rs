@@ -25,10 +25,9 @@ mock! {
     #[async_trait]
     impl ApplicationCredentialApi for ApplicationCredentialProvider {
 
-        async fn create_access_rule<'a>(
+        async fn create_access_rule(
             &self,
             state: &ServiceState,
-            user_id: &'a str,
             rule: AccessRuleCreate,
         ) -> Result<AccessRule, ApplicationCredentialProviderError>;
 

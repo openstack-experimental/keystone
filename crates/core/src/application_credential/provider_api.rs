@@ -25,16 +25,14 @@ pub trait ApplicationCredentialApi: Send + Sync {
     ///
     /// # Parameters
     /// - `state`: The current service state.
-    /// - `user_id`: The ID of the user owning the access rule.
-    /// - `rule`: The access rule to create.
+    /// - `rule`: The access rule to create (its `user_id` identifies the owner).
     ///
     /// # Returns
     /// - `Result<AccessRule, ApplicationCredentialProviderError>` - The created
     ///   access rule or an error.
-    async fn create_access_rule<'a>(
+    async fn create_access_rule(
         &self,
         state: &ServiceState,
-        user_id: &'a str,
         rule: AccessRuleCreate,
     ) -> Result<AccessRule, ApplicationCredentialProviderError>;
 

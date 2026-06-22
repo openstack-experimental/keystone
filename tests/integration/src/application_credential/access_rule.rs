@@ -37,12 +37,12 @@ async fn test_access_rule_crd() -> Result<(), Report> {
     let created = provider
         .create_access_rule(
             &state,
-            &user.id,
             AccessRuleCreate {
                 id: None,
                 path: Some("/v2.1/servers".into()),
                 method: Some("POST".into()),
                 service: Some("compute".into()),
+                user_id: user.id.clone(),
             },
         )
         .await?;
@@ -50,6 +50,7 @@ async fn test_access_rule_crd() -> Result<(), Report> {
     assert_eq!(created.path, Some("/v2.1/servers".into()));
     assert_eq!(created.method, Some("POST".into()));
     assert_eq!(created.service, Some("compute".into()));
+    assert_eq!(created.user_id, user.id, "owner is exposed in the output");
 
     // Get
     let fetched = provider
@@ -124,6 +125,7 @@ async fn test_delete_access_rule_in_use() -> Result<(), Report> {
                     path: Some("/v2.1/servers".into()),
                     method: Some("POST".into()),
                     service: Some("compute".into()),
+                    user_id: user.id.clone(),
                 }]),
                 name: Uuid::new_v4().to_string(),
                 project_id: project.id.clone(),

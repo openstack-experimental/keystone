@@ -67,16 +67,14 @@ impl ApplicationCredentialApi for ApplicationCredentialService {
     ///
     /// # Parameters
     /// - `state`: The current service state.
-    /// - `user_id`: The ID of the user owning the access rule.
-    /// - `rule`: The access rule to create.
+    /// - `rule`: The access rule to create (its `user_id` identifies the owner).
     ///
     /// # Returns
     /// - `Result<AccessRule, ApplicationCredentialProviderError>` - The created
     ///   access rule or an error.
-    async fn create_access_rule<'a>(
+    async fn create_access_rule(
         &self,
         state: &ServiceState,
-        user_id: &'a str,
         rule: AccessRuleCreate,
     ) -> Result<AccessRule, ApplicationCredentialProviderError> {
         let mut rule = rule;
@@ -85,10 +83,8 @@ impl ApplicationCredentialApi for ApplicationCredentialService {
         if rule.id.is_none() {
             rule.id = Some(Uuid::new_v4().simple().to_string());
         }
-        let access_rule = self
-            .backend_driver
-            .create_access_rule(state, user_id, rule)
-            .await?;
+        let user_id = rule.user_id.clone();
+        let access_rule = self.backend_driver.create_access_rule(state, rule).await?;
 
         state
             .event_dispatcher
@@ -96,7 +92,7 @@ impl ApplicationCredentialApi for ApplicationCredentialService {
                 Operation::Create,
                 EventPayload::AccessRule {
                     id: access_rule.id.clone(),
-                    user_id: user_id.to_string(),
+                    user_id,
                 },
             ))
             .await;
@@ -146,6 +142,7 @@ impl ApplicationCredentialApi for ApplicationCredentialService {
                 if rule.id.is_none() {
                     rule.id = Some(Uuid::new_v4().simple().to_string());
                 }
+                rule.user_id = new_rec.user_id.clone();
             }
         }
         if new_rec.secret.is_none() {

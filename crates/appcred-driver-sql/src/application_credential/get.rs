@@ -112,7 +112,8 @@ mod tests {
                     id: "app_cred_rule_id".into(),
                     path: Some("/path".into()),
                     method: Some("method".into()),
-                    service: Some("service".into())
+                    service: Some("service".into()),
+                    user_id: "user_id".into(),
                 }])
             }
         );

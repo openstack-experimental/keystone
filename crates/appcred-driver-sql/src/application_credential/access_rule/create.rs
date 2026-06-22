@@ -27,14 +27,12 @@ use crate::entity::access_rule as db_access_rule;
 ///
 /// # Parameters
 /// - `db`: The database connection.
-/// - `user_id`: The ID of the user owning the access rule.
-/// - `rule`: The access rule to create.
+/// - `rule`: The access rule to create (its `user_id` identifies the owner).
 ///
 /// # Returns
 /// A `Result` containing the created `AccessRule` or an `Error`.
-pub async fn create<U: AsRef<str>>(
+pub async fn create(
     db: &impl ConnectionTrait,
-    user_id: U,
     rule: AccessRuleCreate,
 ) -> Result<AccessRule, ApplicationCredentialProviderError> {
     db_access_rule::ActiveModel {
@@ -43,7 +41,7 @@ pub async fn create<U: AsRef<str>>(
         path: Set(rule.path),
         service: Set(rule.service),
         external_id: Set(Some(rule.id.unwrap_or(Uuid::new_v4().simple().to_string()))),
-        user_id: Set(Some(user_id.as_ref().to_string())),
+        user_id: Set(Some(rule.user_id)),
     }
     .insert(db)
     .await
@@ -69,9 +67,10 @@ mod tests {
             method: Some("POST".into()),
             path: Some("/v2.1/servers".into()),
             service: Some("compute".into()),
+            user_id: "user_id".into(),
         };
 
-        let result = create(&db, "user_id", req).await;
+        let result = create(&db, req).await;
         assert!(result.is_ok(), "create failed: {:?}", result.err());
     }
 }

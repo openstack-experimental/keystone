@@ -70,6 +70,7 @@ mod tests {
                 path: Some("/v2.1/servers".into()),
                 method: Some("POST".into()),
                 service: Some("compute".into()),
+                user_id: "user_id".into(),
             })
         );
     }

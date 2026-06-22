@@ -51,18 +51,16 @@ impl ApplicationCredentialBackend for SqlBackend {
     ///
     /// # Parameters
     /// - `state`: The service state.
-    /// - `user_id`: The ID of the user owning the access rule.
-    /// - `rule`: The access rule to create.
+    /// - `rule`: The access rule to create (its `user_id` identifies the owner).
     ///
     /// # Returns
     /// A `Result` containing the created `AccessRule` or an `Error`.
-    async fn create_access_rule<'a>(
+    async fn create_access_rule(
         &self,
         state: &ServiceState,
-        user_id: &'a str,
         rule: AccessRuleCreate,
     ) -> Result<AccessRule, ApplicationCredentialProviderError> {
-        application_credential::access_rule::create(&state.db, user_id, rule).await
+        application_credential::access_rule::create(&state.db, rule).await
     }
 
     /// Create a new application credential.
