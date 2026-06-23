@@ -58,6 +58,10 @@ httpmock = { version = "0.8", features = ["http2"] }
 mockall.workspace = true
 openstack-keystone-core-types = { workspace = true, features = ["mock"] }
 rstest.workspace = true
+# `process` is test-only: the env-gated cross-verify tests shell out to
+# tools/cross_verify.py. Kept out of the main `tokio` dep to avoid pulling
+# process-spawning machinery into the production build.
+tokio = { workspace = true, features = ["process"] }
 tracing-test = { workspace = true, features = ["no-env-filter"] }
 url.workspace = true
 

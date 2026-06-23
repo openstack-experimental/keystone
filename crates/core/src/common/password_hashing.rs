@@ -214,7 +214,7 @@ impl PasswordHasher for BcryptSha256Hasher {
             // verify()'s encoding byte-for-byte or no hash either path
             // produces is verifiable by the other.
             let hmac_res = compute_hmac_sha256(salt_str.as_bytes(), &password_bytes)?;
-            let hmac_digest_b64 = STANDARD.encode(&hmac_res);
+            let hmac_digest_b64 = STANDARD.encode(hmac_res);
 
             // Hash using the real raw salt and the HMAC-derived intermediate password.
             let final_bcrypt =
@@ -292,14 +292,23 @@ impl PasswordHasher for BcryptSha256Hasher {
         match task::spawn_blocking(move || {
             // Reconstruct the bcrypt hash string for checkpw.
             // Python does: new_salt = f"${opts['t']}${opts['r']}${salt}"
-            // then bcrypt.checkpw(hmac_digest, f"{new_salt}{digest}".encode("ascii"))
-            // The {:02} zero-pad here matches bcrypt's own wire format.
+            // then bcrypt.checkpw(hmac_digest, f"{new_salt}{digest}".encode("ascii")).
+            //
+            // The {:02} zero-pad is deliberate and must NOT be dropped to
+            // literally mirror Python's f-string: the Rust `bcrypt` crate's
+            // parser requires the cost field to be exactly two digits, whereas
+            // Python's `int`-formatted `r=` lets the underlying libbcrypt accept
+            // a single digit. The stored digest was originally computed against
+            // a salt from `bcrypt.gensalt(rounds)`, which always embeds a
+            // 2-digit zero-padded cost (e.g. "05"), so "05" — not "5" — is the
+            // cost the digest actually corresponds to. For realistic round
+            // counts (>= 10) the two forms are identical anyway.
             let reconstructed_hash =
                 format!("${}${:02}${}{}", bcrypt_type, rounds, salt, checksum_part);
 
             // Re-derive the HMAC digest using the embedded salt.
             let hmac_res = compute_hmac_sha256(salt.as_bytes(), &password_bytes)?;
-            let intermediate_b64 = STANDARD.encode(&hmac_res);
+            let intermediate_b64 = STANDARD.encode(hmac_res);
 
             bcrypt::verify(intermediate_b64, &reconstructed_hash).map_err(PasswordHashError::from)
         })
@@ -1237,5 +1246,96 @@ mod tests {
         // The two hashes are likely different (random salt), but we can't assert
         // inequality deterministically. Just verify both are structurally valid.
         let _ = before;
+    }
+
+    // --- Bidirectional cross-verification against the real Python hashers ---
+    //
+    // These tests close the loop the KAT vectors above only check one way: the
+    // KATs prove Rust can *verify* a Python-produced hash; the tests below prove
+    // Python can *verify* a Rust-produced hash. They shell out to
+    // tools/cross_verify.py inside a real Keystone Python checkout, so they are
+    // gated on the KEYSTONE_PYTHON_CHECKOUT env var and silently skip when it is
+    // unset (the common case in CI without a Python install). To run:
+    //
+    //   KEYSTONE_PYTHON_CHECKOUT=~/Projects/openstack/keystone \
+    //     cargo test -p openstack-keystone-core -- cross_verify
+    //
+    // The checkout must have the `bcrypt` and `cryptography` packages installed.
+
+    /// Run a Rust-produced hash through tools/cross_verify.py against the Python
+    /// hashers. Returns the script's exit code (0 = verified, 1 = rejected,
+    /// 2 = error). Returns `None` when no Python checkout is configured so the
+    /// caller can skip.
+    async fn python_cross_verify(algo_name: &str, password: &str, hash: &str) -> Option<i32> {
+        let checkout = std::env::var("KEYSTONE_PYTHON_CHECKOUT").ok()?;
+
+        // cross_verify.py lives in <repo>/tools; this crate is <repo>/crates/core.
+        let script =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tools/cross_verify.py");
+
+        let status = tokio::process::Command::new("python")
+            .arg(script)
+            .arg(algo_name)
+            .arg(password)
+            .arg(hash)
+            // Run inside the checkout so `import keystone...` resolves.
+            .current_dir(checkout)
+            .status()
+            .await
+            .expect("failed to spawn python cross_verify.py");
+
+        Some(status.code().unwrap_or(2))
+    }
+
+    #[tokio::test]
+    async fn test_cross_verify_bcrypt() {
+        let conf = mock_config(PasswordHashingAlgo::Bcrypt, 255);
+        let password = "openstack123";
+        let hash = hash_password(&conf, password).await.unwrap();
+
+        match python_cross_verify("bcrypt", password, &hash).await {
+            None => return, // no Python checkout configured — skip
+            Some(0) => {}
+            Some(code) => panic!("Python rejected Rust bcrypt hash (exit {code}): {hash}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_cross_verify_bcrypt_sha256() {
+        let conf = mock_config(PasswordHashingAlgo::BcryptSha256, 255);
+        let password = "openstack123";
+        let hash = hash_password(&conf, password).await.unwrap();
+
+        match python_cross_verify("bcrypt_sha256", password, &hash).await {
+            None => return,
+            Some(0) => {}
+            Some(code) => panic!("Python rejected Rust bcrypt_sha256 hash (exit {code}): {hash}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_cross_verify_scrypt() {
+        let conf = mock_config(PasswordHashingAlgo::Scrypt, 255);
+        let password = "openstack123";
+        let hash = hash_password(&conf, password).await.unwrap();
+
+        match python_cross_verify("scrypt", password, &hash).await {
+            None => return,
+            Some(0) => {}
+            Some(code) => panic!("Python rejected Rust scrypt hash (exit {code}): {hash}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_cross_verify_pbkdf2_sha512() {
+        let conf = mock_config(PasswordHashingAlgo::Pbkdf2Sha512, 255);
+        let password = "openstack123";
+        let hash = hash_password(&conf, password).await.unwrap();
+
+        match python_cross_verify("pbkdf2_sha512", password, &hash).await {
+            None => return,
+            Some(0) => {}
+            Some(code) => panic!("Python rejected Rust pbkdf2_sha512 hash (exit {code}): {hash}"),
+        }
     }
 }
