@@ -16,6 +16,8 @@ pub(crate) mod helpers;
 
 mod create;
 mod delete;
+mod federated;
 mod get;
+mod get_domain_id;
 mod list;
 mod update;

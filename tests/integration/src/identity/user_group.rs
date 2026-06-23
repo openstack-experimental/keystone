@@ -19,6 +19,8 @@ use openstack_keystone_core::keystone::ServiceState;
 use openstack_keystone_core_types::identity::*;
 
 mod add;
+mod bulk;
+mod expiring;
 mod list;
 mod remove;
 mod set;
