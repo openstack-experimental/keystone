@@ -19,7 +19,9 @@ use secrecy::{ExposeSecret, SecretString};
 use serde_json::Value;
 
 use openstack_keystone_core_types::auth::AuthenticationResult;
-use openstack_keystone_core_types::k8s_auth::{K8sAuthInstance, K8sAuthRequest};
+use openstack_keystone_core_types::k8s_auth::{
+    K8sAuthInstance, K8sAuthRequest, K8sClaims, QueryTokenReviewResult,
+};
 use openstack_keystone_core_types::mapping::auth::MappingAuthRequest;
 use openstack_keystone_core_types::mapping::resolution::IdentitySource;
 
@@ -28,29 +30,67 @@ use crate::k8s_auth::{K8sAuthProviderError, service::K8sAuthService};
 use crate::keystone::ServiceState;
 
 impl K8sAuthService {
-    /// Query the K8s Token Review endpoint.
+    /// Authenticate via K8s TokenReview + mapping engine.
     ///
-    /// JWT decoding and validation is delegated to the [`K8sHttpClient`]
-    /// implementation.
+    /// Validates the JWT through the K8s TokenReview API, flattens the
+    /// response into claims, and delegates to the unified mapping engine
+    /// for identity resolution and shadow registry upsert.
     ///
     /// # Arguments
-    /// * `token` - [`SecretString`] with the JWT token.
-    /// * `instance` - reference to the [`K8sAuthInstance`].
+    /// * `state` - Service state.
+    /// * `req` - A reference to the [`K8sAuthRequest`].
     ///
     /// # Returns
-    /// * Success with the TokenReview response as `Value`.
-    /// * `K8sAuthProviderError` if the token is invalid.
-    pub(super) async fn query_k8s_token_review(
+    /// * Success with [`AuthenticationResult`] via mapping engine.
+    /// * `K8sAuthProviderError` if authentication fails.
+    pub(super) async fn authenticate_by_mapping(
         &self,
-        token: &SecretString,
-        instance: &K8sAuthInstance,
-    ) -> Result<Value, K8sAuthProviderError> {
-        let token_review_json = self
-            .http_client
-            .query_token_review(instance, token.expose_secret())
-            .await?;
+        state: &ServiceState,
+        req: &K8sAuthRequest,
+    ) -> Result<AuthenticationResult, K8sAuthProviderError> {
+        // Fetch k8s auth instance.
+        let instance = self
+            .get_auth_instance(state, &req.auth_instance_id)
+            .await?
+            .ok_or(K8sAuthProviderError::AuthInstanceNotFound(
+                req.auth_instance_id.clone(),
+            ))?;
+        if !instance.enabled {
+            return Err(K8sAuthProviderError::AuthInstanceNotActive(
+                req.auth_instance_id.clone(),
+            ));
+        }
 
-        Ok(token_review_json)
+        // Call the TokenReview.
+        let review = self.query_k8s_token_review(&req.jwt, &instance).await?;
+
+        // Flatten TokenReview response and JWT claims.
+        let claims = self.flatten_k8s_claims(&review.token_review, &review.claims)?;
+
+        // Derive unique workload ID from claims: "<sa>:<ns>" per ADR-0020 §11.2.
+        let sa_name = &claims["k8s.serviceaccount.name"][0];
+        let namespace = &claims["k8s.serviceaccount.namespace"][0];
+        let unique_workload_id = format!("{sa_name}:{namespace}");
+
+        // Delegate to the unified mapping engine.
+        let mapping_req = MappingAuthRequest {
+            domain_id: Some(instance.domain_id.clone()),
+            source: IdentitySource::K8s {
+                cluster_id: instance.id.clone(),
+            },
+            unique_workload_id,
+            claims,
+            rule_name: req.rule_name.clone(),
+        };
+
+        let auth_result = state
+            .provider
+            .get_mapping_provider()
+            .authenticate_by_mapping(state, &mapping_req)
+            .await
+            .map_err(|e| K8sAuthProviderError::MappingEngine(e.to_string()))?;
+
+        Ok(auth_result)
     }
 
     /// Validate K8s Token Review response and extract service account info.
@@ -87,95 +127,58 @@ impl K8sAuthService {
         }
     }
 
-    /// Flatten TokenReview response into a claims map for the mapping engine.
+    /// Flatten TokenReview response and JWT claims into a claims map for
+    /// the mapping engine.
     ///
     /// Per ADR-0020 §11.2, produces claims with keys:
     /// - `k8s.serviceaccount.name`
     /// - `k8s.serviceaccount.namespace`
-    /// - `k8s.aud` (from `sub` claim of the service account token).
+    /// - `k8s.aud` (from `aud` claim of the service account token).
     ///
     /// # Arguments
     /// * `token_review_data` - TokenReview JSON response.
+    /// * `jwt_claims` - Decoded JWT claims containing `aud`.
     ///
     /// # Returns
     /// A flattened claims map.
     pub(super) fn flatten_k8s_claims(
         &self,
         token_review_data: &Value,
+        jwt_claims: &K8sClaims,
     ) -> Result<HashMap<String, Vec<String>>, K8sAuthProviderError> {
         let (namespace, sa_name) = self.extract_k8s_service_account(token_review_data)?;
 
-        let mut claims = HashMap::new();
-        claims.insert("k8s.serviceaccount.name".to_string(), vec![sa_name.clone()]);
-        claims.insert(
+        let mut result = HashMap::new();
+        result.insert("k8s.serviceaccount.name".to_string(), vec![sa_name.clone()]);
+        result.insert(
             "k8s.serviceaccount.namespace".to_string(),
             vec![namespace.clone()],
         );
+        result.insert("k8s.aud".to_string(), jwt_claims.aud.clone());
 
-        Ok(claims)
+        Ok(result)
     }
 
-    /// Authenticate via K8s TokenReview + mapping engine.
+    /// Query the K8s Token Review endpoint.
     ///
-    /// Validates the JWT through the K8s TokenReview API, flattens the
-    /// response into claims, and delegates to the unified mapping engine
-    /// for identity resolution and shadow registry upsert.
+    /// JWT decoding and validation is delegated to the [`K8sHttpClient`]
+    /// implementation.
     ///
     /// # Arguments
-    /// * `state` - Service state.
-    /// * `req` - A reference to the [`K8sAuthRequest`].
+    /// * `token` - [`SecretString`] with the JWT token.
+    /// * `instance` - reference to the [`K8sAuthInstance`].
     ///
     /// # Returns
-    /// * Success with [`AuthenticationResult`] via mapping engine.
-    /// * `K8sAuthProviderError` if authentication fails.
-    pub(super) async fn authenticate_by_mapping(
+    /// * Success with [`QueryTokenReviewResult`].
+    /// * `K8sAuthProviderError` if the token is invalid.
+    pub(super) async fn query_k8s_token_review(
         &self,
-        state: &ServiceState,
-        req: &K8sAuthRequest,
-    ) -> Result<AuthenticationResult, K8sAuthProviderError> {
-        // Fetch k8s auth instance.
-        let instance = self
-            .get_auth_instance(state, &req.auth_instance_id)
-            .await?
-            .ok_or(K8sAuthProviderError::AuthInstanceNotFound(
-                req.auth_instance_id.clone(),
-            ))?;
-        if !instance.enabled {
-            return Err(K8sAuthProviderError::AuthInstanceNotActive(
-                req.auth_instance_id.clone(),
-            ));
-        }
-
-        // Call the TokenReview.
-        let token_review_data = self.query_k8s_token_review(&req.jwt, &instance).await?;
-
-        // Flatten TokenReview response into claims.
-        let claims = self.flatten_k8s_claims(&token_review_data)?;
-
-        // Derive unique workload ID from claims: "<sa>:<ns>" per ADR-0020 §11.2.
-        let sa_name = &claims["k8s.serviceaccount.name"][0];
-        let namespace = &claims["k8s.serviceaccount.namespace"][0];
-        let unique_workload_id = format!("{sa_name}:{namespace}");
-
-        // Delegate to the unified mapping engine.
-        let mapping_req = MappingAuthRequest {
-            domain_id: Some(instance.domain_id.clone()),
-            source: IdentitySource::K8s {
-                cluster_id: instance.id.clone(),
-            },
-            unique_workload_id,
-            claims,
-            rule_name: req.rule_name.clone(),
-        };
-
-        let auth_result = state
-            .provider
-            .get_mapping_provider()
-            .authenticate_by_mapping(state, &mapping_req)
+        token: &SecretString,
+        instance: &K8sAuthInstance,
+    ) -> Result<QueryTokenReviewResult, K8sAuthProviderError> {
+        self.http_client
+            .query_token_review(instance, token.expose_secret())
             .await
-            .map_err(|e| K8sAuthProviderError::MappingEngine(e.to_string()))?;
-
-        Ok(auth_result)
     }
 }
 
@@ -190,6 +193,7 @@ mod tests {
     use crate::k8s_auth::K8sHttpClient;
     use crate::k8s_auth::backend::MockK8sAuthBackend;
     use crate::tests::get_mocked_state;
+    use openstack_keystone_core_types::k8s_auth::{K8sClaims, QueryTokenReviewResult};
 
     struct TestK8sHttpClient;
 
@@ -199,8 +203,15 @@ mod tests {
             &self,
             _instance: &K8sAuthInstance,
             _jwt: &str,
-        ) -> Result<serde_json::Value, K8sAuthProviderError> {
-            Ok(json!({}))
+        ) -> Result<QueryTokenReviewResult, K8sAuthProviderError> {
+            Ok(QueryTokenReviewResult {
+                claims: K8sClaims {
+                    aud: vec![],
+                    exp: 0,
+                    sub: String::new(),
+                },
+                token_review: json!({}),
+            })
         }
     }
 
@@ -261,6 +272,28 @@ mod tests {
 
         assert_eq!(ns, "my_ns");
         assert_eq!(sa, "my_sa");
+    }
+
+    #[test]
+    fn test_flatten_k8s_claims() {
+        let provider = make_service(MockK8sAuthBackend::default());
+
+        let claims = provider
+            .flatten_k8s_claims(
+                &json!({
+                    "status": {"authenticated": true, "user": {"username": "system:serviceaccount:target_ns:target_sa"}}
+                }),
+                &K8sClaims {
+                    aud: vec!["10.0.0.1".to_string(), "kubernetes".to_string()],
+                    exp: 1234567890,
+                    sub: "system:serviceaccount:target_ns:target_sa".to_string(),
+                },
+            )
+            .expect("valid claims should succeed");
+
+        assert_eq!(claims["k8s.serviceaccount.name"], vec!["target_sa"]);
+        assert_eq!(claims["k8s.serviceaccount.namespace"], vec!["target_ns"]);
+        assert_eq!(claims["k8s.aud"], vec!["10.0.0.1", "kubernetes"]);
     }
 
     #[tokio::test]

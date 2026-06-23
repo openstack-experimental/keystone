@@ -18,7 +18,23 @@ mod claims;
 mod error;
 mod instance;
 
+use serde_json::Value;
+
 pub use auth::*;
 pub use claims::*;
 pub use error::*;
 pub use instance::*;
+
+/// Combined result of a successful TokenReview call.
+///
+/// Contains both the K8s API response (JSON) and the decoded JWT claims that
+/// were validated before the round-trip, so the caller can propagate `aud`
+/// (and other fields) into the flattened claims map for the mapping engine.
+#[derive(Debug, Clone)]
+pub struct QueryTokenReviewResult {
+    /// Decoded JWT claims from the presented token.
+    pub claims: K8sClaims,
+
+    /// TokenReview response body.
+    pub token_review: Value,
+}

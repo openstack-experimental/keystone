@@ -26,7 +26,7 @@ use tracing::debug;
 
 use openstack_keystone_core::k8s_auth::K8sAuthProviderError;
 pub use openstack_keystone_core::k8s_auth::K8sHttpClient;
-use openstack_keystone_core_types::k8s_auth::{K8sAuthInstance, K8sClaims};
+use openstack_keystone_core_types::k8s_auth::{K8sAuthInstance, K8sClaims, QueryTokenReviewResult};
 
 /// Path to the service account CA cert mounted in a K8s pod.
 const SERVICE_ACCOUNT_CERT_PATH: &str = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt";
@@ -105,8 +105,8 @@ impl K8sHttpClient for KeystoneK8sHttpClient {
         &self,
         instance: &K8sAuthInstance,
         jwt: &str,
-    ) -> Result<Value, K8sAuthProviderError> {
-        Self::validate_jwt(jwt)?;
+    ) -> Result<QueryTokenReviewResult, K8sAuthProviderError> {
+        let claims = Self::validate_jwt(jwt)?;
         let client = self.get_or_create_client(instance).await?;
 
         let body = serde_json::json!({
@@ -129,9 +129,10 @@ impl K8sHttpClient for KeystoneK8sHttpClient {
             .map_err(K8sAuthProviderError::http)?;
 
         match response.status() {
-            StatusCode::OK | StatusCode::CREATED => {
-                Ok(response.json().await.map_err(K8sAuthProviderError::http)?)
-            }
+            StatusCode::OK | StatusCode::CREATED => Ok(QueryTokenReviewResult {
+                claims,
+                token_review: response.json().await.map_err(K8sAuthProviderError::http)?,
+            }),
             status if status.is_client_error() => {
                 debug!("Kubernetes returned {:?}", response);
                 Err(K8sAuthProviderError::InvalidToken)
@@ -151,7 +152,7 @@ impl K8sHttpClient for KeystoneK8sHttpClient {
 /// Performs JWT decode + expiration validation (shared with production impl),
 /// then returns a pre-configured response.
 pub struct MockK8sHttpClient {
-    response: Mutex<Option<Result<Value, K8sAuthProviderError>>>,
+    response: Mutex<Option<Result<QueryTokenReviewResult, K8sAuthProviderError>>>,
 }
 
 impl Default for MockK8sHttpClient {
@@ -163,7 +164,7 @@ impl Default for MockK8sHttpClient {
 }
 
 impl MockK8sHttpClient {
-    pub fn with_response(response: Result<Value, K8sAuthProviderError>) -> Self {
+    pub fn with_response(response: Result<QueryTokenReviewResult, K8sAuthProviderError>) -> Self {
         Self {
             response: Mutex::new(Some(response)),
         }
@@ -176,20 +177,21 @@ impl K8sHttpClient for MockK8sHttpClient {
         &self,
         _instance: &K8sAuthInstance,
         jwt: &str,
-    ) -> Result<Value, K8sAuthProviderError> {
-        // Reuse production validation logic
-        let _claims = KeystoneK8sHttpClient::validate_jwt(jwt)?;
+    ) -> Result<QueryTokenReviewResult, K8sAuthProviderError> {
+        let claims = KeystoneK8sHttpClient::validate_jwt(jwt)?;
 
-        // Return pre-configured response or default authenticated response
         let response = self.response.lock().unwrap().take();
         match response {
             Some(r) => r,
-            None => Ok(serde_json::json!({
-                "status": {
-                    "authenticated": true,
-                    "user": {"username": "system:serviceaccount:ns:sa"}
-                }
-            })),
+            None => Ok(QueryTokenReviewResult {
+                claims,
+                token_review: serde_json::json!({
+                    "status": {
+                        "authenticated": true,
+                        "user": {"username": "system:serviceaccount:ns:sa"}
+                    }
+                }),
+            }),
         }
     }
 }
@@ -209,7 +211,9 @@ impl std::error::Error for K8sServerResponseError {}
 #[cfg(test)]
 mod tests {
     use httpmock::{Method, MockServer};
-    use openstack_keystone_core_types::k8s_auth::{K8sAuthInstance, K8sClaims};
+    use openstack_keystone_core_types::k8s_auth::{
+        K8sAuthInstance, K8sClaims, QueryTokenReviewResult,
+    };
 
     use super::*;
 
@@ -360,29 +364,51 @@ FPrC1HpT3dzIAiEAtEB0so+KoJb/2Opn1RycVzxke1CQrWgjS8ySnnFK5ok=
                 "user": {"username": "system:serviceaccount:test:sa"}
             }
         });
-        let mock = MockK8sHttpClient::with_response(Ok(resp));
+        let mock = MockK8sHttpClient::with_response(Ok(QueryTokenReviewResult {
+            claims: K8sClaims {
+                aud: vec![],
+                exp: 0,
+                sub: String::new(),
+            },
+            token_review: resp,
+        }));
         let jwt = make_token(60);
         let instance = make_instance_no_ca();
-        let result = mock
+        let review = mock
             .query_token_review(&instance, &jwt)
             .await
             .expect("should be ok");
-        assert!(result["status"]["authenticated"].as_bool().unwrap());
+        assert!(
+            review.token_review["status"]["authenticated"]
+                .as_bool()
+                .unwrap()
+        );
     }
 
     #[tokio::test]
     async fn mock_response_used_once() {
         let resp = serde_json::json!({"custom": true});
-        let mock = MockK8sHttpClient::with_response(Ok(resp));
+        let mock = MockK8sHttpClient::with_response(Ok(QueryTokenReviewResult {
+            claims: K8sClaims {
+                aud: vec![],
+                exp: 0,
+                sub: String::new(),
+            },
+            token_review: resp,
+        }));
         let jwt = make_token(60);
         let instance = make_instance_no_ca();
 
         let r1 = mock.query_token_review(&instance, &jwt).await.unwrap();
-        assert!(r1["custom"].as_bool().unwrap());
+        assert!(r1.token_review["custom"].as_bool().unwrap());
 
         let r2 = mock.query_token_review(&instance, &jwt).await.unwrap();
-        assert!(r2["custom"].is_null());
-        assert!(r2["status"]["authenticated"].as_bool().unwrap());
+        assert!(r2.token_review["custom"].is_null());
+        assert!(
+            r2.token_review["status"]["authenticated"]
+                .as_bool()
+                .unwrap()
+        );
     }
 
     // --- Full HTTP round-trip tests ---
@@ -392,7 +418,7 @@ FPrC1HpT3dzIAiEAtEB0so+KoJb/2Opn1RycVzxke1CQrWgjS8ySnnFK5ok=
         let mock_srv = MockServer::start();
         let jwt = make_token(60);
 
-        let mock = mock_srv.mock(|when, then| {
+        let _mock = mock_srv.mock(|when, then| {
             when.method(Method::POST)
                 .path("/apis/authentication.k8s.io/v1/tokenreviews")
                 .header("authorization", format!("Bearer {}", jwt))
@@ -422,16 +448,19 @@ FPrC1HpT3dzIAiEAtEB0so+KoJb/2Opn1RycVzxke1CQrWgjS8ySnnFK5ok=
             name: Some("t".into()),
         };
 
-        let result = client.query_token_review(&instance, &jwt).await;
-        assert!(result.is_ok());
-
-        let body = result.unwrap();
-        assert!(body["status"]["authenticated"].as_bool().unwrap());
+        let body = client.query_token_review(&instance, &jwt).await.unwrap();
+        assert!(
+            body.token_review["status"]["authenticated"]
+                .as_bool()
+                .unwrap()
+        );
         assert_eq!(
-            body["status"]["user"]["username"].as_str().unwrap(),
+            body.token_review["status"]["user"]["username"]
+                .as_str()
+                .unwrap(),
             "system:serviceaccount:test_ns:test_sa"
         );
-        mock.assert();
+        assert_eq!(body.claims.aud, vec!["aud".to_string()]);
     }
 
     #[tokio::test]

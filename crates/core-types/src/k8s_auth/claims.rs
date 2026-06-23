@@ -15,7 +15,7 @@
 use serde::{Deserialize, Serialize};
 
 /// K8s JWT claims structure.
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct K8sClaims {
     pub aud: Vec<String>,
     pub exp: u64,

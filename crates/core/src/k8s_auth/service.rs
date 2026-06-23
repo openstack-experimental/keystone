@@ -182,6 +182,7 @@ mod tests {
     use crate::k8s_auth::K8sHttpClient;
     use crate::k8s_auth::backend::MockK8sAuthBackend;
     use crate::tests::get_mocked_state;
+    use openstack_keystone_core_types::k8s_auth::{K8sClaims, QueryTokenReviewResult};
 
     struct TestK8sHttpClient;
 
@@ -191,8 +192,15 @@ mod tests {
             &self,
             _instance: &K8sAuthInstance,
             _jwt: &str,
-        ) -> Result<serde_json::Value, K8sAuthProviderError> {
-            Ok(json!({}))
+        ) -> Result<QueryTokenReviewResult, K8sAuthProviderError> {
+            Ok(QueryTokenReviewResult {
+                claims: K8sClaims {
+                    aud: vec![],
+                    exp: 0,
+                    sub: String::new(),
+                },
+                token_review: json!({}),
+            })
         }
     }
 
