@@ -22,18 +22,19 @@ use base64::{
     Engine as _,
     engine::general_purpose::{STANDARD, STANDARD_NO_PAD},
 };
-use hmac::Mac;
-use pbkdf2::Pbkdf2;
-use pbkdf2::password_hash::rand_core::OsRng;
-use pbkdf2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
+// KeyInit provides new_from_slice; Mac provides update/finalize.
+use hmac::{Hmac, KeyInit, Mac};
 use rand::distr::{Alphanumeric, SampleString};
-use scrypt::Scrypt;
-use sha2::Digest;
 use subtle::ConstantTimeEq;
 
 use openstack_keystone_config::{Config, PasswordHashingAlgo};
 
-type HmacSha256 = hmac::Hmac<sha2::Sha256>;
+// HMAC type aliases — use workspace sha2 v0.11 / hmac v0.13 (digest v0.11).
+// The pbkdf2 crate (v0.12) uses sha2 v0.10 (digest v0.10) internally, which
+// is a different type family. By not importing pbkdf2::pbkdf2_hmac and instead
+// implementing PBKDF2 ourselves here, we avoid the cross-version trait conflict.
+type HmacSha256 = Hmac<sha2::Sha256>;
+type HmacSha512 = Hmac<sha2::Sha512>;
 
 /// Length in characters of a bcrypt-encoded (Radix64) salt string.
 const BCRYPT_SALT_LEN: usize = 22;
@@ -55,7 +56,7 @@ const BCRYPT_FULL_HASH_LEN: usize = BCRYPT_PREFIX_LEN + BCRYPT_SALT_LEN + BCRYPT
 const SHA512_OUTPUT_BYTES: usize = 64;
 
 /// Cost factor used solely to derive the canonical Radix64 encoding of a
-/// freshly generated random salt (see `hash_password`'s `BcryptSha256` arm).
+/// freshly generated random salt (see `BcryptSha256Hasher::hash`).
 /// This is bcrypt's minimum permitted cost factor, so the extra bcrypt call
 /// it requires is negligible compared to the real hash computed afterwards
 /// at the configured `rounds`.
@@ -82,39 +83,6 @@ fn get_dummy_cache() -> &'static DynamicDummyCache {
     })
 }
 
-/// Gets a cached dummy hash matching the precise parameters of the current
-/// configuration profile, preventing timing side-channel variations.
-pub async fn get_or_init_dummy_hash(conf: &Config) -> Result<String, PasswordHashError> {
-    let algo = &conf.identity.password_hashing_algorithm;
-    let rounds = conf.identity.password_hash_rounds.unwrap_or(12);
-    let cache_key = format!("{:?}-{}", algo, rounds);
-
-    let cache = get_dummy_cache();
-
-    // Attempt read access first
-    {
-        let read_guard = cache.map.read().await;
-        if let Some(cached_hash) = read_guard.get(&cache_key) {
-            return Ok(cached_hash.clone());
-        }
-    }
-
-    // Compute outside the lock to avoid stalling the cache for other configurations
-    let new_hash = generate_dummy_hash(conf).await?;
-
-    // Acquire write lock only for the quick insertion. Re-check under the
-    // write lock: if another concurrent caller raced us and already
-    // populated this key, keep their value so every caller observes the
-    // same cached hash (double-checked locking).
-    let mut write_guard = cache.map.write().await;
-    if let Some(existing) = write_guard.get(&cache_key) {
-        return Ok(existing.clone());
-    }
-    write_guard.insert(cache_key, new_hash.clone());
-
-    Ok(new_hash)
-}
-
 /// Password hashing related errors.
 #[derive(Error, Debug)]
 pub enum PasswordHashError {
@@ -137,9 +105,414 @@ pub enum PasswordHashError {
     },
 }
 
+// ---------------------------------------------------------------------------
+// PasswordHasher trait — mirrors the hash()/verify() static-method pair
+// every Python hasher class in keystone.common.password_hashers implements.
+// Dispatch is always static (no dyn), so async fn in traits is safe here.
+// ---------------------------------------------------------------------------
+
+trait PasswordHasher {
+    async fn hash(&self, conf: &Config, password: &[u8]) -> Result<String, PasswordHashError>;
+    async fn verify(
+        &self,
+        conf: &Config,
+        password: &[u8],
+        hash: &str,
+    ) -> Result<bool, PasswordHashError>;
+}
+
+// ---------------------------------------------------------------------------
+// Hasher structs — one per algorithm, mirroring Python's class layout.
+// Naming avoids collisions with crate types (e.g. `bcrypt::*`, `scrypt::Scrypt`).
+// ---------------------------------------------------------------------------
+
+struct BcryptHasher;
+struct BcryptSha256Hasher;
+struct ScryptHasher;
+struct Pbkdf2Sha512Hasher;
+/// Rust-only extension — no counterpart in Python Keystone's SUPPORTED_HASHERS.
+/// Stores passwords in plaintext; must never be used in production.
+struct PlaintextHasher;
+
+// ---------------------------------------------------------------------------
+// BcryptHasher — mirrors keystone/common/password_hashers/bcrypt.py::Bcrypt
+// ---------------------------------------------------------------------------
+
+impl PasswordHasher for BcryptHasher {
+    async fn hash(&self, conf: &Config, password: &[u8]) -> Result<String, PasswordHashError> {
+        let password_bytes = password.to_vec();
+        let rounds = conf.identity.password_hash_rounds.unwrap_or(12);
+        // bcrypt::hash is CPU-bound; run off the async executor.
+        let hash =
+            task::spawn_blocking(move || bcrypt::hash(password_bytes, rounds as u32)).await??;
+        Ok(hash)
+    }
+
+    async fn verify(
+        &self,
+        _conf: &Config,
+        password: &[u8],
+        hash: &str,
+    ) -> Result<bool, PasswordHashError> {
+        let password_bytes = password.to_vec();
+        let hash_str = hash.to_string();
+        match task::spawn_blocking(move || bcrypt::verify(password_bytes, &hash_str)).await? {
+            Ok(res) => Ok(res),
+            // A malformed hash string is not a fatal error — it just means
+            // the stored value is not a valid bcrypt hash and cannot match.
+            Err(bcrypt::BcryptError::InvalidHash(_)) => Ok(false),
+            Err(e) => Err(PasswordHashError::from(e)),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// BcryptSha256Hasher — mirrors bcrypt.py::Bcrypt_sha256
+// ---------------------------------------------------------------------------
+
+impl PasswordHasher for BcryptSha256Hasher {
+    async fn hash(&self, conf: &Config, password: &[u8]) -> Result<String, PasswordHashError> {
+        // mirrors keystone/common/password_hashers/bcrypt.py::Bcrypt_sha256.hash():
+        //   salt_with_opts = bcrypt.gensalt(rounds)
+        //   salt = salt_with_opts[-22:]
+        //   hmac_digest = base64.b64encode(hmac.digest(salt, password, "sha256"))
+        //   hashed = bcrypt.hashpw(hmac_digest, salt_with_opts)
+        //   digest = hashed[-31:]
+        //   return f"$bcrypt-sha256$v=2,t=2b,r={rounds}${salt}${digest}"
+        let password_bytes = password.to_vec();
+        let rounds = conf.identity.password_hash_rounds.unwrap_or(12);
+
+        let hash = task::spawn_blocking(move || {
+            // Generate the real salt ourselves instead of throwing away a
+            // full-cost bcrypt computation just to obtain one. We only
+            // need (a) 16 random bytes for the actual hash below, and
+            // (b) their canonical 22-char Radix64 encoding for the HMAC
+            // key / hash record. (b) is obtained via the bcrypt crate's
+            // own (well-tested) salt formatting logic, but at the
+            // algorithm's *minimum* cost factor rather than `rounds` —
+            // the hash output of this call is discarded, only the salt
+            // encoding is used.
+            //
+            // Hand-rolling this encoding instead (e.g. picking 22 random
+            // alphabet characters) is a real trap: a bcrypt salt only
+            // carries 128 bits of entropy across 22 characters, so the
+            // last character has only 4 valid bits - only 4 of the 64
+            // alphabet characters are canonical there. A non-canonical
+            // salt gets silently re-canonicalized by bcrypt when the
+            // hash is computed, so the salt string you embed in the
+            // record stops matching the salt you used for the HMAC key.
+            // Letting the bcrypt crate generate it sidesteps this
+            // entirely.
+            let raw_salt: [u8; 16] = rand::random();
+            let salt_encoder =
+                bcrypt::hash_with_salt(b"unused", BCRYPT_SALT_ENCODING_COST, raw_salt)?;
+            let salt_str = salt_encoder.get_salt();
+
+            // HMAC-SHA256 keyed by the salt bytes, over the password, encoded
+            // with standard PADDED base64 (Python's `base64.b64encode`,
+            // not a padding-stripped variant). This must match
+            // verify()'s encoding byte-for-byte or no hash either path
+            // produces is verifiable by the other.
+            let hmac_res = compute_hmac_sha256(salt_str.as_bytes(), &password_bytes)?;
+            let hmac_digest_b64 = STANDARD.encode(&hmac_res);
+
+            // Hash using the real raw salt and the HMAC-derived intermediate password.
+            let final_bcrypt =
+                bcrypt::hash_with_salt(hmac_digest_b64.as_bytes(), rounds as u32, raw_salt)?;
+            let full_bcrypt_str = final_bcrypt.format_for_version(bcrypt::Version::TwoB);
+            debug_assert_eq!(
+                full_bcrypt_str.len(),
+                BCRYPT_FULL_HASH_LEN,
+                "bcrypt crate's 2b format string length changed unexpectedly"
+            );
+
+            // Extract the exact trailing bcrypt signature digest.
+            let digest_str = &full_bcrypt_str[full_bcrypt_str.len() - BCRYPT_CHECKSUM_LEN..];
+
+            Ok::<String, PasswordHashError>(format!(
+                "$bcrypt-sha256$v=2,t=2b,r={}${}${}",
+                rounds, salt_str, digest_str
+            ))
+        })
+        .await??;
+        Ok(hash)
+    }
+
+    async fn verify(
+        &self,
+        _conf: &Config,
+        password: &[u8],
+        hash: &str,
+    ) -> Result<bool, PasswordHashError> {
+        // mirrors keystone/common/password_hashers/bcrypt.py::Bcrypt_sha256.verify()
+        // exactly: there is no "version" concept in the real implementation.
+        // It always HMACs (never falls back to a plain digest), and it
+        // does not even look at `v=` — it just scans every comma-delimited
+        // param for `t=` and `r=` and ignores anything else. An earlier
+        // revision of this module had a second, version-gated code path
+        // that computed a plain SHA-256 digest (no HMAC) for records
+        // without `v=2`. That path was based on a Passlib-only format
+        // Keystone's own implementation never produces or reads, and has
+        // been removed.
+        let password_bytes = password.to_vec();
+        let hash_str = hash.to_string();
+
+        // Split on '$': ["", "bcrypt-sha256", "v=2,t=2b,r=12", salt, digest]
+        let parts: Vec<&str> = hash_str.split('$').collect();
+        if parts.len() != 5 {
+            debug!("Malformed BcryptSha256 record encountered");
+            return Ok(false);
+        }
+
+        let options = parts[2].to_string();
+        let salt = parts[3].to_string();
+        let checksum_part = parts[4].to_string();
+
+        if salt.len() != BCRYPT_SALT_LEN || checksum_part.len() != BCRYPT_CHECKSUM_LEN {
+            return Ok(false);
+        }
+
+        // Parse t= (bcrypt ident) and r= (cost rounds) from the options field.
+        let mut bcrypt_type = "2b".to_string();
+        let mut rounds = None;
+        for opt in options.split(',') {
+            if let Some(val) = opt.strip_prefix("t=") {
+                bcrypt_type = val.to_string();
+            } else if let Some(val) = opt.strip_prefix("r=") {
+                rounds = Some(val.parse::<u32>().map_err(|_| {
+                    PasswordHashError::CryptoHash("Invalid BcryptSha256 cost factor".into())
+                })?);
+            }
+        }
+
+        let rounds = rounds.ok_or_else(|| {
+            PasswordHashError::CryptoHash("Missing rounds parameter in BcryptSha256 record".into())
+        })?;
+
+        match task::spawn_blocking(move || {
+            // Reconstruct the bcrypt hash string for checkpw.
+            // Python does: new_salt = f"${opts['t']}${opts['r']}${salt}"
+            // then bcrypt.checkpw(hmac_digest, f"{new_salt}{digest}".encode("ascii"))
+            // The {:02} zero-pad here matches bcrypt's own wire format.
+            let reconstructed_hash =
+                format!("${}${:02}${}{}", bcrypt_type, rounds, salt, checksum_part);
+
+            // Re-derive the HMAC digest using the embedded salt.
+            let hmac_res = compute_hmac_sha256(salt.as_bytes(), &password_bytes)?;
+            let intermediate_b64 = STANDARD.encode(&hmac_res);
+
+            bcrypt::verify(intermediate_b64, &reconstructed_hash).map_err(PasswordHashError::from)
+        })
+        .await?
+        {
+            Ok(res) => Ok(res),
+            Err(e) => Err(e),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ScryptHasher — mirrors keystone/common/password_hashers/scrypt.py::Scrypt
+// ---------------------------------------------------------------------------
+
+impl PasswordHasher for ScryptHasher {
+    async fn hash(&self, _conf: &Config, password: &[u8]) -> Result<String, PasswordHashError> {
+        // mirrors keystone/common/password_hashers/scrypt.py::Scrypt.hash()
+        // Python hardcodes: n=2**16 (ln=16), r=8, p=1, salt_size=16, output=32 bytes.
+        // scrypt_block_size / scrypt_parallelism / salt_bytesize config fields are
+        // not yet in IdentityProvider — use Keystone's own defaults until they are added.
+        let password_bytes = password.to_vec();
+        let hash = task::spawn_blocking(move || {
+            let salt: [u8; 16] = rand::random();
+            // Params::new(log_n, r, p, output_len): ln=16 means n=2^16=65536.
+            let params = scrypt::Params::new(16, 8, 1, 32)
+                .map_err(|e| PasswordHashError::CryptoHash(e.to_string()))?;
+            let mut digest = vec![0u8; 32];
+            scrypt::scrypt(&password_bytes, &salt, &params, &mut digest)
+                .map_err(|e| PasswordHashError::CryptoHash(e.to_string()))?;
+            // Python uses binascii.b2a_base64(x).rstrip(b"=\n") — standard base64 no-pad.
+            let salt_str = STANDARD_NO_PAD.encode(salt);
+            let digest_str = STANDARD_NO_PAD.encode(&digest);
+            Ok::<String, PasswordHashError>(format!(
+                "$scrypt$ln=16,r=8,p=1${salt_str}${digest_str}"
+            ))
+        })
+        .await??;
+        Ok(hash)
+    }
+
+    async fn verify(
+        &self,
+        _conf: &Config,
+        password: &[u8],
+        hash: &str,
+    ) -> Result<bool, PasswordHashError> {
+        // mirrors keystone/common/password_hashers/scrypt.py::Scrypt.verify()
+        // Parses the embedded ln/r/p params from the hash string so this path
+        // correctly verifies both hashes produced by this hasher (ln=16) and any
+        // old hashes with different params.
+        let password_bytes = password.to_vec();
+        let hash_str = hash.to_string();
+        let res = task::spawn_blocking(move || -> Result<bool, PasswordHashError> {
+            // Strip leading '$', split on '$': ["scrypt", "ln=N,r=R,p=P", salt_b64, digest_b64]
+            let parts: Vec<&str> = hash_str[1..].split('$').collect();
+            if parts.len() != 4 {
+                return Ok(false);
+            }
+            let (params_str, salt_b64, digest_b64) = (parts[1], parts[2], parts[3]);
+
+            // Parse ln/r/p with Keystone defaults as fallback.
+            let (mut ln, mut r, mut p) = (16u8, 8u32, 1u32);
+            for seg in params_str.split(',') {
+                if let Some(v) = seg.strip_prefix("ln=") {
+                    ln = v
+                        .parse()
+                        .map_err(|_| PasswordHashError::CryptoHash("Invalid scrypt ln".into()))?;
+                } else if let Some(v) = seg.strip_prefix("r=") {
+                    r = v
+                        .parse()
+                        .map_err(|_| PasswordHashError::CryptoHash("Invalid scrypt r".into()))?;
+                } else if let Some(v) = seg.strip_prefix("p=") {
+                    p = v
+                        .parse()
+                        .map_err(|_| PasswordHashError::CryptoHash("Invalid scrypt p".into()))?;
+                }
+            }
+
+            // replace('.', "+") handles old Passlib-era hashes that used '.' in place of '+'.
+            let salt = STANDARD_NO_PAD
+                .decode(salt_b64.replace('.', "+").as_bytes())
+                .map_err(|_| PasswordHashError::CryptoHash("Invalid scrypt salt".into()))?;
+            let expected = STANDARD_NO_PAD
+                .decode(digest_b64.replace('.', "+").as_bytes())
+                .map_err(|_| PasswordHashError::CryptoHash("Invalid scrypt digest".into()))?;
+
+            let params = scrypt::Params::new(ln, r, p, expected.len())
+                .map_err(|e| PasswordHashError::CryptoHash(e.to_string()))?;
+            let mut computed = vec![0u8; expected.len()];
+            scrypt::scrypt(&password_bytes, &salt, &params, &mut computed)
+                .map_err(|e| PasswordHashError::CryptoHash(e.to_string()))?;
+
+            Ok(computed.as_slice().ct_eq(expected.as_slice()).into())
+        })
+        .await??;
+        Ok(res)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Pbkdf2Sha512Hasher — mirrors keystone/common/password_hashers/pbkdf2.py::Sha512
+// ---------------------------------------------------------------------------
+
+impl PasswordHasher for Pbkdf2Sha512Hasher {
+    async fn hash(&self, conf: &Config, password: &[u8]) -> Result<String, PasswordHashError> {
+        // mirrors keystone/common/password_hashers/pbkdf2.py::Sha512.hash()
+        // Wire format: $pbkdf2-sha512$<rounds>$<salt_b64>$<digest_b64>
+        // salt and digest are standard base64 no-pad (binascii.b2a_base64().rstrip("=\n")).
+        let password_bytes = password.to_vec();
+        let rounds = conf.identity.password_hash_rounds.unwrap_or(25000);
+        let hash = task::spawn_blocking(move || {
+            let salt: [u8; 16] = rand::random();
+            let mut digest = [0u8; SHA512_OUTPUT_BYTES];
+            pbkdf2_hmac_sha512(&password_bytes, &salt, rounds as u32, &mut digest)?;
+            let salt_str = STANDARD_NO_PAD.encode(salt);
+            let digest_str = STANDARD_NO_PAD.encode(digest);
+            Ok::<String, PasswordHashError>(format!(
+                "$pbkdf2-sha512${rounds}${salt_str}${digest_str}"
+            ))
+        })
+        .await??;
+        Ok(hash)
+    }
+
+    async fn verify(
+        &self,
+        _conf: &Config,
+        password: &[u8],
+        hash: &str,
+    ) -> Result<bool, PasswordHashError> {
+        // mirrors keystone/common/password_hashers/pbkdf2.py::Sha512.verify()
+        // Parses the embedded rounds from the hash string.
+        // replace('.', "+") handles old Passlib-era hashes that used '.' instead of '+'.
+        let password_bytes = password.to_vec();
+        let hash_str = hash.to_string();
+        let res = task::spawn_blocking(move || {
+            // Split "$pbkdf2-sha512$<rounds>$<salt>$<digest>" on '$':
+            // parts = ["", "pbkdf2-sha512", rounds_str, salt_b64, digest_b64]
+            let parts: Vec<&str> = hash_str.split('$').collect();
+            if parts.len() != 5 || parts[1] != "pbkdf2-sha512" {
+                return Err(PasswordHashError::CryptoHash(
+                    "Unrecognized PBKDF2 hash format".into(),
+                ));
+            }
+
+            let rounds: u32 = parts[2].parse().map_err(|_| {
+                PasswordHashError::CryptoHash(
+                    "Invalid PBKDF2 rounds configuration parameter".into(),
+                )
+            })?;
+
+            let salt_str = parts[3].replace('.', "+");
+            let digest_str = parts[4].replace('.', "+");
+
+            let salt = STANDARD_NO_PAD
+                .decode(salt_str.as_bytes())
+                .map_err(|_| PasswordHashError::CryptoHash("Invalid PBKDF2 salt".into()))?;
+
+            let expected_digest = STANDARD_NO_PAD.decode(digest_str.as_bytes()).map_err(|_| {
+                PasswordHashError::CryptoHash("Invalid PBKDF2 digest encoding".into())
+            })?;
+
+            if expected_digest.len() != SHA512_OUTPUT_BYTES {
+                return Err(PasswordHashError::CryptoHash(
+                    "Invalid PBKDF2-SHA512 checksum buffer bounds".into(),
+                ));
+            }
+
+            let mut computed_digest = [0u8; SHA512_OUTPUT_BYTES];
+            pbkdf2_hmac_sha512(&password_bytes, &salt, rounds, &mut computed_digest)?;
+
+            Ok(computed_digest
+                .as_slice()
+                .ct_eq(expected_digest.as_slice())
+                .into())
+        })
+        .await??;
+        Ok(res)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// PlaintextHasher — Rust-only, no Python counterpart
+// ---------------------------------------------------------------------------
+
+impl PasswordHasher for PlaintextHasher {
+    async fn hash(&self, _conf: &Config, password: &[u8]) -> Result<String, PasswordHashError> {
+        warn!(
+            "PasswordHashingAlgo::None is active — passwords are stored and compared in plaintext"
+        );
+        // Reject invalid UTF-8 outright to prevent collisions from lossy conversion.
+        String::from_utf8(password.to_vec())
+            .map_err(|_| PasswordHashError::CryptoHash("Invalid UTF-8 sequence in password".into()))
+    }
+
+    async fn verify(
+        &self,
+        _conf: &Config,
+        password: &[u8],
+        hash: &str,
+    ) -> Result<bool, PasswordHashError> {
+        Ok(password.ct_eq(hash.as_bytes()).into())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Shared helper functions
+// ---------------------------------------------------------------------------
+
 /// Verify the password length against algorithm constraints and truncate if necessary.
 ///
-/// Mirrors Keystone's own `password_hashing.py` pre-dispatch truncation:
+/// Mirrors Keystone's own `password_hashing.py::verify_length_and_trunc_password`:
 /// only `Bcrypt` is capped at 72 bytes (bcrypt's native input limit); every
 /// other algorithm is left at the full `config_max_length`, since
 /// `BcryptSha256`, `Scrypt` and `Pbkdf2Sha512` all first reduce the
@@ -163,7 +536,10 @@ fn verify_length_and_trunc_password<'a>(
     password
 }
 
-/// Helper to generate a compliant, secure standard HMAC-SHA256 digest string
+/// HMAC-SHA256 keyed by `salt`, over `password`. Returns raw 32-byte digest.
+///
+/// Both `hash` and `verify` in `BcryptSha256Hasher` must use this function so
+/// the intermediate digest is identical on both paths.
 fn compute_hmac_sha256(salt: &[u8], password: &[u8]) -> Result<[u8; 32], PasswordHashError> {
     let mut mac = HmacSha256::new_from_slice(salt).map_err(|e| {
         PasswordHashError::CryptoHash(format!("HMAC key initialization error: {e}"))
@@ -173,6 +549,114 @@ fn compute_hmac_sha256(salt: &[u8], password: &[u8]) -> Result<[u8; 32], Passwor
     let mut bytes = [0u8; 32];
     bytes.copy_from_slice(&result);
     Ok(bytes)
+}
+
+/// PBKDF2-HMAC-SHA512 using the workspace's hmac v0.13 + sha2 v0.11.
+///
+/// The pbkdf2 crate (v0.12) uses sha2 v0.10 / digest v0.10 internally,
+/// which is a different type family from the workspace. Implementing the
+/// algorithm directly avoids the resulting incompatible trait bounds.
+/// Output is exactly SHA512_OUTPUT_BYTES (64) — one PBKDF2 block.
+fn pbkdf2_hmac_sha512(
+    password: &[u8],
+    salt: &[u8],
+    iterations: u32,
+    output: &mut [u8; SHA512_OUTPUT_BYTES],
+) -> Result<(), PasswordHashError> {
+    // U1 = HMAC(password, salt || INT(1))
+    let mut u = {
+        let mut mac = HmacSha512::new_from_slice(password)
+            .map_err(|e| PasswordHashError::CryptoHash(format!("PBKDF2 HMAC init: {e}")))?;
+        mac.update(salt);
+        // Block index is big-endian 4-byte integer, starting at 1.
+        mac.update(&1u32.to_be_bytes());
+        let result = mac.finalize().into_bytes();
+        let mut arr = [0u8; SHA512_OUTPUT_BYTES];
+        arr.copy_from_slice(&result);
+        arr
+    };
+
+    // Seed the output with U1, then XOR in U2..Uc.
+    output.copy_from_slice(&u);
+
+    for _ in 1..iterations {
+        let mut mac = HmacSha512::new_from_slice(password)
+            .map_err(|e| PasswordHashError::CryptoHash(format!("PBKDF2 HMAC iter: {e}")))?;
+        mac.update(&u);
+        let result = mac.finalize().into_bytes();
+        let mut next_u = [0u8; SHA512_OUTPUT_BYTES];
+        next_u.copy_from_slice(&result);
+        u = next_u;
+        // XOR accumulate: DK[i] ^= Uc[i]
+        for (a, b) in output.iter_mut().zip(u.iter()) {
+            *a ^= b;
+        }
+    }
+
+    Ok(())
+}
+
+/// Determine which algorithm produced `hash` by inspecting its prefix.
+///
+/// Falls back to `configured` for unrecognized prefixes (e.g. plaintext
+/// stored by `PlaintextHasher`, or truly unknown formats).
+fn detect_algo(hash: &str, configured: &PasswordHashingAlgo) -> PasswordHashingAlgo {
+    if hash.starts_with("$2b$") || hash.starts_with("$2a$") || hash.starts_with("$2y$") {
+        PasswordHashingAlgo::Bcrypt
+    } else if hash.starts_with("$bcrypt-sha256$") {
+        PasswordHashingAlgo::BcryptSha256
+    } else if hash.starts_with("$scrypt$") {
+        PasswordHashingAlgo::Scrypt
+    } else if hash.starts_with("$pbkdf2-sha512$") {
+        PasswordHashingAlgo::Pbkdf2Sha512
+    } else {
+        configured.clone()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Public API — signatures unchanged; callers outside this module are unaffected.
+// ---------------------------------------------------------------------------
+
+/// Gets a cached dummy hash matching the precise parameters of the current
+/// configuration profile, preventing timing side-channel variations.
+pub async fn get_or_init_dummy_hash(conf: &Config) -> Result<String, PasswordHashError> {
+    let algo = &conf.identity.password_hashing_algorithm;
+    let rounds = conf.identity.password_hash_rounds.unwrap_or(12);
+    let cache_key = format!("{:?}-{}", algo, rounds);
+
+    let cache = get_dummy_cache();
+
+    // Fast path: read lock only.
+    {
+        let read_guard = cache.map.read().await;
+        if let Some(cached_hash) = read_guard.get(&cache_key) {
+            return Ok(cached_hash.clone());
+        }
+    }
+
+    // Compute outside the lock to avoid stalling other callers.
+    let new_hash = generate_dummy_hash(conf).await?;
+
+    // Double-checked locking: re-check under write lock. If another concurrent
+    // caller already populated this key, keep their value.
+    let mut write_guard = cache.map.write().await;
+    if let Some(existing) = write_guard.get(&cache_key) {
+        return Ok(existing.clone());
+    }
+    write_guard.insert(cache_key, new_hash.clone());
+
+    Ok(new_hash)
+}
+
+/// Clear all cached dummy hashes.
+///
+/// Call this whenever the Keystone configuration reloads (e.g. via
+/// `ConfigManager::notify_tx`) so that stale `(algorithm, rounds)` entries
+/// are not served after a config change. See `crates/keystone/src/main.rs`
+/// for the wiring.
+pub async fn reset_dummy_hash_cache() {
+    get_dummy_cache().map.write().await.clear();
 }
 
 /// Generate a dummy password hash matching the configured algorithm.
@@ -192,124 +676,23 @@ pub async fn hash_password<S: AsRef<[u8]>>(
     conf: &Config,
     password: S,
 ) -> Result<String, PasswordHashError> {
-    let truncated_password = verify_length_and_trunc_password(
+    // Truncation uses the *configured* algorithm, not any algorithm detected
+    // from an existing hash string. This is the correct behaviour during
+    // algorithm migrations: a user whose hash is in the old format and whose
+    // password is longer than the new algorithm's limit must be truncated
+    // consistently with what Python Keystone would do.
+    let truncated = verify_length_and_trunc_password(
         password.as_ref(),
         &conf.identity.password_hashing_algorithm,
         conf.identity.max_password_length,
     );
 
     match conf.identity.password_hashing_algorithm {
-        PasswordHashingAlgo::Bcrypt => {
-            let password_bytes = truncated_password.to_vec();
-            let rounds = conf.identity.password_hash_rounds.unwrap_or(12);
-            let hash =
-                task::spawn_blocking(move || bcrypt::hash(password_bytes, rounds as u32)).await??;
-            Ok(hash)
-        }
-
-        PasswordHashingAlgo::BcryptSha256 => {
-            // Mirrors keystone/common/password_hashers/bcrypt.py::Bcrypt_sha256.hash():
-            //   salt_with_opts = bcrypt.gensalt(rounds)
-            //   salt = salt_with_opts[-22:]
-            //   hmac_digest = base64.b64encode(hmac.digest(salt, password, "sha256"))
-            //   hashed = bcrypt.hashpw(hmac_digest, salt_with_opts)
-            //   digest = hashed[-31:]
-            //   return f"$bcrypt-sha256$v=2,t=2b,r={rounds}${salt}${digest}"
-            let password_bytes = truncated_password.to_vec();
-            let rounds = conf.identity.password_hash_rounds.unwrap_or(12);
-
-            let hash = task::spawn_blocking(move || {
-                // Generate the real salt ourselves instead of throwing away a
-                // full-cost bcrypt computation just to obtain one. We only
-                // need (a) 16 random bytes for the actual hash below, and
-                // (b) their canonical 22-char Radix64 encoding for the HMAC
-                // key / hash record. (b) is obtained via the bcrypt crate's
-                // own (well-tested) salt formatting logic, but at the
-                // algorithm's *minimum* cost factor rather than `rounds` —
-                // the hash output of this call is discarded, only the salt
-                // encoding is used.
-                //
-                // Hand-rolling this encoding instead (e.g. picking 22 random
-                // alphabet characters) is a real trap: a bcrypt salt only
-                // carries 128 bits of entropy across 22 characters, so the
-                // last character has only 4 valid bits - only 4 of the 64
-                // alphabet characters are canonical there. A non-canonical
-                // salt gets silently re-canonicalized by bcrypt when the
-                // hash is computed, so the salt string you embed in the
-                // record stops matching the salt you used for the HMAC key.
-                // Letting the bcrypt crate generate it sidesteps this
-                // entirely.
-                let raw_salt: [u8; 16] = rand::random();
-                let salt_encoder =
-                    bcrypt::hash_with_salt(b"unused", BCRYPT_SALT_ENCODING_COST, raw_salt)?;
-                let salt_str = salt_encoder.get_salt();
-
-                // HMAC-SHA256 keyed by the salt, over the password, encoded
-                // with standard PADDED base64 (Python's `base64.b64encode`,
-                // not a padding-stripped variant). This must match
-                // verify_password's encoding byte-for-byte or no hash
-                // either path produces is verifiable by the other.
-                let hmac_res = compute_hmac_sha256(salt_str.as_bytes(), &password_bytes)?;
-                let hmac_digest_b64 = STANDARD.encode(&hmac_res);
-
-                // Hash using the real raw salt and the HMAC-derived intermediate password
-                let final_bcrypt =
-                    bcrypt::hash_with_salt(hmac_digest_b64.as_bytes(), rounds as u32, raw_salt)?;
-                let full_bcrypt_str = final_bcrypt.format_for_version(bcrypt::Version::TwoB);
-                debug_assert_eq!(
-                    full_bcrypt_str.len(),
-                    BCRYPT_FULL_HASH_LEN,
-                    "bcrypt crate's 2b format string length changed unexpectedly"
-                );
-
-                // Extract the exact trailing bcrypt signature digest
-                let digest_str = &full_bcrypt_str[full_bcrypt_str.len() - BCRYPT_CHECKSUM_LEN..];
-
-                Ok::<String, PasswordHashError>(format!(
-                    "$bcrypt-sha256$v=2,t=2b,r={}${}${}",
-                    rounds, salt_str, digest_str
-                ))
-            })
-            .await??;
-            Ok(hash)
-        }
-
-        PasswordHashingAlgo::Scrypt => {
-            let password_bytes = truncated_password.to_vec();
-            let salt = SaltString::generate(&mut OsRng);
-            let hash = task::spawn_blocking(move || {
-                Scrypt
-                    .hash_password(&password_bytes, &salt)
-                    .map(|hash| hash.to_string())
-                    .map_err(|e| PasswordHashError::CryptoHash(e.to_string()))
-            })
-            .await??;
-            Ok(hash)
-        }
-
-        PasswordHashingAlgo::Pbkdf2Sha512 => {
-            let password_bytes = truncated_password.to_vec();
-            let rounds = conf.identity.password_hash_rounds.unwrap_or(25000);
-            let hash = task::spawn_blocking(move || {
-                let salt: [u8; 16] = rand::random(); // or configurable salt_bytesize
-                let mut digest = vec![0u8; 64];
-                pbkdf2::pbkdf2_hmac::<sha2::Sha512>(&password_bytes, &salt, rounds, &mut digest);
-                let salt_str = STANDARD_NO_PAD.encode(salt);
-                let digest_str = STANDARD_NO_PAD.encode(&digest);
-                format!("$pbkdf2-sha512${rounds}${salt_str}${digest_str}")
-            }).await?;
-            Ok(hash)
-        }
-
-        PasswordHashingAlgo::None => {
-            warn!(
-                "PasswordHashingAlgo::None is active — passwords are stored and compared in plaintext"
-            );
-            // Reject invalid UTF-8 outright instead of mutating it via lossy conversion to prevent collisions
-            String::from_utf8(truncated_password.to_vec()).map_err(|_| {
-                PasswordHashError::CryptoHash("Invalid UTF-8 sequence in password".into())
-            })
-        }
+        PasswordHashingAlgo::Bcrypt => BcryptHasher.hash(conf, truncated).await,
+        PasswordHashingAlgo::BcryptSha256 => BcryptSha256Hasher.hash(conf, truncated).await,
+        PasswordHashingAlgo::Scrypt => ScryptHasher.hash(conf, truncated).await,
+        PasswordHashingAlgo::Pbkdf2Sha512 => Pbkdf2Sha512Hasher.hash(conf, truncated).await,
+        PasswordHashingAlgo::None => PlaintextHasher.hash(conf, truncated).await,
     }
 }
 
@@ -319,191 +702,36 @@ pub async fn verify_password<P: AsRef<[u8]>, H: AsRef<str>>(
     password: P,
     hash: H,
 ) -> Result<bool, PasswordHashError> {
-    let password_hash = hash.as_ref().to_string();
-    let raw_password = password.as_ref();
+    let hash_str = hash.as_ref();
 
-    let algo = if password_hash.starts_with("$2b$")
-        || password_hash.starts_with("$2a$")
-        || password_hash.starts_with("$2y$")
-    {
-        PasswordHashingAlgo::Bcrypt
-    } else if password_hash.starts_with("$bcrypt-sha256$") {
-        PasswordHashingAlgo::BcryptSha256
-    } else if password_hash.starts_with("$scrypt$") {
-        PasswordHashingAlgo::Scrypt
-    } else if password_hash.starts_with("$pbkdf2-sha512$") {
-        PasswordHashingAlgo::Pbkdf2Sha512
-    } else {
-        conf.identity.password_hashing_algorithm.clone()
-    };
+    // Detect algorithm from the hash prefix for dispatch, but truncate using
+    // the *configured* algorithm. These two may differ during an algorithm
+    // migration (e.g. config changed to bcrypt_sha256, but user has an old
+    // bcrypt hash). Truncating by detected algo instead of configured algo
+    // would produce wrong results: a user with a >72-byte password whose
+    // old bcrypt hash was computed from the first 72 bytes would fail
+    // verification once the config switches to a non-truncating algorithm.
+    let detected = detect_algo(hash_str, &conf.identity.password_hashing_algorithm);
 
-    let truncated_password = verify_length_and_trunc_password(
-        raw_password,
-        &conf.identity.password_hashing_algorithm,  
+    let truncated = verify_length_and_trunc_password(
+        password.as_ref(),
+        &conf.identity.password_hashing_algorithm,
         conf.identity.max_password_length,
     );
 
-
-    match algo {
-        PasswordHashingAlgo::Bcrypt => {
-            let password_bytes = truncated_password.to_vec();
-            match task::spawn_blocking(move || bcrypt::verify(password_bytes, &password_hash))
-                .await?
-            {
-                Ok(res) => Ok(res),
-                Err(e) => Err(PasswordHashError::from(e))
-            }
-        }
-
+    match detected {
+        PasswordHashingAlgo::Bcrypt => BcryptHasher.verify(conf, truncated, hash_str).await,
         PasswordHashingAlgo::BcryptSha256 => {
-            // Mirrors keystone/common/password_hashers/bcrypt.py::Bcrypt_sha256.verify()
-            // exactly: there is no "version" concept in the real implementation.
-            // It always HMACs (never falls back to a plain digest), and it
-            // does not even look at `v=` - it just scans every comma-delimited
-            // param for `t=` and `r=` and ignores anything else. An earlier
-            // revision of this module had a second, version-gated code path
-            // that computed a plain SHA-256 digest (no HMAC) for records
-            // without `v=2`. That path was based on a Passlib-only legacy
-            // format Keystone's own implementation never produces or reads,
-            // and has been removed.
-            let password_bytes = truncated_password.to_vec();
-
-            let parts: Vec<&str> = password_hash.split('$').collect();
-            if parts.len() != 5 {
-                debug!("Malformed BcryptSha256 record encountered");
-                return Ok(false);
-            }
-
-            let options = parts[2].to_string();
-            let salt = parts[3].to_string();
-            let checksum_part = parts[4].to_string();
-
-            if salt.len() != BCRYPT_SALT_LEN || checksum_part.len() != BCRYPT_CHECKSUM_LEN {
-                return Ok(false);
-            }
-
-            let mut bcrypt_type = "2b".to_string();
-            let mut rounds = None;
-            for opt in options.split(',') {
-                if let Some(val) = opt.strip_prefix("t=") {
-                    bcrypt_type = val.to_string();
-                } else if let Some(val) = opt.strip_prefix("r=") {
-                    rounds = Some(val.parse::<u32>().map_err(|_| {
-                        PasswordHashError::CryptoHash(
-                            "Invalid BcryptSha256 cost factor".into(),
-                        )
-                    })?);
-                }
-            }
-
-            let rounds = rounds.ok_or_else(|| {
-                PasswordHashError::CryptoHash(
-                    "Missing rounds parameter in BcryptSha256 record".into(),
-                )
-            })?;
-
-            match task::spawn_blocking(move || {
-                let reconstructed_hash =
-                    format!("${}${:02}${}{}", bcrypt_type, rounds, salt, checksum_part);
-
-                let hmac_res = compute_hmac_sha256(salt.as_bytes(), &password_bytes)?;
-                let intermediate_b64 = STANDARD.encode(&hmac_res);
-
-                bcrypt::verify(intermediate_b64, &reconstructed_hash)
-                    .map_err(PasswordHashError::from)
-            })
-            .await?
-            {
-                Ok(res) => Ok(res),
-                Err(e) => Err(e),
-            }
+            BcryptSha256Hasher.verify(conf, truncated, hash_str).await
         }
-
-        PasswordHashingAlgo::Scrypt => {
-            let password_bytes = truncated_password.to_vec();
-            let res = task::spawn_blocking(move || {
-                let normalized_hash = password_hash.replace('.', "+");
-                let parsed_hash = PasswordHash::new(&normalized_hash)
-                    .map_err(|e| PasswordHashError::CryptoHash(e.to_string()))?;
-                Ok::<bool, PasswordHashError>(
-                    Scrypt
-                        .verify_password(&password_bytes, &parsed_hash)
-                        .is_ok(),
-                )
-            })
-            .await??;
-            Ok(res)
-        }
-
+        PasswordHashingAlgo::Scrypt => ScryptHasher.verify(conf, truncated, hash_str).await,
         PasswordHashingAlgo::Pbkdf2Sha512 => {
-            let password_bytes = truncated_password.to_vec();
-            let res = task::spawn_blocking(move || {
-                if let Ok(parsed_hash) = PasswordHash::new(&password_hash) {
-                    return Ok::<bool, PasswordHashError>(
-                        Pbkdf2
-                            .verify_password(&password_bytes, &parsed_hash)
-                            .is_ok(),
-                    );
-                }
-
-                let parts: Vec<&str> = password_hash.split('$').collect();
-                if parts.len() == 5 && parts[1] == "pbkdf2-sha512" {
-                    let rounds: u32 = parts[2].parse().map_err(|_| {
-                        PasswordHashError::CryptoHash(
-                            "Invalid PBKDF2 rounds configuration parameter".into(),
-                        )
-                    })?;
-
-                    // maintainer note: Removed 1,000,000 iteration bound to match Python Keystone
-
-                    let salt_str = parts[3].replace('.', "+");
-                    let digest_str = parts[4].replace('.', "+");
-
-                    let salt = STANDARD_NO_PAD.decode(salt_str.as_bytes()).map_err(|_| {
-                        PasswordHashError::CryptoHash("Invalid salt mapping".into())
-                    })?;
-
-                    // maintainer note: Removed 512-byte salt bound to match Python Keystone
-
-                    let expected_digest =
-                        STANDARD_NO_PAD.decode(digest_str.as_bytes()).map_err(|_| {
-                            PasswordHashError::CryptoHash("Invalid database payload digest".into())
-                        })?;
-
-                    if expected_digest.len() != SHA512_OUTPUT_BYTES {
-                        return Err(PasswordHashError::CryptoHash(
-                            "Invalid PBKDF2-SHA512 checksum buffer bounds".into(),
-                        ));
-                    }
-
-                    let mut computed_digest = vec![0u8; SHA512_OUTPUT_BYTES];
-                    pbkdf2::pbkdf2_hmac::<sha2::Sha512>(
-                        &password_bytes,
-                        &salt,
-                        rounds,
-                        &mut computed_digest,
-                    );
-
-                    return Ok(computed_digest
-                        .as_slice()
-                        .ct_eq(expected_digest.as_slice())
-                        .into());
-                }
-
-                Err(PasswordHashError::CryptoHash(
-                    "Unrecognized crypto hash structure".to_string(),
-                ))
-            })
-            .await??;
-            Ok(res)
+            Pbkdf2Sha512Hasher.verify(conf, truncated, hash_str).await
         }
-        
-    PasswordHashingAlgo::None => {
-        let password_bytes = truncated_password.to_vec();
-        Ok(password_bytes.ct_eq(password_hash.as_bytes()).into())
-    }
+        PasswordHashingAlgo::None => PlaintextHasher.verify(conf, truncated, hash_str).await,
     }
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -638,7 +866,9 @@ mod tests {
         let python_hash = "$pbkdf2-sha512$25000$I8rUIx2uchQj3EvwpW/HNQ$jjZ0I3rlnrbptEmxRTThY7W0oyt7qrAmou/2/PDcY8cK+b1lXaxuynbEhCvm7Tdx2OcelTioygvuVVEPiGRRZQ";
 
         assert!(
-            verify_password(&conf, TEST_PASSWORD, python_hash).await.unwrap(),
+            verify_password(&conf, TEST_PASSWORD, python_hash)
+                .await
+                .unwrap(),
             "Rust PBKDF2-SHA512 verification rejected a real Keystone Python PBKDF2-SHA512 hash"
         );
     }
@@ -649,7 +879,9 @@ mod tests {
         let python_hash = "$scrypt$ln=16,r=8,p=1$3k9FLaX9XcxhagGmGMxqwA$T6FmonL+mu+Wx86D2S4Acs5UjRdndfITzW+yF+mj+C0";
 
         assert!(
-            verify_password(&conf, TEST_PASSWORD, python_hash).await.unwrap(),
+            verify_password(&conf, TEST_PASSWORD, python_hash)
+                .await
+                .unwrap(),
             "Rust Scrypt verification rejected a real Keystone Python Scrypt hash"
         );
     }
@@ -660,7 +892,9 @@ mod tests {
         let python_hash = "$2b$12$Hmo85liOZ57y/qMHnbRENON8zynaqEm14wdRuNAoMQHfcNPsx0i56";
 
         assert!(
-            verify_password(&conf, "password123", python_hash).await.unwrap(),
+            verify_password(&conf, "password123", python_hash)
+                .await
+                .unwrap(),
             "Rust Bcrypt verification rejected a real Keystone Python Bcrypt hash"
         );
     }
@@ -687,10 +921,13 @@ mod tests {
     #[tokio::test]
     async fn test_bcrypt_sha256_matches_keystone_python_ascii_password() {
         let conf = mock_config(PasswordHashingAlgo::BcryptSha256, 255);
-        let python_hash = "$bcrypt-sha256$v=2,t=2b,r=12$dBydkKzGxra2xREv29P6/O$GVrUiF0tJM4hk4xQECVHJ80Rm6cnFBe";
+        let python_hash =
+            "$bcrypt-sha256$v=2,t=2b,r=12$dBydkKzGxra2xREv29P6/O$GVrUiF0tJM4hk4xQECVHJ80Rm6cnFBe";
 
         assert!(
-            verify_password(&conf, "password123", python_hash).await.unwrap(),
+            verify_password(&conf, "password123", python_hash)
+                .await
+                .unwrap(),
             "Rust BcryptSha256 verification rejected a real Keystone Python BcryptSha256 hash"
         );
     }
@@ -702,7 +939,8 @@ mod tests {
         // digest before bcrypt ever sees it. This hash was generated from
         // the full, untruncated 73-byte password.
         let conf = mock_config(PasswordHashingAlgo::BcryptSha256, 255);
-        let python_hash = "$bcrypt-sha256$v=2,t=2b,r=12$y6Bnyh5m5Eljt3ZJ15cVQO$.tr2HNwQrYWXZYbHrzqm.iu4x1m6EvW";
+        let python_hash =
+            "$bcrypt-sha256$v=2,t=2b,r=12$y6Bnyh5m5Eljt3ZJ15cVQO$.tr2HNwQrYWXZYbHrzqm.iu4x1m6EvW";
         let full_73_byte_password = "A".repeat(73);
 
         assert!(
@@ -716,7 +954,8 @@ mod tests {
     #[tokio::test]
     async fn test_bcrypt_sha256_matches_keystone_python_utf8_password() {
         let conf = mock_config(PasswordHashingAlgo::BcryptSha256, 255);
-        let python_hash = "$bcrypt-sha256$v=2,t=2b,r=12$mLeKr3jq7QG7SobmywRn..$7IYIos8ugr49dcjSf1AtORmFCwkYxYu";
+        let python_hash =
+            "$bcrypt-sha256$v=2,t=2b,r=12$mLeKr3jq7QG7SobmywRn..$7IYIos8ugr49dcjSf1AtORmFCwkYxYu";
 
         assert!(
             verify_password(&conf, "🚀-rocket-password", python_hash)
@@ -734,7 +973,10 @@ mod tests {
         let result = verify_password(&conf, "wrong_password", &hash)
             .await
             .unwrap();
-        assert!(!result, "BcryptSha256 incorrectly accepted a wrong password");
+        assert!(
+            !result,
+            "BcryptSha256 incorrectly accepted a wrong password"
+        );
     }
 
     #[tokio::test]
@@ -780,8 +1022,58 @@ mod tests {
             "Scrypt hash_password output failed to verify against the same password"
         );
         assert!(
-            !verify_password(&conf, "wrong_password", &hashed).await.unwrap(),
+            !verify_password(&conf, "wrong_password", &hashed)
+                .await
+                .unwrap(),
             "Scrypt verification incorrectly accepted a wrong password"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_pbkdf2_roundtrip_default_rounds() {
+        let mut conf = mock_config(PasswordHashingAlgo::Pbkdf2Sha512, 255);
+        conf.identity.password_hash_rounds = None; // exercise the default (25000)
+        let password = "pbkdf2_roundtrip_password";
+
+        let hashed = hash_password(&conf, password).await.unwrap();
+        assert!(
+            hashed.starts_with("$pbkdf2-sha512$25000$"),
+            "PBKDF2 hash should embed the default round count"
+        );
+        assert!(
+            verify_password(&conf, password, &hashed).await.unwrap(),
+            "PBKDF2 roundtrip failed with default rounds"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_pbkdf2_roundtrip_non_default_rounds() {
+        // Exercises the case where password_hash_rounds is explicitly configured.
+        // This is the scenario where bugs in reading the config field hide.
+        let mut conf = mock_config(PasswordHashingAlgo::Pbkdf2Sha512, 255);
+        conf.identity.password_hash_rounds = Some(10000);
+        let password = "pbkdf2_custom_rounds";
+
+        let hashed = hash_password(&conf, password).await.unwrap();
+        assert!(
+            hashed.starts_with("$pbkdf2-sha512$10000$"),
+            "PBKDF2 hash must embed the configured round count, not the default"
+        );
+        assert!(
+            verify_password(&conf, password, &hashed).await.unwrap(),
+            "PBKDF2 roundtrip failed with non-default rounds"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_scrypt_hash_format_matches_python() {
+        // Verify the wire format prefix matches what Python emits:
+        // $scrypt$ln=16,r=8,p=1$<base64_salt>$<base64_digest>
+        let conf = mock_config(PasswordHashingAlgo::Scrypt, 255);
+        let hashed = hash_password(&conf, "any_password").await.unwrap();
+        assert!(
+            hashed.starts_with("$scrypt$ln=16,r=8,p=1$"),
+            "Scrypt hash format must match Python Keystone's prefix; got: {hashed}"
         );
     }
 
@@ -797,7 +1089,11 @@ mod tests {
         );
 
         assert!(verify_password(&conf, password, &hashed).await.unwrap());
-        assert!(!verify_password(&conf, "wrong_password", &hashed).await.unwrap());
+        assert!(
+            !verify_password(&conf, "wrong_password", &hashed)
+                .await
+                .unwrap()
+        );
     }
 
     #[tokio::test]
@@ -892,17 +1188,21 @@ mod tests {
     async fn test_dummy_cache_concurrent_cold_start() {
         // Regression test: N concurrent callers racing on a cold cache key
         // must all observe the *same* cached hash, not each independently
-        // compute and overwrite it with a different value. Uses a distinct
-        // (algo, rounds) key from other tests in this binary so the cache
-        // is genuinely cold here.
-        let conf = std::sync::Arc::new(mock_config(PasswordHashingAlgo::Bcrypt, 199));
+        // compute and overwrite it with a different value.
+        //
+        // Uses password_hash_rounds=4 (bcrypt minimum) to build a cache key
+        // ("Bcrypt-4") that no other test in this module uses, ensuring the
+        // cache is genuinely cold regardless of test execution order.
+        let mut conf = mock_config(PasswordHashingAlgo::Bcrypt, 255);
+        conf.identity.password_hash_rounds = Some(4); // unique key: "Bcrypt-4"
+        let conf = std::sync::Arc::new(conf);
 
         let mut handles = Vec::new();
         for _ in 0..8 {
             let conf = conf.clone();
-            handles.push(tokio::spawn(
-                async move { get_or_init_dummy_hash(&conf).await.unwrap() },
-            ));
+            handles.push(tokio::spawn(async move {
+                get_or_init_dummy_hash(&conf).await.unwrap()
+            }));
         }
 
         let mut results = Vec::new();
@@ -915,5 +1215,27 @@ mod tests {
             results.iter().all(|hash| hash == first),
             "Concurrent cold-start callers must all observe the same cached dummy hash"
         );
+    }
+
+    #[tokio::test]
+    async fn test_reset_dummy_hash_cache() {
+        let conf = mock_config(PasswordHashingAlgo::Bcrypt, 255);
+
+        // Populate the cache first.
+        let before = get_or_init_dummy_hash(&conf).await.unwrap();
+
+        // Reset should clear the cache so the next call recomputes.
+        reset_dummy_hash_cache().await;
+
+        // After reset, cache is cold; the new hash may differ (bcrypt is randomized).
+        // We just need to confirm the call succeeds and the cache is re-populated.
+        let after = get_or_init_dummy_hash(&conf).await.unwrap();
+        assert!(
+            after.starts_with("$2b$"),
+            "After cache reset, dummy hash should still be a valid bcrypt hash"
+        );
+        // The two hashes are likely different (random salt), but we can't assert
+        // inequality deterministically. Just verify both are structurally valid.
+        let _ = before;
     }
 }

@@ -3947,7 +3947,6 @@ dependencies = [
  "openstack-keystone-config",
  "openstack-keystone-core-types",
  "openstack-keystone-distributed-storage",
- "pbkdf2",
  "rand 0.10.1",
  "regex",
  "regex-syntax",
@@ -4868,8 +4867,6 @@ checksum = "f8ed6a7761f76e3b9f92dfb0a60a6a6477c61024b775147ff0973a02653abaf2"
 dependencies = [
  "digest 0.10.7",
  "hmac 0.12.1",
- "password-hash",
- "sha2 0.10.9",
 ]
 
 [[package]]
