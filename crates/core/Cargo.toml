@@ -44,9 +44,11 @@ uuid = { workspace = true, features = ["v4"] }
 validator.workspace = true
 
 [dev-dependencies]
+axum = { workspace = true, default-features = false, features = ["json"] }
 config = { workspace = true }
 httpmock = { version = "0.8", features = ["http2"] }
 mockall.workspace = true
+openstack-keystone-api-types = { workspace = true, features = ["builder", "conv"] }
 openstack-keystone-core-types = { workspace = true, features = ["mock"] }
 rstest.workspace = true
 tracing-test = { workspace = true, features = ["no-env-filter"] }

@@ -76,7 +76,7 @@
 use async_trait::async_trait;
 use sea_orm::{DatabaseConnection, Schema};
 
-#[cfg(feature = "api")]
+#[cfg(any(feature = "api", test))]
 pub mod api;
 pub mod application_credential;
 pub mod assignment;

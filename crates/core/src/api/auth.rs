@@ -92,7 +92,7 @@ where
         if let Some(svid) = parts.extensions.get::<SpiffeId>() {
             tracing::debug!("authenticating the spiffe svid {}", svid);
 
-            if let Some(admin_svid) = &state
+            if let Some(config_admin_svid) = &state
                 .config_manager
                 .config
                 .read()
@@ -100,6 +100,7 @@ where
                 .interface_admin
                 .as_ref()
                 .and_then(|admin_if| admin_if.admin_svid.as_ref())
+                && **config_admin_svid == svid.to_string()
                 && interface == Interface::Admin
             {
                 // The admin_svid was configured and it is it over the admin interface - short
@@ -110,7 +111,7 @@ where
                         PrincipalInfoBuilder::default()
                             .identity(IdentityInfo::Principal(
                                 PrincipalIdentityInfoBuilder::default()
-                                    .id(*admin_svid)
+                                    .id(svid.to_string())
                                     .issuer(svid.trust_domain_name())
                                     .build()?,
                             ))
@@ -207,7 +208,7 @@ mod tests {
         let config = Config::default();
         let config_manager = ConfigManager::not_watched(config);
         let policy_enforcer = Arc::new(MockPolicy::default());
-        let db = sea_orm::Database::connect("sqlite::memory:").await.unwrap();
+        let db = sea_orm::DatabaseConnection::Disconnected;
         let provider = Provider::mocked_builder()
             .mock_mapping(mapping_provider)
             .build()
@@ -313,7 +314,7 @@ mod tests {
 
         let state = Arc::new(Service {
             config_manager,
-            db: sea_orm::Database::connect("sqlite::memory:").await.unwrap(),
+            db: sea_orm::DatabaseConnection::Disconnected,
             policy_enforcer: Arc::new(MockPolicy::default()),
             provider: Provider::mocked_builder()
                 .mock_mapping(mapping_mock)
@@ -407,7 +408,7 @@ mod tests {
             ..Default::default()
         };
         let config_manager = ConfigManager::not_watched(config);
-        let db = sea_orm::Database::connect("sqlite::memory:").await.unwrap();
+        let db = sea_orm::DatabaseConnection::Disconnected;
         let provider = Provider::mocked_builder()
             .mock_mapping(mapping_mock)
             .build()
@@ -436,11 +437,15 @@ mod tests {
     async fn test_admin_svid_mismatch_falls_to_mapping() {
         use crate::role::MockRoleProvider;
 
-        // When admin_svid is configured and interface is Admin, the shortcut
-        // activates regardless of the client's actual SVID (security gap:
-        // SVID identity is not verified against the configured admin_svid).
-        // This test documents the current behavior.
-        let mapping_mock = MockMappingProvider::new();
+        // When admin_svid is configured and interface is Admin, but the client's
+        // SVID does not match the configured admin_svid, the shortcut is bypassed
+        // and the request falls through to the mapping engine. If no mapping rule
+        // matches, authentication fails.
+        let mut mapping_mock = MockMappingProvider::new();
+        mapping_mock
+            .expect_authenticate_by_mapping()
+            .once()
+            .returning(|_, _| Err(MappingProviderError::NoMatchingRule));
         let config = Config {
             interface_admin: Some(AdminInterface {
                 admin_svid: Some("spiffe://admin".to_string()),
@@ -467,7 +472,7 @@ mod tests {
 
         let state = Arc::new(Service {
             config_manager,
-            db: sea_orm::Database::connect("sqlite::memory:").await.unwrap(),
+            db: sea_orm::DatabaseConnection::Disconnected,
             policy_enforcer: Arc::new(MockPolicy::default()),
             provider: Provider::mocked_builder()
                 .mock_mapping(mapping_mock)
@@ -479,17 +484,16 @@ mod tests {
             shutdown: false,
         });
 
-        // Different SVID than configured admin_svid, but on admin interface
+        // Different SVID than configured admin_svid, on admin interface
         let mut parts = make_parts();
         parts
             .extensions
             .insert(SpiffeId::new("spiffe://other-domain/workload").unwrap());
         parts.extensions.insert(Interface::Admin);
 
-        // Shortcut activates because admin_svid is configured + admin interface
-        // (security gap: SVID not compared to configured admin_svid)
+        // No mapping rule matches, no X-Auth-Token fallback — authentication fails
         let result = Auth::from_request_parts(&mut parts, &state).await;
-        assert!(result.is_ok());
+        assert!(result.is_err());
     }
 
     #[tokio::test]
@@ -499,7 +503,7 @@ mod tests {
         let config = Config::default();
         let config_manager = ConfigManager::not_watched(config);
         let policy_enforcer = Arc::new(MockPolicy::default());
-        let db = sea_orm::Database::connect("sqlite::memory:").await.unwrap();
+        let db = sea_orm::DatabaseConnection::Disconnected;
 
         let mut token_mock = MockTokenProvider::new();
         token_mock.expect_authorize_by_token().once().returning(
