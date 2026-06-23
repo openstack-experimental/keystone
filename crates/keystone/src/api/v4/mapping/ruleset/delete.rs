@@ -23,7 +23,6 @@ use openstack_keystone_api_types::v4::mapping::MappingRuleSet;
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
-use crate::mapping::MappingApi;
 
 /// Delete a mapping ruleset by ID.
 #[utoipa::path(

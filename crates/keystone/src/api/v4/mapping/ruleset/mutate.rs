@@ -28,7 +28,6 @@ use openstack_keystone_api_types::v4::mapping::{
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
-use crate::mapping::MappingApi;
 
 /// Mutate rules within a mapping ruleset imperatively.
 ///

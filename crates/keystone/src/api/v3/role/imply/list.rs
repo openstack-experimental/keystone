@@ -27,7 +27,6 @@ use openstack_keystone_api_types::v3::role::{ImplyGroup, RoleInferenceRules};
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
-use crate::role::RoleApi;
 
 /// List role imply rules for a prior role.
 #[utoipa::path(

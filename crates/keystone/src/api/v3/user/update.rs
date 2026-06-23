@@ -24,7 +24,6 @@ use validator::Validate;
 use super::types::{User, UserResponse, UserUpdateRequest};
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
-use crate::identity::IdentityApi;
 use crate::keystone::ServiceState;
 
 /// Update existing user

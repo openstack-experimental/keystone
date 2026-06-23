@@ -1,3 +1,4 @@
+#![cfg(feature = "bench_internals")]
 use std::collections::HashMap;
 use std::hint::black_box;
 use std::net::{IpAddr, SocketAddr};
@@ -183,7 +184,15 @@ async fn build_cluster(count_nodes: u64) -> Result<Vec<Arc<InstanceHolder>>> {
 async fn test_write(instances: &Vec<Arc<InstanceHolder>>) {
     if let Some(inst) = instances.first() {
         inst.storage
-            .set_value("foo", StoreDataEnvelope::from("barz"), None::<&str>, None)
+            .set_value(
+                "foo".to_string(),
+                StoreDataEnvelope {
+                    metadata: Metadata::new(),
+                    data: rmp_serde::to_vec("barz").unwrap(),
+                },
+                None,
+                None,
+            )
             .await
             .unwrap();
     }
@@ -191,34 +200,31 @@ async fn test_write(instances: &Vec<Arc<InstanceHolder>>) {
 
 async fn test_read(instances: &Vec<Arc<InstanceHolder>>) {
     if let Some(inst) = instances.first() {
-        let _: Option<StoreDataEnvelope<String>> =
-            inst.storage.get_by_key("foo", None::<&str>).await.unwrap();
+        let _: Option<StoreDataEnvelope<Vec<u8>>> =
+            inst.storage.get_by_key(b"foo", None::<&str>).await.unwrap();
     }
 }
 
 async fn test_prefix(instances: &Vec<Arc<InstanceHolder>>) {
     if let Some(inst) = instances.first() {
-        let _: Vec<(String, StoreDataEnvelope<String>)> =
-            inst.storage.prefix("foo", None::<&str>).await.unwrap();
+        let _: Vec<(String, StoreDataEnvelope<Vec<u8>>)> =
+            inst.storage.prefix(b"foo", None::<&str>).await.unwrap();
     }
 }
 
 async fn test_remove(instances: &Vec<Arc<InstanceHolder>>) {
     if let Some(inst) = instances.first() {
-        inst.storage.remove("foo", None::<&str>).await.unwrap();
+        inst.storage.remove("foo".to_string(), None).await.unwrap();
     }
 }
 
 fn bench_command_serde(c: &mut Criterion) {
     let delete_cmd = StoreCommand::Transaction(vec![
-        MutationInner::convert(
-            Mutation::remove("foo", Some("bar"), None).unwrap(),
-            Nonce::default(),
-        )
-        .unwrap(),
+        MutationInner::convert(Mutation::remove("foo", Some("bar"), None), Nonce::default())
+            .unwrap(),
     ]);
     let delete_index_cmd = StoreCommand::Transaction(vec![
-        MutationInner::convert(Mutation::remove_index("foo").unwrap(), Nonce::default()).unwrap(),
+        MutationInner::convert(Mutation::remove_index("foo"), Nonce::default()).unwrap(),
     ]);
     let set_cmd = StoreCommand::Transaction(vec![
         MutationInner::convert(
@@ -228,7 +234,7 @@ fn bench_command_serde(c: &mut Criterion) {
         .unwrap(),
     ]);
     let set_index_cmd = StoreCommand::Transaction(vec![
-        MutationInner::convert(Mutation::set_index("foo").unwrap(), Nonce::default()).unwrap(),
+        MutationInner::convert(Mutation::set_index("foo"), Nonce::default()).unwrap(),
     ]);
     let mut group = c.benchmark_group("Command_Serde");
     for (cmd, name) in [

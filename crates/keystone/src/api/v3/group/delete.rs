@@ -20,7 +20,6 @@ use serde_json::json;
 
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
-use crate::identity::IdentityApi;
 use crate::keystone::ServiceState;
 
 /// Delete group by ID.

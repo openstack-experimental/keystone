@@ -18,12 +18,12 @@ use std::io;
 use std::sync::Mutex;
 
 use async_trait::async_trait;
-use serde::Serialize;
-use serde::de::DeserializeOwned;
 
+use crate::ApiStoreError;
+use crate::StorageApi;
 use crate::StoreError;
-use crate::api::StorageApi;
-use crate::pb::api::{Response, response::Violation};
+use crate::StoreResponse;
+use crate::Violation;
 use crate::store_command::*;
 use crate::types::{Metadata, StoreDataEnvelope};
 
@@ -47,10 +47,6 @@ fn lock<'a, T>(m: &'a Mutex<T>) -> Result<std::sync::MutexGuard<'a, T>, StoreErr
     m.lock().map_err(|_| StoreError::IO {
         source: io::Error::other("mutex poisoned"),
     })
-}
-
-fn resolve_keyspace<S: Into<String>>(ks: Option<S>) -> String {
-    ks.map(Into::into).unwrap_or_else(|| "data".to_string())
 }
 
 impl MockStorage {
@@ -129,36 +125,26 @@ impl MockStorage {
 
 #[async_trait]
 impl StorageApi for MockStorage {
-    async fn contains_key<K, S>(&self, key: K, keyspace: Option<S>) -> Result<bool, StoreError>
-    where
-        K: AsRef<[u8]> + Send,
-        S: AsRef<str> + Send,
-    {
-        let ks = match keyspace {
-            Some(name) => name.as_ref().to_string(),
-            None => "data".to_string(),
-        };
-        let key_str = String::from_utf8(key.as_ref().to_vec())?;
-        Ok(lock(&self.data)?
+    async fn contains_key(
+        &self,
+        key: &[u8],
+        keyspace: Option<&str>,
+    ) -> Result<bool, ApiStoreError> {
+        let ks = keyspace.unwrap_or("data").to_string();
+        let key_str = String::from_utf8(key.to_vec())?;
+        let res = lock(&self.data)?
             .get(&ks)
-            .is_some_and(|m| m.contains_key(&key_str)))
+            .is_some_and(|m| m.contains_key(&key_str));
+        Ok(res)
     }
 
-    async fn get_by_key<T, K, S>(
+    async fn get_by_key(
         &self,
-        key: K,
-        keyspace: Option<S>,
-    ) -> Result<Option<StoreDataEnvelope<T>>, StoreError>
-    where
-        T: DeserializeOwned + Send,
-        K: AsRef<[u8]> + Send,
-        S: AsRef<str> + Send,
-    {
-        let ks = match keyspace {
-            Some(name) => name.as_ref().to_string(),
-            None => "data".to_string(),
-        };
-        let key_str = String::from_utf8(key.as_ref().to_vec())?;
+        key: &[u8],
+        keyspace: Option<&str>,
+    ) -> Result<Option<StoreDataEnvelope<Vec<u8>>>, ApiStoreError> {
+        let ks = keyspace.unwrap_or("data").to_string();
+        let key_str = String::from_utf8(key.to_vec())?;
 
         let data = lock(&self.data)?;
         let metadata_map = lock(&self.metadata)?;
@@ -170,30 +156,21 @@ impl StorageApi for MockStorage {
             return Ok(None);
         };
 
-        let t: T = rmp_serde::from_slice(value_bytes)?;
         let meta = Self::get_metadata(&metadata_map, &key_str);
 
         Ok(Some(StoreDataEnvelope {
-            data: t,
+            data: value_bytes.clone(),
             metadata: meta,
         }))
     }
 
-    async fn prefix<T, K, S>(
+    async fn prefix(
         &self,
-        prefix: K,
-        keyspace: Option<S>,
-    ) -> Result<Vec<(String, StoreDataEnvelope<T>)>, StoreError>
-    where
-        T: DeserializeOwned + Send,
-        K: AsRef<[u8]> + Send,
-        S: AsRef<str> + Send,
-    {
-        let ks = match keyspace {
-            Some(name) => name.as_ref().to_string(),
-            None => "data".to_string(),
-        };
-        let prefix_str = String::from_utf8(prefix.as_ref().to_vec())?;
+        prefix: &[u8],
+        keyspace: Option<&str>,
+    ) -> Result<Vec<(String, StoreDataEnvelope<Vec<u8>>)>, ApiStoreError> {
+        let ks = keyspace.unwrap_or("data").to_string();
+        let prefix_str = String::from_utf8(prefix.to_vec())?;
 
         let data = lock(&self.data)?;
         let metadata_map = lock(&self.metadata)?;
@@ -202,35 +179,31 @@ impl StorageApi for MockStorage {
             return Ok(Vec::new());
         };
 
-        let mut result: Vec<(String, StoreDataEnvelope<T>)> = data_map
+        let mut result: Vec<(String, StoreDataEnvelope<Vec<u8>>)> = data_map
             .iter()
             .filter(|(k, _)| k.starts_with(&prefix_str))
             .map(|(k, v)| {
-                let t: T = rmp_serde::from_slice(v)?;
                 let meta = Self::get_metadata(&metadata_map, k);
-                Ok::<_, StoreError>((
+                (
                     k.clone(),
                     StoreDataEnvelope {
-                        data: t,
+                        data: v.clone(),
                         metadata: meta,
                     },
-                ))
+                )
             })
-            .collect::<Result<Vec<_>, _>>()?;
+            .collect();
 
         result.sort_by(|a, b| a.0.cmp(&b.0));
         Ok(result)
     }
 
-    async fn prefix_index<K>(&self, prefix: K) -> Result<Vec<String>, StoreError>
-    where
-        K: AsRef<[u8]> + Send,
-    {
+    async fn prefix_index(&self, prefix: &[u8]) -> Result<Vec<String>, ApiStoreError> {
         let indexes = lock(&self.indexes)?;
 
         let mut result: Vec<String> = indexes
             .keys()
-            .filter(|k| k.starts_with(prefix.as_ref()))
+            .filter(|k| k.starts_with(prefix))
             .filter_map(|k| String::from_utf8(k.clone()).ok())
             .collect();
 
@@ -238,79 +211,71 @@ impl StorageApi for MockStorage {
         Ok(result)
     }
 
-    async fn remove<K, S>(&self, key: K, keyspace: Option<S>) -> Result<Response, StoreError>
-    where
-        K: Into<Vec<u8>> + Send,
-        S: Into<String> + Send,
-    {
-        let key_bytes = key.into();
-        let ks = resolve_keyspace(keyspace);
-        let key_str = String::from_utf8(key_bytes)?;
+    async fn remove(
+        &self,
+        key: String,
+        keyspace: Option<String>,
+    ) -> Result<StoreResponse, ApiStoreError> {
+        let ks = keyspace.unwrap_or_else(|| "data".to_string());
 
         let mut data = lock(&self.data)?;
         let mut metadata_map = lock(&self.metadata)?;
         if let Some(data_map) = data.get_mut(&ks) {
-            data_map.remove(&key_str);
+            data_map.remove(&key);
         }
-        metadata_map.remove(&key_str);
+        metadata_map.remove(&key);
 
-        Ok(Response::default())
+        Ok(StoreResponse {
+            value: None,
+            violations: vec![],
+        })
     }
 
-    async fn remove_index<K>(&self, key: K) -> Result<Response, StoreError>
-    where
-        K: Into<Vec<u8>> + Send,
-    {
-        let key_bytes = key.into();
-        lock(&self.indexes)?.remove(&key_bytes);
-        Ok(Response::default())
+    async fn remove_index(&self, key: String) -> Result<StoreResponse, ApiStoreError> {
+        lock(&self.indexes)?.remove(&key.into_bytes());
+        Ok(StoreResponse {
+            value: None,
+            violations: vec![],
+        })
     }
 
-    async fn set_value<K, V, S>(
+    async fn set_value(
         &self,
-        key: K,
-        value: StoreDataEnvelope<V>,
-        keyspace: Option<S>,
+        key: String,
+        value: StoreDataEnvelope<Vec<u8>>,
+        keyspace: Option<String>,
         expected_revision: Option<u64>,
-    ) -> Result<Response, StoreError>
-    where
-        K: Into<String> + Send,
-        V: Serialize + Send,
-        S: Into<String> + Send,
-    {
-        let key_str = key.into();
-        let ks = resolve_keyspace(keyspace);
-        let value_bytes = rmp_serde::to_vec(&value.data)?;
+    ) -> Result<StoreResponse, ApiStoreError> {
+        let ks = keyspace.unwrap_or_else(|| "data".to_string());
 
         let mut data = lock(&self.data)?;
         let mut metadata_map = lock(&self.metadata)?;
         let violation = Self::set_value_inner(
             &mut data,
             &mut metadata_map,
-            &key_str,
+            &key,
             &ks,
-            value_bytes,
+            value.data,
             &value.metadata,
             expected_revision,
         )?;
 
         let violations = violation.map_or(Vec::new(), |v| vec![v]);
-        Ok(Response {
+        Ok(StoreResponse {
             value: None,
             violations,
         })
     }
 
-    async fn set_index_key<K>(&self, key: K) -> Result<Response, StoreError>
-    where
-        K: Into<String> + Send,
-    {
-        let key_bytes: Vec<u8> = key.into().into_bytes();
-        lock(&self.indexes)?.insert(key_bytes, ());
-        Ok(Response::default())
+    async fn set_index_key(&self, key: String) -> Result<StoreResponse, ApiStoreError> {
+        lock(&self.indexes)?.insert(key.into_bytes(), ());
+        Ok(StoreResponse {
+            value: None,
+            violations: vec![],
+        })
     }
 
-    async fn transaction(&self, mutations: Vec<Mutation>) -> Result<Response, StoreError> {
+    async fn transaction(&self, mutations: Vec<Mutation>) -> Result<StoreResponse, ApiStoreError> {
         let mut violations: Vec<Violation> = Vec::new();
 
         let mut data = lock(&self.data)?;
@@ -411,10 +376,21 @@ impl StorageApi for MockStorage {
             }
         }
 
-        Ok(Response {
+        Ok(StoreResponse {
             value: None,
             violations,
         })
+    }
+
+    async fn is_initialized(&self) -> Result<bool, ApiStoreError> {
+        Ok(false)
+    }
+
+    async fn initialize(
+        &self,
+        _nodes: HashMap<u64, openstack_keystone_storage_api::Node>,
+    ) -> Result<(), ApiStoreError> {
+        Ok(())
     }
 }
 
@@ -422,17 +398,21 @@ impl StorageApi for MockStorage {
 mod tests {
     use super::*;
 
+    fn serialize(s: &str) -> Vec<u8> {
+        rmp_serde::to_vec(s).unwrap()
+    }
+
     #[tokio::test]
     async fn test_set_value_without_revision_succeeds() {
         let storage = MockStorage::default();
         let resp = storage
             .set_value(
-                "test-key",
+                "test-key".to_string(),
                 StoreDataEnvelope {
                     metadata: Metadata::new(),
-                    data: "value".to_string(),
+                    data: serialize("value"),
                 },
-                None::<String>,
+                None,
                 None,
             )
             .await
@@ -445,12 +425,12 @@ mod tests {
         let storage = MockStorage::default();
         storage
             .set_value(
-                "test-key",
+                "test-key".to_string(),
                 StoreDataEnvelope {
                     metadata: Metadata::new(),
-                    data: "initial".to_string(),
+                    data: serialize("initial"),
                 },
-                None::<String>,
+                None,
                 None,
             )
             .await
@@ -458,15 +438,15 @@ mod tests {
 
         let resp = storage
             .set_value(
-                "test-key",
+                "test-key".to_string(),
                 StoreDataEnvelope {
                     metadata: Metadata {
                         revision: 1,
                         created_at: 0,
                     },
-                    data: "updated".to_string(),
+                    data: serialize("updated"),
                 },
-                None::<String>,
+                None,
                 Some(0),
             )
             .await
@@ -479,12 +459,12 @@ mod tests {
         let storage = MockStorage::default();
         storage
             .set_value(
-                "test-key",
+                "test-key".to_string(),
                 StoreDataEnvelope {
                     metadata: Metadata::new(),
-                    data: "initial".to_string(),
+                    data: serialize("initial"),
                 },
-                None::<String>,
+                None,
                 None,
             )
             .await
@@ -492,15 +472,15 @@ mod tests {
 
         let resp = storage
             .set_value(
-                "test-key",
+                "test-key".to_string(),
                 StoreDataEnvelope {
                     metadata: Metadata {
                         revision: 1,
                         created_at: 0,
                     },
-                    data: "updated".to_string(),
+                    data: serialize("updated"),
                 },
-                None::<String>,
+                None,
                 Some(99),
             )
             .await
@@ -514,12 +494,12 @@ mod tests {
         let storage = MockStorage::default();
         storage
             .set_value(
-                "test-key",
+                "test-key".to_string(),
                 StoreDataEnvelope {
                     metadata: Metadata::new(),
-                    data: "initial".to_string(),
+                    data: serialize("initial"),
                 },
-                None::<String>,
+                None,
                 None,
             )
             .await
@@ -527,24 +507,28 @@ mod tests {
 
         let resp = storage
             .set_value(
-                "test-key",
+                "test-key".to_string(),
                 StoreDataEnvelope {
                     metadata: Metadata {
                         revision: 5,
                         created_at: 0,
                     },
-                    data: "should-not-appear".to_string(),
+                    data: serialize("should-not-appear"),
                 },
-                None::<String>,
+                None,
                 Some(99),
             )
             .await
             .unwrap();
         assert_eq!(resp.violations.len(), 1);
 
-        let fetched: Option<StoreDataEnvelope<String>> =
-            storage.get_by_key("test-key", None::<&str>).await.unwrap();
-        assert_eq!(fetched.unwrap().data, "initial");
+        let fetched = storage
+            .get_by_key(b"test-key", None)
+            .await
+            .unwrap()
+            .unwrap();
+        let typed: String = rmp_serde::from_slice(&fetched.data).unwrap();
+        assert_eq!(typed, "initial");
     }
 
     #[tokio::test]
@@ -556,9 +540,9 @@ mod tests {
         let resp = storage.transaction(mutations).await.unwrap();
         assert!(resp.violations.is_empty());
 
-        let fetched: Option<StoreDataEnvelope<String>> =
-            storage.get_by_key("new-key", None::<&str>).await.unwrap();
-        assert_eq!(fetched.unwrap().data, "value");
+        let fetched = storage.get_by_key(b"new-key", None).await.unwrap().unwrap();
+        let typed: String = rmp_serde::from_slice(&fetched.data).unwrap();
+        assert_eq!(typed, "value");
     }
 
     #[tokio::test]
@@ -566,12 +550,12 @@ mod tests {
         let storage = MockStorage::default();
         storage
             .set_value(
-                "existing-key",
+                "existing-key".to_string(),
                 StoreDataEnvelope {
                     metadata: Metadata::new(),
-                    data: "initial".to_string(),
+                    data: serialize("initial"),
                 },
-                None::<String>,
+                None,
                 None,
             )
             .await
@@ -585,11 +569,13 @@ mod tests {
         assert_eq!(resp.violations.len(), 1);
         assert_eq!(resp.violations[0].r#type, "CONFLICT");
 
-        let fetched: Option<StoreDataEnvelope<String>> = storage
-            .get_by_key("existing-key", None::<&str>)
+        let fetched = storage
+            .get_by_key(b"existing-key", None)
             .await
+            .unwrap()
             .unwrap();
-        assert_eq!(fetched.unwrap().data, "initial");
+        let typed: String = rmp_serde::from_slice(&fetched.data).unwrap();
+        assert_eq!(typed, "initial");
     }
 
     #[tokio::test]
@@ -597,23 +583,22 @@ mod tests {
         let storage = MockStorage::default();
         storage
             .set_value(
-                "test-key",
+                "test-key".to_string(),
                 StoreDataEnvelope {
                     metadata: Metadata::new(),
-                    data: "value".to_string(),
+                    data: serialize("value"),
                 },
-                None::<String>,
+                None,
                 None,
             )
             .await
             .unwrap();
 
-        let mutations = vec![Mutation::remove("test-key", None::<&str>, None).unwrap()];
+        let mutations = vec![Mutation::remove("test-key", None::<&str>, None)];
         let resp = storage.transaction(mutations).await.unwrap();
         assert!(resp.violations.is_empty());
 
-        let fetched: Option<StoreDataEnvelope<String>> =
-            storage.get_by_key("test-key", None::<&str>).await.unwrap();
+        let fetched = storage.get_by_key(b"test-key", None).await.unwrap();
         assert!(fetched.is_none());
     }
 
@@ -622,12 +607,12 @@ mod tests {
         let storage = MockStorage::default();
         storage
             .set_value(
-                "test-key",
+                "test-key".to_string(),
                 StoreDataEnvelope {
                     metadata: Metadata::new(),
-                    data: "value".to_string(),
+                    data: serialize("value"),
                 },
-                None::<String>,
+                None,
                 None,
             )
             .await
@@ -635,26 +620,25 @@ mod tests {
         // Update metadata to revision 5
         storage
             .set_value(
-                "test-key",
+                "test-key".to_string(),
                 StoreDataEnvelope {
                     metadata: Metadata {
                         revision: 5,
                         created_at: 0,
                     },
-                    data: "value2".to_string(),
+                    data: serialize("value2"),
                 },
-                None::<String>,
+                None,
                 None,
             )
             .await
             .unwrap();
 
-        let mutations = vec![Mutation::remove("test-key", None::<&str>, Some(5)).unwrap()];
+        let mutations = vec![Mutation::remove("test-key", None::<&str>, Some(5))];
         let resp = storage.transaction(mutations).await.unwrap();
         assert!(resp.violations.is_empty());
 
-        let fetched: Option<StoreDataEnvelope<String>> =
-            storage.get_by_key("test-key", None::<&str>).await.unwrap();
+        let fetched = storage.get_by_key(b"test-key", None).await.unwrap();
         assert!(fetched.is_none());
     }
 
@@ -663,32 +647,36 @@ mod tests {
         let storage = MockStorage::default();
         storage
             .set_value(
-                "test-key",
+                "test-key".to_string(),
                 StoreDataEnvelope {
                     metadata: Metadata::new(),
-                    data: "value".to_string(),
+                    data: serialize("value"),
                 },
-                None::<String>,
+                None,
                 None,
             )
             .await
             .unwrap();
 
-        let mutations = vec![Mutation::remove("test-key", None::<&str>, Some(99)).unwrap()];
+        let mutations = vec![Mutation::remove("test-key", None::<&str>, Some(99))];
         let resp = storage.transaction(mutations).await.unwrap();
         assert_eq!(resp.violations.len(), 1);
         assert_eq!(resp.violations[0].r#type, "CONFLICT");
 
         // Key should still exist since the removal was rejected
-        let fetched: Option<StoreDataEnvelope<String>> =
-            storage.get_by_key("test-key", None::<&str>).await.unwrap();
-        assert_eq!(fetched.unwrap().data, "value");
+        let fetched = storage
+            .get_by_key(b"test-key", None)
+            .await
+            .unwrap()
+            .unwrap();
+        let typed: String = rmp_serde::from_slice(&fetched.data).unwrap();
+        assert_eq!(typed, "value");
     }
 
     #[tokio::test]
     async fn test_remove_nonexistent_key_with_expected_revision_conflicts() {
         let storage = MockStorage::default();
-        let mutations = vec![Mutation::remove("no-such-key", None::<&str>, Some(1)).unwrap()];
+        let mutations = vec![Mutation::remove("no-such-key", None::<&str>, Some(1))];
         let resp = storage.transaction(mutations).await.unwrap();
         assert_eq!(resp.violations.len(), 1);
         assert_eq!(resp.violations[0].r#type, "CONFLICT");
@@ -699,27 +687,27 @@ mod tests {
         let storage = MockStorage::default();
         storage
             .set_value(
-                "key1",
+                "key1".to_string(),
                 StoreDataEnvelope {
                     metadata: Metadata::new(),
-                    data: "v1".to_string(),
+                    data: serialize("v1"),
                 },
-                None::<String>,
+                None,
                 None,
             )
             .await
             .unwrap();
         storage
             .set_value(
-                "key2",
+                "key2".to_string(),
                 StoreDataEnvelope {
                     metadata: Metadata {
                         revision: 3,
                         created_at: 0,
                     },
-                    data: "v2".to_string(),
+                    data: serialize("v2"),
                 },
-                None::<String>,
+                None,
                 None,
             )
             .await
@@ -728,21 +716,20 @@ mod tests {
         // key1 has revision 0 (Metadata::new()), requesting wrong revision -> conflict
         // key2 has revision 3, requesting correct revision -> success
         let mutations = vec![
-            Mutation::remove("key1", None::<&str>, Some(99)).unwrap(),
-            Mutation::remove("key2", None::<&str>, Some(3)).unwrap(),
+            Mutation::remove("key1", None::<&str>, Some(99)),
+            Mutation::remove("key2", None::<&str>, Some(3)),
         ];
         let resp = storage.transaction(mutations).await.unwrap();
         assert_eq!(resp.violations.len(), 1);
         assert_eq!(resp.violations[0].r#type, "CONFLICT");
 
         // key1 should still exist (CAS conflict)
-        let fetched1: Option<StoreDataEnvelope<String>> =
-            storage.get_by_key("key1", None::<&str>).await.unwrap();
-        assert_eq!(fetched1.unwrap().data, "v1");
+        let fetched1 = storage.get_by_key(b"key1", None).await.unwrap().unwrap();
+        let typed1: String = rmp_serde::from_slice(&fetched1.data).unwrap();
+        assert_eq!(typed1, "v1");
 
         // key2 should be removed (CAS match)
-        let fetched2: Option<StoreDataEnvelope<String>> =
-            storage.get_by_key("key2", None::<&str>).await.unwrap();
+        let fetched2 = storage.get_by_key(b"key2", None).await.unwrap();
         assert!(fetched2.is_none());
     }
 }

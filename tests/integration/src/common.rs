@@ -170,22 +170,37 @@ pub async fn get_state() -> Result<(Arc<Service>, TempDir)> {
         Arc::new(openstack_keystone::k8s_auth_client::MockK8sHttpClient::default());
     let provider = Provider::new(&cfg, &plugin_manager, k8s_http_client)?;
 
+    let concrete_storage: Option<Arc<openstack_keystone_distributed_storage::app::Storage>> =
+        if cfg.distributed_storage.is_some() {
+            let cfg_mgr = ConfigManager::not_watched(cfg.clone());
+            let storage = openstack_keystone_distributed_storage::app::init_storage(&cfg_mgr)
+                .await
+                .wrap_err("Failed to init storage")?;
+            Some(Arc::new(storage))
+        } else {
+            None
+        };
+    let storage_for_service: Option<Arc<dyn openstack_keystone_storage_api::StorageApi>> =
+        concrete_storage
+            .as_ref()
+            .map(|s| Arc::clone(s) as Arc<dyn openstack_keystone_storage_api::StorageApi>);
+
     let state = Arc::new(
         Service::new(
             ConfigManager::not_watched(cfg),
             db,
             provider,
             Arc::new(MockPolicy::default()),
+            storage_for_service,
         )
         .await?,
     );
 
     if let Some(store) = &state.storage {
         store
-            .raft
-            .initialize(std::collections::BTreeMap::from([(
+            .initialize(std::collections::HashMap::from([(
                 1u64,
-                openstack_keystone_distributed_storage::pb::raft::Node {
+                openstack_keystone_storage_api::Node {
                     node_id: 1,
                     rpc_addr: "127.0.0.1:12345".into(),
                 },

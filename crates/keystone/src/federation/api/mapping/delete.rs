@@ -22,7 +22,6 @@ use serde_json::json;
 
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
-use crate::federation::FederationApi;
 use crate::keystone::ServiceState;
 
 /// Delete attribute mapping.

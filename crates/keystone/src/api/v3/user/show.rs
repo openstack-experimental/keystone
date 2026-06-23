@@ -23,7 +23,6 @@ use serde_json::json;
 use super::types::{User, UserResponse};
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
-use crate::identity::IdentityApi;
 use crate::keystone::ServiceState;
 
 /// Get single user

@@ -24,7 +24,6 @@ use validator::Validate;
 use super::types::{User, UserList, UserListParameters};
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
-use crate::identity::IdentityApi;
 use crate::keystone::ServiceState;
 
 /// List users

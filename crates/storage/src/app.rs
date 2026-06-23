@@ -11,6 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -18,9 +19,9 @@ use dashmap::DashMap;
 use eyre::eyre;
 use openraft::Config;
 use openraft::async_runtime::WatchReceiver;
+
+use crate::protobuf as pb;
 use openraft::errors::{ForwardToLeader, RaftError};
-use serde::Serialize;
-use serde::de::DeserializeOwned;
 use tokio::sync::watch;
 use tonic::Code;
 use tonic::service::Routes;
@@ -29,8 +30,11 @@ use tracing::debug;
 
 use openstack_keystone_config::ConfigManager;
 
+use crate::ApiStoreError;
+use crate::StorageApi;
 use crate::StoreError;
-use crate::api::StorageApi;
+use crate::StoreResponse;
+use crate::Violation;
 use crate::grpc::cluster_admin_service::ClusterAdminServiceImpl;
 use crate::grpc::raft_service::RaftServiceImpl;
 use crate::grpc::storage_service::StorageServiceImpl;
@@ -43,6 +47,7 @@ use crate::protobuf::api::storage_service_client::StorageServiceClient;
 use crate::protobuf::api::storage_service_server::StorageServiceServer;
 use crate::store_command::*;
 use crate::types::*;
+use openstack_keystone_storage_api::Node;
 
 /// gRPC metadata header used to communicate the leader's endpoint to clients.
 ///
@@ -148,20 +153,20 @@ impl StorageApi for Storage {
     ///
     /// # Returns
     /// A `Result` containing a boolean indicating if the key exists, or a
-    /// `StoreError`.
-    async fn contains_key<K, S>(&self, key: K, keyspace: Option<S>) -> Result<bool, StoreError>
-    where
-        K: AsRef<[u8]> + Send,
-        S: AsRef<str> + Send,
-    {
-        // wait for the node to apply the latest state
-        // self.raft.ensure_linearizable(ReadPolicy::ReadIndex).await?;
-
-        let ks = match keyspace {
-            None => self.state_machine_store.data(),
-            Some(name) => &self.state_machine_store.keyspace(name)?,
-        };
-        Ok(ks.contains_key(&key)?)
+    /// `ApiStoreError`.
+    async fn contains_key(
+        &self,
+        key: &[u8],
+        keyspace: Option<&str>,
+    ) -> Result<bool, ApiStoreError> {
+        let res: Result<bool, StoreError> = || -> Result<_, StoreError> {
+            let ks = match keyspace {
+                None => self.state_machine_store.data(),
+                Some(name) => &self.state_machine_store.keyspace(name)?,
+            };
+            Ok(ks.contains_key(key)?)
+        }();
+        Ok(res?)
     }
 
     /// Gets a value for a given key from the distributed store.
@@ -171,125 +176,103 @@ impl StorageApi for Storage {
     /// - `keyspace`: Optional keyspace name.
     ///
     /// # Returns
-    /// A `Result` containing an `Option` with the `StoreDataEnvelope<T>` if
-    /// found, or a `StoreError`.
-    async fn get_by_key<T, K, S>(
+    /// A `Result` containing an `Option` with the `StoreDataEnvelope<Vec<u8>>`
+    /// if found, or an `ApiStoreError`.
+    async fn get_by_key(
         &self,
-        key: K,
-        keyspace: Option<S>,
-    ) -> Result<Option<StoreDataEnvelope<T>>, StoreError>
-    where
-        T: DeserializeOwned + Send,
-        K: AsRef<[u8]> + Send,
-        S: AsRef<str> + Send,
-    {
-        // wait for the node to apply the latest state
-        // self.raft.ensure_linearizable(ReadPolicy::ReadIndex).await?;
-
-        let ks = match keyspace {
-            None => self.state_machine_store.data(),
-            Some(name) => &self.state_machine_store.keyspace(name)?,
-        };
-        // NOTE: running lookup in separate tasks makes huge negative performance impact
-        // (+1000%).
-        if let Some(data) = ks
-            .get(&key)?
-            .map(|x| StoreDataInnerEnvelope::unpack(x.as_ref()))
-            .transpose()?
-        {
-            let metadata = if let Some(meta) = self.state_machine_store.meta().get(&key)? {
-                Metadata::unpack(&meta)?
-            } else {
-                // Need to repair data and insert the new metadata
-                let res = Metadata::new();
-                self.state_machine_store
-                    .meta()
-                    .insert(key.as_ref(), res.pack()?)?;
-                res
-            };
-            return Ok(Some(StoreDataEnvelope { data, metadata }));
-        }
-        Ok(None)
+        key: &[u8],
+        keyspace: Option<&str>,
+    ) -> Result<Option<StoreDataEnvelope<Vec<u8>>>, ApiStoreError> {
+        let res: Result<Option<StoreDataEnvelope<Vec<u8>>>, StoreError> =
+            || -> Result<_, StoreError> {
+                let ks = match keyspace {
+                    None => self.state_machine_store.data(),
+                    Some(name) => &self.state_machine_store.keyspace(name)?,
+                };
+                if let Some(data) = ks
+                    .get(key)?
+                    .map(|x| StoreDataInnerEnvelope::unpack_bytes(x.as_ref()))
+                    .transpose()?
+                {
+                    let key_str = String::from_utf8(key.to_vec())?;
+                    let metadata =
+                        if let Some(meta) = self.state_machine_store.meta().get(&key_str)? {
+                            Metadata::unpack(&meta)?
+                        } else {
+                            let res = Metadata::new();
+                            self.state_machine_store
+                                .meta()
+                                .insert(&key_str, res.pack()?)?;
+                            res
+                        };
+                    Ok(Some(StoreDataEnvelope { data, metadata }))
+                } else {
+                    Ok(None)
+                }
+            }();
+        Ok(res?)
     }
 
     /// List key value pairs by the prefix.
     ///
-    /// Return key value pairs matching the specified prefix deserializing the
-    /// data back to the requested type.
+    /// Return key value pairs matching the specified prefix as raw bytes.
     ///
     /// # Parameters
     /// - `prefix`: The prefix to query.
     /// - `keyspace`: Optional keyspace name.
     ///
     /// # Returns
-    /// A `Result` containing a vector of key-value pairs, or a `StoreError`.
-    async fn prefix<T, K, S>(
+    /// A `Result` containing a vector of key-value pairs, or an
+    /// `ApiStoreError`.
+    async fn prefix(
         &self,
-        prefix: K,
-        keyspace: Option<S>,
-    ) -> Result<Vec<(String, StoreDataEnvelope<T>)>, StoreError>
-    where
-        T: DeserializeOwned + Send,
-        K: AsRef<[u8]> + Send,
-        S: AsRef<str> + Send,
-    {
-        // wait for the node to apply the latest state
-        // self.raft.ensure_linearizable(ReadPolicy::ReadIndex).await?;
-
-        let ks = match keyspace {
-            None => self.state_machine_store.data(),
-            Some(name) => &self.state_machine_store.keyspace(name)?,
-        };
-        ks.prefix(&prefix)
-            .map(|item| {
-                let (key, val) = item.into_inner()?;
-                let k = String::from_utf8(key.to_vec())?;
-                let meta = if let Some(meta) = self.state_machine_store.meta().get(&k)? {
-                    Metadata::unpack(&meta)?
-                } else {
-                    // Need to repair data and insert the new metadata
-                    let res = Metadata::new();
-                    self.state_machine_store
-                        .meta()
-                        .insert(k.clone(), res.pack()?)?;
-                    res
-                };
-                Ok((
-                    k.clone(),
-                    StoreDataEnvelope {
-                        data: StoreDataInnerEnvelope::unpack(val.as_ref())?,
-                        metadata: meta,
-                    },
-                ))
-            })
-            .collect()
+        prefix: &[u8],
+        keyspace: Option<&str>,
+    ) -> Result<Vec<(String, StoreDataEnvelope<Vec<u8>>)>, ApiStoreError> {
+        let keyspace_name = keyspace.map(String::from);
+        let res: Result<Vec<(String, StoreDataEnvelope<Vec<u8>>)>, StoreError> = (|| {
+            let ks = match keyspace_name {
+                None => self.state_machine_store.data(),
+                Some(name) => &self.state_machine_store.keyspace(name)?,
+            };
+            ks.prefix(prefix)
+                .map(|item| {
+                    let (key_bytes, val) = item.into_inner()?;
+                    let k = String::from_utf8(key_bytes.to_vec())?;
+                    let meta = if let Some(meta) = self.state_machine_store.meta().get(&k)? {
+                        Metadata::unpack(&meta)?
+                    } else {
+                        let res = Metadata::new();
+                        self.state_machine_store
+                            .meta()
+                            .insert(k.clone(), res.pack()?)?;
+                        res
+                    };
+                    Ok((
+                        k.clone(),
+                        StoreDataEnvelope {
+                            data: StoreDataInnerEnvelope::unpack_bytes(val.as_ref())?,
+                            metadata: meta,
+                        },
+                    ))
+                })
+                .collect()
+        })();
+        Ok(res?)
     }
 
-    /// List index keys the prefix.
-    ///
-    /// Return keys matching the specified prefix in the index keyspace.
-    ///
-    /// # Parameters
-    /// - `prefix`: The prefix to query.
-    ///
-    /// # Returns
-    /// A `Result` containing a vector of keys, or a `StoreError`.
-    async fn prefix_index<K>(&self, prefix: K) -> Result<Vec<String>, StoreError>
-    where
-        K: AsRef<[u8]> + Send,
-    {
-        // wait for the node to apply the latest state
-        // self.raft.ensure_linearizable(ReadPolicy::ReadIndex).await?;
-
-        self.state_machine_store
+    /// A `Result` containing a vector of keys, or an `ApiStoreError`.
+    async fn prefix_index(&self, prefix: &[u8]) -> Result<Vec<String>, ApiStoreError> {
+        let res: Result<Vec<String>, StoreError> = self
+            .state_machine_store
             .index()
-            .prefix(&prefix)
-            .map(|item| {
+            .prefix(prefix)
+            .map(|item| -> Result<String, StoreError> {
                 let key = item.key()?;
-                let k = String::from_utf8(key.to_vec())?;
-                Ok(k)
+                Ok(String::from_utf8(key.to_vec())?)
             })
-            .collect()
+            .collect();
+        Ok(res?)
     }
 
     /// Deletes a value for a given key in the distributed store.
@@ -299,18 +282,22 @@ impl StorageApi for Storage {
     /// - `keyspace`: Optional keyspace name.
     ///
     /// # Returns
-    /// A `Result` containing the `Response`, or a `StoreError`.
-    async fn remove<K, S>(&self, key: K, keyspace: Option<S>) -> Result<Response, StoreError>
-    where
-        K: Into<Vec<u8>> + Send,
-        S: Into<String> + Send,
-    {
-        let request = StoreCommand::Transaction(vec![MutationInner::convert(
-            Mutation::remove(key, keyspace, None)?,
-            Nonce::default(),
-        )?]);
-        let payload = crate::pb::api::CommandRequest::try_from(request)?;
-        self.write_command_to_storage(payload).await
+    /// A `Result` containing the `StoreResponse`, or an `ApiStoreError`.
+    async fn remove(
+        &self,
+        key: String,
+        keyspace: Option<String>,
+    ) -> Result<StoreResponse, ApiStoreError> {
+        let response: Response = {
+            let inner = MutationInner::convert(
+                Mutation::remove(key.into_bytes(), keyspace.clone(), None),
+                Nonce::default(),
+            )?;
+            let request = StoreCommand::Transaction(vec![inner]);
+            let payload = crate::pb::api::CommandRequest::try_from(request)?;
+            self.write_command_to_storage(payload).await?
+        };
+        Ok(rb_resp_to_store_response(response))
     }
 
     /// Deletes index key in the distributed store.
@@ -319,51 +306,53 @@ impl StorageApi for Storage {
     /// - `key`: The key.
     ///
     /// # Returns
-    /// A `Result` containing the `Response`, or a `StoreError`.
-    async fn remove_index<K>(&self, key: K) -> Result<Response, StoreError>
-    where
-        K: Into<Vec<u8>> + Send,
-    {
-        let request =
-            StoreCommand::Transaction(vec![MutationInner::RemoveIndex { key: key.into() }]);
-        let payload = crate::pb::api::CommandRequest::try_from(request)?;
-        self.write_command_to_storage(payload).await
+    /// A `Result` containing the `StoreResponse`, or an `ApiStoreError`.
+    async fn remove_index(&self, key: String) -> Result<StoreResponse, ApiStoreError> {
+        let response: Response = {
+            let request = StoreCommand::Transaction(vec![MutationInner::RemoveIndex {
+                key: key.into_bytes(),
+            }]);
+            let payload = crate::pb::api::CommandRequest::try_from(request)?;
+            self.write_command_to_storage(payload).await?
+        };
+        Ok(rb_resp_to_store_response(response))
     }
 
     /// Sets a value for a given key in the distributed store.
     ///
     /// # Parameters
     /// - `key`: The key.
-    /// - `value`: The value to set for the key.
+    /// - `value`: The value to set for the key (pre-serialized bytes).
     /// - `keyspace`: Optional keyspace name.
     /// - `expected_revision`: Expected revision.
     ///
     /// # Returns
-    /// A `Result` containing the `Response`, or a `StoreError`.
-    async fn set_value<K, V, S>(
+    /// A `Result` containing the `StoreResponse`, or an `ApiStoreError`.
+    async fn set_value(
         &self,
-        key: K,
-        value: StoreDataEnvelope<V>,
-        keyspace: Option<S>,
+        key: String,
+        value: StoreDataEnvelope<Vec<u8>>,
+        keyspace: Option<String>,
         expected_revision: Option<u64>,
-    ) -> Result<Response, StoreError>
-    where
-        K: Into<String> + Send,
-        V: Serialize + Send,
-        S: Into<String> + Send,
-    {
-        let key: String = key.into();
+    ) -> Result<StoreResponse, ApiStoreError> {
         let metrics = self.raft.metrics().borrow_watched().clone();
         let nonce = Nonce::new(metrics.current_term, metrics.last_log_index.unwrap_or(1));
-        let request = StoreCommand::Transaction(vec![MutationInner::convert(
-            Mutation::set(key, value.data, value.metadata, keyspace, expected_revision)?,
+        let inner = MutationInner::convert(
+            Mutation::Set {
+                key: key.into_bytes(),
+                value: value.data,
+                keyspace: keyspace.unwrap_or_else(|| "data".to_string()),
+                metadata: value.metadata,
+                expected_revision,
+            },
             nonce,
-        )?]);
-
+        )?;
+        let request = StoreCommand::Transaction(vec![inner]);
         let payload = crate::pb::api::CommandRequest::try_from(request)?;
-        self.write_command_to_storage(payload).await
+        Ok(rb_resp_to_store_response(
+            self.write_command_to_storage(payload).await?,
+        ))
     }
-
     /// Sets an index key in the distributed store.
     ///
     /// Sets the key with an empty value in the index keyspace of the storage.
@@ -372,16 +361,15 @@ impl StorageApi for Storage {
     /// - `key`: The key.
     ///
     /// # Returns
-    /// A `Result` containing the `Response`, or a `StoreError`.
-    async fn set_index_key<K>(&self, key: K) -> Result<Response, StoreError>
-    where
-        K: Into<String> + Send,
-    {
-        let key: String = key.into();
-        let request = StoreCommand::Transaction(vec![MutationInner::SetIndex { key: key.into() }]);
-
+    /// A `Result` containing the `StoreResponse`, or an `ApiStoreError`.
+    async fn set_index_key(&self, key: String) -> Result<StoreResponse, ApiStoreError> {
+        let request = StoreCommand::Transaction(vec![MutationInner::SetIndex {
+            key: key.into_bytes(),
+        }]);
         let payload = crate::pb::api::CommandRequest::try_from(request)?;
-        self.write_command_to_storage(payload).await
+        Ok(rb_resp_to_store_response(
+            self.write_command_to_storage(payload).await?,
+        ))
     }
 
     /// Mutation transaction.
@@ -391,18 +379,49 @@ impl StorageApi for Storage {
     ///   transaction.
     ///
     /// # Returns
-    /// A `Result` containing the `Response`, or a `StoreError`.
-    async fn transaction(&self, mutations: Vec<Mutation>) -> Result<Response, StoreError> {
-        let metrics = self.raft.metrics().borrow_watched().clone();
-        let nonce = Nonce::new(metrics.current_term, metrics.last_log_index.unwrap_or(1));
-        let request = StoreCommand::Transaction(
-            mutations
-                .into_iter()
-                .map(|x| MutationInner::convert(x, nonce.clone()))
-                .collect::<Result<Vec<_>, _>>()?,
-        );
+    /// A `Result` containing the `StoreResponse`, or an `ApiStoreError`.
+    async fn transaction(&self, mutations: Vec<Mutation>) -> Result<StoreResponse, ApiStoreError> {
+        let inners: Vec<MutationInner> = mutations
+            .into_iter()
+            .map(|m| {
+                let metrics = self.raft.metrics().borrow_watched().clone();
+                let nonce = Nonce::new(metrics.current_term, metrics.last_log_index.unwrap_or(1));
+                MutationInner::convert(m, nonce)
+            })
+            .collect::<Result<_, _>>()?;
+        let request = StoreCommand::Transaction(inners);
         let payload = crate::pb::api::CommandRequest::try_from(request)?;
-        self.write_command_to_storage(payload).await
+        Ok(rb_resp_to_store_response(
+            self.write_command_to_storage(payload).await?,
+        ))
+    }
+
+    async fn is_initialized(&self) -> Result<bool, ApiStoreError> {
+        Ok(self
+            .raft
+            .is_initialized()
+            .await
+            .map_err(|e| StoreError::RaftFatal { source: e })?)
+    }
+
+    async fn initialize(&self, nodes: HashMap<u64, Node>) -> Result<(), ApiStoreError> {
+        let pb_nodes: HashMap<u64, pb::raft::Node> = nodes
+            .into_iter()
+            .map(|(id, node)| {
+                (
+                    id,
+                    pb::raft::Node {
+                        node_id: node.node_id,
+                        rpc_addr: node.rpc_addr,
+                    },
+                )
+            })
+            .collect();
+        self.raft
+            .initialize(pb_nodes)
+            .await
+            .map_err(|e| StoreError::RaftInitError { source: e })?;
+        Ok(())
     }
 }
 
@@ -560,5 +579,21 @@ impl Storage {
         }
 
         Err(eyre!("max retries exceeded").into())
+    }
+}
+
+/// Convert protobuf `Response` to lightweight `StoreResponse`.
+fn rb_resp_to_store_response(resp: Response) -> StoreResponse {
+    StoreResponse {
+        value: resp.value,
+        violations: resp
+            .violations
+            .into_iter()
+            .map(|v| Violation {
+                r#type: v.r#type,
+                subject: v.subject,
+                description: v.description,
+            })
+            .collect(),
     }
 }

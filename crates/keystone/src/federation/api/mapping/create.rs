@@ -19,7 +19,7 @@ use validator::Validate;
 
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
-use crate::federation::{FederationApi, api::types::*};
+use crate::federation::api::types::*;
 use crate::keystone::ServiceState;
 
 /// Create attribute mapping.

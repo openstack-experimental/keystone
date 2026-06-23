@@ -25,17 +25,13 @@ use validator::Validate;
 use openstack_keystone_api_types::error::KeystoneApiError;
 use openstack_keystone_api_types::k8s_auth::K8sAuthRequest;
 use openstack_keystone_api_types::v3::auth::token::TokenBuilder;
-use openstack_keystone_core::k8s_auth::K8sAuthApi;
 use openstack_keystone_core::keystone::ServiceState;
-use openstack_keystone_core::mapping::MappingApi;
-use openstack_keystone_core::token::TokenApi;
 use openstack_keystone_core_types::auth::{AuthenticationContext, ScopeInfo, SecurityContext};
 use openstack_keystone_core_types::mapping::authorization::Authorization;
 use openstack_keystone_core_types::resource::{Domain, Project};
 
 use crate::api::types::{Catalog, CatalogService};
 use crate::api::v4::auth::token::types::TokenResponse;
-use crate::catalog::CatalogApi;
 
 pub(super) fn openapi_router() -> OpenApiRouter<ServiceState> {
     OpenApiRouter::new().routes(routes!(post))

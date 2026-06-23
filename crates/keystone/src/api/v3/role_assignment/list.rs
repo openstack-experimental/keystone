@@ -25,7 +25,6 @@ use crate::api::error::KeystoneApiError;
 use crate::api::v3::role_assignment::types::{
     Assignment, AssignmentList, RoleAssignmentListParameters,
 };
-use crate::assignment::AssignmentApi;
 use crate::keystone::ServiceState;
 
 /// List role assignments.

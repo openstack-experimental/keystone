@@ -25,7 +25,6 @@ use openstack_keystone_api_types::v3::role::{Role, RoleResponse};
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
-use crate::role::RoleApi;
 
 /// Get single role
 #[utoipa::path(

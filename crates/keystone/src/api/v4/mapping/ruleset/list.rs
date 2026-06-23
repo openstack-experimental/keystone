@@ -29,7 +29,6 @@ use openstack_keystone_core_types::mapping::MappingRuleSetListParameters as Prov
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
-use crate::mapping::MappingApi;
 
 /// List mapping rulesets.
 #[utoipa::path(

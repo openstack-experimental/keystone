@@ -1,3 +1,4 @@
+#![cfg(feature = "bench_internals")]
 use std::hint::black_box;
 use std::sync::Arc;
 
@@ -61,7 +62,7 @@ fn bench_state_machine(c: &mut Criterion) {
     .unwrap();
     let remove_transaction = StoreCommand::Transaction(vec![
         MutationInner::convert(
-            Mutation::remove("foo", Some("data"), None).unwrap(),
+            Mutation::remove("foo", Some("data"), None),
             Nonce::default(),
         )
         .unwrap(),

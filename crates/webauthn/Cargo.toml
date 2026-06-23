@@ -20,6 +20,7 @@ openstack-keystone-api-types = { workspace = true, features = ["openapi", "valid
 openstack-keystone-core = { workspace = true, features = ["api"] }
 openstack-keystone-core-types.workspace = true
 openstack-keystone-distributed-storage = { workspace = true, features = ["mock"] }
+rmp-serde.workspace = true
 sea-orm = { workspace = true }
 sea-orm-migration = { workspace = true }
 serde.workspace = true

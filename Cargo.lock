@@ -3792,6 +3792,7 @@ dependencies = [
  "openstack-keystone-resource-driver-sql",
  "openstack-keystone-revoke-driver-sql",
  "openstack-keystone-role-driver-sql",
+ "openstack-keystone-storage-api",
  "openstack-keystone-token-driver-fernet",
  "openstack-keystone-token-restriction-driver-sql",
  "openstack-keystone-trust-driver-sql",
@@ -3978,7 +3979,7 @@ dependencies = [
  "openstack-keystone-api-types",
  "openstack-keystone-config",
  "openstack-keystone-core-types",
- "openstack-keystone-distributed-storage",
+ "openstack-keystone-storage-api",
  "rand 0.10.1",
  "regex",
  "regex-syntax",
@@ -4036,6 +4037,7 @@ dependencies = [
  "mockall",
  "openraft",
  "openstack-keystone-config",
+ "openstack-keystone-storage-api",
  "prost",
  "rand 0.10.1",
  "rcgen",
@@ -4120,6 +4122,7 @@ dependencies = [
  "openstack-keystone-core",
  "openstack-keystone-core-types",
  "openstack-keystone-distributed-storage",
+ "rmp-serde",
  "tokio",
  "tracing",
  "uuid",
@@ -4203,6 +4206,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "openstack-keystone-storage-api"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "rmp-serde",
+ "serde",
+ "serde_bytes",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "openstack-keystone-token-driver-fernet"
 version = "0.1.1"
 dependencies = [
@@ -4281,6 +4296,7 @@ dependencies = [
  "rcgen",
  "reqwest 0.13.4",
  "reserve-port",
+ "rmp-serde",
  "sea-orm",
  "sea-orm-migration",
  "serde",
@@ -7191,6 +7207,7 @@ dependencies = [
  "openstack-keystone-core-types",
  "openstack-keystone-distributed-storage",
  "openstack-keystone-identity-driver-sql",
+ "openstack-keystone-storage-api",
  "openstack-keystone-token-driver-fernet",
  "openstack-keystone-trust-driver-sql",
  "rcgen",

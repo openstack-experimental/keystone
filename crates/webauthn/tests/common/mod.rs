@@ -165,6 +165,7 @@ pub async fn get_state(
         cfg.webauthn.driver = "raft".to_string();
         DatabaseConnection::Disconnected
     };
+    let storage = Arc::new(openstack_keystone_distributed_storage::mock::MockStorage::default());
     let main_state = Arc::new(
         Service::new(
             ConfigManager::not_watched(cfg),
@@ -174,16 +175,16 @@ pub async fn get_state(
                 .build()
                 .unwrap(),
             Arc::new(policy_enforcer_mock),
+            Some(storage),
         )
         .await
         .unwrap(),
     );
     if let Some(store) = &main_state.storage {
         store
-            .raft
-            .initialize(std::collections::BTreeMap::from([(
+            .initialize(std::collections::HashMap::from([(
                 1u64,
-                openstack_keystone_distributed_storage::pb::raft::Node {
+                openstack_keystone_distributed_storage::Node {
                     node_id: 1,
                     rpc_addr: "127.0.0.1:12345".into(),
                 },

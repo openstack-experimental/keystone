@@ -25,7 +25,6 @@ use openstack_keystone_api_types::k8s_auth::*;
 
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
-use crate::k8s_auth::K8sAuthApi;
 use crate::keystone::ServiceState;
 
 /// Get single K8s auth instance.

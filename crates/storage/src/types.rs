@@ -14,12 +14,16 @@
 
 // Declare the Raft type with the TypeConfig.
 // Reference the containing module's type config and re-export it.
-use chrono::Utc;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 pub use crate::TypeConfig;
-use crate::error::StoreError;
+
+// Re-export Metadata and StoreDataEnvelope from storage-api.
+pub use crate::Metadata;
+pub use crate::StoreDataEnvelope;
+
+use crate::StoreError;
 
 pub type NodeId = u64;
 //pub type LogStore = crate::store::log_store::FjallLogStore<TypeConfig>;
@@ -55,70 +59,8 @@ pub type SnapshotResponse = openraft::raft::SnapshotResponse<TypeConfig>;
 pub type ClientWriteResponse = openraft::raft::ClientWriteResponse<TypeConfig>;
 pub type StreamAppendResult = openraft::raft::StreamAppendResult<TypeConfig>;
 
-/// The metadata of the stored data.
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
-pub struct Metadata {
-    /// The resource revision.
-    pub revision: u64,
-    /// The timestamp when the resource was created.
-    pub created_at: i64,
-}
-
-impl Default for Metadata {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl Metadata {
-    /// Create a new instance of `Metadata`.
-    ///
-    /// # Returns
-    /// A new `Metadata` instance.
-    pub fn new() -> Self {
-        Self {
-            revision: 0,
-            created_at: Utc::now().timestamp(),
-        }
-    }
-
-    /// Create a new `Metadata` instance with an incremented revision.
-    ///
-    /// # Returns
-    /// A new `Metadata` instance.
-    pub fn new_revision(&self) -> Self {
-        Self {
-            revision: self.revision + 1,
-            created_at: self.created_at,
-        }
-    }
-
-    /// Pack the metadata for storing in the db.
-    ///
-    /// Serialize the metadata into the bytes using the MsgPack format.
-    ///
-    /// # Returns
-    /// A `Result` containing the serialized bytes, or a `StoreError`.
-    pub(crate) fn pack(&self) -> Result<Vec<u8>, StoreError> {
-        Ok(rmp_serde::to_vec(self)?)
-    }
-
-    /// Unpack the metadata stored in the storage.
-    ///
-    /// Unpack the data from the bytes array with the metadata.
-    ///
-    /// # Parameters
-    /// - `value`: The binary data.
-    ///
-    /// # Returns
-    /// A `Result` containing the unpacked `Metadata`, or a `StoreError`.
-    pub(crate) fn unpack(value: &[u8]) -> Result<Self, StoreError> {
-        Ok(rmp_serde::from_slice(value)?)
-    }
-}
-
 /// The nonce used as an authentication for the data encryption.
-#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq)]
 pub struct Nonce(u64, u64);
 
 impl Nonce {
@@ -170,11 +112,30 @@ impl StoreDataInnerEnvelope {
     ///
     /// # Returns
     /// A `Result` containing the unpacked value of type `T`, or a `StoreError`.
+    #[allow(dead_code)]
     pub(crate) fn unpack<T: DeserializeOwned>(value: &[u8]) -> Result<T, StoreError> {
         let raw_envelope: StoreDataInnerEnvelope = rmp_serde::from_slice(value)?;
         // TODO: decrypt the data.
         let data: T = rmp_serde::from_slice(&raw_envelope.cipher)?;
         Ok(data)
+    }
+
+    /// Unpack the stored data and return the raw cipher bytes without
+    /// deserialization.
+    ///
+    /// This is used by the object-safe [`crate::StorageApi::get_by_key`] which
+    /// returns `StoreDataEnvelope<Vec<u8>>`. The caller is responsible for
+    /// deserializing the bytes into the expected type.
+    ///
+    /// # Parameters
+    /// - `value`: The binary data.
+    ///
+    /// # Returns
+    /// A `Result` containing the raw cipher bytes, or a `StoreError`.
+    pub(crate) fn unpack_bytes(value: &[u8]) -> Result<Vec<u8>, StoreError> {
+        let raw_envelope: StoreDataInnerEnvelope = rmp_serde::from_slice(value)?;
+        // TODO: decrypt the data.
+        Ok(raw_envelope.cipher)
     }
 }
 
@@ -205,28 +166,6 @@ pub fn bench_pack(payload: &[u8]) -> Result<Vec<u8>, StoreError> {
 #[cfg(feature = "bench_internals")]
 pub fn bench_unpack(payload: &[u8]) -> Result<StoreDataEnvelope<String>, StoreError> {
     StoreDataInnerEnvelope::unpack(payload)
-}
-
-/// The store data object with the associated metadata.
-///
-/// An envelope for transferring the store data with the associated metadata
-/// unencrypted over the wire.
-#[derive(Debug, Deserialize, PartialEq)]
-pub struct StoreDataEnvelope<T> {
-    /// The resource metadata.
-    pub metadata: Metadata,
-    /// The resource itself.
-    //#[serde(with = "serde_bytes")]
-    pub data: T,
-}
-
-impl From<&str> for StoreDataEnvelope<String> {
-    fn from(value: &str) -> Self {
-        Self {
-            metadata: Metadata::new(),
-            data: value.into(),
-        }
-    }
 }
 
 #[cfg(test)]

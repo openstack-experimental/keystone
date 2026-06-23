@@ -24,12 +24,9 @@ use tracing::info;
 use openstack_keystone_core_types::assignment::Assignment;
 use openstack_keystone_core_types::assignment::RoleAssignmentListParameters;
 
+use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
-use crate::{
-    api::auth::Auth, assignment::AssignmentApi, identity::IdentityApi, resource::ResourceApi,
-    role::RoleApi,
-};
 
 /// Check whether user has role assignment on project.
 ///

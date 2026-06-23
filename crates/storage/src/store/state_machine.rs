@@ -450,7 +450,8 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                                             .get(&key)
                                             .map_err(|e| io::Error::other(e.to_string()))?
                                             .map(|x| Metadata::unpack(x.as_ref()))
-                                            .transpose()?;
+                                            .transpose()
+                                            .map_err(|e| io::Error::other(e.to_string()))?;
                                         if curr_meta
                                             .as_ref()
                                             .is_none_or(|x| x.revision != expected_revision)
@@ -498,7 +499,8 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                                             .get(&key)
                                             .map_err(|e| io::Error::other(e.to_string()))?
                                             .map(|x| Metadata::unpack(x.as_ref()))
-                                            .transpose()?;
+                                            .transpose()
+                                            .map_err(|e| io::Error::other(e.to_string()))?;
                                         if curr_meta
                                             .as_ref()
                                             .is_none_or(|x| x.revision != expected_revision)
@@ -520,7 +522,13 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                                     let inner_data =
                                         StoreDataInnerEnvelope { cipher, nonce }.pack()?;
                                     batch.insert(ks, key.clone(), inner_data);
-                                    batch.insert(&self.meta, key.clone(), metadata.pack()?);
+                                    batch.insert(
+                                        &self.meta,
+                                        key.clone(),
+                                        metadata
+                                            .pack()
+                                            .map_err(|e| io::Error::other(e.to_string()))?,
+                                    );
                                 }
                                 MutationInner::CreateIfAbsent {
                                     key,
@@ -548,7 +556,13 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                                     let inner_data =
                                         StoreDataInnerEnvelope { cipher, nonce }.pack()?;
                                     batch.insert(ks, key.clone(), inner_data);
-                                    batch.insert(&self.meta, key.clone(), metadata.pack()?);
+                                    batch.insert(
+                                        &self.meta,
+                                        key.clone(),
+                                        metadata
+                                            .pack()
+                                            .map_err(|e| io::Error::other(e.to_string()))?,
+                                    );
                                 }
                                 MutationInner::SetIndex { key } => {
                                     batch.insert(&self.index, key, vec![]);

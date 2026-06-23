@@ -27,7 +27,6 @@ use validator::Validate;
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
-use crate::mapping::MappingApi;
 
 /// Update a mapping ruleset.
 #[utoipa::path(

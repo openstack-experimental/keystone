@@ -17,13 +17,13 @@ inventory.workspace = true
 openstack-keystone-core.workspace = true
 openstack-keystone-core-types.workspace = true
 openstack-keystone-distributed-storage.workspace = true
+rmp-serde.workspace = true
 tracing.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
 openstack-keystone-core-types = { workspace = true, features = ["mock"] }
 openstack-keystone-distributed-storage = { workspace = true, features = ["mock"] }
-rmp-serde.workspace = true
 tokio = { workspace = true, features = ["rt", "macros"] }
 chrono.workspace = true
 uuid = { workspace = true, features = ["v4"] }

@@ -22,7 +22,6 @@ use serde_json::json;
 
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
-use crate::k8s_auth::K8sAuthApi;
 use crate::keystone::ServiceState;
 
 /// Delete K8s auth instance.

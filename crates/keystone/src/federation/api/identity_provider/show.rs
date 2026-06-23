@@ -23,7 +23,7 @@ use serde_json::json;
 
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
-use crate::federation::{FederationApi, api::types::*};
+use crate::federation::api::types::*;
 use crate::keystone::ServiceState;
 
 /// Get single identity provider.

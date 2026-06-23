@@ -37,9 +37,10 @@ openstack-keystone-appcred-driver-sql.workspace = true
 openstack-keystone-assignment-driver-sql.workspace = true
 openstack-keystone-catalog-driver-sql.workspace = true
 openstack-keystone-config.workspace = true
-openstack-keystone-core.workspace = true
+openstack-keystone-core = { workspace = true, features = ["api"] }
 openstack-keystone-core-types.workspace = true
 openstack-keystone-distributed-storage.workspace = true
+openstack-keystone-storage-api.workspace = true
 openstack-keystone-federation-driver-sql.workspace = true
 openstack-keystone-k8s-auth-driver-sql.workspace = true
 openstack-keystone-k8s-auth-driver-raft.workspace = true
@@ -90,6 +91,7 @@ http-body-util.workspace = true
 httpmock = { version = "0.8", features = ["http2"] }
 openstack-keystone-core = { workspace = true, features = ["api", "mock"] }
 openstack-keystone-core-types = { workspace = true, features = ["mock"] }
+openstack-keystone-distributed-storage = { workspace = true, features = ["mock"] }
 rstest.workspace = true
 secrecy = { workspace = true, features = ["serde"] }
 tokio = { workspace = true, features = ["process", "macros"] }

@@ -22,12 +22,9 @@ use axum::{
 use serde_json::json;
 use tracing::info;
 
+use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
-use crate::{
-    api::auth::Auth, assignment::AssignmentApi, identity::IdentityApi, resource::ResourceApi,
-    role::RoleApi,
-};
 use openstack_keystone_core_types::assignment::{AssignmentBuilder, AssignmentType};
 
 /// Revoke role from user on project

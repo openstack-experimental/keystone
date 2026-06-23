@@ -24,7 +24,6 @@ use super::types::{RoleCreateRequest, RoleResponse};
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
-use crate::role::RoleApi;
 
 /// Create a new Role.
 #[utoipa::path(

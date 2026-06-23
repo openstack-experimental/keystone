@@ -142,6 +142,7 @@ pub mod tests {
                 DatabaseConnection::Disconnected,
                 provider,
                 Arc::new(policy_enforcer_mock),
+                None,
             )
             .await
             .unwrap(),

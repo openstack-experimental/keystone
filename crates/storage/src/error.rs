@@ -18,6 +18,9 @@ use thiserror::Error;
 use crate::types::*;
 
 /// Keystone Store error.
+///
+/// Heavy error type containing all implementation-specific variants.
+/// The `StorageApi` trait boundary uses `ApiStoreError` (lightweight).
 #[derive(Error, Debug)]
 pub enum StoreError {
     /// DistributedStorage configuration is unset.
@@ -156,6 +159,13 @@ pub enum StoreError {
     Storage {
         #[from]
         source: openraft::StorageError<TypeConfig>,
+    },
+
+    /// Error from the storage-api layer.
+    #[error(transparent)]
+    StorageApi {
+        #[from]
+        source: openstack_keystone_storage_api::StoreError,
     },
 
     /// Tonic status error.

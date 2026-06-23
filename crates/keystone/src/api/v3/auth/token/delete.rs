@@ -23,8 +23,6 @@ use tracing::error;
 
 use crate::api::{auth::Auth, error::KeystoneApiError};
 use crate::keystone::ServiceState;
-use crate::revoke::RevokeApi;
-use crate::token::TokenApi;
 
 /// Revoke token.
 ///

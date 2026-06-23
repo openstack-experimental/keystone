@@ -14,12 +14,11 @@
 //! # Keystone state
 use std::sync::Arc;
 
-use openstack_keystone_distributed_storage::StorageApi;
 use sea_orm::DatabaseConnection;
 use tracing::info;
 
 use openstack_keystone_config::ConfigManager;
-use openstack_keystone_distributed_storage::app::{Storage, init_storage};
+use openstack_keystone_storage_api::StorageApi;
 
 use crate::error::KeystoneError;
 use crate::events::EventDispatcher;
@@ -45,8 +44,8 @@ pub struct Service {
     /// Event dispatcher for inter-provider notifications.
     pub event_dispatcher: Arc<EventDispatcher>,
 
-    /// Distributed storage.
-    pub storage: Option<Storage>,
+    /// Distributed storage instance (when configured).
+    pub storage: Option<Arc<dyn StorageApi>>,
 
     /// Shutdown flag.
     pub shutdown: bool,
@@ -62,6 +61,7 @@ impl Service {
     /// - `db`: The database connection.
     /// - `provider`: The provider for services/resources.
     /// - `policy_enforcer`: The policy enforcer instance.
+    /// - `storage`: Optional distributed storage instance.
     ///
     /// # Returns
     /// - `Ok(Self)` if the service was initialized successfully.
@@ -71,20 +71,8 @@ impl Service {
         db: DatabaseConnection,
         provider: Provider,
         policy_enforcer: Arc<dyn PolicyEnforcer>,
+        storage: Option<Arc<dyn StorageApi>>,
     ) -> Result<Self, KeystoneError> {
-        let storage = if cfg.config.read().await.distributed_storage.is_some() {
-            // Initialize the raft backed storage.
-            Some(
-                init_storage(&cfg)
-                    .await
-                    .map_err(|e| KeystoneError::Provider {
-                        source: Box::new(e),
-                    })?,
-            )
-        } else {
-            None
-        };
-
         Ok(Self {
             config_manager: cfg,
             provider,
@@ -94,14 +82,6 @@ impl Service {
             storage,
             shutdown: false,
         })
-    }
-
-    /// Returns a reference to the distributed storage if available.
-    ///
-    /// # Returns
-    /// - `Some(&impl StorageApi)` if storage is configured, otherwise `None`.
-    pub fn get_storage(&self) -> Option<&impl StorageApi> {
-        self.storage.as_ref()
     }
 
     /// Terminates the Keystone service.

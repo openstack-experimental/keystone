@@ -27,8 +27,6 @@ use openstack_keystone_api_types::error::KeystoneApiError;
 use openstack_keystone_api_types::v3::auth::token::TokenBuilder;
 use openstack_keystone_api_types::v3::auth::token::TokenResponse;
 use openstack_keystone_core::auth::*;
-use openstack_keystone_core::identity::IdentityApi;
-use openstack_keystone_core::token::TokenApi;
 
 /// Finish user passkey authentication.
 ///

@@ -22,7 +22,6 @@ use serde_json::json;
 use super::types::{Group, GroupResponse};
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
-use crate::identity::IdentityApi;
 use crate::keystone::ServiceState;
 
 /// Get a single user group by ID.

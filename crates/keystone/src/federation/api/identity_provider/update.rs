@@ -24,7 +24,7 @@ use validator::Validate;
 
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
-use crate::federation::{FederationApi, api::types::*};
+use crate::federation::api::types::*;
 use crate::keystone::ServiceState;
 
 /// Update single identity provider.

@@ -22,9 +22,7 @@ use openstack_keystone_core_types::resource::ProjectListParameters;
 
 use crate::api::v3::project::types::ProjectShortList;
 use crate::api::{auth::Auth, error::KeystoneApiError};
-use crate::assignment::AssignmentApi;
 use crate::keystone::ServiceState;
-use crate::resource::ResourceApi;
 
 /// Get available project scopes.
 ///

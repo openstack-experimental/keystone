@@ -36,6 +36,7 @@ http.workspace = true
 mockall.workspace = true
 openraft = { workspace = true, features = ["serde", "type-alias"] }
 openstack-keystone-config.workspace = true
+openstack-keystone-storage-api.workspace = true
 prost.workspace = true
 rand.workspace = true
 rmp.workspace = true

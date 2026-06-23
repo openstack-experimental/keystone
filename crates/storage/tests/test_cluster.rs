@@ -41,8 +41,17 @@ use openstack_keystone_distributed_storage::network::{
 use openstack_keystone_distributed_storage::protobuf as pb;
 use openstack_keystone_distributed_storage::protobuf::raft::cluster_admin_service_client::ClusterAdminServiceClient;
 use openstack_keystone_distributed_storage::store_command::*;
-use openstack_keystone_distributed_storage::{Metadata, StoreDataEnvelope};
+use openstack_keystone_distributed_storage::{Metadata, StoreDataEnvelope, StoreError};
 use openstack_keystone_distributed_storage::{StorageApi, TypeConfig};
+
+fn make_env<T: serde::Serialize + ?Sized>(
+    value: &T,
+) -> Result<StoreDataEnvelope<Vec<u8>>, StoreError> {
+    Ok(StoreDataEnvelope {
+        data: rmp_serde::to_vec(value)?,
+        metadata: Metadata::default(),
+    })
+}
 
 /// Set up a cluster of 3 nodes.
 /// Write to it and read from it.
@@ -200,20 +209,29 @@ async fn test_cluster_inner() -> Result<()> {
         // distributes across the cluster
         instance1
             .storage
-            .set_value("foo", StoreDataEnvelope::from("bar"), None::<String>, None)
+            .set_value("foo".to_string(), make_env("bar")?, None, None)
             .await?;
         instance2
             .storage
             .set_value(
-                "foo1",
-                StoreDataEnvelope::from("bar1"),
-                Some("another_keyspace"),
+                "foo1".to_string(),
+                make_env("bar1")?,
+                Some("another_keyspace".to_string()),
                 None,
             )
             .await?;
-        instance3.storage.set_index_key("idx:foo:1").await?;
-        instance3.storage.set_index_key("idx:foo:2").await?;
-        instance3.storage.set_index_key("idx:foo:3").await?;
+        instance3
+            .storage
+            .set_index_key("idx:foo:1".to_string())
+            .await?;
+        instance3
+            .storage
+            .set_index_key("idx:foo:2".to_string())
+            .await?;
+        instance3
+            .storage
+            .set_index_key("idx:foo:3".to_string())
+            .await?;
         //    // --- Wait for a while to let the replication get done.
         TypeConfig::sleep(Duration::from_millis(1_000)).await;
     }
@@ -222,26 +240,37 @@ async fn test_cluster_inner() -> Result<()> {
     {
         for instance in &instances {
             println!("=== read `foo` on node {}", instance.node_id);
-            let got: StoreDataEnvelope<String> = instance
+            let got = instance
                 .storage
-                .get_by_key("foo", None::<String>)
+                .get_by_key("foo".as_bytes(), None)
                 .await?
                 .expect("must present");
+            let got = got.try_deserialize::<String>()?;
             println!("the data is {:?}", got);
             assert_eq!("bar", got.data);
-            assert!(instance.storage.contains_key("foo", None::<&str>).await?);
+            assert!(
+                instance
+                    .storage
+                    .contains_key("foo".as_bytes(), None)
+                    .await?
+            );
 
-            let got: Option<StoreDataEnvelope<String>> =
-                instance.storage.get_by_key("foo1", None::<String>).await?;
+            let got = instance.storage.get_by_key("foo1".as_bytes(), None).await?;
             assert!(got.is_none());
-            assert!(!instance.storage.contains_key("foo1", None::<&str>).await?);
+            assert!(
+                !instance
+                    .storage
+                    .contains_key("foo1".as_bytes(), None)
+                    .await?
+            );
 
-            let got: Option<StoreDataEnvelope<String>> = instance
+            let got = instance
                 .storage
-                .get_by_key("foo1", Some("another_keyspace"))
+                .get_by_key("foo1".as_bytes(), Some("another_keyspace"))
                 .await?;
-            assert_eq!("bar1", got.unwrap().data);
-            let indexes = instance.storage.prefix_index("idx:foo").await?;
+            let got = got.unwrap();
+            assert_eq!("bar1", got.try_deserialize::<String>()?.data);
+            let indexes = instance.storage.prefix_index("idx:foo".as_bytes()).await?;
             assert!(indexes.contains(&"idx:foo:1".to_string()));
             assert!(indexes.contains(&"idx:foo:2".to_string()));
             assert!(indexes.contains(&"idx:foo:3".to_string()));
@@ -251,8 +280,11 @@ async fn test_cluster_inner() -> Result<()> {
 
     println!("=== delete `foo=bar`");
     {
-        instance3.storage.remove("foo", None::<String>).await?;
-        instance2.storage.remove_index("idx:foo:1").await?;
+        instance3.storage.remove("foo".to_string(), None).await?;
+        instance2
+            .storage
+            .remove_index("idx:foo:1".to_string())
+            .await?;
 
         // --- Wait for a while to let the replication get done.
         TypeConfig::sleep(Duration::from_millis(1_000)).await;
@@ -263,16 +295,16 @@ async fn test_cluster_inner() -> Result<()> {
         for instance in &instances {
             println!("=== read `foo` on node {}", instance.node_id);
 
-            let got: Option<StoreDataEnvelope<String>> =
-                instance.storage.get_by_key("foo", None::<String>).await?;
+            let got = instance.storage.get_by_key("foo".as_bytes(), None).await?;
             assert!(got.is_none());
 
-            let got: Option<StoreDataEnvelope<String>> = instance
+            let got = instance
                 .storage
-                .get_by_key("foo1", Some("another_keyspace"))
+                .get_by_key("foo1".as_bytes(), Some("another_keyspace"))
                 .await?;
-            assert_eq!("bar1", got.unwrap().data);
-            let indexes = instance.storage.prefix_index("idx:foo").await?;
+            let got = got.unwrap();
+            assert_eq!("bar1", got.try_deserialize::<String>()?.data);
+            let indexes = instance.storage.prefix_index("idx:foo".as_bytes()).await?;
             assert!(indexes.contains(&"idx:foo:2".to_string()));
             assert!(indexes.contains(&"idx:foo:3".to_string()));
             assert_eq!(indexes.len(), 2);
@@ -284,7 +316,7 @@ async fn test_cluster_inner() -> Result<()> {
     let mutations = vec![
         Mutation::set("new_foo", "new_val", Metadata::new(), None::<&str>, None)?,
         Mutation::set("new_foo2", "new_val2", Metadata::new(), None::<&str>, None)?,
-        Mutation::remove("foo1", Some("another_keyspace"), None)?,
+        Mutation::remove("foo1", Some("another_keyspace"), None),
     ];
     instance1.storage.transaction(mutations).await?;
     // wait for the log to be applied
@@ -293,24 +325,26 @@ async fn test_cluster_inner() -> Result<()> {
         "new_val",
         instance1
             .storage
-            .get_by_key::<String, &str, &str>("new_foo", None)
+            .get_by_key("new_foo".as_bytes(), None)
             .await?
             .expect("data should be there")
+            .try_deserialize::<String>()?
             .data
     );
     assert_eq!(
         "new_val2",
         instance1
             .storage
-            .get_by_key::<String, &str, &str>("new_foo2", None)
+            .get_by_key("new_foo2".as_bytes(), None)
             .await?
             .expect("data should be there")
+            .try_deserialize::<String>()?
             .data
     );
     assert!(
         instance1
             .storage
-            .get_by_key::<StoreDataEnvelope<String>, &str, &str>("foo1", Some("another_keyspace"))
+            .get_by_key("foo1".as_bytes(), Some("another_keyspace"))
             .await?
             .is_none()
     );

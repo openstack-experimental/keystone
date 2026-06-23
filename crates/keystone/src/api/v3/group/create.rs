@@ -18,7 +18,6 @@ use validator::Validate;
 use super::types::{Group, GroupCreateRequest, GroupResponse};
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
-use crate::identity::IdentityApi;
 use crate::keystone::ServiceState;
 
 /// Create new user group.

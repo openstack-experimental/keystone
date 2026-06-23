@@ -81,7 +81,7 @@ impl RaftBackend {
 
     async fn create_auth_instance_impl(
         &self,
-        storage: &impl StorageApi,
+        storage: &dyn StorageApi,
         instance: K8sAuthInstanceCreate,
     ) -> Result<K8sAuthInstance, StoreError> {
         let obj = K8sAuthInstance::from(instance);
@@ -95,7 +95,7 @@ impl RaftBackend {
             )?,
             Mutation::set_index(
                 self.get_auth_instance_domain_id_idx_key_name(&obj.id, &obj.domain_id),
-            )?,
+            ),
         ];
         storage.transaction(mutations).await?;
         Ok(obj)
@@ -103,19 +103,21 @@ impl RaftBackend {
 
     async fn delete_auth_instance_impl(
         &self,
-        storage: &impl StorageApi,
+        storage: &dyn StorageApi,
         id: &str,
     ) -> Result<(), StoreError> {
         let curr: Option<K8sAuthInstance> = storage
-            .get_by_key(self.get_auth_instance_id_key_name(id), None::<&str>)
+            .get_by_key(self.get_auth_instance_id_key_name(id).as_bytes(), None)
             .await?
-            .map(|x| x.data);
+            .as_ref()
+            .map(|env| env.try_deserialize().map(|x| x.data))
+            .transpose()?;
         if let Some(obj) = curr {
             let mutations = vec![
-                Mutation::remove(self.get_auth_instance_id_key_name(id), None::<&str>, None)?,
+                Mutation::remove(self.get_auth_instance_id_key_name(id), None::<&str>, None),
                 Mutation::remove_index(
                     self.get_auth_instance_domain_id_idx_key_name(id, &obj.domain_id),
-                )?,
+                ),
             ];
             storage.transaction(mutations).await?;
         }
@@ -124,18 +126,20 @@ impl RaftBackend {
 
     async fn get_auth_instance_impl(
         &self,
-        storage: &impl StorageApi,
+        storage: &dyn StorageApi,
         id: &str,
     ) -> Result<Option<K8sAuthInstance>, StoreError> {
         Ok(storage
-            .get_by_key(self.get_auth_instance_id_key_name(id), None::<&str>)
+            .get_by_key(self.get_auth_instance_id_key_name(id).as_bytes(), None)
             .await?
+            .map(|env| env.try_deserialize())
+            .transpose()?
             .map(|x| x.data))
     }
 
     async fn list_auth_instances_impl(
         &self,
-        storage: &impl StorageApi,
+        storage: &dyn StorageApi,
         params: &K8sAuthInstanceListParameters,
     ) -> Result<Vec<K8sAuthInstance>, StoreError> {
         let mut res: Vec<K8sAuthInstance> = Vec::new();
@@ -155,7 +159,7 @@ impl RaftBackend {
             };
             pre_filter_ids.extend(
                 storage
-                    .prefix_index(self.get_auth_instance_by_domain_id_prefix(did))
+                    .prefix_index(self.get_auth_instance_by_domain_id_prefix(did).as_bytes())
                     .await?
                     .into_iter()
                     .map(|entry| entry[id_offset..].into()),
@@ -165,11 +169,10 @@ impl RaftBackend {
         if !pre_filter_ids.is_empty() {
             for id in pre_filter_ids {
                 if let Some(candidate) = storage
-                    .get_by_key::<K8sAuthInstance, String, &str>(
-                        self.get_auth_instance_id_key_name(id),
-                        None::<&str>,
-                    )
+                    .get_by_key(self.get_auth_instance_id_key_name(id).as_bytes(), None)
                     .await?
+                    .map(|env| env.try_deserialize())
+                    .transpose()?
                     .map(|x| x.data)
                     && post_filters.iter().all(|f| f.matches(&candidate))
                 {
@@ -178,13 +181,11 @@ impl RaftBackend {
             }
         } else {
             for candidate in storage
-                .prefix::<K8sAuthInstance, String, &str>(
-                    self.get_auth_instance_prefix(),
-                    None::<&str>,
-                )
+                .prefix(self.get_auth_instance_prefix().as_bytes(), None)
                 .await?
                 .into_iter()
-                .map(|(_, v)| v.data)
+                .map(|(_, env)| env.try_deserialize().map(|x| x.data))
+                .collect::<Result<Vec<_>, _>>()?
             {
                 if post_filters.iter().all(|f| f.matches(&candidate)) {
                     res.push(candidate);
@@ -196,13 +197,15 @@ impl RaftBackend {
 
     async fn update_auth_instance_impl(
         &self,
-        storage: &impl StorageApi,
+        storage: &dyn StorageApi,
         id: &str,
         data: K8sAuthInstanceUpdate,
     ) -> Result<Option<K8sAuthInstance>, StoreError> {
         let curr: Option<StoreDataEnvelope<K8sAuthInstance>> = storage
-            .get_by_key(self.get_auth_instance_id_key_name(id), None::<&str>)
-            .await?;
+            .get_by_key(self.get_auth_instance_id_key_name(id).as_bytes(), None)
+            .await?
+            .map(|env| env.try_deserialize())
+            .transpose()?;
         if let Some(curr) = curr {
             let new = curr.data.with_update(data);
             let new_meta = curr.metadata.new_revision();
@@ -210,10 +213,10 @@ impl RaftBackend {
                 .set_value(
                     self.get_auth_instance_id_key_name(id),
                     StoreDataEnvelope {
-                        data: new.clone(),
+                        data: rmp_serde::to_vec(&new)?,
                         metadata: new_meta,
                     },
-                    None::<&str>,
+                    None,
                     Some(curr.metadata.revision),
                 )
                 .await?;
@@ -242,7 +245,7 @@ impl K8sAuthBackend for RaftBackend {
     ) -> Result<K8sAuthInstance, K8sAuthProviderError> {
         let raft = state
             .storage
-            .as_ref()
+            .as_deref()
             .ok_or(K8sAuthProviderError::RaftNotAvailable)?;
         self.create_auth_instance_impl(raft, instance)
             .await
@@ -265,7 +268,7 @@ impl K8sAuthBackend for RaftBackend {
     ) -> Result<(), K8sAuthProviderError> {
         let raft = state
             .storage
-            .as_ref()
+            .as_deref()
             .ok_or(K8sAuthProviderError::RaftNotAvailable)?;
         self.delete_auth_instance_impl(raft, id)
             .await
@@ -289,7 +292,7 @@ impl K8sAuthBackend for RaftBackend {
     ) -> Result<Option<K8sAuthInstance>, K8sAuthProviderError> {
         let raft = state
             .storage
-            .as_ref()
+            .as_deref()
             .ok_or(K8sAuthProviderError::RaftNotAvailable)?;
         self.get_auth_instance_impl(raft, id)
             .await
@@ -312,7 +315,7 @@ impl K8sAuthBackend for RaftBackend {
     ) -> Result<Vec<K8sAuthInstance>, K8sAuthProviderError> {
         let raft = state
             .storage
-            .as_ref()
+            .as_deref()
             .ok_or(K8sAuthProviderError::RaftNotAvailable)?;
         self.list_auth_instances_impl(raft, params)
             .await
@@ -337,7 +340,7 @@ impl K8sAuthBackend for RaftBackend {
     ) -> Result<K8sAuthInstance, K8sAuthProviderError> {
         let raft = state
             .storage
-            .as_ref()
+            .as_deref()
             .ok_or(K8sAuthProviderError::RaftNotAvailable)?;
         self.update_auth_instance_impl(raft, id, data)
             .await
@@ -511,7 +514,7 @@ mod tests {
             .unwrap();
 
         let idx = storage
-            .prefix_index("k8s_auth:instance:domain:domain-1:")
+            .prefix_index("k8s_auth:instance:domain:domain-1:".as_bytes())
             .await
             .unwrap();
         assert_eq!(idx.len(), 1);
@@ -522,7 +525,7 @@ mod tests {
             .unwrap();
 
         let idx = storage
-            .prefix_index("k8s_auth:instance:domain:domain-1:")
+            .prefix_index("k8s_auth:instance:domain:domain-1:".as_bytes())
             .await
             .unwrap();
         assert_eq!(idx.len(), 0);

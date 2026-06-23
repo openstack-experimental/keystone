@@ -22,7 +22,7 @@ use axum::{
 use serde_json::json;
 
 use crate::api::{KeystoneApiError, auth::Auth, common::build_pagination_links};
-use crate::federation::{FederationApi, api::types::*};
+use crate::federation::api::types::*;
 use crate::keystone::ServiceState;
 
 /// List federation mappings.

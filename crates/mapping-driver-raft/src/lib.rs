@@ -297,7 +297,7 @@ impl RaftBackend {
     /// Returns [`StoreError`] if the distributed transaction fails.
     async fn create_ruleset_impl(
         &self,
-        storage: &impl StorageApi,
+        storage: &dyn StorageApi,
         ruleset: MappingRuleSet,
     ) -> Result<MappingRuleSet, StoreError> {
         let obj = ruleset;
@@ -312,14 +312,14 @@ impl RaftBackend {
         if let Some(ref did) = obj.domain_id {
             mutations.push(Mutation::set_index(
                 self.get_ruleset_domain_idx_key_name(&obj.mapping_id, did),
-            )?);
+            ));
         }
         // Composite source index: domain + identity source
         mutations.push(Mutation::set_index(self.get_ruleset_source_idx_key_name(
             &obj.mapping_id,
             idx_key,
             obj.source.to_string_key(),
-        ))?);
+        )));
         storage.transaction(mutations).await?;
         Ok(obj)
     }
@@ -344,7 +344,7 @@ impl RaftBackend {
     /// Returns [`StoreError`] if the distributed transaction fails.
     async fn create_virtual_user_impl(
         &self,
-        storage: &impl StorageApi,
+        storage: &dyn StorageApi,
         metadata: VirtualUser,
     ) -> Result<VirtualUser, StoreError> {
         let mut mutations = vec![
@@ -357,12 +357,12 @@ impl RaftBackend {
             )?,
             Mutation::set_index(
                 self.get_vuser_mapping_idx_key_name(&metadata.user_id, &metadata.mapping_id),
-            )?,
+            ),
         ];
         if let Some(ref did) = metadata.domain_id {
             mutations.push(Mutation::set_index(
                 self.get_vuser_domain_idx_key_name(&metadata.user_id, did),
-            )?);
+            ));
         }
         storage.transaction(mutations).await?;
         Ok(metadata)
@@ -382,12 +382,14 @@ impl RaftBackend {
     /// Returns [`StoreError`] if the distributed transaction fails.
     async fn delete_ruleset_impl(
         &self,
-        storage: &impl StorageApi,
+        storage: &dyn StorageApi,
         mapping_id: &str,
     ) -> Result<(), StoreError> {
         let curr: Option<StoreDataEnvelope<MappingRuleSet>> = storage
-            .get_by_key(self.get_ruleset_id_key_name(mapping_id), None::<&str>)
-            .await?;
+            .get_by_key(self.get_ruleset_id_key_name(mapping_id).as_bytes(), None)
+            .await?
+            .map(|env| env.try_deserialize())
+            .transpose()?;
         if let Some(env) = curr {
             let obj = &env.data;
             let rev = env.metadata.revision;
@@ -395,18 +397,18 @@ impl RaftBackend {
                 self.get_ruleset_id_key_name(mapping_id),
                 None::<&str>,
                 Some(rev),
-            )?];
+            )];
             if let Some(ref did) = obj.domain_id {
                 mutations.push(Mutation::remove_index(
                     self.get_ruleset_domain_idx_key_name(mapping_id, did),
-                )?);
+                ));
                 mutations.push(Mutation::remove_index(
                     self.get_ruleset_source_idx_key_name(
                         mapping_id,
                         did,
                         obj.source.to_string_key(),
                     ),
-                )?);
+                ));
             }
             storage.transaction(mutations).await?;
         }
@@ -428,25 +430,27 @@ impl RaftBackend {
     /// Returns [`StoreError`] if the distributed transaction fails.
     async fn delete_virtual_user_impl(
         &self,
-        storage: &impl StorageApi,
+        storage: &dyn StorageApi,
         user_id: &str,
     ) -> Result<(), StoreError> {
         let curr: Option<StoreDataEnvelope<VirtualUser>> = storage
-            .get_by_key(self.get_vuser_id_key_name(user_id), None::<&str>)
-            .await?;
+            .get_by_key(self.get_vuser_id_key_name(user_id).as_bytes(), None)
+            .await?
+            .map(|env| env.try_deserialize())
+            .transpose()?;
         if let Some(env) = curr {
             let obj = &env.data;
             let rev = env.metadata.revision;
             let mut mutations = vec![
-                Mutation::remove(self.get_vuser_id_key_name(user_id), None::<&str>, Some(rev))?,
+                Mutation::remove(self.get_vuser_id_key_name(user_id), None::<&str>, Some(rev)),
                 Mutation::remove_index(
                     self.get_vuser_mapping_idx_key_name(user_id, &obj.mapping_id),
-                )?,
+                ),
             ];
             if let Some(ref did) = obj.domain_id {
                 mutations.push(Mutation::remove_index(
                     self.get_vuser_domain_idx_key_name(user_id, did),
-                )?);
+                ));
             }
             storage.transaction(mutations).await?;
         }
@@ -466,12 +470,14 @@ impl RaftBackend {
     /// Returns [`StoreError`] if the read fails.
     async fn get_ruleset_impl(
         &self,
-        storage: &impl StorageApi,
+        storage: &dyn StorageApi,
         mapping_id: &str,
     ) -> Result<Option<MappingRuleSet>, StoreError> {
         Ok(storage
-            .get_by_key(self.get_ruleset_id_key_name(mapping_id), None::<&str>)
+            .get_by_key(self.get_ruleset_id_key_name(mapping_id).as_bytes(), None)
             .await?
+            .map(|env| env.try_deserialize())
+            .transpose()?
             .map(|x| x.data))
     }
 
@@ -492,14 +498,14 @@ impl RaftBackend {
     /// Returns [`StoreError`] if the read fails.
     async fn get_ruleset_by_source_impl(
         &self,
-        storage: &impl StorageApi,
+        storage: &dyn StorageApi,
         domain_id: &str,
         source: &IdentitySource,
     ) -> Result<Option<MappingRuleSet>, StoreError> {
         let source_key = source.to_string_key();
         // Index key: mapping:ruleset:source:<domain_id>:<source_key>:<mapping_id>
         let prefix = format!("mapping:ruleset:source:{}:{}:", domain_id, source_key);
-        let indexes = storage.prefix_index(&prefix).await?;
+        let indexes = storage.prefix_index(prefix.as_bytes()).await?;
         if indexes.is_empty() {
             return Ok(None);
         }
@@ -511,8 +517,10 @@ impl RaftBackend {
             .ok_or_else(|| eyre::eyre!("malformed source index key: {}", indexes[0]))
             .map_err(StoreError::from)?;
         Ok(storage
-            .get_by_key(self.get_ruleset_id_key_name(mapping_id), None::<&str>)
+            .get_by_key(self.get_ruleset_id_key_name(mapping_id).as_bytes(), None)
             .await?
+            .map(|env| env.try_deserialize())
+            .transpose()?
             .map(|x| x.data))
     }
 
@@ -529,12 +537,14 @@ impl RaftBackend {
     /// Returns [`StoreError`] if the read fails.
     async fn get_virtual_user_impl(
         &self,
-        storage: &impl StorageApi,
+        storage: &dyn StorageApi,
         user_id: &str,
     ) -> Result<Option<VirtualUser>, StoreError> {
         Ok(storage
-            .get_by_key(self.get_vuser_id_key_name(user_id), None::<&str>)
+            .get_by_key(self.get_vuser_id_key_name(user_id).as_bytes(), None)
             .await?
+            .map(|env| env.try_deserialize())
+            .transpose()?
             .map(|x| x.data))
     }
 
@@ -562,7 +572,7 @@ impl RaftBackend {
     /// Returns [`StoreError`] if the scan fails.
     async fn list_rulesets_impl(
         &self,
-        storage: &impl StorageApi,
+        storage: &dyn StorageApi,
         params: &MappingRuleSetListParameters,
     ) -> Result<Vec<MappingRuleSet>, StoreError> {
         let mut res: Vec<MappingRuleSet> = Vec::new();
@@ -582,7 +592,7 @@ impl RaftBackend {
             };
             pre_filter_ids.extend(
                 storage
-                    .prefix_index(self.get_ruleset_by_domain_prefix(did))
+                    .prefix_index(self.get_ruleset_by_domain_prefix(did).as_bytes())
                     .await?
                     .into_iter()
                     .map(|entry| entry[id_offset..].into()),
@@ -592,11 +602,10 @@ impl RaftBackend {
         if !pre_filter_ids.is_empty() {
             for id in pre_filter_ids {
                 if let Some(candidate) = storage
-                    .get_by_key::<MappingRuleSet, String, &str>(
-                        self.get_ruleset_id_key_name(id),
-                        None::<&str>,
-                    )
+                    .get_by_key(self.get_ruleset_id_key_name(id).as_bytes(), None)
                     .await?
+                    .map(|env| env.try_deserialize())
+                    .transpose()?
                     .map(|x| x.data)
                     && post_filters.iter().all(|f| f.matches(&candidate))
                 {
@@ -605,10 +614,11 @@ impl RaftBackend {
             }
         } else {
             for candidate in storage
-                .prefix::<MappingRuleSet, String, &str>(self.get_ruleset_prefix(), None::<&str>)
+                .prefix(self.get_ruleset_prefix().as_bytes(), None)
                 .await?
                 .into_iter()
-                .map(|(_, v)| v.data)
+                .map(|(_, env)| env.try_deserialize().map(|x| x.data))
+                .collect::<Result<Vec<_>, _>>()?
             {
                 if post_filters.iter().all(|f| f.matches(&candidate)) {
                     res.push(candidate);
@@ -642,7 +652,7 @@ impl RaftBackend {
     /// Returns [`StoreError`] if the scan fails.
     async fn list_virtual_users_impl(
         &self,
-        storage: &impl StorageApi,
+        storage: &dyn StorageApi,
         params: &VirtualUserListParameters,
     ) -> Result<Vec<VirtualUser>, StoreError> {
         let mut res: Vec<VirtualUser> = Vec::new();
@@ -665,7 +675,7 @@ impl RaftBackend {
             };
             pre_filter_ids.extend(
                 storage
-                    .prefix_index(self.get_vuser_by_domain_prefix(did))
+                    .prefix_index(self.get_vuser_by_domain_prefix(did).as_bytes())
                     .await?
                     .into_iter()
                     .map(|entry| entry[id_offset..].into()),
@@ -679,7 +689,7 @@ impl RaftBackend {
                 prefix.len() + 1
             };
             let by_mapping_ids: BTreeSet<String> = storage
-                .prefix_index(self.get_vuser_by_mapping_prefix(mid))
+                .prefix_index(self.get_vuser_by_mapping_prefix(mid).as_bytes())
                 .await?
                 .into_iter()
                 .map(|entry| entry[id_offset..].into())
@@ -694,11 +704,10 @@ impl RaftBackend {
         if !pre_filter_ids.is_empty() {
             for id in pre_filter_ids {
                 if let Some(candidate) = storage
-                    .get_by_key::<VirtualUser, String, &str>(
-                        self.get_vuser_id_key_name(id),
-                        None::<&str>,
-                    )
+                    .get_by_key(self.get_vuser_id_key_name(id).as_bytes(), None)
                     .await?
+                    .map(|env| env.try_deserialize())
+                    .transpose()?
                     .map(|x| x.data)
                     && post_filters.iter().all(|f| f.matches(&candidate))
                 {
@@ -707,10 +716,11 @@ impl RaftBackend {
             }
         } else {
             for candidate in storage
-                .prefix::<VirtualUser, String, &str>(self.get_vuser_prefix(), None::<&str>)
+                .prefix(self.get_vuser_prefix().as_bytes(), None)
                 .await?
                 .into_iter()
-                .map(|(_, v)| v.data)
+                .map(|(_, env)| env.try_deserialize().map(|x| x.data))
+                .collect::<Result<Vec<_>, _>>()?
             {
                 if post_filters.iter().all(|f| f.matches(&candidate)) {
                     res.push(candidate);
@@ -742,26 +752,27 @@ impl RaftBackend {
     /// fails.
     async fn update_ruleset_impl(
         &self,
-        storage: &impl StorageApi,
+        storage: &dyn StorageApi,
         mapping_id: &str,
         data: MappingRuleSetUpdate,
     ) -> Result<MappingRuleSet, StoreError> {
         let curr: StoreDataEnvelope<MappingRuleSet> = storage
-            .get_by_key(self.get_ruleset_id_key_name(mapping_id), None::<&str>)
+            .get_by_key(self.get_ruleset_id_key_name(mapping_id).as_bytes(), None)
             .await?
             .ok_or(StoreError::Other(eyre::eyre!(
                 "Mapping ruleset not found: {mapping_id}"
-            )))?;
+            )))?
+            .try_deserialize()?;
         let new = curr.data.with_update(data);
         let new_meta = curr.metadata.new_revision();
         storage
             .set_value(
                 self.get_ruleset_id_key_name(mapping_id),
                 StoreDataEnvelope {
-                    data: new.clone(),
+                    data: rmp_serde::to_vec(&new)?,
                     metadata: new_meta,
                 },
-                None::<&str>,
+                None,
                 Some(curr.metadata.revision),
             )
             .await?;
@@ -789,25 +800,26 @@ impl RaftBackend {
     /// fails.
     async fn update_virtual_user_impl(
         &self,
-        storage: &impl StorageApi,
+        storage: &dyn StorageApi,
         user_id: &str,
         metadata: VirtualUser,
     ) -> Result<VirtualUser, StoreError> {
         let curr: StoreDataEnvelope<VirtualUser> = storage
-            .get_by_key(self.get_vuser_id_key_name(user_id), None::<&str>)
+            .get_by_key(self.get_vuser_id_key_name(user_id).as_bytes(), None)
             .await?
             .ok_or(StoreError::Other(eyre::eyre!(
                 "Virtual user not found: {user_id}"
-            )))?;
+            )))?
+            .try_deserialize()?;
         let new_meta = curr.metadata.new_revision();
         storage
             .set_value(
                 self.get_vuser_id_key_name(user_id),
                 StoreDataEnvelope {
-                    data: metadata.clone(),
+                    data: rmp_serde::to_vec(&metadata)?,
                     metadata: new_meta,
                 },
-                None::<&str>,
+                None,
                 Some(curr.metadata.revision),
             )
             .await?;
@@ -831,15 +843,16 @@ impl RaftBackend {
     /// fails.
     async fn disable_virtual_user_impl(
         &self,
-        storage: &impl StorageApi,
+        storage: &dyn StorageApi,
         user_id: &str,
     ) -> Result<VirtualUser, StoreError> {
         let curr: StoreDataEnvelope<VirtualUser> = storage
-            .get_by_key(self.get_vuser_id_key_name(user_id), None::<&str>)
+            .get_by_key(self.get_vuser_id_key_name(user_id).as_bytes(), None)
             .await?
             .ok_or(StoreError::Other(eyre::eyre!(
                 "Virtual user not found: {user_id}"
-            )))?;
+            )))?
+            .try_deserialize()?;
         let new_meta = curr.metadata.new_revision();
         let mut data = curr.data;
         data.enabled = false;
@@ -847,10 +860,10 @@ impl RaftBackend {
             .set_value(
                 self.get_vuser_id_key_name(user_id),
                 StoreDataEnvelope {
-                    data: data.clone(),
+                    data: rmp_serde::to_vec(&data)?,
                     metadata: new_meta,
                 },
-                None::<&str>,
+                None,
                 Some(curr.metadata.revision),
             )
             .await?;
@@ -874,15 +887,16 @@ impl RaftBackend {
     /// fails.
     async fn enable_virtual_user_impl(
         &self,
-        storage: &impl StorageApi,
+        storage: &dyn StorageApi,
         user_id: &str,
     ) -> Result<VirtualUser, StoreError> {
         let curr: StoreDataEnvelope<VirtualUser> = storage
-            .get_by_key(self.get_vuser_id_key_name(user_id), None::<&str>)
+            .get_by_key(self.get_vuser_id_key_name(user_id).as_bytes(), None)
             .await?
             .ok_or(StoreError::Other(eyre::eyre!(
                 "Virtual user not found: {user_id}"
-            )))?;
+            )))?
+            .try_deserialize()?;
         let new_meta = curr.metadata.new_revision();
         let mut data = curr.data;
         data.enabled = true;
@@ -890,10 +904,10 @@ impl RaftBackend {
             .set_value(
                 self.get_vuser_id_key_name(user_id),
                 StoreDataEnvelope {
-                    data: data.clone(),
+                    data: rmp_serde::to_vec(&data)?,
                     metadata: new_meta,
                 },
-                None::<&str>,
+                None,
                 Some(curr.metadata.revision),
             )
             .await?;
@@ -983,7 +997,7 @@ impl MappingBackend for RaftBackend {
     ) -> Result<MappingRuleSet, MappingProviderError> {
         let raft = state
             .storage
-            .as_ref()
+            .as_deref()
             .ok_or(MappingProviderError::RaftNotAvailable)?;
         self.create_ruleset_impl(raft, ruleset)
             .await
@@ -1015,7 +1029,7 @@ impl MappingBackend for RaftBackend {
     ) -> Result<VirtualUser, MappingProviderError> {
         let raft = state
             .storage
-            .as_ref()
+            .as_deref()
             .ok_or(MappingProviderError::RaftNotAvailable)?;
         self.create_virtual_user_impl(raft, metadata)
             .await
@@ -1044,7 +1058,7 @@ impl MappingBackend for RaftBackend {
     ) -> Result<(), MappingProviderError> {
         let raft = state
             .storage
-            .as_ref()
+            .as_deref()
             .ok_or(MappingProviderError::RaftNotAvailable)?;
         match self.delete_ruleset_impl(raft, mapping_id).await {
             Ok(()) => Ok(()),
@@ -1081,7 +1095,7 @@ impl MappingBackend for RaftBackend {
     ) -> Result<(), MappingProviderError> {
         let raft = state
             .storage
-            .as_ref()
+            .as_deref()
             .ok_or(MappingProviderError::RaftNotAvailable)?;
         match self.delete_virtual_user_impl(raft, user_id).await {
             Ok(()) => Ok(()),
@@ -1117,7 +1131,7 @@ impl MappingBackend for RaftBackend {
     ) -> Result<Option<MappingRuleSet>, MappingProviderError> {
         let raft = state
             .storage
-            .as_ref()
+            .as_deref()
             .ok_or(MappingProviderError::RaftNotAvailable)?;
         self.get_ruleset_impl(raft, mapping_id)
             .await
@@ -1147,7 +1161,7 @@ impl MappingBackend for RaftBackend {
     ) -> Result<Option<MappingRuleSet>, MappingProviderError> {
         let raft = state
             .storage
-            .as_ref()
+            .as_deref()
             .ok_or(MappingProviderError::RaftNotAvailable)?;
         self.get_ruleset_by_source_impl(raft, domain_id, source)
             .await
@@ -1175,7 +1189,7 @@ impl MappingBackend for RaftBackend {
     ) -> Result<Option<VirtualUser>, MappingProviderError> {
         let raft = state
             .storage
-            .as_ref()
+            .as_deref()
             .ok_or(MappingProviderError::RaftNotAvailable)?;
         self.get_virtual_user_impl(raft, user_id)
             .await
@@ -1207,7 +1221,7 @@ impl MappingBackend for RaftBackend {
     ) -> Result<Vec<MappingRuleSet>, MappingProviderError> {
         let raft = state
             .storage
-            .as_ref()
+            .as_deref()
             .ok_or(MappingProviderError::RaftNotAvailable)?;
         self.list_rulesets_impl(raft, params)
             .await
@@ -1239,7 +1253,7 @@ impl MappingBackend for RaftBackend {
     ) -> Result<Vec<VirtualUser>, MappingProviderError> {
         let raft = state
             .storage
-            .as_ref()
+            .as_deref()
             .ok_or(MappingProviderError::RaftNotAvailable)?;
         self.list_virtual_users_impl(raft, params)
             .await
@@ -1275,7 +1289,7 @@ impl MappingBackend for RaftBackend {
     ) -> Result<MappingRuleSet, MappingProviderError> {
         let raft = state
             .storage
-            .as_ref()
+            .as_deref()
             .ok_or(MappingProviderError::RaftNotAvailable)?;
         match self.update_ruleset_impl(raft, mapping_id, data).await {
             Ok(r) => Ok(r),
@@ -1319,7 +1333,7 @@ impl MappingBackend for RaftBackend {
     ) -> Result<VirtualUser, MappingProviderError> {
         let raft = state
             .storage
-            .as_ref()
+            .as_deref()
             .ok_or(MappingProviderError::RaftNotAvailable)?;
         match self.update_virtual_user_impl(raft, user_id, metadata).await {
             Ok(r) => Ok(r),
@@ -1358,7 +1372,7 @@ impl MappingBackend for RaftBackend {
     ) -> Result<VirtualUser, MappingProviderError> {
         let raft = state
             .storage
-            .as_ref()
+            .as_deref()
             .ok_or(MappingProviderError::RaftNotAvailable)?;
         match self.disable_virtual_user_impl(raft, user_id).await {
             Ok(r) => Ok(r),
@@ -1397,7 +1411,7 @@ impl MappingBackend for RaftBackend {
     ) -> Result<VirtualUser, MappingProviderError> {
         let raft = state
             .storage
-            .as_ref()
+            .as_deref()
             .ok_or(MappingProviderError::RaftNotAvailable)?;
         match self.enable_virtual_user_impl(raft, user_id).await {
             Ok(r) => Ok(r),
@@ -2066,7 +2080,7 @@ mod tests {
             .await
             .unwrap();
         let idx = storage
-            .prefix_index("mapping:ruleset:domain:domain-idx:")
+            .prefix_index("mapping:ruleset:domain:domain-idx:".as_bytes())
             .await
             .unwrap();
         assert_eq!(idx.len(), 1);
@@ -2075,7 +2089,7 @@ mod tests {
             .await
             .unwrap();
         let idx = storage
-            .prefix_index("mapping:ruleset:domain:domain-idx:")
+            .prefix_index("mapping:ruleset:domain:domain-idx:".as_bytes())
             .await
             .unwrap();
         assert_eq!(idx.len(), 0);
@@ -2091,12 +2105,12 @@ mod tests {
             .await
             .unwrap();
         let domain_idx = storage
-            .prefix_index("mapping:vuser:domain:domain-idx:")
+            .prefix_index("mapping:vuser:domain:domain-idx:".as_bytes())
             .await
             .unwrap();
         assert_eq!(domain_idx.len(), 1);
         let mapping_idx = storage
-            .prefix_index("mapping:vuser:mapping:rs-idx:")
+            .prefix_index("mapping:vuser:mapping:rs-idx:".as_bytes())
             .await
             .unwrap();
         assert_eq!(mapping_idx.len(), 1);
@@ -2105,12 +2119,12 @@ mod tests {
             .await
             .unwrap();
         let domain_idx = storage
-            .prefix_index("mapping:vuser:domain:domain-idx:")
+            .prefix_index("mapping:vuser:domain:domain-idx:".as_bytes())
             .await
             .unwrap();
         assert_eq!(domain_idx.len(), 0);
         let mapping_idx = storage
-            .prefix_index("mapping:vuser:mapping:rs-idx:")
+            .prefix_index("mapping:vuser:mapping:rs-idx:".as_bytes())
             .await
             .unwrap();
         assert_eq!(mapping_idx.len(), 0);
@@ -2250,7 +2264,10 @@ mod tests {
         let created = result.unwrap();
         assert_eq!(created.user_id, "vu-no-domain");
         assert!(created.domain_id.is_none());
-        let domain_idx = storage.prefix_index("mapping:vuser:domain:").await.unwrap();
+        let domain_idx = storage
+            .prefix_index("mapping:vuser:domain:".as_bytes())
+            .await
+            .unwrap();
         assert!(
             !domain_idx
                 .iter()

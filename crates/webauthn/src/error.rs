@@ -73,7 +73,7 @@ pub enum WebauthnError {
     RaftStoreError {
         /// The source of the error.
         #[from]
-        source: openstack_keystone_distributed_storage::StoreError,
+        source: openstack_keystone_distributed_storage::ApiStoreError,
     },
 
     /// Relying party configuration is missing.

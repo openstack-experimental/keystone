@@ -38,9 +38,33 @@ pub mod store {
 mod error;
 pub mod store_command;
 
+// Re-export lightweight types from storage-api crate.
+pub use openstack_keystone_storage_api::{
+    Metadata, Mutation, Node, StorageApi, StoreDataEnvelope, StoreError as ApiStoreError,
+    StoreResponse, Violation,
+};
+
 pub use error::StoreError;
 pub use store::log_store::FjallLogStore;
 pub use store::state_machine::FjallStateMachine;
+
+/// Convert the heavy storage error type to the lightweight API error type.
+impl From<StoreError> for ApiStoreError {
+    fn from(e: StoreError) -> Self {
+        match e {
+            StoreError::ConfigMissing => Self::ConfigMissing,
+            StoreError::Conflict {
+                subject,
+                description,
+            } => Self::Conflict {
+                subject,
+                description,
+            },
+            StoreError::KeyPresent => Self::KeyPresent,
+            _ => Self::Other(Box::new(e)),
+        }
+    }
+}
 
 pub mod protobuf {
     pub mod api {
@@ -55,10 +79,8 @@ pub mod protobuf {
     }
 }
 pub use crate::protobuf as pb;
-pub use api::StorageApi;
-pub use types::{Metadata, Nonce, StoreDataEnvelope};
 #[cfg(feature = "bench_internals")]
-pub use types::{bench_pack, bench_unpack};
+pub use types::{Nonce, bench_pack, bench_unpack};
 
 openraft::declare_raft_types!(
     /// Declare the type configuration for example K/V store.

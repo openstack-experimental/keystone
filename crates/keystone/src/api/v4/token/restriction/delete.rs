@@ -24,7 +24,6 @@ use serde_json::json;
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
-use crate::token::TokenApi;
 
 /// Delete Token restriction.
 ///

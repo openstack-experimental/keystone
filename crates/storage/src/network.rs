@@ -401,7 +401,7 @@ pub async fn init_tls_watcher(
     let cm_clone = config_manager.clone();
     let mut reload_rx = config_manager.notify_tx.subscribe();
     tokio::spawn(async move {
-        while let Ok(_) = reload_rx.recv().await {
+        while reload_rx.recv().await.is_ok() {
             let cfg = cm_clone.config.read().await;
             match get_client_tls_config(&cfg) {
                 Ok(new_config) => {

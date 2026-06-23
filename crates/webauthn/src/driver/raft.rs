@@ -18,8 +18,9 @@ use webauthn_rs::prelude::{PasskeyAuthentication, PasskeyRegistration};
 
 use openstack_keystone_core::keystone::ServiceState;
 use openstack_keystone_distributed_storage::{
-    Metadata, StorageApi, StoreDataEnvelope, StoreError, app::Storage,
+    ApiStoreError, Metadata, StorageApi, StoreDataEnvelope,
 };
+use rmp_serde;
 
 use crate::{
     WebauthnError,
@@ -42,12 +43,8 @@ impl RaftDriver {
     ///
     /// # Returns
     /// The generated keyspace name.
-    fn generate_state_keyspace_name(&self, storage: &Storage) -> String {
-        if let Some(val) = storage.last_log_index() {
-            format!("webauth_state_{}", val)
-        } else {
-            format!("webauth_state_{}", Utc::now().timestamp())
-        }
+    fn generate_state_keyspace_name(&self) -> String {
+        format!("webauth_state_{}", Utc::now().timestamp())
     }
 
     /// Get the name of the keyspace containing current (not expired) states.
@@ -59,27 +56,23 @@ impl RaftDriver {
     /// A `Result` containing the keyspace name, or an `Error`.
     async fn get_current_state_keyspace_name(
         &self,
-        storage: &Storage,
-    ) -> Result<String, WebauthnError> {
+        storage: &dyn StorageApi,
+    ) -> Result<String, ApiStoreError> {
         let res = match storage
-            .get_by_key(KEY_CURRENT_STATE, Some(DATA_KEYSPACE))
+            .get_by_key(KEY_CURRENT_STATE.as_bytes(), Some(DATA_KEYSPACE))
             .await?
         {
-            Some(val) => {
-                // Use the current value
-                val.data
-            }
+            Some(val) => rmp_serde::from_slice(&val.data)?,
             None => {
-                // Write the new value and use the result as the name
-                let ks_name = self.generate_state_keyspace_name(storage);
+                let ks_name = self.generate_state_keyspace_name();
                 storage
                     .set_value(
-                        KEY_CURRENT_STATE,
+                        KEY_CURRENT_STATE.to_string(),
                         StoreDataEnvelope {
                             metadata: Metadata::new(),
-                            data: ks_name.clone(),
+                            data: rmp_serde::to_vec(&ks_name)?,
                         },
-                        Some(DATA_KEYSPACE),
+                        Some(DATA_KEYSPACE.to_string()),
                         None,
                     )
                     .await?;
@@ -136,72 +129,76 @@ impl RaftDriver {
 
     async fn create_user_webauthn_credential_impl(
         &self,
-        storage: &impl StorageApi,
+        storage: &dyn StorageApi,
         credential: &WebauthnCredential,
-    ) -> Result<WebauthnCredential, StoreError> {
+    ) -> Result<WebauthnCredential, ApiStoreError> {
         storage
             .set_value(
                 self.get_cred_key_name(&credential.user_id, &credential.credential_id),
                 StoreDataEnvelope {
                     metadata: Metadata::new(),
-                    data: credential.clone(),
+                    data: rmp_serde::to_vec(credential)?,
                 },
-                Some(DATA_KEYSPACE),
+                Some(DATA_KEYSPACE.to_string()),
                 None,
             )
             .await?;
         Ok(credential.clone())
     }
 
-    async fn get_user_webauthn_credential_impl<'a>(
+    async fn get_user_webauthn_credential_impl(
         &self,
-        storage: &impl StorageApi,
-        user_id: &'a str,
-        credential_id: &'a str,
-    ) -> Result<Option<WebauthnCredential>, StoreError> {
+        storage: &dyn StorageApi,
+        user_id: &str,
+        credential_id: &str,
+    ) -> Result<Option<WebauthnCredential>, ApiStoreError> {
         let key = self.get_cred_key_name(user_id, credential_id);
         Ok(storage
-            .get_by_key(key, Some(DATA_KEYSPACE))
+            .get_by_key(key.as_bytes(), Some(DATA_KEYSPACE))
             .await?
+            .map(|env| env.try_deserialize())
+            .transpose()?
             .map(|x| x.data))
     }
 
-    async fn delete_user_webauthn_credential_impl<'a>(
+    async fn delete_user_webauthn_credential_impl(
         &self,
-        storage: &impl StorageApi,
-        user_id: &'a str,
-        credential_id: &'a str,
-    ) -> Result<(), StoreError> {
+        storage: &dyn StorageApi,
+        user_id: &str,
+        credential_id: &str,
+    ) -> Result<(), ApiStoreError> {
         let key = self.get_cred_key_name(user_id, credential_id);
-        storage.remove(key, Some(DATA_KEYSPACE)).await?;
+        storage.remove(key, Some(DATA_KEYSPACE.to_string())).await?;
         Ok(())
     }
 
-    async fn list_user_webauthn_credentials_impl<'a>(
+    async fn list_user_webauthn_credentials_impl(
         &self,
-        storage: &impl StorageApi,
-        user_id: &'a str,
-    ) -> Result<Vec<WebauthnCredential>, StoreError> {
+        storage: &dyn StorageApi,
+        user_id: &str,
+    ) -> Result<Vec<WebauthnCredential>, ApiStoreError> {
         let prefix = self.get_user_cred_list_prefix(user_id);
-        Ok(storage
-            .prefix(prefix, Some(DATA_KEYSPACE))
+        storage
+            .prefix(prefix.as_bytes(), Some(DATA_KEYSPACE))
             .await?
             .into_iter()
-            .map(|(_, v)| v.data)
-            .collect())
+            .map(|(_, env)| env.try_deserialize().map(|x| x.data))
+            .collect::<Result<Vec<_>, _>>()
     }
 
-    async fn update_user_webauthn_credential_impl<'a>(
+    async fn update_user_webauthn_credential_impl(
         &self,
-        storage: &impl StorageApi,
-        user_id: &'a str,
-        credential_id: &'a str,
+        storage: &dyn StorageApi,
+        user_id: &str,
+        credential_id: &str,
         credential: &WebauthnCredential,
-    ) -> Result<Option<WebauthnCredential>, StoreError> {
+    ) -> Result<Option<WebauthnCredential>, ApiStoreError> {
         let key = self.get_cred_key_name(user_id, credential_id);
         if let Some(curr) = storage
-            .get_by_key::<WebauthnCredential, String, &str>(key, Some(DATA_KEYSPACE))
+            .get_by_key(key.as_bytes(), Some(DATA_KEYSPACE))
             .await?
+            .map(|env| env.try_deserialize::<WebauthnCredential>())
+            .transpose()?
         {
             let new_meta = curr.metadata.new_revision();
             let curr_revision = curr.metadata.revision;
@@ -210,9 +207,9 @@ impl RaftDriver {
                     self.get_cred_key_name(user_id, credential_id),
                     StoreDataEnvelope {
                         metadata: new_meta,
-                        data: credential,
+                        data: rmp_serde::to_vec(credential)?,
                     },
-                    Some(DATA_KEYSPACE),
+                    Some(DATA_KEYSPACE.to_string()),
                     Some(curr_revision),
                 )
                 .await?;
@@ -222,93 +219,101 @@ impl RaftDriver {
         }
     }
 
-    async fn save_user_webauthn_credential_authentication_state_impl<'a>(
+    async fn save_user_webauthn_credential_authentication_state_impl(
         &self,
-        storage: &impl StorageApi,
-        user_id: &'a str,
+        storage: &dyn StorageApi,
+        user_id: &str,
         auth_state: &PasskeyAuthentication,
-        state_keysapce: &str,
-    ) -> Result<(), StoreError> {
+        state_keyspace: &str,
+    ) -> Result<(), ApiStoreError> {
         storage
             .set_value(
                 self.get_user_cred_auth_state_key_name(user_id),
                 StoreDataEnvelope {
                     metadata: Metadata::new(),
-                    data: auth_state,
+                    data: rmp_serde::to_vec(auth_state)?,
                 },
-                Some(state_keysapce),
+                Some(state_keyspace.to_string()),
                 None,
             )
             .await?;
         Ok(())
     }
 
-    async fn get_user_webauthn_credential_authentication_state_impl<'a>(
+    async fn get_user_webauthn_credential_authentication_state_impl(
         &self,
-        storage: &impl StorageApi,
-        user_id: &'a str,
-        state_keysapce: &str,
-    ) -> Result<Option<PasskeyAuthentication>, StoreError> {
+        storage: &dyn StorageApi,
+        user_id: &str,
+        state_keyspace: &str,
+    ) -> Result<Option<PasskeyAuthentication>, ApiStoreError> {
         let key = self.get_user_cred_auth_state_key_name(user_id);
         Ok(storage
-            .get_by_key(key, Some(state_keysapce))
+            .get_by_key(key.as_bytes(), Some(state_keyspace))
             .await?
+            .map(|env| env.try_deserialize())
+            .transpose()?
             .map(|x| x.data))
     }
 
-    async fn delete_user_webauthn_credential_authentication_state_impl<'a>(
+    async fn delete_user_webauthn_credential_authentication_state_impl(
         &self,
-        storage: &impl StorageApi,
-        user_id: &'a str,
-        state_keysapce: &str,
-    ) -> Result<(), StoreError> {
+        storage: &dyn StorageApi,
+        user_id: &str,
+        state_keyspace: &str,
+    ) -> Result<(), ApiStoreError> {
         let key = self.get_user_cred_auth_state_key_name(user_id);
-        storage.remove(key, Some(state_keysapce)).await?;
+        storage
+            .remove(key, Some(state_keyspace.to_string()))
+            .await?;
         Ok(())
     }
 
-    async fn save_user_webauthn_credential_registration_state_impl<'a>(
+    async fn save_user_webauthn_credential_registration_state_impl(
         &self,
-        storage: &impl StorageApi,
-        user_id: &'a str,
+        storage: &dyn StorageApi,
+        user_id: &str,
         reg_state: &PasskeyRegistration,
-        state_keysapce: &str,
-    ) -> Result<(), StoreError> {
+        state_keyspace: &str,
+    ) -> Result<(), ApiStoreError> {
         storage
             .set_value(
                 self.get_user_cred_registration_state_key_name(user_id),
                 StoreDataEnvelope {
                     metadata: Metadata::new(),
-                    data: reg_state,
+                    data: rmp_serde::to_vec(reg_state)?,
                 },
-                Some(state_keysapce),
+                Some(state_keyspace.to_string()),
                 None,
             )
             .await?;
         Ok(())
     }
 
-    async fn get_user_webauthn_credential_registration_state_impl<'a>(
+    async fn get_user_webauthn_credential_registration_state_impl(
         &self,
-        storage: &impl StorageApi,
-        user_id: &'a str,
-        state_keysapce: &str,
-    ) -> Result<Option<PasskeyRegistration>, StoreError> {
+        storage: &dyn StorageApi,
+        user_id: &str,
+        state_keyspace: &str,
+    ) -> Result<Option<PasskeyRegistration>, ApiStoreError> {
         let key = self.get_user_cred_registration_state_key_name(user_id);
         Ok(storage
-            .get_by_key(key, Some(state_keysapce))
+            .get_by_key(key.as_bytes(), Some(state_keyspace))
             .await?
+            .map(|env| env.try_deserialize())
+            .transpose()?
             .map(|x| x.data))
     }
 
-    async fn delete_user_webauthn_credential_registration_state_impl<'a>(
+    async fn delete_user_webauthn_credential_registration_state_impl(
         &self,
-        storage: &impl StorageApi,
-        user_id: &'a str,
-        state_keysapce: &str,
-    ) -> Result<(), StoreError> {
+        storage: &dyn StorageApi,
+        user_id: &str,
+        state_keyspace: &str,
+    ) -> Result<(), ApiStoreError> {
         let key = self.get_user_cred_registration_state_key_name(user_id);
-        storage.remove(key, Some(state_keysapce)).await?;
+        storage
+            .remove(key, Some(state_keyspace.to_string()))
+            .await?;
         Ok(())
     }
 }
@@ -343,7 +348,7 @@ impl WebauthnApi for RaftDriver {
     ) -> Result<WebauthnCredential, WebauthnError> {
         let raft = state
             .storage
-            .as_ref()
+            .as_deref()
             .ok_or(WebauthnError::RaftNotAvailable)?;
         self.create_user_webauthn_credential_impl(raft, credential)
             .await
@@ -369,7 +374,7 @@ impl WebauthnApi for RaftDriver {
     ) -> Result<Option<WebauthnCredential>, WebauthnError> {
         let raft = state
             .storage
-            .as_ref()
+            .as_deref()
             .ok_or(WebauthnError::RaftNotAvailable)?;
         self.get_user_webauthn_credential_impl(raft, user_id, credential_id)
             .await
@@ -394,7 +399,7 @@ impl WebauthnApi for RaftDriver {
     ) -> Result<(), WebauthnError> {
         let raft = state
             .storage
-            .as_ref()
+            .as_deref()
             .ok_or(WebauthnError::RaftNotAvailable)?;
         self.delete_user_webauthn_credential_impl(raft, user_id, credential_id)
             .await
@@ -417,13 +422,13 @@ impl WebauthnApi for RaftDriver {
     ) -> Result<(), WebauthnError> {
         let raft = state
             .storage
-            .as_ref()
+            .as_deref()
             .ok_or(WebauthnError::RaftNotAvailable)?;
-        let state_keysapce = self.get_current_state_keyspace_name(raft).await?;
+        let state_keyspace = self.get_current_state_keyspace_name(raft).await?;
         self.delete_user_webauthn_credential_authentication_state_impl(
             raft,
             user_id,
-            &state_keysapce,
+            &state_keyspace,
         )
         .await
         .map_err(|e| e.into())
@@ -445,10 +450,10 @@ impl WebauthnApi for RaftDriver {
     ) -> Result<(), WebauthnError> {
         let raft = state
             .storage
-            .as_ref()
+            .as_deref()
             .ok_or(WebauthnError::RaftNotAvailable)?;
-        let state_keysapce = self.get_current_state_keyspace_name(raft).await?;
-        self.delete_user_webauthn_credential_registration_state_impl(raft, user_id, &state_keysapce)
+        let state_keyspace = self.get_current_state_keyspace_name(raft).await?;
+        self.delete_user_webauthn_credential_registration_state_impl(raft, user_id, &state_keyspace)
             .await
             .map_err(|e| e.into())
     }
@@ -470,10 +475,10 @@ impl WebauthnApi for RaftDriver {
     ) -> Result<Option<PasskeyAuthentication>, WebauthnError> {
         let raft = state
             .storage
-            .as_ref()
+            .as_deref()
             .ok_or(WebauthnError::RaftNotAvailable)?;
-        let state_keysapce = self.get_current_state_keyspace_name(raft).await?;
-        self.get_user_webauthn_credential_authentication_state_impl(raft, user_id, &state_keysapce)
+        let state_keyspace = self.get_current_state_keyspace_name(raft).await?;
+        self.get_user_webauthn_credential_authentication_state_impl(raft, user_id, &state_keyspace)
             .await
             .map_err(|e| e.into())
     }
@@ -495,10 +500,10 @@ impl WebauthnApi for RaftDriver {
     ) -> Result<Option<PasskeyRegistration>, WebauthnError> {
         let raft = state
             .storage
-            .as_ref()
+            .as_deref()
             .ok_or(WebauthnError::RaftNotAvailable)?;
-        let state_keysapce = self.get_current_state_keyspace_name(raft).await?;
-        self.get_user_webauthn_credential_registration_state_impl(raft, user_id, &state_keysapce)
+        let state_keyspace = self.get_current_state_keyspace_name(raft).await?;
+        self.get_user_webauthn_credential_registration_state_impl(raft, user_id, &state_keyspace)
             .await
             .map_err(|e| e.into())
     }
@@ -519,7 +524,7 @@ impl WebauthnApi for RaftDriver {
     ) -> Result<Vec<WebauthnCredential>, WebauthnError> {
         let raft = state
             .storage
-            .as_ref()
+            .as_deref()
             .ok_or(WebauthnError::RaftNotAvailable)?;
         self.list_user_webauthn_credentials_impl(raft, user_id)
             .await
@@ -544,14 +549,14 @@ impl WebauthnApi for RaftDriver {
     ) -> Result<(), WebauthnError> {
         let raft = state
             .storage
-            .as_ref()
+            .as_deref()
             .ok_or(WebauthnError::RaftNotAvailable)?;
-        let state_keysapce = self.get_current_state_keyspace_name(raft).await?;
+        let state_keyspace = self.get_current_state_keyspace_name(raft).await?;
         self.save_user_webauthn_credential_authentication_state_impl(
             raft,
             user_id,
             auth_state,
-            &state_keysapce,
+            &state_keyspace,
         )
         .await
         .map_err(|e| e.into())
@@ -575,14 +580,14 @@ impl WebauthnApi for RaftDriver {
     ) -> Result<(), WebauthnError> {
         let raft = state
             .storage
-            .as_ref()
+            .as_deref()
             .ok_or(WebauthnError::RaftNotAvailable)?;
-        let state_keysapce = self.get_current_state_keyspace_name(raft).await?;
+        let state_keyspace = self.get_current_state_keyspace_name(raft).await?;
         self.save_user_webauthn_credential_registration_state_impl(
             raft,
             user_id,
             reg_state,
-            &state_keysapce,
+            &state_keyspace,
         )
         .await
         .map_err(|e| e.into())
@@ -608,7 +613,7 @@ impl WebauthnApi for RaftDriver {
     ) -> Result<WebauthnCredential, WebauthnError> {
         let raft = state
             .storage
-            .as_ref()
+            .as_deref()
             .ok_or(WebauthnError::RaftNotAvailable)?;
         match self
             .update_user_webauthn_credential_impl(raft, user_id, credential_id, credential)
@@ -640,21 +645,23 @@ mod tests {
 
         storage
             .set_value(
-                &cred_key,
+                cred_key.clone(),
                 StoreDataEnvelope {
                     metadata: Metadata::new(),
-                    data: cred_value.clone(),
+                    data: rmp_serde::to_vec(&cred_value).unwrap(),
                 },
-                Some(DATA_KEYSPACE_TEST),
+                Some(DATA_KEYSPACE_TEST.to_string()),
                 None,
             )
             .await
             .unwrap();
 
-        let found = storage
-            .get_by_key::<String, &str, &str>(&cred_key, Some(DATA_KEYSPACE_TEST))
+        let found: StoreDataEnvelope<String> = storage
+            .get_by_key(cred_key.as_bytes(), Some(DATA_KEYSPACE_TEST))
             .await
             .unwrap()
+            .unwrap()
+            .try_deserialize()
             .unwrap();
         assert_eq!(found.data, "test-credential-data");
     }
@@ -697,21 +704,23 @@ mod tests {
 
         storage
             .set_value(
-                &key,
+                key.clone(),
                 StoreDataEnvelope {
                     metadata: Metadata::new(),
-                    data: auth_value.clone(),
+                    data: rmp_serde::to_vec(&auth_value).unwrap(),
                 },
-                Some(STATE_KEYSPACE),
+                Some(STATE_KEYSPACE.to_string()),
                 None,
             )
             .await
             .unwrap();
 
-        let found = storage
-            .get_by_key::<String, &str, &str>(&key, Some(STATE_KEYSPACE))
+        let found: StoreDataEnvelope<String> = storage
+            .get_by_key(key.as_bytes(), Some(STATE_KEYSPACE))
             .await
             .unwrap()
+            .unwrap()
+            .try_deserialize()
             .unwrap();
         assert_eq!(found.data, "auth-state-data");
     }
@@ -726,21 +735,23 @@ mod tests {
 
         storage
             .set_value(
-                &key,
+                key.clone(),
                 StoreDataEnvelope {
                     metadata: Metadata::new(),
-                    data: reg_value.clone(),
+                    data: rmp_serde::to_vec(&reg_value).unwrap(),
                 },
-                Some(STATE_KEYSPACE),
+                Some(STATE_KEYSPACE.to_string()),
                 None,
             )
             .await
             .unwrap();
 
-        let found = storage
-            .get_by_key::<String, &str, &str>(&key, Some(STATE_KEYSPACE))
+        let found: StoreDataEnvelope<String> = storage
+            .get_by_key(key.as_bytes(), Some(STATE_KEYSPACE))
             .await
             .unwrap()
+            .unwrap()
+            .try_deserialize()
             .unwrap();
         assert_eq!(found.data, "reg-state-data");
     }
@@ -753,24 +764,24 @@ mod tests {
         let cred_key = driver.get_cred_key_name("user-1", "cred-1");
         storage
             .set_value(
-                &cred_key,
+                cred_key.clone(),
                 StoreDataEnvelope {
                     metadata: Metadata::new(),
-                    data: "test".to_string(),
+                    data: rmp_serde::to_vec("test").unwrap(),
                 },
-                Some(DATA_KEYSPACE_TEST),
+                Some(DATA_KEYSPACE_TEST.to_string()),
                 None,
             )
             .await
             .unwrap();
 
         storage
-            .remove(cred_key.clone(), Some(DATA_KEYSPACE_TEST))
+            .remove(cred_key.clone(), Some(DATA_KEYSPACE_TEST.to_string()))
             .await
             .unwrap();
 
         let found = storage
-            .get_by_key::<String, &str, &str>(&cred_key, Some(DATA_KEYSPACE_TEST))
+            .get_by_key(cred_key.as_bytes(), Some(DATA_KEYSPACE_TEST))
             .await
             .unwrap();
         assert!(found.is_none());
@@ -784,24 +795,24 @@ mod tests {
         let key = driver.get_user_cred_auth_state_key_name("user-1");
         storage
             .set_value(
-                &key,
+                key.clone(),
                 StoreDataEnvelope {
                     metadata: Metadata::new(),
-                    data: "test".to_string(),
+                    data: rmp_serde::to_vec("test").unwrap(),
                 },
-                Some(STATE_KEYSPACE),
+                Some(STATE_KEYSPACE.to_string()),
                 None,
             )
             .await
             .unwrap();
 
         storage
-            .remove(key.clone(), Some(STATE_KEYSPACE))
+            .remove(key.clone(), Some(STATE_KEYSPACE.to_string()))
             .await
             .unwrap();
 
         let found = storage
-            .get_by_key::<String, &str, &str>(&key, Some(STATE_KEYSPACE))
+            .get_by_key(key.as_bytes(), Some(STATE_KEYSPACE))
             .await
             .unwrap();
         assert!(found.is_none());

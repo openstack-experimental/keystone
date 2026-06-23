@@ -26,9 +26,9 @@ use tracing::info;
 use openstack_keystone_api_types::v3::role_assignment::{Role, RoleAssignmentRoleList};
 use openstack_keystone_core_types::assignment::RoleAssignmentListParameters;
 
+use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
-use crate::{api::auth::Auth, assignment::AssignmentApi, identity::IdentityApi};
 
 /// List the roles that a user has on the system.
 #[utoipa::path(

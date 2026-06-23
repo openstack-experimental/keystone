@@ -21,10 +21,7 @@ use sea_orm::{DatabaseConnection, Schema};
 use openstack_keystone_core::assignment::{AssignmentProviderError, backend::AssignmentBackend};
 use openstack_keystone_core::db::create_table;
 use openstack_keystone_core::error::DatabaseError;
-use openstack_keystone_core::identity::IdentityApi;
 use openstack_keystone_core::keystone::ServiceState;
-use openstack_keystone_core::resource::ResourceApi;
-use openstack_keystone_core::role::RoleApi;
 use openstack_keystone_core::{SqlDriver, SqlDriverRegistration};
 use openstack_keystone_core_types::assignment::*;
 
@@ -342,6 +339,7 @@ mod tests {
                 db,
                 provider,
                 Arc::new(MockPolicy::default()),
+                None,
             )
             .await
             .unwrap(),

@@ -21,7 +21,6 @@ use openstack_keystone_core_types::resource::Domain;
 
 use crate::api::KeystoneApiError;
 use crate::keystone::ServiceState;
-use crate::resource::ResourceApi;
 
 /// Get the domain by ID or Name.
 ///

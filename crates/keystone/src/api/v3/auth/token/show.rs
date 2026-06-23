@@ -35,9 +35,7 @@ use openstack_keystone_api_types::v3::auth::token::TokenBuilder;
 
 use crate::api::v3::auth::token::types::{TokenResponse, ValidateTokenParameters};
 use crate::api::{Catalog, CatalogService, auth::Auth, error::KeystoneApiError};
-use crate::catalog::CatalogApi;
 use crate::keystone::ServiceState;
-use crate::token::TokenApi;
 
 /// Validate and show information for token.
 ///

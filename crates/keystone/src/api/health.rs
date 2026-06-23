@@ -257,17 +257,13 @@ async fn check_database(state: &ServiceState) -> DatabaseStatus {
 
 /// Perform Raft storage checks.
 async fn check_storage(state: &ServiceState) -> RaftStatus {
-    match &state.storage {
-        None => RaftStatus::skipped(),
-        Some(storage) => {
-            // TODO: many more raft checks should be processed here (e.g., log state,
-            // connection to the leader, storage readiness, etc).
-            match storage.raft.is_initialized().await {
-                Ok(true) => RaftStatus::ok(),
-                Ok(false) => RaftStatus::warn("storage is not initialized"),
-                Err(err) => RaftStatus::err(err),
-            }
-        }
+    let Some(storage) = state.storage.as_deref() else {
+        return RaftStatus::skipped();
+    };
+    match storage.is_initialized().await {
+        Ok(true) => RaftStatus::ok(),
+        Ok(false) => RaftStatus::warn("storage is not initialized"),
+        Err(err) => RaftStatus::err(err),
     }
 }
 

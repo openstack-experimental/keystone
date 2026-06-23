@@ -53,7 +53,6 @@ use openstack_keystone::application_credential::ApplicationCredentialHook;
 use openstack_keystone::assignment::AssignmentHook;
 use openstack_keystone::catalog::CatalogHook;
 use openstack_keystone::config::{ConfigManager, Interface, ListenerConfig};
-use openstack_keystone::federation::FederationApi;
 use openstack_keystone::federation::FederationHook;
 use openstack_keystone::identity::IdentityHook;
 use openstack_keystone::idmapping::IdMappingHook;
@@ -73,6 +72,8 @@ use openstack_keystone::trust::TrustHook;
 use openstack_keystone::webauthn;
 use openstack_keystone::{api, common};
 use openstack_keystone_core::db::sync_schema;
+use openstack_keystone_core::error::KeystoneError;
+use openstack_keystone_distributed_storage::{StorageApi, app::Storage};
 
 // Default body limit 256kB
 const DEFAULT_BODY_LIMIT: usize = 1024 * 256;
@@ -242,8 +243,32 @@ async fn main() -> Result<(), Report> {
     let provider = Provider::new(&cfg, &plugin_manager, k8s_http_client)?;
     let policy = HttpPolicyEnforcer::new(cfg.api_policy.opa_base_url.clone()).await?;
 
-    let shared_state =
-        Arc::new(KeystoneServiceState::new(cfg_mgr, conn, provider, Arc::new(policy)).await?);
+    let concrete_storage: Option<Arc<Storage>> = if cfg.distributed_storage.is_some() {
+        let storage = openstack_keystone_distributed_storage::app::init_storage(&cfg_mgr)
+            .await
+            .map_err(|e| KeystoneError::Provider {
+                source: Box::new(e),
+            })?;
+        Some(Arc::new(storage))
+    } else {
+        None
+    };
+
+    let storage_for_service: Option<Arc<dyn StorageApi>> = concrete_storage
+        .as_ref()
+        .map(Arc::clone)
+        .map(|s| s as Arc<dyn StorageApi>);
+
+    let shared_state = Arc::new(
+        KeystoneServiceState::new(
+            cfg_mgr,
+            conn,
+            provider,
+            Arc::new(policy),
+            storage_for_service,
+        )
+        .await?,
+    );
 
     spawn(cleanup(cloned_token, shared_state.clone()));
 
@@ -379,10 +404,10 @@ async fn main() -> Result<(), Report> {
     // Raft
     if cfg.distributed_storage.is_some() {
         let raft_cancel_token = token.clone();
-        let raft_state = shared_state.clone();
         let raft_config = cfg.clone();
+        let raft_storage = concrete_storage.as_ref().expect("storage is None").clone();
         handles.spawn(async move {
-            raft_grpc::start_raft_app(raft_state, raft_config, raft_cancel_token)
+            raft_grpc::start_raft_app(raft_storage, raft_config, raft_cancel_token)
                 .await
                 .unwrap()
         });

@@ -23,7 +23,6 @@ use serde_json::json;
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
 use crate::api::v3::group::types::{Group, GroupList};
-use crate::identity::IdentityApi;
 use crate::keystone::ServiceState;
 
 /// List groups a user is member of

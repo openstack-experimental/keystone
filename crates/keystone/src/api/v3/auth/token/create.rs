@@ -30,10 +30,8 @@ use openstack_keystone_core_types::scope::Scope as ProviderScope;
 use crate::api::v3::auth::token::common::authenticate_request;
 use crate::api::v3::auth::token::types::{AuthRequest, CreateTokenParameters, TokenResponse};
 use crate::api::{Catalog, CatalogService, error::KeystoneApiError};
-use crate::catalog::CatalogApi;
 use crate::common::TracedJson;
 use crate::keystone::ServiceState;
-use crate::token::TokenApi;
 
 /// Authenticate user issuing a new token.
 #[utoipa::path(
@@ -310,6 +308,7 @@ mod tests {
                 DatabaseConnection::Disconnected,
                 provider,
                 Arc::new(MockPolicy::default()),
+                None,
             )
             .await
             .unwrap(),
@@ -467,6 +466,7 @@ mod tests {
                 DatabaseConnection::Disconnected,
                 provider,
                 Arc::new(MockPolicy::default()),
+                None,
             )
             .await
             .unwrap(),
@@ -580,6 +580,7 @@ mod tests {
                 DatabaseConnection::Disconnected,
                 provider,
                 Arc::new(MockPolicy::default()),
+                None,
             )
             .await
             .unwrap(),

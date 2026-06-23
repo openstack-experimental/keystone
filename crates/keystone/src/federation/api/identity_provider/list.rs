@@ -27,7 +27,6 @@ use openstack_keystone_api_types::federation::*;
 use openstack_keystone_core_types::federation::IdentityProviderListParameters as ProviderIdentityProviderListParameters;
 
 use crate::api::{KeystoneApiError, auth::Auth, common::build_pagination_links};
-use crate::federation::FederationApi;
 use crate::keystone::ServiceState;
 
 /// List identity providers.

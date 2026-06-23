@@ -23,9 +23,9 @@ use tracing::info;
 
 use openstack_keystone_core_types::assignment::AssignmentCreate;
 
+use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
-use crate::{api::auth::Auth, assignment::AssignmentApi, identity::IdentityApi, role::RoleApi};
 
 /// Assign role to user on system
 ///

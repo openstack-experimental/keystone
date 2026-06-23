@@ -18,6 +18,9 @@ use serde::{Deserialize, Serialize};
 use crate::StoreError;
 use crate::types::{Metadata, Nonce};
 
+/// Re-export `Mutation` from storage-api crate.
+pub use openstack_keystone_storage_api::Mutation;
+
 /// Store command.
 ///
 /// An operation to be performed on the storage. The data is transferred
@@ -156,191 +159,6 @@ impl MutationInner {
     }
 }
 
-/// Store modification operation.
-#[derive(Debug, Deserialize, PartialEq, Serialize)]
-pub enum Mutation {
-    /// Delete the entry from the store.
-    Remove {
-        /// The Key to delete.
-        key: Vec<u8>,
-
-        /// The `keyspace` of the key.
-        keyspace: String,
-
-        /// Expected revision for CAS-protected delete.
-        expected_revision: Option<u64>,
-    },
-
-    /// Delete the entry from the store.
-    RemoveIndex {
-        /// The Key to delete.
-        key: Vec<u8>,
-    },
-
-    /// Set the value for the key in the store.
-    Set {
-        /// Expected revision.
-        expected_revision: Option<u64>,
-
-        /// The key to set.
-        key: Vec<u8>,
-
-        /// The `keyspace` of the key.
-        keyspace: String,
-
-        /// The resource metadata.
-        metadata: Metadata,
-
-        /// The value to set.
-        #[serde(with = "serde_bytes")]
-        value: Vec<u8>,
-    },
-
-    /// Set the value for the key in the store only if the key does not already
-    /// exist. If the key exists, a CONFLICT violation is emitted and no
-    /// write occurs.
-    CreateIfAbsent {
-        /// The key to set.
-        key: Vec<u8>,
-
-        /// The `keyspace` of the key.
-        keyspace: String,
-
-        /// The resource metadata.
-        metadata: Metadata,
-
-        /// The value to set.
-        #[serde(with = "serde_bytes")]
-        value: Vec<u8>,
-    },
-
-    /// Set the value for the key in the store.
-    SetIndex {
-        /// The key to set.
-        key: Vec<u8>,
-    },
-}
-
-impl Mutation {
-    /// Create a remove mutation.
-    ///
-    /// # Parameters
-    /// - `key`: The key to remove.
-    /// - `keyspace`: The keyspace for the key.
-    /// - `expected_revision`: Optional expected revision for CAS-protected
-    ///   delete.
-    ///
-    /// # Returns
-    /// A `Result` containing the `Mutation`, or a `StoreError`.
-    pub fn remove<K, S>(
-        key: K,
-        keyspace: Option<S>,
-        expected_revision: Option<u64>,
-    ) -> Result<Self, StoreError>
-    where
-        K: Into<Vec<u8>>,
-        S: Into<String>,
-    {
-        Ok(Self::Remove {
-            key: key.into(),
-            keyspace: keyspace.map(Into::into).unwrap_or("data".into()),
-            expected_revision,
-        })
-    }
-
-    /// Create a remove index mutation.
-    ///
-    /// # Parameters
-    /// - `key`: The key to remove from the index.
-    ///
-    /// # Returns
-    /// A `Result` containing the `Mutation`, or a `StoreError`.
-    pub fn remove_index<K>(key: K) -> Result<Self, StoreError>
-    where
-        K: Into<Vec<u8>>,
-    {
-        Ok(Self::RemoveIndex { key: key.into() })
-    }
-
-    /// Create a set mutation.
-    ///
-    /// # Parameters
-    /// - `key`: The key to set.
-    /// - `value`: The value to set.
-    /// - `metadata`: The resource metadata.
-    /// - `keyspace`: The keyspace for the key.
-    /// - `expected_revision`: The expected revision.
-    ///
-    /// # Returns
-    /// A `Result` containing the `Mutation`, or a `StoreError`.
-    pub fn set<K, V, S>(
-        key: K,
-        value: V,
-        metadata: Metadata,
-        keyspace: Option<S>,
-        expected_revision: Option<u64>,
-    ) -> Result<Self, StoreError>
-    where
-        K: Into<Vec<u8>>,
-        V: Serialize,
-        S: Into<String>,
-    {
-        Ok(Self::Set {
-            key: key.into(),
-            value: rmp_serde::to_vec(&value)?,
-            keyspace: keyspace.map(Into::into).unwrap_or("data".into()),
-            metadata,
-            expected_revision,
-        })
-    }
-
-    /// Create a create-if-absent mutation.
-    ///
-    /// Sets the value only if the key does not already exist. If the key
-    /// exists, a CONFLICT violation is emitted and no write occurs.
-    ///
-    /// # Parameters
-    /// - `key`: The key to set.
-    /// - `value`: The value to set.
-    /// - `metadata`: The resource metadata.
-    /// - `keyspace`: The keyspace for the key.
-    ///
-    /// # Returns
-    /// A `Result` containing the `Mutation`, or a `StoreError`.
-    pub fn create_if_absent<K, V, S>(
-        key: K,
-        value: V,
-        metadata: Metadata,
-        keyspace: Option<S>,
-    ) -> Result<Self, StoreError>
-    where
-        K: Into<Vec<u8>>,
-        V: Serialize,
-        S: Into<String>,
-    {
-        Ok(Self::CreateIfAbsent {
-            key: key.into(),
-            value: rmp_serde::to_vec(&value)?,
-            keyspace: keyspace.map(Into::into).unwrap_or("data".into()),
-            metadata,
-        })
-    }
-
-    /// Create a set index mutation.
-    ///
-    /// # Parameters
-    /// - `key`: The key to set in the index.
-    ///
-    /// # Returns
-    /// A `Result` containing the `Mutation`, or a `StoreError`.
-    pub fn set_index<K>(key: K) -> Result<Self, StoreError>
-    where
-        K: Into<Vec<u8>>,
-    {
-        Ok(Self::SetIndex { key: key.into() })
-    }
-}
-
 impl StoreCommand {
     /// Pack the [`StoreCommand`] into the format safe for the Raft log.
     ///
@@ -372,7 +190,7 @@ mod tests {
 
     #[test]
     fn test_delete_command() {
-        let mutation = Mutation::remove("foo", Some("bar"), None).unwrap();
+        let mutation = Mutation::remove("foo", Some("bar"), None);
         let cmd = StoreCommand::Transaction(vec![
             MutationInner::convert(mutation, Nonce::default()).unwrap(),
         ]);
@@ -384,7 +202,7 @@ mod tests {
 
     #[test]
     fn test_delete_command_with_expected_revision() {
-        let mutation = Mutation::remove("foo", Some("bar"), Some(42)).unwrap();
+        let mutation = Mutation::remove("foo", Some("bar"), Some(42));
         let cmd = StoreCommand::Transaction(vec![
             MutationInner::convert(mutation, Nonce::default()).unwrap(),
         ]);
@@ -405,7 +223,7 @@ mod tests {
 
     #[test]
     fn test_delete_index_command() {
-        let mutation = Mutation::remove_index("foo").unwrap();
+        let mutation = Mutation::remove_index("foo");
         let cmd = StoreCommand::Transaction(vec![
             MutationInner::convert(mutation, Nonce::default()).unwrap(),
         ]);
@@ -437,7 +255,7 @@ mod tests {
 
     #[test]
     fn test_set_index_command() {
-        let mutation = Mutation::set_index("foo").unwrap();
+        let mutation = Mutation::set_index("foo");
         let cmd = StoreCommand::Transaction(vec![
             MutationInner::convert(mutation, Nonce::default()).unwrap(),
         ]);

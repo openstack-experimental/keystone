@@ -34,6 +34,7 @@ use crate::keystone::ServiceState;
 ///
 /// # Returns
 /// * `Result<ProjectBuilder, KeystoneApiError>` - The project builder
+#[allow(dead_code)]
 pub(super) async fn get_project_info_scope_builder(
     state: &ServiceState,
     project: &Project,

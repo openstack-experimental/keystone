@@ -25,7 +25,6 @@ use super::types::{Domain, DomainResponse};
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
-use crate::resource::ResourceApi;
 
 /// Get single domain
 #[utoipa::path(

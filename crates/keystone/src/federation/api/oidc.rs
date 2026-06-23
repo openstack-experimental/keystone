@@ -34,15 +34,9 @@ use crate::api::{
     types::{Catalog, CatalogService},
 };
 use crate::auth::*;
-use crate::catalog::CatalogApi;
-use crate::federation::{
-    FederationApi,
-    api::{error::OidcError, types::*},
-};
-use crate::identity::IdentityApi;
+use crate::federation::api::{error::OidcError, types::*};
 use crate::identity::error::IdentityProviderError;
 use crate::keystone::ServiceState;
-use crate::token::TokenApi;
 use openstack_keystone_api_types::v3::auth::token::TokenBuilder;
 use openstack_keystone_core::api::common::get_authz_info;
 use openstack_keystone_core_types::identity::{

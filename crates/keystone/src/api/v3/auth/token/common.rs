@@ -15,9 +15,7 @@
 use crate::api::error::KeystoneApiError;
 use crate::api::v3::auth::token::types::AuthRequest;
 use crate::auth::*;
-use crate::identity::IdentityApi;
 use crate::keystone::ServiceState;
-use crate::token::TokenApi;
 
 /// Authenticate the user ignoring any scope information. It is important not to
 /// expose any hints that user, project, domain, etc might exist before we have

@@ -33,30 +33,25 @@ use openidconnect::core::{
 use openidconnect::reqwest;
 use openidconnect::{Client, ClientId, IdToken, IssuerUrl, JsonWebKeySet, JsonWebKeySetUrl, Nonce};
 
-use super::error::OidcError;
+use openstack_keystone_api_types::v3::auth::token::TokenBuilder;
+use openstack_keystone_core::api::common::get_authz_info;
+use openstack_keystone_core_types::federation::{
+    MappingListParameters as ProviderMappingListParameters, MappingType as ProviderMappingType,
+};
+use openstack_keystone_core_types::identity::{
+    FederationBuilder, FederationProtocol, UserCreateBuilder,
+};
+use openstack_keystone_core_types::scope as provider_types;
+
 use crate::api::v4::auth::token::types::TokenResponse as KeystoneTokenResponse;
 use crate::api::{
     KeystoneApiError,
     types::{Catalog, CatalogService},
 };
 use crate::auth::*;
-use crate::catalog::CatalogApi;
-use openstack_keystone_api_types::v3::auth::token::TokenBuilder;
-//use crate::common::types as provider_types;
-use crate::federation::{FederationApi, api::types::*};
-use crate::identity::{IdentityApi, error::IdentityProviderError};
+use crate::federation::api::{error::OidcError, types::*};
+use crate::identity::error::IdentityProviderError;
 use crate::keystone::ServiceState;
-use crate::token::TokenApi;
-use openstack_keystone_core::api::common::get_authz_info;
-use openstack_keystone_core_types::federation::{
-    MappingListParameters as ProviderMappingListParameters,
-    MappingType as ProviderMappingType,
-    //Project as ProviderProject, Scope as ProviderScope,
-};
-use openstack_keystone_core_types::identity::{
-    FederationBuilder, FederationProtocol, UserCreateBuilder,
-};
-use openstack_keystone_core_types::scope as provider_types;
 
 use super::common::{map_user_data, validate_bound_claims};
 
