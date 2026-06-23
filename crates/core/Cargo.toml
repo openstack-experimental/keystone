@@ -46,6 +46,9 @@ tracing.workspace = true
 url = { workspace = true, features = ["serde"] }
 uuid = { workspace = true, features = ["v4"] }
 validator.workspace = true
+pbkdf2 = { version = "0.12", features = ["simple", "sha2"] }
+scrypt = { version = "0.11", features = ["simple"] }
+subtle = "2.6.1"
 
 [dev-dependencies]
 config = { workspace = true }
