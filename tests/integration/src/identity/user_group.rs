@@ -20,6 +20,8 @@ use openstack_keystone_core_types::identity::*;
 
 mod add;
 mod list;
+mod remove;
+mod set;
 
 async fn list_user_groups<U>(state: &ServiceState, user_id: U) -> Result<Vec<Group>, Report>
 where
