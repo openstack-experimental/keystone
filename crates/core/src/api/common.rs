@@ -24,10 +24,6 @@ use openstack_keystone_core_types::resource::{Domain, Project};
 use openstack_keystone_core_types::scope::Scope as ProviderScope;
 
 use crate::keystone::ServiceState;
-use crate::resource::{
-    ResourceApi,
-    //    types::{Domain, Project},
-};
 
 /// Get the scope [ProjectBuilder] for the given Project.
 ///

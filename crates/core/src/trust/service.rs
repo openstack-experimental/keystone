@@ -27,7 +27,6 @@ use openstack_keystone_core_types::trust::*;
 
 use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManagerApi;
-use crate::role::RoleApi;
 use crate::trust::{TrustApi, TrustProviderError, backend::TrustBackend};
 
 /// Trust provider.

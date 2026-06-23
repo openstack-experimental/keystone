@@ -101,6 +101,9 @@ pub mod role;
 pub mod token;
 pub mod trust;
 
+#[cfg(any(test, feature = "mock"))]
+pub mod mocks;
+
 #[cfg(test)]
 pub mod tests;
 

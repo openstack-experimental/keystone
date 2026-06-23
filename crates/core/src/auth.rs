@@ -26,13 +26,7 @@ use openstack_keystone_core_types::resource::ResourceProviderError;
 use openstack_keystone_core_types::role::*;
 use openstack_keystone_core_types::token::FernetToken;
 
-use crate::assignment::AssignmentApi;
-use crate::identity::IdentityApi;
 use crate::keystone::ServiceState;
-use crate::mapping::MappingApi;
-use crate::resource::ResourceApi;
-use crate::role::RoleApi;
-use crate::trust::TrustApi;
 
 pub use openstack_keystone_core_types::auth::*;
 
@@ -613,7 +607,7 @@ mod tests {
     use std::collections::HashMap;
 
     use crate::assignment::MockAssignmentProvider;
-    use crate::mapping::mock::MockMappingProvider;
+    use crate::mapping::MockMappingProvider;
     use crate::provider::Provider;
     use crate::role::{MockRoleProvider, RoleProviderError};
     use crate::tests::get_mocked_state;

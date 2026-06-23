@@ -40,19 +40,13 @@ use openstack_keystone_core_types::token::{
 };
 use openstack_keystone_core_types::trust::TrustProviderError;
 
-use crate::application_credential::ApplicationCredentialApi;
 use crate::auth::*;
-use crate::identity::IdentityApi;
 use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManagerApi;
-use crate::resource::ResourceApi;
-use crate::revoke::RevokeApi;
-use crate::role::RoleApi;
 use crate::token::{
     TokenApi, TokenProviderError,
     backend::{TokenBackend, TokenRestrictionBackend},
 };
-use crate::trust::TrustApi;
 
 pub struct TokenService {
     config: Config,

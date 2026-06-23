@@ -28,7 +28,8 @@ pub trait ApplicationCredentialBackend: Send + Sync {
     ///
     /// # Parameters
     /// - `state`: The current service state.
-    /// - `rule`: The access rule to create (its `user_id` identifies the owner).
+    /// - `rule`: The access rule to create (its `user_id` identifies the
+    ///   owner).
     ///
     /// # Returns
     /// - `Result<AccessRule, ApplicationCredentialProviderError>` - The created
