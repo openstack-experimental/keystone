@@ -14,7 +14,6 @@
 //! # Federation API
 //!
 //! - IDP
-//! - Mapping
 //! - Auth initialization
 //! - Auth callback
 use utoipa::{
@@ -32,7 +31,6 @@ mod common;
 pub mod error;
 pub mod identity_provider;
 pub mod jwt;
-pub mod mapping;
 pub mod oidc;
 pub mod types;
 
@@ -46,18 +44,11 @@ pub mod types;
 Identity provider resource allows to federate users from an external Identity Provider (i.e.
 Keycloak, Azure AD, etc.).
 
-Using the Identity provider requires creation of the mapping, which describes how to map attributes
-of the remote Idp to local users.
+Using the Identity provider requires creation of the mapping ruleset (mapping engine), which
+describes how to map attributes of the remote IdP to local users.
 
 Identity provider with an empty domain_id are considered globals and every domain may use it with
 appropriate mapping."#),
-        (name="mappings", description=r#"Federation mappings API.
-
-Mappings define how the user attributes on the remote IDP are mapped to the local user.
-
-Mappings with an empty domain_id are considered globals and every domain may use it. Such mappings
-require the `domain_id_claim` attribute to be set to identify the domain_id for the respective
-user."#),
     )
 )]
 pub struct ApiDoc;
@@ -65,7 +56,6 @@ pub struct ApiDoc;
 pub fn openapi_router() -> OpenApiRouter<ServiceState> {
     OpenApiRouter::new()
         .nest("/identity_providers", identity_provider::openapi_router())
-        .nest("/mappings", mapping::openapi_router())
         .merge(auth::openapi_router())
         .merge(jwt::openapi_router())
         .merge(oidc::openapi_router())

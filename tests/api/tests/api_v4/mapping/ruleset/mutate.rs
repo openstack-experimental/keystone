@@ -47,6 +47,7 @@ async fn test_mutate_mapping_ruleset() -> Result<()> {
                     description: None,
                     r#match: MatchCriteria::default(),
                     identity: IdentityBinding {
+                        identity_mode: None,
                         user_name: "initialuser".to_string(),
                         user_id: None,
                         user_domain_id: None,
@@ -72,6 +73,7 @@ async fn test_mutate_mapping_ruleset() -> Result<()> {
                     description: None,
                     r#match: MatchCriteria::default(),
                     identity: IdentityBinding {
+                        identity_mode: None,
                         user_name: "seconduser".to_string(),
                         user_id: None,
                         user_domain_id: None,
@@ -117,6 +119,7 @@ async fn test_mutate_global_mapping_ruleset() -> Result<()> {
                     description: None,
                     r#match: MatchCriteria::default(),
                     identity: IdentityBinding {
+                        identity_mode: None,
                         user_name: "initialuser".to_string(),
                         user_id: None,
                         user_domain_id: None,
@@ -142,6 +145,7 @@ async fn test_mutate_global_mapping_ruleset() -> Result<()> {
                     description: None,
                     r#match: MatchCriteria::default(),
                     identity: IdentityBinding {
+                        identity_mode: None,
                         user_name: "seconduser".to_string(),
                         user_id: None,
                         user_domain_id: None,

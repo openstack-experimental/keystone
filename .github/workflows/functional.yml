@@ -169,7 +169,6 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - name: Install browser
-        # This is crucial for Selenium to interact with a browser
         run: |
           sudo apt-get update
           sudo apt-get install -y firefox
@@ -183,18 +182,15 @@ jobs:
         run:
           docker run -d -p 5556:5556 -d -v $PWD/tools/dex.config.yaml:/etc/dex/config.docker.yaml --name dex ghcr.io/dexidp/dex:latest
 
-      - name: Run keycloak tests
-        working-directory: "tests/federation"
-        env:
-          KEYCLOAK_USER: admin
-          KEYCLOAK_PASSWORD: password
-        run: cargo test --test keycloak
+      - name: Verify keycloak responsiveness
+        run: |
+          curl --retry 6 --retry-delay 10 --retry-all-errors \
+            http://localhost:8082/health/ready
 
-      - name: Run dex tests
-        working-directory: "tests/federation"
-        env:
-          DEX_URL: http://localhost:5556
-        run: cargo test --test dex
+      - name: Verify dex responsiveness
+        run: |
+          curl --retry 6 --retry-delay 10 --retry-all-errors \
+            http://localhost:5556/healthz
 
       - name: Dump seleniumdriver log
         if: failure()
@@ -216,63 +212,6 @@ jobs:
         if: failure()
         run: docker logs opa
 
-  federation-github:
-    runs-on: ubuntu-latest
-    if: "github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'openstack-experimental-release-plz'"
-    needs:
-      - build
-    permissions:
-      id-token: write
-      contents: read
-      packages: read
-    services:
-      postgres:
-        image: postgres:17
-        env:
-          POSTGRES_USER: keystone
-          POSTGRES_PASSWORD: '1234'
-        ports:
-          - 5432:5432
-        options: --health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5
-      keycloak:
-        image: ghcr.io/openstack-experimental/keystone/keycloak-ci-service:26.2
-        env:
-          KC_BOOTSTRAP_ADMIN_USERNAME: admin
-          KC_BOOTSTRAP_ADMIN_PASSWORD: password
-        ports:
-          - 8082:8080
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-
-      - uses: ./.github/actions/deploy_keystone
-
-      - name: Get GitHub JWT token
-        id: get_token
-        run: |
-          TOKEN_JSON=$(curl -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-          "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=https://github.com")
-
-          TOKEN=$(echo $TOKEN_JSON | jq -r .value)
-          echo "token=$TOKEN" >> $GITHUB_OUTPUT
-
-      - name: Run github tests
-        working-directory: "tests/federation"
-        env:
-          GITHUB_JWT: ${{ steps.get_token.outputs.token }}
-          GITHUB_SUB: "repo:openstack-experimental/keystone:pull_request"
-        run: cargo test --test github -- --nocapture
-
-      - name: Dump py-keystone logs
-        if: failure()
-        run: docker logs keystone
-
-      - name: Dump rust keystone log
-        if: failure()
-        run: cat rust.log
-
-      - name: Dump OPA log
-        if: failure()
-        run: docker logs opa
 
   loadtest:
     runs-on: ubuntu-latest
@@ -376,6 +315,7 @@ jobs:
     permissions:
       contents: read
       packages: write # Required to push to GHCR
+      id-token: write # Required for GitHub OIDC JWT (github federation test)
     steps:
 
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -430,10 +370,14 @@ jobs:
           # deploy built artifacts
           skaffold deploy -a build.artifacts --status-check
 
+      - name: Write GitHub OIDC env file
+        run: |
+          echo "ACTIONS_ID_TOKEN_REQUEST_TOKEN=${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" >> github-oidc.env
+          echo "ACTIONS_ID_TOKEN_REQUEST_URL=${ACTIONS_ID_TOKEN_REQUEST_URL}" >> github-oidc.env
+
       - name: Run tests
         run: |
-          # run tests referring to the artifacts metadata file
-          skaffold verify -a build.artifacts -v debug
+          skaffold verify --profile github-ci --env-file github-oidc.env -a build.artifacts -v debug
 
       - name: Dump K8 pods
         if: failure()

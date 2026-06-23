@@ -13,7 +13,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! # Mapping provider
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -25,7 +25,11 @@ use uuid::Uuid;
 use openstack_keystone_config::Config;
 use openstack_keystone_core_types::auth::{
     AuthenticationContext, AuthenticationResult, AuthenticationResultBuilder, IdentityInfo,
-    PrincipalIdentityInfoBuilder, PrincipalInfo,
+    OidcContextBuilder, PrincipalIdentityInfoBuilder, PrincipalInfo, UserIdentityInfoBuilder,
+};
+use openstack_keystone_core_types::identity::{
+    FederationBuilder, FederationProtocol, GroupCreate, GroupListParameters, UserCreateBuilder,
+    UserResponse,
 };
 use openstack_keystone_core_types::mapping::*;
 
@@ -120,22 +124,50 @@ impl MappingService {
         )?
         .ok_or(MappingProviderError::NoMatchingRule)?;
 
-        // 4. Derive deterministic virtual user ID via HMAC-SHA256
+        // 4. Resolve identity mode: explicit rule value > source-based default
+        let identity_mode = match_result.identity_mode.clone().unwrap_or({
+            if matches!(req.source, IdentitySource::Federation { .. }) {
+                IdentityMode::Ephemeral
+            } else {
+                IdentityMode::Ephemeral
+            }
+        });
+
+        // 5. Branch on identity mode
+        match identity_mode {
+            IdentityMode::Local => {
+                self.authenticate_local(state, &match_result, &ruleset, req)
+                    .await
+            }
+            IdentityMode::Ephemeral => {
+                self.authenticate_ephemeral(state, &match_result, &ruleset, req, salt)
+                    .await
+            }
+        }
+    }
+
+    /// Authenticate with a virtual shadow registry record (ephemeral path).
+    async fn authenticate_ephemeral(
+        &self,
+        state: &ServiceState,
+        match_result: &MatchResult,
+        ruleset: &MappingRuleSet,
+        req: &MappingAuthRequest,
+        salt: &[u8],
+    ) -> Result<AuthenticationResult, MappingProviderError> {
         let virtual_user_id =
             hmac::derive_virtual_user_id(salt, &req.unique_workload_id, &req.source)?;
 
-        // 5. Upsert shadow registry record
         let virtual_user = self
             .upsert_virtual_user_shadow(
                 state,
                 &virtual_user_id,
-                &match_result,
-                &ruleset,
+                match_result,
+                ruleset,
                 &req.unique_workload_id,
             )
             .await?;
 
-        // 6. Build AuthenticationResult with deferred scope resolution
         let user_name = match_result.user_name.clone();
         let pinfo = if let Some(domain_id) = &virtual_user.domain_id {
             PrincipalIdentityInfoBuilder::default()
@@ -173,6 +205,212 @@ impl MappingService {
             }))
             .build()
             .map_err(Box::new)?)
+    }
+
+    /// Authenticate with a real federated user row (local path).
+    async fn authenticate_local(
+        &self,
+        state: &ServiceState,
+        match_result: &MatchResult,
+        ruleset: &MappingRuleSet,
+        req: &MappingAuthRequest,
+    ) -> Result<AuthenticationResult, MappingProviderError> {
+        let IdentitySource::Federation { idp_id } = &req.source else {
+            return Err(MappingProviderError::LocalIdentityRequiresFederation(
+                req.source.to_string_key(),
+            ));
+        };
+
+        let domain_id = match_result
+            .user_domain_id
+            .clone()
+            .or_else(|| ruleset.domain_id.clone())
+            .ok_or(MappingProviderError::HmacDerivationFailed(
+                "domain_id required for local identity mode".to_string(),
+            ))?;
+
+        let user = self
+            .find_or_create_federated_user(
+                state,
+                idp_id,
+                &domain_id,
+                &match_result.user_name,
+                &req.unique_workload_id,
+            )
+            .await?;
+
+        // Always sync group memberships to reflect current claims, not just
+        // on first-time creation.
+        self.sync_user_groups(state, &user, match_result, idp_id)
+            .await?;
+
+        let user_groups = state
+            .provider
+            .get_identity_provider()
+            .list_groups_of_user(state, &user.id)
+            .await
+            .map_err(MappingProviderError::driver)?;
+
+        let auth_result = AuthenticationResultBuilder::default()
+            .principal(PrincipalInfo {
+                identity: IdentityInfo::User(
+                    UserIdentityInfoBuilder::default()
+                        .user_id(user.id.clone())
+                        .user(user.clone())
+                        .user_groups(user_groups)
+                        .build()
+                        .map_err(Box::new)?,
+                ),
+            })
+            .context(AuthenticationContext::Oidc {
+                oidc: OidcContextBuilder::default()
+                    .idp_id(idp_id.clone())
+                    .protocol_id("oidc")
+                    .build()
+                    .map_err(Box::new)?,
+                token: None,
+            })
+            .build()
+            .map_err(Box::new)?;
+
+        Ok(auth_result)
+    }
+
+    /// Find existing federated user or create a new one.
+    ///
+    /// Uses `unique_workload_id` (the raw subject from the IdP) as the
+    /// federated user's unique_id, matching the lookup key used by the IdP's
+    /// token validation flow.
+    async fn find_or_create_federated_user(
+        &self,
+        state: &ServiceState,
+        idp_id: &str,
+        domain_id: &str,
+        user_name: &str,
+        unique_workload_id: &str,
+    ) -> Result<UserResponse, MappingProviderError> {
+        let idp = state
+            .provider
+            .get_federation_provider()
+            .get_identity_provider(state, idp_id)
+            .await
+            .map_err(MappingProviderError::driver)?
+            .ok_or_else(|| {
+                MappingProviderError::NotFound(format!("identity provider {}", idp_id))
+            })?;
+
+        if !idp.enabled {
+            return Err(MappingProviderError::DisabledRuleset);
+        }
+
+        let identity_provider = state.provider.get_identity_provider();
+
+        if let Some(existing) = identity_provider
+            .find_federated_user(state, idp_id, unique_workload_id)
+            .await
+            .map_err(MappingProviderError::driver)?
+        {
+            return Ok(existing);
+        }
+
+        let mut federated_builder = FederationBuilder::default();
+        federated_builder
+            .idp_id(idp_id.to_string())
+            .unique_id(unique_workload_id.to_string())
+            .protocols(vec![FederationProtocol {
+                protocol_id: "oidc".to_string(),
+                unique_id: unique_workload_id.to_string(),
+            }]);
+
+        let mut user_builder = UserCreateBuilder::default();
+        user_builder
+            .domain_id(domain_id.to_string())
+            .enabled(true)
+            .name(user_name.to_string())
+            .federated(vec![
+                federated_builder
+                    .build()
+                    .map_err(MappingProviderError::driver)?,
+            ]);
+
+        let user = identity_provider
+            .create_user(
+                state,
+                user_builder.build().map_err(MappingProviderError::driver)?,
+            )
+            .await
+            .map_err(MappingProviderError::driver)?;
+
+        Ok(user)
+    }
+
+    /// Sync user group memberships based on mapping rule's group bindings.
+    async fn sync_user_groups(
+        &self,
+        state: &ServiceState,
+        user: &UserResponse,
+        match_result: &MatchResult,
+        idp_id: &str,
+    ) -> Result<(), MappingProviderError> {
+        let identity_provider = state.provider.get_identity_provider();
+
+        let domain_groups: HashMap<String, String> = identity_provider
+            .list_groups(
+                state,
+                &GroupListParameters {
+                    domain_id: Some(user.domain_id.clone()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .map_err(MappingProviderError::driver)?
+            .into_iter()
+            .map(|g| (g.name.clone(), g.id.clone()))
+            .collect();
+
+        let mut group_ids = HashSet::new();
+
+        for binding in &match_result.resolved_group_bindings {
+            if let Some(group_name) = &binding.name {
+                let group_id = if let Some(id) = domain_groups.get(group_name) {
+                    id.clone()
+                } else {
+                    let domain_id = binding
+                        .domain_id
+                        .clone()
+                        .or_else(|| Some(user.domain_id.clone()))
+                        .unwrap_or_default();
+                    let created = identity_provider
+                        .create_group(
+                            state,
+                            GroupCreate {
+                                domain_id,
+                                name: group_name.clone(),
+                                ..Default::default()
+                            },
+                        )
+                        .await
+                        .map_err(MappingProviderError::driver)?;
+                    created.id
+                };
+                group_ids.insert(group_id);
+            }
+        }
+
+        if !group_ids.is_empty() {
+            identity_provider
+                .set_user_groups_expiring(
+                    state,
+                    &user.id,
+                    HashSet::from_iter(group_ids.iter().map(|s| s.as_str())),
+                    idp_id,
+                    Some(&Utc::now()),
+                )
+                .await
+                .map_err(MappingProviderError::driver)?;
+        }
+
+        Ok(())
     }
 
     /// Upsert a virtual user shadow record with CAS-protected retry loop.
@@ -770,6 +1008,7 @@ mod tests {
                 description: None,
                 r#match: MatchCriteria::AllOf(vec![]),
                 identity: IdentityBinding {
+                    identity_mode: None,
                     user_name: "test".to_string(),
                     user_id: None,
                     user_domain_id: None,
@@ -1070,6 +1309,7 @@ mod tests {
                 description: None,
                 r#match: MatchCriteria::AllOf(vec![]),
                 identity: IdentityBinding {
+                    identity_mode: None,
                     user_name: "a".to_string(),
                     user_id: None,
                     user_domain_id: None,
@@ -1083,6 +1323,7 @@ mod tests {
                 description: None,
                 r#match: MatchCriteria::AllOf(vec![]),
                 identity: IdentityBinding {
+                    identity_mode: None,
                     user_name: "b".to_string(),
                     user_id: None,
                     user_domain_id: None,
@@ -1124,6 +1365,7 @@ mod tests {
                     description: None,
                     r#match: MatchCriteria::AllOf(vec![]),
                     identity: IdentityBinding {
+                        identity_mode: None,
                         user_name: "a".to_string(),
                         user_id: None,
                         user_domain_id: None,
@@ -1137,6 +1379,7 @@ mod tests {
                     description: None,
                     r#match: MatchCriteria::AllOf(vec![]),
                     identity: IdentityBinding {
+                        identity_mode: None,
                         user_name: "x".to_string(),
                         user_id: None,
                         user_domain_id: None,
@@ -1150,6 +1393,7 @@ mod tests {
                     description: None,
                     r#match: MatchCriteria::AllOf(vec![]),
                     identity: IdentityBinding {
+                        identity_mode: None,
                         user_name: "b".to_string(),
                         user_id: None,
                         user_domain_id: None,
@@ -1174,6 +1418,7 @@ mod tests {
             description: None,
             r#match: MatchCriteria::AllOf(vec![]),
             identity: IdentityBinding {
+                identity_mode: None,
                 user_name: "x".to_string(),
                 user_id: None,
                 user_domain_id: None,
@@ -1283,6 +1528,7 @@ mod tests {
             description: None,
             r#match: MatchCriteria::AllOf(vec![]),
             identity: IdentityBinding {
+                identity_mode: None,
                 user_name: "x".to_string(),
                 user_id: None,
                 user_domain_id: None,
@@ -1574,6 +1820,7 @@ mod tests {
                 },
             )]),
             identity: IdentityBinding {
+                identity_mode: Some(IdentityMode::Ephemeral),
                 user_name: "${claims.sub}-mapped".to_string(),
                 user_id: None,
                 user_domain_id: None,

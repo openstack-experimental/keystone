@@ -50,17 +50,20 @@ pub enum Authorization {
 /// Group assignment within a mapping rule.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Validate)]
 pub struct GroupAssignment {
-    /// Immutable UUID anchor.
+    /// Optional group UUID. When absent, the group is resolved by name at
+    /// runtime (used for `Local` identity mode where groups are created on the
+    /// fly).
+    #[serde(default)]
     #[validate(length(min = 1, max = 64))]
-    pub group_id: String,
-
-    /// Interpolated group name for display/lookup.
-    #[validate(length(min = 1, max = 255))]
-    pub group_name: String,
+    pub group_id: Option<String>,
 
     /// Optional domain ID for the group.
     #[validate(length(min = 1, max = 64))]
     pub group_domain_id: Option<String>,
+
+    /// Interpolated group name for display/lookup.
+    #[validate(length(min = 1, max = 255))]
+    pub group_name: String,
 
     /// Group resolution strategy.
     #[serde(default = "default_create_or_get")]

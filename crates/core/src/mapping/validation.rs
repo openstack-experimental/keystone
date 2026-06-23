@@ -254,6 +254,8 @@ fn validate_identity_templates(
 /// Validate domain resolution mode consistency.
 ///
 /// - `Fixed`: `user_domain_id` must NOT contain `${claims.*}` templates.
+///   Authorization domain IDs and group domain IDs must also NOT contain
+///   `${claims.*}` templates.
 /// - `ClaimsOnly`: `user_domain_id` must contain at least one `${claims.*}`
 ///   template.
 /// - `ClaimsOrMapping`: both claim templates and static values are permitted.
@@ -264,12 +266,44 @@ fn validate_domain_resolution_mode(
 ) -> Result<(), MappingProviderError> {
     match mode {
         DomainResolutionMode::Fixed => {
-            // Fixed mode: no claim templates in user_domain_id
+            // Fixed mode: no claim templates in any domain fields
             for rule in rules {
+                // Check user_domain_id in identity binding
                 if let Some(ref domain_template) = rule.identity.user_domain_id
                     && contains_claims_template(domain_template)
                 {
                     return Err(MappingProviderError::DomainOverrideInFixedMode);
+                }
+
+                // Check domain IDs in authorizations
+                for auth in &rule.authorizations {
+                    let d = match auth {
+                        openstack_keystone_core_types::mapping::authorization::Authorization::Domain {
+                            domain_id: d,
+                            ..
+                        } => d,
+                        openstack_keystone_core_types::mapping::authorization::Authorization::Project {
+                            project_domain_id: d,
+                            ..
+                        } => d,
+                        openstack_keystone_core_types::mapping::authorization::Authorization::System {
+                            ..
+                        } => {
+                            continue;
+                        }
+                    };
+                    if contains_claims_template(d) {
+                        return Err(MappingProviderError::DomainOverrideInFixedMode);
+                    }
+                }
+
+                // Check group domain IDs
+                for group in &rule.groups {
+                    if let Some(ref group_domain) = group.group_domain_id
+                        && contains_claims_template(group_domain)
+                    {
+                        return Err(MappingProviderError::DomainOverrideInFixedMode);
+                    }
                 }
             }
         }
@@ -431,6 +465,7 @@ mod tests {
             description: None,
             r#match: MatchCriteria::AllOf(vec![]),
             identity: IdentityBinding {
+                identity_mode: None,
                 user_name: "user-${claims.sub}".to_string(),
                 user_id: Some("${claims.sub}".to_string()),
                 user_domain_id: None,
@@ -458,6 +493,7 @@ mod tests {
             description: None,
             r#match: MatchCriteria::AllOf(vec![]),
             identity: IdentityBinding {
+                identity_mode: None,
                 user_name: user_name.to_string(),
                 user_id: None,
                 user_domain_id: None,
@@ -615,6 +651,7 @@ mod tests {
             description: None,
             r#match: MatchCriteria::AllOf(vec![]),
             identity: IdentityBinding {
+                identity_mode: None,
                 user_name: "user-${claims.sub}".to_string(),
                 user_id: None,
                 user_domain_id: Some("${claims.domain}".to_string()),
@@ -640,6 +677,7 @@ mod tests {
             description: None,
             r#match: MatchCriteria::AllOf(vec![]),
             identity: IdentityBinding {
+                identity_mode: None,
                 user_name: "user-${claims.sub}".to_string(),
                 user_id: None,
                 user_domain_id: Some("static-domain".to_string()),
@@ -663,6 +701,7 @@ mod tests {
             description: None,
             r#match: MatchCriteria::AllOf(vec![]),
             identity: IdentityBinding {
+                identity_mode: None,
                 user_name: "user-${claims.sub}".to_string(),
                 user_id: None,
                 user_domain_id: Some("static-domain".to_string()),
@@ -693,6 +732,7 @@ mod tests {
             description: None,
             r#match: MatchCriteria::AllOf(vec![]),
             identity: IdentityBinding {
+                identity_mode: None,
                 user_name: "user-${claims.sub}".to_string(),
                 user_id: None,
                 user_domain_id: Some("${claims.domain}".to_string()),
@@ -711,6 +751,338 @@ mod tests {
         );
 
         assert!(result.is_ok());
+    }
+
+    // -----------------------------------------------------------------------
+    // validate_domain_resolution_mode — authorization domain_id tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn fixed_mode_rejects_claims_template_in_domain_auth_domain_id() {
+        let rules = vec![MappingRule {
+            name: "test".to_string(),
+            description: None,
+            r#match: MatchCriteria::AllOf(vec![]),
+            identity: IdentityBinding {
+                identity_mode: None,
+                user_name: "user".to_string(),
+                user_id: None,
+                user_domain_id: None,
+                is_system: false,
+            },
+            authorizations: vec![
+                openstack_keystone_core_types::mapping::authorization::Authorization::Domain {
+                    domain_id: "${claims.domain}".to_string(),
+                    roles: vec![],
+                },
+            ],
+            groups: Vec::new(),
+        }];
+
+        let result =
+            validate_domain_resolution_mode(&DomainResolutionMode::Fixed, &rules, Some("domain"));
+
+        assert!(matches!(
+            result,
+            Err(MappingProviderError::DomainOverrideInFixedMode)
+        ));
+    }
+
+    #[test]
+    fn fixed_mode_rejects_claims_template_in_project_auth_project_domain_id() {
+        let rules = vec![MappingRule {
+            name: "test".to_string(),
+            description: None,
+            r#match: MatchCriteria::AllOf(vec![]),
+            identity: IdentityBinding {
+                identity_mode: None,
+                user_name: "user".to_string(),
+                user_id: None,
+                user_domain_id: None,
+                is_system: false,
+            },
+            authorizations: vec![
+                openstack_keystone_core_types::mapping::authorization::Authorization::Project {
+                    project_id: "proj-123".to_string(),
+                    project_domain_id: "${claims.domain}".to_string(),
+                    roles: vec![],
+                },
+            ],
+            groups: Vec::new(),
+        }];
+
+        let result =
+            validate_domain_resolution_mode(&DomainResolutionMode::Fixed, &rules, Some("domain"));
+
+        assert!(matches!(
+            result,
+            Err(MappingProviderError::DomainOverrideInFixedMode)
+        ));
+    }
+
+    #[test]
+    fn fixed_mode_allows_static_domain_in_domain_auth() {
+        let rules = vec![MappingRule {
+            name: "test".to_string(),
+            description: None,
+            r#match: MatchCriteria::AllOf(vec![]),
+            identity: IdentityBinding {
+                identity_mode: None,
+                user_name: "user".to_string(),
+                user_id: None,
+                user_domain_id: None,
+                is_system: false,
+            },
+            authorizations: vec![
+                openstack_keystone_core_types::mapping::authorization::Authorization::Domain {
+                    domain_id: "static-domain".to_string(),
+                    roles: vec![],
+                },
+            ],
+            groups: Vec::new(),
+        }];
+
+        let result =
+            validate_domain_resolution_mode(&DomainResolutionMode::Fixed, &rules, Some("domain"));
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn fixed_mode_allows_static_domain_in_project_auth() {
+        let rules = vec![MappingRule {
+            name: "test".to_string(),
+            description: None,
+            r#match: MatchCriteria::AllOf(vec![]),
+            identity: IdentityBinding {
+                identity_mode: None,
+                user_name: "user".to_string(),
+                user_id: None,
+                user_domain_id: None,
+                is_system: false,
+            },
+            authorizations: vec![
+                openstack_keystone_core_types::mapping::authorization::Authorization::Project {
+                    project_id: "proj-123".to_string(),
+                    project_domain_id: "static-domain".to_string(),
+                    roles: vec![],
+                },
+            ],
+            groups: Vec::new(),
+        }];
+
+        let result =
+            validate_domain_resolution_mode(&DomainResolutionMode::Fixed, &rules, Some("domain"));
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn fixed_mode_allows_system_authorization() {
+        let rules = vec![MappingRule {
+            name: "test".to_string(),
+            description: None,
+            r#match: MatchCriteria::AllOf(vec![]),
+            identity: IdentityBinding {
+                identity_mode: None,
+                user_name: "user".to_string(),
+                user_id: None,
+                user_domain_id: None,
+                is_system: false,
+            },
+            authorizations: vec![
+                openstack_keystone_core_types::mapping::authorization::Authorization::System {
+                    system_id: "all".to_string(),
+                    roles: vec![],
+                },
+            ],
+            groups: Vec::new(),
+        }];
+
+        let result =
+            validate_domain_resolution_mode(&DomainResolutionMode::Fixed, &rules, Some("domain"));
+
+        assert!(result.is_ok());
+    }
+
+    // -----------------------------------------------------------------------
+    // validate_domain_resolution_mode — group domain_id tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn fixed_mode_rejects_claims_template_in_group_domain_id() {
+        let rules = vec![MappingRule {
+            name: "test".to_string(),
+            description: None,
+            r#match: MatchCriteria::AllOf(vec![]),
+            identity: IdentityBinding {
+                identity_mode: None,
+                user_name: "user".to_string(),
+                user_id: None,
+                user_domain_id: None,
+                is_system: false,
+            },
+            authorizations: Vec::new(),
+            groups: vec![
+                openstack_keystone_core_types::mapping::authorization::GroupAssignment {
+                    group_id: None,
+                    group_domain_id: Some("${claims.domain}".to_string()),
+                    group_name: "admins".to_string(),
+                    strategy: None,
+                },
+            ],
+        }];
+
+        let result =
+            validate_domain_resolution_mode(&DomainResolutionMode::Fixed, &rules, Some("domain"));
+
+        assert!(matches!(
+            result,
+            Err(MappingProviderError::DomainOverrideInFixedMode)
+        ));
+    }
+
+    #[test]
+    fn fixed_mode_allows_static_group_domain_id() {
+        let rules = vec![MappingRule {
+            name: "test".to_string(),
+            description: None,
+            r#match: MatchCriteria::AllOf(vec![]),
+            identity: IdentityBinding {
+                identity_mode: None,
+                user_name: "user".to_string(),
+                user_id: None,
+                user_domain_id: None,
+                is_system: false,
+            },
+            authorizations: Vec::new(),
+            groups: vec![
+                openstack_keystone_core_types::mapping::authorization::GroupAssignment {
+                    group_id: None,
+                    group_domain_id: Some("static-domain".to_string()),
+                    group_name: "admins".to_string(),
+                    strategy: None,
+                },
+            ],
+        }];
+
+        let result =
+            validate_domain_resolution_mode(&DomainResolutionMode::Fixed, &rules, Some("domain"));
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn fixed_mode_allows_none_group_domain_id() {
+        let rules = vec![MappingRule {
+            name: "test".to_string(),
+            description: None,
+            r#match: MatchCriteria::AllOf(vec![]),
+            identity: IdentityBinding {
+                identity_mode: None,
+                user_name: "user".to_string(),
+                user_id: None,
+                user_domain_id: None,
+                is_system: false,
+            },
+            authorizations: Vec::new(),
+            groups: vec![
+                openstack_keystone_core_types::mapping::authorization::GroupAssignment {
+                    group_id: None,
+                    group_domain_id: None,
+                    group_name: "admins".to_string(),
+                    strategy: None,
+                },
+            ],
+        }];
+
+        let result =
+            validate_domain_resolution_mode(&DomainResolutionMode::Fixed, &rules, Some("domain"));
+
+        assert!(result.is_ok());
+    }
+
+    // -----------------------------------------------------------------------
+    // validate_domain_resolution_mode — mixed authorization and group tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn fixed_mode_allows_static_auth_and_group_domains() {
+        let rules = vec![MappingRule {
+            name: "test".to_string(),
+            description: None,
+            r#match: MatchCriteria::AllOf(vec![]),
+            identity: IdentityBinding {
+                identity_mode: None,
+                user_name: "user".to_string(),
+                user_id: None,
+                user_domain_id: None,
+                is_system: false,
+            },
+            authorizations: vec![
+                openstack_keystone_core_types::mapping::authorization::Authorization::Project {
+                    project_id: "proj-123".to_string(),
+                    project_domain_id: "domain-a".to_string(),
+                    roles: vec![],
+                },
+                openstack_keystone_core_types::mapping::authorization::Authorization::Domain {
+                    domain_id: "domain-b".to_string(),
+                    roles: vec![],
+                },
+            ],
+            groups: vec![
+                openstack_keystone_core_types::mapping::authorization::GroupAssignment {
+                    group_id: None,
+                    group_domain_id: Some("domain-c".to_string()),
+                    group_name: "admins".to_string(),
+                    strategy: None,
+                },
+            ],
+        }];
+
+        let result =
+            validate_domain_resolution_mode(&DomainResolutionMode::Fixed, &rules, Some("domain"));
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn fixed_mode_rejects_any_claims_template_in_mixed_domains() {
+        let rules = vec![MappingRule {
+            name: "test".to_string(),
+            description: None,
+            r#match: MatchCriteria::AllOf(vec![]),
+            identity: IdentityBinding {
+                identity_mode: None,
+                user_name: "user".to_string(),
+                user_id: None,
+                user_domain_id: None,
+                is_system: false,
+            },
+            authorizations: vec![
+                openstack_keystone_core_types::mapping::authorization::Authorization::Project {
+                    project_id: "proj-123".to_string(),
+                    project_domain_id: "static-domain".to_string(),
+                    roles: vec![],
+                },
+            ],
+            groups: vec![
+                openstack_keystone_core_types::mapping::authorization::GroupAssignment {
+                    group_id: None,
+                    group_domain_id: Some("${claims.domain}".to_string()),
+                    group_name: "admins".to_string(),
+                    strategy: None,
+                },
+            ],
+        }];
+
+        let result =
+            validate_domain_resolution_mode(&DomainResolutionMode::Fixed, &rules, Some("domain"));
+
+        assert!(matches!(
+            result,
+            Err(MappingProviderError::DomainOverrideInFixedMode)
+        ));
     }
 
     // -----------------------------------------------------------------------
@@ -736,6 +1108,7 @@ mod tests {
             description: None,
             r#match: MatchCriteria::AllOf(vec![]),
             identity: IdentityBinding {
+                identity_mode: None,
                 user_name: "user".to_string(),
                 user_id: Some("${claims.enclosing_domain_id}".to_string()),
                 user_domain_id: None,
@@ -770,6 +1143,7 @@ mod tests {
             description: None,
             r#match: MatchCriteria::AllOf(vec![]),
             identity: IdentityBinding {
+                identity_mode: None,
                 user_name: "user".to_string(),
                 user_id: None,
                 user_domain_id: None,
@@ -891,6 +1265,7 @@ mod tests {
             description: None,
             r#match: MatchCriteria::AllOf(vec![]),
             identity: IdentityBinding {
+                identity_mode: None,
                 user_name: "user-${claims.sub}".to_string(),
                 user_id: None,
                 user_domain_id: Some("static-domain".to_string()),
@@ -918,6 +1293,7 @@ mod tests {
             description: None,
             r#match: MatchCriteria::AllOf(vec![]),
             identity: IdentityBinding {
+                identity_mode: None,
                 user_name: "user".to_string(),
                 user_id: None,
                 user_domain_id: Some("${claims.domain}".to_string()),
@@ -949,9 +1325,10 @@ mod tests {
                 description: None,
                 r#match: MatchCriteria::AllOf(vec![]),
                 identity: IdentityBinding {
-                    user_name: "user".to_string(),
+                    identity_mode: None,
+                    user_name: "test-user".to_string(),
                     user_id: None,
-                    user_domain_id: Some("static-domain".to_string()),
+                    user_domain_id: None,
                     is_system: false,
                 },
                 authorizations: Vec::new(),
@@ -962,9 +1339,10 @@ mod tests {
                 description: None,
                 r#match: MatchCriteria::AllOf(vec![]),
                 identity: IdentityBinding {
-                    user_name: "user-2".to_string(),
+                    identity_mode: None,
+                    user_name: "test-user".to_string(),
                     user_id: None,
-                    user_domain_id: Some("${claims.domain}".to_string()),
+                    user_domain_id: None,
                     is_system: false,
                 },
                 authorizations: Vec::new(),

@@ -13,6 +13,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use sea_orm::DatabaseConnection;
+use sea_orm::TransactionTrait;
 use sea_orm::entity::*;
 
 use openstack_keystone_core::error::DbContextExt;
@@ -25,6 +26,10 @@ use crate::entity::prelude::{
 
 /// Delete an identity provider by its ID.
 ///
+/// Both the new-style and legacy table deletes are performed within a single
+/// transaction so that a failure during the second delete does not leave orphan
+/// data in the first table.
+///
 /// # Parameters
 /// - `db`: The database connection.
 /// - `id`: The ID of the identity provider to delete.
@@ -35,61 +40,75 @@ pub async fn delete<S: AsRef<str>>(
     db: &DatabaseConnection,
     id: S,
 ) -> Result<(), FederationProviderError> {
-    let res = DbFederatedIdentityProvider::delete_by_id(id.as_ref())
-        .exec(db)
+    let id_str = id.as_ref();
+
+    let txn = db
+        .begin()
+        .await
+        .context("starting transaction for deleting identity provider")?;
+
+    let res = DbFederatedIdentityProvider::delete_by_id(id_str)
+        .exec(&txn)
         .await
         .context("deleting identity provider")?;
+
     if res.rows_affected == 1 {
-        DbIdentityProvider::delete_by_id(id.as_ref())
-            .exec(db)
+        DbIdentityProvider::delete_by_id(id_str)
+            .exec(&txn)
             .await
             .context("deleting v3 identity provider")?;
+        txn.commit()
+            .await
+            .context("committing identity provider deletion transaction")?;
         Ok(())
     } else {
+        txn.rollback()
+            .await
+            .context("rolling back identity provider deletion transaction")?;
         Err(FederationProviderError::IdentityProviderNotFound(
-            id.as_ref().to_string(),
+            id_str.to_string(),
         ))
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use sea_orm::{DatabaseBackend, MockDatabase, MockExecResult, Transaction};
+    use sea_orm::{DatabaseBackend, MockDatabase, MockExecResult};
 
     use super::*;
 
     #[tokio::test]
     async fn test_delete() {
-        // Create MockDatabase with mock query results
         let db = MockDatabase::new(DatabaseBackend::Postgres)
             .append_exec_results([
                 MockExecResult {
                     rows_affected: 1,
-                    ..Default::default()
+                    last_insert_id: 0,
                 },
                 MockExecResult {
                     rows_affected: 1,
-                    ..Default::default()
+                    last_insert_id: 0,
+                },
+                MockExecResult {
+                    rows_affected: 1,
+                    last_insert_id: 0,
                 },
             ])
             .into_connection();
 
         delete(&db, "id").await.unwrap();
-        // Checking transaction log
-        assert_eq!(
-            db.into_transaction_log(),
-            [
-                Transaction::from_sql_and_values(
-                    DatabaseBackend::Postgres,
-                    r#"DELETE FROM "federated_identity_provider" WHERE "federated_identity_provider"."id" = $1"#,
-                    ["id".into()]
-                ),
-                Transaction::from_sql_and_values(
-                    DatabaseBackend::Postgres,
-                    r#"DELETE FROM "identity_provider" WHERE "identity_provider"."id" = $1"#,
-                    ["id".into()]
-                ),
-            ]
-        );
+
+        // Verify both tables were deleted inside a single transaction
+        let txns = db.into_transaction_log();
+        assert_eq!(txns.len(), 1);
+        let sqls: Vec<&str> = txns[0]
+            .statements()
+            .iter()
+            .map(|s| s.sql.as_str())
+            .collect();
+        assert!(sqls[0] == "BEGIN");
+        assert!(sqls[1].contains("federated_identity_provider") && sqls[1].starts_with("DELETE"));
+        assert!(sqls[2].contains("identity_provider") && sqls[2].starts_with("DELETE"));
+        assert!(sqls[3] == "COMMIT");
     }
 }

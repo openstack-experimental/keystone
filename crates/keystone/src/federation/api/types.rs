@@ -11,7 +11,8 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-use derive_builder::Builder;
+//! Federation API types and federation types.
+
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -28,7 +29,6 @@ use openidconnect::{
 pub use openstack_keystone_api_types::federation::*;
 
 mod identity_provider;
-mod mapping;
 
 pub(super) type OidcIdTokenFields = IdTokenFields<
     AllOtherClaims,
@@ -74,13 +74,3 @@ impl AdditionalClaims for AllOtherClaims {}
 #[derive(Debug, Deserialize, Serialize)]
 pub(super) struct ExtraFields(HashMap<String, serde_json::Value>);
 impl ExtraTokenFields for ExtraFields {}
-
-#[derive(Builder, Debug, Clone)]
-#[builder(setter(into))]
-pub(super) struct MappedUserData {
-    pub(super) unique_id: String,
-    pub(super) user_name: String,
-    pub(super) domain_id: String,
-    #[builder(default)]
-    pub(super) group_names: Option<Vec<String>>,
-}

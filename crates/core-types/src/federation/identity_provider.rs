@@ -66,6 +66,17 @@ pub struct IdentityProvider {
     #[builder(default)]
     pub default_mapping_name: Option<String>,
 
+    /// List of OIDC scopes to request during the OIDC authorization flow.
+    #[builder(default)]
+    pub oidc_scopes: Option<Vec<String>>,
+
+    /// List of allowed redirect URIs for OIDC flows. When set, the redirect
+    /// URI passed at auth-init must match one of these values. An empty list
+    /// means no restriction is applied, which is the default for backward
+    /// compatibility.
+    #[builder(default)]
+    pub allowed_redirect_uris: Option<Vec<String>>,
+
     #[builder(default)]
     pub provider_config: Option<Value>,
 }
@@ -117,6 +128,14 @@ pub struct IdentityProviderCreate {
     #[builder(default)]
     pub default_mapping_name: Option<String>,
 
+    /// List of OIDC scopes to request during the OIDC authorization flow.
+    #[builder(default)]
+    pub oidc_scopes: Option<Vec<String>>,
+
+    /// List of allowed redirect URIs for OIDC flows.
+    #[builder(default)]
+    pub allowed_redirect_uris: Option<Vec<String>>,
+
     #[builder(default)]
     pub provider_config: Option<Value>,
 }
@@ -158,6 +177,14 @@ pub struct IdentityProviderUpdate {
 
     #[builder(default)]
     pub default_mapping_name: Option<Option<String>>,
+
+    /// List of OIDC scopes to request during the OIDC authorization flow.
+    #[builder(default)]
+    pub oidc_scopes: Option<Option<Vec<String>>>,
+
+    /// List of allowed redirect URIs for OIDC flows.
+    #[builder(default)]
+    pub allowed_redirect_uris: Option<Option<Vec<String>>>,
 
     #[builder(default)]
     pub provider_config: Option<Option<Value>>,

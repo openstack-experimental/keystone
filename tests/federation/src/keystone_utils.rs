@@ -35,6 +35,7 @@ use tokio_util::sync::CancellationToken;
 
 use openstack_keystone_api_types::federation::*;
 use openstack_keystone_api_types::v3::auth::token::TokenResponse;
+use openstack_keystone_api_types::v4::mapping::*;
 use openstack_keystone_api_types::v4::user::*;
 
 static CONFIG: OnceLock<TestConfig> = OnceLock::new();
@@ -160,19 +161,25 @@ pub async fn create_idp<T: AsRef<str>>(
         .identity_provider)
 }
 
-pub async fn create_mapping<T: AsRef<str>>(
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub struct MappingRuleSetResponseBody {
+    pub mapping: MappingRuleSet,
+}
+
+/// Create a mapping ruleset via the v4 mapping API.
+pub async fn create_ruleset<T: AsRef<str>>(
     config: &TestConfig,
     token: T,
-    mapping: MappingCreateRequest,
-) -> Result<Mapping, Report> {
+    ruleset: MappingRuleSetCreateRequest,
+) -> Result<MappingRuleSet, Report> {
     Ok(config
         .client
-        .post(format!("{}/v4/federation/mappings", &config.keystone_url))
+        .post(format!("{}/v4/mappings/rulesets", &config.keystone_url))
         .header("x-auth-token", token.as_ref())
-        .json(&serde_json::to_value(mapping)?)
+        .json(&serde_json::to_value(ruleset)?)
         .send()
         .await?
-        .json::<MappingResponse>()
+        .json::<MappingRuleSetResponse>()
         .await?
         .mapping)
 }

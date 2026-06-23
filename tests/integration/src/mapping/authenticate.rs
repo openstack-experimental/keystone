@@ -42,6 +42,7 @@ async fn test_authenticate_happy_path() -> Result<()> {
             value: serde_json::Value::String("workload-123".into()),
         })]),
         identity: IdentityBinding {
+            identity_mode: None,
             user_name: "mapped-user".into(),
             user_id: None,
             user_domain_id: None,
@@ -109,6 +110,7 @@ async fn test_authenticate_global_ruleset() -> Result<()> {
             value: serde_json::Value::String("global-workload".into()),
         })]),
         identity: IdentityBinding {
+            identity_mode: None,
             user_name: "global-mapped-user".into(),
             user_id: None,
             user_domain_id: None,

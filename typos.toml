@@ -28,7 +28,7 @@ wrk = "wrk"
 
 [type.rust]
 extend-glob = []
-extend-ignore-identifiers-re = []
+extend-ignore-identifiers-re = ["INSERT"]
 extend-ignore-words-re = ["udid", "typ"]
 extend-ignore-re = [
   "gAA.*\\b"

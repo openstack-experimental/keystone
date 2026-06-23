@@ -67,6 +67,7 @@ pub fn sample_rule() -> MappingRule {
             value: serde_json::Value::String("testuser".into()),
         })]),
         identity: IdentityBinding {
+            identity_mode: None,
             user_name: "${name}".into(),
             user_id: None,
             user_domain_id: None,

@@ -26,12 +26,6 @@ pub struct IdentityProviderAuthRequest {
     /// Redirect URI to include in the auth request.
     #[cfg_attr(feature = "validate", validate(url))]
     pub redirect_uri: String,
-    /// IDP mapping id.
-    #[cfg_attr(feature = "validate", validate(length(max = 64)))]
-    pub mapping_id: Option<String>,
-    /// IDP mapping name.
-    #[cfg_attr(feature = "validate", validate(length(max = 64)))]
-    pub mapping_name: Option<String>,
     /// Authentication scope.
     #[cfg_attr(feature = "validate", validate(nested))]
     pub scope: Option<Scope>,

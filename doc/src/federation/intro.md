@@ -41,9 +41,6 @@ A series of brand new API endpoints have been added to the Keystone API.
 
 - **/v4/federation/identity_providers** (manage the identity providers)
 
-- **/v4/federation/mappings** (manage the mappings tied to the identity
-  provider)
-
 - **/v4/federation/auth** (initiate the authentication and get the IdP url)
 
 - **/v4/federation/oidc/callback** (exchange the authorization code for the
@@ -52,27 +49,20 @@ A series of brand new API endpoints have been added to the Keystone API.
 - **/v4/federation/identity_providers/{idp_id}/jwt** (exchange the JWT token
   issued by the referred IdP for the Keystone token)
 
+- **/v4/mappings/rulesets** (manage mapping rulesets that define how claims are
+  mapped to Keystone identities)
+
+> **Note:** The legacy `/v4/federation/mappings` API has been removed. Mapping
+> configuration is now handled through the unified mapping engine at
+> `/v4/mappings/rulesets`.
+
 ## DB changes
 
 Following tables are added:
 
 - `federated_identity_provider`
 
-```rust
-{{#rustdoc_include ../../../crates/keystone/src/db/entity/federated_identity_provider.rs:15:30}}
-```
-
-- `federated_mapping`
-
-```rust
-{{#include ../../../crates/keystone/src/db/entity/federated_mapping.rs:15:32}}
-```
-
 - `federated_auth_state`
-
-```rust
-{{#include ../../../crates/keystone/src/db/entity/federated_auth_state.rs:8:16}}
-```
 
 ## Compatibility notes
 

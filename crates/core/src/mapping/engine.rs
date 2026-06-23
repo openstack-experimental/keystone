@@ -98,6 +98,7 @@ pub fn evaluate_ruleset(
                         user_domain_id,
                         is_system: rule.identity.is_system,
                         authorizations: rule.authorizations.clone(),
+                        identity_mode: rule.identity.identity_mode.clone(),
                         resolved_group_bindings,
                         ruleset_version: ruleset.ruleset_version,
                     }));
@@ -135,6 +136,7 @@ pub fn evaluate_ruleset(
             user_domain_id,
             is_system: rule.identity.is_system,
             authorizations: rule.authorizations.clone(),
+            identity_mode: rule.identity.identity_mode.clone(),
             resolved_group_bindings,
             ruleset_version: ruleset.ruleset_version,
         }));
@@ -362,23 +364,64 @@ fn resolve_domain(
 }
 
 /// Interpolate group bindings, producing `GroupRef` entries.
+///
+/// Expands multi-value claims into multiple `GroupRef` entries: if the claim
+/// referenced by the group name template resolves to a list (e.g.,
+/// `groups: ["admin", "users"]`), each value produces a separate entry.
 fn interpolate_groups(
     groups: &[GroupAssignment],
     claims: &HashMap<String, Vec<String>>,
     _ruleset: &MappingRuleSet,
     enclosing: &str,
 ) -> Result<Vec<GroupRef>, MappingProviderError> {
-    groups
-        .iter()
-        .map(|g| {
-            let _ = interpolation::interpolate(&g.group_name, claims, enclosing)?;
-            Ok(GroupRef {
+    let mut resolved = Vec::new();
+
+    for g in groups {
+        let interpolated = interpolation::interpolate(&g.group_name, claims, enclosing)?;
+
+        // Check if the original template referenced a multi-value claim.
+        // If the claim key resolves to multiple values, expand each one into
+        // a separate GroupRef (matching the old OIDC flow's `groups` claim
+        // extraction from a JSON array).
+        let claim_values = extract_claim_values(&g.group_name, claims);
+        if claim_values.len() > 1 {
+            for value in claim_values {
+                resolved.push(GroupRef {
+                    domain_id: g.group_domain_id.clone(),
+                    id: g.group_id.clone().unwrap_or_default(),
+                    name: Some(value),
+                });
+            }
+        } else {
+            resolved.push(GroupRef {
                 domain_id: g.group_domain_id.clone(),
-                id: g.group_id.clone(),
-                name: None,
-            })
-        })
-        .collect()
+                id: g.group_id.clone().unwrap_or_default(),
+                name: Some(interpolated.clone()),
+            });
+        }
+    }
+
+    Ok(resolved)
+}
+
+/// Extract claim values from a group name template that references a single
+/// claim key (e.g., `${claims.groups}` → all values for `groups`).
+///
+/// Returns a single-element vector with the interpolated result if the
+/// template contains multiple tokens, no claim reference, or the claim has
+/// a single value.
+fn extract_claim_values(template: &str, claims: &HashMap<String, Vec<String>>) -> Vec<String> {
+    // Only expand if the template is a single `${claims.<key>}` token
+    let key = template
+        .strip_prefix("${claims.")
+        .and_then(|s| s.strip_suffix('}'));
+    if let Some(key) = key
+        && let Some(values) = claims.get(key)
+        && !values.is_empty()
+    {
+        return values.clone();
+    }
+    Vec::new()
 }
 
 #[cfg(test)]
@@ -415,6 +458,7 @@ mod tests {
                 },
             )]),
             identity: IdentityBinding {
+                identity_mode: None,
                 user_name: user_name.to_string(),
                 user_id: None,
                 user_domain_id: None,
@@ -480,6 +524,7 @@ mod tests {
                 }),
             ]),
             identity: IdentityBinding {
+                identity_mode: None,
                 user_name: "allmatch-user".to_string(),
                 user_id: None,
                 user_domain_id: None,
@@ -511,6 +556,7 @@ mod tests {
                 }),
             ]),
             identity: IdentityBinding {
+                identity_mode: None,
                 user_name: "allmatch-user".to_string(),
                 user_id: None,
                 user_domain_id: None,
@@ -541,6 +587,7 @@ mod tests {
                 }),
             ]),
             identity: IdentityBinding {
+                identity_mode: None,
                 user_name: "anymatch-user".to_string(),
                 user_id: None,
                 user_domain_id: None,
@@ -568,6 +615,7 @@ mod tests {
                 },
             )]),
             identity: IdentityBinding {
+                identity_mode: None,
                 user_name: "regex-user".to_string(),
                 user_id: None,
                 user_domain_id: None,
@@ -595,6 +643,7 @@ mod tests {
                 },
             )]),
             identity: IdentityBinding {
+                identity_mode: None,
                 user_name: "regex-user".to_string(),
                 user_id: None,
                 user_domain_id: None,
@@ -628,6 +677,7 @@ mod tests {
                 require_all_keys: true,
             },
             identity: IdentityBinding {
+                identity_mode: None,
                 user_name: "strict-user".to_string(),
                 user_id: None,
                 user_domain_id: None,
@@ -661,6 +711,7 @@ mod tests {
                 require_all_keys: false,
             },
             identity: IdentityBinding {
+                identity_mode: None,
                 user_name: "strict-user".to_string(),
                 user_id: None,
                 user_domain_id: None,
@@ -687,6 +738,7 @@ mod tests {
                 },
             )]),
             identity: IdentityBinding {
+                identity_mode: None,
                 user_name: "fixed-user".to_string(),
                 user_id: None,
                 user_domain_id: Some("${claims.sub}".to_string()),
@@ -727,6 +779,7 @@ mod tests {
                 ]))),
             ]),
             identity: IdentityBinding {
+                identity_mode: None,
                 user_name: "nested-user".to_string(),
                 user_id: None,
                 user_domain_id: None,
@@ -754,6 +807,7 @@ mod tests {
                 },
             )]),
             identity: IdentityBinding {
+                identity_mode: None,
                 user_name: "${claims.preferred_username}@mapped".to_string(),
                 user_id: None,
                 user_domain_id: None,
@@ -788,6 +842,7 @@ mod tests {
                 require_all_keys: true,
             },
             identity: IdentityBinding {
+                identity_mode: None,
                 user_name: "strictall-user".to_string(),
                 user_id: None,
                 user_domain_id: None,
@@ -819,6 +874,7 @@ mod tests {
                 }),
             ]),
             identity: IdentityBinding {
+                identity_mode: None,
                 user_name: "anyfail-user".to_string(),
                 user_id: None,
                 user_domain_id: None,
@@ -845,6 +901,7 @@ mod tests {
                 },
             )]),
             identity: IdentityBinding {
+                identity_mode: None,
                 user_name: "claimsonly-user".to_string(),
                 user_id: None,
                 user_domain_id: Some("${claims.domain_claim}".to_string()),
@@ -891,6 +948,7 @@ mod tests {
                 },
             )]),
             identity: IdentityBinding {
+                identity_mode: None,
                 user_name: "claimsonly-fallback-user".to_string(),
                 user_id: None,
                 user_domain_id: Some("${claims.sub}".to_string()),
@@ -934,6 +992,7 @@ mod tests {
                     },
                 )]),
                 identity: IdentityBinding {
+                    identity_mode: None,
                     user_name: "".to_string(),
                     user_id: None,
                     user_domain_id: None,
@@ -963,6 +1022,7 @@ mod tests {
                 },
             )]),
             identity: IdentityBinding {
+                identity_mode: None,
                 user_name: "userid-user".to_string(),
                 user_id: Some("${claims.sub}-suffix".to_string()),
                 user_domain_id: None,
@@ -992,6 +1052,7 @@ mod tests {
                 ],
             })]),
             identity: IdentityBinding {
+                identity_mode: None,
                 user_name: "anyof-user".to_string(),
                 user_id: None,
                 user_domain_id: None,
@@ -1020,6 +1081,7 @@ mod tests {
                 ],
             })]),
             identity: IdentityBinding {
+                identity_mode: None,
                 user_name: "anyof-user".to_string(),
                 user_id: None,
                 user_domain_id: None,
@@ -1052,6 +1114,7 @@ mod tests {
                 },
             )]),
             identity: IdentityBinding {
+                identity_mode: None,
                 user_name: "multivalue-user".to_string(),
                 user_id: None,
                 user_domain_id: None,
@@ -1079,6 +1142,7 @@ mod tests {
                 },
             )]),
             identity: IdentityBinding {
+                identity_mode: None,
                 user_name: "badregex-user".to_string(),
                 user_id: None,
                 user_domain_id: None,
@@ -1111,6 +1175,7 @@ mod tests {
                 },
             )]),
             identity: IdentityBinding {
+                identity_mode: None,
                 user_name: "large-user".to_string(),
                 user_id: None,
                 user_domain_id: None,
@@ -1142,6 +1207,7 @@ mod tests {
                 },
             )]),
             identity: IdentityBinding {
+                identity_mode: None,
                 user_name: "tagregex-user".to_string(),
                 user_id: None,
                 user_domain_id: None,
@@ -1182,6 +1248,7 @@ mod tests {
                 }),
             ]),
             identity: IdentityBinding {
+                identity_mode: None,
                 user_name: "${claims.spiffe.trust_domain}-user".to_string(),
                 user_id: None,
                 user_domain_id: None,
@@ -1233,7 +1300,8 @@ mod tests {
                     },
                 )]),
                 identity: IdentityBinding {
-                    user_name: "target-user".to_string(),
+                    identity_mode: None,
+                    user_name: "test-user".to_string(),
                     user_id: None,
                     user_domain_id: None,
                     is_system: false,

@@ -152,10 +152,11 @@ impl From<core::MatchCriteria> for api::MatchCriteria {
 impl From<api::IdentityBinding> for core::IdentityBinding {
     fn from(value: api::IdentityBinding) -> Self {
         Self {
+            identity_mode: value.identity_mode.map(Into::into),
+            is_system: value.is_system,
             user_name: value.user_name,
             user_id: value.user_id,
             user_domain_id: value.user_domain_id,
-            is_system: value.is_system,
         }
     }
 }
@@ -163,10 +164,11 @@ impl From<api::IdentityBinding> for core::IdentityBinding {
 impl From<core::IdentityBinding> for api::IdentityBinding {
     fn from(value: core::IdentityBinding) -> Self {
         Self {
+            identity_mode: value.identity_mode.map(Into::into),
+            is_system: value.is_system,
             user_name: value.user_name,
             user_id: value.user_id,
             user_domain_id: value.user_domain_id,
-            is_system: value.is_system,
         }
     }
 }
@@ -251,12 +253,30 @@ impl From<core::GroupStrategy> for api::GroupStrategy {
     }
 }
 
+impl From<api::IdentityMode> for core::IdentityMode {
+    fn from(value: api::IdentityMode) -> Self {
+        match value {
+            api::IdentityMode::Local => Self::Local,
+            api::IdentityMode::Ephemeral => Self::Ephemeral,
+        }
+    }
+}
+
+impl From<core::IdentityMode> for api::IdentityMode {
+    fn from(value: core::IdentityMode) -> Self {
+        match value {
+            core::IdentityMode::Local => Self::Local,
+            core::IdentityMode::Ephemeral => Self::Ephemeral,
+        }
+    }
+}
+
 impl From<api::GroupAssignment> for core::GroupAssignment {
     fn from(value: api::GroupAssignment) -> Self {
         Self {
             group_id: value.group_id,
-            group_name: value.group_name,
             group_domain_id: value.group_domain_id,
+            group_name: value.group_name,
             strategy: value.strategy.map(Into::into),
         }
     }
@@ -266,8 +286,8 @@ impl From<core::GroupAssignment> for api::GroupAssignment {
     fn from(value: core::GroupAssignment) -> Self {
         Self {
             group_id: value.group_id,
-            group_name: value.group_name,
             group_domain_id: value.group_domain_id,
+            group_name: value.group_name,
             strategy: value.strategy.map(Into::into),
         }
     }

@@ -11,42 +11,41 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-#![allow(clippy::expect_used)]
-#![allow(clippy::unwrap_used)]
 
-use eyre::Report;
 use std::env;
-use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
 use thirtyfour::prelude::*;
-use tokio::signal;
-use tokio_util::sync::CancellationToken;
 use tracing::debug;
 use tracing_test::traced_test;
+use uuid::Uuid;
 
 use openstack_keystone_api_types::federation::*;
+use openstack_keystone_api_types::v4::mapping::*;
 
 mod keystone_utils;
-
 use keystone_utils::*;
 
 pub async fn setup_idp<T: AsRef<str>, K: AsRef<str>, S: AsRef<str>>(
     token: T,
     client_id: K,
     client_secret: S,
-) -> Result<(IdentityProvider, Mapping), Report> {
+) -> Result<(IdentityProvider, MappingRuleSet), eyre::Report> {
     let config = get_config();
     let dex_url = env::var("DEX_URL").expect("DEX_URL is set");
+
+    let ruleset_name = Uuid::new_v4().simple().to_string();
 
     let idp = create_idp(
         config,
         token.as_ref(),
         IdentityProviderCreateRequest {
             identity_provider: IdentityProviderCreateBuilder::default()
-                .name("dex")
+                .name(Uuid::new_v4().simple().to_string())
                 .enabled(true)
                 .domain_id("default")
-                .default_mapping_name("default")
-                .oidc_discovery_url(format!("{}/dex", dex_url))
+                .default_mapping_name(&ruleset_name)
+                .oidc_discovery_url(format!("{dex_url}/dex"))
                 .oidc_client_id(client_id.as_ref())
                 .oidc_client_secret(client_secret.as_ref())
                 .build()?,
@@ -54,28 +53,58 @@ pub async fn setup_idp<T: AsRef<str>, K: AsRef<str>, S: AsRef<str>>(
     )
     .await?;
 
-    let mapping = create_mapping(
+    let ruleset = create_ruleset(
         config,
         token.as_ref(),
-        MappingCreateRequest {
-            mapping: MappingCreateBuilder::default()
-                .id("dex")
-                .name("default")
-                .enabled(true)
-                .domain_id("default")
-                .idp_id(idp.id.clone())
-                .allowed_redirect_uris(vec![
-                    "http://localhost:8080/v4/identity_providers/dex/callback".into(),
-                ])
-                .user_id_claim("sub")
-                .user_name_claim("name")
-                .oidc_scopes(vec!["email".into(), "profile".into()])
-                .build()?,
+        MappingRuleSetCreateRequest {
+            mapping: MappingRuleSetCreate {
+                mapping_id: Some(ruleset_name.clone()),
+                domain_id: Some("default".into()),
+                source: IdentitySource::Federation {
+                    idp_id: idp.id.clone(),
+                },
+                domain_resolution_mode: DomainResolutionMode::Fixed,
+                enabled: true,
+                rules: vec![MappingRule {
+                    name: ruleset_name.clone(),
+                    description: None,
+                    r#match: MatchCriteria::AllOf(Vec::new()),
+                    identity: IdentityBinding {
+                        identity_mode: Some(IdentityMode::Local),
+                        user_name: "${claims.name}".into(),
+                        user_id: None,
+                        user_domain_id: None,
+                        is_system: false,
+                    },
+                    authorizations: Vec::new(),
+                    groups: Vec::new(),
+                }],
+            },
         },
     )
     .await?;
 
-    Ok((idp, mapping))
+    Ok((idp, ruleset))
+}
+
+async fn wait_for_callback(timeout_secs: u64) -> FederationAuthCodeCallbackResponse {
+    let callback_url =
+        env::var("CALLBACK_URL").unwrap_or_else(|_| "http://dex-callback:8050".to_string());
+
+    let start = std::time::Instant::now();
+    while start.elapsed() < Duration::from_secs(timeout_secs) {
+        let resp = reqwest::get(format!("{callback_url}/status")).await;
+        if let Ok(r) = resp {
+            if r.status().is_success() {
+                if let Ok(data) = r.json::<FederationAuthCodeCallbackResponse>().await {
+                    return data;
+                }
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+
+    panic!("Timed out waiting for callback from {callback_url}");
 }
 
 #[tokio::test]
@@ -87,81 +116,57 @@ async fn test_login_oidc() {
     let client_id = "keystone_test";
     let client_secret = "keystone_test_secret";
 
-    let token = auth(config).await;
-    let (idp, mapping) = setup_idp(&token, client_id, client_secret).await.unwrap();
+    let token = auth(&config).await;
+    let (idp, ruleset) = setup_idp(&token, client_id, client_secret).await.unwrap();
 
-    let auth_req = initialize_oidc_auth(
-        config,
-        &idp.id,
-        &mapping.id,
-        "http://localhost:8050/oidc/callback",
-    )
-    .await
-    .unwrap();
+    let redirect_uri = "http://dex-callback:8050/oidc/callback";
+    let callback_url =
+        env::var("CALLBACK_URL").unwrap_or_else(|_| "http://dex-callback:8050".to_string());
 
-    // Prepare the callback server
-    let cancel_token = CancellationToken::new();
-    let state: Arc<Mutex<Option<FederationAuthCodeCallbackResponse>>> = Arc::new(Mutex::new(None));
+    // Clear previous callback data
+    let _ = reqwest::get(format!("{callback_url}/clear")).await;
 
-    tokio::spawn({
-        let cancel_token = cancel_token.clone();
-        async move {
-            if let Ok(()) = signal::ctrl_c().await {
-                cancel_token.cancel();
-            }
-        }
-    });
+    let auth_resp = initialize_oidc_auth(&config, &idp.id, &ruleset.mapping_id, redirect_uri)
+        .await
+        .unwrap();
 
-    let socket_addr = std::net::SocketAddr::from(([127, 0, 0, 1], 8050));
-    let callback_handle = tokio::spawn({
-        let cancel_token = cancel_token.clone();
-        let state = state.clone();
-        async move { auth_callback_server(socket_addr, state, cancel_token).await }
-    });
-
-    // Start the selenium part
     let mut caps = DesiredCapabilities::firefox();
     caps.set_headless().unwrap();
-    let driver = WebDriver::new(
-        format!(
-            "http://localhost:{}",
-            env::var("BROWSERDRIVER_PORT").unwrap_or("4444".to_string())
-        ),
-        caps,
-    )
-    .await
-    .unwrap();
 
-    debug!("Going to {:?}", auth_req.auth_url.clone());
-    driver.goto(auth_req.auth_url).await.unwrap();
+    let browserdriver_url = env::var("BROWSERDRIVER_URL")
+        .unwrap_or_else(|_| "http://selenium-service:4444".to_string());
 
-    debug!("Page source is {:?}", driver.source().await.unwrap());
+    let driver = WebDriver::new(&browserdriver_url, caps).await.unwrap();
+
+    debug!("Navigating to {}", auth_resp.auth_url);
+    driver.goto(auth_resp.auth_url).await.unwrap();
+
+    debug!("Page source: {:?}", driver.source().await.unwrap());
 
     let username_input = driver.query(By::Id("login")).first().await.unwrap();
     username_input.send_keys(user_name).await.unwrap();
+
     let password_input = driver.query(By::Id("password")).first().await.unwrap();
     password_input.send_keys(user_password).await.unwrap();
+
     let login = driver.find(By::Id("submit-login")).await.unwrap();
     login.click().await.unwrap();
 
-    // Accept access request
+    // Accept consent
     let accept = driver
         .find(By::ClassName("theme-btn--success"))
         .await
         .unwrap();
     accept.click().await.unwrap();
 
-    debug!("Page source is {:?}", driver.source().await.unwrap());
-
+    debug!(
+        "Page source after consent: {:?}",
+        driver.source().await.unwrap()
+    );
     driver.quit().await.unwrap();
 
-    let _res = callback_handle.await.unwrap();
-
-    let guard = state.lock().expect("poisoned guard");
-    let res: FederationAuthCodeCallbackResponse = guard.clone().unwrap();
-
-    let _auth_rsp = exchange_authorization_code(config, res.state, res.code)
+    let res = wait_for_callback(60).await;
+    let _auth_rsp = exchange_authorization_code(&config, res.state, res.code)
         .await
         .unwrap();
-    // TODO: Add checks for the response
 }

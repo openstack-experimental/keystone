@@ -203,6 +203,20 @@ impl validator::Validate for MatchCriteria {
 // ---------------------------------------------------------------------------
 // Identity, Authorization & Groups
 // ---------------------------------------------------------------------------
+/// Identity mode determines whether the matched identity should be resolved as
+/// a real federated user row (`Local`) or a virtual shadow record
+/// (`Ephemeral`).
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum IdentityMode {
+    /// Real user CRUD: create/find federated user, sync group memberships.
+    #[default]
+    Local,
+    /// Virtual shadow registry: HMAC-derived ID, no persistent user row.
+    Ephemeral,
+}
+
 /// Identity binding that defines how the external identity maps to a
 /// localized Keystone identity.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
@@ -212,6 +226,12 @@ pub struct IdentityBinding {
     /// Whether the resolved identity has system-level privileges.
     #[serde(default)]
     pub is_system: bool,
+
+    /// Identity mode for the resolved principal. When absent, defaults to
+    /// `Local` for `Federation` source and `Ephemeral` for others.
+    #[serde(default)]
+    pub identity_mode: Option<IdentityMode>,
+
     /// User domain ID for the resolved identity.
     #[cfg_attr(feature = "validate", validate(length(max = 256)))]
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -303,7 +323,8 @@ pub struct GroupAssignment {
     pub group_domain_id: Option<String>,
     /// Group identifier.
     #[cfg_attr(feature = "validate", validate(length(min = 1, max = 64)))]
-    pub group_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group_id: Option<String>,
     /// Group name.
     #[cfg_attr(feature = "validate", validate(length(min = 1, max = 256)))]
     pub group_name: String,

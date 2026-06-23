@@ -11,166 +11,94 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+//! Shared helpers for federation claim flattening.
+
+use std::collections::HashMap;
 
 use serde_json::Value;
 
-use openidconnect::IdTokenClaims;
-use openidconnect::core::CoreGenderClaim;
+use openstack_keystone_core_types::mapping::error::MappingProviderError;
 
-use openstack_keystone_core_types::federation::{
-    IdentityProvider as ProviderIdentityProvider, Mapping as ProviderMapping,
-};
+/// Maximum bytes allowed per individual claim value.
+const CLAIM_VALUE_LIMIT: usize = 4096;
 
-use crate::federation::api::{
-    error::OidcError,
-    types::{AllOtherClaims, MappedUserData, MappedUserDataBuilder},
-};
-use crate::keystone::ServiceState;
+/// Maximum total serialized bytes for the flattened claims map.
+const CLAIMS_MAP_LIMIT: usize = 64 * 1024;
 
-/// Validate bound claims in the token.
+/// Flatten a JSON claims object into the dotted-key claims map.
+///
+/// Walks the JSON value recursively, accumulating dotted key paths
+/// (e.g., `user.profile.id`). Normalizes `String`, `Number`, and `Bool`
+/// values to their string representation. Nested objects are traversed;
+/// arrays are dropped (claim condition evaluation expects scalar values).
+///
+/// Enforces per-claim (4096 bytes) and total map (64 KiB) size caps per
+/// ADR-0020 §9. Excess per-claim values are silently dropped; total map
+/// exceeding 64 KiB returns an error.
 ///
 /// # Arguments
-///
-/// * `mapping` - The mapping to validate against
-/// * `claims` - The claims to validate
-/// * `claims_as_json` - The claims as json to validate
+/// * `claims_json` - The JSON-serialized claims object.
 ///
 /// # Returns
-///
-/// * `Result<(), OidcError>`
-pub(super) fn validate_bound_claims(
-    mapping: &ProviderMapping,
-    claims: &IdTokenClaims<AllOtherClaims, CoreGenderClaim>,
-    claims_as_json: &Value,
-) -> Result<(), OidcError> {
-    if let Some(bound_subject) = &mapping.bound_subject
-        && bound_subject != claims.subject().as_str()
-    {
-        return Err(OidcError::BoundSubjectMismatch {
-            expected: bound_subject.to_string(),
-            found: claims.subject().as_str().into(),
-        });
+/// Flattened claims map, or `MappingProviderError::ClaimsMapTooLarge` if
+/// the total map exceeds 64 KiB.
+pub(super) fn flatten_federation_claims(
+    claims_json: &Value,
+) -> Result<HashMap<String, Vec<String>>, MappingProviderError> {
+    let mut claims = HashMap::new();
+    flatten_value(claims_json, None, &mut claims)?;
+
+    let total_bytes: usize = claims
+        .iter()
+        .map(|(k, v)| k.len() + v.iter().map(|s| s.len()).sum::<usize>())
+        .sum();
+    if total_bytes > CLAIMS_MAP_LIMIT {
+        return Err(MappingProviderError::ClaimsMapTooLarge);
     }
-    if let Some(bound_audiences) = &mapping.bound_audiences {
-        let mut bound_audiences_match: bool = false;
-        for claim_audience in claims.audiences() {
-            if bound_audiences.iter().any(|x| x == claim_audience.as_str()) {
-                bound_audiences_match = true;
-            }
-        }
-        if !bound_audiences_match {
-            return Err(OidcError::BoundAudiencesMismatch {
-                expected: bound_audiences.join(","),
-                found: claims
-                    .audiences()
-                    .iter()
-                    .map(|x| x.as_str())
-                    .collect::<Vec<_>>()
-                    .join(","),
-            });
-        }
-    }
-    //if let Some(bound_claims) = &mapping.bound_claims
-    //    && let Some(required_claims) = bound_claims.as_object()
-    //{
-    for (claim, value) in mapping.bound_claims.iter() {
-        if !claims_as_json
-            .get(claim)
-            .map(|x| x == value)
-            .is_some_and(|val| val)
-        {
-            return Err(OidcError::BoundClaimsMismatch {
-                claim: claim.to_string(),
-                expected: value.to_string(),
-                found: claims_as_json
-                    .get(claim)
-                    .map(|x| x.to_string())
-                    .unwrap_or_default(),
-            });
-        }
-    }
-    //}
-    Ok(())
+
+    Ok(claims)
 }
 
-/// Map the user data using the referred mapping.
+/// Recursively flatten a JSON value into the claims map.
 ///
 /// # Arguments
-/// * `idp` - The identity provider
-/// * `mapping` - The mapping to use
-/// * `claims_as_json` - The claims as json
-///
-/// # Returns
-/// The mapped user data.
-pub(super) async fn map_user_data(
-    _state: &ServiceState,
-    idp: &ProviderIdentityProvider,
-    mapping: &ProviderMapping,
-    claims_as_json: &Value,
-) -> Result<MappedUserData, OidcError> {
-    let mut builder = MappedUserDataBuilder::default();
-    //if let Some(token_user_id) = &mapping.token_user_id {
-    //    // TODO: How to check that the user belongs to the right domain)
-    //    if let Ok(Some(user)) = state
-    //        .provider
-    //        .get_identity_provider()
-    //        .get_user(&state.db, token_user_id)
-    //        .await
-    //    {
-    //        builder.unique_id(token_user_id.clone());
-    //        builder.user_name(user.name.clone());
-    //    } else {
-    //        return Err(OidcError::UserNotFound(token_user_id.clone()))?;
-    //    }
-    //} else {
-    builder.unique_id(
-        claims_as_json
-            .get(&mapping.user_id_claim)
-            .and_then(|x| x.as_str())
-            .ok_or_else(|| OidcError::UserIdClaimRequired(mapping.user_id_claim.clone()))?
-            .to_string(),
-    );
-
-    builder.user_name(
-        claims_as_json
-            .get(&mapping.user_name_claim)
-            .and_then(|x| x.as_str())
-            .ok_or_else(|| OidcError::UserNameClaimRequired(mapping.user_name_claim.clone()))?,
-    );
-    //}
-
-    builder.domain_id(
-        mapping
-            .domain_id
-            .as_ref()
-            .or(idp.domain_id.as_ref())
-            .or(mapping
-                .domain_id_claim
-                .as_ref()
-                .and_then(|claim| {
-                    claims_as_json
-                        .get(claim)
-                        .and_then(|x| x.as_str().map(|v| v.to_string()))
-                })
-                .as_ref())
-            .ok_or(OidcError::UserDomainUnbound)?,
-    );
-
-    if let Some(groups_claim) = &mapping.groups_claim
-        && let Some(group_names_data) = &claims_as_json.get(groups_claim)
-    {
-        builder.group_names(
-            group_names_data
-                .as_array()
-                .map(|names| {
-                    names
-                        .iter()
-                        .map(|group| group.as_str().map(|v| v.to_string()))
-                        .collect::<Option<Vec<_>>>()
-                })
-                .ok_or(OidcError::GroupsClaimNotArrayOfStrings)?,
-        );
+/// * `value` - JSON value to process.
+/// * `prefix` - Current dotted key path (e.g., `Some("user.profile")`).
+/// * `claims` - The accumulator map.
+fn flatten_value(
+    value: &Value,
+    prefix: Option<&str>,
+    claims: &mut HashMap<String, Vec<String>>,
+) -> Result<(), MappingProviderError> {
+    match value {
+        Value::Object(map) => {
+            for (key, val) in map {
+                let next = match prefix {
+                    Some(p) => Some(format!("{p}.{key}")),
+                    None => Some(key.clone()),
+                };
+                flatten_value(val, next.as_deref(), claims)?;
+            }
+        }
+        Value::String(s) => {
+            let key = prefix.unwrap_or("*").to_string();
+            // Silently drop oversized values per ADR-0020 §9
+            if s.len() <= CLAIM_VALUE_LIMIT {
+                claims.entry(key).or_default().push(s.clone());
+            }
+        }
+        Value::Number(n) => {
+            let key = prefix.unwrap_or("*").to_string();
+            let s = n.to_string();
+            if s.len() <= CLAIM_VALUE_LIMIT {
+                claims.entry(key).or_default().push(s);
+            }
+        }
+        Value::Bool(b) => {
+            let key = prefix.unwrap_or("*").to_string();
+            claims.entry(key).or_default().push(b.to_string());
+        }
+        Value::Null | Value::Array(_) => {}
     }
-
-    Ok(builder.build()?)
+    Ok(())
 }

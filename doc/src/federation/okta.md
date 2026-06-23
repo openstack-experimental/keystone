@@ -28,20 +28,38 @@ On the Keystone side the following must be implemented:
 - register an identity provider with the data obtained from Okta app
   configuration:
 
-  ```console
+```console
   osc identity4 federation identity-provider create --bound-issuer <OKTA_ISSUER> --oidc-client-id <CLIENT_ID> --oidc-client-secret <CLIENT_SECRET> --oidc-discovery-url <OKTA_DISCOVERY_URL> --default-mapping-name okta --domain-id <DOMAIN_ID> --name okta
-  ```
+```
 
-  Default mapping name is created in the next step and is not explicitly
-  required. It is used when no mapping was explicitly specified in the
-  authentication request. The provider name can be also obfuscated more. The
-  authentication depends on the identity provider ID and not the name.
+The `--default-mapping-name` references a mapping ruleset managed at
+`/v4/mappings/rulesets`. The ruleset must match the IDP source
+(`IdentitySource::Federation`) and be named accordingly.
 
-- create authentication mapping
+- create mapping ruleset
 
-  ```console
-  osc identity4 federation mapping create --user-id-claim sub --idp-id <IDP_ID> --user-name-claim preferred_username --name okta --oidc-scopes openid,profile
-  ```
+A mapping ruleset must be created via `/v4/mappings/rulesets` that defines how
+Okta OIDC claims are mapped to Keystone identities:
+
+```json
+{
+  "mapping": {
+    "mapping_id": "okta",
+    "domain_id": "<DOMAIN_ID>",
+    "source": { "type": "federation", "idp_id": "<IDP_ID>" },
+    "domain_resolution_mode": "fixed",
+    "enabled": true,
+    "rules": [{
+      "name": "okta",
+      "match": { "all_of": [] },
+      "identity": {
+        "identity_mode": "local",
+        "user_name": "${claims.preferred_username}"
+      }
+    }]
+  }
+}
+```
 
 Afterwards `osc` can be used by users to authenticate.
 

@@ -41,7 +41,6 @@ pub async fn create(
     let entry = db_federated_auth_state::ActiveModel {
         state: Set(rec.state.clone()),
         idp_id: Set(rec.idp_id.clone()),
-        mapping_id: Set(rec.mapping_id.clone()),
         nonce: Set(rec.nonce.clone()),
         redirect_uri: Set(rec.redirect_uri.clone()),
         pkce_verifier: Set(rec.pkce_verifier.clone()),
@@ -73,7 +72,6 @@ mod tests {
 
         let req = AuthState {
             idp_id: "idp".into(),
-            mapping_id: "mapping".into(),
             state: "state".into(),
             nonce: "nonce".into(),
             redirect_uri: "redirect_uri".into(),
@@ -90,10 +88,9 @@ mod tests {
             db.into_transaction_log(),
             [Transaction::from_sql_and_values(
                 DatabaseBackend::Postgres,
-                r#"INSERT INTO "federated_auth_state" ("idp_id", "mapping_id", "state", "nonce", "redirect_uri", "pkce_verifier", "expires_at") VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING "idp_id", "mapping_id", "state", "nonce", "redirect_uri", "pkce_verifier", "expires_at", "requested_scope""#,
+                r#"INSERT INTO "federated_auth_state" ("idp_id", "state", "nonce", "redirect_uri", "pkce_verifier", "expires_at") VALUES ($1, $2, $3, $4, $5, $6) RETURNING "idp_id", "state", "nonce", "redirect_uri", "pkce_verifier", "expires_at", "requested_scope""#,
                 [
                     "idp".into(),
-                    "mapping".into(),
                     "state".into(),
                     "nonce".into(),
                     "redirect_uri".into(),

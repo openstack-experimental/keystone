@@ -74,12 +74,23 @@ impl TryFrom<db_federated_identity_provider::Model> for IdentityProvider {
         if let Some(val) = &value.default_mapping_name {
             builder.default_mapping_name(val);
         }
+        if let Some(val) = &value.oidc_scopes
+            && !val.is_empty()
+        {
+            builder.oidc_scopes(Vec::from_iter(val.split(",").map(Into::into)));
+        }
+        if let Some(val) = &value.allowed_redirect_uris
+            && !val.is_empty()
+        {
+            builder.allowed_redirect_uris(Vec::from_iter(val.split(",").map(Into::into)));
+        }
         Ok(builder.build()?)
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use openstack_keystone_core_types::federation::IdentityProvider;
 
     use crate::entity::{federated_identity_provider, federation_protocol, identity_provider};
 
@@ -112,5 +123,13 @@ mod tests {
     }
 
     #[test]
-    fn test_from_db_model() {}
+    fn test_from_db_model() {
+        let mut db_model = get_idp_mock("test-id");
+        db_model.enabled = true;
+        let idp: IdentityProvider = db_model.clone().try_into().unwrap();
+        assert_eq!(idp.id, "test-id");
+        assert_eq!(idp.name, "name");
+        assert_eq!(idp.domain_id, Some("did".into()));
+        assert!(idp.enabled);
+    }
 }

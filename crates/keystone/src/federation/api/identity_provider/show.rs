@@ -182,6 +182,8 @@ mod tests {
                 jwt_validation_pubkeys: None,
                 bound_issuer: None,
                 default_mapping_name: Some("dummy".into()),
+                oidc_scopes: None,
+                allowed_redirect_uris: None,
                 provider_config: None
             },
             res.identity_provider,

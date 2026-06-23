@@ -38,6 +38,7 @@ async fn test_update() -> Result<()> {
         description: None,
         r#match: MatchCriteria::AllOf(vec![]),
         identity: IdentityBinding {
+            identity_mode: None,
             user_name: "${username}".into(),
             user_id: None,
             user_domain_id: None,
@@ -117,6 +118,7 @@ async fn test_update_global() -> Result<()> {
         description: None,
         r#match: MatchCriteria::AllOf(vec![]),
         identity: IdentityBinding {
+            identity_mode: None,
             user_name: "${username}".into(),
             user_id: None,
             user_domain_id: None,

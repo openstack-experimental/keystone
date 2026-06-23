@@ -116,21 +116,40 @@ impl ClaimCondition {
     }
 }
 
+/// Identity mode determines whether the matched identity should be resolved as
+/// a real federated user row (`Local`) or a virtual shadow record
+/// (`Ephemeral`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum IdentityMode {
+    /// Real user CRUD: create/find federated user, sync group memberships.
+    Local,
+
+    /// Virtual shadow registry: HMAC-derived ID, no persistent user row.
+    Ephemeral,
+}
+
 /// Identity binding configuration for a matched rule.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct IdentityBinding {
-    /// Interpolated username for the principal.
-    pub user_name: String,
-
-    /// Optional interpolated user ID.
-    pub user_id: Option<String>,
-
-    /// Optional interpolated domain ID; resolved per `DomainResolutionMode`.
-    pub user_domain_id: Option<String>,
+    /// Identity mode. When `None`, defaults to `Ephemeral` (virtual user) for
+    /// all sources to maintain backward compatibility with existing mapping
+    /// rules.
+    #[serde(default)]
+    pub identity_mode: Option<IdentityMode>,
 
     /// Control-plane bypass flag; defaults to `false`.
     #[serde(default = "default_false")]
     pub is_system: bool,
+
+    /// Optional interpolated domain ID; resolved per `DomainResolutionMode`.
+    pub user_domain_id: Option<String>,
+
+    /// Optional interpolated user ID.
+    pub user_id: Option<String>,
+
+    /// Interpolated username for the principal.
+    pub user_name: String,
 }
 
 fn default_false() -> bool {

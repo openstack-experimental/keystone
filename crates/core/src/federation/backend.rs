@@ -63,21 +63,6 @@ pub trait FederationBackend: Send + Sync {
         idp: IdentityProviderCreate,
     ) -> Result<IdentityProvider, FederationProviderError>;
 
-    /// Create mapping.
-    ///
-    /// # Parameters
-    /// - `state`: The service state.
-    /// - `idp`: The mapping to create.
-    ///
-    /// # Returns
-    /// - `Result<Mapping, FederationProviderError>` - The created `Mapping` or
-    ///   an error.
-    async fn create_mapping(
-        &self,
-        state: &ServiceState,
-        idp: Mapping,
-    ) -> Result<Mapping, FederationProviderError>;
-
     /// Delete authentication state.
     ///
     /// # Parameters
@@ -101,20 +86,6 @@ pub trait FederationBackend: Send + Sync {
     /// # Returns
     /// - `Result<(), FederationProviderError>` - Ok if successful, or an error.
     async fn delete_identity_provider<'a>(
-        &self,
-        state: &ServiceState,
-        id: &'a str,
-    ) -> Result<(), FederationProviderError>;
-
-    /// Delete mapping.
-    ///
-    /// # Parameters
-    /// - `state`: The service state.
-    /// - `id`: The ID of the mapping to delete.
-    ///
-    /// # Returns
-    /// - `Result<(), FederationProviderError>` - Ok if successful, or an error.
-    async fn delete_mapping<'a>(
         &self,
         state: &ServiceState,
         id: &'a str,
@@ -151,21 +122,6 @@ pub trait FederationBackend: Send + Sync {
         id: &'a str,
     ) -> Result<Option<IdentityProvider>, FederationProviderError>;
 
-    /// Get single mapping by ID.
-    ///
-    /// # Parameters
-    /// - `state`: The service state.
-    /// - `id`: The ID of the mapping to retrieve.
-    ///
-    /// # Returns
-    /// - `Result<Option<Mapping>, FederationProviderError>` - A `Result`
-    ///   containing an `Option` with the Mapping if found, or an `Error`.
-    async fn get_mapping<'a>(
-        &self,
-        state: &ServiceState,
-        id: &'a str,
-    ) -> Result<Option<Mapping>, FederationProviderError>;
-
     /// List Identity Providers.
     ///
     /// # Parameters
@@ -180,21 +136,6 @@ pub trait FederationBackend: Send + Sync {
         state: &ServiceState,
         params: &IdentityProviderListParameters,
     ) -> Result<Vec<IdentityProvider>, FederationProviderError>;
-
-    /// List mappings.
-    ///
-    /// # Parameters
-    /// - `state`: The service state.
-    /// - `params`: The list parameters for mappings.
-    ///
-    /// # Returns
-    /// - `Result<Vec<Mapping>, FederationProviderError>` - A list of mappings
-    ///   or an error.
-    async fn list_mappings(
-        &self,
-        state: &ServiceState,
-        params: &MappingListParameters,
-    ) -> Result<Vec<Mapping>, FederationProviderError>;
 
     /// Update Identity provider.
     ///
@@ -212,21 +153,4 @@ pub trait FederationBackend: Send + Sync {
         id: &'a str,
         idp: IdentityProviderUpdate,
     ) -> Result<IdentityProvider, FederationProviderError>;
-
-    /// Update mapping.
-    ///
-    /// # Parameters
-    /// - `state`: The service state.
-    /// - `id`: The ID of the mapping to update.
-    /// - `idp`: The update details for the mapping.
-    ///
-    /// # Returns
-    /// - `Result<Mapping, FederationProviderError>` - The updated `Mapping` or
-    ///   an error.
-    async fn update_mapping<'a>(
-        &self,
-        state: &ServiceState,
-        id: &'a str,
-        idp: MappingUpdate,
-    ) -> Result<Mapping, FederationProviderError>;
 }

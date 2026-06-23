@@ -94,6 +94,16 @@ pub struct IdentityProvider {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub default_mapping_name: Option<String>,
 
+    /// List of OIDC scopes to request during the OIDC authorization flow.
+    #[cfg_attr(feature = "builder", builder(default))]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub oidc_scopes: Option<Vec<String>>,
+
+    /// List of allowed redirect URIs for OIDC flows.
+    #[cfg_attr(feature = "builder", builder(default))]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allowed_redirect_uris: Option<Vec<String>>,
+
     /// Additional provider configuration.
     #[cfg_attr(feature = "builder", builder(default))]
     #[cfg_attr(feature = "openapi", schema(value_type = Object))]
@@ -205,10 +215,21 @@ pub struct IdentityProviderCreate {
     /// mapping is explicitly requested. The referred attribute mapping must
     /// exist.
     #[cfg_attr(feature = "builder", builder(default))]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_mapping_name: Option<String>,
+
+    /// List of OIDC scopes to request during the OIDC authorization flow.
+    #[cfg_attr(feature = "builder", builder(default))]
     #[cfg_attr(feature = "openapi", schema(nullable = false))]
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(feature = "validate", validate(length(max = 255)))]
-    pub default_mapping_name: Option<String>,
+    pub oidc_scopes: Option<Vec<String>>,
+
+    /// List of allowed redirect URIs for OIDC flows. When set, the redirect
+    /// URI passed at auth-init must match one of these values.
+    #[cfg_attr(feature = "builder", builder(default))]
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allowed_redirect_uris: Option<Vec<String>>,
 
     /// Additional special provider specific configuration.
     #[cfg_attr(feature = "builder", builder(default))]
@@ -287,6 +308,14 @@ pub struct IdentityProviderUpdate {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "validate", validate(length(max = 255)))]
     pub default_mapping_name: Option<Option<String>>,
+
+    /// List of OIDC scopes to request during the OIDC authorization flow.
+    #[cfg_attr(feature = "builder", builder(default))]
+    pub oidc_scopes: Option<Option<Vec<String>>>,
+
+    /// List of allowed redirect URIs for OIDC flows.
+    #[cfg_attr(feature = "builder", builder(default))]
+    pub allowed_redirect_uris: Option<Option<Vec<String>>>,
 
     /// New additional provider configuration.
     #[cfg_attr(feature = "builder", builder(default))]

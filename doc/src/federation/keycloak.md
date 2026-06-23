@@ -88,37 +88,39 @@ An `osc` is going to be used to register the IdP.
   osc identity4 federation identity-provider create --bound-issuer <KEYCLOAK_ISSUER> --oidc-client-id <CLIENT_ID> --oidc-client-secret <CLIENT_SECRET> --oidc-discovery-url <KEYCLOAK_DISCOVERY_URL> --default-mapping-name keycloak --domain-id <DOMAIN_ID> --name keycloak
 ```
 
-The `default-mapping-name` parameter allows the specified mapping to be applied
-automatically during the login unless user explicitly specifies the mapping.
-Mapping names are unique within the identity provider they are created under.
-Then mapping does not exist yet and is going to be created in the next step.
-This is an optional parameter and it can be set or unset later.
+The `default-mapping-name` references a mapping ruleset managed at
+`/v4/mappings/rulesets`. The ruleset must match the IDP source
+(`IdentitySource::Federation`) and be named accordingly.
 
-3. Registering the mapping.
+3. Creating the mapping ruleset.
 
-Now it is necessary to create the attribute mapping that converts OIDC protocol
-claims into the corresponding user attributes and perform additional
-verification (i.e. requiring certain `bound_claims` to be present).
+Now it is necessary to create a mapping ruleset that converts OIDC protocol
+claims into the corresponding Keystone user attributes via the
+`/v4/mappings/rulesets` API:
 
-```console
-
-  osc identity4 federation mapping create --user-id-claim sub --idp-id <IDP_ID> --user-name-claim preferred_username --name keycloak --oidc-scopes openid,profile --domain-id-claim <DOMAIN_ID_CLAIM_NAME>
+```json
+{
+  "mapping": {
+    "mapping_id": "keycloak",
+    "domain_id": "<DOMAIN_ID>",
+    "source": { "type": "federation", "idp_id": "<IDP_ID>" },
+    "domain_resolution_mode": "fixed",
+    "enabled": true,
+    "rules": [{
+      "name": "keycloak",
+      "match": { "all_of": [] },
+      "identity": {
+        "identity_mode": "local",
+        "user_name": "${claims.preferred_username}"
+      }
+    }]
+  }
+}
 ```
 
-- `idp-id` is the identity provider is created in the previous step.
-
-- `user-id-claim` represents the claim name which should be used for the remote
-  idp user identifier. This is not the resulting `user_id` in Keystone, but a
-  `unique_id` property.
-
-- `user-name-claim` represents the claim name with the user name.
-
-- `domain-id-claim` is the name of the claim populated with the client mapper on
-  the Keycloak side and represents the domain on the Keystone the user would be
-  placed under. Note: domain must exist on Keystone.
-
-- Many more additional attributes can be passed to further tighten the mapping
-  process.
+- `source.type` = `federation` binds this ruleset to the identity provider.
+- `user_name` template interpolates the OIDC claim into the Keystone user name.
+- `identity_mode: local` creates/finds the user and syncs groups on every login.
 
 4. API Login process
 

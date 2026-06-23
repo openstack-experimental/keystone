@@ -11,7 +11,38 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-//! OpenStack Keystone SQL driver for the federation provider
+//! SQL backend driver for the Keystone federation provider.
+//!
+//! This crate provides the database persistence layer for federation-related
+//! resources managed by the
+//! [`FederationBackend`](openstack_keystone_core::federation::backend::FederationBackend):
+//! identity providers, federation protocols, federated users, and
+//! authentication state. It uses SeaORM for query construction and migration
+//! handling.
+//!
+//! # Entities
+//!
+//! - [`entity::IdentityProvider`] - identity providers (IdPs)
+//! - [`entity::FederationProtocol`] -federation protocols bound to IdPs
+//! - [`entity::FederatedIdentityProvider`] - federated users mapped to local
+//!   identity
+//! - [`entity::FederatedAuthState`] -short-lived authentication state records
+//!   for federation flows
+//! - [`entity::IdpRemoteIds`] - remote identifiers associated with an IdP
+//!
+//! # Registration
+//!
+//! The [`SqlBackend`] is registered with the
+//! [`SqlDriver`](openstack_keystone_core::SqlDriver) plugin registry via
+//! `inventory::submit!` so it is automatically discovered at runtime when the
+//! SQL driver feature is enabled.
+//!
+//! # Authentication State
+//!
+//! Authentication state records are short-lived and carry an expiration
+//! timestamp. The [`SqlBackend::cleanup`] method periodically removes expired
+//! records to prevent unbounded growth.
+
 use async_trait::async_trait;
 use sea_orm::{DatabaseConnection, Schema};
 use sea_orm_migration::MigrationTrait;
@@ -26,10 +57,15 @@ use openstack_keystone_core_types::federation::*;
 mod auth_state;
 pub mod entity;
 mod identity_provider;
-mod mapping;
 pub mod migration;
 
 #[derive(Default)]
+/// SQL backend for the federation provider.
+///
+/// Implements
+/// [`FederationBackend`](openstack_keystone_core::federation::backend::FederationBackend)
+/// for persistence and [`SqlDriver`](openstack_keystone_core::SqlDriver) for
+/// schema setup and migrations.
 pub struct SqlBackend {}
 
 /// Linkage anchor — see ADR-0018. Referenced by the `keystone` crate's
@@ -46,13 +82,25 @@ inventory::submit! {
 
 #[async_trait]
 impl FederationBackend for SqlBackend {
-    /// Cleanup expired resources.
+    /// Delete expired authentication state records.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn cleanup(&self, state: &ServiceState) -> Result<(), FederationProviderError> {
         Ok(auth_state::delete_expired(&state.db).await?)
     }
 
-    /// Create new auth state.
+    /// Persist a new authentication state record.
+    ///
+    /// This is the initial step in a federation authentication flow. The record
+    /// carries an expiration timestamp so it can be cleaned up by
+    /// [`Self::cleanup`].
+    ///
+    /// # Arguments
+    ///
+    /// * `auth_state` - the authentication state to create.
+    ///
+    /// # Returns
+    ///
+    /// The created [`AuthState`].
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn create_auth_state(
         &self,
@@ -62,7 +110,15 @@ impl FederationBackend for SqlBackend {
         Ok(auth_state::create(&state.db, auth_state).await?)
     }
 
-    /// Create Identity provider.
+    /// Create a new identity provider.
+    ///
+    /// # Arguments
+    ///
+    /// * `idp` - the identity provider details.
+    ///
+    /// # Returns
+    ///
+    /// The created [`IdentityProvider`].
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn create_identity_provider(
         &self,
@@ -72,17 +128,11 @@ impl FederationBackend for SqlBackend {
         Ok(identity_provider::create(&state.db, idp).await?)
     }
 
-    /// Create mapping.
-    #[tracing::instrument(level = "debug", skip(self, state))]
-    async fn create_mapping(
-        &self,
-        state: &ServiceState,
-        idp: Mapping,
-    ) -> Result<Mapping, FederationProviderError> {
-        Ok(mapping::create(&state.db, idp).await?)
-    }
-
-    /// Delete auth state.
+    /// Delete the authentication state record identified by `id`.
+    ///
+    /// # Arguments
+    ///
+    /// * `id` - the auth state record ID.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn delete_auth_state<'a>(
         &self,
@@ -92,17 +142,11 @@ impl FederationBackend for SqlBackend {
         Ok(auth_state::delete(&state.db, id).await?)
     }
 
-    /// Delete mapping.
-    #[tracing::instrument(level = "debug", skip(self, state))]
-    async fn delete_mapping<'a>(
-        &self,
-        state: &ServiceState,
-        id: &'a str,
-    ) -> Result<(), FederationProviderError> {
-        Ok(mapping::delete(&state.db, id).await?)
-    }
-
-    /// Delete identity provider.
+    /// Delete the identity provider identified by `id`.
+    ///
+    /// # Arguments
+    ///
+    /// * `id` - the identity provider ID.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn delete_identity_provider<'a>(
         &self,
@@ -112,7 +156,16 @@ impl FederationBackend for SqlBackend {
         Ok(identity_provider::delete(&state.db, id).await?)
     }
 
-    /// Get auth state by ID.
+    /// Retrieve the authentication state record by ID.
+    ///
+    /// # Arguments
+    ///
+    /// * `id` - the auth state record ID.
+    ///
+    /// # Returns
+    ///
+    /// The [`AuthState`] if it exists, or `None` if the record has expired or
+    /// was already consumed.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn get_auth_state<'a>(
         &self,
@@ -122,7 +175,15 @@ impl FederationBackend for SqlBackend {
         Ok(auth_state::get(&state.db, id).await?)
     }
 
-    /// Get single IDP by ID.
+    /// Retrieve a single identity provider by ID.
+    ///
+    /// # Arguments
+    ///
+    /// * `id` - the identity provider ID.
+    ///
+    /// # Returns
+    ///
+    /// The [`IdentityProvider`] if it exists, or `None`.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn get_identity_provider<'a>(
         &self,
@@ -132,17 +193,15 @@ impl FederationBackend for SqlBackend {
         Ok(identity_provider::get(&state.db, id).await?)
     }
 
-    /// Get single mapping by ID.
-    #[tracing::instrument(level = "debug", skip(self, state))]
-    async fn get_mapping<'a>(
-        &self,
-        state: &ServiceState,
-        id: &'a str,
-    ) -> Result<Option<Mapping>, FederationProviderError> {
-        Ok(mapping::get(&state.db, id).await?)
-    }
-
-    /// List IDPs.
+    /// List identity providers matching the given filter parameters.
+    ///
+    /// # Arguments
+    ///
+    /// * `params` - name and description filters.
+    ///
+    /// # Returns
+    ///
+    /// A vector of matching [`IdentityProvider`]s.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn list_identity_providers(
         &self,
@@ -152,17 +211,16 @@ impl FederationBackend for SqlBackend {
         Ok(identity_provider::list(&state.db, params).await?)
     }
 
-    /// List Mapping.
-    #[tracing::instrument(level = "debug", skip(self, state))]
-    async fn list_mappings(
-        &self,
-        state: &ServiceState,
-        params: &MappingListParameters,
-    ) -> Result<Vec<Mapping>, FederationProviderError> {
-        Ok(mapping::list(&state.db, params).await?)
-    }
-
-    /// Update Identity provider.
+    /// Update an existing identity provider.
+    ///
+    /// # Arguments
+    ///
+    /// * `id` - the identity provider ID.
+    /// * `idp` - the fields to update.
+    ///
+    /// # Returns
+    ///
+    /// The updated [`IdentityProvider`].
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn update_identity_provider<'a>(
         &self,
@@ -172,21 +230,14 @@ impl FederationBackend for SqlBackend {
     ) -> Result<IdentityProvider, FederationProviderError> {
         Ok(identity_provider::update(&state.db, id, idp).await?)
     }
-
-    /// Update mapping.
-    #[tracing::instrument(level = "debug", skip(self, state))]
-    async fn update_mapping<'a>(
-        &self,
-        state: &ServiceState,
-        id: &'a str,
-        idp: MappingUpdate,
-    ) -> Result<Mapping, FederationProviderError> {
-        Ok(mapping::update(&state.db, id, idp).await?)
-    }
 }
 
 #[async_trait]
 impl SqlDriver for SqlBackend {
+    /// Create the federation-related database tables.
+    ///
+    /// Sets up the tables for identity providers, federation protocols,
+    /// federated identity providers, IdP remote IDs, and federated auth state.
     async fn setup(
         &self,
         connection: &DatabaseConnection,
@@ -198,7 +249,6 @@ impl SqlDriver for SqlBackend {
             crate::entity::prelude::FederatedIdentityProvider,
         )
         .await?;
-        create_table(connection, schema, crate::entity::prelude::FederatedMapping).await?;
         create_table(connection, schema, crate::entity::prelude::IdentityProvider).await?;
         create_table(
             connection,
@@ -207,7 +257,6 @@ impl SqlDriver for SqlBackend {
         )
         .await?;
         create_table(connection, schema, crate::entity::prelude::IdpRemoteIds).await?;
-        create_table(connection, schema, crate::entity::prelude::Mapping).await?;
         create_table(
             connection,
             schema,
@@ -217,6 +266,7 @@ impl SqlDriver for SqlBackend {
         Ok(())
     }
 
+    /// Return the ordered list of database migrations for this driver.
     fn migrations(&self) -> Vec<Box<dyn MigrationTrait>> {
         crate::migration::migrations()
     }

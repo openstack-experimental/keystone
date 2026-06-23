@@ -63,7 +63,6 @@ mod tests {
             get(&db, "state").await.unwrap().unwrap(),
             AuthState {
                 idp_id: "idp".into(),
-                mapping_id: "mapping".into(),
                 state: "state".into(),
                 nonce: "nonce".into(),
                 redirect_uri: "redirect_uri".into(),
@@ -77,7 +76,7 @@ mod tests {
             db.into_transaction_log(),
             [Transaction::from_sql_and_values(
                 DatabaseBackend::Postgres,
-                r#"SELECT "federated_auth_state"."idp_id", "federated_auth_state"."mapping_id", "federated_auth_state"."state", "federated_auth_state"."nonce", "federated_auth_state"."redirect_uri", "federated_auth_state"."pkce_verifier", "federated_auth_state"."expires_at", "federated_auth_state"."requested_scope" FROM "federated_auth_state" WHERE "federated_auth_state"."state" = $1 LIMIT $2"#,
+                r#"SELECT "federated_auth_state"."idp_id", "federated_auth_state"."state", "federated_auth_state"."nonce", "federated_auth_state"."redirect_uri", "federated_auth_state"."pkce_verifier", "federated_auth_state"."expires_at", "federated_auth_state"."requested_scope" FROM "federated_auth_state" WHERE "federated_auth_state"."state" = $1 LIMIT $2"#,
                 ["state".into(), 1u64.into()]
             ),]
         );

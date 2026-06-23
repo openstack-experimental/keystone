@@ -62,6 +62,7 @@ async fn test_k8s_happy_path() -> Result<()> {
             }),
         ]),
         identity: IdentityBinding {
+                identity_mode: None,
             user_name: "svc-k8s-${claims.k8s.serviceaccount.name}".into(),
             user_id: None,
             user_domain_id: None,
@@ -147,6 +148,7 @@ async fn test_k8s_no_matching_rule() -> Result<()> {
             }),
         ]),
         identity: IdentityBinding {
+                identity_mode: None,
             user_name: "svc-k8s-other".into(),
             user_id: None,
             user_domain_id: None,
@@ -217,6 +219,7 @@ async fn test_k8s_any_of_match() -> Result<()> {
             }),
         ]),
         identity: IdentityBinding {
+                identity_mode: None,
             user_name: "svc-k8s-ci".into(),
             user_id: None,
             user_domain_id: None,
@@ -295,6 +298,7 @@ async fn test_k8s_matches_regex() -> Result<()> {
             }),
         ]),
         identity: IdentityBinding {
+                identity_mode: None,
             user_name: "svc-k8s-${claims.k8s.serviceaccount.name}".into(),
             user_id: None,
             user_domain_id: None,
@@ -376,6 +380,7 @@ async fn test_k8s_all_of_strict() -> Result<()> {
             require_all_keys: true,
         },
         identity: IdentityBinding {
+                identity_mode: None,
             user_name: "svc-k8s-strict".into(),
             user_id: None,
             user_domain_id: None,
@@ -469,6 +474,7 @@ async fn test_k8s_with_authorizations() -> Result<()> {
             value: serde_json::Value::String("admin-sa".into()),
         })]),
         identity: IdentityBinding {
+                identity_mode: None,
             user_name: "svc-k8s-admin".into(),
             user_id: None,
             user_domain_id: None,
@@ -561,6 +567,7 @@ async fn test_k8s_template_interpolation() -> Result<()> {
             }),
         ]),
         identity: IdentityBinding {
+                identity_mode: None,
             user_name: "svc-k8s-${claims.k8s.serviceaccount.name}".into(),
             user_id: None,
             user_domain_id: None,
@@ -634,6 +641,7 @@ async fn test_k8s_disabled_ruleset() -> Result<()> {
             value: serde_json::Value::String("any-sa".into()),
         })]),
         identity: IdentityBinding {
+                identity_mode: None,
             user_name: "svc-k8s-disabled".into(),
             user_id: None,
             user_domain_id: None,
@@ -695,6 +703,7 @@ async fn test_k8s_unique_workload_id() -> Result<()> {
             value: serde_json::Value::String("unique-sa".into()),
         })]),
         identity: IdentityBinding {
+                identity_mode: None,
             user_name: "svc-k8s-unique".into(),
             user_id: None,
             user_domain_id: None,
@@ -802,6 +811,7 @@ async fn test_k8s_aud_claim_passthrough() -> Result<()> {
             }),
         ]),
         identity: IdentityBinding {
+                identity_mode: None,
             user_name: "svc-k8s-aud".into(),
             user_id: None,
             user_domain_id: None,
@@ -876,6 +886,7 @@ async fn test_k8s_rule_priority() -> Result<()> {
                 }),
             ]),
             identity: IdentityBinding {
+                identity_mode: None,
                 user_name: "svc-k8s-specific".into(),
                 user_id: None,
                 user_domain_id: None,
@@ -894,6 +905,7 @@ async fn test_k8s_rule_priority() -> Result<()> {
                 },
             )]),
             identity: IdentityBinding {
+                identity_mode: None,
                 user_name: "svc-k8s-catchall".into(),
                 user_id: None,
                 user_domain_id: None,
@@ -960,6 +972,7 @@ async fn test_k8s_project_authorization() -> Result<()> {
             value: serde_json::Value::String("pipeline-sa".into()),
         })]),
         identity: IdentityBinding {
+                identity_mode: None,
             user_name: "svc-k8s-pipeline".into(),
             user_id: None,
             user_domain_id: None,
@@ -1059,6 +1072,7 @@ async fn test_k8s_rule_name_hint() -> Result<()> {
                 }),
             ]),
             identity: IdentityBinding {
+                identity_mode: None,
                 user_name: "svc-k8s-specific-ci".into(),
                 user_id: None,
                 user_domain_id: None,
@@ -1081,6 +1095,7 @@ async fn test_k8s_rule_name_hint() -> Result<()> {
                 }),
             ]),
             identity: IdentityBinding {
+                identity_mode: None,
                 user_name: "svc-k8s-specific-monitoring".into(),
                 user_id: None,
                 user_domain_id: None,
@@ -1099,6 +1114,7 @@ async fn test_k8s_rule_name_hint() -> Result<()> {
                 },
             )]),
             identity: IdentityBinding {
+                identity_mode: None,
                 user_name: "svc-k8s-catchall".into(),
                 user_id: None,
                 user_domain_id: None,

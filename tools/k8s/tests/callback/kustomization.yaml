@@ -1,0 +1,7 @@
+configMapGenerator:
+  - name: dex-callback
+    files:
+      - callback.py
+resources:
+  - deployment.yaml
+  - service.yaml

@@ -11,7 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-pub use sea_orm_migration::prelude::*;
+use sea_orm_migration::prelude::*;
 
 mod m20250414_000001_idp;
 

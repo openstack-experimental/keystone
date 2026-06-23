@@ -15,9 +15,7 @@
 mod auth_state;
 mod error;
 mod identity_provider;
-mod mapping;
 
 pub use auth_state::*;
 pub use error::*;
 pub use identity_provider::*;
-pub use mapping::*;

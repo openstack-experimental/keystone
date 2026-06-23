@@ -16,6 +16,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::authorization::Authorization;
+use super::rule::IdentityMode;
 
 use crate::identity::GroupRef;
 
@@ -101,6 +102,9 @@ pub struct MatchResult {
 
     /// Snapshot of authorizations.
     pub authorizations: Vec<Authorization>,
+
+    /// Identity mode determined at rule evaluation time.
+    pub identity_mode: Option<IdentityMode>,
 
     /// Resolved group bindings.
     pub resolved_group_bindings: Vec<GroupRef>,

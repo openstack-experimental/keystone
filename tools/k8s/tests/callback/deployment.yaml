@@ -1,0 +1,33 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dex-callback
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dex-callback
+  template:
+    metadata:
+      labels:
+        app: dex-callback
+    spec:
+      containers:
+        - name: callback
+          image: python:3.13-slim
+          command: ["python3", "/callback/callback.py"]
+          ports:
+            - containerPort: 8050
+          volumeMounts:
+            - name: cb
+              mountPath: /callback
+          readinessProbe:
+            httpGet:
+              path: /status
+              port: 8050
+            initialDelaySeconds: 5
+            periodSeconds: 5
+      volumes:
+        - name: cb
+          configMap:
+            name: dex-callback

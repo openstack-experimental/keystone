@@ -6,6 +6,10 @@
 
 Approved
 
+> **Phase 5 Status:** Mapping engine migration complete. Legacy federation
+> mappings (`/v4/federation/mappings`) removed. `allowed_redirect_uris` migrated
+> from mapping to `IdentityProvider`. All federation tests passing.
+
 ## Context
 
 High-performance, low-latency identity federation mapping for `keystone-rs`
@@ -107,12 +111,12 @@ identifier symmetry across administrative lookup routines.
 
 ```rust
 pub struct OidcProviderResource {
-    pub domain_id: Option<String>,    // Owning tenant domain boundary (None if global system mapping)
-    pub provider_id: String,              // Functional configuration slug anchor
-    pub issuer: String,                   // e.g., "https://auth.acme.com"
-    pub client_id: String,                // Client ID registered at the external IdP
-    pub client_secret: Option<String>,    // Secret used for authorization code exchanges
-    pub jwks_uri: String,                 // Cached public keys URI for signature verification
+    pub domain_id: Option<String>,      // Owning tenant domain boundary (None if global system mapping)
+    pub provider_id: String,            // Functional configuration slug anchor
+    pub issuer: String,                 // e.g., "https://auth.acme.com"
+    pub client_id: String,              // Client ID registered at the external IdP
+    pub client_secret: Option<String>,  // Secret used for authorization code exchanges
+    pub jwks_uri: String,               // Cached public keys URI for signature verification
     pub allowed_redirect_uris: Vec<String>,
     pub oidc_scopes: Vec<String>,
     pub token_endpoint_auth_method: Option<String>,
@@ -182,7 +186,7 @@ pub struct MappingRuleSet {
     pub provider_id: String,
     pub source: IdentitySource,
     pub domain_resolution_mode: DomainResolutionMode,
-    pub allowed_domains: Vec<String>,   // Whitelist of domain IDs that claims-based interpolation may resolve to. Mandatory and non-empty for ClaimsOnly/ClaimsOrMapping modes. For Fixed mode, must be empty (no claims-based interpolation possible)
+    pub allowed_domains: Vec<String>, // Whitelist of domain IDs that claims-based interpolation may resolve to. Mandatory and non-empty for ClaimsOnly/ClaimsOrMapping modes. For Fixed mode, must be empty (no claims-based interpolation possible)
     pub enabled: bool,
     pub rules: Vec<MappingRule>,
     pub ruleset_version: u128,    // Content-aware SHA-256 hash (first 16 bytes) of full ruleset — detects reordering, renaming, authorization swaps, not just addition/deletion
@@ -200,10 +204,20 @@ pub struct MappingRule {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IdentityBinding {
+    pub identity_mode: Option<IdentityMode>,   // Virtual shadow record (Ephemeral) or real user CRUD (Local)
+    pub is_system: bool,                       // Nuclear control-plane shortcut bypass flag; defaults to false
     pub user_name: String,
     pub user_id:   Option<String>,
     pub user_domain_id: Option<String>,     // Template: resolves to domain UUID string at evaluation time
-    pub is_system: Option<bool>,       // Nuclear control-plane shortcut bypass flag
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum IdentityMode {
+    /// Real user CRUD: create/find federated user row, sync group memberships.
+    Local,
+    /// Virtual shadow registry: HMAC-derived ID, no persistent user row.
+    Ephemeral,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -259,7 +273,7 @@ pub enum MatchCondition {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GroupAssignment {
-    pub group_id: String,                   // Immutable UUID anchor — prevents name-collision attacks
+    pub group_id: Option<String>,            // Optional group UUID — absent for Local identity mode (resolved by name at runtime)
     pub group_name: String,                 // Template for display/lookup; interpolated at runtime
     pub group_domain_id: Option<String>,
     pub strategy: Option<GroupStrategy>,
@@ -334,8 +348,8 @@ and `resolved_user_name`. Set `enabled: true` (a successful match indicates the
 principal is active; if previously deactivated, successful authentication
 reactivates). The `created_at` timestamp is immutably preserved from initial
 creation. The `is_system` flag is **intentionally preserved** from initial
-creation — on a subsequent upsert `meta.is_system = meta.is_system` prevents
-the flag from being modified. This is a deliberate security measure: once a
+creation — on a subsequent upsert `meta.is_system = meta.is_system` prevents the
+flag from being modified. This is a deliberate security measure: once a
 principal is granted system-level service privileges, those privileges cannot be
 escalated nor revoked through ruleset modification alone. Revoking `is_system`
 requires setting `enabled: false` (deactivation) via the provider API, followed
@@ -441,8 +455,9 @@ pub struct MatchResult {
     pub user_id: Option<String>,
     pub user_domain_id: Option<String>,
     pub is_system: bool,
+    pub identity_mode: Option<IdentityMode>,  // Propagated from matched rule's IdentityBinding
     pub authorizations: Vec<Authorization>,
-    pub resolved_group_bindings: Vec<ResolvedGroupBinding>,
+    pub resolved_group_bindings: Vec<GroupRef>,   // D3: resolved by name at runtime for Local identity mode
     pub ruleset_version: u128,    // Content-aware SHA-256 hash (first 16 bytes) — anchors token validity to ruleset state
 }
 ```
@@ -991,22 +1006,22 @@ single database transaction:
    `user:v1:virtual:<user_id>`.
 
 4. **Merge or create.**
-    - **Update path (existing record):** Refresh `mapping_id`,
-      `matched_rule_name`, `resolved_user_name`, `resolved_group_bindings`, and
-      snapshotted `authorizations`. Update `ruleset_version` from the match
-      result and `last_authenticated_at` to current timestamp. Set `enabled:
-      true` — a successful match indicates the principal is active; if the
-      record was previously deactivated, successful authentication reactivates
-      it. The `created_at` timestamp is immutably preserved from initial
-      creation. The `is_system` flag is **immutably preserved** from initial
-      creation (`meta.is_system = meta.is_system`) — once a principal is granted
-      system-level privileges, those privileges cannot be escalated nor revoked
-      through ruleset modification alone. Revoking `is_system` requires setting
-      `enabled: false` (deactivation) via the provider API.
-    - **Insert path (new record):** Create a fresh `VirtualUserMetadata`
-      populated with all fields from the match result, the validated
-      `effective_domain`, `enabled: true`, and the current timestamp for
-      `created_at` and `last_authenticated_at`.
+   - **Update path (existing record):** Refresh `mapping_id`,
+     `matched_rule_name`, `resolved_user_name`, `resolved_group_bindings`, and
+     snapshotted `authorizations`. Update `ruleset_version` from the match
+     result and `last_authenticated_at` to current timestamp. Set
+     `enabled: true` — a successful match indicates the principal is active; if
+     the record was previously deactivated, successful authentication
+     reactivates it. The `created_at` timestamp is immutably preserved from
+     initial creation. The `is_system` flag is **immutably preserved** from
+     initial creation (`meta.is_system = meta.is_system`) — once a principal is
+     granted system-level privileges, those privileges cannot be escalated nor
+     revoked through ruleset modification alone. Revoking `is_system` requires
+     setting `enabled: false` (deactivation) via the provider API.
+   - **Insert path (new record):** Create a fresh `VirtualUserMetadata`
+     populated with all fields from the match result, the validated
+     `effective_domain`, `enabled: true`, and the current timestamp for
+     `created_at` and `last_authenticated_at`.
 
 5. **Persist.** Write the merged or new record atomically to the shadow
    keyspace.
@@ -1310,9 +1325,9 @@ fall back to `ruleset.domain_id` to prevent domain escape.
 ### 12. Real-Time Token Revocation Pipeline
 
 Any Raft proposal that deactivates (`enabled: false`), deletes (archive
-cleanup), or alters a `MappingRuleSet` will automatically append explicit
-token validation revocation objects directly into the global validation engine
-(ADR 0009 keyspace):
+cleanup), or alters a `MappingRuleSet` will automatically append explicit token
+validation revocation objects directly into the global validation engine (ADR
+0009 keyspace):
 
 - `revocation:v1:mapping:<mapping_id>` $\rightarrow$ Timestamp
 - `revocation:v1:user:<virtual_user_id>` $\rightarrow$ Timestamp
@@ -1329,12 +1344,12 @@ Every rule mutation, API declarative replacement, or administrative override
 emits a normative Cloud Auditing Data Federation (CADF) event format log into
 the system notifier bus. The following event types are emitted:
 
-| Event Type    | Triggering Condition                                                   |
-| ------------- | ---------------------------------------------------------------------- |
-| `control`     | Mapping CRUD operations (create, update, delete, mutate)               |
-| `access`      | Failed authentication attempts, `RulesetVersionMismatch` rejections    |
+| Event Type    | Triggering Condition                                                                                                               |
+| ------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `control`     | Mapping CRUD operations (create, update, delete, mutate)                                                                           |
+| `access`      | Failed authentication attempts, `RulesetVersionMismatch` rejections                                                                |
 | `maintenance` | Janitor shadow record deactivations, archive cleanup deletions, virtual user enable/disable, token revocation pipeline activations |
-| `privileged`  | Admin Tier 1 bypass API invocations (`ctx.is_admin() == true` paths)   |
+| `privileged`  | Admin Tier 1 bypass API invocations (`ctx.is_admin() == true` paths)                                                               |
 
 #### Example: Control Event (Mapping Mutation)
 
@@ -1562,11 +1577,11 @@ the system notifier bus. The following event types are emitted:
 
 ### 11.2. Claim Flattening Per Provider (Ingress Adapter Contract)
 
-| Provider       | Source Data         | Flattening Convention                                                  | Unique Workload Key Invariant                                                                   |
-| -------------- | ------------------- | ---------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| **OIDC / JWT** | JWT ID token claims | Flat string mappings via dotted pathways (`email`, `user.profile.id`)  | Value string of the `sub` claim element                                                         |
-| **Kubernetes** | K8s TokenReview JWT | `k8s.serviceaccount.name`, `k8s.serviceaccount.namespace`, `k8s.aud`   | Formatted invariant: `<serviceaccount_name>:<serviceaccount_namespace>`                         |
-| **SPIFFE**     | SPIFFE SVID cert    | `spiffe.id`, `spiffe.trust_domain`                                     | Full raw URI format asset string (e.g., `spiffe://prod.keystone.internal/ns/openstack/sa/nova`) |
+| Provider       | Source Data         | Flattening Convention                                                 | Unique Workload Key Invariant                                                                   |
+| -------------- | ------------------- | --------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| **OIDC / JWT** | JWT ID token claims | Flat string mappings via dotted pathways (`email`, `user.profile.id`) | Value string of the `sub` claim element                                                         |
+| **Kubernetes** | K8s TokenReview JWT | `k8s.serviceaccount.name`, `k8s.serviceaccount.namespace`, `k8s.aud`  | Formatted invariant: `<serviceaccount_name>:<serviceaccount_namespace>`                         |
+| **SPIFFE**     | SPIFFE SVID cert    | `spiffe.id`, `spiffe.trust_domain`                                    | Full raw URI format asset string (e.g., `spiffe://prod.keystone.internal/ns/openstack/sa/nova`) |
 
 **Size constraints.** All ingress adapters must enforce the following limits:
 
@@ -1640,18 +1655,42 @@ Migrate the K8s TokenReview authenticator to the mapping engine.
 
 ### Phase 5: Federation Provider Migration
 
+**Status:** Complete. All steps from Phase 5 delivered.
+
 Final and broadest migration. Existing federation providers (OIDC, JWT) carry
 the most complex claim profiles and legacy `token_restriction` patterns.
 
-- Rewrite `OidcProviderResource` authenticator to flatten JWT claims and invoke
-  the mapping engine.
-- Migrate legacy `Mapping` objects to `MappingRuleSet` using the field
-  translation table (§11.1).
-- Enable `ClaimsOrMapping` and `ClaimsOnly` domain resolution modes for
-  federation scenarios.
-- Remove `token_restriction` payload generation for federated principals; all
-  scoping is handled natively by `Authorization` fields in `MatchResult`.
-- Deprecate legacy federation mapping code path.
+- Rewrite `OidcProviderResource` authenticator to invoke the mapping engine.
+- **DONE:** `flatten_federation_claims()` helper with per-claim (4096 bytes) and total map (64 KiB) size caps in `crates/keystone/src/federation/api/common.rs`.
+- **DONE:** OIDC callback handler rewritten to use `flatten_federation_claims` → `MappingAuthRequest` → `authenticate_by_mapping` pattern in `crates/keystone/src/federation/api/oidc.rs` (replaced 145+ lines of manual `FederationBuilder`/`UserCreateBuilder`/`list_groups`/`create_group`/`set_user_groups_expiring` CRUD).
+- **DONE:** JWT login handler integrated with mapping engine: verifies JWT claims, flattens claims, delegates to `authenticate_by_mapping` (`crates/keystone/src/federation/api/jwt.rs`).
+- **DONE:** Legacy `Mapping` migration utility (`mapping_to_ruleset_create`) in `crates/core/src/mapping/migration.rs` using field translation table (§11.1).
+- **DONE:** `ClaimsOrMapping` and `ClaimsOnly` domain resolution modes enabled for Federation scenarios (engine handles all modes uniformly for all `IdentitySource` variants).
+- **DONE:** `IdentityMode::Local` path in `authenticate_local` (`crates/core/src/mapping/service.rs`) with `find_or_create_federated_user` and `sync_user_groups` (group membership sync on every login).
+- ~~Remove `token_restriction` payload generation for federated principals; all~~
+  ~~scoping is handled natively by `Authorization` fields in `MatchResult`.~~
+- **DONE:** `token_restriction_id` field removed from `Mapping`, `MappingUpdate`, and
+  related SQL drivers (`federation-driver-sql`). The OIDC flow now uses
+  `Authorization::Project` from the mapping engine for scope.
+- ~~Deprecate legacy federation mapping code path.~~
+- **DONE:** Legacy federation mapping CRUD removed. The `/v4/federation/mappings/` API
+  endpoints, controller, service methods, and policy files have been eliminated.
+  `Mapping`, `MappingListParameters`, `MappingUpdate` types removed from
+  `core-types` and `api-types`. `mapping_id` removed from `AuthState` core type
+  and `FederatedAuthState` DB entity. `MappingNotFound`,
+  `MappingTokenProjectDomainUnset`, `MappingTokenUserDomainUnset` error variants
+  removed from `FederationProviderError`. `oidc_scopes` moved from legacy
+  `Mapping` into `IdentityProvider` core and API types. Auth flow now requires
+  `default_mapping_name` to be set on the IDP; no longer accepts `mapping_id` or
+  `mapping_name` override in `IdentityProviderAuthRequest`. Database tables
+  `federated_mapping` and `mapping` are retained for backward compatibility but
+  no longer managed by active CRUD code.
+- **DONE:** Allowed redirect URIs migrated to `IdentityProvider`. The `allowed_redirect_uris` field
+  was moved from the legacy `Mapping` to the `IdentityProvider` core/API types, SQL driver, and
+  migration. Redirect URI validation at auth-init rejects URIs not in the allowlist when set,
+  providing OIDC redirect_uri authorization code interception protection. Empty or unset list
+  means no restriction (backward compatible).
+  Replaces the previous `mapping.allowed_redirect_uris` path.
 - **Deliverable:** All federation authentication fully mediated by the unified
   mapping engine; legacy `token_restriction` pattern eliminated.
 
@@ -1666,9 +1705,9 @@ the original specification.
 
 The `MappingRuleSet` struct does not carry a separate `provider_id` field. The
 ingress provider instance is identified through `source: IdentitySource`, which
-contains the relevant anchor (`idp_id`, `cluster_id`, or
-`trust_domain`) as its enum variant payload. The `provider_id` slug used in
-keyspace coordinates is derived from the `source` field at storage time.
+contains the relevant anchor (`idp_id`, `cluster_id`, or `trust_domain`) as its
+enum variant payload. The `provider_id` slug used in keyspace coordinates is
+derived from the `source` field at storage time.
 
 ### D2. `DomainResolutionMode` — `allowed_domains` consolidated into enum variants
 
@@ -1690,17 +1729,18 @@ shadow record only needs the group anchor (id + domain_id + name).
 ### D4. `MappingRuleSetUpdate` — mode variant is immutable
 
 The `MappingRuleSetUpdate` type carries `allowed_domains` as a separate
-`Option<Vec<String>>` field rather than replacing the entire `DomainResolutionMode`.
-The service layer merges the new `allowed_domains` into the existing variant,
-preventing an operator from changing `Fixed` → `ClaimsOrMapping` (or vice versa)
-via update. The resolution mode variant itself is immutable after creation.
+`Option<Vec<String>>` field rather than replacing the entire
+`DomainResolutionMode`. The service layer merges the new `allowed_domains` into
+the existing variant, preventing an operator from changing `Fixed` →
+`ClaimsOrMapping` (or vice versa) via update. The resolution mode variant itself
+is immutable after creation.
 
 ### D5. `is_system: bool` — defaults to `false`
 
-The `is_system` field on `IdentityBinding` is typed as `bool` (not `Option<bool>`)
-with a `serde(default)` attribute that resolves missing JSON to `false`. This
-removes ambiguity — an omitted field means the operator did not grant system
-privileges.
+The `is_system` field on `IdentityBinding` is typed as `bool` (not
+`Option<bool>`) with a `serde(default)` attribute that resolves missing JSON to
+`false`. This removes ambiguity — an omitted field means the operator did not
+grant system privileges.
 
 ### D6. `GroupStrategy::CreateOrGet` — default for `GroupAssignment`
 
@@ -1710,18 +1750,62 @@ default (fewer failures when groups are not pre-provisioned).
 
 ### D7. `MappingRule` — `provider_id` not present
 
-`MappingRule` does not carry `provider_id`. It is nested within `MappingRuleSet`,
-which identifies the provider through `source: IdentitySource`. All rule-level
-context is inherited from the parent ruleset.
+`MappingRule` does not carry `provider_id`. It is nested within
+`MappingRuleSet`, which identifies the provider through
+`source: IdentitySource`. All rule-level context is inherited from the parent
+ruleset.
 
 ### D8. Virtual user lifecycle — deactivation preferred over deletion
 
 The janitor task sets `enabled: false` instead of deleting records. A separate
-archive cleanup task permanently removes deactivated records after a configurable
-retention period (default: 365 days, configurable via
+archive cleanup task permanently removes deactivated records after a
+configurable retention period (default: 365 days, configurable via
 `[keystone] shadow_registry_archive_retention_days`). This preserves forensic
 evidence (identity bindings, authorization snapshots, activity timestamps) for
 incident response and compliance auditing. The original spec specified immediate
 deletion. The provider interface is extended with explicit `enable_virtual_user`
 and `disable_virtual_user` methods. The mapping provider calls the revocation
-provider upon virtual user deactivation to trigger the token revocation pipeline.
+provider upon virtual user deactivation to trigger the token revocation
+pipeline.
+
+### D9. `GroupAssignment.group_id` — `String` changed to `Option<String>`
+
+The `group_id` field on `GroupAssignment` is `Option<String>` rather than
+`String`. For `Local` identity mode, groups are resolved by name at runtime via
+`group_name` interpolation, and no pre-assigned `group_id` is required.
+Operations like `find_or_create_federated_user` and `sync_user_groups` resolve
+groups by `GroupRef.name` at authentication time. For `Ephemeral` identity mode,
+`GroupAssignment.group_id` should be specified to prevent group naming
+collisions.
+
+### D10. Legacy `Mapping` migration utility — `mapping_to_ruleset_create`
+
+The migration utility (`mapping_to_ruleset_create` in
+`crates/core/src/mapping/migration.rs`) performs the field translation described
+in §11.1, with the following deviations:
+
+- `bound_audiences` is converted to a single `ClaimCondition::AnyOf` on the
+  `"aud"` claim, rather than individual equality checks per audience.
+- `groups_claim` generates a single `GroupAssignment` with `group_id: None` and
+  `strategy: CreateOrGet`, deferring group resolution to authentication time.
+- `token_project_id` generates an `Authorization::Project` with an empty
+  `roles` vector — the operator must populate roles post-migration.
+- `bound_claims` entries are added as individual `ClaimCondition::Equals`
+  conditions within an `AllOf` criteria, preserving their original semantics.
+- `r#type` (Oidc/Jwt) is dropped since `IdentitySource::Federation` covers
+  both flows.
+- `token_restriction_id` is dropped as obsolete; scoping is now handled by
+  `Authorization` fields.
+- `allowed_redirect_uris` and `oidc_scopes` are dropped as provider-level
+  configuration (not part of ruleset semantics).
+- The generated rule name is `"legacy-mapping-rule"` with a description
+  referencing the original mapping name and type.
+
+### D11. `MatchResult.identity_mode` — new field
+
+The `MatchResult` struct carries `identity_mode: Option<IdentityMode>` (default
+`None`), which propagates `IdentityBinding.identity_mode` from the matched rule.
+When `None`, defaults to `Ephemeral` for all sources to maintain backward
+compatibility with existing mapping rules. This field determines whether the
+authentication flow should use real user CRUD (`Local`) or the virtual shadow
+registry (`Ephemeral`).

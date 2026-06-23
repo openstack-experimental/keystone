@@ -34,18 +34,6 @@ pub enum FederationProviderError {
     #[error("identity provider {0} not found")]
     IdentityProviderNotFound(String),
 
-    /// Mapping not found.
-    #[error("mapping {0} not found")]
-    MappingNotFound(String),
-
-    /// Use of token_project_id requires domain_id to be set.
-    #[error("`mapping.domain_id` must be set")]
-    MappingTokenProjectDomainUnset,
-
-    /// Use of token_user_id requires domain_id to be set.
-    #[error("`mapping.domain_id` must be set")]
-    MappingTokenUserDomainUnset,
-
     /// Identity provider error.
     #[error("data serialization error")]
     Serde {

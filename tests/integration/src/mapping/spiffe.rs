@@ -56,6 +56,7 @@ async fn test_spiffe_happy_path() -> Result<()> {
             value: serde_json::Value::String("spiffe://example.org/workload".into()),
         })]),
         identity: IdentityBinding {
+            identity_mode: None,
             user_name: "spiffe-user".into(),
             user_id: None,
             user_domain_id: None,
@@ -172,6 +173,7 @@ async fn test_spiffe_system_ruleset() -> Result<()> {
             value: serde_json::Value::String("spiffe://example.org/system".into()),
         })]),
         identity: IdentityBinding {
+            identity_mode: None,
             user_name: "spiffe-system-user".into(),
             user_id: None,
             user_domain_id: None,
@@ -249,6 +251,7 @@ async fn test_spiffe_claim_condition_any_of() -> Result<()> {
             ],
         })]),
         identity: IdentityBinding {
+            identity_mode: None,
             user_name: "spiffe-anyof-user".into(),
             user_id: None,
             user_domain_id: None,
@@ -323,6 +326,7 @@ async fn test_spiffe_any_of_no_match() -> Result<()> {
             ],
         })]),
         identity: IdentityBinding {
+            identity_mode: None,
             user_name: "spiffe-anyof-user".into(),
             user_id: None,
             user_domain_id: None,
@@ -386,6 +390,7 @@ async fn test_spiffe_matches_regex() -> Result<()> {
             },
         )]),
         identity: IdentityBinding {
+            identity_mode: None,
             user_name: "spiffe-regex-user".into(),
             user_id: None,
             user_domain_id: None,
@@ -467,6 +472,7 @@ async fn test_spiffe_all_of_strict_with_auth() -> Result<()> {
             require_all_keys: true,
         },
         identity: IdentityBinding {
+            identity_mode: None,
             user_name: "spiffe-strict-user".into(),
             user_id: None,
             user_domain_id: None,

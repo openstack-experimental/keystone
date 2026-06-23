@@ -29,9 +29,6 @@ pub struct AuthState {
     /// IDP ID.
     pub idp_id: String,
 
-    /// Mapping ID.
-    pub mapping_id: String,
-
     /// Nonce.
     pub nonce: String,
 

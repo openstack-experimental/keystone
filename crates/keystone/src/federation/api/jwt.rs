@@ -11,19 +11,16 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-
 //! JWT based authentication API.
 
 use axum::{
     Json, debug_handler,
     extract::{Path, State},
-    http::HeaderMap,
-    http::StatusCode,
-    http::header::AUTHORIZATION,
+    http::{HeaderMap, StatusCode, header::AUTHORIZATION},
     response::IntoResponse,
 };
 use std::str::FromStr;
-use tracing::warn;
+use tracing::{trace, warn};
 use utoipa_axum::{router::OpenApiRouter, routes};
 
 use openidconnect::core::{
@@ -33,27 +30,22 @@ use openidconnect::core::{
 use openidconnect::reqwest;
 use openidconnect::{Client, ClientId, IdToken, IssuerUrl, JsonWebKeySet, JsonWebKeySetUrl, Nonce};
 
-use openstack_keystone_api_types::v3::auth::token::TokenBuilder;
-use openstack_keystone_core::api::common::get_authz_info;
-use openstack_keystone_core_types::federation::{
-    MappingListParameters as ProviderMappingListParameters, MappingType as ProviderMappingType,
-};
-use openstack_keystone_core_types::identity::{
-    FederationBuilder, FederationProtocol, UserCreateBuilder,
-};
-use openstack_keystone_core_types::scope as provider_types;
-
 use crate::api::v4::auth::token::types::TokenResponse as KeystoneTokenResponse;
 use crate::api::{
     KeystoneApiError,
     types::{Catalog, CatalogService},
 };
 use crate::auth::*;
-use crate::federation::api::{error::OidcError, types::*};
-use crate::identity::error::IdentityProviderError;
+use crate::federation::api::error::OidcError;
 use crate::keystone::ServiceState;
+use openstack_keystone_api_types::v3::auth::token::TokenBuilder;
+use openstack_keystone_core::api::common::get_authz_info;
+use openstack_keystone_core_types::auth::AuthenticationResult;
+use openstack_keystone_core_types::mapping::auth::MappingAuthRequest;
+use openstack_keystone_core_types::mapping::resolution::IdentitySource;
 
-use super::common::{map_user_data, validate_bound_claims};
+use super::common;
+use super::types::*;
 
 pub(super) fn openapi_router() -> OpenApiRouter<ServiceState> {
     OpenApiRouter::new().routes(routes!(login))
@@ -66,19 +58,12 @@ type FullIdToken = IdToken<
     CoreJwsSigningAlgorithm,
 >;
 
-/// Authentication using the JWT.
-///
-/// This operation allows user to exchange the JWT issued by the trusted
-/// identity provider for the regular Keystone session token. Request specifies
-/// the necessary authentication mapping, which is also used to validate
-/// expected claims.
 #[utoipa::path(
     post,
-    //path = "/jwt/login",
     path = "/identity_providers/{idp_id}/jwt",
     operation_id = "/federation/identity_provider/jwt:login",
     params(
-        ("openstack-mapping" = String, Header, description = "Federated attribute mapping"),
+        ("openstack-mapping" = String, Header, description = "Rule name hint for targeted rule matching"),
     ),
     responses(
         (
@@ -113,11 +98,10 @@ pub async fn login(
         .auth
         .methods
         .iter()
-        // TODO: is it how it should be hardcoded?
-        // TODO: should be better to use jwt, but it is not available in py-keystone
         .find(|m| *m == "openid")
         .ok_or(KeystoneApiError::AuthMethodNotSupported)?;
 
+    // Parse the Bearer token from the Authorization header.
     let jwt: String = match headers
         .get(AUTHORIZATION)
         .ok_or(KeystoneApiError::SubjectTokenMissing)?
@@ -129,12 +113,18 @@ pub async fn login(
         _ => return Err(OidcError::BearerJwtTokenMissing.into()),
     };
 
-    let mapping: String = headers
-        .get("openstack-mapping")
-        .ok_or(OidcError::MappingRequiredJwt)?
-        .to_str()
-        .map_err(|_| KeystoneApiError::InvalidHeader)?
-        .to_string();
+    // The `openstack-mapping` header is optional. When present, it specifies a
+    // rule name hint that the mapping engine will evaluate first before falling
+    // back to the standard first-match-wins iteration.
+    let rule_name: Option<String> = if let Some(v) = headers.get("openstack-mapping") {
+        Some(
+            v.to_str()
+                .map_err(|_| KeystoneApiError::InvalidHeader)?
+                .to_string(),
+        )
+    } else {
+        None
+    };
 
     let idp = state
         .provider
@@ -148,59 +138,18 @@ pub async fn login(
             })
         })??;
 
-    let mapping = state
-        .provider
-        .get_federation_provider()
-        .list_mappings(
-            &state,
-            &ProviderMappingListParameters {
-                idp_id: Some(idp_id.clone()),
-                name: Some(mapping.clone()),
-                r#type: Some(ProviderMappingType::Jwt),
-                ..Default::default()
-            },
-        )
-        .await?
-        .first()
-        .ok_or(KeystoneApiError::NotFound {
-            resource: "mapping".into(),
-            identifier: mapping.clone(),
-        })?
-        .to_owned();
-
-    // Check for IdP and mapping `enabled` state
     if !idp.enabled {
         return Err(OidcError::IdentityProviderDisabled.into());
     }
-    if !mapping.enabled {
-        return Err(OidcError::MappingDisabled.into());
-    }
 
-    tracing::debug!("Mapping is {:?}", mapping);
-    let token_restriction = if let Some(tr_id) = &mapping.token_restriction_id {
-        state
-            .provider
-            .get_token_provider()
-            .get_token_restriction(&state, tr_id, true)
-            .await?
-    } else {
-        None
-    };
-
-    //if !matches!(mapping.r#type, ProviderMappingType::Jwt) {
-    //    // need to log helping message, since the error is wrapped
-    //    // to prevent existence exposure.
-    //    warn!("Not JWT mapping used for the JWT login");
-    //    return Err(OidcError::NonJwtMapping)?;
-    //}
-
+    // Build the HTTP client with strict redirect policy.
     let http_client = reqwest::ClientBuilder::new()
         // Following redirects opens the client up to SSRF vulnerabilities.
         .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(OidcError::from)?;
 
-    // Discover metadata when issuer or jwks_url is not known
+    // Discover metadata when issuer or jwks_url is not known.
     let provider_metadata: Option<CoreProviderMetadata> = if let Some(discovery_url) =
         &idp.oidc_discovery_url
         && (idp.bound_issuer.is_none() || idp.jwks_url.is_none())
@@ -239,12 +188,18 @@ pub async fn login(
         .await
         .map_err(|err| OidcError::discovery(jwks_url.as_str(), &err))?;
 
-    // TODO: client_id should match the audience. How to get that?
     let audience = "keystone";
-    let client: CoreClient = Client::new(ClientId::new(audience.to_string()), issuer_url, jwks);
+    let client: CoreClient = Client::new(
+        ClientId::new(audience.to_string()),
+        issuer_url.clone(),
+        jwks,
+    );
 
     let id_token = FullIdToken::from_str(&jwt)?;
 
+    // We disable audience matching because the JWT Bearer token is not necessarily
+    // issued to the keystone audience. The identity provider handles audience
+    // validation through its configured bound_issuer.
     let id_token_verifier = client.id_token_verifier().require_audience_match(false);
     // The nonce is not used in the JWT flow, so we can ignore it.
     let nonce_verifier = |_nonce: Option<&Nonce>| Ok(());
@@ -252,89 +207,45 @@ pub async fn login(
         .into_claims(&id_token_verifier, &nonce_verifier)
         .map_err(OidcError::from)?;
 
-    let claims_as_json = serde_json::to_value(&claims)?;
+    // Flatten claims for the mapping engine. The `sub` claim provides a stable
+    // unique identifier for the federated user.
+    let claims_json = serde_json::to_value(&claims)?;
+    let flattened = common::flatten_federation_claims(&claims_json).map_err(OidcError::from)?;
 
-    validate_bound_claims(&mapping, &claims, &claims_as_json)?;
-    let mapped_user_data = map_user_data(&state, &idp, &mapping, &claims_as_json).await?;
+    // Extract the unique workload identifier from the `sub` claim.
+    let unique_workload_id = claims.subject().as_str().to_string();
 
-    let user = if let Some(existing_user) = state
-        .provider
-        .get_identity_provider()
-        .find_federated_user(&state, &idp.id, &mapped_user_data.unique_id)
-        .await?
-    {
-        // The user exists already
-        existing_user
-
-        // TODO: update user?
-    } else {
-        // New user
-        let mut federated_user: FederationBuilder = FederationBuilder::default();
-        federated_user.idp_id(idp.id.clone());
-        federated_user.unique_id(mapped_user_data.unique_id.clone());
-        federated_user.protocols(vec![FederationProtocol {
-            protocol_id: "oidc".into(),
-            unique_id: mapped_user_data.unique_id.clone(),
-        }]);
-        let mut user_builder: UserCreateBuilder = UserCreateBuilder::default();
-        user_builder.domain_id(mapped_user_data.domain_id);
-        user_builder.enabled(true);
-        user_builder.name(mapped_user_data.user_name);
-        user_builder.federated(Vec::from([federated_user
-            .build()
-            .map_err(IdentityProviderError::from)?]));
-
-        state
-            .provider
-            .get_identity_provider()
-            .create_user(
-                &state,
-                user_builder.build().map_err(IdentityProviderError::from)?,
-            )
-            .await?
+    // Delegate to the mapping engine for identity resolution. The rule_name
+    // hint from the `openstack-mapping` header allows targeted rule matching.
+    let mapping_req = MappingAuthRequest {
+        domain_id: idp.domain_id.clone(),
+        source: IdentitySource::Federation {
+            idp_id: idp.id.clone(),
+        },
+        unique_workload_id,
+        claims: flattened,
+        rule_name,
     };
-    let auth = AuthenticationResultBuilder::default()
-        .principal(PrincipalInfo {
-            identity: IdentityInfo::User(
-                UserIdentityInfoBuilder::default()
-                    .user_id(user.id.clone())
-                    .user(user.clone())
-                    .build()?,
-            ),
-        })
-        .context(AuthenticationContext::Oidc {
-            oidc: OidcContextBuilder::default()
-                .idp_id(idp.id.clone())
-                .protocol_id("jwt")
-                .build()?,
-            token: None,
-        })
-        .build()?;
-    let mut ctx = SecurityContext::try_from(auth)?;
-    if let Some(token_restriction) = &token_restriction {
-        ctx.set_token_restriction(token_restriction.clone());
-    }
 
-    // TODO: detect scope from the mapping or claims
-    let authz_info = get_authz_info(
-        &state,
-        mapping
-            .token_project_id
-            .as_ref()
-            .map(|token_project_id| {
-                provider_types::Scope::Project(provider_types::Project {
-                    id: Some(token_project_id.to_string()),
-                    ..Default::default()
-                })
-            })
-            .as_ref(),
-    )
-    .await?;
+    let auth_result: AuthenticationResult = state
+        .provider
+        .get_mapping_provider()
+        .authenticate_by_mapping(&state, &mapping_req)
+        .await?;
 
+    // No scope is requested in JWT flow, so we resolve unscoped token.
+    let authz_info = get_authz_info(&state, None).await?;
+    trace!("Granting the scope: {:?}", authz_info);
+
+    // Issue token with validated security context.
     let vsc = state
         .provider
         .get_token_provider()
-        .issue_token_context(&state, &ctx, &authz_info)
+        .issue_token_context(
+            &state,
+            &SecurityContext::try_from(auth_result)?,
+            &authz_info,
+        )
         .await?;
 
     let mut api_token = KeystoneTokenResponse {

@@ -41,6 +41,7 @@ async fn test_virtual_user_lifecycle() -> Result<()> {
             value: serde_json::Value::String("user-123".into()),
         })]),
         identity: IdentityBinding {
+            identity_mode: None,
             user_name: "vuser-123".into(),
             user_id: None,
             user_domain_id: None,
@@ -130,6 +131,7 @@ async fn test_virtual_user_lifecycle_global() -> Result<()> {
             value: serde_json::Value::String("global-user-123".into()),
         })]),
         identity: IdentityBinding {
+            identity_mode: None,
             user_name: "global-vuser-123".into(),
             user_id: None,
             user_domain_id: None,

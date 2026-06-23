@@ -109,35 +109,6 @@ impl FederationApi for FederationService {
             .await
     }
 
-    /// Create mapping.
-    ///
-    /// # Parameters
-    /// - `state`: The service state.
-    /// - `mapping`: The mapping to create.
-    ///
-    /// # Returns
-    /// - `Result<Mapping, FederationProviderError>` - The created `Mapping` or
-    ///   an error.
-    async fn create_mapping(
-        &self,
-        state: &ServiceState,
-        mapping: Mapping,
-    ) -> Result<Mapping, FederationProviderError> {
-        let mut mod_mapping = mapping;
-        mod_mapping.id = Uuid::new_v4().into();
-        if let Some(_pid) = &mod_mapping.token_project_id {
-            // ensure domain_id is set and matches the one of the project_id.
-            if let Some(_did) = &mod_mapping.domain_id {
-                // TODO: Get the project_id and compare the domain_id
-            } else {
-                return Err(FederationProviderError::MappingTokenProjectDomainUnset);
-            }
-            // TODO: ensure current user has access to the project
-        }
-
-        self.backend_driver.create_mapping(state, mod_mapping).await
-    }
-
     /// Delete auth state.
     ///
     /// # Parameters
@@ -170,22 +141,6 @@ impl FederationApi for FederationService {
         self.backend_driver
             .delete_identity_provider(state, id)
             .await
-    }
-
-    /// Delete mapping.
-    ///
-    /// # Parameters
-    /// - `state`: The service state.
-    /// - `id`: The ID of the mapping to delete.
-    ///
-    /// # Returns
-    /// - `Result<(), FederationProviderError>` - Ok if successful, or an error.
-    async fn delete_mapping<'a>(
-        &self,
-        state: &ServiceState,
-        id: &'a str,
-    ) -> Result<(), FederationProviderError> {
-        self.backend_driver.delete_mapping(state, id).await
     }
 
     /// Get auth state by ID.
@@ -223,23 +178,6 @@ impl FederationApi for FederationService {
         self.backend_driver.get_identity_provider(state, id).await
     }
 
-    /// Get single mapping by ID.
-    ///
-    /// # Parameters
-    /// - `state`: The service state.
-    /// - `id`: The ID of the mapping to retrieve.
-    ///
-    /// # Returns
-    /// - `Result<Option<Mapping>, FederationProviderError>` - A `Result`
-    ///   containing an `Option` with the mapping if found, or an `Error`.
-    async fn get_mapping<'a>(
-        &self,
-        state: &ServiceState,
-        id: &'a str,
-    ) -> Result<Option<Mapping>, FederationProviderError> {
-        self.backend_driver.get_mapping(state, id).await
-    }
-
     /// List IDP.
     ///
     /// # Parameters
@@ -257,23 +195,6 @@ impl FederationApi for FederationService {
         self.backend_driver
             .list_identity_providers(state, params)
             .await
-    }
-
-    /// List mappings.
-    ///
-    /// # Parameters
-    /// - `state`: The service state.
-    /// - `params`: The list parameters for mappings.
-    ///
-    /// # Returns
-    /// - `Result<Vec<Mapping>, FederationProviderError>` - A list of mappings
-    ///   or an error.
-    async fn list_mappings(
-        &self,
-        state: &ServiceState,
-        params: &MappingListParameters,
-    ) -> Result<Vec<Mapping>, FederationProviderError> {
-        self.backend_driver.list_mappings(state, params).await
     }
 
     /// Update Identity provider.
@@ -295,44 +216,5 @@ impl FederationApi for FederationService {
         self.backend_driver
             .update_identity_provider(state, id, idp)
             .await
-    }
-
-    /// Update mapping
-    ///
-    /// # Parameters
-    /// - `state`: The service state.
-    /// - `id`: The ID of the mapping to update.
-    /// - `mapping`: The update details for the mapping.
-    ///
-    /// # Returns
-    /// - `Result<Mapping, FederationProviderError>` - The updated `Mapping` or
-    ///   an error.
-    async fn update_mapping<'a>(
-        &self,
-        state: &ServiceState,
-        id: &'a str,
-        mapping: MappingUpdate,
-    ) -> Result<Mapping, FederationProviderError> {
-        let current = self
-            .backend_driver
-            .get_mapping(state, id)
-            .await?
-            .ok_or_else(|| FederationProviderError::MappingNotFound(id.to_string()))?;
-
-        if let Some(_new_idp_id) = &mapping.idp_id {
-            // TODO: Check the new idp_id domain escaping
-        }
-
-        if let Some(_pid) = &mapping.token_project_id {
-            // ensure domain_id is set and matches the one of the project_id.
-            if let Some(_did) = &current.domain_id {
-                // TODO: Get the project_id and compare the domain_id
-            } else {
-                return Err(FederationProviderError::MappingTokenProjectDomainUnset);
-            }
-            // TODO: ensure current user has access to the project
-        }
-        // TODO: Pass current to the backend to skip re-fetching
-        self.backend_driver.update_mapping(state, id, mapping).await
     }
 }

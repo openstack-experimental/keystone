@@ -267,12 +267,6 @@ mod federation {
                 idp: IdentityProviderCreate,
             ) -> Result<IdentityProvider, FederationProviderError>;
 
-            async fn create_mapping(
-                &self,
-                state: &ServiceState,
-                mapping: Mapping,
-            ) -> Result<Mapping, FederationProviderError>;
-
             async fn delete_auth_state<'a>(
                 &self,
                 state: &ServiceState,
@@ -285,23 +279,11 @@ mod federation {
                 id: &'a str,
             ) -> Result<(), FederationProviderError>;
 
-            async fn delete_mapping<'a>(
-                &self,
-                state: &ServiceState,
-                id: &'a str,
-            ) -> Result<(), FederationProviderError>;
-
             async fn get_auth_state<'a>(
                 &self,
                 state: &ServiceState,
                 id: &'a str,
             ) -> Result<Option<AuthState>, FederationProviderError>;
-
-            async fn get_mapping<'a>(
-                &self,
-                state: &ServiceState,
-                id: &'a str,
-            ) -> Result<Option<Mapping>, FederationProviderError>;
 
             async fn get_identity_provider<'a>(
                 &self,
@@ -315,25 +297,12 @@ mod federation {
                 params: &IdentityProviderListParameters,
             ) -> Result<Vec<IdentityProvider>, FederationProviderError>;
 
-            async fn list_mappings(
-                &self,
-                state: &ServiceState,
-                params: &MappingListParameters,
-            ) -> Result<Vec<Mapping>, FederationProviderError>;
-
             async fn update_identity_provider<'a>(
                 &self,
                 state: &ServiceState,
                 id: &'a str,
                 idp: IdentityProviderUpdate,
             ) -> Result<IdentityProvider, FederationProviderError>;
-
-            async fn update_mapping<'a>(
-                &self,
-                state: &ServiceState,
-                id: &'a str,
-                mapping: MappingUpdate,
-            ) -> Result<Mapping, FederationProviderError>;
         }
     }
 }

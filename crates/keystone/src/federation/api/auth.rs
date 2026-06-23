@@ -33,9 +33,7 @@ use openidconnect::{
 use crate::api::error::KeystoneApiError;
 use crate::federation::{api::error::OidcError, api::types::*};
 use crate::keystone::ServiceState;
-use openstack_keystone_core_types::federation::{
-    AuthState, MappingListParameters as ProviderMappingListParameters,
-};
+use openstack_keystone_core_types::federation::AuthState;
 
 pub(super) fn openapi_router() -> OpenApiRouter<ServiceState> {
     OpenApiRouter::new().routes(routes!(post))
@@ -106,47 +104,13 @@ pub async fn post(
             })
         })??;
 
-    let mapping = if let Some(mapping_id) = req.mapping_id {
-        state
-            .provider
-            .get_federation_provider()
-            .get_mapping(&state, &mapping_id)
-            .await
-            .map(|x| {
-                x.ok_or_else(|| KeystoneApiError::NotFound {
-                    resource: "mapping".into(),
-                    identifier: mapping_id.clone(),
-                })
-            })??
-    } else if let Some(mapping_name) = req.mapping_name.or(idp.default_mapping_name) {
-        state
-            .provider
-            .get_federation_provider()
-            .list_mappings(
-                &state,
-                &ProviderMappingListParameters {
-                    idp_id: Some(idp.id.clone()),
-                    name: Some(mapping_name.clone()),
-                    ..Default::default()
-                },
-            )
-            .await?
-            .first()
-            .ok_or(KeystoneApiError::NotFound {
-                resource: "mapping".into(),
-                identifier: mapping_name.clone(),
-            })?
-            .to_owned()
-    } else {
+    if idp.default_mapping_name.is_none() {
         return Err(OidcError::MappingRequired.into());
-    };
+    }
 
-    // Check for IdP and mapping `enabled` state
+    // Check for IdP `enabled` state
     if !idp.enabled {
         return Err(OidcError::IdentityProviderDisabled.into());
-    }
-    if !mapping.enabled {
-        return Err(OidcError::MappingDisabled.into());
     }
 
     let client = if let Some(discovery_url) = &idp.oidc_discovery_url {
@@ -162,13 +126,21 @@ pub async fn post(
         )
         .await
         .map_err(|err| OidcError::discovery(discovery_url, &err))?;
+
+        // Validate redirect URI against the IDP's allowed_redirect_uris list.
+        if let Some(allowed) = &idp.allowed_redirect_uris
+            && !allowed.is_empty()
+            && !allowed.contains(&req.redirect_uri)
+        {
+            return Err(OidcError::RedirectUriNotAllowed.into());
+        }
+
         CoreClient::from_provider_metadata(
             provider_metadata,
             ClientId::new(idp.oidc_client_id.ok_or(OidcError::ClientIdRequired)?),
             idp.oidc_client_secret.map(ClientSecret::new),
         )
         // Set the URL the user will be redirected to after the authorization process.
-        // TODO: Check the redirect uri against mapping.allowed_redirect_uris
         .set_redirect_uri(RedirectUrl::new(req.redirect_uri.clone()).map_err(OidcError::from)?)
     } else {
         return Err(OidcError::ClientWithoutDiscoveryNotSupported.into());
@@ -178,7 +150,7 @@ pub async fn post(
 
     // `oidc` scope is the default in the openidconnect crate and do not need to be
     // added explicitly.
-    let oidc_scopes: HashSet<Scope> = mapping
+    let oidc_scopes: HashSet<Scope> = idp
         .oidc_scopes
         .map(|scopes| HashSet::from_iter(scopes.into_iter().map(Scope::new)))
         .unwrap_or_default();
@@ -204,7 +176,6 @@ pub async fn post(
                 state: csrf_token.secret().clone(),
                 nonce: nonce.secret().clone(),
                 idp_id: idp.id.clone(),
-                mapping_id: mapping.id.clone(),
                 redirect_uri: req.redirect_uri.clone(),
                 pkce_verifier: pkce_verifier.into_secret(),
                 expires_at: (Local::now() + TimeDelta::seconds(180)).into(),

@@ -12,10 +12,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 #![allow(clippy::enum_variant_names)]
-use sea_orm_migration::{
-    prelude::{extension::postgres::Type, *},
-    schema::*,
-};
+use sea_orm_migration::{prelude::*, schema::*};
 
 #[derive(DeriveMigrationName)]
 pub struct Migration;
@@ -23,7 +20,6 @@ pub struct Migration;
 #[async_trait::async_trait]
 impl MigrationTrait for Migration {
     async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
-        let db_backend = manager.get_database_backend();
         manager
             .create_table(
                 Table::create()
@@ -33,6 +29,10 @@ impl MigrationTrait for Migration {
                     .col(string_len(FederatedIdentityProvider::Name, 255))
                     .col(string_len_null(FederatedIdentityProvider::DomainId, 64))
                     .col(boolean(FederatedIdentityProvider::Enabled))
+                    .col(string_len_null(
+                        FederatedIdentityProvider::AllowedRedirectUris,
+                        1024,
+                    ))
                     .col(string_len_null(
                         FederatedIdentityProvider::OidcDiscoveryUrl,
                         255,
@@ -53,6 +53,7 @@ impl MigrationTrait for Migration {
                         FederatedIdentityProvider::OidcResponseTypes,
                         255,
                     ))
+                    .col(string_len_null(FederatedIdentityProvider::OidcScopes, 128))
                     .col(text_null(FederatedIdentityProvider::JwksUrl))
                     .col(text_null(FederatedIdentityProvider::JwtValidationPubkeys))
                     .col(string_len_null(FederatedIdentityProvider::BoundIssuer, 255))
@@ -74,76 +75,12 @@ impl MigrationTrait for Migration {
             )
             .await?;
 
-        if db_backend == sea_orm::DatabaseBackend::Postgres {
-            manager
-                .create_type(
-                    Type::create()
-                        .as_enum(FederatedMappingType::FederatedMappingType)
-                        .values([FederatedMappingType::Oidc, FederatedMappingType::Jwt])
-                        .to_owned(),
-                )
-                .await?;
-        }
-
-        manager
-            .create_table(
-                Table::create()
-                    .table(FederatedMapping::Table)
-                    .if_not_exists()
-                    .col(string_len(FederatedMapping::Id, 64).primary_key())
-                    .col(string_len(FederatedMapping::Name, 255))
-                    .col(string_len(FederatedMapping::IdpId, 64))
-                    .col(string_len_null(FederatedMapping::DomainId, 64))
-                    .col(enumeration(
-                        FederatedMapping::Type,
-                        FederatedMappingType::FederatedMappingType,
-                        [FederatedMappingType::Oidc, FederatedMappingType::Jwt],
-                    ))
-                    .col(boolean(FederatedMapping::Enabled))
-                    .col(string_len_null(FederatedMapping::AllowedRedirectUris, 1024))
-                    .col(string_len(FederatedMapping::UserIdClaim, 64))
-                    .col(string_len(FederatedMapping::UserNameClaim, 64))
-                    .col(string_len_null(FederatedMapping::DomainIdClaim, 64))
-                    //.col(string_len_null(FederatedMapping::UserClaimJsonPointer, 128))
-                    .col(string_len_null(FederatedMapping::GroupsClaim, 64))
-                    .col(string_len_null(FederatedMapping::BoundAudiences, 1024))
-                    .col(string_len_null(FederatedMapping::BoundSubject, 128))
-                    .col(json_null(FederatedMapping::BoundClaims))
-                    .col(string_len_null(FederatedMapping::OidcScopes, 128))
-                    //.col(json_null(FederatedMapping::ClaimMappings))
-                    .col(string_len_null(FederatedMapping::TokenProjectId, 128))
-                    .col(string_len_null(FederatedMapping::TokenRestrictionId, 64))
-                    .foreign_key(
-                        ForeignKey::create()
-                            .name("fk-idp-mapping-idp")
-                            .from(FederatedMapping::Table, FederatedMapping::IdpId)
-                            .to(
-                                FederatedIdentityProvider::Table,
-                                FederatedIdentityProvider::Id,
-                            )
-                            .on_delete(ForeignKeyAction::Cascade),
-                    )
-                    .to_owned(),
-            )
-            .await?;
-
-        manager
-            .create_index(
-                Index::create()
-                    .name("idx-idp-mapping-domain")
-                    .table(FederatedMapping::Table)
-                    .col(FederatedMapping::DomainId)
-                    .to_owned(),
-            )
-            .await?;
-
         manager
             .create_table(
                 Table::create()
                     .table(FederatedAuthState::Table)
                     .if_not_exists()
                     .col(string_len(FederatedAuthState::IdpId, 64))
-                    .col(string_len(FederatedAuthState::MappingId, 64))
                     .col(string_len(FederatedAuthState::State, 64).primary_key())
                     .col(string_len(FederatedAuthState::Nonce, 64))
                     .col(string_len(FederatedAuthState::RedirectUri, 256))
@@ -160,13 +97,6 @@ impl MigrationTrait for Migration {
                             )
                             .on_delete(ForeignKeyAction::Cascade),
                     )
-                    .foreign_key(
-                        ForeignKey::create()
-                            .name("fk-idp-auth-state-mapping")
-                            .from(FederatedAuthState::Table, FederatedAuthState::MappingId)
-                            .to(FederatedMapping::Table, FederatedMapping::Id)
-                            .on_delete(ForeignKeyAction::Cascade),
-                    )
                     .to_owned(),
             )
             .await?;
@@ -175,7 +105,6 @@ impl MigrationTrait for Migration {
     }
 
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
-        let db_backend = manager.get_database_backend();
         manager
             .drop_table(
                 Table::drop()
@@ -184,26 +113,6 @@ impl MigrationTrait for Migration {
                     .to_owned(),
             )
             .await?;
-
-        manager
-            .drop_table(
-                Table::drop()
-                    .if_exists()
-                    .table(FederatedMapping::Table)
-                    .to_owned(),
-            )
-            .await?;
-
-        if db_backend == sea_orm::DatabaseBackend::Postgres {
-            manager
-                .drop_type(
-                    Type::drop()
-                        .if_exists()
-                        .name(FederatedMappingType::FederatedMappingType)
-                        .to_owned(),
-                )
-                .await?;
-        }
 
         manager
             .drop_table(
@@ -224,11 +133,13 @@ enum FederatedIdentityProvider {
     DomainId,
     Name,
     Enabled,
+    AllowedRedirectUris,
     OidcDiscoveryUrl,
     OidcClientId,
     OidcClientSecret,
     OidcResponseMode,
     OidcResponseTypes,
+    OidcScopes,
     BoundIssuer,
     JwksUrl,
     JwtValidationPubkeys,
@@ -237,39 +148,9 @@ enum FederatedIdentityProvider {
 }
 
 #[derive(DeriveIden)]
-enum FederatedMapping {
-    Table,
-    Id,
-    DomainId,
-    Name,
-    IdpId,
-    Type,
-    Enabled,
-    AllowedRedirectUris,
-    UserIdClaim,
-    UserNameClaim,
-    DomainIdClaim,
-    GroupsClaim,
-    BoundAudiences,
-    BoundSubject,
-    BoundClaims,
-    OidcScopes,
-    TokenProjectId,
-    TokenRestrictionId,
-}
-
-#[derive(DeriveIden)]
-enum FederatedMappingType {
-    FederatedMappingType,
-    Oidc,
-    Jwt,
-}
-
-#[derive(DeriveIden)]
 enum FederatedAuthState {
     Table,
     IdpId,
-    MappingId,
     State,
     Nonce,
     RedirectUri,

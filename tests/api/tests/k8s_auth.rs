@@ -33,14 +33,13 @@ use openstack_sdk::{AsyncOpenStack, api::RawQueryAsync};
 use openstack_keystone_api_types::k8s_auth::{K8sAuthRequest, instance::*};
 use openstack_keystone_api_types::v3::auth::token::{Token, TokenResponse};
 use openstack_keystone_api_types::v3::project::ProjectCreateBuilder;
-use openstack_keystone_api_types::v3::role::{RoleCreate, RoleCreateBuilder, RoleRef};
+use openstack_keystone_api_types::v3::role::RoleRef;
 
 use test_api::guard::*;
 use test_api::k8s_auth::auth::K8sAuthenticationRequestBuilder;
 use test_api::k8s_auth::instance::{create_auth_instance, update_auth_instance};
 use test_api::mapping::ruleset::create_ruleset;
 use test_api::resource::project::create_project;
-use test_api::role;
 use test_api::role::create_role;
 
 /// Helper: sends a k8s auth request and returns the Token + X-Subject-Token
@@ -126,6 +125,7 @@ fn wildcard_k8s_rule(
             ),
         ]),
         identity: openstack_keystone_api_types::v4::mapping::ruleset::IdentityBinding {
+            identity_mode: None,
             user_name: user_name.into(),
             user_id: None,
             user_domain_id: None,

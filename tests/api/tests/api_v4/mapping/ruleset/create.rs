@@ -47,6 +47,7 @@ async fn test_create_mapping_ruleset() -> Result<()> {
                     description: Some("API test rule".to_string()),
                     r#match: MatchCriteria::default(),
                     identity: IdentityBinding {
+                        identity_mode: None,
                         user_name: "testuser".to_string(),
                         user_id: None,
                         user_domain_id: None,
@@ -91,6 +92,7 @@ async fn test_create_global_mapping_ruleset() -> Result<()> {
                     description: Some("API test rule".to_string()),
                     r#match: MatchCriteria::default(),
                     identity: IdentityBinding {
+                        identity_mode: None,
                         user_name: "testuser".to_string(),
                         user_id: None,
                         user_domain_id: None,

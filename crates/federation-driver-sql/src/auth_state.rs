@@ -34,7 +34,6 @@ impl TryFrom<db_federated_auth_state::Model> for AuthState {
         builder.state(value.state.clone());
         builder.nonce(value.nonce.clone());
         builder.idp_id(value.idp_id.clone());
-        builder.mapping_id(value.mapping_id.clone());
         builder.redirect_uri(value.redirect_uri.clone());
         builder.pkce_verifier(value.pkce_verifier.clone());
         builder.expires_at(value.expires_at.and_utc());
@@ -53,7 +52,6 @@ mod tests {
     pub(super) fn get_auth_state_mock<S: AsRef<str>>(state: S) -> db_federated_auth_state::Model {
         db_federated_auth_state::Model {
             idp_id: "idp".into(),
-            mapping_id: "mapping".into(),
             state: state.as_ref().into(),
             nonce: "nonce".into(),
             redirect_uri: "redirect_uri".into(),

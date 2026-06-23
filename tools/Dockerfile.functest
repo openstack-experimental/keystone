@@ -40,6 +40,8 @@ RUN cargo test -p test_federation --test keycloak --no-run && \
     cp $(find target/debug/deps -name "keycloak-*" -type f -executable) /app/test-keycloak
 RUN cargo test -p test_federation --test dex --no-run && \
     cp $(find target/debug/deps -name "dex-*" -type f -executable) /app/test-dex
+RUN cargo test -p test_federation --test github --no-run && \
+    cp $(find target/debug/deps -name "github-*" -type f -executable) /app/test-github
 
 # Stage 4: Package
 FROM debian:trixie-slim AS runtime

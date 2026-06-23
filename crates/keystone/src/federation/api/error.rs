@@ -15,22 +15,20 @@
 use thiserror::Error;
 use tracing::{Level, error, instrument};
 
+use openstack_keystone_core_types::mapping::error::MappingProviderError;
+
 use crate::api::error::KeystoneApiError;
-use crate::federation::api::types::*;
 
 #[derive(Error, Debug)]
 pub enum OidcError {
-    /// OIDC Discovery error.
     #[error("discovery error for {url}: {msg}")]
-    Discovery {
-        /// IdP URL.
-        url: String,
-        /// Error message.
-        msg: String,
-    },
+    Discovery { url: String, msg: String },
 
     #[error("client without discovery is not supported")]
     ClientWithoutDiscoveryNotSupported,
+
+    #[error("mapping id or mapping name with idp id must be specified")]
+    MappingIdOrNameWithIdp,
 
     #[error(
         "federated authentication requires mapping being specified in the payload or default set on the identity provider"
@@ -43,17 +41,9 @@ pub enum OidcError {
     #[error("`bearer` authorization token is missing.")]
     BearerJwtTokenMissing,
 
-    #[error("mapping id or mapping name with idp id must be specified")]
-    MappingIdOrNameWithIdp,
-
-    #[error("groups claim must be an array of strings")]
-    GroupsClaimNotArrayOfStrings,
-
-    /// IdP is disabled.
     #[error("identity provider is disabled")]
     IdentityProviderDisabled,
 
-    /// Mapping is disabled.
     #[error("mapping is disabled")]
     MappingDisabled,
 
@@ -84,61 +74,23 @@ pub enum OidcError {
         source: url::ParseError,
     },
 
-    #[error("server did not returned an ID token")]
+    #[error("server did not return an ID token")]
     NoToken,
 
     #[error("identity Provider client_id is missing")]
     ClientIdRequired,
 
-    #[error("ID token does not contain user id claim {0}")]
-    UserIdClaimRequired(String),
-
-    #[error("ID token does not contain user id claim {0}")]
-    UserNameClaimRequired(String),
-
-    /// Domain_id for the user cannot be identified.
-    #[error("can not identify resulting domain_id for the user")]
-    UserDomainUnbound,
-
-    /// Bound subject mismatch.
-    #[error("bound subject mismatches {expected} != {found}")]
-    BoundSubjectMismatch { expected: String, found: String },
-
-    /// Bound audiences mismatch.
-    #[error("bound audiences mismatch {expected} != {found}")]
-    BoundAudiencesMismatch { expected: String, found: String },
-
-    /// Bound claims mismatch.
-    #[error("bound claims mismatch")]
-    BoundClaimsMismatch {
-        claim: String,
-        expected: String,
-        found: String,
-    },
-
-    /// Error building user data.
-    #[error(transparent)]
-    MappedUserDataBuilder {
-        #[from]
-        #[allow(private_interfaces)]
-        source: MappedUserDataBuilderError,
-    },
-
-    /// Authentication expired.
     #[error("authentication expired")]
     AuthStateExpired,
 
-    /// Cannot use OIDC attribute mapping for JWT login.
-    #[error("non jwt mapping requested for jwt login")]
-    NonJwtMapping,
-
-    /// No JWT issuer can be identified for the mapping.
     #[error("no jwt issuer can be determined")]
     NoJwtIssuer,
 
-    /// User not found.
-    #[error("token user not found")]
-    UserNotFound(String),
+    #[error("mapping engine error: {0}")]
+    MappingEngine(String),
+
+    #[error("redirect URI is not allowed")]
+    RedirectUriNotAllowed,
 }
 
 impl OidcError {
@@ -155,16 +107,12 @@ impl OidcError {
     }
 }
 
-/// Convert OIDC error into the [HTTP](KeystoneApiError) with the expected
-/// message.
 impl From<OidcError> for KeystoneApiError {
     #[instrument(level = Level::ERROR)]
     fn from(value: OidcError) -> Self {
         error!("Federation error: {:#?}", value);
         match value {
-            e @ OidcError::Discovery { .. } => {
-                KeystoneApiError::InternalError(e.to_string())
-            }
+            e @ OidcError::Discovery { .. } => KeystoneApiError::InternalError(e.to_string()),
             e @ OidcError::ClientWithoutDiscoveryNotSupported => {
                 KeystoneApiError::InternalError(e.to_string())
             }
@@ -177,21 +125,18 @@ impl From<OidcError> for KeystoneApiError {
             OidcError::MappingRequired => {
                 KeystoneApiError::BadRequest("Federated authentication requires mapping being specified in the payload or default set on the identity provider.".to_string())
             }
-            OidcError::MappingRequiredJwt => {
-                KeystoneApiError::BadRequest("JWT authentication requires `openstack-mapping` header to be provided.".to_string())
-            }
-            OidcError::BearerJwtTokenMissing => {
-                KeystoneApiError::BadRequest("`bearer` token is missing in the `Authorization` header.".to_string())
-            }
-            OidcError::MappingIdOrNameWithIdp => {
-                KeystoneApiError::BadRequest("Federated authentication requires mapping being specified in the payload either with ID or name with identity provider id.".to_string())
-            }
-            OidcError::GroupsClaimNotArrayOfStrings => {
-                KeystoneApiError::BadRequest("Groups claim must be an array of strings representing group names.".to_string())
-            }
-            OidcError::RequestToken { msg } => {
-                KeystoneApiError::BadRequest(format!("Error exchanging authorization code for the authorization token: {msg}"))
-            }
+            OidcError::MappingIdOrNameWithIdp => KeystoneApiError::BadRequest(
+                "Federated authentication requires mapping being specified in the payload either with ID or name with identity provider id.".to_string(),
+            ),
+            OidcError::MappingRequiredJwt => KeystoneApiError::BadRequest(
+                "JWT authentication requires `openstack-mapping` header to be provided.".to_string(),
+            ),
+            OidcError::BearerJwtTokenMissing => KeystoneApiError::BadRequest(
+                "`bearer` token is missing in the `Authorization` header.".to_string(),
+            ),
+            OidcError::RequestToken { msg } => KeystoneApiError::BadRequest(format!(
+                "Error exchanging authorization code for the authorization token: {msg}"
+            )),
             OidcError::ClaimVerification { source } => {
                 KeystoneApiError::BadRequest(format!("Error in claims verification: {source}"))
             }
@@ -208,40 +153,22 @@ impl From<OidcError> for KeystoneApiError {
                 KeystoneApiError::InternalError(format!("Error in OpenIDConnect logic: {e}"))
             }
             OidcError::ClientIdRequired => {
-                KeystoneApiError::BadRequest("Identity Provider mut set `client_id`.".to_string())
+                KeystoneApiError::BadRequest("Identity Provider must set `client_id`.".to_string())
             }
-            OidcError::UserIdClaimRequired(source) => {
-                KeystoneApiError::BadRequest(format!("OIDC ID token does not contain user id claim: {source}"))
-            }
-            OidcError::UserNameClaimRequired(source) => {
-                KeystoneApiError::BadRequest(format!("OIDC ID token does not contain user name claim: {source}"))
-            }
-            OidcError::UserDomainUnbound => {
-                KeystoneApiError::BadRequest("Cannot identify domain_id of the user.".to_string())
-            }
-            OidcError::BoundSubjectMismatch{ expected, found } => {
-                KeystoneApiError::BadRequest(format!("OIDC Bound subject mismatches: {expected} != {found}"))
-            }
-            OidcError::BoundAudiencesMismatch{ expected, found } => {
-                KeystoneApiError::BadRequest(format!("OIDC Bound audiences mismatches: {expected} != {found}"))
-            }
-            OidcError::BoundClaimsMismatch{ claim, expected, found } => {
-                KeystoneApiError::BadRequest(format!("OIDC Bound claim {claim} mismatch: {expected} != {found}"))
-            }
-            e @ OidcError::MappedUserDataBuilder { .. } => {
-                KeystoneApiError::InternalError(e.to_string())
-            }
-            OidcError::AuthStateExpired => {
-                KeystoneApiError::BadRequest("Authentication has expired. Please start again.".to_string())
-            }
-            OidcError::NonJwtMapping | OidcError::NoJwtIssuer => {
-                // Not exposing info about mapping and idp existence.
-                KeystoneApiError::unauthorized(value, Some("mapping error"))
-            }
-            OidcError::UserNotFound(_) => {
-                // Not exposing info about mapping and idp existence.
-                KeystoneApiError::unauthorized(value, Some("User not found"))
-            }
+            OidcError::AuthStateExpired => KeystoneApiError::BadRequest(
+                "Authentication has expired. Please start again.".to_string(),
+            ),
+            OidcError::RedirectUriNotAllowed => KeystoneApiError::BadRequest(
+                "redirect_uri is not allowed for this identity provider.".to_string(),
+            ),
+            OidcError::NoJwtIssuer => KeystoneApiError::unauthorized(value, Some("no jwt issuer")),
+            OidcError::MappingEngine(_msg) => KeystoneApiError::UnauthorizedNoContext,
         }
+    }
+}
+
+impl From<MappingProviderError> for OidcError {
+    fn from(value: MappingProviderError) -> Self {
+        Self::MappingEngine(value.to_string())
     }
 }

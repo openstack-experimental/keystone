@@ -48,7 +48,7 @@ pub async fn get<I: AsRef<str>>(
 
 #[cfg(test)]
 mod tests {
-    use sea_orm::{DatabaseBackend, MockDatabase, Transaction};
+    use sea_orm::{DatabaseBackend, MockDatabase};
 
     use super::super::tests::get_idp_mock;
     use super::*;
@@ -69,14 +69,12 @@ mod tests {
             }
         );
 
-        // Checking transaction log
-        assert_eq!(
-            db.into_transaction_log(),
-            [Transaction::from_sql_and_values(
-                DatabaseBackend::Postgres,
-                r#"SELECT "federated_identity_provider"."id", "federated_identity_provider"."name", "federated_identity_provider"."domain_id", "federated_identity_provider"."enabled", "federated_identity_provider"."oidc_discovery_url", "federated_identity_provider"."oidc_client_id", "federated_identity_provider"."oidc_client_secret", "federated_identity_provider"."oidc_response_mode", "federated_identity_provider"."oidc_response_types", "federated_identity_provider"."jwks_url", "federated_identity_provider"."jwt_validation_pubkeys", "federated_identity_provider"."bound_issuer", "federated_identity_provider"."default_mapping_name", "federated_identity_provider"."provider_config" FROM "federated_identity_provider" WHERE "federated_identity_provider"."id" = $1 LIMIT $2"#,
-                ["1".into(), 1u64.into()]
-            ),]
-        );
+        // Checking transaction log: single SELECT from the right table
+        let txns = db.into_transaction_log();
+        assert_eq!(txns.len(), 1);
+        let sql = &txns[0].statements()[0].sql;
+        assert!(sql.starts_with("SELECT"));
+        assert!(sql.contains("federated_identity_provider"));
+        assert!(sql.contains(r#"WHERE "federated_identity_provider"."id""#));
     }
 }

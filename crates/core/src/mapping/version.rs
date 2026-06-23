@@ -108,6 +108,7 @@ mod tests {
                 },
             )]),
             identity: IdentityBinding {
+                identity_mode: None,
                 user_name: "${claims.sub}".to_string(),
                 user_id: Some("${claims.sub}".to_string()),
                 user_domain_id: None,
@@ -157,7 +158,8 @@ mod tests {
                 description: None,
                 r#match: MatchCriteria::AllOf(vec![]),
                 identity: IdentityBinding {
-                    user_name: "a".to_string(),
+                    identity_mode: None,
+                    user_name: "test-user".to_string(),
                     user_id: None,
                     user_domain_id: None,
                     is_system: false,
@@ -170,7 +172,8 @@ mod tests {
                 description: None,
                 r#match: MatchCriteria::AllOf(vec![]),
                 identity: IdentityBinding {
-                    user_name: "b".to_string(),
+                    identity_mode: None,
+                    user_name: "test-user".to_string(),
                     user_id: None,
                     user_domain_id: None,
                     is_system: false,

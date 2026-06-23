@@ -26,6 +26,7 @@ use tracing_test::traced_test;
 use uuid::Uuid;
 
 use openstack_keystone_api_types::federation::*;
+use openstack_keystone_api_types::v4::mapping::*;
 
 mod keystone_utils;
 mod keycloak {
@@ -39,7 +40,7 @@ pub async fn setup_keycloak_idp<T: AsRef<str>, K: AsRef<str>, S: AsRef<str>>(
     token: T,
     client_id: K,
     client_secret: S,
-) -> Result<(IdentityProvider, Mapping), Report> {
+) -> Result<(IdentityProvider, MappingRuleSet), Report> {
     let config = get_config();
     let keycloak_url = env::var("KEYCLOAK_URL").expect("KEYCLOAK_URL is set");
 
@@ -50,6 +51,8 @@ pub async fn setup_keycloak_idp<T: AsRef<str>, K: AsRef<str>, S: AsRef<str>>(
             identity_provider: IdentityProviderCreateBuilder::default()
                 .name(Uuid::new_v4().simple().to_string())
                 .enabled(true)
+                .domain_id("default")
+                .default_mapping_name("default")
                 .oidc_discovery_url(format!("{}/realms/master", keycloak_url))
                 .oidc_client_id(client_id.as_ref())
                 .oidc_client_secret(client_secret.as_ref())
@@ -58,33 +61,48 @@ pub async fn setup_keycloak_idp<T: AsRef<str>, K: AsRef<str>, S: AsRef<str>>(
     )
     .await?;
 
-    let mapping = create_mapping(
+    let ruleset = create_ruleset(
         config,
         token.as_ref(),
-        MappingCreateRequest {
-            mapping: MappingCreateBuilder::default()
-                .name(Uuid::new_v4().simple().to_string())
-                .enabled(true)
-                .idp_id(idp.id.clone())
-                .user_id_claim("sub")
-                .user_name_claim("preferred_username")
-                .domain_id_claim("domain_id")
-                .groups_claim("groups")
-                .build()?,
+        MappingRuleSetCreateRequest {
+            mapping: MappingRuleSetCreate {
+                mapping_id: None,
+                domain_id: Some("default".into()),
+                source: IdentitySource::Federation {
+                    idp_id: idp.id.clone(),
+                },
+                domain_resolution_mode: DomainResolutionMode::Fixed,
+                enabled: true,
+                rules: vec![MappingRule {
+                    name: "default".into(),
+                    description: None,
+                    r#match: MatchCriteria::AllOf(vec![]),
+                    identity: IdentityBinding {
+                        identity_mode: Some(IdentityMode::Local),
+                        user_name: "${claims.preferred_username}".into(),
+                        user_id: None,
+                        user_domain_id: None,
+                        is_system: false,
+                    },
+                    authorizations: vec![],
+                    groups: vec![],
+                }],
+            },
         },
     )
     .await?;
 
-    Ok((idp, mapping))
+    Ok((idp, ruleset))
 }
 
 pub async fn setup_kecloak_idp_jwt<T: AsRef<str>, K: AsRef<str>, S: AsRef<str>>(
     token: T,
     _client_id: K,
     _client_secret: S,
-) -> Result<(IdentityProvider, Mapping), Report> {
+) -> Result<(IdentityProvider, MappingRuleSet), Report> {
     let config = get_config();
     let keycloak_url = env::var("KEYCLOAK_URL").expect("KEYCLOAK_URL is set");
+    let ruleset_name = Uuid::new_v4().simple().to_string();
 
     let idp = create_idp(
         config,
@@ -93,6 +111,8 @@ pub async fn setup_kecloak_idp_jwt<T: AsRef<str>, K: AsRef<str>, S: AsRef<str>>(
             identity_provider: IdentityProviderCreateBuilder::default()
                 .name(Uuid::new_v4().simple().to_string())
                 .enabled(true)
+                .domain_id("default")
+                .default_mapping_name(&ruleset_name)
                 .oidc_discovery_url(format!("{}/realms/master", keycloak_url))
                 .jwks_url(format!(
                     "{}/realms/master/protocol/openid-connect/certs",
@@ -104,24 +124,38 @@ pub async fn setup_kecloak_idp_jwt<T: AsRef<str>, K: AsRef<str>, S: AsRef<str>>(
     )
     .await?;
 
-    let mapping = create_mapping(
+    let ruleset = create_ruleset(
         config,
         token.as_ref(),
-        MappingCreateRequest {
-            mapping: MappingCreateBuilder::default()
-                .name(Uuid::new_v4().simple().to_string())
-                .enabled(true)
-                .r#type(MappingType::Jwt)
-                .idp_id(idp.id.clone())
-                .user_id_claim("sub")
-                .user_name_claim("preferred_username")
-                .domain_id_claim("domain_id")
-                .build()?,
+        MappingRuleSetCreateRequest {
+            mapping: MappingRuleSetCreate {
+                mapping_id: Some(ruleset_name.clone()),
+                domain_id: Some("default".into()),
+                source: IdentitySource::Federation {
+                    idp_id: idp.id.clone(),
+                },
+                domain_resolution_mode: DomainResolutionMode::Fixed,
+                enabled: true,
+                rules: vec![MappingRule {
+                    name: ruleset_name.clone(),
+                    description: None,
+                    r#match: MatchCriteria::AllOf(Vec::new()),
+                    identity: IdentityBinding {
+                        identity_mode: Some(IdentityMode::Local),
+                        user_name: "${claims.preferred_username}".into(),
+                        user_id: None,
+                        user_domain_id: None,
+                        is_system: false,
+                    },
+                    authorizations: Vec::new(),
+                    groups: Vec::new(),
+                }],
+            },
         },
     )
     .await?;
 
-    Ok((idp, mapping))
+    Ok((idp, ruleset))
 }
 
 #[tokio::test]
@@ -151,14 +185,14 @@ async fn test_login_oidc_keycloak() {
     put_user_to_group(&keycloak, user, group).await.unwrap();
 
     let token = auth(config).await;
-    let (idp, mapping) = setup_keycloak_idp(&token, &client_id, client_secret)
+    let (idp, _ruleset) = setup_keycloak_idp(&token, &client_id, client_secret)
         .await
         .unwrap();
 
     let auth_req = initialize_oidc_auth(
         config,
         &idp.id,
-        &mapping.id,
+        "default",
         &format!("http://{}:8050/oidc/callback", local_ip_address),
     )
     .await
@@ -252,9 +286,11 @@ async fn test_login_jwt_keycloak() {
 
     let token = auth(config).await;
     ensure_user(&token, "jwt_user", "default").await.unwrap();
-    let (idp, mapping) = setup_kecloak_idp_jwt(&token, &client_id, client_secret)
+    let (idp, _ruleset) = setup_kecloak_idp_jwt(&token, &client_id, client_secret)
         .await
         .unwrap();
 
-    let _auth_rsp = auth_jwt(config, jwt, idp.id, mapping.name).await.unwrap();
+    let _auth_rsp = auth_jwt(config, jwt, idp.id, idp.default_mapping_name.unwrap())
+        .await
+        .unwrap();
 }

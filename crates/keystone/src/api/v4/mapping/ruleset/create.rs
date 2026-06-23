@@ -115,6 +115,7 @@ mod tests {
                     ),
                 ]),
                 identity: openstack_keystone_api_types::v4::mapping::IdentityBinding {
+                    identity_mode: None,
                     user_name: "test_user".into(),
                     user_id: None,
                     user_domain_id: None,
@@ -147,6 +148,7 @@ mod tests {
                     ),
                 ]),
                 identity: provider_types::IdentityBinding {
+                    identity_mode: None,
                     user_name: "test_user".into(),
                     user_id: None,
                     user_domain_id: None,

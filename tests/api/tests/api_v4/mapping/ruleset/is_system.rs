@@ -48,6 +48,7 @@ async fn test_system_ruleset_immutable() -> Result<()> {
                     description: None,
                     r#match: MatchCriteria::default(),
                     identity: IdentityBinding {
+                        identity_mode: None,
                         user_name: "systemuser".to_string(),
                         user_id: None,
                         user_domain_id: None,
@@ -127,6 +128,7 @@ async fn test_system_global_ruleset_immutable() -> Result<()> {
                     description: None,
                     r#match: MatchCriteria::default(),
                     identity: IdentityBinding {
+                        identity_mode: None,
                         user_name: "global-systemuser".to_string(),
                         user_id: None,
                         user_domain_id: None,

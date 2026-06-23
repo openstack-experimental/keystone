@@ -32,6 +32,8 @@ impl From<provider_types::IdentityProvider> for api_types::IdentityProvider {
             jwt_validation_pubkeys: value.jwt_validation_pubkeys,
             bound_issuer: value.bound_issuer,
             default_mapping_name: value.default_mapping_name,
+            oidc_scopes: value.oidc_scopes,
+            allowed_redirect_uris: value.allowed_redirect_uris,
             provider_config: value.provider_config,
         }
     }
@@ -53,6 +55,8 @@ impl From<api_types::IdentityProviderCreateRequest> for provider_types::Identity
             jwt_validation_pubkeys: value.identity_provider.jwt_validation_pubkeys,
             bound_issuer: value.identity_provider.bound_issuer,
             default_mapping_name: value.identity_provider.default_mapping_name,
+            oidc_scopes: value.identity_provider.oidc_scopes,
+            allowed_redirect_uris: value.identity_provider.allowed_redirect_uris,
             provider_config: value.identity_provider.provider_config,
         }
     }
@@ -72,6 +76,8 @@ impl From<api_types::IdentityProviderUpdateRequest> for provider_types::Identity
             jwt_validation_pubkeys: value.identity_provider.jwt_validation_pubkeys,
             bound_issuer: value.identity_provider.bound_issuer,
             default_mapping_name: value.identity_provider.default_mapping_name,
+            oidc_scopes: value.identity_provider.oidc_scopes,
+            allowed_redirect_uris: value.identity_provider.allowed_redirect_uris,
             provider_config: value.identity_provider.provider_config,
         }
     }
@@ -83,7 +89,7 @@ impl From<api_types::IdentityProviderListParameters>
     fn from(value: api_types::IdentityProviderListParameters) -> Self {
         Self {
             name: value.name,
-            domain_ids: None, //value.domain_id,
+            domain_ids: None, //value.domain_id
             limit: value.limit,
             marker: value.marker,
         }

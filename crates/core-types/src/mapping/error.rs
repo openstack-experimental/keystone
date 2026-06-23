@@ -132,6 +132,14 @@ pub enum MappingProviderError {
     /// `allowed_domains` list exceeds cardinality limit ({0}).
     #[error("allowed_domains list exceeds cardinality limit of {0}")]
     AllowedDomainsTooLarge(usize),
+
+    /// The total flattened claims map exceeds the 64 KiB size limit.
+    #[error("total flattened claims map exceeds size limit")]
+    ClaimsMapTooLarge,
+
+    /// Local identity mode requires Federation as the identity source.
+    #[error("Local identity mode requires Federation source (got: {0})")]
+    LocalIdentityRequiresFederation(String),
 }
 
 impl MappingProviderError {
@@ -141,6 +149,16 @@ impl MappingProviderError {
         E: std::error::Error + Send + Sync + 'static,
     {
         Self::RaftStoreError {
+            source: Box::new(source),
+        }
+    }
+
+    /// Create a driver error from any error type.
+    pub fn driver<E>(source: E) -> Self
+    where
+        E: std::error::Error + Send + Sync + 'static,
+    {
+        Self::Driver {
             source: Box::new(source),
         }
     }

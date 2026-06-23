@@ -33,6 +33,7 @@ async fn test_system_ruleset_immutable() -> Result<()> {
         description: None,
         r#match: MatchCriteria::AllOf(vec![]),
         identity: IdentityBinding {
+            identity_mode: None,
             user_name: "${name}".into(),
             user_id: None,
             user_domain_id: None,
@@ -114,6 +115,7 @@ async fn test_system_global_ruleset_immutable() -> Result<()> {
         description: None,
         r#match: MatchCriteria::AllOf(vec![]),
         identity: IdentityBinding {
+            identity_mode: None,
             user_name: "${name}".into(),
             user_id: None,
             user_domain_id: None,

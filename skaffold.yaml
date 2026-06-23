@@ -24,6 +24,7 @@ manifests:
     paths:
       - tools/k8s/tests/keycloak
       - tools/k8s/tests/dex
+      - tools/k8s/tests/callback
   rawYaml:
     - tools/k8s/tests/selenium.yaml
 deploy:
@@ -86,6 +87,20 @@ profiles:
         useBuildkit: true
         concurrency: 0
         tryImportMissing: true
+    verify:
+      - name: "github"
+        container:
+          image: "keystone-tests"
+          name: "github"
+          command: ["/tests/test-github", "--nocapture"]
+          env:
+            - name: "KEYSTONE_URL"
+              value: "http://keystone-rs:8080"
+            - name: "ACTIONS_ID_TOKEN_AUDIENCE"
+              value: "https://github.com"
+        executionMode:
+          kubernetesCluster: {}
+
   - name: local
     build:
       insecureRegistries:
@@ -208,19 +223,16 @@ verify:
     executionMode:
       kubernetesCluster: {}
 
-  # - name: "dex"
-  #   container:
-  #     image: "keystone-tests"
-  #     name: "dex-test"
-  #     command: ["/tests/test-dex", "--nocapture"]
-  #     #env:
-  #     #  - name: "BROWSERDRIVER_URL"
-  #     #    value: "http://selenium-service:4444"
-  #     #  - name: "KEYSTONE_URL"
-  #     #    value: "http://keystone-rs:8080"
-  #     #  - name: "DEX_URL"
-  #     #    value: "http://dex:5556"
-  #   executionMode:
-  #     kubernetesCluster:
-  #       #jobManifestPath: "tools/k8s/tests/dex/job.yaml"
-  #       overrides: '{ "spec": { "template": { "spec": { "containers": [{"name": "dex", "image": "ghcr.io/dexidp/dex:latest"}, {"name": "test", "image": "keystone-tests"}] } } } }'
+  - name: "dex"
+    container:
+      image: "keystone-tests"
+      name: "dex"
+      command: ["/tests/test-dex", "--nocapture"]
+      env:
+        - name: "KEYSTONE_URL"
+          value: "http://keystone-rs:8080"
+        - name: "DEX_URL"
+          value: "http://dex:5556"
+    executionMode:
+      kubernetesCluster: {}
+

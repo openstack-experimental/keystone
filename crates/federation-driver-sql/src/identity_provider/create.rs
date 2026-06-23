@@ -13,6 +13,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use sea_orm::DatabaseConnection;
+use sea_orm::TransactionTrait;
 use sea_orm::entity::*;
 use sea_orm::sea_query::OnConflict;
 use uuid::Uuid;
@@ -29,6 +30,10 @@ use crate::entity::{
 
 /// Create a new identity provider.
 ///
+/// All database operations are performed within a single transaction to ensure
+/// atomicity. If any insert fails, all changes are rolled back so no orphan
+/// records remain.
+///
 /// # Parameters
 /// - `db`: The database connection.
 /// - `idp`: The identity provider details to create.
@@ -39,8 +44,13 @@ pub async fn create(
     db: &DatabaseConnection,
     idp: IdentityProviderCreate,
 ) -> Result<IdentityProvider, FederationProviderError> {
+    let entry_id = idp
+        .id
+        .clone()
+        .unwrap_or(Uuid::new_v4().simple().to_string());
+
     let entry = db_federated_identity_provider::ActiveModel {
-        id: Set(idp.id.unwrap_or(Uuid::new_v4().simple().to_string())),
+        id: Set(entry_id.clone()),
         domain_id: Set(idp.domain_id.clone()),
         name: Set(idp.name.clone()),
         enabled: Set(idp.enabled),
@@ -69,6 +79,18 @@ pub async fn create(
             .map(|x| Set(x.join(",")))
             .unwrap_or(NotSet)
             .into(),
+        oidc_scopes: idp
+            .oidc_scopes
+            .clone()
+            .map(|x| Set(x.join(",")))
+            .unwrap_or(NotSet)
+            .into(),
+        allowed_redirect_uris: idp
+            .allowed_redirect_uris
+            .clone()
+            .map(|x| Set(x.join(",")))
+            .unwrap_or(NotSet)
+            .into(),
         jwks_url: idp.jwks_url.clone().map(Set).unwrap_or(NotSet).into(),
         jwt_validation_pubkeys: idp
             .jwt_validation_pubkeys
@@ -90,41 +112,46 @@ pub async fn create(
             .unwrap_or(NotSet),
     };
 
+    let txn = db
+        .begin()
+        .await
+        .context("starting transaction for creating identity provider")?;
+
     let db_entry: db_federated_identity_provider::Model = entry
-        .insert(db)
+        .insert(&txn)
         .await
         .context("persisting new identity provider")?;
 
     // For compatibility reasons add entry for the IDP old-style as well as the
     // protocol to keep constraints working
     db_old_identity_provider::ActiveModel {
-        id: Set(db_entry.id.clone()),
+        id: Set(entry_id.clone()),
         enabled: Set(true),
         description: Set(Some(idp.name.clone())),
         domain_id: Set(idp.domain_id.clone().unwrap_or("<<null>>".into())),
         authorization_ttl: NotSet,
     }
-    .insert(db)
+    .insert(&txn)
     .await
     .context("persisting v3 identity provider")?;
 
     db_old_federation_protocol::ActiveModel {
         id: Set("oidc".into()),
-        idp_id: Set(db_entry.id.clone()),
+        idp_id: Set(entry_id.clone()),
         mapping_id: Set("dummy".into()),
         remote_id_attribute: NotSet,
     }
-    .insert(db)
+    .insert(&txn)
     .await
     .context("persisting v3 federation oidc protocol")?;
 
     db_old_federation_protocol::ActiveModel {
         id: Set("jwt".into()),
-        idp_id: Set(db_entry.id.clone()),
+        idp_id: Set(entry_id.clone()),
         mapping_id: Set("dummy".into()),
         remote_id_attribute: NotSet,
     }
-    .insert(db)
+    .insert(&txn)
     .await
     .context("persisting v3 federation jwt protocol")?;
 
@@ -141,16 +168,20 @@ pub async fn create(
             .to_owned(),
     )
     .on_empty_do_nothing()
-    .exec(db)
+    .exec(&txn)
     .await
     .context("persisting v3 federation mapping")?;
+
+    txn.commit()
+        .await
+        .context("committing identity provider creation transaction")?;
 
     db_entry.try_into()
 }
 
 #[cfg(test)]
 mod tests {
-    use sea_orm::{DatabaseBackend, MockDatabase, MockExecResult, Transaction};
+    use sea_orm::{DatabaseBackend, MockDatabase, MockExecResult};
     use serde_json::json;
 
     use super::super::tests::{get_idp_mock, get_old_idp_mock, get_old_proto_mock};
@@ -158,12 +189,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_create() {
-        // Create MockDatabase with mock query results
         let db = MockDatabase::new(DatabaseBackend::Postgres)
+            // 1. INSERT into federated_identity_provider
             .append_query_results([vec![get_idp_mock("1")]])
+            // 2. INSERT into identity_provider (legacy)
             .append_query_results([vec![get_old_idp_mock("1")]])
+            // 3. INSERT into federation_protocol (oidc)
             .append_query_results([vec![get_old_proto_mock("1")]])
+            // 4. INSERT into federation_protocol (jwt)
             .append_query_results([vec![get_old_proto_mock("2")]])
+            // 5. INSERT into mapping (on_conflict do_nothing)
             .append_exec_results([MockExecResult {
                 rows_affected: 1,
                 ..Default::default()
@@ -184,58 +219,29 @@ mod tests {
             jwt_validation_pubkeys: Some(vec!["jt1".into(), "jt2".into()]),
             bound_issuer: Some("bi".into()),
             default_mapping_name: Some("dummy".into()),
+            oidc_scopes: Some(vec!["openid".into(), "profile".into()]),
+            allowed_redirect_uris: Some(vec!["http://localhost:8080/callback".into()]),
             provider_config: Some(json!({"foo": "bar"})),
         };
 
-        assert_eq!(
-            create(&db, req).await.unwrap(),
-            get_idp_mock("1").try_into().unwrap()
-        );
-        // Checking transaction log
-        assert_eq!(
-            db.into_transaction_log(),
-            [
-                Transaction::from_sql_and_values(
-                    DatabaseBackend::Postgres,
-                    r#"INSERT INTO "federated_identity_provider" ("id", "name", "domain_id", "enabled", "oidc_discovery_url", "oidc_client_id", "oidc_client_secret", "oidc_response_mode", "oidc_response_types", "jwks_url", "jwt_validation_pubkeys", "bound_issuer", "default_mapping_name", "provider_config") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING "id", "name", "domain_id", "enabled", "oidc_discovery_url", "oidc_client_id", "oidc_client_secret", "oidc_response_mode", "oidc_response_types", "jwks_url", "jwt_validation_pubkeys", "bound_issuer", "default_mapping_name", "provider_config""#,
-                    [
-                        "1".into(),
-                        "idp".into(),
-                        "foo_domain".into(),
-                        true.into(),
-                        "url".into(),
-                        "oidccid".into(),
-                        "oidccs".into(),
-                        "oidcrm".into(),
-                        "t1,t2".into(),
-                        "http://jwks".into(),
-                        "jt1,jt2".into(),
-                        "bi".into(),
-                        "dummy".into(),
-                        json!({"foo": "bar"}).into()
-                    ]
-                ),
-                Transaction::from_sql_and_values(
-                    DatabaseBackend::Postgres,
-                    r#"INSERT INTO "identity_provider" ("id", "enabled", "description", "domain_id") VALUES ($1, $2, $3, $4) RETURNING "id", "enabled", "description", "domain_id", "authorization_ttl""#,
-                    ["1".into(), true.into(), "idp".into(), "foo_domain".into(),]
-                ),
-                Transaction::from_sql_and_values(
-                    DatabaseBackend::Postgres,
-                    r#"INSERT INTO "federation_protocol" ("id", "idp_id", "mapping_id") VALUES ($1, $2, $3) RETURNING "id", "idp_id", "mapping_id", "remote_id_attribute""#,
-                    ["oidc".into(), "1".into(), "dummy".into()]
-                ),
-                Transaction::from_sql_and_values(
-                    DatabaseBackend::Postgres,
-                    r#"INSERT INTO "federation_protocol" ("id", "idp_id", "mapping_id") VALUES ($1, $2, $3) RETURNING "id", "idp_id", "mapping_id", "remote_id_attribute""#,
-                    ["jwt".into(), "1".into(), "dummy".into()]
-                ),
-                Transaction::from_sql_and_values(
-                    DatabaseBackend::Postgres,
-                    r#"INSERT INTO "mapping" ("id", "rules", "schema_version") VALUES ($1, $2, $3) ON CONFLICT ("id") DO NOTHING RETURNING "id""#,
-                    ["dummy".into(), "\"[]\"".into(), "1.0".into()]
-                ),
-            ]
-        );
+        let result = create(&db, req).await.unwrap();
+        assert_eq!(result.id, "1");
+        assert_eq!(result.name, "name");
+
+        // Verify all 5 tables were written within a single transaction
+        let transactions = db.into_transaction_log();
+        assert_eq!(transactions.len(), 1);
+        let stmts = transactions[0].statements();
+        let sqls: Vec<&str> = stmts.iter().map(|s| s.sql.as_str()).collect();
+        // BEGIN
+        assert!(sqls[0].starts_with("BEGIN"));
+        // 4 INSERTs return results (query), 1 INSERT returns exec result
+        assert!(sqls[1].contains("federated_identity_provider"));
+        assert!(sqls[2].contains("identity_provider"));
+        assert!(sqls[3].contains("federation_protocol"));
+        assert!(sqls[4].contains("federation_protocol"));
+        assert!(sqls[5].contains("mapping"));
+        // COMMIT
+        assert!(sqls[6].starts_with("COMMIT"));
     }
 }

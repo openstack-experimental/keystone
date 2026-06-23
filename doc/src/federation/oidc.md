@@ -25,58 +25,52 @@ sequenceDiagram
 ## TLDR
 
 The user client (cli) sends authentication request to Keystone specifying the
-identity provider, the preferred attribute mapping and optionally the scope (no
-credentials in the request). In the response the user client receives the time
-limited URL of the IDP that the user must open in the browser. When
-authentication in the browser is completed the user is redirected to the
-callback that the user also sent in the initial request (most likely on the
-localhost). User client is catching this callback containing the OIDC
-authorization code. Afterwards this code is being sent to the Keystone together
-with the authentication state and the user receives regular scoped or unscoped
-Keystone token.
+identity provider and optionally the scope (no credentials in the request). In
+the response the user client receives the time limited URL of the IDP that the
+user must open in the browser. When authentication in the browser is completed
+the user is redirected to the callback that the user also sent in the initial
+request (most likely on the localhost). User client is catching this callback
+containing the OIDC authorization code. Afterwards this code is being sent to
+the Keystone together with the authentication state and the user receives
+regular scoped or unscoped Keystone token.
+
+## Identity provider and mapping configuration
+
+The identity provider is bound to a domain via `--domain-id` and references a
+mapping ruleset through `--default-mapping-name`. The mapping ruleset (managed
+at `/v4/mappings/rulesets`) defines how JWT/OIDC claims are mapped to Keystone
+identities. The IDP `--default-mapping-name` must match the `mapping_id` or
+`rule_name` in the ruleset so that the engine can resolve the correct mapping at
+callback time.
+
+> **Note:** Legacy federation mappings (`/v4/federation/mappings`) have been
+replaced by the unified mapping engine (`/v4/mappings/rulesets`).
 
 ## User domain mapping
-
-Long years of working with multiple CSPs showed that there is no single way how
-users are stored in external IdPs. Sometimes it is desired to have a single
-"realm" with all users of the cloud differentiated by certain attributes or
-group memberships. Or every OpenStack domain is mapped as a dedicated "realm" in
-which case users are more isolated from each other. Or every customer is having
-a physically different IdP.
 
 A Keystone identity provider can be bound to a single domain by setting the
 domain-id attribute on it. This means all users federated from such IDP would be
 placed in the specified domain.
 
-A Keystone attribute mapping can be dedicated for a certain domain by setting
-the domain-id attribute. In such case all users authenticating using such
-attribute mapping would be placed in the specified domain. This makes it
-possible for the users to obtain memberhip in other domain and should therefore
-be used with extra care and only when absolutely necessary.
+Domain resolution can also be controlled by the mapping ruleset through its
+`domain_resolution_mode`:
+
+- **Fixed**: locked to the IDP domain
+- **ClaimsOrMapping**: rules may override domain via claims templates
+- **ClaimsOnly**: neither IDP nor mapping is bound to a domain
 
 The ultimate flexibility of having a single IdP for multiple domains is by
-specifying the claim attribute that specifies domain the user should belong to.
-This is implemented by using the `domain-id-claim` attribute of the mapping.
-Authentication with the claim missing is going to be rejected.
+using the `user_domain_id` template in the mapping rule to specify domain the
+user should belong to. Authentication with the claim missing is going to be
+rejected.
 
 ## User group membership
 
-When a user authenticates using the OIDC the group memberships are persisted in
-the database with the expiration in addition to the list of group ids being also
-saved in the token. This mechanism intends preventing continuous use of the
-roles granted through the group memberships (i.e. with application credentials).
-`conf.federation.default_authorization_ttl` configuration variable defines the
-expiration for such group memberships. Every time the user authenticates with
-the OIDC the group memberships are renewed (their `last_verified` property is
-reset to the login timestamp). Groups the user is not member of anymore would be
-unassigned.
+When a user authenticates using OIDC, group memberships are synced on every
+login via the mapping engine. The mapping ruleset defines which groups the user
+should be assigned to based on JWT/OIDC claims. With `IdentityMode::Local` the
+engine performs user create/find and group membership sync on every login.
 
-The major consequence of this when using the application credentials that rely
-on the roles assigned through the group memberships is that the user need to
-periodically login using the OIDC (no other authentication method is renewing
-the group memberships since Keystone has currently no mechanism of querying the
-IdP for the current groups.
-
-This is going to be changed soon since Keystone now has the means of
-communication with the IdP. Additionally the SCIM support is going to be added
-allowing the IdP to push updates to the Keystone.
+The major consequence when using application credentials that rely on roles
+assigned through group memberships is that the user needs to periodically login
+using the OIDC, since only the mapping engine can refresh group memberships.

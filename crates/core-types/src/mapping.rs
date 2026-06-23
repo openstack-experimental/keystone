@@ -36,7 +36,9 @@ pub use ruleset::{
 };
 
 // Re-export rule types
-pub use rule::{ClaimCondition, IdentityBinding, MappingRule, MatchCondition, MatchCriteria};
+pub use rule::{
+    ClaimCondition, IdentityBinding, IdentityMode, MappingRule, MatchCondition, MatchCriteria,
+};
 
 // Re-export authorization types
 pub use authorization::{Authorization, GroupAssignment, GroupStrategy};
