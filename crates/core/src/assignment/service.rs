@@ -24,8 +24,6 @@ use openstack_keystone_core_types::role::{Role, RoleListParameters};
 use crate::assignment::{AssignmentApi, AssignmentProviderError, backend::AssignmentBackend};
 use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManagerApi;
-use crate::revoke::RevokeApi;
-use crate::role::RoleApi;
 
 pub struct AssignmentService {
     backend_driver: Arc<dyn AssignmentBackend>,

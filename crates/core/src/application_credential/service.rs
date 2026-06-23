@@ -33,7 +33,6 @@ use crate::application_credential::{
 };
 use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManagerApi;
-use crate::role::RoleApi;
 
 /// Application Credential Provider.
 pub struct ApplicationCredentialService {
@@ -67,7 +66,8 @@ impl ApplicationCredentialApi for ApplicationCredentialService {
     ///
     /// # Parameters
     /// - `state`: The current service state.
-    /// - `rule`: The access rule to create (its `user_id` identifies the owner).
+    /// - `rule`: The access rule to create (its `user_id` identifies the
+    ///   owner).
     ///
     /// # Returns
     /// - `Result<AccessRule, ApplicationCredentialProviderError>` - The created

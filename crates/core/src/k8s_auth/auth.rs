@@ -26,7 +26,6 @@ use openstack_keystone_core_types::mapping::resolution::IdentitySource;
 use super::K8sAuthApi;
 use crate::k8s_auth::{K8sAuthProviderError, service::K8sAuthService};
 use crate::keystone::ServiceState;
-use crate::mapping::MappingApi;
 
 impl K8sAuthService {
     /// Query the K8s Token Review endpoint.

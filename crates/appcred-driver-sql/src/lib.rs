@@ -51,7 +51,8 @@ impl ApplicationCredentialBackend for SqlBackend {
     ///
     /// # Parameters
     /// - `state`: The service state.
-    /// - `rule`: The access rule to create (its `user_id` identifies the owner).
+    /// - `rule`: The access rule to create (its `user_id` identifies the
+    ///   owner).
     ///
     /// # Returns
     /// A `Result` containing the created `AccessRule` or an `Error`.

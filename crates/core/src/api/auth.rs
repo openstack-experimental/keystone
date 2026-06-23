@@ -31,8 +31,6 @@ use openstack_keystone_core_types::mapping::resolution::IdentitySource;
 use crate::api::KeystoneApiError;
 use crate::auth::ValidatedSecurityContext;
 use crate::keystone::ServiceState;
-use crate::mapping::MappingApi;
-use crate::token::TokenApi;
 
 #[derive(Debug, Clone)]
 pub struct Auth(pub ValidatedSecurityContext);

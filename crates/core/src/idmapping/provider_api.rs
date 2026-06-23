@@ -21,7 +21,7 @@ use crate::keystone::ServiceState;
 
 /// IdMapping provider API.
 #[async_trait]
-pub trait IdMappingApi {
+pub trait IdMappingApi: Send + Sync {
     /// Get the `IdMapping` by the local data.
     ///
     /// # Parameters
