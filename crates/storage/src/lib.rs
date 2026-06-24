@@ -22,6 +22,7 @@ use std::sync::Arc;
 
 use fjall::Database;
 use openraft::RaftTypeConfig;
+use openstack_keystone_storage_crypto::{DekEpoch, KekProvider, generate_dek};
 
 pub mod api;
 pub mod app;
@@ -30,6 +31,7 @@ pub mod grpc;
 pub mod mock;
 pub mod network;
 mod proto_impl;
+pub mod preflight;
 mod types;
 pub mod store {
     pub mod log_store;
@@ -40,13 +42,16 @@ pub mod store_command;
 
 // Re-export lightweight types from storage-api crate.
 pub use openstack_keystone_storage_api::{
-    Metadata, Mutation, Node, StorageApi, StoreDataEnvelope, StoreError as ApiStoreError,
+    DataTier, Metadata, Mutation, Node, StorageApi, StoreDataEnvelope, StoreError as ApiStoreError,
     StoreResponse, Violation,
 };
 
 pub use error::StoreError;
 pub use store::log_store::FjallLogStore;
 pub use store::state_machine::FjallStateMachine;
+
+/// DEK meta key used to persist the wrapped DEK in Fjall.
+const META_DEK_CURRENT: &[u8] = b"_meta:dek:current";
 
 /// Convert the heavy storage error type to the lightweight API error type.
 impl From<StoreError> for ApiStoreError {
@@ -61,6 +66,10 @@ impl From<StoreError> for ApiStoreError {
                 description,
             },
             StoreError::KeyPresent => Self::KeyPresent,
+            StoreError::Quarantined(partition) => Self::Conflict {
+                subject: partition,
+                description: "partition quarantined due to repeated GCM tag failures".to_string(),
+            },
             _ => Self::Other(Box::new(e)),
         }
     }
@@ -68,19 +77,15 @@ impl From<StoreError> for ApiStoreError {
 
 pub mod protobuf {
     pub mod api {
-        // Import the traits into this specific scope
         use serde::{Deserialize, Serialize};
         tonic::include_proto!("keystone.api");
     }
     pub mod raft {
-        // Import the traits into this specific scope
         use serde::{Deserialize, Serialize};
         tonic::include_proto!("keystone.raft");
     }
 }
 pub use crate::protobuf as pb;
-#[cfg(feature = "bench_internals")]
-pub use types::{Nonce, bench_pack, bench_unpack};
 
 openraft::declare_raft_types!(
     /// Declare the type configuration for example K/V store.
@@ -94,17 +99,22 @@ openraft::declare_raft_types!(
         SnapshotData = Vec<u8>,
 );
 
-/// Create a pair of `FjallLogStore` and `FjallStateMachine` that are backed by
-/// a same fjall db instance.
+/// Create a pair of `FjallLogStore` and `FjallStateMachine` sharing a Fjall DB.
+///
+/// Bootstraps the DEK on first boot (generates a fresh key, wraps it under the
+/// KEK, persists it to `_meta:dek:current`) or loads it on subsequent boots.
 ///
 /// # Parameters
-/// - `db_path`: Path to the database directory.
+/// - `db_path`: Path to the Fjall database directory.
+/// - `node_id`: Raft node ID; used as the high 8 bytes of log nonces.
+/// - `kek`: Key Encryption Key provider for wrapping/unwrapping the DEK.
 ///
 /// # Returns
-/// A `Result` containing a tuple of `FjallLogStore` and `FjallStateMachine`, or
-/// an `io::Error`.
+/// `(FjallLogStore, FjallStateMachine)` sharing the same database handle.
 pub async fn new<C, P: AsRef<Path>>(
     db_path: P,
+    node_id: u64,
+    kek: &dyn KekProvider,
 ) -> Result<(FjallLogStore<C>, FjallStateMachine), io::Error>
 where
     C: RaftTypeConfig,
@@ -114,12 +124,41 @@ where
     let db = Database::builder(db_path)
         .open()
         .map_err(|e| io::Error::other(e.to_string()))?;
-
     let db = Arc::new(db);
+
+    // Bootstrap or load the DEK from the meta keyspace.
+    let dek = bootstrap_dek(&db, kek).map_err(|e| io::Error::other(e.to_string()))?;
+    let dek = Arc::new(dek);
+
     Ok((
-        FjallLogStore::new(db.clone())?,
-        FjallStateMachine::new(db, snapshot_dir)?,
+        FjallLogStore::new(db.clone(), node_id, dek.clone())
+            .map_err(|e| io::Error::other(e.to_string()))?,
+        FjallStateMachine::new(db, snapshot_dir, dek)
+            .map_err(|e| io::Error::other(e.to_string()))?,
     ))
+}
+
+/// Load the current DEK epoch from Fjall, or generate and persist a new one.
+fn bootstrap_dek(
+    db: &Database,
+    kek: &dyn KekProvider,
+) -> Result<DekEpoch, StoreError> {
+    let meta = db.keyspace("meta", fjall::KeyspaceCreateOptions::default)?;
+
+    if let Some(wrapped_bytes) = meta.get(META_DEK_CURRENT)? {
+        // Existing DEK: unwrap and derive sub-keys.
+        let raw = kek.unwrap_dek(wrapped_bytes.as_ref())?;
+        let epoch = DekEpoch::from_raw(&raw, 0)?;
+        Ok(epoch)
+    } else {
+        // First boot: generate fresh DEK, wrap under KEK, persist.
+        let raw = generate_dek();
+        let wrapped = kek.wrap_dek(&raw)?;
+        meta.insert(META_DEK_CURRENT, &wrapped)?;
+        db.persist(fjall::PersistMode::SyncAll)?;
+        let epoch = DekEpoch::from_raw(&raw, 0)?;
+        Ok(epoch)
+    }
 }
 
 #[cfg(test)]
@@ -130,6 +169,7 @@ mod tests {
     use openraft::testing::log::StoreBuilder;
     use openraft::testing::log::Suite;
     use openraft::type_config::TypeConfigExt;
+    use openstack_keystone_storage_crypto::EnvKek;
     use tempfile::TempDir;
     use tracing_test::traced_test;
 
@@ -150,7 +190,8 @@ mod tests {
         > {
             let td =
                 TempDir::new().map_err(|e| StorageError::read(TypeConfig::err_from_error(&e)))?;
-            let (log_store, sm) = crate::new(td.path())
+            let kek = EnvKek::from_bytes([0x42u8; 32]);
+            let (log_store, sm) = crate::new(td.path(), 1, &kek)
                 .await
                 .map_err(|e| StorageError::read(TypeConfig::err_from_error(&e)))?;
             Ok((td, log_store, Arc::new(sm)))

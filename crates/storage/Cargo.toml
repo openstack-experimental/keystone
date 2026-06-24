@@ -34,9 +34,11 @@ fjall = { version = "3.1" }
 futures.workspace = true
 http.workspace = true
 mockall.workspace = true
+nix = { workspace = true, features = ["process", "resource"] }
 openraft = { workspace = true, features = ["serde", "type-alias"] }
 openstack-keystone-config.workspace = true
 openstack-keystone-storage-api.workspace = true
+openstack-keystone-storage-crypto.workspace = true
 prost.workspace = true
 rand.workspace = true
 rmp.workspace = true

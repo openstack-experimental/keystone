@@ -25,7 +25,7 @@ use openstack_keystone_config::{
     TlsConfigurationBuilder,
 };
 use openstack_keystone_distributed_storage::{
-    Metadata, Nonce, StorageApi, StoreDataEnvelope, TypeConfig,
+    Metadata, StorageApi, StoreDataEnvelope, TypeConfig,
     app::{Storage, get_app_server, init_storage},
     network::get_server_tls_config,
     protobuf as pb,
@@ -220,21 +220,19 @@ async fn test_remove(instances: &Vec<Arc<InstanceHolder>>) {
 
 fn bench_command_serde(c: &mut Criterion) {
     let delete_cmd = StoreCommand::Transaction(vec![
-        MutationInner::convert(Mutation::remove("foo", Some("bar"), None), Nonce::default())
-            .unwrap(),
+        MutationInner::convert(Mutation::remove("foo", Some("bar"), None)).unwrap(),
     ]);
     let delete_index_cmd = StoreCommand::Transaction(vec![
-        MutationInner::convert(Mutation::remove_index("foo"), Nonce::default()).unwrap(),
+        MutationInner::convert(Mutation::remove_index("foo")).unwrap(),
     ]);
     let set_cmd = StoreCommand::Transaction(vec![
         MutationInner::convert(
             Mutation::set("foo", "bar", Metadata::new(), Some("bar"), None).unwrap(),
-            Nonce::default(),
         )
         .unwrap(),
     ]);
     let set_index_cmd = StoreCommand::Transaction(vec![
-        MutationInner::convert(Mutation::set_index("foo"), Nonce::default()).unwrap(),
+        MutationInner::convert(Mutation::set_index("foo")).unwrap(),
     ]);
     let mut group = c.benchmark_group("Command_Serde");
     for (cmd, name) in [

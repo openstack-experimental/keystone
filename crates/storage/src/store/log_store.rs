@@ -16,18 +16,27 @@ use std::fmt::Debug;
 use std::io;
 use std::marker::PhantomData;
 use std::ops::{Bound, RangeBounds};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use fjall::{Database, Keyspace, KeyspaceCreateOptions, PersistMode};
 use openraft::alias::{EntryOf, LogIdOf, VoteOf};
 use openraft::entry::RaftEntry;
 use openraft::storage::{IOFlushed, LogState, RaftLogStorage};
+use openraft::vote::RaftLeaderId;
 use openraft::{OptionalSend, RaftLogReader, RaftTypeConfig};
+use openstack_keystone_storage_crypto::{DekEpoch, NonceManager, log_decrypt, log_encrypt};
 
 use crate::StoreError;
+use crate::types::FjallNoncePersistence;
 
 const KEY_VOTE: &[u8] = b"vote";
 const KEY_PURGED: &[u8] = b"purged";
+
+/// On-disk prefix length for a log entry: 8 bytes for term (BE u64).
+/// Full layout: [term_u64_BE (8)] ++ log_encrypt output [nonce_12 ++ ciphertext ++ tag_16].
+const TERM_PREFIX_LEN: usize = 8;
+/// Minimum stored log entry size: term(8) + nonce(12) + tag(16) = 36.
+const LOG_ENTRY_MIN_LEN: usize = 36;
 
 #[derive(Clone)]
 pub struct FjallLogStore<C>
@@ -37,6 +46,8 @@ where
     pub db: Arc<Database>,
     pub logs: Keyspace,
     pub meta: Keyspace,
+    dek: Arc<DekEpoch>,
+    nonce_mgr: Arc<Mutex<NonceManager>>,
     _p: PhantomData<C>,
 }
 
@@ -49,17 +60,27 @@ where
     ///
     /// # Parameters
     /// - `db`: Database instance.
+    /// - `node_id`: Raft node ID used as the high 8 bytes of each log nonce.
+    /// - `dek`: Data Encryption Key epoch for log entry encryption.
     ///
     /// # Returns
     /// A `Result` containing the `FjallLogStore`, or a `StoreError`.
-    pub fn new(db: Arc<Database>) -> Result<Self, StoreError> {
+    pub fn new(db: Arc<Database>, node_id: u64, dek: Arc<DekEpoch>) -> Result<Self, StoreError> {
         let logs = db.keyspace("logs", KeyspaceCreateOptions::default)?;
         let meta = db.keyspace("meta", KeyspaceCreateOptions::default)?;
+
+        let persistence = FjallNoncePersistence {
+            keyspace: meta.clone(),
+            db: db.clone(),
+        };
+        let nonce_mgr = NonceManager::new(node_id, Box::new(persistence))?;
 
         Ok(Self {
             db,
             logs,
             meta,
+            dek,
+            nonce_mgr: Arc::new(Mutex::new(nonce_mgr)),
             _p: Default::default(),
         })
     }
@@ -67,13 +88,6 @@ where
     #[allow(clippy::result_large_err)]
     #[tracing::instrument(skip(self, value))]
     /// Set metadata for the log store.
-    ///
-    /// # Parameters
-    /// - `key`: The metadata key.
-    /// - `value`: The metadata value.
-    ///
-    /// # Returns
-    /// A `Result` indicating success, or a `StoreError`.
     fn set_meta<T: serde::Serialize>(&self, key: &[u8], value: &T) -> Result<(), StoreError> {
         let bytes = serde_json::to_vec(value)?;
         self.meta.insert(key, bytes)?;
@@ -84,13 +98,6 @@ where
     #[allow(clippy::result_large_err)]
     #[tracing::instrument(skip(self))]
     /// Get metadata for the log store.
-    ///
-    /// # Parameters
-    /// - `key`: The metadata key.
-    ///
-    /// # Returns
-    /// A `Result` containing an `Option` with the metadata if found, or a
-    /// `StoreError`.
     fn get_meta<T: serde::de::DeserializeOwned>(
         &self,
         key: &[u8],
@@ -101,11 +108,43 @@ where
             None => Ok(None),
         }
     }
+
+    /// Encrypt a serialized Raft entry for storage.
+    ///
+    /// Layout: `[term_u64_BE; 8] ++ [nonce_12] ++ [ciphertext] ++ [tag_16]`
+    fn encrypt_entry(&self, term: u64, index: u64, plaintext: &[u8]) -> Result<Vec<u8>, StoreError> {
+        let nonce = self
+            .nonce_mgr
+            .lock()
+            .map_err(|_| StoreError::Other(eyre::eyre!("nonce manager lock poisoned")))?
+            .next_nonce()?;
+        let encrypted = log_encrypt(self.dek.log_dek(), plaintext, term, index, &nonce)?;
+        let mut out = Vec::with_capacity(TERM_PREFIX_LEN + encrypted.len());
+        out.extend_from_slice(&term.to_be_bytes());
+        out.extend_from_slice(&encrypted);
+        Ok(out)
+    }
+
+    /// Decrypt a stored log entry.
+    fn decrypt_entry(&self, index: u64, stored: &[u8]) -> Result<Vec<u8>, StoreError> {
+        if stored.len() < LOG_ENTRY_MIN_LEN {
+            return Err(StoreError::Other(eyre::eyre!(
+                "stored log entry too short: {} bytes",
+                stored.len()
+            )));
+        }
+        let term = u64::from_be_bytes(stored[..TERM_PREFIX_LEN].try_into().map_err(|_| {
+            StoreError::Other(eyre::eyre!("could not read term prefix"))
+        })?);
+        let plaintext = log_decrypt(self.dek.log_dek(), &stored[TERM_PREFIX_LEN..], term, index)?;
+        Ok(plaintext.to_vec())
+    }
 }
 
 impl<C> RaftLogReader<C> for FjallLogStore<C>
 where
     C: RaftTypeConfig,
+    <C::LeaderId as RaftLeaderId>::Committed: Clone + Into<u64>,
 {
     #[tracing::instrument(skip(self))]
     async fn try_get_log_entries<RB: RangeBounds<u64> + Clone + Debug + OptionalSend>(
@@ -114,7 +153,6 @@ where
     ) -> Result<Vec<C::Entry>, io::Error> {
         let mut entries = Vec::new();
 
-        // Convert u64 bounds to Big-Endian Vec<u8>
         let start = match range.start_bound() {
             Bound::Included(i) => Bound::Included(i.to_be_bytes().to_vec()),
             Bound::Excluded(i) => Bound::Excluded(i.to_be_bytes().to_vec()),
@@ -127,8 +165,21 @@ where
         };
 
         for res in self.logs.range((start, end)) {
-            let v = res.value().map_err(|e| io::Error::other(e.to_string()))?;
-            entries.push(serde_json::from_slice::<C::Entry>(&v)?);
+            let (key_slice, val_slice) = res
+                .into_inner()
+                .map_err(|e| io::Error::other(e.to_string()))?;
+
+            let index = u64::from_be_bytes(
+                key_slice.as_ref().try_into().map_err(|_| {
+                    io::Error::other("log key has unexpected length")
+                })?,
+            );
+
+            let plaintext = self
+                .decrypt_entry(index, val_slice.as_ref())
+                .map_err(|e| io::Error::other(e.to_string()))?;
+
+            entries.push(serde_json::from_slice::<C::Entry>(&plaintext)?);
         }
         Ok(entries)
     }
@@ -142,6 +193,7 @@ where
 impl<C> RaftLogStorage<C> for FjallLogStore<C>
 where
     C: RaftTypeConfig,
+    <C::LeaderId as RaftLeaderId>::Committed: Clone + Into<u64>,
 {
     type LogReader = Self;
 
@@ -155,13 +207,22 @@ where
         let last_log_id = self
             .logs
             .last_key_value()
-            .map(|x| x.value())
-            .transpose()
-            .map_err(|e| io::Error::other(e.to_string()))?
-            .map(|x| serde_json::from_slice::<EntryOf<C>>(&x))
-            .transpose()
-            .map_err(|e| io::Error::other(e.to_string()))?
-            .map(|x| x.log_id());
+            .map(|guard| -> Result<LogIdOf<C>, io::Error> {
+                let (key_slice, val_slice) = guard
+                    .into_inner()
+                    .map_err(|e| io::Error::other(e.to_string()))?;
+                let index = u64::from_be_bytes(
+                    key_slice.as_ref().try_into().map_err(|_| {
+                        io::Error::other("log key has unexpected length")
+                    })?,
+                );
+                let plaintext = self
+                    .decrypt_entry(index, val_slice.as_ref())
+                    .map_err(|e| io::Error::other(e.to_string()))?;
+                let entry: C::Entry = serde_json::from_slice(&plaintext)?;
+                Ok(entry.log_id())
+            })
+            .transpose()?;
 
         let last_purged_log_id = self
             .get_meta(KEY_PURGED)
@@ -187,12 +248,19 @@ where
         I: IntoIterator<Item = EntryOf<C>> + Send,
     {
         for entry in entries {
-            let key = entry.log_id().index.to_be_bytes();
-            // TODO: encrypt the payload with AEAD using log_id and term as metadata
-            tracing::debug!("appending {:?}, {:?}", entry.log_id().index, entry);
-            let val = serde_json::to_vec(&entry).map_err(|e| io::Error::other(e.to_string()))?;
+            let log_id = entry.log_id();
+            let term: u64 = log_id.committed_leader_id().clone().into();
+            let index = log_id.index();
+            tracing::debug!("appending log entry term={} index={}", term, index);
+
+            let plaintext =
+                serde_json::to_vec(&entry).map_err(|e| io::Error::other(e.to_string()))?;
+            let stored = self
+                .encrypt_entry(term, index, &plaintext)
+                .map_err(|e| io::Error::other(e.to_string()))?;
+
             self.logs
-                .insert(key, val)
+                .insert(index.to_be_bytes(), stored)
                 .map_err(|e| io::Error::other(e.to_string()))?;
         }
         self.db
@@ -211,8 +279,6 @@ where
             None => 0,
         };
 
-        // Fjall doesn't have a native "delete_range" yet, so we iterate and remove
-        // Alternatively, use a WriteBatch for atomicity
         for entry in self.logs.range(start_index.to_be_bytes()..) {
             if let Ok(key) = entry.key() {
                 self.logs
@@ -230,9 +296,6 @@ where
     #[tracing::instrument(skip(self))]
     async fn purge(&mut self, log_id: LogIdOf<C>) -> Result<(), io::Error> {
         tracing::debug!("delete_log: [0, {:?}]", log_id);
-        // Write the last-purged log id before purging the logs.
-        // The logs at and before last-purged log id will be ignored by openraft.
-        // Therefore, there is no need to do it in a transaction.
         self.set_meta(KEY_PURGED, &log_id)
             .map_err(|e| io::Error::other(e.to_string()))?;
 

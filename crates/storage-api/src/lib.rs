@@ -45,6 +45,42 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+/// Data sensitivity tier for at-rest encryption AD binding.
+///
+/// The tier byte is the first byte of the AES-GCM Associated Data in
+/// `state_encrypt`, binding the sensitivity classification cryptographically to
+/// the ciphertext.  Altering the tier in a stored record will fail tag
+/// verification.
+///
+/// Tier 0–1 (Public, Internal) may be served from local state machine
+/// reads without linearizability.  Tier 2–3 (Sensitive, Secret) require
+/// a Raft `ReadIndex` round-trip before reading (Phase 2).
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
+#[repr(u8)]
+pub enum DataTier {
+    /// Publicly readable data (e.g. service catalog).
+    Public = 0,
+    /// Internal keystone data (default).
+    #[default]
+    Internal = 1,
+    /// Sensitive data (e.g. hashed credentials).
+    Sensitive = 2,
+    /// Secret data (e.g. application credentials).
+    Secret = 3,
+}
+
+impl From<u8> for DataTier {
+    fn from(v: u8) -> Self {
+        match v {
+            0 => Self::Public,
+            1 => Self::Internal,
+            2 => Self::Sensitive,
+            3 => Self::Secret,
+            _ => Self::Internal,
+        }
+    }
+}
+
 /// Lightweight error type for storage operations.
 ///
 /// Contains only consumer-visible variants. Implementation-specific errors
@@ -135,25 +171,38 @@ pub struct Metadata {
     pub revision: u64,
     /// The timestamp when the resource was created.
     pub created_at: i64,
+    /// Data sensitivity tier used for at-rest encryption AD and read-path
+    /// enforcement.  Defaults to [`DataTier::Internal`].  Old records without
+    /// this field (e.g. from a previous schema) deserialize to the default.
+    #[serde(default)]
+    pub tier: DataTier,
 }
 
 impl Metadata {
-    /// Create new metadata with the current timestamp.
-    /// Create a new metadata instance with revision 0 and the current
-    /// timestamp.
+    /// Create new metadata with the current timestamp and `Internal` tier.
     pub fn new() -> Self {
         Self {
             revision: 0,
             created_at: Utc::now().timestamp(),
+            tier: DataTier::Internal,
         }
     }
 
-    /// Create new metadata with an incremented revision and the same timestamp.
-    /// Create a new metadata instance with the incremented revision.
+    /// Create new metadata with the given tier and the current timestamp.
+    pub fn with_tier(tier: DataTier) -> Self {
+        Self {
+            revision: 0,
+            created_at: Utc::now().timestamp(),
+            tier,
+        }
+    }
+
+    /// Create new metadata with an incremented revision, preserving timestamp and tier.
     pub fn new_revision(&self) -> Self {
         Self {
             revision: self.revision + 1,
             created_at: self.created_at,
+            tier: self.tier,
         }
     }
 

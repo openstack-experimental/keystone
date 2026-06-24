@@ -16,7 +16,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::StoreError;
-use crate::types::{Metadata, Nonce};
+use crate::types::Metadata;
 
 /// Re-export `Mutation` from storage-api crate.
 pub use openstack_keystone_storage_api::Mutation;
@@ -24,15 +24,20 @@ pub use openstack_keystone_storage_api::Mutation;
 /// Store command.
 ///
 /// An operation to be performed on the storage. The data is transferred
-/// encrypted over the wire since it is stored in the raft log files.
+/// over the wire inside the Raft log entry; log entries are encrypted by
+/// `log_encrypt` before being written to Fjall.
 #[derive(Debug, Deserialize, PartialEq, Serialize)]
 pub enum StoreCommand {
     /// Store mutation transaction.
     Transaction(Vec<MutationInner>),
 }
 
-/// Inner representation of the store modification operation encrypting the data
-/// for at-rest storage.
+/// Inner representation of a store modification operation.
+///
+/// Carries plaintext value bytes for Set/CreateIfAbsent mutations; the state
+/// machine re-encrypts them for at-rest storage via `state_encrypt` during
+/// `apply`.  `tier` is the data-sensitivity classification (ADR §3) bound
+/// cryptographically into the GCM Associated Data.
 #[derive(Debug, Deserialize, PartialEq, Serialize)]
 pub enum MutationInner {
     /// Delete the entry from the store.
@@ -55,7 +60,7 @@ pub enum MutationInner {
 
     /// Set the value for the key in the store.
     Set {
-        /// The value to set.
+        /// Plaintext serialized value bytes (encrypted by state machine on apply).
         #[serde(with = "serde_bytes")]
         cipher: Vec<u8>,
 
@@ -71,14 +76,14 @@ pub enum MutationInner {
         /// The resource metadata.
         metadata: Metadata,
 
-        /// Nonce.
-        nonce: Nonce,
+        /// Data sensitivity tier (ADR §3); bound into GCM AD on state_encrypt.
+        tier: u8,
     },
 
     /// Set the value for the key only if the key does not already exist.
     /// If the key exists, a CONFLICT violation is emitted and no write occurs.
     CreateIfAbsent {
-        /// The value to set.
+        /// Plaintext serialized value bytes (encrypted by state machine on apply).
         #[serde(with = "serde_bytes")]
         cipher: Vec<u8>,
 
@@ -91,8 +96,8 @@ pub enum MutationInner {
         /// The resource metadata.
         metadata: Metadata,
 
-        /// Nonce.
-        nonce: Nonce,
+        /// Data sensitivity tier (ADR §3); bound into GCM AD on state_encrypt.
+        tier: u8,
     },
 
     /// Set the key in the index keyspace.
@@ -103,18 +108,13 @@ pub enum MutationInner {
 }
 
 impl MutationInner {
-    /// Convert the mutation operation into the Raft operation.
+    /// Convert a public [`Mutation`] into the internal [`MutationInner`]
+    /// representation.
     ///
-    /// Convert the mutation command into the raft operation encrypting the data
-    /// for the at-rest encryption.
-    ///
-    /// # Parameters
-    /// - `value`: The mutation to convert.
-    /// - `nonce`: The encryption nonce.
-    ///
-    /// # Returns
-    /// A `Result` containing the `MutationInner`, or a `StoreError`.
-    pub fn convert(value: Mutation, nonce: Nonce) -> Result<MutationInner, StoreError> {
+    /// All `Set` and `CreateIfAbsent` mutations default to
+    /// `DataTier::Internal` (tier byte = 1).  Callers that need a different
+    /// tier must construct `MutationInner` directly.
+    pub fn convert(value: Mutation) -> Result<MutationInner, StoreError> {
         Ok(match value {
             Mutation::Remove {
                 key,
@@ -136,9 +136,8 @@ impl MutationInner {
                 key,
                 keyspace,
                 metadata,
-                // TODO: encrypt for at-rest
                 cipher: value,
-                nonce,
+                tier: openstack_keystone_storage_api::DataTier::Internal as u8,
                 expected_revision,
             },
             Mutation::CreateIfAbsent {
@@ -150,9 +149,8 @@ impl MutationInner {
                 key,
                 keyspace,
                 metadata,
-                // TODO: encrypt for at-rest
                 cipher: value,
-                nonce,
+                tier: openstack_keystone_storage_api::DataTier::Internal as u8,
             },
             Mutation::SetIndex { key } => MutationInner::SetIndex { key },
         })
@@ -187,13 +185,12 @@ impl StoreCommand {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::Metadata;
 
     #[test]
     fn test_delete_command() {
         let mutation = Mutation::remove("foo", Some("bar"), None);
-        let cmd = StoreCommand::Transaction(vec![
-            MutationInner::convert(mutation, Nonce::default()).unwrap(),
-        ]);
+        let cmd = StoreCommand::Transaction(vec![MutationInner::convert(mutation).unwrap()]);
 
         let packed = cmd.pack().unwrap();
         let unpacked = StoreCommand::unpack(&packed).unwrap();
@@ -203,9 +200,7 @@ mod tests {
     #[test]
     fn test_delete_command_with_expected_revision() {
         let mutation = Mutation::remove("foo", Some("bar"), Some(42));
-        let cmd = StoreCommand::Transaction(vec![
-            MutationInner::convert(mutation, Nonce::default()).unwrap(),
-        ]);
+        let cmd = StoreCommand::Transaction(vec![MutationInner::convert(mutation).unwrap()]);
 
         let packed = cmd.pack().unwrap();
         let unpacked = StoreCommand::unpack(&packed).unwrap();
@@ -224,9 +219,7 @@ mod tests {
     #[test]
     fn test_delete_index_command() {
         let mutation = Mutation::remove_index("foo");
-        let cmd = StoreCommand::Transaction(vec![
-            MutationInner::convert(mutation, Nonce::default()).unwrap(),
-        ]);
+        let cmd = StoreCommand::Transaction(vec![MutationInner::convert(mutation).unwrap()]);
 
         let packed = cmd.pack().unwrap();
         let unpacked = StoreCommand::unpack(&packed).unwrap();
@@ -237,17 +230,16 @@ mod tests {
     fn test_set_command() {
         let mutation =
             Mutation::set("foo", "value", Metadata::new(), Some("bar"), Some(3)).unwrap();
-        let cmd = StoreCommand::Transaction(vec![
-            MutationInner::convert(mutation, Nonce::default()).unwrap(),
-        ]);
+        let cmd = StoreCommand::Transaction(vec![MutationInner::convert(mutation).unwrap()]);
         let packed = cmd.pack().unwrap();
         let unpacked = StoreCommand::unpack(&packed).unwrap();
         assert_eq!(cmd, unpacked);
         if let StoreCommand::Transaction(data) = unpacked
             && let Some(mutation) = data.first()
-            && let MutationInner::Set { cipher, .. } = mutation
+            && let MutationInner::Set { cipher, tier, .. } = mutation
         {
             assert_eq!(cipher, &rmp_serde::to_vec("value").unwrap());
+            assert_eq!(*tier, 1u8); // DataTier::Internal
         } else {
             panic!("should be the set command");
         }
@@ -256,9 +248,7 @@ mod tests {
     #[test]
     fn test_set_index_command() {
         let mutation = Mutation::set_index("foo");
-        let cmd = StoreCommand::Transaction(vec![
-            MutationInner::convert(mutation, Nonce::default()).unwrap(),
-        ]);
+        let cmd = StoreCommand::Transaction(vec![MutationInner::convert(mutation).unwrap()]);
         let packed = cmd.pack().unwrap();
         let unpacked = StoreCommand::unpack(&packed).unwrap();
         assert_eq!(cmd, unpacked);

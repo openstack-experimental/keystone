@@ -13,10 +13,12 @@
 // SPDX-License-Identifier: Apache-2.0
 //! # Fjall DB based `openraft` state machine implementation.
 
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
 use std::io;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use fjall::{Database, Keyspace, KeyspaceCreateOptions, PersistMode, Readable};
 use futures::Stream;
@@ -34,19 +36,132 @@ use openraft::storage::EntryResponder;
 use openraft::storage::RaftStateMachine;
 use openraft::storage::Snapshot;
 use openraft::type_config::TypeConfigExt;
+use openstack_keystone_storage_crypto::{DekEpoch, state_decrypt, state_encrypt};
 use rand::RngExt;
 use serde::Deserialize;
 use serde::Serialize;
 
+use crate::DataTier;
 use crate::StoreError;
 use crate::TypeConfig;
 use crate::protobuf as pb;
 use crate::protobuf::api::response::Violation;
 use crate::store_command::*;
-use crate::types::{Metadata, StoreDataInnerEnvelope};
+use crate::types::Metadata;
 
 const KEY_LAST_APPLIED_LOG: &[u8] = b"last_applied_log";
 const KEY_LAST_MEMBERSHIP: &[u8] = b"last_membership";
+
+/// Fjall meta key prefix for persisted quarantine markers.
+const QUARANTINE_META_PREFIX: &str = "_meta:quarantine:";
+
+/// Sliding window for GCM failure counting.
+const QUARANTINE_WINDOW: Duration = Duration::from_secs(60);
+
+/// Number of GCM failures within `QUARANTINE_WINDOW` that triggers quarantine.
+const QUARANTINE_THRESHOLD: usize = 3;
+
+/// Per-partition GCM decryption failure tracker with automatic quarantine.
+///
+/// A partition accumulates failure `Instant`s in a 60-second sliding window.
+/// At three failures the partition is marked quarantined and the marker is
+/// persisted to Fjall `meta` so it survives restarts.
+///
+/// Quarantine can be cleared by an operator via `FjallStateMachine::clear_quarantine`.
+#[derive(Default)]
+struct QuarantineTracker {
+    failures: Mutex<HashMap<String, VecDeque<Instant>>>,
+    quarantined: Mutex<HashSet<String>>,
+}
+
+impl QuarantineTracker {
+    /// Initialise from Fjall meta, loading any persisted quarantine markers.
+    fn from_meta(meta: &Keyspace) -> Result<Self, crate::StoreError> {
+        let mut quarantined = HashSet::new();
+        for item in meta.prefix(QUARANTINE_META_PREFIX.as_bytes()) {
+            let (key_bytes, _) = item.into_inner()?;
+            if let Ok(key_str) = String::from_utf8(key_bytes.to_vec()) {
+                if let Some(partition) = key_str.strip_prefix(QUARANTINE_META_PREFIX) {
+                    quarantined.insert(partition.to_string());
+                    tracing::error!(
+                        partition,
+                        "SECURITY: partition is quarantined (loaded from persistent state)"
+                    );
+                }
+            }
+        }
+        Ok(Self {
+            failures: Mutex::new(HashMap::new()),
+            quarantined: Mutex::new(quarantined),
+        })
+    }
+
+    fn is_quarantined(&self, partition: &str) -> bool {
+        self.quarantined
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .contains(partition)
+    }
+
+    /// Records a GCM failure for a partition; returns `true` if newly quarantined.
+    fn record_failure(&self, partition: &str) -> bool {
+        if self.is_quarantined(partition) {
+            return false;
+        }
+
+        let now = Instant::now();
+        let mut failures = self.failures.lock().unwrap_or_else(|p| p.into_inner());
+        let window = failures.entry(partition.to_string()).or_default();
+
+        // Evict timestamps outside the sliding window.
+        window.retain(|&t| now.duration_since(t) < QUARANTINE_WINDOW);
+        window.push_back(now);
+        let count = window.len();
+
+        match count {
+            1 => {
+                tracing::warn!(
+                    partition,
+                    "SECURITY: GCM tag verification failure (1/{QUARANTINE_THRESHOLD}); \
+                     possible data corruption or tampering"
+                );
+            }
+            2 => {
+                tracing::error!(
+                    partition,
+                    "SECURITY: GCM tag verification failure (2/{QUARANTINE_THRESHOLD}); \
+                     possible active attack"
+                );
+            }
+            _ => {
+                tracing::error!(
+                    partition,
+                    count,
+                    "SECURITY: GCM failures reached threshold — quarantining partition"
+                );
+                drop(failures);
+                self.quarantined
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .insert(partition.to_string());
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Clears quarantine state for a partition (operator-initiated recovery).
+    fn clear(&self, partition: &str) {
+        self.quarantined
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .remove(partition);
+        self.failures
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .remove(partition);
+    }
+}
 
 /// Snapshot file format: metadata + data stored together.
 #[derive(Serialize, Deserialize)]
@@ -56,8 +171,10 @@ struct SnapshotFile {
 }
 
 /// State machine backed by FjallDB for full persistence.
-/// All application data is stored directly in the `data` column family.
-/// Snapshots are persisted to the `snapshot_dir` directory.
+///
+/// All application data is AES-256-GCM encrypted at rest via `state_encrypt`
+/// before writing to the `data` keyspace.  The `dek` field holds the current
+/// DEK epoch; encryption uses the `StateDek` sub-key derived from it.
 #[derive(Clone)]
 pub struct FjallStateMachine {
     db: Arc<Database>,
@@ -65,6 +182,8 @@ pub struct FjallStateMachine {
     data: Keyspace,
     index: Keyspace,
     snapshot_dir: PathBuf,
+    dek: Arc<DekEpoch>,
+    quarantine: Arc<QuarantineTracker>,
 }
 
 impl FjallStateMachine {
@@ -74,15 +193,22 @@ impl FjallStateMachine {
     /// # Parameters
     /// - `db`: Database instance.
     /// - `snapshot_dir`: Directory to store snapshots.
+    /// - `dek`: Data Encryption Key epoch for state encryption.
     ///
     /// # Returns
     /// A `Result` containing the `FjallStateMachine`, or a `StoreError`.
-    pub fn new(db: Arc<Database>, snapshot_dir: PathBuf) -> Result<Self, StoreError> {
+    pub fn new(
+        db: Arc<Database>,
+        snapshot_dir: PathBuf,
+        dek: Arc<DekEpoch>,
+    ) -> Result<Self, StoreError> {
         let meta = db.keyspace("meta", KeyspaceCreateOptions::default)?;
         let data = db.keyspace("data", KeyspaceCreateOptions::default)?;
         let index = db.keyspace("index", KeyspaceCreateOptions::default)?;
 
         fs::create_dir_all(&snapshot_dir)?;
+
+        let quarantine = Arc::new(QuarantineTracker::from_meta(&meta)?);
 
         Ok(Self {
             db,
@@ -90,50 +216,32 @@ impl FjallStateMachine {
             meta,
             data,
             index,
+            dek,
+            quarantine,
         })
     }
 
     /// Get the database handle.
-    ///
-    /// # Returns
-    /// A reference to the database.
     pub fn db(&self) -> &Arc<Database> {
         &self.db
     }
 
     /// Get the data `keyspace` handle.
-    ///
-    /// # Returns
-    /// A reference to the data keyspace.
     pub fn data(&self) -> &Keyspace {
         &self.data
     }
 
     /// Get the index `keyspace` handle.
-    ///
-    /// # Returns
-    /// A reference to the index keyspace.
     pub fn index(&self) -> &Keyspace {
         &self.index
     }
 
     /// Get the metadata `keyspace` handle.
-    ///
-    /// # Returns
-    /// A reference to the metadata keyspace.
     pub fn meta(&self) -> &Keyspace {
         &self.meta
     }
 
-    /// Get the Flall `keyspace` handle by name.
-    ///
-    /// Get a handle to the keyspace creating a new one when not exists.
-    ///
-    /// # Parameters
-    /// - `name`: The name of the keyspace.
-    ///
-    /// # Returns
-    /// A `Result` containing the `Keyspace`, or a `StoreError`.
+    /// Get the Fjall `keyspace` handle by name.
     pub fn keyspace<S: AsRef<str>>(&self, name: S) -> Result<Keyspace, StoreError> {
         Ok(match name.as_ref() {
             "data" => self.data.clone(),
@@ -145,13 +253,94 @@ impl FjallStateMachine {
         })
     }
 
+    /// Decrypt state bytes previously written by [`state_encrypt`].
+    ///
+    /// `tier`, `keyspace`, and `pk` must match the values used at write time;
+    /// any mismatch causes GCM tag verification to fail and returns an error.
+    ///
+    /// Returns `StoreError::Quarantined` if the keyspace partition is quarantined.
+    /// GCM tag failures are tracked; three failures within 60 s quarantine the
+    /// partition and persist the marker to Fjall meta for restart durability.
+    pub fn decrypt_state(
+        &self,
+        stored: &[u8],
+        tier: u8,
+        keyspace: &[u8],
+        pk: &[u8],
+    ) -> Result<Vec<u8>, StoreError> {
+        let partition = String::from_utf8_lossy(keyspace).into_owned();
+
+        if self.quarantine.is_quarantined(&partition) {
+            return Err(StoreError::Quarantined(partition));
+        }
+
+        match state_decrypt(self.dek.state_dek(), stored, tier, keyspace, pk) {
+            Ok((plaintext, _next_version)) => Ok(plaintext.to_vec()),
+            Err(e) => {
+                if matches!(e, openstack_keystone_storage_crypto::CryptoError::AesDecrypt) {
+                    if self.quarantine.record_failure(&partition) {
+                        // Newly quarantined — persist so the marker survives restarts.
+                        let key = format!("{QUARANTINE_META_PREFIX}{partition}");
+                        // Best-effort: non-fatal if Fjall write fails here.
+                        let _ = self.meta.insert(key, b"1");
+                    }
+                }
+                Err(StoreError::Crypto { source: e })
+            }
+        }
+    }
+
+    /// Returns `true` if the given keyspace partition is currently quarantined.
+    pub fn is_quarantined(&self, partition: &str) -> bool {
+        self.quarantine.is_quarantined(partition)
+    }
+
+    /// Clears quarantine for a partition (operator-initiated recovery).
+    ///
+    /// Removes the quarantine marker from Fjall meta so the partition becomes
+    /// accessible again after a restart as well.
+    pub fn clear_quarantine(&self, partition: &str) -> Result<(), StoreError> {
+        self.quarantine.clear(partition);
+        let key = format!("{QUARANTINE_META_PREFIX}{partition}");
+        self.meta.remove(key)?;
+        Ok(())
+    }
+
+    /// Encrypt and write state bytes for a given key.
+    ///
+    /// Reads the current encrypted record (if present) to extract the stored
+    /// version, increments it, then calls `state_encrypt` with the new version.
+    ///
+    /// Returns `StoreError::Quarantined` if the keyspace partition is quarantined.
+    fn encrypt_and_store(
+        &self,
+        ks: &Keyspace,
+        key: &[u8],
+        keyspace: &[u8],
+        tier: u8,
+        plaintext: &[u8],
+    ) -> Result<Vec<u8>, StoreError> {
+        let partition = String::from_utf8_lossy(keyspace).into_owned();
+        if self.quarantine.is_quarantined(&partition) {
+            return Err(StoreError::Quarantined(partition));
+        }
+
+        // Read existing version (0 for new keys).
+        let next_version = if let Some(existing) = ks.get(key)? {
+            state_decrypt(self.dek.state_dek(), existing.as_ref(), tier, keyspace, key)
+                .map(|(_, v)| v)
+                .unwrap_or(0)
+        } else {
+            0
+        };
+
+        let encrypted =
+            state_encrypt(self.dek.state_dek(), plaintext, tier, keyspace, key, next_version)?;
+        Ok(encrypted)
+    }
+
     #[allow(clippy::result_large_err)]
     #[tracing::instrument(skip(self))]
-    /// Get the internal metadata.
-    ///
-    /// # Returns
-    /// A `Result` containing a tuple of the last applied log ID and the stored
-    /// membership, or a `StoreError`.
     fn get_meta(
         &self,
     ) -> Result<(Option<LogIdOf<TypeConfig>>, StoredMembershipOf<TypeConfig>), StoreError> {
@@ -170,24 +359,10 @@ impl FjallStateMachine {
     }
 }
 
-/// Serialize a value to bytes.
-///
-/// # Parameters
-/// - `value`: The value to serialize.
-///
-/// # Returns
-/// A `Result` containing the serialized bytes, or a `StorageError`.
 fn serialize<T: Serialize>(value: &T) -> Result<Vec<u8>, StorageError<TypeConfig>> {
     rmp_serde::to_vec(value).map_err(|e| StorageError::write(TypeConfig::err_from_error(&e)))
 }
 
-/// Deserialize bytes into a value.
-///
-/// # Parameters
-/// - `bytes`: The bytes to deserialize.
-///
-/// # Returns
-/// A `Result` containing the deserialized value, or a `StorageError`.
 fn deserialize<T: for<'de> Deserialize<'de>>(bytes: &[u8]) -> Result<T, StorageError<TypeConfig>> {
     rmp_serde::from_slice(bytes).map_err(|e| StorageError::read(TypeConfig::err_from_error(&e)))
 }
@@ -195,10 +370,8 @@ fn deserialize<T: for<'de> Deserialize<'de>>(bytes: &[u8]) -> Result<T, StorageE
 impl RaftSnapshotBuilder<TypeConfig> for Arc<FjallStateMachine> {
     #[tracing::instrument(level = "trace", skip(self))]
     async fn build_snapshot(&mut self) -> Result<SnapshotOf<TypeConfig>, io::Error> {
-        //// 1. Get the last applied log ID from the snapshot view
         let (last_applied_log, last_membership) = self.get_meta()?;
 
-        // Generate a random snapshot index.
         let snapshot_idx: u64 = rand::rng().random_range(0..1000);
 
         let snapshot_id = if let Some(last) = last_applied_log {
@@ -220,10 +393,8 @@ impl RaftSnapshotBuilder<TypeConfig> for Arc<FjallStateMachine> {
 
         tracing::trace!("snapshot metadata: {:?}", meta);
 
-        // 2. Capture a point-in-time view of the entire database
         let snapshot = self.db.snapshot();
 
-        // 3. Serialize all KV pairs in the 'data' keyspace from the snapshot
         let mut data_buffer = Vec::new();
         for item in snapshot.iter(&self.data) {
             let (key, value) = item
@@ -232,7 +403,6 @@ impl RaftSnapshotBuilder<TypeConfig> for Arc<FjallStateMachine> {
             data_buffer.push((key.to_vec(), value.to_vec()));
         }
 
-        // Serialize both metadata and data together
         let snapshot_file = SnapshotFile {
             meta: meta.clone(),
             data: data_buffer.clone(),
@@ -245,7 +415,6 @@ impl RaftSnapshotBuilder<TypeConfig> for Arc<FjallStateMachine> {
             )
         })?;
 
-        // Write complete snapshot to file
         let snapshot_path = self.snapshot_dir.join(&snapshot_id);
         fs::write(&snapshot_path, &file_bytes).map_err(|e| {
             StorageError::<TypeConfig>::write_snapshot(
@@ -254,7 +423,6 @@ impl RaftSnapshotBuilder<TypeConfig> for Arc<FjallStateMachine> {
             )
         })?;
 
-        // Return snapshot with data-only for backward compatibility with the data field
         let data_bytes = serialize(&data_buffer).map_err(|e| {
             StorageError::<TypeConfig>::write_snapshot(
                 Some(meta.signature()),
@@ -265,7 +433,6 @@ impl RaftSnapshotBuilder<TypeConfig> for Arc<FjallStateMachine> {
 
         Ok(Snapshot {
             meta,
-            //snapshot: Cursor::new(data_bytes),
             snapshot: data_bytes,
         })
     }
@@ -302,14 +469,11 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
             "decoding snapshot for installation"
         );
 
-        // Deserialize snapshot data
         let snapshot_data: Vec<(Vec<u8>, Vec<u8>)> = deserialize(snapshot.as_ref())
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
 
-        // Clone data for file writing later
         let snapshot_data_clone = snapshot_data.clone();
 
-        // Prepare metadata to restore
         let last_applied_bytes = meta
             .last_log_id
             .as_ref()
@@ -347,7 +511,6 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
             .persist(PersistMode::SyncAll)
             .map_err(|e| io::Error::other(e.to_string()))?;
 
-        // Write snapshot file with metadata for get_current_snapshot
         let snapshot_file = SnapshotFile {
             meta: meta.clone(),
             data: snapshot_data_clone,
@@ -363,7 +526,6 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
 
     #[tracing::instrument(skip(self))]
     async fn get_current_snapshot(&mut self) -> Result<Option<SnapshotOf<TypeConfig>>, io::Error> {
-        // Find the latest snapshot file by comparing filenames lexicographically
         let mut latest_snapshot_id: Option<String> = None;
 
         for entry in fs::read_dir(&self.snapshot_dir)? {
@@ -377,7 +539,6 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
             if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
                 let snapshot_id = filename.to_string();
 
-                // Update latest if this is the first snapshot or if it's newer
                 if latest_snapshot_id
                     .as_ref()
                     .is_none_or(|current| snapshot_id > *current)
@@ -393,12 +554,10 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
 
         let snapshot_path = self.snapshot_dir.join(&snapshot_id);
 
-        // Read and deserialize snapshot file
         let file_bytes = fs::read(&snapshot_path)?;
         let snapshot_file: SnapshotFile = rmp_serde::from_slice(&file_bytes)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
 
-        // Serialize data for snapshot field
         let data_bytes = rmp_serde::to_vec(&snapshot_file.data)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
 
@@ -417,10 +576,6 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
 
         while let Some((entry, responder)) = entries.try_next().await? {
             let last_applied_log = entry.log_id();
-            // Per-entry batch: mutations commit atomically or are discarded entirely on
-            // violations. last_applied_log is committed together with user data
-            // so that on crash recovery an entry is never replayed with a
-            // different CAS outcome.
             let mut batch = self.db.batch();
             let mut has_violations = false;
 
@@ -443,7 +598,6 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                                         ));
                                     }
 
-                                    // Check expected_revision — if mismatch, record violation.
                                     if let Some(expected_revision) = expected_revision {
                                         let curr_meta = self
                                             .meta()
@@ -468,7 +622,6 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                                         }
                                     }
 
-                                    // Apply to batch — will be discarded if any violation occurs.
                                     let ks = &self.keyspace(keyspace)?;
                                     batch.remove(ks, key.clone());
                                     batch.remove(&self.meta, key.clone());
@@ -481,7 +634,7 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                                     keyspace,
                                     cipher,
                                     metadata,
-                                    nonce,
+                                    tier,
                                     expected_revision,
                                 } => {
                                     if keyspace == "meta" && key == KEY_LAST_MEMBERSHIP
@@ -492,7 +645,6 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                                         ));
                                     }
 
-                                    // Check expected_revision — if mismatch, record violation.
                                     if let Some(expected_revision) = expected_revision {
                                         let curr_meta = self
                                             .meta()
@@ -517,25 +669,48 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                                         }
                                     }
 
-                                    // Apply to batch — will be discarded if any violation occurs.
-                                    let ks = &self.keyspace(keyspace)?;
-                                    let inner_data =
-                                        StoreDataInnerEnvelope { cipher, nonce }.pack()?;
-                                    batch.insert(ks, key.clone(), inner_data);
-                                    batch.insert(
-                                        &self.meta,
-                                        key.clone(),
-                                        metadata
-                                            .pack()
-                                            .map_err(|e| io::Error::other(e.to_string()))?,
-                                    );
+                                    let ks = self
+                                        .keyspace(&keyspace)
+                                        .map_err(|e| io::Error::other(e.to_string()))?;
+                                    match self.encrypt_and_store(
+                                        &ks,
+                                        &key,
+                                        keyspace.as_bytes(),
+                                        tier,
+                                        &cipher,
+                                    ) {
+                                        Ok(encrypted) => {
+                                            batch.insert(&ks, key.clone(), encrypted);
+                                            let mut meta_with_tier = metadata.clone();
+                                            meta_with_tier.tier = DataTier::from(tier);
+                                            batch.insert(
+                                                &self.meta,
+                                                key.clone(),
+                                                meta_with_tier
+                                                    .pack()
+                                                    .map_err(|e| io::Error::other(e.to_string()))?,
+                                            );
+                                        }
+                                        Err(StoreError::Quarantined(p)) => {
+                                            violations.push(Violation {
+                                                r#type: "QUARANTINED".to_string(),
+                                                subject: String::from_utf8_lossy(&key).to_string(),
+                                                description: format!(
+                                                    "partition '{p}' is quarantined"
+                                                ),
+                                            });
+                                        }
+                                        Err(e) => {
+                                            return Err(io::Error::other(e.to_string()));
+                                        }
+                                    }
                                 }
                                 MutationInner::CreateIfAbsent {
                                     key,
                                     keyspace,
                                     cipher,
                                     metadata,
-                                    nonce,
+                                    tier,
                                 } => {
                                     let exists = self
                                         .meta()
@@ -551,18 +726,41 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                                         });
                                     }
 
-                                    // Apply to batch — will be discarded if any violation occurs.
-                                    let ks = &self.keyspace(keyspace)?;
-                                    let inner_data =
-                                        StoreDataInnerEnvelope { cipher, nonce }.pack()?;
-                                    batch.insert(ks, key.clone(), inner_data);
-                                    batch.insert(
-                                        &self.meta,
-                                        key.clone(),
-                                        metadata
-                                            .pack()
-                                            .map_err(|e| io::Error::other(e.to_string()))?,
-                                    );
+                                    let ks = self
+                                        .keyspace(&keyspace)
+                                        .map_err(|e| io::Error::other(e.to_string()))?;
+                                    match self.encrypt_and_store(
+                                        &ks,
+                                        &key,
+                                        keyspace.as_bytes(),
+                                        tier,
+                                        &cipher,
+                                    ) {
+                                        Ok(encrypted) => {
+                                            batch.insert(&ks, key.clone(), encrypted);
+                                            let mut meta_with_tier = metadata.clone();
+                                            meta_with_tier.tier = DataTier::from(tier);
+                                            batch.insert(
+                                                &self.meta,
+                                                key.clone(),
+                                                meta_with_tier
+                                                    .pack()
+                                                    .map_err(|e| io::Error::other(e.to_string()))?,
+                                            );
+                                        }
+                                        Err(StoreError::Quarantined(p)) => {
+                                            violations.push(Violation {
+                                                r#type: "QUARANTINED".to_string(),
+                                                subject: String::from_utf8_lossy(&key).to_string(),
+                                                description: format!(
+                                                    "partition '{p}' is quarantined"
+                                                ),
+                                            });
+                                        }
+                                        Err(e) => {
+                                            return Err(io::Error::other(e.to_string()));
+                                        }
+                                    }
                                 }
                                 MutationInner::SetIndex { key } => {
                                     batch.insert(&self.index, key, vec![]);
@@ -583,17 +781,12 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                 (None, vec![])
             };
 
-            // Commit user data only if no violations for this entry.
             if !has_violations {
                 batch
                     .commit()
                     .map_err(|e| io::Error::other(e.to_string()))?;
             }
-            // else: user data mutations are discarded.
 
-            // Always persist last_applied_log per entry regardless of violations.
-            // A violating entry is a no-op that still advances the log pointer,
-            // preventing Raft from replaying it and producing a different outcome.
             self.meta
                 .insert(
                     KEY_LAST_APPLIED_LOG,
@@ -602,7 +795,6 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                 )
                 .map_err(|e| io::Error::other(e.to_string()))?;
 
-            // Persist after all writes, before sending response.
             self.db
                 .persist(PersistMode::SyncAll)
                 .map_err(|e| io::Error::other(e.to_string()))?;
@@ -615,7 +807,6 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
             }
         }
 
-        // Bookkeeping batch for Raft membership state (always commits).
         let mut meta_batch = self.db.batch();
         if let Some(val) = last_membership {
             meta_batch.insert(

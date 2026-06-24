@@ -54,6 +54,10 @@ default-filter = "all()"
 filter = "binary(integration)"
 setup = "raft-env"
 
+[[profile.raft.scripts]]
+filter = "binary(test_cluster)"
+setup = "raft-env"
+
 # --- API tests ---
 [profile.api]
 

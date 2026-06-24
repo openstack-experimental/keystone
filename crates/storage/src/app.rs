@@ -19,8 +19,10 @@ use dashmap::DashMap;
 use eyre::eyre;
 use openraft::Config;
 use openraft::async_runtime::WatchReceiver;
+use openstack_keystone_storage_crypto::EnvKek;
 
 use crate::protobuf as pb;
+use openraft::ReadPolicy;
 use openraft::errors::{ForwardToLeader, RaftError};
 use tokio::sync::watch;
 use tonic::Code;
@@ -31,6 +33,7 @@ use tracing::debug;
 use openstack_keystone_config::ConfigManager;
 
 use crate::ApiStoreError;
+use crate::DataTier;
 use crate::StorageApi;
 use crate::StoreError;
 use crate::StoreResponse;
@@ -85,8 +88,20 @@ pub async fn init_storage(config_manager: &Arc<ConfigManager>) -> Result<Storage
         .ok_or(StoreError::ConfigMissing)?
         .clone();
 
+    // Run OS-level security pre-flight checks before loading any key material.
+    crate::preflight::preflight_check();
+
+    // Bootstrap the Key Encryption Key from the environment (dev mode).
+    // Production deployments should set kek_provider = "pkcs11" in config
+    // and the Pkcs11KekStub will be replaced by a live HSM driver in a
+    // future phase.
+    let kek = EnvKek::from_env().map_err(|e| {
+        StoreError::Other(eyre!("failed to load KEYSTONE_DEV_KEK: {e}"))
+    })?;
+
     // Create stores and network
-    let (log_store, sm) = crate::new::<crate::TypeConfig, _>(ds_config.path).await?;
+    let (log_store, sm) =
+        crate::new::<crate::TypeConfig, _>(ds_config.path, ds_config.node_id, &kek).await?;
     let state_machine_store = Arc::new(sm);
     let tls_watcher = init_tls_watcher(config_manager).await?;
     let network = Arc::new(NetworkManager::new(tls_watcher.clone())?);
@@ -183,33 +198,55 @@ impl StorageApi for Storage {
         key: &[u8],
         keyspace: Option<&str>,
     ) -> Result<Option<StoreDataEnvelope<Vec<u8>>>, ApiStoreError> {
+        let keyspace_bytes = keyspace.unwrap_or("data").as_bytes().to_vec();
+
+        // Read metadata first to determine the sensitivity tier.
+        let key_str = String::from_utf8(key.to_vec())
+            .map_err(|e| StoreError::Other(eyre::eyre!("{e}")))?;
+        let metadata: Option<Metadata> = (|| -> Result<_, StoreError> {
+            Ok(self.state_machine_store
+                .meta()
+                .get(&key_str)?
+                .map(|raw| Metadata::unpack(raw.as_ref()))
+                .transpose()?)
+        })()
+        .map_err(ApiStoreError::from)?;
+
+        // If the key has no metadata it does not exist yet.
+        let Some(metadata) = metadata else {
+            return Ok(None);
+        };
+
+        // Tier 2 (Sensitive) and 3 (Secret) require a linearizable ReadIndex
+        // before reading from local state.
+        if metadata.tier as u8 >= DataTier::Sensitive as u8 {
+            self.raft
+                .ensure_linearizable(ReadPolicy::ReadIndex)
+                .await
+                .map_err(|e| {
+                    ApiStoreError::Other(Box::new(StoreError::Other(eyre::eyre!(
+                        "ReadIndex failed: {e:?}"
+                    ))))
+                })?;
+        }
+
         let res: Result<Option<StoreDataEnvelope<Vec<u8>>>, StoreError> =
-            || -> Result<_, StoreError> {
+            (|| -> Result<_, StoreError> {
                 let ks = match keyspace {
-                    None => self.state_machine_store.data(),
-                    Some(name) => &self.state_machine_store.keyspace(name)?,
+                    None => self.state_machine_store.data().clone(),
+                    Some(name) => self.state_machine_store.keyspace(name)?,
                 };
-                if let Some(data) = ks
-                    .get(key)?
-                    .map(|x| StoreDataInnerEnvelope::unpack_bytes(x.as_ref()))
-                    .transpose()?
-                {
-                    let key_str = String::from_utf8(key.to_vec())?;
-                    let metadata =
-                        if let Some(meta) = self.state_machine_store.meta().get(&key_str)? {
-                            Metadata::unpack(&meta)?
-                        } else {
-                            let res = Metadata::new();
-                            self.state_machine_store
-                                .meta()
-                                .insert(&key_str, res.pack()?)?;
-                            res
-                        };
-                    Ok(Some(StoreDataEnvelope { data, metadata }))
-                } else {
-                    Ok(None)
-                }
-            }();
+                let Some(encrypted) = ks.get(key)? else {
+                    return Ok(None);
+                };
+                let data = self.state_machine_store.decrypt_state(
+                    encrypted.as_ref(),
+                    metadata.tier as u8,
+                    &keyspace_bytes,
+                    key,
+                )?;
+                Ok(Some(StoreDataEnvelope { data, metadata }))
+            })();
         Ok(res?)
     }
 
@@ -230,10 +267,17 @@ impl StorageApi for Storage {
         keyspace: Option<&str>,
     ) -> Result<Vec<(String, StoreDataEnvelope<Vec<u8>>)>, ApiStoreError> {
         let keyspace_name = keyspace.map(String::from);
-        let res: Result<Vec<(String, StoreDataEnvelope<Vec<u8>>)>, StoreError> = (|| {
-            let ks = match keyspace_name {
+        let keyspace_bytes = keyspace.unwrap_or("data").as_bytes().to_vec();
+
+        // Phase 1: collect raw encrypted bytes + metadata synchronously.
+        // Decryption happens after a potential async ReadIndex round-trip.
+        let raw_items: Result<Vec<(String, Vec<u8>, Metadata)>, StoreError> = (|| {
+            let ks_owned = keyspace_name
+                .map(|n| self.state_machine_store.keyspace(n))
+                .transpose()?;
+            let ks = match ks_owned.as_ref() {
                 None => self.state_machine_store.data(),
-                Some(name) => &self.state_machine_store.keyspace(name)?,
+                Some(k) => k,
             };
             ks.prefix(prefix)
                 .map(|item| {
@@ -248,17 +292,38 @@ impl StorageApi for Storage {
                             .insert(k.clone(), res.pack()?)?;
                         res
                     };
-                    Ok((
-                        k.clone(),
-                        StoreDataEnvelope {
-                            data: StoreDataInnerEnvelope::unpack_bytes(val.as_ref())?,
-                            metadata: meta,
-                        },
-                    ))
+                    Ok((k, val.to_vec(), meta))
                 })
                 .collect()
         })();
-        Ok(res?)
+        let raw_items = raw_items.map_err(ApiStoreError::from)?;
+
+        // Phase 2: if any entry is SENSITIVE or SECRET, enforce linearizable read.
+        let needs_read_index = raw_items
+            .iter()
+            .any(|(_, _, meta)| meta.tier as u8 >= DataTier::Sensitive as u8);
+        if needs_read_index {
+            self.raft
+                .ensure_linearizable(ReadPolicy::ReadIndex)
+                .await
+                .map_err(|e| {
+                    ApiStoreError::Other(Box::new(StoreError::Other(eyre::eyre!(
+                        "ReadIndex failed: {e:?}"
+                    ))))
+                })?;
+        }
+
+        // Phase 3: decrypt all entries using the per-entry tier.
+        raw_items
+            .into_iter()
+            .map(|(k, val_bytes, meta)| {
+                let data = self
+                    .state_machine_store
+                    .decrypt_state(&val_bytes, meta.tier as u8, &keyspace_bytes, k.as_bytes())
+                    .map_err(ApiStoreError::from)?;
+                Ok((k, StoreDataEnvelope { data, metadata: meta }))
+            })
+            .collect()
     }
 
     /// A `Result` containing a vector of keys, or an `ApiStoreError`.
@@ -289,10 +354,7 @@ impl StorageApi for Storage {
         keyspace: Option<String>,
     ) -> Result<StoreResponse, ApiStoreError> {
         let response: Response = {
-            let inner = MutationInner::convert(
-                Mutation::remove(key.into_bytes(), keyspace.clone(), None),
-                Nonce::default(),
-            )?;
+            let inner = MutationInner::convert(Mutation::remove(key.into_bytes(), keyspace.clone(), None))?;
             let request = StoreCommand::Transaction(vec![inner]);
             let payload = crate::pb::api::CommandRequest::try_from(request)?;
             self.write_command_to_storage(payload).await?
@@ -335,18 +397,13 @@ impl StorageApi for Storage {
         keyspace: Option<String>,
         expected_revision: Option<u64>,
     ) -> Result<StoreResponse, ApiStoreError> {
-        let metrics = self.raft.metrics().borrow_watched().clone();
-        let nonce = Nonce::new(metrics.current_term, metrics.last_log_index.unwrap_or(1));
-        let inner = MutationInner::convert(
-            Mutation::Set {
-                key: key.into_bytes(),
-                value: value.data,
-                keyspace: keyspace.unwrap_or_else(|| "data".to_string()),
-                metadata: value.metadata,
-                expected_revision,
-            },
-            nonce,
-        )?;
+        let inner = MutationInner::convert(Mutation::Set {
+            key: key.into_bytes(),
+            value: value.data,
+            keyspace: keyspace.unwrap_or_else(|| "data".to_string()),
+            metadata: value.metadata,
+            expected_revision,
+        })?;
         let request = StoreCommand::Transaction(vec![inner]);
         let payload = crate::pb::api::CommandRequest::try_from(request)?;
         Ok(rb_resp_to_store_response(
@@ -383,11 +440,7 @@ impl StorageApi for Storage {
     async fn transaction(&self, mutations: Vec<Mutation>) -> Result<StoreResponse, ApiStoreError> {
         let inners: Vec<MutationInner> = mutations
             .into_iter()
-            .map(|m| {
-                let metrics = self.raft.metrics().borrow_watched().clone();
-                let nonce = Nonce::new(metrics.current_term, metrics.last_log_index.unwrap_or(1));
-                MutationInner::convert(m, nonce)
-            })
+            .map(MutationInner::convert)
             .collect::<Result<_, _>>()?;
         let request = StoreCommand::Transaction(inners);
         let payload = crate::pb::api::CommandRequest::try_from(request)?;

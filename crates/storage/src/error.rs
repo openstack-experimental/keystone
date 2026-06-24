@@ -13,6 +13,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //use std::io;
 
+use openstack_keystone_storage_crypto::CryptoError;
 use thiserror::Error;
 
 use crate::types::*;
@@ -32,6 +33,13 @@ pub enum StoreError {
     Conflict {
         subject: String,
         description: String,
+    },
+
+    /// Cryptographic error (AES-GCM, nonce management, DEK).
+    #[error(transparent)]
+    Crypto {
+        #[from]
+        source: CryptoError,
     },
 
     /// Database error.
@@ -64,6 +72,10 @@ pub enum StoreError {
     /// unset.
     #[error("key is already set")]
     KeyPresent,
+
+    /// A keyspace partition is quarantined due to repeated GCM tag failures.
+    #[error("partition '{0}' is quarantined due to repeated GCM tag failures")]
+    Quarantined(String),
 
     /// Tls configuration is unset.
     #[error("missing mTLS configuration")]

@@ -19,6 +19,7 @@ members = [
   "crates/revoke-driver-sql",
   "crates/storage",
   "crates/storage-api",
+  "crates/storage-crypto",
   "crates/token-driver-fernet",
   "crates/token-restriction-driver-sql",
   "crates/trust-driver-sql",
@@ -52,6 +53,7 @@ exclude = [
 ]
 
 [workspace.dependencies]
+aes-gcm = { version = "0.10" }
 async-trait = { version = "0.1" }
 axum = { version = "0.8", default-features = false }
 axum-server = { version = "0.8", default-features = false }
@@ -76,6 +78,7 @@ http-body-util = "0.1"
 http = { version = "1.4" }
 hyper = { version = "1.10" }
 hyper-util = { version = "0.1" }
+hkdf = { version = "0.12" }
 hmac = { version = "0.13" }
 inventory = { version = "0.3" }
 itertools = { version = "0.15" }
@@ -93,6 +96,7 @@ openstack-keystone-core = { version = "0.1.0", path = "crates/core" }
 openstack-keystone-core-types = { version = "0.1.0", path = "crates/core-types" }
 openstack-keystone-distributed-storage = { version = "0.1.0", path = "crates/storage"}
 openstack-keystone-storage-api = { version = "0.1.0", path = "crates/storage-api" }
+openstack-keystone-storage-crypto = { version = "0.1.0", path = "crates/storage-crypto" }
 openstack-keystone-federation-driver-sql = { version = "0.1", path = "crates/federation-driver-sql" }
 openstack-keystone-k8s-auth-driver-sql = { version = "0.1", path = "crates/k8s-auth-driver-sql/" }
 openstack-keystone-k8s-auth-driver-raft = { version = "0.1", path = "crates/k8s-auth-driver-raft/" }
