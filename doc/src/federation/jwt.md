@@ -88,26 +88,50 @@ TODO: add more claims according to
 A way for the workflow to obtain the JWT
 [is described here](https://docs.github.com/en/actions/reference/security/oidc#methods-for-requesting-the-oidc-token).
 
+Keystone ships a reusable composite action, [`login_jwt`](https://github.com/openstack-experimental/keystone/tree/main/.github/actions/login_jwt),
+that performs the whole exchange: it requests the GitHub OIDC token and swaps it
+for a Keystone token via the JWT login endpoint, masking the secrets and exposing
+the result as the `token` output. The calling job only needs to grant the
+`id-token: write` permission.
+
 ```yaml
-...
 permissions:
-  token: write
+  id-token: write
   contents: read
 
-job:
-  ...
-  - name: Get GitHub JWT token
-    id: get_token
-    run: |
-      TOKEN_JSON=$(curl -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-      "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=https://github.com")
+jobs:
+  example:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
 
-      TOKEN=$(echo $TOKEN_JSON | jq -r .value)
-      echo "token=$TOKEN" >> $GITHUB_OUTPUT
-  ...
-  # TODO: build a proper command for capturing the actual token and/or write a dedicated action for that.
-  - name: Exchange GitHub JWT for Keystone token
-    run: |
-      KEYSTONE_TOKEN=$(curl -H "Authorization: bearer ${{ steps.get_token.outputs.token }}" -H "openstack-mapping: gtmema_keystone_main" https://keystone_url/v4/federation/identity_providers/IDP/jwt)
+      - name: Login to Keystone with JWT
+        id: keystone_login
+        uses: openstack-experimental/keystone/.github/actions/login_jwt@main
+        with:
+          keystone_url: https://keystone.example.com
+          idp_id: <IDP_ID>
+          mapping: gtema_keystone_main
+          # audience defaults to https://github.com and must match the
+          # mapping `bound_audiences` configured in Keystone.
 
+      - name: Use the Keystone token
+        env:
+          OS_TOKEN: ${{ steps.keystone_login.outputs.token }}
+        run: |
+          curl -H "X-Auth-Token: ${OS_TOKEN}" \
+            https://keystone.example.com/v3/auth/tokens
+```
+
+If you already hold a JWT (for example one issued by a non-GitHub IdP), pass it
+via the `jwt` input and the OIDC request step is skipped:
+
+```yaml
+      - name: Login to Keystone with JWT
+        uses: openstack-experimental/keystone/.github/actions/login_jwt@main
+        with:
+          keystone_url: https://keystone.example.com
+          idp_id: <IDP_ID>
+          mapping: gtema_keystone_main
+          jwt: ${{ steps.some_previous_step.outputs.jwt }}
 ```

@@ -1,0 +1,101 @@
+name: 'Login to Keystone with JWT'
+description: >
+  Exchange a federated OIDC JWT for a Keystone session token. By default the
+  action requests a GitHub Actions OIDC token and swaps it for a Keystone token
+  using the JWT federation login endpoint. A pre-fetched JWT (e.g. from a
+  non-GitHub IdP) can be supplied via the `jwt` input instead.
+
+inputs:
+  keystone_url:
+    description: 'Base URL of the Keystone service (e.g. https://keystone.example.com).'
+    required: true
+  idp_id:
+    description: 'Identifier of the federated identity provider registered in Keystone.'
+    required: true
+  mapping:
+    description: 'Name of the Keystone attribute mapping (sent as the openstack-mapping header).'
+    required: true
+  audience:
+    description: >
+      Audience to request for the GitHub OIDC token. Only used when `jwt` is not
+      provided. Must match the mapping `bound_audiences` configured in Keystone.
+    required: false
+    default: 'https://github.com'
+  jwt:
+    description: >
+      A pre-fetched OIDC JWT to exchange. When empty (default) the action
+      requests a GitHub Actions OIDC token, which requires the calling job to
+      grant `permissions: id-token: write`.
+    required: false
+    default: ''
+
+outputs:
+  token:
+    description: 'The issued Keystone token (value of the X-Subject-Token response header).'
+    value: ${{ steps.exchange.outputs.token }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Obtain OIDC JWT
+      id: jwt
+      shell: bash
+      env:
+        INPUT_JWT: ${{ inputs.jwt }}
+        AUDIENCE: ${{ inputs.audience }}
+      run: |
+        set -euo pipefail
+        if [ -n "${INPUT_JWT}" ]; then
+          echo "Using JWT supplied via the 'jwt' input."
+          JWT="${INPUT_JWT}"
+        else
+          if [ -z "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ] || [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
+            echo "::error::No 'jwt' input provided and the GitHub OIDC token endpoint is unavailable. Ensure the calling job sets 'permissions: id-token: write'." >&2
+            exit 1
+          fi
+          echo "Requesting GitHub Actions OIDC token for audience '${AUDIENCE}'."
+          TOKEN_JSON=$(curl -sS \
+            -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=${AUDIENCE}")
+          JWT=$(echo "${TOKEN_JSON}" | jq -r '.value')
+        fi
+        if [ -z "${JWT}" ] || [ "${JWT}" = "null" ]; then
+          echo "::error::Failed to obtain an OIDC JWT." >&2
+          exit 1
+        fi
+        echo "::add-mask::${JWT}"
+        echo "jwt=${JWT}" >> "${GITHUB_OUTPUT}"
+
+    - name: Exchange JWT for Keystone token
+      id: exchange
+      shell: bash
+      env:
+        KEYSTONE_URL: ${{ inputs.keystone_url }}
+        IDP_ID: ${{ inputs.idp_id }}
+        MAPPING: ${{ inputs.mapping }}
+        JWT: ${{ steps.jwt.outputs.jwt }}
+      run: |
+        set -euo pipefail
+        URL="${KEYSTONE_URL%/}/v4/federation/identity_providers/${IDP_ID}/jwt"
+        echo "Exchanging JWT for a Keystone token at ${URL}."
+        HEADERS_FILE="$(mktemp)"
+        trap 'rm -f "${HEADERS_FILE}"' EXIT
+        HTTP_CODE=$(curl -sS -o /dev/null -D "${HEADERS_FILE}" -w '%{http_code}' \
+          -X POST "${URL}" \
+          -H "Authorization: bearer ${JWT}" \
+          -H "openstack-mapping: ${MAPPING}")
+        if [ "${HTTP_CODE}" -lt 200 ] || [ "${HTTP_CODE}" -ge 300 ]; then
+          echo "::error::Keystone JWT login failed with HTTP ${HTTP_CODE}." >&2
+          cat "${HEADERS_FILE}" >&2
+          exit 1
+        fi
+        # Extract the X-Subject-Token header (case-insensitive, tolerate CRLF).
+        TOKEN=$(grep -i '^x-subject-token:' "${HEADERS_FILE}" | tail -n1 \
+          | sed -e 's/^[^:]*:[[:space:]]*//' -e 's/[[:space:]]*$//' | tr -d '\r' || true)
+        if [ -z "${TOKEN}" ]; then
+          echo "::error::Keystone did not return an X-Subject-Token header." >&2
+          exit 1
+        fi
+        echo "::add-mask::${TOKEN}"
+        echo "token=${TOKEN}" >> "${GITHUB_OUTPUT}"
+        echo "Successfully obtained a Keystone token."

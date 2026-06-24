@@ -261,6 +261,58 @@ jobs:
           GITHUB_SUB: "repo:openstack-experimental/keystone:pull_request"
         run: cargo test --test github -- --nocapture
 
+      - name: Register IdP and mapping for the login_jwt action self-test
+        id: setup_action_idp
+        env:
+          GITHUB_SUB: "repo:openstack-experimental/keystone:pull_request"
+        run: |
+          set -euo pipefail
+          # Obtain an admin token from the rust Keystone.
+          ADMIN_TOKEN=$(curl -sS -D - -o /dev/null \
+            -X POST "${KEYSTONE_URL}/v3/auth/tokens" \
+            -H "Content-Type: application/json" \
+            -d '{"auth":{"identity":{"methods":["password"],"password":{"user":{"name":"admin","password":"password","domain":{"id":"default"}}}},"scope":{"project":{"name":"admin","domain":{"id":"default"}}}}}' \
+            | grep -i '^x-subject-token:' | tail -n1 \
+            | sed -e 's/^[^:]*:[[:space:]]*//' | tr -d '\r')
+          test -n "${ADMIN_TOKEN}"
+          # Register the GitHub identity provider.
+          IDP_ID=$(curl -sS \
+            -X POST "${KEYSTONE_URL}/v4/federation/identity_providers" \
+            -H "x-auth-token: ${ADMIN_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d '{"identity_provider":{"name":"github-action-test","enabled":true,"bound_issuer":"https://token.actions.githubusercontent.com","jwks_url":"https://token.actions.githubusercontent.com/.well-known/jwks"}}' \
+            | jq -r '.identity_provider.id')
+          test -n "${IDP_ID}" && test "${IDP_ID}" != "null"
+          # Create the JWT attribute mapping bound to this workflow.
+          HTTP_CODE=$(curl -sS -o /dev/null -w '%{http_code}' \
+            -X POST "${KEYSTONE_URL}/v4/federation/mappings" \
+            -H "x-auth-token: ${ADMIN_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "{\"mapping\":{\"name\":\"github-action\",\"type\":\"jwt\",\"enabled\":true,\"idp_id\":\"${IDP_ID}\",\"domain_id\":\"default\",\"bound_audiences\":[\"https://github.com\"],\"bound_subject\":\"${GITHUB_SUB}\",\"bound_claims\":{\"base_ref\":\"main\"},\"user_id_claim\":\"actor_id\",\"user_name_claim\":\"actor\"}}")
+          if [ "${HTTP_CODE}" -lt 200 ] || [ "${HTTP_CODE}" -ge 300 ]; then
+            echo "::error::Failed to create mapping (HTTP ${HTTP_CODE})." >&2
+            exit 1
+          fi
+          echo "idp_id=${IDP_ID}" >> "${GITHUB_OUTPUT}"
+
+      - name: Login to Keystone with JWT (action self-test)
+        id: login_jwt_selftest
+        uses: ./.github/actions/login_jwt
+        with:
+          keystone_url: ${{ env.KEYSTONE_URL }}
+          idp_id: ${{ steps.setup_action_idp.outputs.idp_id }}
+          mapping: github-action
+          audience: https://github.com
+
+      - name: Verify the login_jwt action returned a Keystone token
+        run: |
+          set -euo pipefail
+          if [ -z "${{ steps.login_jwt_selftest.outputs.token }}" ]; then
+            echo "::error::login_jwt action did not return a token." >&2
+            exit 1
+          fi
+          echo "login_jwt action successfully returned a Keystone token."
+
       - name: Dump py-keystone logs
         if: failure()
         run: docker logs keystone
