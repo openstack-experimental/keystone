@@ -205,7 +205,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .method("HEAD")
-                    .uri("/system/group/group_id/roles/role_id")
+                    .uri("/system/groups/group_id/roles/role_id")
                     .extension(vsc)
                     .body(Body::empty())
                     .unwrap(),
@@ -274,7 +274,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .method("HEAD")
-                    .uri("/system/group/group_id/roles/role_id")
+                    .uri("/system/groups/group_id/roles/role_id")
                     .extension(vsc)
                     .body(Body::empty())
                     .unwrap(),
@@ -353,7 +353,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .method("HEAD")
-                    .uri("/system/group/group_id/roles/role_id")
+                    .uri("/system/groups/group_id/roles/role_id")
                     .extension(vsc)
                     .body(Body::empty())
                     .unwrap(),
@@ -410,7 +410,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .method("HEAD")
-                    .uri("/system/group/group_id/roles/role_id")
+                    .uri("/system/groups/group_id/roles/role_id")
                     .extension(vsc)
                     .body(Body::empty())
                     .unwrap(),
