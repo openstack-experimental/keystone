@@ -1,12 +1,23 @@
 # ADR 0016-v2: Distributed Encrypted Storage via Raft and Fjall
 
 Date: 2026-06-13
+Last-revised: 2026-06-24 (security review)
 
 ## Status
 
 Proposed
 
 **Supersedes:** ADR-0016 (2026-04-12)
+
+**Security review findings applied (2026-06-24):**
+- F1 HIGH: Raft log nonce NodeId widened from 4 to 8 bytes; counter shrunk to 4 bytes (§2.2)
+- F2 MEDIUM: Audit HMAC key derivation made per-node via `node_id` in HKDF info (§3.1)
+- F3 MEDIUM: Backup manifest AD now includes `dek_version_u32` to prevent same-second swap (§7)
+- F4 MEDIUM: SPIFFE mode expanded with TTL ceiling, fail-closed behaviour, SPIFFE ID pattern (§4.1)
+- F5 MEDIUM: Quarantine state specified as Raft-committed and restart-persistent (§10 invariant 5)
+- F6 LOW: Emergency rotation confirmation timeout now has an explicit abort + audit path (§6.2)
+- F7 LOW: NodeId uniqueness check specified as fail-closed when leader is unreachable (§4.3)
+- F8 LOW: Sub-key derivation notation changed from `HKDF-SHA256` to `HKDF-Expand` (§2.1)
 
 ## Context
 
@@ -98,9 +109,9 @@ HSM / PKCS#11 / Cloud KMS
         ▼
 Data Encryption Key (DEK)       ← 256-bit random key, generated at bootstrap
          │
-         ├── Log DEK (LD)          ← HKDF-SHA256(DEK, "keystone-raft-log-v1")
-         ├── State DEK (SD)        ← HKDF-SHA256(DEK, "keystone-fjall-state-v1")
-         └── Backup DEK (BDEK)     ← HKDF-SHA256(DEK, "keystone-backup-v1" ++ dek_version_u32)
+         ├── Log DEK (LD)          ← HKDF-Expand(DEK, info="keystone-raft-log-v1", L=32)
+         ├── State DEK (SD)        ← HKDF-Expand(DEK, info="keystone-fjall-state-v1", L=32)
+         └── Backup DEK (BDEK)     ← HKDF-Expand(DEK, info="keystone-backup-v1" ++ dek_version_u32_be, L=32)
 
 ```
 
@@ -118,9 +129,10 @@ memory protection described in §9.
   `std::env::remove_var` and zero the original string. The variable must not
   persist in the process environment for the lifetime of the process, preventing
   exposure via `/proc/<pid>/environ`.
-- **DEK Derivation:** The DEK is derived into isolated sub-keys via HKDF-SHA256
-  to ensure log, state, and backup ciphertexts are never encrypted under the
-  same key context. The backup DEK (BDEK) incorporates the active
+- **DEK Derivation:** The DEK is derived into isolated sub-keys via
+  HKDF-Expand (Expand-only; the DEK is already uniformly random so HKDF-Extract
+  is not needed) to ensure log, state, and backup ciphertexts are never
+  encrypted under the same key context. The backup DEK (BDEK) incorporates the active
   `dek_version_u32` into its derivation input, binding it to the current DEK
   epoch. This ensures backups created under different DEK rotations do not share
   the same BDEK, limiting the blast radius of a BDEK compromise.
@@ -131,17 +143,19 @@ AES-256-GCM requires strict nonce uniqueness. Truncated tags are prohibited; all
 tags must be 16 bytes.
 
 - **Raft Log (Log DEK):** Nonce is
-  `[4-byte NodeId BE] ++ [8-byte monotonic counter BE]`. The counter is stored
-  durably and increments with a reservation block of 1024 to absorb crashes. On
-  startup, the persisted counter is validated against a separately-stored
-  high-water mark; if the recovered counter is less than or equal to the high-
-  water mark, the node refuses to start and requires operator intervention,
-  preventing nonce reuse from counter corruption. After each reservation block
-  write, the node verifies the write by reading back and comparing; if the
-  read-back does not match, the node treats it as a fatal storage error and
-  halts, preventing silent nonce reuse during a live session. A warning is
-  emitted when remaining counter space drops below 10% of the `2^31` rotation
-  threshold.
+  `[8-byte NodeId BE] ++ [4-byte monotonic counter BE]`. NodeId occupies the
+  full 8 bytes (matching the `u64` type in §8) to prevent nonce-space collision
+  between nodes that share the same lower 32 bits. The counter is stored durably
+  and increments with a reservation block of 1024 to absorb crashes. On startup,
+  the persisted counter is validated against a separately-stored high-water mark
+  (kept in a dedicated Fjall metadata key `_meta:nonce_hwm:<node_id>`); if the
+  recovered counter is less than or equal to the high-water mark, the node
+  refuses to start and requires operator intervention, preventing nonce reuse
+  from counter corruption. After each reservation block write, the node verifies
+  the write by reading back and comparing; if the read-back does not match, the
+  node treats it as a fatal storage error and halts, preventing silent nonce
+  reuse during a live session. A warning is emitted when remaining counter space
+  drops below 10% of the `2^31` rotation threshold.
 - **Fjall State Machine (State DEK):** Nonce is derived via
   `HKDF-Expand(StateDek, info=PrimaryKey || version_u32, L=12)`. The `version`
   field starts at `0` for new records and increments on each update. This
@@ -246,12 +260,17 @@ independently of the identity data store.
 
 **Integrity:** Each audit record is signed with a per-node HMAC-SHA256 key
 derived from the KEK via
-`HKDF-SHA256(KEK, info="keystone-audit-hmac-v1", L=32)`. The signing key is
-rotated on every DEK rotation, binding the HMAC key lifetime to the DEK epoch.
-The signature is computed over the canonical JSON representation of the audit
-record (including timestamp, event type, and actor), and transmitted alongside
-the record. An epoch tag (`dek_version_u32`) is included in each audit record to
-identify which HMAC key signed it.
+`HKDF-Expand(KEK, info="keystone-audit-hmac-v1" ++ node_id_u64_be, L=32)`. The
+`node_id` is included in the derivation so each node holds a distinct signing
+key; a compromised node cannot forge audit records attributed to other nodes.
+The signing key is rotated on every DEK rotation, binding the HMAC key lifetime
+to the DEK epoch. The signature is computed over the canonical JSON
+representation of the audit record (including timestamp, event type, actor, and
+`node_id`), and transmitted alongside the record. An epoch tag
+(`dek_version_u32`) and the originating `node_id` are included in each audit
+record to identify which HMAC key signed it. Because the KEK never enters
+process memory in production (§2.1), this derivation is performed inside the
+HSM or Cloud KMS using a context-keyed derivation operation.
 
 **Transport:** Audit records are forwarded over an authenticated channel
 (TCP/TLS) to the SIEM. The keystone node cannot unilaterally modify records
@@ -290,7 +309,21 @@ configuration time and refuse to start if unsupported ciphers are negotiated.
 
 Managed automatically by SPIRE.
 
-- **Identity:** Short-lived X.509 SVIDs rotated automatically.
+- **Identity:** Short-lived X.509 SVIDs rotated automatically. SVID TTL MUST
+  NOT exceed 1 hour. Node processes enforce this by refusing to use an SVID
+  with a remaining validity of less than 5 minutes (force-renewal window).
+- **SPIFFE ID Pattern:** All Keystone storage node SVIDs MUST match
+  `spiffe://<trust-domain>/keystone/storage/<role>`. The gRPC interceptor
+  validates this pattern before any RPC is dispatched; connections from SVIDs
+  that do not match are rejected with `PERMISSION_DENIED`.
+- **SPIRE Unavailability (Fail-Closed):** If the SPIRE agent cannot renew an
+  expiring SVID before it enters the force-renewal window, the node emits a
+  `CRITICAL` log entry. If the SVID expires before renewal succeeds, the node
+  refuses to accept new inbound connections and drains in-flight Raft proposals
+  before halting. It does NOT fall back to an expired SVID.
+- **Trust Bundle Refresh:** The SPIRE agent manages trust bundle rotation
+  automatically. No manual intervention is required or permitted for trust
+  bundle updates.
 
 ### 4.2 TLS Mode (Fallback)
 
@@ -336,6 +369,11 @@ any existing member shares the same `node_id` but has a different `rpc_addr`, a
 collision is detected. The node emits a fatal log entry and refuses to start.
 The leader enforces the same check when processing `add_learner` requests. This
 catches both operator misconfiguration and deliberate duplication.
+**Fail-closed:** If the node cannot contact any cluster member to retrieve the
+membership config at startup (e.g., network partition, no quorum), it MUST
+refuse to start rather than skip the uniqueness check. An inability to verify
+uniqueness is treated the same as a detected collision. This prevents a
+misconfigured node from joining an isolated network segment undetected.
 
 ---
 
@@ -456,6 +494,15 @@ additional containment steps:
    cluster over gRPC with mTLS enforcement (see §1). Access requires RBAC
    authorization (`storage-operator` role) and dual-control confirmation via
    `ConfirmRotateDek` from a second operator within 5 minutes.
+   **Confirmation timeout:** If the 5-minute window expires without
+   confirmation, the pending emergency rotation is automatically aborted: the
+   node commits a Raft proposal removing `_meta:dek:pending`. The abort is
+   recorded in the audit log with the initiating operator identity, the
+   expiry timestamp, and the fact that no confirmation was received. The
+   partial-rotation recovery path (end of §6) checks for a `rotation_id`
+   timestamp and ignores `_meta:dek:pending` entries older than 5 minutes
+   that were never confirmed, preventing an aborted emergency rotation from
+   being resumed on restart as a normal rotation.
 2. **Immediate containment:** A fresh DEK is generated and committed via Raft
    following the standard flow (§6 step 1-2). The compromised DEK is marked
    `revoked` (not `retired`) in `_meta:dek:revoked:<timestamp>`, preventing its
@@ -504,11 +551,13 @@ manifest listing all retired DEKs that may be required for offline decryption,
 handling cases where the snapshot spans a rotation boundary. The DEK manifest is
 a separate structure included in the backup bundle alongside the encrypted
 snapshot. It is encrypted with the BDEK using AES-256-GCM with AD bound to
-`b"keystone-backup-manifest-v1" ++ snapshot_utc_epoch_be_u64`. The manifest
-itself is not covered by the outer backup envelope but is independently
-encrypted and integrity-protected. BDEK incorporates `dek_version_u32` in its
-derivation, binding each backup to its DEK epoch, and the AD provides
-independent replay protection._
+`b"keystone-backup-manifest-v1" ++ snapshot_utc_epoch_be_u64 ++ dek_version_u32`.
+Including `dek_version_u32` in the manifest AD prevents swapping the manifest
+between two backups taken within the same UTC second under different DEK epochs.
+The manifest itself is not covered by the outer backup envelope but is
+independently encrypted and integrity-protected. BDEK incorporates
+`dek_version_u32` in its derivation, binding each backup to its DEK epoch, and
+the AD provides independent replay protection._
 
 _Note: The timestamp is explicitly an 8-byte big-endian UTC epoch seconds value.
 String timestamps are prohibited as Associated Data due to ambiguity and
@@ -688,15 +737,20 @@ Any code change violating the following is rejected at review:
 5. **No unauthenticated operations:** GCM tag mismatch is fatal for the affected
    key; 3 distinct key failures within 60 seconds in the same Fjall partition
    trigger read-only quarantine (in-flight Raft proposals are drained, not
-   interrupted); recovery requires the operator to run
+   interrupted). **Quarantine state is durable:** it is committed via a Raft
+   proposal to `_meta:quarantine:<node_id>:<partition>` so it persists across
+   node restarts and is visible to all cluster members. A restarted node reads
+   this key at startup and re-enters quarantine if the flag is set, preventing
+   escape via process restart. Recovery requires the operator to run
    `keystone-manage storage clear-quarantine` on the affected node, which
-   requires `storage-operator` RBAC authorization and is audit-logged with
-   caller identity and timestamp. A single GCM tag failure emits a `WARN` log
-   and increments a metric; two failures within 60 seconds emit an `ERROR` log
-   and trigger an alert. Per-source-IP and per-identity rate limits apply (see
-   §1): `RotateDek` limited to 2/hour, `ClearQuarantine` to 10/hour. Emergency
-   rotation (`RotateDekRequest{emergency: true}`) requires dual-control approval
-   from a second `storage-operator` via `ConfirmRotateDek` within 5 minutes.
+   requires `storage-operator` RBAC authorization, is committed via Raft (so
+   the flag is cleared cluster-wide), and is audit-logged with caller identity
+   and timestamp. A single GCM tag failure emits a `WARN` log and increments a
+   metric; two failures within 60 seconds emit an `ERROR` log and trigger an
+   alert. Per-source-IP and per-identity rate limits apply (see §1): `RotateDek`
+   limited to 2/hour, `ClearQuarantine` to 10/hour. Emergency rotation
+   (`RotateDekRequest{emergency: true}`) requires dual-control approval from a
+   second `storage-operator` via `ConfirmRotateDek` within 5 minutes.
 6. **No environment-variable KEK in production:** The `--dev-mode` flag and
    `KEYSTONE_ALLOW_ENV_KEK=1` are explicitly required to start with an
    environment-provided KEK.
