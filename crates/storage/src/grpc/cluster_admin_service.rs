@@ -24,6 +24,7 @@ use tracing::trace;
 use crate::StoreError;
 use crate::pb;
 use crate::protobuf::raft::cluster_admin_service_server::ClusterAdminService;
+use crate::store_command::{MutationInner, StoreCommand};
 use crate::types::*;
 
 /// Raft cluster administrative operations.
@@ -217,13 +218,31 @@ impl ClusterAdminService for ClusterAdminServiceImpl {
     #[tracing::instrument(level = "trace", skip(self))]
     async fn clear_quarantine(
         &self,
-        _request: Request<pb::raft::ClearQuarantineRequest>,
+        request: Request<pb::raft::ClearQuarantineRequest>,
     ) -> Result<Response<()>, Status> {
-        trace!("Clearing quarantine state");
-        // TODO: Implement quarantine clear logic.
-        // Must:
-        // 1. Reset the quarantine state counter.
-        // 2. Audit-log the invocation with timestamp and caller identity.
+        let partition = request.into_inner().partition;
+        if partition.is_empty() {
+            return Err(Status::invalid_argument(
+                "partition must not be empty — specify the keyspace to un-quarantine (e.g. \"data\")",
+            ));
+        }
+
+        trace!(partition, "operator clearing quarantine via gRPC");
+
+        let cmd = StoreCommand::Transaction(vec![MutationInner::ClearQuarantine {
+            partition: partition.clone(),
+        }]);
+        let payload = pb::api::CommandRequest::try_from(cmd)
+            .map_err(|e| Status::internal(e.to_string()))?;
+
+        self.raft_node
+            .client_write(payload)
+            .await
+            .map_err(|e| Status::internal(format!("Raft write failed: {e}")))?;
+
+        // Audit placeholder: Phase 8 will forward this to the SIEM forwarder.
+        tracing::info!(partition, "AUDIT: quarantine cleared by operator");
+
         Ok(Response::new(()))
     }
 

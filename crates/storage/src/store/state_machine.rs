@@ -765,6 +765,18 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                                 MutationInner::SetIndex { key } => {
                                     batch.insert(&self.index, key, vec![]);
                                 }
+                                MutationInner::ClearQuarantine { partition } => {
+                                    // Clear in-memory tracker first so reads are
+                                    // unblocked as soon as the batch commits.
+                                    self.quarantine.clear(&partition);
+                                    let key =
+                                        format!("{QUARANTINE_META_PREFIX}{partition}");
+                                    batch.remove(&self.meta, key.as_bytes());
+                                    tracing::info!(
+                                        partition,
+                                        "quarantine cleared by operator"
+                                    );
+                                }
                             }
                         }
                         has_violations = !violations.is_empty();

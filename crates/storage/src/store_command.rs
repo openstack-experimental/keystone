@@ -105,6 +105,16 @@ pub enum MutationInner {
         /// The key to set.
         key: Vec<u8>,
     },
+
+    /// Clear the quarantine state for a keyspace partition.
+    ///
+    /// Removes the `_meta:quarantine:<partition>` persistence marker from Fjall
+    /// and clears the in-memory `QuarantineTracker` entry so the partition
+    /// becomes accessible again.  Propagated via Raft so all nodes are cleared.
+    ClearQuarantine {
+        /// The keyspace partition to un-quarantine (e.g. `"data"`).
+        partition: String,
+    },
 }
 
 impl MutationInner {

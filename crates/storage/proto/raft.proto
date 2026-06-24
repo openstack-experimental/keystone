@@ -240,7 +240,11 @@ service ClusterAdminService {
   rpc ConfirmRotateDek(ConfirmRotateDekRequest) returns (AdminResponse) {}
 }
 
-message ClearQuarantineRequest {}
+message ClearQuarantineRequest {
+  // The keyspace partition to un-quarantine (e.g. "data").
+  // Must be non-empty; to clear all partitions issue one request per partition.
+  string partition = 1;
+}
 
 message RotateDekRequest {
   // If true, the current DEK is revoked (not retired) and the rotation

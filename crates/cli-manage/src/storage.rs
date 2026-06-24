@@ -24,6 +24,7 @@ use openstack_keystone_distributed_storage::{
     protobuf::raft::cluster_admin_service_client::ClusterAdminServiceClient,
 };
 
+mod clear_quarantine;
 mod demote;
 mod init;
 mod join;
@@ -32,6 +33,7 @@ mod promote;
 mod remove_peer;
 
 use crate::PerformAction;
+use crate::storage::clear_quarantine::ClearQuarantineCommand;
 use crate::storage::demote::DemoteCommand;
 use crate::storage::init::InitCommand;
 use crate::storage::join::JoinCommand;
@@ -53,6 +55,7 @@ pub struct StorageCommand {
 impl PerformAction for StorageCommand {
     async fn take_action(self, config: &Config) -> Result<(), Report> {
         match self.command {
+            StorageCommands::ClearQuarantine(e) => e.take_action(config).await,
             StorageCommands::Demote(e) => e.take_action(config).await,
             StorageCommands::Init(e) => e.take_action(config).await,
             StorageCommands::Join(e) => e.take_action(config).await,
@@ -65,6 +68,7 @@ impl PerformAction for StorageCommand {
 
 #[derive(Subcommand)]
 enum StorageCommands {
+    ClearQuarantine(ClearQuarantineCommand),
     Demote(DemoteCommand),
     Init(InitCommand),
     Join(JoinCommand),
