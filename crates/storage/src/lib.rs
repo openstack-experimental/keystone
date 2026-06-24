@@ -30,8 +30,8 @@ pub mod grpc;
 #[cfg(feature = "mock")]
 pub mod mock;
 pub mod network;
-mod proto_impl;
 pub mod preflight;
+mod proto_impl;
 mod types;
 pub mod store {
     pub mod log_store;
@@ -139,10 +139,7 @@ where
 }
 
 /// Load the current DEK epoch from Fjall, or generate and persist a new one.
-fn bootstrap_dek(
-    db: &Database,
-    kek: &dyn KekProvider,
-) -> Result<DekEpoch, StoreError> {
+fn bootstrap_dek(db: &Database, kek: &dyn KekProvider) -> Result<DekEpoch, StoreError> {
     let meta = db.keyspace("meta", fjall::KeyspaceCreateOptions::default)?;
 
     if let Some(wrapped_bytes) = meta.get(META_DEK_CURRENT)? {

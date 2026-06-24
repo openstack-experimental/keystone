@@ -86,10 +86,7 @@ impl NonceManager {
     ///
     /// Reads persisted state, validates against the HWM, then immediately
     /// reserves the next block.
-    pub fn new(
-        node_id: u64,
-        storage: Box<dyn NoncePersistence>,
-    ) -> Result<Self, CryptoError> {
+    pub fn new(node_id: u64, storage: Box<dyn NoncePersistence>) -> Result<Self, CryptoError> {
         let ctr_key = nonce_ctr_key(node_id);
         let hwm_key = nonce_hwm_key(node_id);
 
@@ -263,7 +260,9 @@ mod tests {
         let store = MemNonce::default();
         // Simulate a previous session that reached counter 2048 (hwm = 2048).
         store.write_u64("_meta:nonce_ctr:1", 2048).expect("write");
-        store.write_u64("_meta:nonce_hwm:1", 2048).expect("write hwm");
+        store
+            .write_u64("_meta:nonce_hwm:1", 2048)
+            .expect("write hwm");
 
         // Normal restart: ctr == hwm (not strictly less) → OK.
         let mut mgr = NonceManager::new(1, Box::new(store.clone())).expect("ok");
@@ -273,6 +272,9 @@ mod tests {
         store.write_u64("_meta:nonce_ctr:1", 512).expect("write");
         // hwm still 2048 or higher after mgr above wrote new reservation.
         let result = NonceManager::new(1, Box::new(store));
-        assert!(matches!(result, Err(CryptoError::NonceCounterRollback { .. })));
+        assert!(matches!(
+            result,
+            Err(CryptoError::NonceCounterRollback { .. })
+        ));
     }
 }

@@ -207,7 +207,10 @@ mod tests {
         let mut wrapped = kek.wrap_dek(&dek).expect("wrap");
         // Corrupt the tag
         *wrapped.last_mut().expect("non-empty") ^= 0xFF;
-        assert!(matches!(kek.unwrap_dek(&wrapped), Err(CryptoError::AesDecrypt)));
+        assert!(matches!(
+            kek.unwrap_dek(&wrapped),
+            Err(CryptoError::AesDecrypt)
+        ));
     }
 
     #[test]

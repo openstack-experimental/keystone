@@ -95,9 +95,8 @@ pub async fn init_storage(config_manager: &Arc<ConfigManager>) -> Result<Storage
     // Production deployments should set kek_provider = "pkcs11" in config
     // and the Pkcs11KekStub will be replaced by a live HSM driver in a
     // future phase.
-    let kek = EnvKek::from_env().map_err(|e| {
-        StoreError::Other(eyre!("failed to load KEYSTONE_DEV_KEK: {e}"))
-    })?;
+    let kek = EnvKek::from_env()
+        .map_err(|e| StoreError::Other(eyre!("failed to load KEYSTONE_DEV_KEK: {e}")))?;
 
     // Create stores and network
     let (log_store, sm) =
@@ -201,10 +200,11 @@ impl StorageApi for Storage {
         let keyspace_bytes = keyspace.unwrap_or("data").as_bytes().to_vec();
 
         // Read metadata first to determine the sensitivity tier.
-        let key_str = String::from_utf8(key.to_vec())
-            .map_err(|e| StoreError::Other(eyre::eyre!("{e}")))?;
+        let key_str =
+            String::from_utf8(key.to_vec()).map_err(|e| StoreError::Other(eyre::eyre!("{e}")))?;
         let metadata: Option<Metadata> = (|| -> Result<_, StoreError> {
-            Ok(self.state_machine_store
+            Ok(self
+                .state_machine_store
                 .meta()
                 .get(&key_str)?
                 .map(|raw| Metadata::unpack(raw.as_ref()))
@@ -321,7 +321,13 @@ impl StorageApi for Storage {
                     .state_machine_store
                     .decrypt_state(&val_bytes, meta.tier as u8, &keyspace_bytes, k.as_bytes())
                     .map_err(ApiStoreError::from)?;
-                Ok((k, StoreDataEnvelope { data, metadata: meta }))
+                Ok((
+                    k,
+                    StoreDataEnvelope {
+                        data,
+                        metadata: meta,
+                    },
+                ))
             })
             .collect()
     }
@@ -354,7 +360,8 @@ impl StorageApi for Storage {
         keyspace: Option<String>,
     ) -> Result<StoreResponse, ApiStoreError> {
         let response: Response = {
-            let inner = MutationInner::convert(Mutation::remove(key.into_bytes(), keyspace.clone(), None))?;
+            let inner =
+                MutationInner::convert(Mutation::remove(key.into_bytes(), keyspace.clone(), None))?;
             let request = StoreCommand::Transaction(vec![inner]);
             let payload = crate::pb::api::CommandRequest::try_from(request)?;
             self.write_command_to_storage(payload).await?

@@ -112,7 +112,12 @@ where
     /// Encrypt a serialized Raft entry for storage.
     ///
     /// Layout: `[term_u64_BE; 8] ++ [nonce_12] ++ [ciphertext] ++ [tag_16]`
-    fn encrypt_entry(&self, term: u64, index: u64, plaintext: &[u8]) -> Result<Vec<u8>, StoreError> {
+    fn encrypt_entry(
+        &self,
+        term: u64,
+        index: u64,
+        plaintext: &[u8],
+    ) -> Result<Vec<u8>, StoreError> {
         let nonce = self
             .nonce_mgr
             .lock()
@@ -133,9 +138,11 @@ where
                 stored.len()
             )));
         }
-        let term = u64::from_be_bytes(stored[..TERM_PREFIX_LEN].try_into().map_err(|_| {
-            StoreError::Other(eyre::eyre!("could not read term prefix"))
-        })?);
+        let term = u64::from_be_bytes(
+            stored[..TERM_PREFIX_LEN]
+                .try_into()
+                .map_err(|_| StoreError::Other(eyre::eyre!("could not read term prefix")))?,
+        );
         let plaintext = log_decrypt(self.dek.log_dek(), &stored[TERM_PREFIX_LEN..], term, index)?;
         Ok(plaintext.to_vec())
     }
@@ -170,9 +177,10 @@ where
                 .map_err(|e| io::Error::other(e.to_string()))?;
 
             let index = u64::from_be_bytes(
-                key_slice.as_ref().try_into().map_err(|_| {
-                    io::Error::other("log key has unexpected length")
-                })?,
+                key_slice
+                    .as_ref()
+                    .try_into()
+                    .map_err(|_| io::Error::other("log key has unexpected length"))?,
             );
 
             let plaintext = self
@@ -212,9 +220,10 @@ where
                     .into_inner()
                     .map_err(|e| io::Error::other(e.to_string()))?;
                 let index = u64::from_be_bytes(
-                    key_slice.as_ref().try_into().map_err(|_| {
-                        io::Error::other("log key has unexpected length")
-                    })?,
+                    key_slice
+                        .as_ref()
+                        .try_into()
+                        .map_err(|_| io::Error::other("log key has unexpected length"))?,
                 );
                 let plaintext = self
                     .decrypt_entry(index, val_slice.as_ref())

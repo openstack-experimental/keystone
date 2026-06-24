@@ -64,6 +64,8 @@ spec:
               value: "/etc/keystone/site.toml"
             - name: "SPIFFE_ENDPOINT_SOCKET"
               value: "unix:///run/spire/sockets/spire-agent.sock"
+            - name: "KEYSTONE_DEV_KEK"
+              value: "4242424242424242424242424242424242424242424242424242424242424242"
           command: ["keystone", "-vv"]
 
           image: keystone-rs

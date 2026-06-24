@@ -277,7 +277,10 @@ impl FjallStateMachine {
         match state_decrypt(self.dek.state_dek(), stored, tier, keyspace, pk) {
             Ok((plaintext, _next_version)) => Ok(plaintext.to_vec()),
             Err(e) => {
-                if matches!(e, openstack_keystone_storage_crypto::CryptoError::AesDecrypt) {
+                if matches!(
+                    e,
+                    openstack_keystone_storage_crypto::CryptoError::AesDecrypt
+                ) {
                     if self.quarantine.record_failure(&partition) {
                         // Newly quarantined — persist so the marker survives restarts.
                         let key = format!("{QUARANTINE_META_PREFIX}{partition}");
@@ -334,8 +337,14 @@ impl FjallStateMachine {
             0
         };
 
-        let encrypted =
-            state_encrypt(self.dek.state_dek(), plaintext, tier, keyspace, key, next_version)?;
+        let encrypted = state_encrypt(
+            self.dek.state_dek(),
+            plaintext,
+            tier,
+            keyspace,
+            key,
+            next_version,
+        )?;
         Ok(encrypted)
     }
 
@@ -769,13 +778,9 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                                     // Clear in-memory tracker first so reads are
                                     // unblocked as soon as the batch commits.
                                     self.quarantine.clear(&partition);
-                                    let key =
-                                        format!("{QUARANTINE_META_PREFIX}{partition}");
+                                    let key = format!("{QUARANTINE_META_PREFIX}{partition}");
                                     batch.remove(&self.meta, key.as_bytes());
-                                    tracing::info!(
-                                        partition,
-                                        "quarantine cleared by operator"
-                                    );
+                                    tracing::info!(partition, "quarantine cleared by operator");
                                 }
                             }
                         }

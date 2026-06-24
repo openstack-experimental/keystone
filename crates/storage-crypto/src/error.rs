@@ -37,9 +37,7 @@ pub enum CryptoError {
 
     /// The recovered nonce counter is less than the high-water mark, indicating
     /// rollback or corruption.  Node must not start to prevent nonce reuse.
-    #[error(
-        "nonce counter rollback detected: recovered={current} is not ahead of hwm={hwm}"
-    )]
+    #[error("nonce counter rollback detected: recovered={current} is not ahead of hwm={hwm}")]
     NonceCounterRollback { current: u64, hwm: u64 },
 
     /// The nonce counter has reached the rotation threshold.

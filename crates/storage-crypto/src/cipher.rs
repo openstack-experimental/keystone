@@ -171,7 +171,7 @@ pub fn state_decrypt(
 ) -> Result<(Zeroizing<Vec<u8>>, u32), CryptoError> {
     if stored.len() < STATE_MIN_LEN {
         return Err(CryptoError::CiphertextTooShort);
-}
+    }
     // Layout: [nonce 12B][ciphertext][tag 16B][version 4B]
     let (nonce_bytes, rest) = stored.split_at(12);
     let version_bytes: [u8; 4] = rest[rest.len() - 4..]
@@ -220,8 +220,8 @@ fn log_aad(term: u64, index: u64) -> [u8; 16] {
 ///
 /// `info = pk ++ version_u32_be` as per ADR §2.2.
 fn state_nonce(dek: &StateDek, pk: &[u8], version: u32) -> Result<[u8; 12], CryptoError> {
-    let hkdf = Hkdf::<Sha256>::from_prk(dek.0.as_ref())
-        .map_err(|_| CryptoError::InvalidKeyLength)?;
+    let hkdf =
+        Hkdf::<Sha256>::from_prk(dek.0.as_ref()).map_err(|_| CryptoError::InvalidKeyLength)?;
 
     let mut info = Vec::with_capacity(pk.len() + 4);
     info.extend_from_slice(pk);
@@ -256,8 +256,10 @@ mod tests {
     }
 
     fn test_nonce() -> [u8; 12] {
-        [0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, // node_id
-         0x00, 0x00, 0x00, 0x01] // counter
+        [
+            0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, // node_id
+            0x00, 0x00, 0x00, 0x01,
+        ] // counter
     }
 
     #[test]

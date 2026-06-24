@@ -6,6 +6,7 @@ use criterion::{BatchSize, BenchmarkId, Criterion, criterion_group, criterion_ma
 use fjall::Database;
 use futures::stream;
 use openraft::{RaftSnapshotBuilder, storage::RaftStateMachine};
+use openstack_keystone_storage_crypto::{DekEpoch, generate_dek};
 use tempfile::TempDir;
 use tokio::runtime::Runtime;
 
@@ -13,14 +14,15 @@ use openstack_keystone_distributed_storage::pb::raft::Entry;
 use openstack_keystone_distributed_storage::store_command::{
     Mutation, MutationInner, StoreCommand,
 };
-use openstack_keystone_distributed_storage::{FjallStateMachine, Metadata, Nonce};
+use openstack_keystone_distributed_storage::{FjallStateMachine, Metadata};
 
 fn bench_state_machine(c: &mut Criterion) {
     let db_path = TempDir::new().unwrap();
     let snapshot_dir = db_path.path().join("snapshots");
     let db = Database::builder(db_path).open().unwrap();
     let db = Arc::new(db);
-    let sm = Arc::new(FjallStateMachine::new(db, snapshot_dir).unwrap());
+    let dek = Arc::new(DekEpoch::from_raw(&generate_dek(), 0).unwrap());
+    let sm = Arc::new(FjallStateMachine::new(db, snapshot_dir, dek).unwrap());
 
     c.bench_function("get_db", |b| {
         b.iter(|| sm.db());
@@ -54,18 +56,13 @@ fn bench_state_machine(c: &mut Criterion) {
     let set_transaction = StoreCommand::Transaction(vec![
         MutationInner::convert(
             Mutation::set("foo", "bar", Metadata::new(), Some("data"), None).unwrap(),
-            Nonce::default(),
         )
         .unwrap(),
     ])
     .pack()
     .unwrap();
     let remove_transaction = StoreCommand::Transaction(vec![
-        MutationInner::convert(
-            Mutation::remove("foo", Some("data"), None),
-            Nonce::default(),
-        )
-        .unwrap(),
+        MutationInner::convert(Mutation::remove("foo", Some("data"), None)).unwrap(),
     ])
     .pack()
     .unwrap();

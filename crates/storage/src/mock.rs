@@ -443,6 +443,7 @@ mod tests {
                     metadata: Metadata {
                         revision: 1,
                         created_at: 0,
+                        ..Default::default()
                     },
                     data: serialize("updated"),
                 },
@@ -477,6 +478,7 @@ mod tests {
                     metadata: Metadata {
                         revision: 1,
                         created_at: 0,
+                        ..Default::default()
                     },
                     data: serialize("updated"),
                 },
@@ -512,6 +514,7 @@ mod tests {
                     metadata: Metadata {
                         revision: 5,
                         created_at: 0,
+                        ..Default::default()
                     },
                     data: serialize("should-not-appear"),
                 },
@@ -625,6 +628,7 @@ mod tests {
                     metadata: Metadata {
                         revision: 5,
                         created_at: 0,
+                        ..Default::default()
                     },
                     data: serialize("value2"),
                 },
@@ -704,6 +708,7 @@ mod tests {
                     metadata: Metadata {
                         revision: 3,
                         created_at: 0,
+                        ..Default::default()
                     },
                     data: serialize("v2"),
                 },

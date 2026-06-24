@@ -70,10 +70,7 @@ impl DekEpoch {
     ///
     /// Uses HKDF-Expand (no Extract) to produce domain-separated sub-keys.
     /// The raw DEK bytes are zeroed when this function returns.
-    pub fn from_raw(
-        dek_bytes: &Zeroizing<[u8; 32]>,
-        version: u32,
-    ) -> Result<Self, CryptoError> {
+    pub fn from_raw(dek_bytes: &Zeroizing<[u8; 32]>, version: u32) -> Result<Self, CryptoError> {
         let hkdf = Hkdf::<Sha256>::from_prk(dek_bytes.as_ref())
             .map_err(|_| CryptoError::InvalidKeyLength)?;
 
@@ -133,10 +130,7 @@ mod tests {
         // Sub-keys must differ from each other and from raw input.
         assert_ne!(epoch.log_dek.0.as_ref(), raw.as_ref());
         assert_ne!(epoch.state_dek.0.as_ref(), raw.as_ref());
-        assert_ne!(
-            epoch.log_dek.0.as_ref(),
-            epoch.state_dek.0.as_ref()
-        );
+        assert_ne!(epoch.log_dek.0.as_ref(), epoch.state_dek.0.as_ref());
     }
 
     #[test]

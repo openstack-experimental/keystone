@@ -232,8 +232,8 @@ impl ClusterAdminService for ClusterAdminServiceImpl {
         let cmd = StoreCommand::Transaction(vec![MutationInner::ClearQuarantine {
             partition: partition.clone(),
         }]);
-        let payload = pb::api::CommandRequest::try_from(cmd)
-            .map_err(|e| Status::internal(e.to_string()))?;
+        let payload =
+            pb::api::CommandRequest::try_from(cmd).map_err(|e| Status::internal(e.to_string()))?;
 
         self.raft_node
             .client_write(payload)

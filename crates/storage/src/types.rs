@@ -94,4 +94,3 @@ impl NoncePersistence for FjallNoncePersistence {
             .map_err(|e| CryptoError::NoncePersistence(e.to_string()))
     }
 }
-
