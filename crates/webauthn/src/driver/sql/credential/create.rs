@@ -86,7 +86,7 @@ mod tests {
                     URL_SAFE_NO_PAD.encode(passkey.cred_id()).into(),
                     "description".into(),
                     serde_json::to_string(&passkey).unwrap().into(),
-                    0.into(),
+                    0i64.into(),
                     "cross-platform".into(),
                     now.naive_utc().into()
                 ]

@@ -63,11 +63,9 @@ pub async fn update<U: AsRef<str>, S: AsRef<str>>(
 
     let mut entry: db_webauthn_credential::ActiveModel = current.into();
 
-    entry.counter = Set(credential.counter.try_into()?);
+    entry.counter = Set(credential.counter as i64);
     entry.passkey = Set(serde_json::to_string(&credential.data)?);
-    if let Some(val) = &credential.description {
-        entry.description = Set(Some(val.clone()));
-    }
+    entry.description = Set(credential.description.clone());
     if let Some(val) = credential.last_used_at {
         entry.last_used_at = Set(Some(val.naive_utc()));
     }
@@ -124,7 +122,7 @@ mod tests {
                     [
                         cred.description.into(),
                         serde_json::to_string(&passkey).unwrap().into(),
-                        5.into(),
+                        5i64.into(),
                         now.naive_utc().into(),
                         now.naive_utc().into(),
                         cred.credential_id.into()

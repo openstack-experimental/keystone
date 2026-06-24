@@ -28,24 +28,24 @@ use super::StateType;
 
 /// Delete user state of a specific type.
 ///
-/// # Parameters
-/// - `db`: The database connection.
-/// - `user_id`: The user ID.
-/// - `state_type`: The type of state to delete.
-///
-/// # Returns
-/// A `Result` containing `()` on success, or a `WebauthnError`.
+/// Returns `WebauthnError::StateNotFound` when no row was deleted. The caller
+/// maps this to 401 Unauthorized. This prevents two concurrent `/finish`
+/// requests from both authenticating: only the first delete wins; the second
+/// gets `StateNotFound` before it can verify the ceremony.
 pub async fn delete<U: AsRef<str>>(
     db: &sea_orm::DatabaseConnection,
     user_id: U,
     state_type: StateType,
 ) -> Result<(), WebauthnError> {
-    DbPasskeyState::delete_many()
+    let result = DbPasskeyState::delete_many()
         .filter(db_webauthn_state::Column::UserId.eq(user_id.as_ref()))
         .filter(db_webauthn_state::Column::Type.eq(state_type.as_str()))
         .exec(db)
         .await
         .context("deleting webauthn state record")?;
+    if result.rows_affected == 0 {
+        return Err(WebauthnError::StateNotFound);
+    }
     Ok(())
 }
 
@@ -92,6 +92,24 @@ mod tests {
                 ["id".into(), "auth".into()]
             ),]
         );
+    }
+
+    #[tokio::test]
+    async fn test_delete_not_found() {
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_exec_results([MockExecResult {
+                rows_affected: 0,
+                ..Default::default()
+            }])
+            .into_connection();
+
+        match delete(&db, "id", StateType::Auth).await {
+            Err(WebauthnError::StateNotFound) => {}
+            other => panic!(
+                "delete with 0 rows_affected must return StateNotFound, got {:?}",
+                other
+            ),
+        }
     }
 
     #[tokio::test]

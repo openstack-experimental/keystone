@@ -21,10 +21,6 @@ pub use delete::{delete, delete_expired};
 pub use get::{get_auth, get_register};
 
 /// Valid WebAuthN state types.
-///
-/// Using a dedicated enum instead of raw `&str` literals ensures that a typo
-/// (e.g. `"Auth"`, `"registr"`) is caught at compile time rather than silently
-/// matching zero rows at runtime and leaving stale state undeleted.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StateType {
     Auth,

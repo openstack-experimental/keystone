@@ -22,7 +22,7 @@ openstack-keystone-core-types.workspace = true
 openstack-keystone-distributed-storage = { workspace = true, features = ["mock"] }
 rmp-serde.workspace = true
 sea-orm = { workspace = true, features = ["default"] }
-sea-orm-migration = { workspace = true, features = ["default"] }
+sea-orm-migration = { workspace = true }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

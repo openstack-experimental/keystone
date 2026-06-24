@@ -24,7 +24,7 @@ pub struct Model {
     pub description: Option<String>,
     #[sea_orm(column_type = "Text")]
     pub passkey: String,
-    pub counter: i32,
+    pub counter: i64,
     pub r#type: String,
     pub aaguid: Option<String>,
     pub created_at: DateTime,
