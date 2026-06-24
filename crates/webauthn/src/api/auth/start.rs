@@ -14,7 +14,6 @@
 
 //! # Start passkey authentication process
 use axum::{Json, extract::State, response::IntoResponse};
-use tracing::debug;
 use validator::Validate;
 
 use openstack_keystone_api_types::error::KeystoneApiError;
@@ -49,11 +48,6 @@ pub async fn start(
     req.validate()?;
     // TODO: Check user existence and simulate the response when the user does not
     // exist.
-    state
-        .extension
-        .provider
-        .delete_user_webauthn_credential_authentication_state(&state.core, &req.passkey.user_id)
-        .await?;
     let allow_credentials: Vec<webauthn_rs::prelude::Passkey> = state
         .extension
         .provider
@@ -79,11 +73,11 @@ pub async fn start(
                 .await?;
             Json(PasskeyAuthenticationStartResponse::from(rcr))
         }
-        Err(e) => {
-            debug!("challenge_register -> {:?}", e);
-            return Err(KeystoneApiError::InternalError(
-                "unexpected error in the webauthn extension".into(),
-            ));
+        Err(err) => {
+            return Err(KeystoneApiError::InternalError(format!(
+                "unexpected error in the webauthn extension: {:?}",
+                err
+            )));
         }
     };
 

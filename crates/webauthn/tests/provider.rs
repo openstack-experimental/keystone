@@ -286,7 +286,7 @@ async fn test_webauthn_roundtrip() -> Result<()> {
     let auth_challenge_response = authenticator.do_authentication(
         origin,
         webauthn_authenticator_rs::prelude::RequestChallengeResponse {
-            public_key: cca.public_key.try_into()?,
+            public_key: cca.public_key,
             mediation: cca.mediation,
         },
     )?;

@@ -24,23 +24,25 @@ use crate::driver::sql::model::{
     prelude::WebauthnState as DbPasskeyState, webauthn_state as db_webauthn_state,
 };
 
+use super::StateType;
+
 /// Delete user state of a specific type.
 ///
 /// # Parameters
 /// - `db`: The database connection.
 /// - `user_id`: The user ID.
-/// - `state_type`: The state type (`"auth"` or `"register"`).
+/// - `state_type`: The type of state to delete.
 ///
 /// # Returns
 /// A `Result` containing `()` on success, or a `WebauthnError`.
 pub async fn delete<U: AsRef<str>>(
-    db: &DatabaseConnection,
+    db: &sea_orm::DatabaseConnection,
     user_id: U,
-    state_type: &str,
+    state_type: StateType,
 ) -> Result<(), WebauthnError> {
     DbPasskeyState::delete_many()
         .filter(db_webauthn_state::Column::UserId.eq(user_id.as_ref()))
-        .filter(db_webauthn_state::Column::Type.eq(state_type))
+        .filter(db_webauthn_state::Column::Type.eq(state_type.as_str()))
         .exec(db)
         .await
         .context("deleting webauthn state record")?;
@@ -80,7 +82,7 @@ mod tests {
             }])
             .into_connection();
 
-        delete(&db, "id", "auth").await.unwrap();
+        delete(&db, "id", StateType::Auth).await.unwrap();
         // Checking transaction log
         assert_eq!(
             db.into_transaction_log(),
@@ -88,6 +90,26 @@ mod tests {
                 DatabaseBackend::Postgres,
                 r#"DELETE FROM "webauthn_state" WHERE "webauthn_state"."user_id" = $1 AND "webauthn_state"."type" = $2"#,
                 ["id".into(), "auth".into()]
+            ),]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_delete_register() {
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_exec_results([MockExecResult {
+                rows_affected: 1,
+                ..Default::default()
+            }])
+            .into_connection();
+
+        delete(&db, "id", StateType::Register).await.unwrap();
+        assert_eq!(
+            db.into_transaction_log(),
+            [Transaction::from_sql_and_values(
+                DatabaseBackend::Postgres,
+                r#"DELETE FROM "webauthn_state" WHERE "webauthn_state"."user_id" = $1 AND "webauthn_state"."type" = $2"#,
+                ["id".into(), "register".into()]
             ),]
         );
     }

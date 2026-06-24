@@ -19,3 +19,29 @@ mod get;
 pub use create::{create_auth, create_register};
 pub use delete::{delete, delete_expired};
 pub use get::{get_auth, get_register};
+
+/// Valid WebAuthN state types.
+///
+/// Using a dedicated enum instead of raw `&str` literals ensures that a typo
+/// (e.g. `"Auth"`, `"registr"`) is caught at compile time rather than silently
+/// matching zero rows at runtime and leaving stale state undeleted.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StateType {
+    Auth,
+    Register,
+}
+
+impl StateType {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            StateType::Auth => "auth",
+            StateType::Register => "register",
+        }
+    }
+}
+
+impl std::fmt::Display for StateType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}

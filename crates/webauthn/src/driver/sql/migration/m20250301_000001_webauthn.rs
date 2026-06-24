@@ -44,11 +44,15 @@ impl MigrationTrait for Migration {
                 Table::create()
                     .table(WebauthnState::Table)
                     .if_not_exists()
-                    .col(string_len(WebauthnCredential::UserId, 64))
+                    .col(string_len(WebauthnState::UserId, 64))
                     .col(text(WebauthnState::State))
                     .col(string_len(WebauthnState::Type, 10))
                     .col(date_time(WebauthnState::CreatedAt))
-                    .primary_key(Index::create().col(WebauthnState::UserId))
+                    .primary_key(
+                        Index::create()
+                            .col(WebauthnState::UserId)
+                            .col(WebauthnState::Type),
+                    )
                     .to_owned(),
             )
             .await?;

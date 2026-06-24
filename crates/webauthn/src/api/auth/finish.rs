@@ -16,7 +16,6 @@
 use axum::{Json, extract::State, http::StatusCode, response::IntoResponse};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::Utc;
-use tracing::debug;
 use validator::Validate;
 
 use crate::{
@@ -68,7 +67,12 @@ pub async fn finish(
         return Err(KeystoneApiError::UnauthorizedNoContext);
     };
 
-    // Consume the challenge state unconditionally before verification so that
+    // Deserialize request data into webauthn_rs types *before* consuming state.
+    // If deserialization fails (e.g. base64 decode error), the challenge remains
+    // intact and the user can retry without restarting the ceremony.
+    let auth_req = req.try_into().map_err(WebauthnError::from)?;
+
+    // Consume the challenge state unconditionally after deserialization so that
     // it cannot be replayed regardless of whether the ceremony succeeds or fails
     // (WebAuthn Level 3 §6.3.3 step 21).
     state
@@ -77,16 +81,13 @@ pub async fn finish(
         .delete_user_webauthn_credential_authentication_state(&state.core, &user_id)
         .await?;
 
-    // We explicitly try to deserealize the request data directly into the
-    // underlying webauthn_rs type.
     let auth_result = match state
         .extension
         .webauthn
-        .finish_passkey_authentication(&req.try_into().map_err(WebauthnError::from)?, &s)
+        .finish_passkey_authentication(&auth_req, &s)
     {
         Ok(r) => r,
         Err(e) => {
-            debug!("finish_passkey_authentication -> {:?}", e);
             return Err(KeystoneApiError::unauthorized(e, None::<String>));
         }
     };
@@ -111,10 +112,16 @@ pub async fn finish(
         .ok_or(WebauthnError::CredentialNotFound(cred_id))?;
 
     let now = Utc::now();
+    if auth_result.counter() == 0 && credential.counter > 0 {
+        // WebAuthn §6.3.3 step 17: a zero counter when stored counter is > 0
+        // indicates a cloned credential (e.g. software authenticator that never
+        // increments the counter).
+        return Err(WebauthnError::CounterVerification.into());
+    }
+    if auth_result.counter() > 0 && auth_result.counter() <= credential.counter {
+        return Err(WebauthnError::CounterVerification.into());
+    }
     if auth_result.counter() > 0 {
-        if auth_result.counter() <= credential.counter {
-            return Err(WebauthnError::CounterVerification.into());
-        }
         credential.counter = auth_result.counter();
     }
 

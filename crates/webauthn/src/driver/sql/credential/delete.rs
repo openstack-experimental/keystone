@@ -35,12 +35,17 @@ pub async fn delete<U: AsRef<str>, C: AsRef<str>>(
     user_id: U,
     credential_id: C,
 ) -> Result<(), WebauthnError> {
-    WebauthnCredential::delete_many()
+    let result = WebauthnCredential::delete_many()
         .filter(webauthn_credential::Column::UserId.eq(user_id.as_ref()))
         .filter(webauthn_credential::Column::CredentialId.eq(credential_id.as_ref()))
         .exec(db)
         .await
         .context("deleting webauthn credential record")?;
+    if result.rows_affected == 0 {
+        return Err(WebauthnError::CredentialNotFound(
+            credential_id.as_ref().into(),
+        ));
+    }
     Ok(())
 }
 
@@ -69,5 +74,27 @@ mod tests {
                 ["uid".into(), "cred_id".into()]
             ),]
         );
+    }
+
+    #[tokio::test]
+    async fn test_delete_not_found() {
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_exec_results([MockExecResult {
+                rows_affected: 0,
+                ..Default::default()
+            }])
+            .into_connection();
+
+        match delete(&db, "uid", "cred_id").await {
+            Err(WebauthnError::CredentialNotFound(id)) => {
+                assert_eq!(id, String::from("cred_id"));
+            }
+            other => {
+                panic!(
+                    "Delete of non-existent credential must return CredentialNotFound, got {:?}",
+                    other
+                );
+            }
+        }
     }
 }

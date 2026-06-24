@@ -12,8 +12,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use sea_orm::DatabaseConnection;
-use sea_orm::entity::*;
+use sea_orm::query::*;
+use sea_orm::{DatabaseConnection, entity::*};
 
 use openstack_keystone_core::error::DbContextExt;
 
@@ -27,54 +27,58 @@ use crate::{WebauthnCredential, WebauthnError};
 ///
 /// # Parameters
 /// - `db`: The database connection.
+/// - `user_id`: The owner's user ID (must match the stored credential).
 /// - `credential_id`: The ID of the credential to update.
 /// - `credential`: The updated credential data.
 ///
 /// # Returns
 /// A `Result` containing the updated `WebauthnCredential`, or a
 /// `WebauthnError`.
-pub async fn update<S>(
+pub async fn update<U: AsRef<str>, S: AsRef<str>>(
     db: &DatabaseConnection,
+    user_id: U,
     credential_id: S,
     credential: &WebauthnCredential,
-) -> Result<WebauthnCredential, WebauthnError>
-where
-    S: AsRef<str>,
-{
-    if let Some(current) = DbWebauthnCredential::find_by_id(credential_id.as_ref())
+) -> Result<WebauthnCredential, WebauthnError> {
+    let current = DbWebauthnCredential::find()
+        .filter(db_webauthn_credential::Column::UserId.eq(user_id.as_ref()))
+        .filter(db_webauthn_credential::Column::CredentialId.eq(credential_id.as_ref()))
         .one(db)
         .await
         .context("fetching current webauthn_credential data for update")?
-    {
-        if current.credential_id != credential.credential_id {
-            return Err(WebauthnError::Conflict(
-                "updating credential_id is not allowed".to_string(),
-            ));
-        }
-
-        let mut entry: db_webauthn_credential::ActiveModel = current.into();
-
-        entry.counter = Set(credential.counter.try_into()?);
-        entry.passkey = Set(serde_json::to_string(&credential.data)?);
-        if let Some(val) = &credential.description {
-            entry.description = Set(Some(val.clone()));
-        }
-        if let Some(val) = credential.last_used_at {
-            entry.last_used_at = Set(Some(val.naive_utc()));
-        }
-        if let Some(val) = credential.updated_at {
-            entry.last_updated_at = Set(Some(val.naive_utc()));
-        }
-        entry
-            .update(db)
-            .await
-            .context("updating webauthn credential")?
-            .try_into()
-    } else {
-        Err(WebauthnError::CredentialNotFound(
+        .ok_or(WebauthnError::CredentialNotFound(
             credential_id.as_ref().into(),
-        ))
+        ))?;
+
+    if current.credential_id != credential.credential_id {
+        return Err(WebauthnError::Conflict(
+            "updating credential_id is not allowed".to_string(),
+        ));
     }
+    if current.user_id != credential.user_id {
+        return Err(WebauthnError::Conflict(
+            "updating user_id is not allowed".to_string(),
+        ));
+    }
+
+    let mut entry: db_webauthn_credential::ActiveModel = current.into();
+
+    entry.counter = Set(credential.counter.try_into()?);
+    entry.passkey = Set(serde_json::to_string(&credential.data)?);
+    if let Some(val) = &credential.description {
+        entry.description = Set(Some(val.clone()));
+    }
+    if let Some(val) = credential.last_used_at {
+        entry.last_used_at = Set(Some(val.naive_utc()));
+    }
+    if let Some(val) = credential.updated_at {
+        entry.last_updated_at = Set(Some(val.naive_utc()));
+    }
+    entry
+        .update(db)
+        .await
+        .context("updating webauthn credential")?
+        .try_into()
 }
 
 #[cfg(test)]
@@ -103,7 +107,7 @@ mod tests {
         cred.data = get_fake_passkey();
         cred.counter = 5;
 
-        update(&db, "1", &cred).await.unwrap();
+        update(&db, "uid", "1", &cred).await.unwrap();
 
         // Checking transaction log
         assert_eq!(
@@ -111,8 +115,8 @@ mod tests {
             [
                 Transaction::from_sql_and_values(
                     DatabaseBackend::Postgres,
-                    r#"SELECT "webauthn_credential"."user_id", "webauthn_credential"."credential_id", "webauthn_credential"."description", "webauthn_credential"."passkey", "webauthn_credential"."counter", "webauthn_credential"."type", "webauthn_credential"."aaguid", "webauthn_credential"."created_at", "webauthn_credential"."last_used_at", "webauthn_credential"."last_updated_at" FROM "webauthn_credential" WHERE "webauthn_credential"."credential_id" = $1 LIMIT $2"#,
-                    ["1".into(), 1u64.into()]
+                    r#"SELECT "webauthn_credential"."user_id", "webauthn_credential"."credential_id", "webauthn_credential"."description", "webauthn_credential"."passkey", "webauthn_credential"."counter", "webauthn_credential"."type", "webauthn_credential"."aaguid", "webauthn_credential"."created_at", "webauthn_credential"."last_used_at", "webauthn_credential"."last_updated_at" FROM "webauthn_credential" WHERE "webauthn_credential"."user_id" = $1 AND "webauthn_credential"."credential_id" = $2 LIMIT $3"#,
+                    ["uid".into(), "1".into(), 1u64.into()]
                 ),
                 Transaction::from_sql_and_values(
                     DatabaseBackend::Postgres,
@@ -141,15 +145,15 @@ mod tests {
 
         cred.credential_id = "new".into();
 
-        match update(&db, "1", &cred).await {
+        match update(&db, "uid", "1", &cred).await {
             Err(WebauthnError::Conflict(_)) => {
                 // Checking transaction log
                 assert_eq!(
                     db.into_transaction_log(),
                     [Transaction::from_sql_and_values(
                         DatabaseBackend::Postgres,
-                        r#"SELECT "webauthn_credential"."user_id", "webauthn_credential"."credential_id", "webauthn_credential"."description", "webauthn_credential"."passkey", "webauthn_credential"."counter", "webauthn_credential"."type", "webauthn_credential"."aaguid", "webauthn_credential"."created_at", "webauthn_credential"."last_used_at", "webauthn_credential"."last_updated_at" FROM "webauthn_credential" WHERE "webauthn_credential"."credential_id" = $1 LIMIT $2"#,
-                        ["1".into(), 1u64.into()]
+                        r#"SELECT "webauthn_credential"."user_id", "webauthn_credential"."credential_id", "webauthn_credential"."description", "webauthn_credential"."passkey", "webauthn_credential"."counter", "webauthn_credential"."type", "webauthn_credential"."aaguid", "webauthn_credential"."created_at", "webauthn_credential"."last_used_at", "webauthn_credential"."last_updated_at" FROM "webauthn_credential" WHERE "webauthn_credential"."user_id" = $1 AND "webauthn_credential"."credential_id" = $2 LIMIT $3"#,
+                        ["uid".into(), "1".into(), 1u64.into()]
                     ),]
                 );
             }

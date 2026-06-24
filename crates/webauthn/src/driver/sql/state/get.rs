@@ -12,7 +12,6 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use sea_orm::DatabaseConnection;
 use sea_orm::entity::*;
 use webauthn_rs::prelude::{PasskeyAuthentication, PasskeyRegistration};
 
@@ -20,6 +19,8 @@ use openstack_keystone_core::error::DbContextExt;
 
 use crate::WebauthnError;
 use crate::driver::sql::model::prelude::WebauthnState as DbPasskeyState;
+
+use super::StateType;
 
 /// Get registration state.
 ///
@@ -31,13 +32,16 @@ use crate::driver::sql::model::prelude::WebauthnState as DbPasskeyState;
 /// A `Result` containing an `Option` with the `PasskeyRegistration` if found,
 /// or an `Error`.
 pub async fn get_register<U: AsRef<str>>(
-    db: &DatabaseConnection,
+    db: &sea_orm::DatabaseConnection,
     user_id: U,
 ) -> Result<Option<PasskeyRegistration>, WebauthnError> {
-    match DbPasskeyState::find_by_id((user_id.as_ref().to_string(), String::from("register")))
-        .one(db)
-        .await
-        .context("searching for webauthn registration state record")?
+    match DbPasskeyState::find_by_id((
+        user_id.as_ref().to_string(),
+        StateType::Register.as_str().to_string(),
+    ))
+    .one(db)
+    .await
+    .context("searching for webauthn registration state record")?
     {
         Some(rec) => Ok(Some(serde_json::from_str(&rec.state)?)),
         None => Ok(None),
@@ -54,13 +58,16 @@ pub async fn get_register<U: AsRef<str>>(
 /// A `Result` containing an `Option` with the `PasskeyAuthentication` if found,
 /// or an `Error`.
 pub async fn get_auth<U: AsRef<str>>(
-    db: &DatabaseConnection,
+    db: &sea_orm::DatabaseConnection,
     user_id: U,
 ) -> Result<Option<PasskeyAuthentication>, WebauthnError> {
-    match DbPasskeyState::find_by_id((user_id.as_ref().to_string(), String::from("auth")))
-        .one(db)
-        .await
-        .context("searching for webauthn auth state record")?
+    match DbPasskeyState::find_by_id((
+        user_id.as_ref().to_string(),
+        StateType::Auth.as_str().to_string(),
+    ))
+    .one(db)
+    .await
+    .context("searching for webauthn auth state record")?
     {
         Some(rec) => Ok(Some(serde_json::from_str(&rec.state)?)),
         None => Ok(None),
@@ -110,5 +117,45 @@ mod tests {
                 ["id".into(), "register".into(), 1u64.into()]
             ),]
         );
+    }
+
+    #[tokio::test]
+    async fn test_get_auth_found() {
+        // PasskeyAuthentication wraps AuthenticationState under "ast"
+        let auth_json = r#"{"ast": {"credentials": [], "policy": "preferred", "challenge": "dGVzdC1jaGFsbGVuZ2U", "appid": null, "allow_backup_eligible_upgrade": false}}"#;
+
+        let model = webauthn_state::Model {
+            user_id: "uid".to_string(),
+            state: auth_json.to_string(),
+            r#type: "auth".to_string(),
+            created_at: chrono::Utc::now().naive_utc(),
+        };
+
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([vec![model]])
+            .into_connection();
+
+        let result = get_auth(&db, "uid").await.unwrap();
+        assert!(result.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_get_register_found() {
+        // PasskeyRegistration wraps RegistrationState under "rs"
+        let reg_json = r#"{"rs": {"policy": "preferred", "exclude_credentials": [], "challenge": "dGVzdC1jaGFsbGVuZ2U", "credential_algorithms": [], "require_resident_key": false, "authenticator_attachment": null, "extensions": {}, "allow_synchronised_authenticators": false}}"#;
+
+        let model = webauthn_state::Model {
+            user_id: "uid".to_string(),
+            state: reg_json.to_string(),
+            r#type: "register".to_string(),
+            created_at: chrono::Utc::now().naive_utc(),
+        };
+
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([vec![model]])
+            .into_connection();
+
+        let result = get_register(&db, "uid").await.unwrap();
+        assert!(result.is_some());
     }
 }
