@@ -6,6 +6,12 @@ Date: 2026-06-16
 
 Proposed
 
+> **Security review 2026-06-24:** Seven findings applied — HMAC canonicalization
+> (RFC 8785/JCS), `boot_session_id` CSPRNG requirement, `initiator.host`
+> sanitization rules, `refresh_hmac_key` version-collision fix, HMAC key
+> retention policy, cross-node spool tamper detection, and
+> `map_event_to_action` dangling-reference correction.
+
 ## Context
 
 For feature parity with OpenStack's `pycadf`, our Axum/Tonic application
@@ -51,9 +57,12 @@ impl CadfEventPayload {
     fn sign(self, dispatcher: &AuditDispatcher) -> CadfEvent {
         dispatcher.finalize_event(self)
     }
-    /// Reconstruct from signed event for spool replay HMAC verification.
-    /// SIEMs use this path to extract `CadfEventPayload` from `CadfEvent`
-    /// (excluding `signature`), recompute HMAC, and compare.
+    /// Internal test-tooling only — NOT the SIEM verification path.
+    /// External SIEMs MUST implement verification by: (1) parse received JSON,
+    /// (2) remove the `signature` key, (3) serialize the remainder in JCS
+    /// canonical form (RFC 8785), (4) compute HMAC-SHA256 with the key
+    /// identified by `hmac_key_version`. Cross-language test vectors
+    /// (tests/audit/hmac_vectors.jsonl) cover this exact path.
     fn from_cadf(evt: &CadfEvent) -> Self {
         let e = evt.payload();
         Self {
@@ -87,6 +96,13 @@ impl CadfEvent {
 pub struct Initiator {
     id: String, project_id: Option<String>, domain_id: Option<String>,
     /// Pre-auth signal (EC2 access key, federation idp_id). No PII.
+    /// Content arrives before authentication and is fully attacker-controlled.
+    /// Sanitization rules (enforced at construction, not by Initiator itself):
+    ///   EC2 access key  — must match /^AKIA[A-Z0-9]{16}$/; rejected otherwise.
+    ///   Federation idp_id (UUID) — passed through sanitize_audit_id().
+    ///   Federation idp_id (non-UUID) — filtered to [a-zA-Z0-9._-], max 64 chars.
+    ///   Any other value — filtered to printable ASCII (0x20–0x7E), max 128 chars.
+    ///   Field is omitted (None) if empty after filtering.
     host: Option<String>,
 }
 impl Initiator {
@@ -158,7 +174,10 @@ pub struct AuditDispatcher {
 }
 
 impl AuditDispatcher {
-    // Signs over unsigned payload; SIEM verifies by extracting payload.
+    // Signs over unsigned payload. HMAC input is the JCS-canonical (RFC 8785)
+    // UTF-8 JSON of all payload fields with keys in lexicographic order, no
+    // extra whitespace, null-valued fields always included. This is the sole
+    // canonical form; SIEMs must reproduce it exactly for verification.
     fn finalize_event(&self, partial: CadfEventPayload) -> CadfEvent {
         let (key, version) = self.hmac_key_and_version.load_full().as_ref();
         let completed = CadfEventPayload {
@@ -195,9 +214,11 @@ impl AuditDispatcher {
         self.critical_sender.send(event).await.map_err(|_| AuditChannelDead)
     }
 
-    pub(crate) fn refresh_hmac_key(&self, new_key: Arc<[u8]>) {
-        let (_, old) = self.hmac_key_and_version.load_full().as_ref();
-        self.hmac_key_and_version.store(Arc::from((new_key, **old + 1)));
+    /// MUST be called from a single serialized context (dedicated key-rotation
+    /// task). Concurrent invocations produce version collisions (two different
+    /// keys share the same version), breaking SIEM verification.
+    pub(crate) fn refresh_hmac_key(&self, new_key: Arc<[u8]>, new_version: u64) {
+        self.hmac_key_and_version.store(Arc::new((new_key, new_version)));
     }
 }
 ```
@@ -205,6 +226,13 @@ impl AuditDispatcher {
 **Spooling & Replay:** Workers drain channels to sinks. On shutdown, unsent
 critical events spool. On startup, HMAC-verified and replayed. Corrupted lines
 are skipped to recover adjacent valid events; file quarantined at end.
+
+**`boot_session_id`:** MUST be a UUIDv4 generated from the OS CSPRNG at
+process startup, before any request handling. MUST NOT be derived from a
+wall-clock timestamp, PID, or any predictable value. It is never persisted;
+its sole purpose is to namespace the `seq` counter within a single process
+lifetime. SIEMs MUST partition `seq`-gap detection by
+`(node_id, boot_session_id)` to avoid false gap alerts across restarts.
 
 ---
 
@@ -294,16 +322,23 @@ fn extract_provider_name(source: &Box<dyn std::error::Error>)
 ```rust
 fn map_event_to_action(event: &Event) -> String {
     match &event.operation {
-        Operation::Create => "create", Operation::Update => "update",
-        Operation::Delete => "delete", Operation::Disable => "disable",
-        Operation::Enable => "enable", Operation::Authenticate => "authenticate",
-        Operation::Revoke => "revoke",
-        Operation::Other(action) => { // Sanitize: ASCII + /, cap 64 chars; reject empty
-            let s: String = action.chars().filter(|c| c.is_ascii_alphanumeric()
-                || *c == '-' || *c == '_' || *c == '/').take(64).collect();
-            if s.is_empty() { "unknown" } else { &s }
+        Operation::Create => "create".to_string(),
+        Operation::Update => "update".to_string(),
+        Operation::Delete => "delete".to_string(),
+        Operation::Disable => "disable".to_string(),
+        Operation::Enable => "enable".to_string(),
+        Operation::Authenticate => "authenticate".to_string(),
+        Operation::Revoke => "revoke".to_string(),
+        Operation::Other(action) => {
+            // Sanitize: ASCII alphanumeric + /, -, _; cap 64 chars; reject empty.
+            let s: String = action.chars()
+                .filter(|c| c.is_ascii_alphanumeric()
+                    || *c == '-' || *c == '_' || *c == '/')
+                .take(64)
+                .collect();
+            if s.is_empty() { "unknown".to_string() } else { s }
         }
-    }.to_string()
+    }
 }
 ```
 
@@ -420,9 +455,22 @@ startup: `state.event_dispatcher.subscribe_audit(CadfAuditHook).await`.
   `serde(flatten)`. Private fields prevent unsigned construction. Key derived
   via `HKDF-SHA256(KEK, info="keystone-audit-hmac-v1")`. Key+version as
   `ArcSwap<(Arc<[u8]>, u64)>` for atomic rotation (ADR 0016-v2 §6.2).
+  HMAC input is the JCS-canonical (RFC 8785) serialization of the payload
+  (all fields, lexicographically sorted keys, compact, null fields included).
+- **HMAC Key Retention:** The KEK store MUST retain all HMAC key versions for
+  at least `max(spool_drain_timeout + SIEM_lag_budget, 24h)`. Key versions
+  are monotonically increasing and permanent — never reused. The version
+  number is supplied by the key-rotation task (not derived by
+  `refresh_hmac_key` itself) to prevent version collisions under concurrent
+  rotation attempts. SIEMs MUST cache all key versions seen and MUST NOT
+  delete them without operator confirmation.
 - **Spool Integrity:** Corrupted/tampered lines skipped (recovery-first).
   Per-node spool path (`audit-spool-{node_id}.jsonl`) eliminates shared-file
-  races; advisory lock as secondary guard.
+  races; advisory lock as secondary guard. Because the HMAC key is shared
+  across nodes (same KEK), a signed event from node A is cryptographically
+  valid on node B. The SIEM MUST verify that `observer.node_id` in each event
+  matches the expected source node for the spool being ingested; mismatches
+  MUST be quarantined as tamper indicators, not silently accepted.
 - **Delivery Guarantee:** At-least-once delivery. SIEMs must deduplicate on
   `CadfEvent.id` (unique `node_id:uuid`).
 - **Attempt Reconciliation:** SIEM treats an `Attempt` with no corresponding
