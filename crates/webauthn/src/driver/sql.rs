@@ -99,7 +99,7 @@ impl WebauthnApi for SqlDriver {
     ///
     /// # Parameters
     /// - `state`: The service state.
-    /// - `_user_id`: The user ID (unused).
+    /// - `user_id`: The user ID.
     /// - `credential_id`: The credential ID.
     ///
     /// # Returns
@@ -108,10 +108,10 @@ impl WebauthnApi for SqlDriver {
     async fn delete_user_webauthn_credential<'a>(
         &self,
         state: &ServiceState,
-        _user_id: &'a str,
+        user_id: &'a str,
         credential_id: &'a str,
     ) -> Result<(), WebauthnError> {
-        credential::delete(&state.db, credential_id).await?;
+        credential::delete(&state.db, user_id, credential_id).await?;
         Ok(())
     }
 
@@ -129,7 +129,7 @@ impl WebauthnApi for SqlDriver {
         state: &ServiceState,
         user_id: &'a str,
     ) -> Result<(), WebauthnError> {
-        state::delete(&state.db, user_id).await
+        state::delete(&state.db, user_id, "auth").await
     }
 
     /// Delete webauthn credential registration state for the user.
@@ -146,7 +146,7 @@ impl WebauthnApi for SqlDriver {
         state: &ServiceState,
         user_id: &'a str,
     ) -> Result<(), WebauthnError> {
-        state::delete(&state.db, user_id).await
+        state::delete(&state.db, user_id, "register").await
     }
 
     /// Get webauthn credential auth state.

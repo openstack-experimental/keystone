@@ -21,8 +21,8 @@ openstack-keystone-core = { workspace = true, features = ["api"] }
 openstack-keystone-core-types.workspace = true
 openstack-keystone-distributed-storage = { workspace = true, features = ["mock"] }
 rmp-serde.workspace = true
-sea-orm = { workspace = true }
-sea-orm-migration = { workspace = true }
+sea-orm = { workspace = true, features = ["default"] }
+sea-orm-migration = { workspace = true, features = ["default"] }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
@@ -43,7 +43,7 @@ openstack-keystone-config.workspace = true
 openstack-keystone-core = { workspace = true, features = ["mock"] }
 openstack-keystone-token-driver-fernet.workspace = true
 rcgen.workspace = true
-reqwest.workspace = true
+reqwest = { workspace = true, features = ["json"] }
 reserve-port = "2.4"
 sea-orm = { workspace = true, features = ["mock", "sqlx-sqlite", "sqlx-postgres", "sqlx-mysql", "runtime-tokio" ]}
 serde_json.workspace = true

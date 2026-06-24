@@ -14,28 +14,33 @@
 
 use sea_orm::DatabaseConnection;
 use sea_orm::entity::*;
+use sea_orm::query::*;
 
 use openstack_keystone_core::error::DbContextExt;
 
 use crate::WebauthnError;
-use crate::driver::sql::model::prelude::WebauthnCredential;
+use crate::driver::sql::model::{prelude::WebauthnCredential, webauthn_credential};
 
-/// Delete a webauthn credential.
+/// Delete a webauthn credential owned by the given user.
 ///
 /// # Parameters
 /// - `db`: The database connection.
+/// - `user_id`: The owner's user ID.
 /// - `credential_id`: The ID of the credential to delete.
 ///
 /// # Returns
 /// A `Result` containing `()` on success, or a `WebauthnError`.
-pub async fn delete<U: AsRef<str>>(
+pub async fn delete<U: AsRef<str>, C: AsRef<str>>(
     db: &DatabaseConnection,
-    credential_id: U,
+    user_id: U,
+    credential_id: C,
 ) -> Result<(), WebauthnError> {
-    WebauthnCredential::delete_by_id(credential_id.as_ref())
+    WebauthnCredential::delete_many()
+        .filter(webauthn_credential::Column::UserId.eq(user_id.as_ref()))
+        .filter(webauthn_credential::Column::CredentialId.eq(credential_id.as_ref()))
         .exec(db)
         .await
-        .context("deleting webauthn state record")?;
+        .context("deleting webauthn credential record")?;
     Ok(())
 }
 
@@ -54,14 +59,14 @@ mod tests {
             }])
             .into_connection();
 
-        delete(&db, "id").await.unwrap();
+        delete(&db, "uid", "cred_id").await.unwrap();
         // Checking transaction log
         assert_eq!(
             db.into_transaction_log(),
             [Transaction::from_sql_and_values(
                 DatabaseBackend::Postgres,
-                r#"DELETE FROM "webauthn_credential" WHERE "webauthn_credential"."credential_id" = $1"#,
-                ["id".into()]
+                r#"DELETE FROM "webauthn_credential" WHERE "webauthn_credential"."user_id" = $1 AND "webauthn_credential"."credential_id" = $2"#,
+                ["uid".into(), "cred_id".into()]
             ),]
         );
     }

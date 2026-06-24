@@ -24,20 +24,23 @@ use crate::driver::sql::model::{
     prelude::WebauthnState as DbPasskeyState, webauthn_state as db_webauthn_state,
 };
 
-/// Delete user state.
+/// Delete user state of a specific type.
 ///
 /// # Parameters
 /// - `db`: The database connection.
 /// - `user_id`: The user ID.
+/// - `state_type`: The state type (`"auth"` or `"register"`).
 ///
 /// # Returns
 /// A `Result` containing `()` on success, or a `WebauthnError`.
 pub async fn delete<U: AsRef<str>>(
     db: &DatabaseConnection,
     user_id: U,
+    state_type: &str,
 ) -> Result<(), WebauthnError> {
     DbPasskeyState::delete_many()
         .filter(db_webauthn_state::Column::UserId.eq(user_id.as_ref()))
+        .filter(db_webauthn_state::Column::Type.eq(state_type))
         .exec(db)
         .await
         .context("deleting webauthn state record")?;
@@ -77,14 +80,14 @@ mod tests {
             }])
             .into_connection();
 
-        delete(&db, "id").await.unwrap();
+        delete(&db, "id", "auth").await.unwrap();
         // Checking transaction log
         assert_eq!(
             db.into_transaction_log(),
             [Transaction::from_sql_and_values(
                 DatabaseBackend::Postgres,
-                r#"DELETE FROM "webauthn_state" WHERE "webauthn_state"."user_id" = $1"#,
-                ["id".into()]
+                r#"DELETE FROM "webauthn_state" WHERE "webauthn_state"."user_id" = $1 AND "webauthn_state"."type" = $2"#,
+                ["id".into(), "auth".into()]
             ),]
         );
     }
