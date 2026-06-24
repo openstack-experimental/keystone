@@ -71,7 +71,7 @@ tokio-rustls.workspace = true
 tokio-util.workspace = true
 tonic = { workspace = true, features = ["server", "tls-aws-lc" ] }
 tower.workspace = true
-tower-http = { workspace = true, features = ["compression-full", "request-id", "sensitive-headers", "trace", "util"] }
+tower-http = { workspace = true, features = ["compression-full", "normalize-path", "request-id", "sensitive-headers", "trace", "util"] }
 tracing.workspace = true
 tracing-appender.workspace = true
 tracing-error = "0.2"

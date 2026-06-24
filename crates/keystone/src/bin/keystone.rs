@@ -21,7 +21,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::{
-    Router,
+    Router, ServiceExt,
     extract::DefaultBodyLimit,
     http::{self, HeaderName, Request, header},
 };
@@ -32,9 +32,12 @@ use secrecy::ExposeSecret;
 use tokio::net::TcpListener;
 use tokio::{signal, spawn, time};
 use tokio_util::sync::CancellationToken;
-use tower::ServiceBuilder;
+// `Layer` imported anonymously: its `.layer()` method is needed to wrap the
+// Router, but the name is already taken by `tracing_subscriber::Layer` below.
+use tower::{Layer as _, ServiceBuilder};
 use tower_http::{
     LatencyUnit, ServiceBuilderExt,
+    normalize_path::NormalizePathLayer,
     request_id::{MakeRequestId, PropagateRequestIdLayer, RequestId, SetRequestIdLayer},
     trace::{DefaultOnRequest, DefaultOnResponse, TraceLayer},
 };
@@ -389,6 +392,15 @@ async fn main() -> Result<(), Report> {
         .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", openapi))
         .layer(middleware);
 
+    // Serve a path with or without a trailing slash from the same handler
+    // (matches Python Keystone, see issue #734). NormalizePathLayer rewrites
+    // the request URI *before* routing, so it must wrap the Router from the
+    // outside, not be added via Router::layer() (which runs *after* route
+    // matching, by which point "/v3/users/" has already failed to match the
+    // "/v3/users" route). No HTTP redirect is involved.
+    // https://docs.rs/tower-http/latest/tower_http/normalize_path/index.html
+    let app = NormalizePathLayer::trim_trailing_slash().layer(app);
+
     // Shutdown watcher
     let global_shutdown_token = token.clone();
     let signal_state = shared_state.clone();
@@ -474,12 +486,18 @@ async fn main() -> Result<(), Report> {
             let rest_cancel_token = token.clone();
             let rest_app = app.clone();
             handles.spawn(async move {
-                axum::serve(listener, rest_app.into_make_service())
-                    .with_graceful_shutdown(async move {
-                        rest_cancel_token.cancelled().await;
-                    })
-                    .await
-                    .unwrap();
+                // `rest_app` is `NormalizePath<Router>`, which has no
+                // `Router::into_make_service`; use axum's `ServiceExt` with an
+                // explicit request type to satisfy inference (E0284).
+                axum::serve(
+                    listener,
+                    ServiceExt::<axum::extract::Request>::into_make_service(rest_app),
+                )
+                .with_graceful_shutdown(async move {
+                    rest_cancel_token.cancelled().await;
+                })
+                .await
+                .unwrap();
             });
         }
         _ => {

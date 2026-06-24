@@ -128,4 +128,41 @@ async fn version(
 #[cfg(test)]
 pub(crate) mod tests {
     pub use openstack_keystone_core::api::tests::{get_mocked_state, test_fixture_scoped};
+
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use tower::{Layer, ServiceExt};
+    use tower_http::normalize_path::NormalizePathLayer;
+
+    use super::openapi_router;
+    use crate::provider::Provider;
+
+    /// A request to a route with a trailing slash must be served by the same
+    /// handler as the canonical (no-slash) path — no 404 and no redirect
+    /// (issue #734). This guards both that the middleware is wired in and that
+    /// `trim_trailing_slash` is the correct direction for this router, whose
+    /// routes are registered canonically without a trailing slash.
+    #[tokio::test]
+    async fn trailing_slash_is_normalized() {
+        let state = get_mocked_state(Provider::mocked_builder(), false, None).await;
+        let (router, _) = openapi_router().split_for_parts();
+        let app = NormalizePathLayer::trim_trailing_slash().layer(router.with_state(state));
+
+        // `/v3` is the canonical version-discovery route (needs no auth/DB).
+        let canonical = app
+            .clone()
+            .oneshot(Request::builder().uri("/v3").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+
+        // `/v3/` must be normalized to `/v3` and hit the same handler.
+        let with_slash = app
+            .oneshot(Request::builder().uri("/v3/").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+
+        assert_ne!(with_slash.status(), StatusCode::NOT_FOUND);
+        assert!(!with_slash.status().is_redirection());
+        assert_eq!(with_slash.status(), canonical.status());
+    }
 }

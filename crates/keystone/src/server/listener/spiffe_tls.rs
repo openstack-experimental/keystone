@@ -21,6 +21,7 @@ use spiffe_rustls_tokio::TlsAcceptor;
 use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;
 use tower::Service;
+use tower_http::normalize_path::NormalizePath;
 use tracing::info;
 
 use crate::config::Interface;
@@ -32,7 +33,7 @@ use crate::server::listener::spiffe_common;
 /// the SPIFFE workload API.
 pub async fn start_axum_app(
     addr: std::net::SocketAddr,
-    app: Router,
+    app: NormalizePath<Router>,
     token: CancellationToken,
     trust_domains: Vec<String>,
     interface: Interface,
