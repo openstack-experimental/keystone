@@ -2,9 +2,22 @@
 
 **Date:** 2026-06-12
 
+**Last-revised:** 2026-06-24 (security review)
+
 ## Status
 
 Proposed
+
+**Security review 2026-06-24:**
+
+- F1 MEDIUM: empty authorization list now fails authentication instead of
+  producing an unscoped context (§4 + Invariant 1);
+- F2 MEDIUM: §3 Step 2 XFF algorithm aligned with §6.E to prevent IP-allowlist
+  bypass via leftmost-take (Invariant 4);
+- F3 LOW: `allowed_ips: None` semantics specified as "no restriction" (Invariant
+  5);
+- F4 LOW: `compute_deterministic_user_id` input contract specified as
+  `client_id`-derived (Invariant 6). New §7 Security Invariants section added.
 
 ## Context
 
@@ -57,7 +70,7 @@ pub struct ApiClientResource {
     pub client_id: String,             // Public UUID for management API references
     pub lookup_hash: String,           // Fast SHA-256 hash of the token for O(1) DB index lookups
     pub secret_hash: String,           // PHC format Argon2id hash (e.g., $argon2id$v=19$m=65536$...)
-    pub allowed_ips: Option<Vec<String>>,
+    pub allowed_ips: Option<Vec<String>>,  // None = no IP restriction (any source IP accepted)
     pub description: Option<String>,
     pub enabled: bool,
     pub created_at: i64,               // UTC Epoch seconds
@@ -111,10 +124,15 @@ short-circuiting pipeline.
 1. The middleware queries FjallDB for
    `data:api_client:v1:<domain_id>:<lookup_hash>`.
 2. It verifies `enabled: true` and `current_utc_seconds < expires_at`.
-3. It extracts the source IP from `X-Forwarded-For` **only** if the immediate
-   upstream connection matches an explicitly configured `trusted_proxies` array
-   (otherwise falling back to the raw TCP peer IP). It then validates this IP
-   against the `allowed_ips` CIDR blocks.
+3. It determines the effective client IP using the **rightmost non-trusted-proxy
+   IP** algorithm: append the raw TCP peer address to the right of the
+   `X-Forwarded-For` header chain, then walk right-to-left, returning the first
+   address that is **not** in the statically configured `trusted_proxies` CIDR
+   array. If the raw TCP peer is not in `trusted_proxies`, it is used directly
+   (XFF is not consulted). This prevents leftmost-entry XFF spoofing through
+   untrusted intermediate hops. The resulting effective IP is then validated
+   against `allowed_ips` CIDR blocks. If `allowed_ips` is `None`, the IP check
+   is skipped (no restriction applies).
 
 ### Step 3: Cryptographic Verification & Lazy Re-Hash
 
@@ -134,10 +152,20 @@ operate under exactly _one_ scope.
 
 ```rust
 pub async fn hydrate_ephemeral_context(...) -> Result<ValidatedSecurityContext, AuthenticationError> {
-    let user_id = compute_deterministic_user_id(...);
+    // Derived exclusively from client_id (the unique key UUID), never from
+    // provider_id, so each API key produces a distinct audit identity even
+    // during N:1 rotation periods (§5.D).
+    let user_id = compute_deterministic_user_id(resource.client_id);
 
     // Initialize strictly as Unscoped.
     let mut ctx = SecurityContext::new_ephemeral(IdentityInfo::Principal(PrincipalInfo { user_id }), ScopeInfo::Unscoped);
+
+    // Invariant: a key whose UME mapping resolves to zero authorizations MUST
+    // fail authentication. Returning an unscoped/role-less context would push
+    // the access decision entirely onto downstream OPA policy coverage.
+    if match_result.authorizations.is_empty() {
+        return Err(AuthenticationError::NoAuthorizationsFound);
+    }
 
     // Enforce Single-Scope Constraint
     if match_result.authorizations.len() > 1 {
@@ -285,10 +313,14 @@ traffic migrates seamlessly, and Key A is subsequently revoked.
 
 ### E. X-Forwarded-For Spoofing
 
-- **Measures:** IP allowlisting strictly reads the rightmost non-trusted IP in
-  the `X-Forwarded-For` chain. This relies on an explicit, statically configured
-  `trusted_proxies` CIDR array. If the immediate upstream connection is not in
-  `trusted_proxies`, the application falls back to the raw TCP peer IP.
+- **Measures:** IP allowlisting uses the **rightmost non-trusted-proxy IP**
+  algorithm (§3 Step 2): the raw TCP peer is appended to the right of the XFF
+  chain, then the chain is walked right-to-left and the first address not in
+  `trusted_proxies` is used as the effective client IP. If the TCP peer is
+  untrusted, XFF is not consulted at all. This prevents an attacker from
+  bypassing `allowed_ips` by routing through an untrusted intermediate proxy
+  that prepends a spoofed originating IP to `X-Forwarded-For` before a trusted
+  proxy. `allowed_ips: None` means no IP restriction is applied.
 
 ### F. Janitor Disablement, Asynchronous Drift & Physical Reclamation
 
@@ -307,3 +339,48 @@ traffic migrates seamlessly, and Key A is subsequently revoked.
    executes a secondary garbage-collection phase. Any `ApiClientResource`
    containing a `revoked_at` timestamp older than 365 days is permanently purged
    from FjallDB.
+
+---
+
+## 7. Security Invariants
+
+The following invariants MUST hold at all times. Any implementation deviation is
+a security defect.
+
+1. **No-authorizations → authentication failure.** `hydrate_ephemeral_context`
+   MUST return `Err(AuthenticationError::NoAuthorizationsFound)` when the UME
+   resolves zero authorizations for a key. It MUST NOT produce a
+   `ValidatedSecurityContext` with `ScopeInfo::Unscoped` and an empty role set.
+
+2. **Single-scope enforcement.** A key MUST NOT authenticate if its UME mapping
+   resolves to more than one authorization entry (`MultipleScopesForbidden`).
+
+3. **System scope prohibited at ingress.** An `Authorization::System` match in
+   `hydrate_ephemeral_context` MUST return `SystemScopeForbiddenForApiKey`. The
+   companion write-time prohibition (§6.C) is defense-in-depth, not a substitute
+   for this runtime check.
+
+4. **XFF rightmost-non-trusted algorithm.** Effective client IP MUST be the
+   rightmost address in the XFF chain (with TCP peer appended) that is not in
+   `trusted_proxies`. Implementations MUST NOT use XFF[0] (leftmost) as the
+   effective IP under any trusted-proxy configuration.
+
+5. **`allowed_ips: None` means unrestricted, not deny-all.** When `allowed_ips`
+   is absent from an `ApiClientResource`, the IP check MUST be skipped entirely.
+   Implementations MUST treat a missing field and `Some([])` identically (no
+   restriction).
+
+6. **`compute_deterministic_user_id` MUST be derived from `client_id`.** The
+   ephemeral user_id is computed from the key's unique `client_id` UUID, not
+   from `provider_id`. Two distinct keys sharing a `provider_id` MUST produce
+   different user_ids so their audit records are not conflated.
+
+7. **Dummy-hash timing parity.** When no `ApiClientResource` is found for a
+   given `lookup_hash`, a full Argon2id dummy computation using current global
+   parameters MUST be performed before returning a failure response, preventing
+   timing-based enumeration of valid lookup hashes.
+
+8. **Argon2id minimum parameters enforced.** The parameters embedded in any
+   stored PHC string MUST be validated against configured minimums before
+   accepting a verification as sufficient. Parameters below the floor trigger a
+   lazy re-hash regardless of verification outcome.
