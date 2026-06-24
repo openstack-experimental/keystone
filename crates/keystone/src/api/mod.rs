@@ -129,8 +129,13 @@ async fn version(
 pub(crate) mod tests {
     pub use openstack_keystone_core::api::tests::{get_mocked_state, test_fixture_scoped};
 
+    use std::net::SocketAddr;
+
     use axum::body::Body;
+    use axum::extract::ConnectInfo;
     use axum::http::{Request, StatusCode};
+    use axum::routing::get;
+    use axum::{Router, ServiceExt as AxumServiceExt};
     use tower::{Layer, ServiceExt};
     use tower_http::normalize_path::NormalizePathLayer;
 
@@ -164,5 +169,48 @@ pub(crate) mod tests {
         assert_ne!(with_slash.status(), StatusCode::NOT_FOUND);
         assert!(!with_slash.status().is_redirection());
         assert_eq!(with_slash.status(), canonical.status());
+    }
+
+    /// Issue #358: the public listener captures the raw TCP peer address into a
+    /// `ConnectInfo<SocketAddr>` request extension (the keystone-ng analogue of
+    /// Python Keystone's WSGI `REMOTE_ADDR`). This verifies the capture works and
+    /// composes with the #734 `NormalizePathLayer` wrap: a trailing-slash request
+    /// still normalizes while `ConnectInfo` is populated. Driven fully in-process
+    /// via `Connected<SocketAddr> for SocketAddr`, so no real socket is needed.
+    #[tokio::test]
+    async fn connect_info_is_captured_and_normalizes() {
+        async fn echo_addr(ConnectInfo(addr): ConnectInfo<SocketAddr>) -> String {
+            addr.to_string()
+        }
+
+        let router = Router::new().route("/echo", get(echo_addr));
+        let app = NormalizePathLayer::trim_trailing_slash().layer(router);
+
+        // Same make-service path the public listener uses; the explicit request
+        // type satisfies inference (E0284), as in the binary.
+        let make =
+            AxumServiceExt::<Request<Body>>::into_make_service_with_connect_info::<SocketAddr>(app);
+        let addr: SocketAddr = "192.0.2.4:5555".parse().unwrap();
+        // `Connected<SocketAddr> for SocketAddr` lets us drive the make-service
+        // with a fixed peer address instead of a live TCP connection.
+        let svc = make.oneshot(addr).await.unwrap();
+
+        // `/echo/` (trailing slash) must normalize to `/echo` AND the handler
+        // must observe the injected peer address.
+        let response = svc
+            .oneshot(
+                Request::builder()
+                    .uri("/echo/")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert_eq!(&body[..], b"192.0.2.4:5555");
     }
 }

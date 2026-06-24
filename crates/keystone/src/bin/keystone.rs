@@ -16,13 +16,14 @@
 //! This is the entry point of the `keystone` binary.
 
 use std::io;
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
 use axum::{
     Router, ServiceExt,
-    extract::DefaultBodyLimit,
+    extract::{ConnectInfo, DefaultBodyLimit},
     http::{self, HeaderName, Request, header},
 };
 use clap::{Parser, ValueEnum};
@@ -348,10 +349,19 @@ async fn main() -> Result<(), Report> {
         .layer(
             TraceLayer::new(common::KeystoneResponseClassifier)
                 .make_span_with(|request: &Request<_>| {
+                    // Raw TCP peer address captured by
+                    // `into_make_service_with_connect_info` on the public
+                    // listener (the keystone-ng analogue of Python Keystone's
+                    // WSGI REMOTE_ADDR / flask.request.remote_addr). `None` for
+                    // the SPIFFE interfaces, which do not populate ConnectInfo.
+                    let client_addr = request
+                        .extensions()
+                        .get::<ConnectInfo<SocketAddr>>()
+                        .map(|ConnectInfo(addr)| *addr);
                     info_span!(
                         "request",
                         method = ?request.method(),
-                        some_other_field = tracing::field::Empty,
+                        client.addr = ?client_addr,
                         uri = ?request.uri().path(),
                         x_request_id = ?request.headers().get("x-openstack-request-id")
                     )
@@ -486,12 +496,25 @@ async fn main() -> Result<(), Report> {
             let rest_cancel_token = token.clone();
             let rest_app = app.clone();
             handles.spawn(async move {
-                // `rest_app` is `NormalizePath<Router>`, which has no
-                // `Router::into_make_service`; use axum's `ServiceExt` with an
+                // `rest_app` is `NormalizePath<Router>` (issue #734 wraps the
+                // Router from the outside), which has no
+                // `Router::into_make_service_with_connect_info`; use axum's
+                // `ServiceExt` (blanket-impl'd for any `Service`) with an
                 // explicit request type to satisfy inference (E0284).
+                //
+                // `into_make_service_with_connect_info::<SocketAddr>` stores the
+                // raw TCP peer address in a `ConnectInfo<SocketAddr>` request
+                // extension (the analogue of Python Keystone's WSGI REMOTE_ADDR).
+                // This is the *raw* peer, not proxy-resolved: behind a reverse
+                // proxy/LB it is the proxy's address. A trusted forwarded-header
+                // layer (mirroring oslo_middleware's `enable_proxy_headers_parsing`,
+                // off by default) is a deliberate follow-up before this is used
+                // for any IP-based login control. See issue #358.
                 axum::serve(
                     listener,
-                    ServiceExt::<axum::extract::Request>::into_make_service(rest_app),
+                    ServiceExt::<axum::extract::Request>::into_make_service_with_connect_info::<
+                        SocketAddr,
+                    >(rest_app),
                 )
                 .with_graceful_shutdown(async move {
                     rest_cancel_token.cancelled().await;
