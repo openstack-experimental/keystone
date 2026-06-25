@@ -197,11 +197,26 @@ impl AssignmentApi for AssignmentService {
             revoked_at: chrono::Utc::now(),
         };
 
-        state
-            .provider
-            .get_revoke_provider()
-            .create_revocation_event(state, revocation_event)
-            .await?;
+        // Only create revocation event for group assignments if revoke_by_id is enabled.
+        // By default group revocations do not create revocation events since token
+        // validation rebuilds assignments at validation time.
+        // Reference: Python Keystone bug #1662514
+        let is_group_assignment = matches!(
+            &grant.r#type,
+            AssignmentType::GroupDomain
+                | AssignmentType::GroupProject
+                | AssignmentType::GroupSystem
+        );
+
+        let revoke_by_id = state.config_manager.config.read().await.token.revoke_by_id;
+
+        if !is_group_assignment || revoke_by_id {
+            state
+                .provider
+                .get_revoke_provider()
+                .create_revocation_event(state, revocation_event)
+                .await?;
+        }
 
         state
             .event_dispatcher
@@ -397,6 +412,40 @@ mod tests {
             .role_id("rid1")
             .target_id("target_id")
             .r#type(AssignmentType::UserProject)
+            .build()
+            .unwrap();
+        let assignment_clone = assignment.clone();
+        backend
+            .expect_revoke_grant()
+            .withf(move |_, params: &Assignment| *params == assignment_clone)
+            .returning(|_, _| Ok(()));
+
+        let provider = AssignmentService {
+            backend_driver: Arc::new(backend),
+        };
+
+        assert!(provider.revoke_grant(&state, assignment).await.is_ok());
+    }
+    #[tokio::test]
+    async fn test_revoke_group_system_grant() {
+        let mut revoke_mock = MockRevokeProvider::default();
+        // Group assignments must NOT create revocation events by default
+        // (revoke_by_id = false). Token validation rebuilds assignments
+        // at validation time. Reference: Python Keystone bug #1662514
+        revoke_mock.expect_create_revocation_event().never();
+
+        let state = get_mocked_state(
+            None,
+            Some(Provider::mocked_builder().mock_revoke(revoke_mock)),
+        )
+        .await;
+
+        let mut backend = MockAssignmentBackend::default();
+        let assignment = AssignmentBuilder::default()
+            .actor_id("group_id")
+            .role_id("rid1")
+            .target_id("system")
+            .r#type(AssignmentType::GroupSystem)
             .build()
             .unwrap();
         let assignment_clone = assignment.clone();

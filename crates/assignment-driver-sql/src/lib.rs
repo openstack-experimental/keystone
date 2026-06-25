@@ -244,6 +244,9 @@ impl AssignmentBackend for SqlBackend {
         if let Some(uid) = &params.user_id {
             actors.push(uid.into());
         }
+        if let Some(gid) = &params.group_id {
+            actors.push(gid.into());
+        }
         if let Some(true) = &params.effective
             && let Some(uid) = &params.user_id
         {

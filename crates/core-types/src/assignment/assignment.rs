@@ -152,6 +152,22 @@ impl AssignmentCreate {
         )
     }
 
+    /// Instantiate GroupSystem assignment.
+    pub fn group_system<A, T, R>(actor_id: A, target_id: T, role_id: R, inherited: bool) -> Self
+    where
+        A: Into<String>,
+        T: Into<String>,
+        R: Into<String>,
+    {
+        Self::new(
+            actor_id,
+            target_id,
+            role_id,
+            AssignmentType::GroupSystem,
+            inherited,
+        )
+    }
+
     /// Instantiate UserDomain assignment.
     pub fn user_domain<A, T, R>(actor_id: A, target_id: T, role_id: R, inherited: bool) -> Self
     where
