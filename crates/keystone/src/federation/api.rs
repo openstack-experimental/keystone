@@ -32,6 +32,7 @@ pub mod error;
 pub mod identity_provider;
 pub mod jwt;
 pub mod oidc;
+mod oidc_utils;
 pub mod types;
 
 /// OpenApi specification for the federation.
