@@ -76,6 +76,17 @@ pub enum KeystoneApiError {
     #[error("selected authentication is forbidden")]
     SelectedAuthenticationForbidden,
 
+    /// Rate limit exceeded (HTTP 429 Too Many Requests).
+    ///
+    /// `retry_after` is the number of seconds the client must wait before
+    /// retrying. Surfaced via the `Retry-After` response header (ADR-0022,
+    /// Invariant 3). No key-identifying information is included.
+    #[error("Rate limit exceeded. Retry in {retry_after}s.")]
+    TooManyRequests {
+        /// Minimum seconds to wait before retrying.
+        retry_after: u64,
+    },
+
     /// (de)serialization error.
     #[error(transparent)]
     Serde {
@@ -86,16 +97,12 @@ pub enum KeystoneApiError {
     #[error("missing x-subject-token header")]
     SubjectTokenMissing,
 
-    #[error("rate limit exceeded, retry later")]
-    TooManyRequests,
-
     /// Request is syntactically valid but semantically invalid (RFC 4918
     /// §11.2 / RFC 7231 §6.5.1's `422` successor). Used for write-time
     /// validation failures that are not simple malformed-request errors
     /// (e.g. ADR 0024 §2.C's `Authorization::Project` prohibition).
     #[error("{0}.")]
     UnprocessableEntity(String),
-
     #[error("The request you have made requires authentication.")]
     UnauthorizedNoContext,
 

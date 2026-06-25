@@ -239,6 +239,9 @@ mod tests {
                 openstack_keystone_dynamic_plugin_runtime::WasmPluginRegistry::default(),
             )),
             core_host_functions: tokio::sync::RwLock::new(None),
+            rate_limiters: crate::rate_limit::RateLimitState {
+                global_ip_limiter: None,
+            },
             shutdown: false,
         };
         Arc::new(service)
@@ -352,6 +355,9 @@ mod tests {
                 openstack_keystone_dynamic_plugin_runtime::WasmPluginRegistry::default(),
             )),
             core_host_functions: tokio::sync::RwLock::new(None),
+            rate_limiters: crate::rate_limit::RateLimitState {
+                global_ip_limiter: None,
+            },
             shutdown: false,
         });
 
@@ -459,6 +465,9 @@ mod tests {
                 openstack_keystone_dynamic_plugin_runtime::WasmPluginRegistry::default(),
             )),
             core_host_functions: tokio::sync::RwLock::new(None),
+            rate_limiters: crate::rate_limit::RateLimitState {
+                global_ip_limiter: None,
+            },
             shutdown: false,
         });
 
@@ -530,6 +539,9 @@ mod tests {
                 openstack_keystone_dynamic_plugin_runtime::WasmPluginRegistry::default(),
             )),
             core_host_functions: tokio::sync::RwLock::new(None),
+            rate_limiters: crate::rate_limit::RateLimitState {
+                global_ip_limiter: None,
+            },
             shutdown: false,
         });
 
@@ -600,6 +612,9 @@ mod tests {
                 openstack_keystone_dynamic_plugin_runtime::WasmPluginRegistry::default(),
             )),
             core_host_functions: tokio::sync::RwLock::new(None),
+            rate_limiters: crate::rate_limit::RateLimitState {
+                global_ip_limiter: None,
+            },
             shutdown: false,
         });
 

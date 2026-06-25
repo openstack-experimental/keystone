@@ -29,6 +29,7 @@ use crate::error::KeystoneError;
 use crate::events::EventDispatcher;
 use crate::policy::PolicyEnforcer;
 use crate::provider::Provider;
+use crate::rate_limit::RateLimitState;
 
 // Placing ServiceState behind Arc is necessary to address DatabaseConnection
 // not implementing Clone.
@@ -76,6 +77,13 @@ pub struct Service {
     /// `None` until `load_dynamic_plugins` runs, same as the registry.
     pub core_host_functions: RwLock<Option<Arc<CoreHostFunctions>>>,
 
+    /// Rate-limiting state (ADR-0022).
+    ///
+    /// Holds one `governor` keyed limiter per active bucket. `None` fields
+    /// mean the corresponding bucket is disabled in `keystone.conf` and
+    /// requests bypass that check entirely.
+    pub rate_limiters: RateLimitState,
+
     /// Shutdown flag.
     pub shutdown: bool,
 }
@@ -120,6 +128,13 @@ impl Service {
         );
         let api_key_rate_limiter = Arc::new(RateLimiter::keyed(quota));
 
+        // Build rate-limiting state from config. Fails fast (Invariant 2) if
+        // any enabled bucket has zero burst or replenish rate.
+        let rate_limiters = {
+            let config = cfg.config.read().await;
+            RateLimitState::from_config(&config)?
+        };
+
         Ok(Self {
             config_manager: cfg,
             provider,
@@ -131,6 +146,7 @@ impl Service {
             api_key_rate_limiter,
             dynamic_plugin_registry: RwLock::new(Arc::new(WasmPluginRegistry::default())),
             core_host_functions: RwLock::new(None),
+            rate_limiters,
             shutdown: false,
         })
     }

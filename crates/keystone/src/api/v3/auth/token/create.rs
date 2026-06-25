@@ -105,6 +105,18 @@ async fn create_inner(
     peer_addr: Option<SocketAddr>,
 ) -> Result<(ValidatedSecurityContext, Response), KeystoneApiError> {
     req.validate()?;
+
+    // Global per-IP rate-limit check (ADR-0022, Invariant 4).
+    // Fires BEFORE authenticate_request to avoid consuming CPU on password
+    // hashing for rejected requests.
+    if let Some(addr) = peer_addr
+        && let Err(retry_after) = state.rate_limiters.check_ip(addr.ip())
+    {
+        return Err(KeystoneApiError::TooManyRequests {
+            retry_after: retry_after.as_secs().max(1),
+        });
+    }
+
     let auth_res =
         authenticate_request(state, &req, headers, peer_addr.map(|addr| addr.ip())).await?;
     let ctx = SecurityContext::try_from(auth_res)?;
@@ -167,20 +179,22 @@ async fn create_inner(
 mod tests {
     use axum::{
         body::Body,
+        extract::ConnectInfo,
         http::{Request, StatusCode, header},
     };
     use http_body_util::BodyExt; // for `collect`
     use sea_orm::DatabaseConnection;
     use serde_json::json;
+    use std::net::SocketAddr;
     use std::sync::Arc;
     use tower::ServiceExt; // for `call`, `oneshot`, and `ready`
     use tower_http::trace::TraceLayer;
     use tracing_test::traced_test;
 
     use openstack_keystone_audit::AuditDispatcher;
-    use openstack_keystone_config::{Config, ConfigManager};
+    use openstack_keystone_config::{Config, ConfigManager, RateLimitSection};
     use openstack_keystone_core_types::auth::*;
-    use openstack_keystone_core_types::identity::UserPasswordAuthRequest;
+    use openstack_keystone_core_types::identity::{IdentityProviderError, UserPasswordAuthRequest};
     use openstack_keystone_core_types::resource::{Domain, DomainBuilder, Project};
     use openstack_keystone_core_types::token::{ProjectScopePayload, TokenProviderError};
     use secrecy::ExposeSecret;
@@ -696,5 +710,252 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    // Build a minimal JSON body that passes `req.validate()`.
+    fn auth_body() -> Vec<u8> {
+        serde_json::to_vec(&json!({
+            "auth": {
+                "identity": {
+                    "methods": ["password"],
+                    "password": {
+                        "user": {
+                            "id": "uid",
+                            "name": "uname",
+                            "domain": { "id": "udid", "name": "udname" },
+                            "password": "pass"
+                        }
+                    }
+                }
+            }
+        }))
+        .unwrap()
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_rate_limit_returns_429_after_burst_exhausted() {
+        // burst_size=1: the first request consumes the single burst token and
+        // passes through to auth; the second must be rejected with 429 before
+        // authenticate_request is ever called.
+        let config = Config {
+            rate_limit_global_ip: RateLimitSection {
+                enabled: true,
+                burst_size: 1,
+                replenish_rate_per_second: 1,
+            },
+            ..Config::default()
+        };
+
+        // The first request reaches identity — we return an error so we don't
+        // need the full auth fixture.  The second must never reach identity at
+        // all (rate limited before authenticate_request).
+        let mut identity_mock = MockIdentityProvider::default();
+        identity_mock
+            .expect_authenticate_by_password()
+            .once()
+            .returning(|_, _| Err(IdentityProviderError::UserNotFound("uid".into())));
+
+        let provider = Provider::mocked_builder()
+            .mock_identity(identity_mock)
+            .build()
+            .unwrap();
+
+        let state = Arc::new(
+            Service::new(
+                ConfigManager::not_watched(config),
+                DatabaseConnection::Disconnected,
+                provider,
+                Arc::new(MockPolicy::default()),
+                AuditDispatcher::noop(),
+                None,
+            )
+            .await
+            .unwrap(),
+        );
+
+        let client_addr: SocketAddr = "203.0.113.1:1234".parse().unwrap();
+
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state.clone());
+
+        // First request — passes the rate limit, fails at auth → not 429.
+        let mut req1 = Request::builder()
+            .uri("/")
+            .method("POST")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(auth_body()))
+            .unwrap();
+        req1.extensions_mut().insert(ConnectInfo(client_addr));
+        let resp1 = api.as_service().oneshot(req1).await.unwrap();
+        assert_ne!(
+            resp1.status(),
+            StatusCode::TOO_MANY_REQUESTS,
+            "first request must not be rate-limited"
+        );
+
+        // Second request from the same IP — burst exhausted → 429 + Retry-After.
+        let mut req2 = Request::builder()
+            .uri("/")
+            .method("POST")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(auth_body()))
+            .unwrap();
+        req2.extensions_mut().insert(ConnectInfo(client_addr));
+        let resp2 = api.as_service().oneshot(req2).await.unwrap();
+        assert_eq!(resp2.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert!(
+            resp2.headers().contains_key(header::RETRY_AFTER),
+            "429 response must carry Retry-After header"
+        );
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_rate_limit_does_not_apply_without_connect_info() {
+        // When there is no ConnectInfo in extensions (SPIFFE/internal interface),
+        // requests must never be rate-limited regardless of the configured quota.
+        let config = Config {
+            rate_limit_global_ip: RateLimitSection {
+                enabled: true,
+                burst_size: 1,
+                replenish_rate_per_second: 1,
+            },
+            ..Config::default()
+        };
+
+        let mut identity_mock = MockIdentityProvider::default();
+        // Two calls expected — both reach identity, neither is rate-limited.
+        identity_mock
+            .expect_authenticate_by_password()
+            .times(2)
+            .returning(|_, _| Err(IdentityProviderError::UserNotFound("uid".into())));
+
+        let provider = Provider::mocked_builder()
+            .mock_identity(identity_mock)
+            .build()
+            .unwrap();
+
+        let state = Arc::new(
+            Service::new(
+                ConfigManager::not_watched(config),
+                DatabaseConnection::Disconnected,
+                provider,
+                Arc::new(MockPolicy::default()),
+                AuditDispatcher::noop(),
+                None,
+            )
+            .await
+            .unwrap(),
+        );
+
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state.clone());
+
+        // Neither request carries ConnectInfo — both must reach identity.
+        for _ in 0..2 {
+            let resp = api
+                .as_service()
+                .oneshot(
+                    Request::builder()
+                        .uri("/")
+                        .method("POST")
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .body(Body::from(auth_body()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_ne!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+        }
+    }
+
+    /// End-to-end path: drive the real `create` route through the exact
+    /// make-service the public listener uses
+    /// (`into_make_service_with_connect_info::<SocketAddr>`) with a fixed peer
+    /// address, so the `ConnectInfo<SocketAddr>` extension is populated by axum
+    /// itself — not injected by the test. This proves the whole chain wires up:
+    /// TCP peer → `ConnectInfo` extension → `Option<Extension<ConnectInfo<_>>>`
+    /// extractor → `check_ip` → 429 + `Retry-After`. Confirms the `401 → 429`
+    /// flip the manual `curl` loop in the PR test plan would show, without a
+    /// live database or socket (`Connected<SocketAddr> for SocketAddr` drives
+    /// the make-service with a synthetic peer).
+    #[tokio::test]
+    #[traced_test]
+    async fn test_rate_limit_429_over_connect_info_make_service() {
+        use axum::ServiceExt as AxumServiceExt;
+
+        let config = Config {
+            rate_limit_global_ip: RateLimitSection {
+                enabled: true,
+                burst_size: 1,
+                replenish_rate_per_second: 1,
+            },
+            ..Config::default()
+        };
+
+        // Identity returns an auth failure so the first (non-limited) request
+        // resolves without the full token fixture; it must be called exactly
+        // once — the second request is rejected before reaching identity.
+        let mut identity_mock = MockIdentityProvider::default();
+        identity_mock
+            .expect_authenticate_by_password()
+            .once()
+            .returning(|_, _| Err(IdentityProviderError::UserNotFound("uid".into())));
+
+        let provider = Provider::mocked_builder()
+            .mock_identity(identity_mock)
+            .build()
+            .unwrap();
+
+        let state = Arc::new(
+            Service::new(
+                ConfigManager::not_watched(config),
+                DatabaseConnection::Disconnected,
+                provider,
+                Arc::new(MockPolicy::default()),
+                AuditDispatcher::noop(),
+                None,
+            )
+            .await
+            .unwrap(),
+        );
+
+        // Same make-service path as `spawn_public_listener`; explicit request
+        // type satisfies inference (E0284), as in the binary.
+        let (router, _) = openapi_router().split_for_parts();
+        let app = router.with_state(state.clone());
+        let make =
+            AxumServiceExt::<Request<Body>>::into_make_service_with_connect_info::<SocketAddr>(app);
+        let peer: SocketAddr = "203.0.113.7:4444".parse().unwrap();
+
+        let post = || {
+            Request::builder()
+                .uri("/")
+                .method("POST")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(auth_body()))
+                .unwrap()
+        };
+
+        // First request from the peer: passes rate limit, fails at auth → not 429.
+        let svc1 = make.clone().oneshot(peer).await.unwrap();
+        let resp1 = svc1.oneshot(post()).await.unwrap();
+        assert_ne!(
+            resp1.status(),
+            StatusCode::TOO_MANY_REQUESTS,
+            "first request from a fresh IP must not be rate-limited"
+        );
+
+        // Second request from the same peer: burst spent → 429 + Retry-After.
+        let svc2 = make.clone().oneshot(peer).await.unwrap();
+        let resp2 = svc2.oneshot(post()).await.unwrap();
+        assert_eq!(resp2.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert!(
+            resp2.headers().contains_key(header::RETRY_AFTER),
+            "429 response must carry a Retry-After header"
+        );
     }
 }
