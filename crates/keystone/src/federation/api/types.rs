@@ -12,68 +12,11 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 use derive_builder::Builder;
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-
-use openidconnect::core::{
-    CoreAuthDisplay, CoreAuthPrompt, CoreErrorResponseType, CoreGenderClaim, CoreJsonWebKey,
-    CoreJweContentEncryptionAlgorithm, CoreJwsSigningAlgorithm, CoreRevocableToken,
-    CoreRevocationErrorResponse, CoreTokenIntrospectionResponse, CoreTokenType,
-};
-use openidconnect::{
-    AdditionalClaims, EndpointMaybeSet, EndpointNotSet, EndpointSet, ExtraTokenFields,
-    IdTokenFields, StandardErrorResponse, StandardTokenResponse,
-};
 
 pub use openstack_keystone_api_types::federation::*;
 
 mod identity_provider;
 mod mapping;
-
-pub(super) type OidcIdTokenFields = IdTokenFields<
-    AllOtherClaims,
-    ExtraFields,
-    CoreGenderClaim,
-    CoreJweContentEncryptionAlgorithm,
-    CoreJwsSigningAlgorithm,
->;
-
-pub(super) type OidcTokenResponse = StandardTokenResponse<OidcIdTokenFields, CoreTokenType>;
-
-pub(super) type OidcClient<
-    HasAuthUrl = EndpointSet,
-    HasDeviceAuthUrl = EndpointNotSet,
-    HasIntrospectionUrl = EndpointNotSet,
-    HasRevocationUrl = EndpointNotSet,
-    HasTokenUrl = EndpointMaybeSet,
-    HasUserInfoUrl = EndpointMaybeSet,
-> = openidconnect::Client<
-    AllOtherClaims,
-    CoreAuthDisplay,
-    CoreGenderClaim,
-    CoreJweContentEncryptionAlgorithm,
-    CoreJsonWebKey,
-    CoreAuthPrompt,
-    StandardErrorResponse<CoreErrorResponseType>,
-    OidcTokenResponse,
-    CoreTokenIntrospectionResponse,
-    CoreRevocableToken,
-    CoreRevocationErrorResponse,
-    HasAuthUrl,
-    HasDeviceAuthUrl,
-    HasIntrospectionUrl,
-    HasRevocationUrl,
-    HasTokenUrl,
-    HasUserInfoUrl,
->;
-
-#[derive(Debug, Deserialize, Serialize)]
-pub(super) struct AllOtherClaims(HashMap<String, serde_json::Value>);
-impl AdditionalClaims for AllOtherClaims {}
-
-#[derive(Debug, Deserialize, Serialize)]
-pub(super) struct ExtraFields(HashMap<String, serde_json::Value>);
-impl ExtraTokenFields for ExtraFields {}
 
 #[derive(Builder, Debug, Clone)]
 #[builder(setter(into))]

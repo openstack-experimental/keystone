@@ -22,16 +22,8 @@ use axum::{
     http::header::AUTHORIZATION,
     response::IntoResponse,
 };
-use std::str::FromStr;
 use tracing::warn;
 use utoipa_axum::{router::OpenApiRouter, routes};
-
-use openidconnect::core::{
-    CoreClient, CoreGenderClaim, CoreJsonWebKey, CoreJweContentEncryptionAlgorithm,
-    CoreJwsSigningAlgorithm, CoreProviderMetadata,
-};
-use openidconnect::reqwest;
-use openidconnect::{Client, ClientId, IdToken, IssuerUrl, JsonWebKeySet, JsonWebKeySetUrl, Nonce};
 
 use openstack_keystone_api_types::v3::auth::token::TokenBuilder;
 use openstack_keystone_core::api::common::get_authz_info;
@@ -49,22 +41,16 @@ use crate::api::{
     types::{Catalog, CatalogService},
 };
 use crate::auth::*;
-use crate::federation::api::{error::OidcError, types::*};
+use crate::federation::api::error::OidcError;
 use crate::identity::error::IdentityProviderError;
 use crate::keystone::ServiceState;
 
 use super::common::{map_user_data, validate_bound_claims};
+use super::oidc_utils::{build_http_client, discover, fetch_jwks, verify_jwt};
 
 pub(super) fn openapi_router() -> OpenApiRouter<ServiceState> {
     OpenApiRouter::new().routes(routes!(login))
 }
-
-type FullIdToken = IdToken<
-    AllOtherClaims,
-    CoreGenderClaim,
-    CoreJweContentEncryptionAlgorithm,
-    CoreJwsSigningAlgorithm,
->;
 
 /// Authentication using the JWT.
 ///
@@ -187,74 +173,48 @@ pub async fn login(
         None
     };
 
-    //if !matches!(mapping.r#type, ProviderMappingType::Jwt) {
-    //    // need to log helping message, since the error is wrapped
-    //    // to prevent existence exposure.
-    //    warn!("Not JWT mapping used for the JWT login");
-    //    return Err(OidcError::NonJwtMapping)?;
-    //}
+    let http_client = build_http_client()?;
 
-    let http_client = reqwest::ClientBuilder::new()
-        // Following redirects opens the client up to SSRF vulnerabilities.
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .map_err(OidcError::from)?;
-
-    // Discover metadata when issuer or jwks_url is not known
-    let provider_metadata: Option<CoreProviderMetadata> = if let Some(discovery_url) =
-        &idp.oidc_discovery_url
+    // Discover metadata when issuer or jwks_url is not known.
+    let discovered_issuer: Option<String>;
+    let discovered_jwks_uri: Option<String>;
+    if let Some(discovery_url) = &idp.oidc_discovery_url
         && (idp.bound_issuer.is_none() || idp.jwks_url.is_none())
     {
-        Some(
-            CoreProviderMetadata::discover_async(
-                IssuerUrl::new(discovery_url.to_string()).map_err(OidcError::from)?,
-                &http_client,
-            )
+        let metadata = discover(discovery_url, &http_client)
             .await
-            .map_err(|err| OidcError::discovery(discovery_url, &err))?,
-        )
+            .map_err(|err| OidcError::discovery(discovery_url.as_str(), &err))?;
+        discovered_issuer = Some(metadata.issuer);
+        discovered_jwks_uri = Some(metadata.jwks_uri);
     } else {
-        None
-    };
+        discovered_issuer = None;
+        discovered_jwks_uri = None;
+    }
 
-    let issuer_url = if let Some(bound_issuer) = &idp.bound_issuer {
-        IssuerUrl::new(bound_issuer.clone()).map_err(OidcError::from)?
-    } else if let Some(metadata) = &provider_metadata {
-        metadata.issuer().clone()
+    let issuer = if let Some(bound_issuer) = &idp.bound_issuer {
+        bound_issuer.as_str()
+    } else if let Some(ref iss) = discovered_issuer {
+        iss.as_str()
     } else {
         warn!("No issuer_url can be determined for {:?}", idp);
         return Err(OidcError::NoJwtIssuer.into());
     };
 
-    let jwks_url = if let Some(jwks_url) = &idp.jwks_url {
-        JsonWebKeySetUrl::new(jwks_url.clone()).map_err(OidcError::from)?
-    } else if let Some(metadata) = &provider_metadata {
-        metadata.jwks_uri().clone()
+    let jwks_uri = if let Some(jwks_url) = &idp.jwks_url {
+        jwks_url.as_str()
+    } else if let Some(ref uri) = discovered_jwks_uri {
+        uri.as_str()
     } else {
         warn!("No jwks_url can be determined for {:?}", idp);
         return Err(OidcError::NoJwtIssuer.into());
     };
 
-    let jwks: JsonWebKeySet<CoreJsonWebKey> = JsonWebKeySet::fetch_async(&jwks_url, &http_client)
-        .await
-        .map_err(|err| OidcError::discovery(jwks_url.as_str(), &err))?;
+    let jwks = fetch_jwks(jwks_uri, &http_client).await?;
 
-    // TODO: client_id should match the audience. How to get that?
-    let audience = "keystone";
-    let client: CoreClient = Client::new(ClientId::new(audience.to_string()), issuer_url, jwks);
+    // No nonce in the JWT flow; no audience check (audience is not fixed to a client_id here).
+    let claims_as_json = verify_jwt(&jwt, &jwks, Some(issuer), None, &[])?;
 
-    let id_token = FullIdToken::from_str(&jwt)?;
-
-    let id_token_verifier = client.id_token_verifier().require_audience_match(false);
-    // The nonce is not used in the JWT flow, so we can ignore it.
-    let nonce_verifier = |_nonce: Option<&Nonce>| Ok(());
-    let claims = id_token
-        .into_claims(&id_token_verifier, &nonce_verifier)
-        .map_err(OidcError::from)?;
-
-    let claims_as_json = serde_json::to_value(&claims)?;
-
-    validate_bound_claims(&mapping, &claims, &claims_as_json)?;
+    validate_bound_claims(&mapping, &claims_as_json)?;
     let mapped_user_data = map_user_data(&state, &idp, &mapping, &claims_as_json).await?;
 
     let user = if let Some(existing_user) = state

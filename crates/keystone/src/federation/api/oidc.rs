@@ -15,18 +15,9 @@
 
 use axum::{Json, debug_handler, extract::State, http::StatusCode, response::IntoResponse};
 use chrono::Utc;
-use eyre::WrapErr;
 use std::collections::{HashMap, HashSet};
 use tracing::{debug, trace};
-use url::Url;
 use utoipa_axum::{router::OpenApiRouter, routes};
-
-use openidconnect::core::CoreProviderMetadata;
-use openidconnect::reqwest;
-use openidconnect::{
-    AuthorizationCode, ClientId, ClientSecret, IssuerUrl, Nonce, PkceCodeVerifier, RedirectUrl,
-    TokenResponse,
-};
 
 use crate::api::v4::auth::token::types::TokenResponse as KeystoneTokenResponse;
 use crate::api::{
@@ -45,6 +36,7 @@ use openstack_keystone_core_types::identity::{
 };
 
 use super::common::{map_user_data, validate_bound_claims};
+use super::oidc_utils::{build_http_client, discover, exchange_code, fetch_jwks, verify_jwt};
 
 pub(super) fn openapi_router() -> OpenApiRouter<ServiceState> {
     OpenApiRouter::new().routes(routes!(callback))
@@ -142,62 +134,57 @@ pub async fn callback(
         None
     };
 
-    let http_client = reqwest::ClientBuilder::new()
-        // Following redirects opens the client up to SSRF vulnerabilities.
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .map_err(OidcError::from)?;
+    let discovery_url = idp
+        .oidc_discovery_url
+        .as_deref()
+        .ok_or(OidcError::ClientWithoutDiscoveryNotSupported)?;
 
-    let client = if let Some(discovery_url) = &idp.oidc_discovery_url {
-        let provider_metadata = CoreProviderMetadata::discover_async(
-            IssuerUrl::new(discovery_url.to_string()).map_err(OidcError::from)?,
-            &http_client,
-        )
+    let http_client = build_http_client()?;
+    let metadata = discover(discovery_url, &http_client)
         .await
         .map_err(|err| OidcError::discovery(discovery_url, &err))?;
-        OidcClient::from_provider_metadata(
-            provider_metadata,
-            ClientId::new(
-                idp.oidc_client_id
-                    .clone()
-                    .ok_or(OidcError::ClientIdRequired)?,
-            ),
-            idp.oidc_client_secret.clone().map(ClientSecret::new),
-        )
-        .set_redirect_uri(RedirectUrl::new(auth_state.redirect_uri).map_err(OidcError::from)?)
-    } else {
-        return Err(OidcError::ClientWithoutDiscoveryNotSupported.into());
-    };
 
-    // Finish authorization request by exchanging the authorization code for the
-    // token.
-    let token_response = client
-        .exchange_code(AuthorizationCode::new(query.code))
-        .map_err(OidcError::from)?
-        // Set the PKCE code verifier.
-        .set_pkce_verifier(PkceCodeVerifier::new(auth_state.pkce_verifier))
-        .request_async(&http_client)
-        .await
-        .map_err(|err| OidcError::request_token(&err))?;
+    let client_id = idp
+        .oidc_client_id
+        .as_deref()
+        .ok_or(OidcError::ClientIdRequired)?;
 
-    //// Extract the ID token claims after verifying its authenticity and nonce.
-    let id_token = token_response.id_token().ok_or(OidcError::NoToken)?;
-    let claims = id_token
-        .claims(&client.id_token_verifier(), &Nonce::new(auth_state.nonce))
-        .map_err(OidcError::from)?;
-    if let Some(bound_issuer) = &idp.bound_issuer
-        && Url::parse(bound_issuer)
-            .map_err(OidcError::from)
-            .wrap_err_with(|| {
-                format!("while parsing the mapping bound_issuer url: {bound_issuer}")
-            })?
-            == *claims.issuer().url()
-    {}
+    // Exchange the authorization code for tokens.
+    let token_response = exchange_code(
+        &metadata.token_endpoint,
+        client_id,
+        idp.oidc_client_secret.as_deref(),
+        &query.code,
+        &auth_state.redirect_uri,
+        &auth_state.pkce_verifier,
+        &http_client,
+    )
+    .await
+    .map_err(|err| OidcError::request_token(&err))?;
 
-    let claims_as_json = serde_json::to_value(claims)?;
+    let id_token_str = token_response.id_token.ok_or(OidcError::NoToken)?;
+
+    // Fetch JWKS and verify the ID token.
+    let jwks = fetch_jwks(&metadata.jwks_uri, &http_client).await?;
+
+    // Use bound_issuer if set, otherwise trust the discovered issuer.
+    let issuer = idp
+        .bound_issuer
+        .as_deref()
+        .unwrap_or(metadata.issuer.as_str());
+
+    let audiences = &[client_id];
+    let claims_as_json = verify_jwt(
+        &id_token_str,
+        &jwks,
+        Some(issuer),
+        Some(&auth_state.nonce),
+        audiences,
+    )?;
+
     debug!("Claims data {claims_as_json}");
 
-    validate_bound_claims(&mapping, claims, &claims_as_json)?;
+    validate_bound_claims(&mapping, &claims_as_json)?;
     let mapped_user_data = map_user_data(&state, &idp, &mapping, &claims_as_json).await?;
     debug!("Mapped user is {mapped_user_data:?}");
 

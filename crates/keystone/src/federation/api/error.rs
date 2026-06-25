@@ -60,22 +60,16 @@ pub enum OidcError {
     #[error("request token error")]
     RequestToken { msg: String },
 
-    #[error("claim verification error")]
-    ClaimVerification {
+    #[error("JWT decode/verification error")]
+    JwtDecode {
         #[from]
-        source: openidconnect::ClaimsVerificationError,
+        source: jsonwebtoken::errors::Error,
     },
 
-    #[error(transparent)]
-    OpenIdConnectReqwest {
+    #[error("HTTP request error")]
+    HttpRequest {
         #[from]
-        source: openidconnect::reqwest::Error,
-    },
-
-    #[error(transparent)]
-    OpenIdConnectConfiguration {
-        #[from]
-        source: openidconnect::ConfigurationError,
+        source: reqwest::Error,
     },
 
     #[error(transparent)]
@@ -83,6 +77,18 @@ pub enum OidcError {
         #[from]
         source: url::ParseError,
     },
+
+    #[error("nonce mismatch in ID token")]
+    NonceMismatch,
+
+    #[error("no matching JWK found for kid `{0}`")]
+    JwkNotFound(String),
+
+    #[error("JWKS contains no usable keys")]
+    NoJwksKeys,
+
+    #[error("unsupported JWT signing algorithm: {0}")]
+    UnsupportedAlgorithm(String),
 
     #[error("server did not returned an ID token")]
     NoToken,
@@ -192,23 +198,32 @@ impl From<OidcError> for KeystoneApiError {
             OidcError::RequestToken { msg } => {
                 KeystoneApiError::BadRequest(format!("Error exchanging authorization code for the authorization token: {msg}"))
             }
-            OidcError::ClaimVerification { source } => {
-                KeystoneApiError::BadRequest(format!("Error in claims verification: {source}"))
+            OidcError::JwtDecode { source } => {
+                KeystoneApiError::BadRequest(format!("JWT verification error: {source}"))
             }
-            OidcError::OpenIdConnectReqwest { source } => {
-                KeystoneApiError::InternalError(format!("Error in OpenIDConnect logic: {source}"))
-            }
-            OidcError::OpenIdConnectConfiguration { source } => {
-                KeystoneApiError::InternalError(format!("Error in OpenIDConnect logic: {source}"))
+            OidcError::HttpRequest { source } => {
+                KeystoneApiError::InternalError(format!("HTTP request error: {source}"))
             }
             OidcError::UrlParse { source } => {
-                KeystoneApiError::BadRequest(format!("Error in OpenIDConnect logic: {source}"))
+                KeystoneApiError::BadRequest(format!("URL parse error: {source}"))
+            }
+            OidcError::NonceMismatch => {
+                KeystoneApiError::BadRequest("Nonce mismatch in ID token.".to_string())
+            }
+            OidcError::JwkNotFound(kid) => {
+                KeystoneApiError::BadRequest(format!("No matching JWK for kid `{kid}`"))
+            }
+            OidcError::NoJwksKeys => {
+                KeystoneApiError::InternalError("JWKS contains no usable keys.".to_string())
+            }
+            OidcError::UnsupportedAlgorithm(alg) => {
+                KeystoneApiError::BadRequest(format!("Unsupported JWT algorithm: {alg}"))
             }
             e @ OidcError::NoToken => {
-                KeystoneApiError::InternalError(format!("Error in OpenIDConnect logic: {e}"))
+                KeystoneApiError::InternalError(format!("Error in OIDC logic: {e}"))
             }
             OidcError::ClientIdRequired => {
-                KeystoneApiError::BadRequest("Identity Provider mut set `client_id`.".to_string())
+                KeystoneApiError::BadRequest("Identity Provider must set `client_id`.".to_string())
             }
             OidcError::UserIdClaimRequired(source) => {
                 KeystoneApiError::BadRequest(format!("OIDC ID token does not contain user id claim: {source}"))

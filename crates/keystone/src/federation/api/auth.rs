@@ -24,17 +24,15 @@ use tracing::debug;
 use utoipa_axum::{router::OpenApiRouter, routes};
 use validator::Validate;
 
-use openidconnect::core::{CoreAuthenticationFlow, CoreClient, CoreProviderMetadata};
-use openidconnect::reqwest;
-use openidconnect::{
-    ClientId, ClientSecret, CsrfToken, IssuerUrl, Nonce, PkceCodeChallenge, RedirectUrl, Scope,
-};
-
 use crate::api::error::KeystoneApiError;
 use crate::federation::{api::error::OidcError, api::types::*};
 use crate::keystone::ServiceState;
 use openstack_keystone_core_types::federation::{
     AuthState, MappingListParameters as ProviderMappingListParameters,
+};
+
+use super::oidc_utils::{
+    build_auth_url, build_http_client, discover, generate_pkce, generate_random_token,
 };
 
 pub(super) fn openapi_router() -> OpenApiRouter<ServiceState> {
@@ -149,51 +147,43 @@ pub async fn post(
         return Err(OidcError::MappingDisabled.into());
     }
 
-    let client = if let Some(discovery_url) = &idp.oidc_discovery_url {
-        let http_client = reqwest::ClientBuilder::new()
-            // Following redirects opens the client up to SSRF vulnerabilities.
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
-            .map_err(OidcError::from)?;
+    let discovery_url = idp
+        .oidc_discovery_url
+        .as_deref()
+        .ok_or(OidcError::ClientWithoutDiscoveryNotSupported)?;
 
-        let provider_metadata = CoreProviderMetadata::discover_async(
-            IssuerUrl::new(discovery_url.to_string()).map_err(OidcError::from)?,
-            &http_client,
-        )
+    let http_client = build_http_client()?;
+    let metadata = discover(discovery_url, &http_client)
         .await
         .map_err(|err| OidcError::discovery(discovery_url, &err))?;
-        CoreClient::from_provider_metadata(
-            provider_metadata,
-            ClientId::new(idp.oidc_client_id.ok_or(OidcError::ClientIdRequired)?),
-            idp.oidc_client_secret.map(ClientSecret::new),
-        )
-        // Set the URL the user will be redirected to after the authorization process.
-        // TODO: Check the redirect uri against mapping.allowed_redirect_uris
-        .set_redirect_uri(RedirectUrl::new(req.redirect_uri.clone()).map_err(OidcError::from)?)
-    } else {
-        return Err(OidcError::ClientWithoutDiscoveryNotSupported.into());
-    };
 
-    let (pkce_challenge, pkce_verifier) = PkceCodeChallenge::new_random_sha256();
+    let client_id = idp
+        .oidc_client_id
+        .as_deref()
+        .ok_or(OidcError::ClientIdRequired)?;
 
-    // `oidc` scope is the default in the openidconnect crate and do not need to be
-    // added explicitly.
-    let oidc_scopes: HashSet<Scope> = mapping
+    let pkce = generate_pkce();
+    let csrf_token = generate_random_token();
+    let nonce = generate_random_token();
+
+    let oidc_scopes: Vec<String> = mapping
         .oidc_scopes
-        .map(|scopes| HashSet::from_iter(scopes.into_iter().map(Scope::new)))
+        .map(|scopes| {
+            // deduplicate against the implicit "openid" scope
+            let unique: HashSet<String> = scopes.into_iter().collect();
+            unique.into_iter().filter(|s| s != "openid").collect()
+        })
         .unwrap_or_default();
 
-    // Generate the full authorization URL.
-    let (auth_url, csrf_token, nonce) = client
-        .authorize_url(
-            CoreAuthenticationFlow::AuthorizationCode,
-            CsrfToken::new_random,
-            Nonce::new_random,
-        )
-        .add_scopes(oidc_scopes)
-        // Set the PKCE code challenge.
-        .set_pkce_challenge(pkce_challenge)
-        .url();
+    let auth_url = build_auth_url(
+        &metadata.authorization_endpoint,
+        client_id,
+        &req.redirect_uri,
+        &oidc_scopes,
+        &csrf_token,
+        &nonce,
+        &pkce.challenge,
+    )?;
 
     state
         .provider
@@ -201,12 +191,12 @@ pub async fn post(
         .create_auth_state(
             &state,
             AuthState {
-                state: csrf_token.secret().clone(),
-                nonce: nonce.secret().clone(),
+                state: csrf_token.clone(),
+                nonce: nonce.clone(),
                 idp_id: idp.id.clone(),
                 mapping_id: mapping.id.clone(),
                 redirect_uri: req.redirect_uri.clone(),
-                pkce_verifier: pkce_verifier.into_secret(),
+                pkce_verifier: pkce.verifier,
                 expires_at: (Local::now() + TimeDelta::seconds(180)).into(),
                 // TODO: Make this configurable
                 scope: req.scope.map(Into::into),
@@ -215,10 +205,8 @@ pub async fn post(
         .await?;
 
     debug!(
-        "url: {:?}, csrf: {:?}, nonce: {:?}",
-        auth_url,
-        csrf_token.secret(),
-        nonce.secret()
+        "auth_url: {:?}, csrf: {:?}, nonce: {:?}",
+        auth_url, csrf_token, nonce,
     );
     Ok((
         StatusCode::OK,

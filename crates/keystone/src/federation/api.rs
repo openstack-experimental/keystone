@@ -34,6 +34,7 @@ pub mod identity_provider;
 pub mod jwt;
 pub mod mapping;
 pub mod oidc;
+mod oidc_utils;
 pub mod types;
 
 /// OpenApi specification for the federation.
