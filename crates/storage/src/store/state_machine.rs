@@ -334,7 +334,7 @@ impl FjallStateMachine {
     }
 
     /// Return the path to the snapshot directory.
-    pub fn snapshot_dir(&self) -> &std::path::Path {
+    pub(crate) fn snapshot_dir(&self) -> &std::path::Path {
         &self.snapshot_dir
     }
 
@@ -349,25 +349,8 @@ impl FjallStateMachine {
         &self,
         bytes: &[u8],
     ) -> Result<(crate::types::Snapshot, u64, u32), crate::StoreError> {
-        const HEADER_LEN: usize = 4 + 8;
-        if bytes.len() < HEADER_LEN {
-            return Err(crate::StoreError::Other(eyre::eyre!(
-                "backup blob too short: {} bytes",
-                bytes.len()
-            )));
-        }
-        let dek_version = u32::from_be_bytes(
-            bytes[..4]
-                .try_into()
-                .map_err(|_| crate::StoreError::Other(eyre::eyre!("invalid version prefix")))?,
-        );
-        let utc_epoch = u64::from_be_bytes(
-            bytes[4..12]
-                .try_into()
-                .map_err(|_| crate::StoreError::Other(eyre::eyre!("invalid epoch bytes")))?,
-        );
-
-        let snapshot_file = decrypt_snapshot_file(bytes, &self.dek, &self.old_deks)?;
+        let (snapshot_file, dek_version, utc_epoch) =
+            decrypt_snapshot_file(bytes, &self.dek, &self.old_deks)?;
 
         let data_bytes = rmp_serde::to_vec(&snapshot_file.data)
             .map_err(|e| crate::StoreError::Other(eyre::eyre!("snapshot re-serialize: {e}")))?;
@@ -575,7 +558,7 @@ fn decrypt_snapshot_file(
     disk_bytes: &[u8],
     current_dek: &std::sync::Arc<std::sync::RwLock<std::sync::Arc<DekEpoch>>>,
     old_deks: &std::sync::Arc<std::sync::Mutex<BTreeMap<u32, std::sync::Arc<DekEpoch>>>>,
-) -> Result<SnapshotFile, crate::StoreError> {
+) -> Result<(SnapshotFile, u32, u64), crate::StoreError> {
     use openstack_keystone_storage_crypto::dek::BackupDek;
 
     const HEADER_LEN: usize = 4 + 8; // version + epoch
@@ -623,8 +606,9 @@ fn decrypt_snapshot_file(
         ))
     })?;
 
-    rmp_serde::from_slice(&file_bytes)
-        .map_err(|e| crate::StoreError::Other(eyre::eyre!("snapshot deserialize: {e}")))
+    let file = rmp_serde::from_slice(&file_bytes)
+        .map_err(|e| crate::StoreError::Other(eyre::eyre!("snapshot deserialize: {e}")))?;
+    Ok((file, dek_version, utc_epoch))
 }
 
 impl RaftSnapshotBuilder<TypeConfig> for Arc<FjallStateMachine> {
@@ -865,7 +849,7 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
         let snapshot_path = self.snapshot_dir.join(&snapshot_id);
 
         let disk_bytes = fs::read(&snapshot_path)?;
-        let snapshot_file = decrypt_snapshot_file(&disk_bytes, &self.dek, &self.old_deks)
+        let (snapshot_file, _, _) = decrypt_snapshot_file(&disk_bytes, &self.dek, &self.old_deks)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
 
         let data_bytes = rmp_serde::to_vec(&snapshot_file.data)

@@ -18,7 +18,8 @@ use async_trait::async_trait;
 use clap::Parser;
 use color_eyre::Report;
 use color_eyre::eyre::eyre;
-use tokio::fs;
+use tokio::fs::File;
+use tokio::io::AsyncReadExt;
 use tonic::transport::Uri;
 
 use openstack_keystone_config::Config;
@@ -26,6 +27,24 @@ use openstack_keystone_distributed_storage::protobuf as pb;
 
 use super::get_grpc_client;
 use crate::PerformAction;
+
+const CHUNK_SIZE: usize = 256 * 1024;
+
+fn file_chunk_stream(
+    file: File,
+) -> impl futures::Stream<Item = pb::raft::RestoreChunk> {
+    futures::stream::unfold(file, |mut f| async move {
+        let mut buf = vec![0u8; CHUNK_SIZE];
+        match f.read(&mut buf).await {
+            Ok(0) => None,
+            Ok(n) => {
+                buf.truncate(n);
+                Some((pb::raft::RestoreChunk { data: buf }, f))
+            }
+            Err(_) => None,
+        }
+    })
+}
 
 /// Restore an encrypted operator backup to a freshly-bootstrapped cluster.
 ///
@@ -55,22 +74,21 @@ pub(super) struct RestoreCommand {
 impl PerformAction for RestoreCommand {
     #[allow(clippy::print_stdout)]
     async fn take_action(self, config: &Config) -> Result<(), Report> {
-        let raw = fs::read(&self.snapshot)
+        let file = File::open(&self.snapshot)
             .await
-            .map_err(|e| eyre!("cannot read snapshot file {:?}: {e}", self.snapshot))?;
+            .map_err(|e| eyre!("cannot open snapshot file {:?}: {e}", self.snapshot))?;
+        let file_size = file
+            .metadata()
+            .await
+            .map(|m| m.len())
+            .unwrap_or(0) as usize;
 
-        let file_size = raw.len();
-
-        // Stream in 256 KiB chunks.
-        const CHUNK_SIZE: usize = 256 * 1024;
-        let chunks: Vec<pb::raft::RestoreChunk> = raw
-            .chunks(CHUNK_SIZE)
-            .map(|s| pb::raft::RestoreChunk { data: s.to_vec() })
-            .collect();
+        // Stream in 256 KiB chunks; at most one chunk is resident in memory at a time.
+        let stream = file_chunk_stream(file);
 
         let mut client = get_grpc_client(config, self.addr).await?;
 
-        client.restore(futures::stream::iter(chunks)).await?;
+        client.restore(stream).await?;
 
         println!(
             "Restore complete ({} bytes from {:?}).",

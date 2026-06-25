@@ -12,7 +12,6 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 use std::collections::{BTreeMap, HashMap};
-use std::fs;
 use std::sync::{Arc, Mutex, RwLock};
 
 use openraft::RaftSnapshotBuilder;
@@ -587,21 +586,15 @@ impl ClusterAdminService for ClusterAdminServiceImpl {
 
         // Trigger snapshot build via the snapshot builder trait.
         let mut builder = self.sm.clone();
-        builder
+        let built = builder
             .build_snapshot()
             .await
             .map_err(|e| Status::internal(format!("snapshot build failed: {e}")))?;
 
-        // Find latest snapshot file in the snapshot directory.
-        let snapshot_dir = self.sm.snapshot_dir().to_owned();
-        let latest = fs::read_dir(&snapshot_dir)
-            .map_err(|e| Status::internal(format!("cannot read snapshot dir: {e}")))?
-            .filter_map(|e| e.ok())
-            .filter(|e| e.path().is_file())
-            .max_by_key(|e| e.file_name())
-            .ok_or_else(|| Status::not_found("no snapshot available after build"))?;
-
-        let disk_bytes = fs::read(latest.path())
+        // The snapshot_id from the returned meta is the exact filename written to disk.
+        let snapshot_path = self.sm.snapshot_dir().join(&built.meta.snapshot_id);
+        let disk_bytes = tokio::fs::read(&snapshot_path)
+            .await
             .map_err(|e| Status::internal(format!("cannot read snapshot file: {e}")))?;
 
         // Parse header: [dek_version_u32_BE; 4] ++ [utc_epoch_u64_BE; 8]
@@ -664,8 +657,14 @@ impl ClusterAdminService for ClusterAdminServiceImpl {
         trace!(actor, "operator restore requested");
 
         let mut stream = request.into_inner();
+        const MAX_RESTORE_SIZE: usize = 4 * 1024 * 1024 * 1024; // 4 GiB
         let mut buf: Vec<u8> = Vec::new();
         while let Some(chunk) = stream.message().await? {
+            if buf.len() + chunk.data.len() > MAX_RESTORE_SIZE {
+                return Err(Status::resource_exhausted(
+                    "restore stream exceeds maximum allowed size (4 GiB)",
+                ));
+            }
             buf.extend_from_slice(&chunk.data);
         }
         if buf.is_empty() {
@@ -677,8 +676,13 @@ impl ClusterAdminService for ClusterAdminServiceImpl {
             .decode_backup_blob(&buf)
             .map_err(|e| Status::invalid_argument(format!("invalid backup blob: {e}")))?;
 
-        // Get the current committed vote to authenticate the install.
+        // install_full_snapshot requires the node to be a committed leader.
         let vote = self.raft_node.metrics().borrow_watched().vote.clone();
+        if !vote.committed {
+            return Err(Status::failed_precondition(
+                "node is not a committed leader; direct restore to the current cluster leader",
+            ));
+        }
 
         self.raft_node
             .install_full_snapshot(vote, snapshot)
