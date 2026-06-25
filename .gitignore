@@ -1,6 +1,4 @@
 **/target
-# Local Claude Code instructions - never commit
-CLAUDE.md
 # no OpenPolicyAgent data
 bundle.tar.gz
 /*.rego
