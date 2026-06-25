@@ -58,7 +58,15 @@ impl From<WebauthnError> for KeystoneApiError {
     fn from(value: WebauthnError) -> Self {
         match value {
             WebauthnError::AuthenticationInfo { source } => source.into(),
-            ref err @ WebauthnError::Conflict { .. } => Self::Conflict(err.to_string()),
+            WebauthnError::Conflict(ref msg) => Self::Conflict(msg.clone()),
+            WebauthnError::CounterVerification => {
+                Self::unauthorized(WebauthnError::CounterVerification, None::<String>)
+            }
+            WebauthnError::CredentialNotFound(id) => Self::NotFound {
+                resource: "passkey".into(),
+                identifier: id,
+            },
+            WebauthnError::StateNotFound => Self::UnauthorizedNoContext,
             other => Self::InternalError(other.to_string()),
         }
     }

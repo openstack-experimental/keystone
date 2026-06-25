@@ -16,7 +16,6 @@
 use axum::{Json, extract::State, http::StatusCode, response::IntoResponse};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::Utc;
-use tracing::debug;
 use validator::Validate;
 
 use crate::{
@@ -58,79 +57,91 @@ pub async fn finish(
 ) -> Result<impl IntoResponse, KeystoneApiError> {
     req.validate()?;
     let user_id = req.user_id.clone();
-    // TODO: Wrap all errors into the Unauthorized, but log the error
-    if let Some(s) = state
+
+    let Some(s) = state
         .extension
         .provider
         .get_user_webauthn_credential_authentication_state(&state.core, &user_id)
         .await?
+    else {
+        return Err(KeystoneApiError::UnauthorizedNoContext);
+    };
+
+    // Deserialize request data into webauthn_rs types *before* consuming state.
+    // If deserialization fails (e.g. base64 decode error), the challenge remains
+    // intact and the user can retry without restarting the ceremony.
+    let auth_req = req.try_into().map_err(WebauthnError::from)?;
+
+    // Consume the challenge state unconditionally after deserialization so that
+    // it cannot be replayed regardless of whether the ceremony succeeds or fails
+    // (WebAuthn Level 3 §6.3.3 step 21).
+    state
+        .extension
+        .provider
+        .delete_user_webauthn_credential_authentication_state(&state.core, &user_id)
+        .await?;
+
+    let auth_result = match state
+        .extension
+        .webauthn
+        .finish_passkey_authentication(&auth_req, &s)
     {
-        // We explicitly try to deserealize the request data directly into the
-        // underlying webauthn_rs type.
-        match state
-            .extension
-            .webauthn
-            .finish_passkey_authentication(&req.try_into().map_err(WebauthnError::from)?, &s)
-        {
-            Ok(auth_result) => {
-                // As per https://www.w3.org/TR/webauthn-3/#sctn-verifying-assertion 21:
-                //
-                // If the Credential Counter is greater than 0 you MUST assert that the counter
-                // is greater than the stored counter. If the counter is equal or less than this
-                // MAY indicate a cloned credential and you SHOULD invalidate and reject that
-                // credential as a result.
-                //
-                // From this AuthenticationResult you should update the Credential’s Counter
-                // value if it is valid per the above check. If you wish you may use the content
-                // of the AuthenticationResult for extended validations (such as the presence of
-                // the user verification flag).
-                let cred_id = URL_SAFE_NO_PAD.encode(auth_result.cred_id());
-                let mut credential = state
-                    .extension
-                    .provider
-                    .get_user_webauthn_credential(&state.core, &user_id, &cred_id)
-                    .await?
-                    .ok_or(WebauthnError::CredentialNotFound(cred_id))?;
+        Ok(r) => r,
+        Err(e) => {
+            return Err(KeystoneApiError::unauthorized(e, None::<String>));
+        }
+    };
 
-                let now = Utc::now();
-                if auth_result.counter() > 0 {
-                    if auth_result.counter() <= credential.counter {
-                        return Err(WebauthnError::CounterVerification.into());
-                    }
-                    credential.counter = auth_result.counter();
-                }
+    // As per https://www.w3.org/TR/webauthn-3/#sctn-verifying-assertion 21:
+    //
+    // If the Credential Counter is greater than 0 you MUST assert that the counter
+    // is greater than the stored counter. If the counter is equal or less than this
+    // MAY indicate a cloned credential and you SHOULD invalidate and reject that
+    // credential as a result.
+    //
+    // From this AuthenticationResult you should update the Credential’s Counter
+    // value if it is valid per the above check. If you wish you may use the content
+    // of the AuthenticationResult for extended validations (such as the presence of
+    // the user verification flag).
+    let cred_id = URL_SAFE_NO_PAD.encode(auth_result.cred_id());
+    let mut credential = state
+        .extension
+        .provider
+        .get_user_webauthn_credential(&state.core, &user_id, &cred_id)
+        .await?
+        .ok_or(WebauthnError::CredentialNotFound(cred_id))?;
 
-                credential.last_used_at = Some(now);
-                credential.updated_at = Some(now);
-                // Integrate auth_result into the saved passkey data. Ignore the result since we
-                // want to update the last_used_at anyway.
-                credential.data.update_credential(&auth_result);
-
-                // Persist updated data.
-                state
-                    .extension
-                    .provider
-                    .update_user_webauthn_credential(
-                        &state.core,
-                        &user_id,
-                        &credential.credential_id,
-                        &credential,
-                    )
-                    .await?;
-            }
-            Err(e) => {
-                debug!("challenge_register -> {:?}", e);
-                return Err(KeystoneApiError::InternalError(
-                    "unexpected error in the webauthn extension".into(),
-                ));
-            }
-        };
-        state
-            .extension
-            .provider
-            .delete_user_webauthn_credential_authentication_state(&state.core, &user_id)
-            .await?;
+    let now = Utc::now();
+    if auth_result.counter() == 0 && credential.counter > 0 {
+        // WebAuthn §6.3.3 step 17: a zero counter when stored counter is > 0
+        // indicates a cloned credential (e.g. software authenticator that never
+        // increments the counter).
+        return Err(WebauthnError::CounterVerification.into());
     }
+    if auth_result.counter() > 0 && auth_result.counter() <= credential.counter {
+        return Err(WebauthnError::CounterVerification.into());
+    }
+    if auth_result.counter() > 0 {
+        credential.counter = auth_result.counter();
+    }
+
+    credential.last_used_at = Some(now);
+    credential.updated_at = Some(now);
+    // Integrate auth_result into the saved passkey data. Ignore the result since we
+    // want to update the last_used_at anyway.
+    credential.data.update_credential(&auth_result);
+
+    // Persist updated data.
+    state
+        .extension
+        .provider
+        .update_user_webauthn_credential(
+            &state.core,
+            &user_id,
+            &credential.credential_id,
+            &credential,
+        )
+        .await?;
 
     let user = state
         .core

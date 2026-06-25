@@ -80,6 +80,10 @@ pub enum WebauthnError {
     #[error("webauthn relying party configuration is missing")]
     RelyingPartyConfigurationUnset,
 
+    /// Ceremony state not found — concurrent request already consumed it.
+    #[error("webauthn ceremony state not found or already consumed")]
+    StateNotFound,
+
     /// (de)serialization error.
     #[error(transparent)]
     Serde {

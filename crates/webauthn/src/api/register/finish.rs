@@ -18,9 +18,6 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
-//use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
-//use chrono::Utc;
-use tracing::debug;
 use validator::Validate;
 
 use openstack_keystone_api_types::error::KeystoneApiError;
@@ -84,43 +81,50 @@ pub(super) async fn finish(
         )
         .await?;
 
-    if let Some(s) = state
+    let Some(s) = state
         .extension
         .provider
         .get_user_webauthn_credential_registration_state(&state.core, &user_id)
         .await?
+    else {
+        return Err(KeystoneApiError::UnauthorizedNoContext);
+    };
+
+    let credential_description = req.description.clone();
+
+    // Deserialize into webauthn_rs type *before* consuming state so that
+    // malformed-input errors don't permanently consume the challenge.
+    let reg_req = req.try_into().map_err(WebauthnError::from)?;
+
+    // Consume the registration state before verification so that a
+    // verification failure still prevents replay of the intercepted
+    // attestation response.
+    state
+        .extension
+        .provider
+        .delete_user_webauthn_credential_registration_state(&state.core, &user_id)
+        .await?;
+
+    let passkey = match state
+        .extension
+        .webauthn
+        .finish_passkey_registration(&reg_req, &s)
     {
-        let credential_description = req.description.clone();
-        let passkey = match state
-            .extension
-            .webauthn
-            .finish_passkey_registration(&req.try_into().map_err(WebauthnError::from)?, &s)
-        {
-            Ok(sk) => {
-                let cred =
-                    WebauthnCredential::from_passkey(sk, &user_id, credential_description.as_ref());
-                state
-                    .extension
-                    .provider
-                    .create_user_webauthn_credential(&state.core, &cred)
-                    .await?
-            }
-            Err(e) => {
-                debug!("challenge_register -> {:?}", e);
-                return Err(KeystoneApiError::InternalError(
-                    "unexpected error in the webauthn extension".into(),
-                ));
-            }
-        };
-        state
-            .extension
-            .provider
-            .delete_user_webauthn_credential_registration_state(&state.core, &user_id)
-            .await?;
-        Ok((StatusCode::CREATED, Json(PasskeyResponse::from(passkey))).into_response())
-    } else {
-        return Err(KeystoneApiError::InternalError(
-            "unexpected error in the webauthn extension".into(),
-        ));
-    }
+        Ok(sk) => {
+            let cred =
+                WebauthnCredential::from_passkey(sk, &user_id, credential_description.as_ref());
+            state
+                .extension
+                .provider
+                .create_user_webauthn_credential(&state.core, &cred)
+                .await?
+        }
+        Err(err) => {
+            return Err(KeystoneApiError::unauthorized(
+                err,
+                Some("finishing webauthn credential registration"),
+            ));
+        }
+    };
+    Ok((StatusCode::CREATED, Json(PasskeyResponse::from(passkey))).into_response())
 }

@@ -17,7 +17,6 @@ use axum::{
     extract::{Path, State},
     response::IntoResponse,
 };
-use tracing::debug;
 use uuid::Uuid;
 use validator::Validate;
 
@@ -85,11 +84,6 @@ pub(super) async fn start(
         )
         .await?;
 
-    state
-        .extension
-        .provider
-        .delete_user_webauthn_credential_registration_state(&state.core, &user_id)
-        .await?;
     let res = match state.extension.webauthn.start_passkey_registration(
         Uuid::parse_str(&user_id)?,
         // user_name
@@ -106,11 +100,11 @@ pub(super) async fn start(
                 .await?;
             Json(UserPasskeyRegistrationStartResponse::try_from(ccr).map_err(WebauthnError::from)?)
         }
-        Err(e) => {
-            debug!("challenge_register -> {:?}", e);
-            return Err(KeystoneApiError::InternalError(
-                "unexpected error in the webauthn extension".into(),
-            ));
+        Err(err) => {
+            return Err(KeystoneApiError::InternalError(format!(
+                "unexpected error in the webauthn extension: {:?}",
+                err
+            )));
         }
     };
 

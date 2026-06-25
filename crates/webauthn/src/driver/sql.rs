@@ -25,6 +25,7 @@ use openstack_keystone_core::keystone::ServiceState;
 
 use crate::{
     WebauthnError,
+    driver::sql::state::StateType,
     types::{WebauthnApi, WebauthnCredential},
 };
 
@@ -99,7 +100,7 @@ impl WebauthnApi for SqlDriver {
     ///
     /// # Parameters
     /// - `state`: The service state.
-    /// - `_user_id`: The user ID (unused).
+    /// - `user_id`: The user ID.
     /// - `credential_id`: The credential ID.
     ///
     /// # Returns
@@ -108,10 +109,10 @@ impl WebauthnApi for SqlDriver {
     async fn delete_user_webauthn_credential<'a>(
         &self,
         state: &ServiceState,
-        _user_id: &'a str,
+        user_id: &'a str,
         credential_id: &'a str,
     ) -> Result<(), WebauthnError> {
-        credential::delete(&state.db, credential_id).await?;
+        credential::delete(&state.db, user_id, credential_id).await?;
         Ok(())
     }
 
@@ -129,7 +130,7 @@ impl WebauthnApi for SqlDriver {
         state: &ServiceState,
         user_id: &'a str,
     ) -> Result<(), WebauthnError> {
-        state::delete(&state.db, user_id).await
+        state::delete(&state.db, user_id, StateType::Auth).await
     }
 
     /// Delete webauthn credential registration state for the user.
@@ -146,7 +147,7 @@ impl WebauthnApi for SqlDriver {
         state: &ServiceState,
         user_id: &'a str,
     ) -> Result<(), WebauthnError> {
-        state::delete(&state.db, user_id).await
+        state::delete(&state.db, user_id, StateType::Register).await
     }
 
     /// Get webauthn credential auth state.
@@ -260,7 +261,7 @@ impl WebauthnApi for SqlDriver {
         credential_id: &'a str,
         credential: &WebauthnCredential,
     ) -> Result<WebauthnCredential, WebauthnError> {
-        credential::update(&state.db, credential_id, credential).await
+        credential::update(&state.db, user_id, credential_id, credential).await
     }
 }
 

@@ -29,7 +29,7 @@ impl MigrationTrait for Migration {
                     .col(string_len(WebauthnCredential::CredentialId, 1024).primary_key())
                     .col(string_len_null(WebauthnCredential::Description, 64))
                     .col(text(WebauthnCredential::Passkey))
-                    .col(unsigned(WebauthnCredential::Counter))
+                    .col(big_integer(WebauthnCredential::Counter))
                     .col(string_len(WebauthnCredential::Type, 25))
                     .col(string_len_null(WebauthnCredential::Aaguid, 36))
                     .col(date_time(WebauthnCredential::CreatedAt))
@@ -44,11 +44,15 @@ impl MigrationTrait for Migration {
                 Table::create()
                     .table(WebauthnState::Table)
                     .if_not_exists()
-                    .col(string_len(WebauthnCredential::UserId, 64))
+                    .col(string_len(WebauthnState::UserId, 64))
                     .col(text(WebauthnState::State))
                     .col(string_len(WebauthnState::Type, 10))
                     .col(date_time(WebauthnState::CreatedAt))
-                    .primary_key(Index::create().col(WebauthnState::UserId))
+                    .primary_key(
+                        Index::create()
+                            .col(WebauthnState::UserId)
+                            .col(WebauthnState::Type),
+                    )
                     .to_owned(),
             )
             .await?;
