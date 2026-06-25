@@ -57,6 +57,9 @@ pub async fn set_new_password<C: ConnectionTrait>(
     password: SecretString,
     existing_passwords: Vec<db_password::Model>,
 ) -> Result<db_password::Model, IdentityProviderError> {
+    conf.security_compliance
+        .validate_password(&password)
+        .map_err(IdentityProviderError::SecurityCompliance)?;
     check_history::check_password_history(conf, &existing_passwords, &password).await?;
 
     let now = Utc::now();
@@ -281,6 +284,33 @@ pub mod tests {
         assert!(
             is_password_expired(&db_password::ModelBuilder::expired().build().unwrap()).unwrap(),
             "password is expired"
+        );
+    }
+    #[tokio::test]
+    async fn test_set_new_password_rejects_password_regex_mismatch() {
+        use sea_orm::{DatabaseBackend, MockDatabase};
+
+        let mut conf = Config::default();
+        conf.identity.password_hashing_algorithm =
+            openstack_keystone_config::PasswordHashingAlgo::None;
+        conf.security_compliance.password_regex = Some(r"^[a-zA-Z]+[0-9]+$".to_string());
+        conf.security_compliance.password_regex_description =
+            Some("password must contain letters followed by digits".to_string());
+        conf.security_compliance.compile_regex().unwrap();
+
+        let db = MockDatabase::new(DatabaseBackend::Postgres).into_connection();
+
+        let result =
+            set_new_password(&db, &conf, 1, SecretString::from("abcdefg"), Vec::new()).await;
+
+        assert!(
+            matches!(
+                result,
+                Err(IdentityProviderError::SecurityCompliance(
+                    openstack_keystone_config::SecurityComplianceError::PasswordInvalid(_)
+                ))
+            ),
+            "password that does not match password_regex should be rejected"
         );
     }
 }
