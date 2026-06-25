@@ -197,7 +197,8 @@ impl Metadata {
         }
     }
 
-    /// Create new metadata with an incremented revision, preserving timestamp and tier.
+    /// Create new metadata with an incremented revision, preserving timestamp
+    /// and tier.
     pub fn new_revision(&self) -> Self {
         Self {
             revision: self.revision + 1,

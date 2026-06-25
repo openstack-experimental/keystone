@@ -32,6 +32,25 @@ pub enum StoreCommand {
     Transaction(Vec<MutationInner>),
 }
 
+/// A pending emergency DEK rotation waiting for dual-control confirmation.
+///
+/// Persisted to Fjall meta under `_meta:rotation:pending:<rotation_id>` so
+/// that it survives node restarts within the 5-minute confirmation window.
+#[derive(Debug, Deserialize, PartialEq, Serialize, Clone)]
+pub struct PendingRotation {
+    /// UUID v4 identifier returned to the initiating operator.
+    pub rotation_id: String,
+    /// New DEK wrapped under the active KEK.
+    #[serde(with = "serde_bytes")]
+    pub wrapped_dek: Vec<u8>,
+    /// New monotonically increasing epoch version.
+    pub dek_version: u32,
+    /// Unix epoch seconds after which this entry is considered expired.
+    pub expires_at: u64,
+    /// Peer TLS identity (SPIFFE URI or CN) of the operator who initiated.
+    pub initiator: String,
+}
+
 /// Inner representation of a store modification operation.
 ///
 /// Carries plaintext value bytes for Set/CreateIfAbsent mutations; the state
@@ -60,7 +79,8 @@ pub enum MutationInner {
 
     /// Set the value for the key in the store.
     Set {
-        /// Plaintext serialized value bytes (encrypted by state machine on apply).
+        /// Plaintext serialized value bytes (encrypted by state machine on
+        /// apply).
         #[serde(with = "serde_bytes")]
         cipher: Vec<u8>,
 
@@ -83,7 +103,8 @@ pub enum MutationInner {
     /// Set the value for the key only if the key does not already exist.
     /// If the key exists, a CONFLICT violation is emitted and no write occurs.
     CreateIfAbsent {
-        /// Plaintext serialized value bytes (encrypted by state machine on apply).
+        /// Plaintext serialized value bytes (encrypted by state machine on
+        /// apply).
         #[serde(with = "serde_bytes")]
         cipher: Vec<u8>,
 
@@ -114,6 +135,60 @@ pub enum MutationInner {
     ClearQuarantine {
         /// The keyspace partition to un-quarantine (e.g. `"data"`).
         partition: String,
+    },
+
+    /// Install a new DEK epoch on all cluster members.
+    ///
+    /// Carries the new DEK wrapped under the KEK.  On apply each node unwraps
+    /// the DEK, derives the new epoch sub-keys, persists the wrapped DEK to
+    /// `_meta:dek:current`, retires the previous epoch to
+    /// `_meta:dek:retired:<old_version>`, and swaps the in-memory DEK epoch.
+    ///
+    /// Background re-encryption of state entries from the old epoch to the new
+    /// one begins immediately after the swap completes.
+    InstallDek {
+        /// New DEK wrapped under the active KEK.
+        ///
+        /// Format: `[version_u32_BE; 4] ++ wrap_dek(raw_dek_bytes)`.
+        #[serde(with = "serde_bytes")]
+        wrapped_dek: Vec<u8>,
+        /// New monotonically increasing epoch version.
+        dek_version: u32,
+        /// If `true`, the old DEK is revoked (not retired).  Retired DEKs
+        /// remain available for decrypting pre-rotation data; revoked DEKs
+        /// are immediately rejected.  ADR §6.2 emergency rotation.
+        is_emergency: bool,
+    },
+
+    /// Stage 1 of dual-control emergency DEK rotation (ADR §6.2).
+    ///
+    /// Stores a pending rotation entry in Fjall meta and in the in-memory map.
+    /// The rotation is not yet applied; the new DEK is not yet active.  A
+    /// second operator must call `ConfirmRotateDek` within 5 minutes.
+    CreatePendingRotation {
+        /// UUID v4 identifier returned to the initiating operator.
+        rotation_id: String,
+        /// New DEK wrapped under the active KEK.
+        #[serde(with = "serde_bytes")]
+        wrapped_dek: Vec<u8>,
+        /// New monotonically increasing epoch version.
+        dek_version: u32,
+        /// Unix epoch seconds after which this entry expires.
+        expires_at: u64,
+        /// Peer TLS identity of the initiating operator.
+        initiator: String,
+    },
+
+    /// Stage 2 of dual-control emergency DEK rotation (ADR §6.2).
+    ///
+    /// On apply: verifies the pending entry exists and has not expired, that
+    /// the confirming operator differs from the initiator, then executes the
+    /// same DEK-install logic as `InstallDek { is_emergency: true }`.
+    ConfirmPendingRotation {
+        /// UUID v4 identifier from `CreatePendingRotation`.
+        rotation_id: String,
+        /// Peer TLS identity of the confirming operator.
+        confirmer: String,
     },
 }
 

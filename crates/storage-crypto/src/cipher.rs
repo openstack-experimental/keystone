@@ -40,8 +40,11 @@ use hkdf::Hkdf;
 use sha2::Sha256;
 use zeroize::Zeroizing;
 
-use crate::dek::{LogDek, StateDek};
+use crate::dek::{BackupDek, LogDek, StateDek};
 use crate::error::CryptoError;
+
+// Label for snapshot backup AD (ADR §7).
+const BACKUP_AD_LABEL: &[u8] = b"keystone-backup-v1";
 
 // Minimum bytes in a stored state value: nonce(12) + tag(16) + version(4) = 32
 const STATE_MIN_LEN: usize = 32;
@@ -62,7 +65,7 @@ const LOG_MIN_LEN: usize = 28;
 /// - `nonce`      — 12-byte nonce: `[8-byte NodeId BE] ++ [4-byte counter BE]`.
 ///
 /// # Returns
-/// `[nonce 12B] ++ [ciphertext] ++ [tag 16B]`
+/// `[nonce 12B] ++ [ciphertext] ++ [tag 16B]`.
 pub fn log_encrypt(
     dek: &LogDek,
     plaintext: &[u8],
@@ -129,7 +132,7 @@ pub fn log_decrypt(
 /// - `version`    — record version counter; must be incremented on each write.
 ///
 /// # Returns
-/// `[nonce 12B] ++ [ciphertext] ++ [tag 16B] ++ [version u32 BE]`
+/// `[nonce 12B] ++ [ciphertext] ++ [tag 16B] ++ [version u32 BE]`.
 pub fn state_encrypt(
     dek: &StateDek,
     plaintext: &[u8],
@@ -201,8 +204,87 @@ pub fn state_decrypt(
         .decrypt_in_place_detached(gcm_nonce, &aad, buf.as_mut(), tag)
         .map_err(|_| CryptoError::AesDecrypt)?;
 
-    let next_version = stored_version.checked_add(1).unwrap_or(u32::MAX);
+    let next_version = stored_version.saturating_add(1);
     Ok((buf, next_version))
+}
+
+// ---------------------------------------------------------------------------
+// Snapshot backup encryption
+// ---------------------------------------------------------------------------
+
+/// Encrypt a Raft snapshot with the epoch's `BackupDek`.
+///
+/// Nonce is derived deterministically via
+/// HKDF-Expand(BackupDek, BACKUP_AD_LABEL ++ utc_epoch_u64_BE ++
+/// counter_u64_BE, L=12) so that no random material is required (ADR Invariant
+/// 10 — deterministic nonces only). The `counter` ensures uniqueness when
+/// multiple snapshots are taken under the same DEK epoch in the same second.
+/// AD = `b"keystone-backup-v1" ++ utc_epoch_u64_BE ++ dek_version_u32_BE ++
+/// counter_u64_BE`.
+///
+/// # Returns
+/// `[nonce 12B] ++ [ciphertext] ++ [tag 16B]`.
+pub fn backup_encrypt(
+    dek: &BackupDek,
+    plaintext: &[u8],
+    dek_version: u32,
+    utc_epoch: u64,
+    counter: u64,
+) -> Result<Vec<u8>, CryptoError> {
+    let nonce_bytes = backup_nonce(dek, utc_epoch, counter)?;
+    let aad = backup_aad(dek_version, utc_epoch, counter);
+    let cipher = Aes256Gcm::new(GenericArray::from_slice(dek.as_bytes()));
+    let gcm_nonce = GenericArray::from_slice(&nonce_bytes);
+
+    let mut buf = plaintext.to_vec();
+    let tag = cipher
+        .encrypt_in_place_detached(gcm_nonce, &aad, &mut buf)
+        .map_err(|_| CryptoError::AesEncrypt)?;
+
+    let mut out = Vec::with_capacity(12 + plaintext.len() + 16);
+    out.extend_from_slice(&nonce_bytes);
+    out.extend_from_slice(&buf);
+    out.extend_from_slice(tag.as_slice());
+    Ok(out)
+}
+
+/// Decrypt a snapshot previously encrypted with [`backup_encrypt`].
+///
+/// `dek_version`, `utc_epoch`, and `counter` must match the values used at
+/// encrypt time; any mismatch causes GCM tag verification to fail.
+/// The stored nonce is re-derived from (`dek`, `utc_epoch`, `counter`) and
+/// verified against the stored bytes to detect accidental epoch/timestamp
+/// confusion.
+pub fn backup_decrypt(
+    dek: &BackupDek,
+    stored: &[u8],
+    dek_version: u32,
+    utc_epoch: u64,
+    counter: u64,
+) -> Result<Zeroizing<Vec<u8>>, CryptoError> {
+    const BACKUP_MIN_LEN: usize = 12 + 16;
+    if stored.len() < BACKUP_MIN_LEN {
+        return Err(CryptoError::CiphertextTooShort);
+    }
+    let (nonce_bytes, rest) = stored.split_at(12);
+
+    // Verify nonce matches the deterministic derivation.
+    let expected_nonce = backup_nonce(dek, utc_epoch, counter)?;
+    if nonce_bytes != expected_nonce {
+        return Err(CryptoError::AesDecrypt);
+    }
+
+    let (ciphertext, tag_bytes) = rest.split_at(rest.len() - 16);
+    let aad = backup_aad(dek_version, utc_epoch, counter);
+    let cipher = Aes256Gcm::new(GenericArray::from_slice(dek.as_bytes()));
+    let gcm_nonce = GenericArray::from_slice(nonce_bytes);
+    let tag = GenericArray::from_slice(tag_bytes);
+
+    let mut buf = Zeroizing::new(ciphertext.to_vec());
+    cipher
+        .decrypt_in_place_detached(gcm_nonce, &aad, buf.as_mut(), tag)
+        .map_err(|_| CryptoError::AesDecrypt)?;
+    Ok(buf)
 }
 
 // ---------------------------------------------------------------------------
@@ -239,6 +321,34 @@ fn state_aad(tier: u8, domain_id: &[u8], pk: &[u8]) -> Vec<u8> {
     aad.extend_from_slice(domain_id);
     aad.extend_from_slice(pk);
     aad
+}
+
+fn backup_aad(dek_version: u32, utc_epoch: u64, counter: u64) -> Vec<u8> {
+    let mut aad = Vec::with_capacity(BACKUP_AD_LABEL.len() + 8 + 4 + 8);
+    aad.extend_from_slice(BACKUP_AD_LABEL);
+    aad.extend_from_slice(&utc_epoch.to_be_bytes());
+    aad.extend_from_slice(&dek_version.to_be_bytes());
+    aad.extend_from_slice(&counter.to_be_bytes());
+    aad
+}
+
+/// Derive a deterministic 12-byte nonce for snapshot encryption (ADR Invariant
+/// 10).
+///
+/// `info = BACKUP_AD_LABEL ++ utc_epoch_u64_be ++ counter_u64_be`.
+/// The `counter` parameter ensures uniqueness even when multiple snapshots are
+/// taken within the same second under the same DEK epoch (H4 fix).
+fn backup_nonce(dek: &BackupDek, utc_epoch: u64, counter: u64) -> Result<[u8; 12], CryptoError> {
+    let hkdf =
+        Hkdf::<Sha256>::from_prk(dek.as_bytes()).map_err(|_| CryptoError::InvalidKeyLength)?;
+    let mut info = Vec::with_capacity(BACKUP_AD_LABEL.len() + 8 + 8);
+    info.extend_from_slice(BACKUP_AD_LABEL);
+    info.extend_from_slice(&utc_epoch.to_be_bytes());
+    info.extend_from_slice(&counter.to_be_bytes());
+    let mut nonce = [0u8; 12];
+    hkdf.expand(&info, &mut nonce)
+        .map_err(|_| CryptoError::InvalidKeyLength)?;
+    Ok(nonce)
 }
 
 #[cfg(test)]
@@ -355,5 +465,66 @@ mod tests {
             state_decrypt(&dek, &[0u8; 10], 0, b"", b""),
             Err(CryptoError::CiphertextTooShort)
         ));
+    }
+
+    fn test_backup_dek() -> crate::dek::BackupDek {
+        crate::dek::BackupDek::from_raw([0x33u8; 32])
+    }
+
+    #[test]
+    fn test_backup_roundtrip() {
+        let dek = test_backup_dek();
+        let plaintext = b"snapshot data";
+        let dek_version = 1u32;
+        let utc_epoch = 1_700_000_000u64;
+
+        let enc = backup_encrypt(&dek, plaintext, dek_version, utc_epoch, 0).expect("encrypt");
+        assert_eq!(enc.len(), 12 + plaintext.len() + 16);
+
+        let dec = backup_decrypt(&dek, &enc, dek_version, utc_epoch, 0).expect("decrypt");
+        assert_eq!(dec.as_slice(), plaintext);
+    }
+
+    #[test]
+    fn test_backup_nonce_is_deterministic() {
+        let dek = test_backup_dek();
+        let utc_epoch = 1_700_000_000u64;
+        let n1 = backup_nonce(&dek, utc_epoch, 0).expect("nonce 1");
+        let n2 = backup_nonce(&dek, utc_epoch, 0).expect("nonce 2");
+        assert_eq!(n1, n2, "nonce must be deterministic for same inputs");
+    }
+
+    #[test]
+    fn test_backup_different_epoch_different_nonce() {
+        let dek = test_backup_dek();
+        let n1 = backup_nonce(&dek, 1_000u64, 0).expect("nonce 1");
+        let n2 = backup_nonce(&dek, 1_001u64, 0).expect("nonce 2");
+        assert_ne!(n1, n2, "different utc_epoch must produce different nonces");
+    }
+
+    #[test]
+    fn test_backup_wrong_epoch_rejected() {
+        let dek = test_backup_dek();
+        let enc = backup_encrypt(&dek, b"data", 1, 1_000u64, 0).expect("encrypt");
+        assert!(
+            matches!(
+                backup_decrypt(&dek, &enc, 1, 1_001u64, 0),
+                Err(CryptoError::AesDecrypt)
+            ),
+            "mismatched utc_epoch must fail decryption"
+        );
+    }
+
+    #[test]
+    fn test_backup_wrong_dek_version_rejected() {
+        let dek = test_backup_dek();
+        let enc = backup_encrypt(&dek, b"data", 1, 1_000u64, 0).expect("encrypt");
+        assert!(
+            matches!(
+                backup_decrypt(&dek, &enc, 2, 1_000u64, 0),
+                Err(CryptoError::AesDecrypt)
+            ),
+            "mismatched dek_version must fail decryption"
+        );
     }
 }

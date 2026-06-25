@@ -34,6 +34,7 @@ impl From<ClientWriteResponse> for pb::raft::AdminResponse {
             log_id: Some(r.log_id.into()),
             data: Some(r.data),
             membership: r.membership.map(|mem| mem.into()),
+            pending_rotation_id: String::new(),
         }
     }
 }

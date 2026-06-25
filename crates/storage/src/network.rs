@@ -303,6 +303,179 @@ impl NetTransferLeader<TypeConfig> for NetworkConnection {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Phase 9 — SPIFFE Mode (ADR 0016-v2 §4.1 / F4)
+// ---------------------------------------------------------------------------
+
+/// SVID TTL ceiling enforced per ADR 0016-v2 §4.1.
+const SVID_MAX_TTL_SECS: u64 = 3600;
+/// Minimum remaining SVID validity before rejection (force-renewal window).
+const SVID_MIN_REMAINING_SECS: u64 = 300;
+
+/// SPIFFE Workload API provider — interface stub.
+///
+/// In production this contacts the SPIRE agent at
+/// `unix:///tmp/spire-agent/public/api.sock`, retrieves a JWT or X.509 SVID,
+/// and enforces the TTL ceiling.
+///
+/// This implementation always returns [`StoreError::Other`] (SPIFFE workload
+/// API not yet implemented).  The struct is defined to lock in the abstraction
+/// boundary before the SPIRE client is wired up.
+pub struct SpiffeTlsProvider {
+    /// SPIFFE trust domain, e.g. `"example.org"`.
+    pub trust_domain: String,
+    /// Expected role path component, e.g. `"storage"`.
+    pub role: String,
+}
+
+impl SpiffeTlsProvider {
+    pub fn new(trust_domain: impl Into<String>, role: impl Into<String>) -> Self {
+        Self {
+            trust_domain: trust_domain.into(),
+            role: role.into(),
+        }
+    }
+
+    /// Validate that a SPIFFE ID matches the expected pattern:
+    /// `spiffe://<trust_domain>/keystone/storage/<role>`.
+    pub fn validate_spiffe_id(&self, spiffe_id: &str) -> Result<(), StoreError> {
+        let expected_prefix = format!("spiffe://{}/keystone/storage/", self.trust_domain);
+        if !spiffe_id.starts_with(&expected_prefix) {
+            return Err(StoreError::Other(eyre::eyre!(
+                "SPIFFE ID {spiffe_id:?} does not match expected pattern \
+                 spiffe://{}/keystone/storage/<role>",
+                self.trust_domain
+            )));
+        }
+        let role_suffix = &spiffe_id[expected_prefix.len()..];
+        if role_suffix != self.role {
+            return Err(StoreError::Other(eyre::eyre!(
+                "SPIFFE ID {spiffe_id:?} role component {role_suffix:?} does not match \
+                 expected role {:?}",
+                self.role
+            )));
+        }
+        Ok(())
+    }
+}
+
+/// TLS certificate expiry watchdog for the manual-TLS fallback path.
+///
+/// Spawns a background `tokio::task` that wakes every hour and checks the
+/// remaining validity of the server TLS certificate.  Emits:
+///
+/// * `WARN` when fewer than 7 days remain.
+/// * `ERROR` when fewer than 2 days remain.
+/// * `CRITICAL` + optional shutdown when the certificate has expired.
+pub struct CertExpiryWatchdog;
+
+impl CertExpiryWatchdog {
+    /// Spawn the watchdog task.
+    ///
+    /// `cert_pem` is the raw PEM bytes of the certificate to monitor.
+    /// `shutdown_on_expiry` controls whether the process exits on expiry
+    /// (production) or only logs (dev mode).
+    pub fn spawn(cert_pem: Vec<u8>, shutdown_on_expiry: bool) -> tokio::task::JoinHandle<()> {
+        tokio::spawn(async move {
+            let check_interval = tokio::time::Duration::from_secs(3600);
+            loop {
+                check_cert_expiry(&cert_pem, shutdown_on_expiry);
+                tokio::time::sleep(check_interval).await;
+            }
+        })
+    }
+}
+
+fn check_cert_expiry(cert_pem: &[u8], shutdown_on_expiry: bool) {
+    use x509_parser::certificate::X509Certificate;
+    use x509_parser::pem::parse_x509_pem;
+    use x509_parser::prelude::FromDer;
+
+    let (_, pem) = match parse_x509_pem(cert_pem) {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::error!(error = %e, "TLS cert expiry check: failed to parse PEM");
+            return;
+        }
+    };
+    let (_, cert) = match X509Certificate::from_der(&pem.contents) {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::error!(error = %e, "TLS cert expiry check: failed to parse DER");
+            return;
+        }
+    };
+
+    let not_after = cert.validity().not_after;
+    // x509-parser uses its own ASN1Time; convert via timestamp.
+    let expiry_secs = not_after.timestamp();
+    let now_secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64;
+    let remaining_secs = expiry_secs - now_secs;
+
+    const WARN_THRESHOLD: i64 = 7 * 24 * 3600;
+    const ERROR_THRESHOLD: i64 = 2 * 24 * 3600;
+
+    if remaining_secs <= 0 {
+        tracing::error!(
+            "CRITICAL: TLS certificate has expired! Renew immediately to avoid \
+             cluster communication failure."
+        );
+        if shutdown_on_expiry {
+            tracing::error!("Initiating shutdown due to expired TLS certificate.");
+            std::process::exit(1);
+        }
+    } else if remaining_secs <= ERROR_THRESHOLD {
+        tracing::error!(
+            remaining_days = remaining_secs / 86400,
+            "TLS certificate expires in less than 2 days — renew urgently"
+        );
+    } else if remaining_secs <= WARN_THRESHOLD {
+        tracing::warn!(
+            remaining_days = remaining_secs / 86400,
+            "TLS certificate expires in less than 7 days — schedule renewal"
+        );
+    } else {
+        tracing::debug!(
+            remaining_days = remaining_secs / 86400,
+            "TLS certificate expiry check passed"
+        );
+    }
+}
+
+/// Validate SVID remaining TTL against enforcement thresholds.
+///
+/// Called before accepting a connection in SPIFFE mode.
+///
+/// Returns `Err` if the SVID has expired, has less than
+/// [`SVID_MIN_REMAINING_SECS`] remaining, or exceeds [`SVID_MAX_TTL_SECS`]
+/// (which would violate the ADR §4.1 TTL ceiling).
+pub fn validate_svid_ttl(issued_at_secs: u64, expires_at_secs: u64) -> Result<(), StoreError> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
+    let ttl = expires_at_secs.saturating_sub(issued_at_secs);
+    if ttl > SVID_MAX_TTL_SECS {
+        return Err(StoreError::Other(eyre::eyre!(
+            "SVID TTL {ttl}s exceeds maximum allowed {SVID_MAX_TTL_SECS}s"
+        )));
+    }
+
+    let remaining = expires_at_secs.saturating_sub(now);
+    if remaining < SVID_MIN_REMAINING_SECS {
+        return Err(StoreError::Other(eyre::eyre!(
+            "SVID has only {remaining}s remaining validity \
+             (minimum {SVID_MIN_REMAINING_SECS}s required); force-renew SVID"
+        )));
+    }
+
+    Ok(())
+}
+
 /// Build the tonic [`ClientTlsConfig`] from the Keystone [`Config`].
 ///
 /// Initialize the [`ClientTlsConfig`] from the distributed_storage or the

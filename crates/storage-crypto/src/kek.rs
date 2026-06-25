@@ -84,6 +84,15 @@ impl EnvKek {
         let mut hex_val = env::var("KEYSTONE_DEV_KEK").map_err(|_| CryptoError::KekMissing)?;
         let raw = decode_hex(&hex_val).map_err(|_| CryptoError::InvalidHex)?;
         hex_val.zeroize();
+        // env::remove_var is unsafe in Rust 2024 (TOCTOU with concurrent env reads)
+        // and forbidden by the workspace unsafe policy. The key material is zeroized
+        // above; operators must clear the variable via systemd UnsetEnvironment= or
+        // equivalent OS-level isolation.
+        tracing::warn!(
+            "SECURITY: KEYSTONE_DEV_KEK remains in process environment after read. \
+             Use systemd UnsetEnvironment= or equivalent to prevent exposure \
+             via /proc/<pid>/environ."
+        );
 
         if raw.len() != 32 {
             return Err(CryptoError::InvalidKeyLength);
@@ -161,7 +170,7 @@ impl KekProvider for Pkcs11KekStub {
 // ---------------------------------------------------------------------------
 
 fn decode_hex(s: &str) -> Result<Vec<u8>, CryptoError> {
-    if s.len() % 2 != 0 {
+    if !s.len().is_multiple_of(2) {
         return Err(CryptoError::InvalidHex);
     }
     (0..s.len())

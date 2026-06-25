@@ -12,11 +12,12 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //! # Fjall DB based `openraft` log store implementation.
+use std::collections::{BTreeMap, HashSet};
 use std::fmt::Debug;
 use std::io;
 use std::marker::PhantomData;
 use std::ops::{Bound, RangeBounds};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 
 use fjall::{Database, Keyspace, KeyspaceCreateOptions, PersistMode};
 use openraft::alias::{EntryOf, LogIdOf, VoteOf};
@@ -24,7 +25,9 @@ use openraft::entry::RaftEntry;
 use openraft::storage::{IOFlushed, LogState, RaftLogStorage};
 use openraft::vote::RaftLeaderId;
 use openraft::{OptionalSend, RaftLogReader, RaftTypeConfig};
-use openstack_keystone_storage_crypto::{DekEpoch, NonceManager, log_decrypt, log_encrypt};
+use openstack_keystone_storage_crypto::{
+    CryptoError, DekEpoch, NonceManager, log_decrypt, log_encrypt,
+};
 
 use crate::StoreError;
 use crate::types::FjallNoncePersistence;
@@ -32,11 +35,13 @@ use crate::types::FjallNoncePersistence;
 const KEY_VOTE: &[u8] = b"vote";
 const KEY_PURGED: &[u8] = b"purged";
 
-/// On-disk prefix length for a log entry: 8 bytes for term (BE u64).
-/// Full layout: [term_u64_BE (8)] ++ log_encrypt output [nonce_12 ++ ciphertext ++ tag_16].
+/// Log entry on-disk layout (all fields big-endian):
+/// `[dek_version_u32; 4] ++ [term_u64; 8] ++ log_encrypt([nonce_12 ++
+/// ciphertext ++ tag_16])`.
+const DEK_VERSION_PREFIX_LEN: usize = 4;
 const TERM_PREFIX_LEN: usize = 8;
-/// Minimum stored log entry size: term(8) + nonce(12) + tag(16) = 36.
-const LOG_ENTRY_MIN_LEN: usize = 36;
+/// Minimum stored size: dek_version(4) + term(8) + nonce(12) + tag(16) = 40.
+const LOG_ENTRY_MIN_LEN: usize = DEK_VERSION_PREFIX_LEN + TERM_PREFIX_LEN + 12 + 16;
 
 #[derive(Clone)]
 pub struct FjallLogStore<C>
@@ -46,7 +51,14 @@ where
     pub db: Arc<Database>,
     pub logs: Keyspace,
     pub meta: Keyspace,
-    dek: Arc<DekEpoch>,
+    /// Current active DEK epoch (shared with FjallStateMachine for live
+    /// rotation).
+    dek: Arc<RwLock<Arc<DekEpoch>>>,
+    /// Retired DEK epochs keyed by version — kept for decrypting old log
+    /// entries until those entries are compacted into a snapshot.
+    old_deks: Arc<Mutex<BTreeMap<u32, Arc<DekEpoch>>>>,
+    /// Revoked DEK versions — immediately rejected on decrypt (ADR §6.2).
+    revoked_deks: Arc<Mutex<HashSet<u32>>>,
     nonce_mgr: Arc<Mutex<NonceManager>>,
     _p: PhantomData<C>,
 }
@@ -61,11 +73,18 @@ where
     /// # Parameters
     /// - `db`: Database instance.
     /// - `node_id`: Raft node ID used as the high 8 bytes of each log nonce.
-    /// - `dek`: Data Encryption Key epoch for log entry encryption.
+    /// - `dek`: Shared current DEK epoch (also held by `FjallStateMachine`).
+    /// - `old_deks`: Shared map of retired DEK epochs for reading old entries.
     ///
     /// # Returns
     /// A `Result` containing the `FjallLogStore`, or a `StoreError`.
-    pub fn new(db: Arc<Database>, node_id: u64, dek: Arc<DekEpoch>) -> Result<Self, StoreError> {
+    pub fn new(
+        db: Arc<Database>,
+        node_id: u64,
+        dek: Arc<RwLock<Arc<DekEpoch>>>,
+        old_deks: Arc<Mutex<BTreeMap<u32, Arc<DekEpoch>>>>,
+        revoked_deks: Arc<Mutex<HashSet<u32>>>,
+    ) -> Result<Self, StoreError> {
         let logs = db.keyspace("logs", KeyspaceCreateOptions::default)?;
         let meta = db.keyspace("meta", KeyspaceCreateOptions::default)?;
 
@@ -80,6 +99,8 @@ where
             logs,
             meta,
             dek,
+            old_deks,
+            revoked_deks,
             nonce_mgr: Arc::new(Mutex::new(nonce_mgr)),
             _p: Default::default(),
         })
@@ -111,7 +132,8 @@ where
 
     /// Encrypt a serialized Raft entry for storage.
     ///
-    /// Layout: `[term_u64_BE; 8] ++ [nonce_12] ++ [ciphertext] ++ [tag_16]`
+    /// Layout: `[dek_version_u32_BE; 4] ++ [term_u64_BE; 8] ++ [nonce_12] ++
+    /// [ciphertext] ++ [tag_16]`.
     fn encrypt_entry(
         &self,
         term: u64,
@@ -123,14 +145,24 @@ where
             .lock()
             .map_err(|_| StoreError::Other(eyre::eyre!("nonce manager lock poisoned")))?
             .next_nonce()?;
-        let encrypted = log_encrypt(self.dek.log_dek(), plaintext, term, index, &nonce)?;
-        let mut out = Vec::with_capacity(TERM_PREFIX_LEN + encrypted.len());
+        let (dek_version, encrypted) = {
+            let guard = self
+                .dek
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let version = guard.version;
+            let enc = log_encrypt(guard.log_dek(), plaintext, term, index, &nonce)?;
+            (version, enc)
+        };
+        let mut out =
+            Vec::with_capacity(DEK_VERSION_PREFIX_LEN + TERM_PREFIX_LEN + encrypted.len());
+        out.extend_from_slice(&dek_version.to_be_bytes());
         out.extend_from_slice(&term.to_be_bytes());
         out.extend_from_slice(&encrypted);
         Ok(out)
     }
 
-    /// Decrypt a stored log entry.
+    /// Decrypt a stored log entry, selecting the correct DEK epoch by version.
     fn decrypt_entry(&self, index: u64, stored: &[u8]) -> Result<Vec<u8>, StoreError> {
         if stored.len() < LOG_ENTRY_MIN_LEN {
             return Err(StoreError::Other(eyre::eyre!(
@@ -138,13 +170,62 @@ where
                 stored.len()
             )));
         }
+        let dek_version = u32::from_be_bytes(
+            stored[..DEK_VERSION_PREFIX_LEN]
+                .try_into()
+                .map_err(|_| StoreError::Other(eyre::eyre!("could not read dek version")))?,
+        );
+        let rest = &stored[DEK_VERSION_PREFIX_LEN..];
         let term = u64::from_be_bytes(
-            stored[..TERM_PREFIX_LEN]
+            rest[..TERM_PREFIX_LEN]
                 .try_into()
                 .map_err(|_| StoreError::Other(eyre::eyre!("could not read term prefix")))?,
         );
-        let plaintext = log_decrypt(self.dek.log_dek(), &stored[TERM_PREFIX_LEN..], term, index)?;
-        Ok(plaintext.to_vec())
+        let payload = &rest[TERM_PREFIX_LEN..];
+
+        // Use active DEK if versions match, otherwise look up retired DEK map.
+        let current_version = self.dek.read().unwrap_or_else(|p| p.into_inner()).version;
+        if dek_version == current_version {
+            let guard = self.dek.read().unwrap_or_else(|p| p.into_inner());
+            let plaintext = log_decrypt(guard.log_dek(), payload, term, index)?;
+            Ok(plaintext.to_vec())
+        } else {
+            // Check if this DEK version has been revoked (emergency rotation).
+            {
+                let revoked = self.revoked_deks.lock().unwrap_or_else(|p| p.into_inner());
+                if revoked.contains(&dek_version) {
+                    return Err(CryptoError::RevokedDek {
+                        version: dek_version,
+                    }
+                    .into());
+                }
+            }
+            let old_map = self.old_deks.lock().unwrap_or_else(|p| p.into_inner());
+            let old = old_map.get(&dek_version).ok_or_else(|| {
+                StoreError::Other(eyre::eyre!(
+                    "no DEK epoch for version {dek_version} — log entry unreadable"
+                ))
+            })?;
+            let plaintext = log_decrypt(old.log_dek(), payload, term, index)?;
+            Ok(plaintext.to_vec())
+        }
+    }
+
+    /// Register a retired DEK epoch so old log entries can still be decrypted.
+    pub fn register_old_dek(&self, epoch: Arc<DekEpoch>) {
+        self.old_deks
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .insert(epoch.version, epoch);
+    }
+
+    /// Remove a retired DEK epoch once all log entries for that version are
+    /// compacted into a snapshot.
+    pub fn evict_old_dek(&self, version: u32) {
+        self.old_deks
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .remove(&version);
     }
 }
 

@@ -68,6 +68,12 @@ pub enum CryptoError {
     #[error("stored ciphertext is too short to be a valid encrypted record")]
     CiphertextTooShort,
 
+    /// Ciphertext was encrypted under a revoked DEK epoch (ADR 0016-v2 §6.2).
+    /// Emergency rotation revokes the compromised DEK; any attempt to decrypt
+    /// data with the revoked key is a fatal error.
+    #[error("DEK epoch {version} was revoked; decryption refused")]
+    RevokedDek { version: u32 },
+
     /// PKCS#11 backend is not yet implemented.
     #[error("PKCS#11 HSM backend is not implemented in this build")]
     Pkcs11NotImplemented,
