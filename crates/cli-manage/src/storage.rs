@@ -18,9 +18,9 @@ use clap::{Parser, Subcommand};
 use color_eyre::{Report, eyre::OptionExt};
 use tonic::transport::{Channel, Uri};
 
-use openstack_keystone_config::Config;
+use openstack_keystone_config::{Config, RaftTlsConfiguration};
 use openstack_keystone_distributed_storage::{
-    network::get_client_tls_config,
+    network::{get_client_tls_config, get_spiffe_client_tls_config},
     protobuf::raft::cluster_admin_service_client::ClusterAdminServiceClient,
 };
 
@@ -81,16 +81,21 @@ async fn get_grpc_client(
     cfg: &Config,
     addr: Option<Uri>,
 ) -> Result<ClusterAdminServiceClient<Channel>, Report> {
-    let ep = Channel::builder(
-        addr.unwrap_or(
-            cfg.distributed_storage
-                .as_ref()
-                .ok_or_eyre("distributed storage configuration missing")?
-                .node_cluster_addr
-                .clone(),
-        ),
-    )
-    .tls_config(get_client_tls_config(cfg)?)?;
+    let ds = cfg
+        .distributed_storage
+        .as_ref()
+        .ok_or_eyre("distributed storage configuration missing")?;
+
+    let target_addr = addr.unwrap_or_else(|| ds.node_cluster_addr.clone());
+
+    let tls_config = match &ds.tls_configuration {
+        RaftTlsConfiguration::Spiffe(spiffe_cfg) => {
+            get_spiffe_client_tls_config(&spiffe_cfg.trust_domains).await?
+        }
+        RaftTlsConfiguration::Tls(_) => get_client_tls_config(cfg)?,
+    };
+
+    let ep = Channel::builder(target_addr).tls_config(tls_config)?;
     let client = ClusterAdminServiceClient::new(ep.connect().await?);
     Ok(client)
 }

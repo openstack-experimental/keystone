@@ -15,6 +15,7 @@ use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 
+use base64::Engine as _;
 use futures::SinkExt;
 use futures::Stream;
 use futures::StreamExt;
@@ -28,6 +29,7 @@ use openraft::raft::{StreamAppendError, StreamAppendResult, TransferLeaderReques
 use openraft::{AnyError, OptionalSend, RaftNetworkFactory};
 use openstack_keystone_config::RaftTlsConfiguration;
 use secrecy::ExposeSecret;
+use spiffe::{TrustDomain, X509Source};
 use tokio::sync::watch;
 use tonic::transport::{Certificate, Channel, ClientTlsConfig, Identity, ServerTlsConfig};
 use tracing::error;
@@ -476,6 +478,125 @@ pub fn validate_svid_ttl(issued_at_secs: u64, expires_at_secs: u64) -> Result<()
     Ok(())
 }
 
+/// Encode DER bytes as a PEM block with the given label.
+fn der_to_pem(label: &str, der: &[u8]) -> Vec<u8> {
+    let b64 = base64::engine::general_purpose::STANDARD.encode(der);
+    let header = format!("-----BEGIN {label}-----\n");
+    let footer = format!("-----END {label}-----\n");
+    let mut out = Vec::with_capacity(header.len() + b64.len() + b64.len() / 64 + 2 + footer.len());
+    out.extend_from_slice(header.as_bytes());
+    for chunk in b64.as_bytes().chunks(64) {
+        out.extend_from_slice(chunk);
+        out.push(b'\n');
+    }
+    out.extend_from_slice(footer.as_bytes());
+    out
+}
+
+/// Build a tonic [`ClientTlsConfig`] from a live [`X509Source`].
+///
+/// Converts the current SVID cert chain and private key from DER to PEM for
+/// tonic, and adds CA certificates for each trust domain from the bundle set.
+/// Validates SVID TTL before use (ADR 0016-v2 §4.1).
+fn build_spiffe_client_tls_config(
+    source: &X509Source,
+    trust_domains: &[String],
+) -> Result<ClientTlsConfig, StoreError> {
+    use x509_parser::certificate::X509Certificate;
+    use x509_parser::prelude::FromDer;
+
+    let svid = source
+        .svid()
+        .map_err(|e| StoreError::Other(eyre::eyre!("SPIFFE SVID unavailable: {e}")))?;
+
+    // Validate SVID TTL via the leaf cert's validity window.
+    let (_, x509) = X509Certificate::from_der(svid.leaf().as_bytes())
+        .map_err(|e| StoreError::Other(eyre::eyre!("Failed to parse SVID leaf cert: {e}")))?;
+    let not_before = x509.validity().not_before.timestamp().max(0) as u64;
+    let not_after = x509.validity().not_after.timestamp().max(0) as u64;
+    validate_svid_ttl(not_before, not_after)?;
+
+    // Build PEM identity from the SVID certificate chain and private key.
+    let mut cert_pem: Vec<u8> = Vec::new();
+    for cert in svid.cert_chain() {
+        cert_pem.extend_from_slice(&der_to_pem("CERTIFICATE", cert.as_bytes()));
+    }
+    let key_pem = der_to_pem("PRIVATE KEY", svid.private_key().as_bytes());
+    let identity = Identity::from_pem(cert_pem, key_pem);
+
+    // Collect CA certificates from each configured trust domain bundle.
+    let bundle_set = source
+        .bundle_set()
+        .map_err(|e| StoreError::Other(eyre::eyre!("SPIFFE bundle set unavailable: {e}")))?;
+
+    let mut tls_client_config = ClientTlsConfig::new().identity(identity);
+    for td_str in trust_domains {
+        let trust_domain = TrustDomain::try_from(td_str.as_str()).map_err(|e| {
+            StoreError::Other(eyre::eyre!("Invalid SPIFFE trust domain {td_str:?}: {e}"))
+        })?;
+        if let Some(bundle) = bundle_set.get(&trust_domain) {
+            for authority in bundle.authorities() {
+                let ca_pem = der_to_pem("CERTIFICATE", authority.as_bytes());
+                tls_client_config =
+                    tls_client_config.ca_certificate(Certificate::from_pem(ca_pem));
+            }
+        }
+    }
+
+    Ok(tls_client_config)
+}
+
+/// Initialize a SPIFFE-backed TLS config watcher.
+///
+/// Connects to the SPIRE Workload API, builds an initial [`ClientTlsConfig`],
+/// and spawns a background task that rebuilds the config on each SVID rotation.
+async fn init_spiffe_tls_watcher(
+    trust_domains: Vec<String>,
+) -> Result<watch::Receiver<ClientTlsConfig>, StoreError> {
+    let source = X509Source::new()
+        .await
+        .map_err(|e| StoreError::Other(eyre::eyre!("SPIFFE X509Source init failed: {e}")))?;
+
+    let initial_config = build_spiffe_client_tls_config(&source, &trust_domains)?;
+    let (tx, rx) = watch::channel(initial_config);
+
+    let mut updates = source.updated();
+    tokio::spawn(async move {
+        loop {
+            match updates.changed().await {
+                Ok(_) => match build_spiffe_client_tls_config(&source, &trust_domains) {
+                    Ok(new_config) => {
+                        let _ = tx.send(new_config);
+                    }
+                    Err(e) => {
+                        error!("Failed to rebuild SPIFFE client TLS config: {e:?}");
+                    }
+                },
+                Err(_) => {
+                    tracing::info!("SPIFFE X509Source closed, stopping TLS watcher");
+                    break;
+                }
+            }
+        }
+    });
+
+    Ok(rx)
+}
+
+/// Build a one-shot [`ClientTlsConfig`] from the SPIFFE Workload API.
+///
+/// Creates a short-lived [`X509Source`] connection to SPIRE, fetches the
+/// current SVID and trust bundle, and returns a configured [`ClientTlsConfig`].
+/// Intended for CLI tools that connect once and exit.
+pub async fn get_spiffe_client_tls_config(
+    trust_domains: &[String],
+) -> Result<ClientTlsConfig, StoreError> {
+    let source = X509Source::new()
+        .await
+        .map_err(|e| StoreError::Other(eyre::eyre!("SPIFFE X509Source init failed: {e}")))?;
+    build_spiffe_client_tls_config(&source, trust_domains)
+}
+
 /// Build the tonic [`ClientTlsConfig`] from the Keystone [`Config`].
 ///
 /// Initialize the [`ClientTlsConfig`] from the distributed_storage or the
@@ -554,6 +675,10 @@ pub fn get_server_tls_config(config: &Config) -> Result<ServerTlsConfig, StoreEr
 
 /// Initialize the [ClientTlsConfig] configuration watcher.
 ///
+/// Dispatches to either the SPIFFE Workload API watcher (when
+/// [`RaftTlsConfiguration::Spiffe`] is configured) or the static file-based
+/// TLS watcher (when [`RaftTlsConfiguration::Tls`] is configured).
+///
 /// # Parameters
 /// - `config_manager`: The Keystone [`ConfigManager`].
 ///
@@ -563,14 +688,33 @@ pub fn get_server_tls_config(config: &Config) -> Result<ServerTlsConfig, StoreEr
 pub async fn init_tls_watcher(
     config_manager: &Arc<ConfigManager>,
 ) -> Result<watch::Receiver<ClientTlsConfig>, StoreError> {
-    // 1. Initial Load: Try to load the certs once to start with a valid state
-    let cfg = config_manager.config.read().await;
-    let initial_config = get_client_tls_config(&cfg)?;
+    // Determine TLS mode and collect any SPIFFE-specific data before
+    // releasing the read lock (init_spiffe_tls_watcher is async).
+    let spiffe_trust_domains = {
+        let cfg = config_manager.config.read().await;
+        if let Some(ds) = &cfg.distributed_storage {
+            if let RaftTlsConfiguration::Spiffe(spiffe_cfg) = &ds.tls_configuration {
+                Some(spiffe_cfg.trust_domains.clone())
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    };
 
-    // 2. Create the channel
+    if let Some(trust_domains) = spiffe_trust_domains {
+        return init_spiffe_tls_watcher(trust_domains).await;
+    }
+
+    // Static TLS fallback: load certificates from config files.
+    let initial_config = {
+        let cfg = config_manager.config.read().await;
+        get_client_tls_config(&cfg)?
+    };
+
     let (tx, rx) = watch::channel(initial_config);
 
-    // 3. Spawn the File Watcher Task
     let cm_clone = config_manager.clone();
     let mut reload_rx = config_manager.notify_tx.subscribe();
     tokio::spawn(async move {
@@ -578,7 +722,6 @@ pub async fn init_tls_watcher(
             let cfg = cm_clone.config.read().await;
             match get_client_tls_config(&cfg) {
                 Ok(new_config) => {
-                    // If the cert changed, broadcast to all receivers
                     let _ = tx.send(new_config);
                 }
                 Err(e) => {
@@ -588,6 +731,5 @@ pub async fn init_tls_watcher(
         }
     });
 
-    // 4. Return the Receiver to be cloned into your RaftNetworkFactory
     Ok(rx)
 }
