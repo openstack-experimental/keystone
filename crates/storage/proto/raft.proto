@@ -186,7 +186,7 @@ message ChangeMembershipRequest {
   bool retain = 2;
 }
 
-message AdminResponse { 
+message AdminResponse {
   // The log id of the committed log entry.
   keystone.raft.LogId log_id = 1;
 
@@ -195,6 +195,11 @@ message AdminResponse {
 
   // If the committed log entry is a normal one.
   keystone.api.Response data = 3;
+
+  // Non-empty when the response is a pending emergency DEK rotation (stage 1
+  // of dual-control). The caller must pass this id to ConfirmRotateDek within
+  // 5 minutes.
+  string pending_rotation_id = 4;
 }
 
 message MetricsResponse {

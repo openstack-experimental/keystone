@@ -77,6 +77,10 @@ pub enum StoreError {
     #[error("partition '{0}' is quarantined due to repeated GCM tag failures")]
     Quarantined(String),
 
+    /// Per-record write version exceeded the rotation threshold.
+    #[error("key '{0}' write rate exceeded (version {1} >= threshold)")]
+    WriteRateExceeded(String, u32),
+
     /// Tls configuration is unset.
     #[error("missing mTLS configuration")]
     TlsConfigMissing,

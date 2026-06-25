@@ -53,6 +53,8 @@ tonic-prost.workspace = true
 tracing.workspace = true
 tokio.workspace = true
 chrono.workspace = true
+uuid.workspace = true
+x509-parser = "0.16"
 
 [dev-dependencies]
 criterion = { workspace = true, features = ["async_tokio"] }

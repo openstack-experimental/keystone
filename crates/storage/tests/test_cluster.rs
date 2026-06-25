@@ -27,7 +27,9 @@ use rcgen::{
     BasicConstraints, CertificateParams, DistinguishedName, DnType, ExtendedKeyUsagePurpose, IsCa,
     Issuer, KeyPair, KeyUsagePurpose, SanType,
 };
+use temp_env;
 use tempfile::TempDir;
+
 use tonic::transport::{Channel, ClientTlsConfig, Uri};
 
 use openstack_keystone_config::{
@@ -58,7 +60,9 @@ fn make_env<T: serde::Serialize + ?Sized>(
 #[tracing_test::traced_test]
 #[test]
 fn test_cluster() {
-    TypeConfig::run(test_cluster_inner()).unwrap();
+    temp_env::with_var("KEYSTONE_DEV_KEK", Some(&"00".repeat(32)), || {
+        TypeConfig::run(test_cluster_inner()).unwrap();
+    });
 }
 
 #[allow(dead_code)]
@@ -86,6 +90,7 @@ impl InstanceHolder {
 }
 
 async fn test_cluster_inner() -> Result<()> {
+    // Existing test body
     let provider = rustls::crypto::aws_lc_rs::default_provider();
     rustls::crypto::CryptoProvider::install_default(provider).unwrap();
 
@@ -147,6 +152,9 @@ async fn test_cluster_inner() -> Result<()> {
 
         let metrics = admin_client1.metrics(()).await?.into_inner();
         println!("=== metrics after init: {:?}", metrics);
+        // Wait until node 1 has committed the init membership and elected itself
+        // leader.
+        wait_for_leader(&mut admin_client1, 1).await;
     }
 
     println!(
@@ -401,6 +409,18 @@ fn get_addr(node_id: u64) -> SocketAddr {
             unreachable!("node_id must be 1, 2, or 3");
         }
     }
+}
+
+async fn wait_for_leader(client: &mut ClusterAdminServiceClient<Channel>, expected_leader: u64) {
+    for _ in 0..50 {
+        if let Ok(resp) = client.metrics(()).await {
+            if resp.into_inner().current_leader == Some(expected_leader) {
+                return;
+            }
+        }
+        TypeConfig::sleep(Duration::from_millis(100)).await;
+    }
+    panic!("leader {expected_leader} not elected within 5 seconds");
 }
 
 pub async fn start_raft_app(

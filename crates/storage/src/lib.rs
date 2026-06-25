@@ -16,16 +16,20 @@
 //! A distributed storage for OpenStack Keystone backed by Raft and Fjall KV
 //! database.
 
+#![deny(clippy::mem_forget)]
+
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io;
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, RwLock};
 
 use fjall::Database;
 use openraft::RaftTypeConfig;
-use openstack_keystone_storage_crypto::{DekEpoch, KekProvider, generate_dek};
+use openstack_keystone_storage_crypto::{DekEpoch, KekProvider, LockedKey, generate_dek};
 
 pub mod api;
 pub mod app;
+pub mod audit;
 pub mod grpc;
 #[cfg(feature = "mock")]
 pub mod mock;
@@ -70,6 +74,12 @@ impl From<StoreError> for ApiStoreError {
                 subject: partition,
                 description: "partition quarantined due to repeated GCM tag failures".to_string(),
             },
+            StoreError::WriteRateExceeded(key, version) => Self::Conflict {
+                subject: key,
+                description: format!(
+                    "write rate exceeded at version {version}; DEK rotation required"
+                ),
+            },
             _ => Self::Other(Box::new(e)),
         }
     }
@@ -104,57 +114,209 @@ openraft::declare_raft_types!(
 /// Bootstraps the DEK on first boot (generates a fresh key, wraps it under the
 /// KEK, persists it to `_meta:dek:current`) or loads it on subsequent boots.
 ///
+/// Returns the pair of stores plus the shared `current_dek` handle (for use by
+/// the `rotate_dek` gRPC handler and other admin operations that need to know
+/// the current DEK epoch version).
+///
 /// # Parameters
 /// - `db_path`: Path to the Fjall database directory.
 /// - `node_id`: Raft node ID; used as the high 8 bytes of log nonces.
 /// - `kek`: Key Encryption Key provider for wrapping/unwrapping the DEK.
 ///
 /// # Returns
-/// `(FjallLogStore, FjallStateMachine)` sharing the same database handle.
+/// `(FjallLogStore, FjallStateMachine, Arc<RwLock<Arc<DekEpoch>>>,
+/// Arc<Mutex<HashSet<u32>>>, Arc<Mutex<HashMap<String, PendingRotation>>>)`.
 pub async fn new<C, P: AsRef<Path>>(
     db_path: P,
     node_id: u64,
-    kek: &dyn KekProvider,
-) -> Result<(FjallLogStore<C>, FjallStateMachine), io::Error>
+    kek: Arc<dyn KekProvider>,
+) -> Result<
+    (
+        FjallLogStore<C>,
+        FjallStateMachine,
+        Arc<RwLock<Arc<DekEpoch>>>,
+        Arc<Mutex<HashSet<u32>>>,
+        Arc<Mutex<HashMap<String, store_command::PendingRotation>>>,
+    ),
+    io::Error,
+>
 where
     C: RaftTypeConfig,
 {
     let db_path = db_path.as_ref();
     let snapshot_dir = db_path.join("snapshots");
-    let db = Database::builder(db_path)
-        .open()
-        .map_err(|e| io::Error::other(e.to_string()))?;
-    let db = Arc::new(db);
+    let db = Arc::new(
+        Database::builder(db_path)
+            .open()
+            .map_err(|e| io::Error::other(e.to_string()))?,
+    );
 
     // Bootstrap or load the DEK from the meta keyspace.
-    let dek = bootstrap_dek(&db, kek).map_err(|e| io::Error::other(e.to_string()))?;
-    let dek = Arc::new(dek);
+    let initial_epoch =
+        bootstrap_dek(&db, kek.as_ref()).map_err(|e| io::Error::other(e.to_string()))?;
+    let current_dek: Arc<RwLock<Arc<DekEpoch>>> = Arc::new(RwLock::new(initial_epoch));
+    // Load retired DEK epochs from Fjall so pre-rotation ciphertext remains
+    // readable across restarts (C3: old_deks must survive process restarts).
+    let retired_map =
+        load_retired_deks(&db, kek.as_ref()).map_err(|e| io::Error::other(e.to_string()))?;
+    let old_deks: Arc<Mutex<BTreeMap<u32, Arc<DekEpoch>>>> = Arc::new(Mutex::new(retired_map));
+    let revoked_deks: Arc<Mutex<HashSet<u32>>> = Arc::new(Mutex::new(HashSet::new()));
 
-    Ok((
-        FjallLogStore::new(db.clone(), node_id, dek.clone())
-            .map_err(|e| io::Error::other(e.to_string()))?,
-        FjallStateMachine::new(db, snapshot_dir, dek)
-            .map_err(|e| io::Error::other(e.to_string()))?,
-    ))
+    // Load any pending emergency rotations that were staged before a restart.
+    let meta_ks = db
+        .keyspace("meta", fjall::KeyspaceCreateOptions::default)
+        .map_err(|e| io::Error::other(e.to_string()))?;
+    let pending_map = crate::store::state_machine::load_pending_rotations(&meta_ks)
+        .map_err(|e| io::Error::other(e.to_string()))?;
+    let pending_rotations: Arc<Mutex<HashMap<String, store_command::PendingRotation>>> =
+        Arc::new(Mutex::new(pending_map));
+
+    let (reencrypt_tx, mut reencrypt_rx) = tokio::sync::mpsc::channel::<Arc<DekEpoch>>(16);
+    // Stub re-encryption task: drains the channel and logs.
+    // Full background re-encryption of state entries is deferred to Phase 5.2.
+    tokio::spawn(async move {
+        while let Some(old_epoch) = reencrypt_rx.recv().await {
+            tracing::info!(
+                version = old_epoch.version,
+                "DEK rotation: old epoch registered (re-encryption deferred to Phase 5.2)"
+            );
+        }
+    });
+
+    let log_store = FjallLogStore::new(
+        db.clone(),
+        node_id,
+        current_dek.clone(),
+        old_deks.clone(),
+        revoked_deks.clone(),
+    )
+    .map_err(|e| io::Error::other(e.to_string()))?;
+
+    let sm = FjallStateMachine::new(
+        db,
+        snapshot_dir,
+        current_dek.clone(),
+        old_deks,
+        revoked_deks.clone(),
+        kek,
+        reencrypt_tx,
+        pending_rotations.clone(),
+    )
+    .map_err(|e| io::Error::other(e.to_string()))?;
+
+    Ok((log_store, sm, current_dek, revoked_deks, pending_rotations))
+}
+
+/// Fjall meta key prefix for retired DEK epochs (mirrors the constant in
+/// state_machine).
+const DEK_RETIRED_PREFIX: &str = "_meta:dek:retired:";
+
+/// Load retired DEK epochs from Fjall meta for post-rotation read fallback.
+///
+/// Retired epochs are stored under `_meta:dek:retired:VERSION` with the
+/// wrapped DEK bytes as the value.  Any epoch that cannot be unwrapped or
+/// parsed is skipped with a `WARN` log — startup proceeds so the node
+/// remains available.
+fn load_retired_deks(
+    db: &Database,
+    kek: &dyn KekProvider,
+) -> Result<BTreeMap<u32, Arc<DekEpoch>>, StoreError> {
+    let meta = db.keyspace("meta", fjall::KeyspaceCreateOptions::default)?;
+    let mut map = BTreeMap::new();
+    for item in meta.prefix(DEK_RETIRED_PREFIX.as_bytes()) {
+        let (key_bytes, wrapped_bytes) = item.into_inner()?;
+        let key_str = match std::str::from_utf8(&key_bytes) {
+            Ok(s) => s.to_owned(),
+            Err(_) => continue,
+        };
+        let version_str = match key_str.strip_prefix(DEK_RETIRED_PREFIX) {
+            Some(s) => s,
+            None => continue,
+        };
+        let version: u32 = match version_str.parse() {
+            Ok(v) => v,
+            Err(_) => {
+                tracing::warn!(
+                    key = key_str,
+                    "retired DEK key has non-numeric version suffix"
+                );
+                continue;
+            }
+        };
+        match kek.unwrap_dek(&wrapped_bytes) {
+            Ok(raw) => {
+                let epoch_dek = LockedKey::from_raw(*raw);
+                match DekEpoch::from_raw(epoch_dek, version) {
+                    Ok(epoch) => {
+                        tracing::info!(version, "loaded retired DEK epoch for read fallback");
+                        map.insert(version, Arc::new(epoch));
+                    }
+                    Err(e) => {
+                        tracing::warn!(version, error = %e, "failed to construct retired DEK epoch");
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!(version, error = %e, "failed to unwrap retired DEK — skipping");
+            }
+        }
+    }
+    Ok(map)
 }
 
 /// Load the current DEK epoch from Fjall, or generate and persist a new one.
-fn bootstrap_dek(db: &Database, kek: &dyn KekProvider) -> Result<DekEpoch, StoreError> {
+///
+/// On-disk format for `_meta:dek:current`:
+/// `[version_u32_BE; 4] ++ [nonce_12] ++ [ciphertext_32] ++ [tag_16]` (64 bytes
+/// total). Legacy format (60 bytes, no version prefix) is migrated to version 1
+/// on first load.
+fn bootstrap_dek(db: &Database, kek: &dyn KekProvider) -> Result<Arc<DekEpoch>, StoreError> {
     let meta = db.keyspace("meta", fjall::KeyspaceCreateOptions::default)?;
 
-    if let Some(wrapped_bytes) = meta.get(META_DEK_CURRENT)? {
-        // Existing DEK: unwrap and derive sub-keys.
-        let raw = kek.unwrap_dek(wrapped_bytes.as_ref())?;
-        let epoch = DekEpoch::from_raw(&raw, 0)?;
-        Ok(epoch)
+    if let Some(stored) = meta.get(META_DEK_CURRENT)? {
+        let stored = stored.as_ref();
+        let (version, wrapped) = if stored.len() >= 64 {
+            // New format: [version_u32_BE; 4] ++ wrapped_bytes.
+            let version = u32::from_be_bytes(
+                stored[..4]
+                    .try_into()
+                    .map_err(|_| StoreError::Other(eyre::eyre!("invalid DEK version prefix")))?,
+            );
+            (version, &stored[4..])
+        } else if stored.len() == 60 {
+            // Legacy format (no version prefix): treat as version 1 and migrate.
+            tracing::warn!(
+                "DEK stored in legacy format (no version prefix); treating as version 1"
+            );
+            let wrapped = stored;
+            let raw = kek.unwrap_dek(wrapped)?;
+            let raw_bytes = *raw;
+            let mut migrated = 1u32.to_be_bytes().to_vec();
+            migrated.extend_from_slice(&kek.wrap_dek(&raw_bytes)?);
+            meta.insert(META_DEK_CURRENT, &migrated)?;
+            db.persist(fjall::PersistMode::SyncAll)?;
+            let epoch_dek = LockedKey::from_raw(raw_bytes);
+            return Ok(Arc::new(DekEpoch::from_raw(epoch_dek, 1)?));
+        } else {
+            return Err(StoreError::Other(eyre::eyre!(
+                "invalid DEK stored size: {} bytes",
+                stored.len()
+            )));
+        };
+        let raw = kek.unwrap_dek(wrapped)?;
+        let epoch_dek = LockedKey::from_raw(*raw);
+        Ok(Arc::new(DekEpoch::from_raw(epoch_dek, version)?))
     } else {
-        // First boot: generate fresh DEK, wrap under KEK, persist.
-        let raw = generate_dek();
-        let wrapped = kek.wrap_dek(&raw)?;
-        meta.insert(META_DEK_CURRENT, &wrapped)?;
+        // First boot: generate fresh DEK at version 1, wrap under KEK, persist.
+        let dek = generate_dek();
+        let wrapped = kek.wrap_dek(dek.as_bytes())?;
+        let version = 1u32;
+        let mut persisted = version.to_be_bytes().to_vec();
+        persisted.extend_from_slice(&wrapped);
+        meta.insert(META_DEK_CURRENT, &persisted)?;
         db.persist(fjall::PersistMode::SyncAll)?;
-        let epoch = DekEpoch::from_raw(&raw, 0)?;
-        Ok(epoch)
+        // Pass the mlock'd key directly — no copy through bypass allocation.
+        Ok(Arc::new(DekEpoch::from_raw(dek, version)?))
     }
 }
 
@@ -187,10 +349,12 @@ mod tests {
         > {
             let td =
                 TempDir::new().map_err(|e| StorageError::read(TypeConfig::err_from_error(&e)))?;
-            let kek = EnvKek::from_bytes([0x42u8; 32]);
-            let (log_store, sm) = crate::new(td.path(), 1, &kek)
-                .await
-                .map_err(|e| StorageError::read(TypeConfig::err_from_error(&e)))?;
+            let kek: Arc<dyn openstack_keystone_storage_crypto::KekProvider> =
+                Arc::new(EnvKek::from_bytes([0x42u8; 32]));
+            let (log_store, sm, _current_dek, _revoked, _pending_rotations) =
+                crate::new(td.path(), 1, kek)
+                    .await
+                    .map_err(|e| StorageError::read(TypeConfig::err_from_error(&e)))?;
             Ok((td, log_store, Arc::new(sm)))
         }
     }

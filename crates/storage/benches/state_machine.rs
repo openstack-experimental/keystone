@@ -1,12 +1,16 @@
 #![cfg(feature = "bench_internals")]
+use std::collections::HashMap;
+use std::collections::{BTreeMap, HashSet};
 use std::hint::black_box;
 use std::sync::Arc;
+use std::sync::Mutex;
+use std::sync::RwLock;
 
 use criterion::{BatchSize, BenchmarkId, Criterion, criterion_group, criterion_main};
 use fjall::Database;
 use futures::stream;
 use openraft::{RaftSnapshotBuilder, storage::RaftStateMachine};
-use openstack_keystone_storage_crypto::{DekEpoch, generate_dek};
+use openstack_keystone_storage_crypto::{DekEpoch, EnvKek, KekProvider, generate_dek};
 use tempfile::TempDir;
 use tokio::runtime::Runtime;
 
@@ -21,8 +25,32 @@ fn bench_state_machine(c: &mut Criterion) {
     let snapshot_dir = db_path.path().join("snapshots");
     let db = Database::builder(db_path).open().unwrap();
     let db = Arc::new(db);
-    let dek = Arc::new(DekEpoch::from_raw(&generate_dek(), 0).unwrap());
-    let sm = Arc::new(FjallStateMachine::new(db, snapshot_dir, dek).unwrap());
+    let raw = generate_dek();
+    let epoch = Arc::new(DekEpoch::from_raw(raw, 0).unwrap());
+    let current_dek: Arc<RwLock<Arc<DekEpoch>>> = Arc::new(RwLock::new(epoch));
+    let old_deks: Arc<Mutex<BTreeMap<u32, Arc<DekEpoch>>>> = Arc::new(Mutex::new(BTreeMap::new()));
+    let revoked_deks: Arc<Mutex<HashSet<u32>>> = Arc::new(Mutex::new(HashSet::new()));
+    let kek: Arc<dyn KekProvider> = Arc::new(EnvKek::from_bytes([0x42u8; 32]));
+    let (_reencrypt_tx, _reencrypt_rx) = tokio::sync::mpsc::channel::<Arc<DekEpoch>>(16);
+    let pending_rotations: Arc<
+        Mutex<
+            HashMap<String, openstack_keystone_distributed_storage::store_command::PendingRotation>,
+        >,
+    > = Arc::new(Mutex::new(HashMap::new()));
+    #[allow(unused)]
+    let sm = Arc::new(
+        FjallStateMachine::new(
+            db,
+            snapshot_dir,
+            current_dek,
+            old_deks,
+            revoked_deks,
+            kek,
+            _reencrypt_tx,
+            pending_rotations,
+        )
+        .unwrap(),
+    );
 
     c.bench_function("get_db", |b| {
         b.iter(|| sm.db());

@@ -12,14 +12,14 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, RwLock};
 
 use async_trait::async_trait;
 use dashmap::DashMap;
 use eyre::eyre;
 use openraft::Config;
 use openraft::async_runtime::WatchReceiver;
-use openstack_keystone_storage_crypto::EnvKek;
+use openstack_keystone_storage_crypto::{DekEpoch, EnvKek, KekProvider};
 
 use crate::protobuf as pb;
 use openraft::ReadPolicy;
@@ -38,11 +38,11 @@ use crate::StorageApi;
 use crate::StoreError;
 use crate::StoreResponse;
 use crate::Violation;
+use crate::audit::AuditForwarder;
 use crate::grpc::cluster_admin_service::ClusterAdminServiceImpl;
 use crate::grpc::raft_service::RaftServiceImpl;
 use crate::grpc::storage_service::StorageServiceImpl;
-use crate::network::NetworkManager;
-use crate::network::init_tls_watcher;
+use crate::network::{CertExpiryWatchdog, NetworkManager, init_tls_watcher};
 use crate::pb::api::Response;
 use crate::pb::raft::cluster_admin_service_server::ClusterAdminServiceServer;
 use crate::pb::raft::raft_service_server::RaftServiceServer;
@@ -59,6 +59,53 @@ use openstack_keystone_storage_api::Node;
 /// clients can retry against the leader.
 pub const LEADER_ENDPOINT_HEADER: &str = "x-openraft-leader-endpoint";
 pub const LEADER_ID_HEADER: &str = "x-openraft-leader-id";
+
+/// Check that `node_id` is not already registered in the committed cluster
+/// membership with a different `rpc_addr`.
+///
+/// Reads local committed membership state — no network access required.  If
+/// the committed membership contains `node_id` at a different address, this
+/// indicates a misconfiguration or an impersonation attempt: we refuse to
+/// start (fail-closed, per ADR 0016-v2 §4.3 / F7).
+async fn check_node_id_uniqueness(
+    raft: &Raft,
+    node_id: u64,
+    rpc_addr: &str,
+) -> Result<(), StoreError> {
+    let check_addr = rpc_addr.to_owned();
+    let check_id = node_id;
+    let conflict = raft
+        .with_raft_state(move |s| {
+            s.membership_state
+                .committed()
+                .nodes()
+                .find_map(|(nid, node)| {
+                    if *nid == check_id && node.rpc_addr != check_addr {
+                        Some(node.rpc_addr.clone())
+                    } else {
+                        None
+                    }
+                })
+        })
+        .await
+        .map_err(|e| StoreError::Other(eyre!("failed to read Raft membership state: {e}")))?;
+
+    if let Some(existing_addr) = conflict {
+        tracing::error!(
+            node_id,
+            rpc_addr,
+            existing_addr,
+            "FATAL: node_id already registered in cluster at a different address"
+        );
+        return Err(StoreError::Other(eyre!(
+            "FATAL: node_id {node_id} already registered in cluster at {existing_addr}; \
+             refusing to start with address {rpc_addr}"
+        )));
+    }
+
+    tracing::debug!(node_id, rpc_addr, "node_id uniqueness check passed");
+    Ok(())
+}
 
 /// Initialize storage services backed by the raft.
 ///
@@ -95,15 +142,27 @@ pub async fn init_storage(config_manager: &Arc<ConfigManager>) -> Result<Storage
     // Production deployments should set kek_provider = "pkcs11" in config
     // and the Pkcs11KekStub will be replaced by a live HSM driver in a
     // future phase.
-    let kek = EnvKek::from_env()
-        .map_err(|e| StoreError::Other(eyre!("failed to load KEYSTONE_DEV_KEK: {e}")))?;
+    let kek: Arc<dyn KekProvider> = Arc::new(
+        EnvKek::from_env()
+            .map_err(|e| StoreError::Other(eyre!("failed to load KEYSTONE_DEV_KEK: {e}")))?,
+    );
 
     // Create stores and network
-    let (log_store, sm) =
-        crate::new::<crate::TypeConfig, _>(ds_config.path, ds_config.node_id, &kek).await?;
+    let (log_store, sm, current_dek, _revoked_deks, pending_rotations) =
+        crate::new::<crate::TypeConfig, _>(ds_config.path, ds_config.node_id, kek.clone()).await?;
     let state_machine_store = Arc::new(sm);
     let tls_watcher = init_tls_watcher(config_manager).await?;
     let network = Arc::new(NetworkManager::new(tls_watcher.clone())?);
+
+    // Spawn TLS cert expiry watchdog for manual-TLS fallback (ADR §4.2).
+    // In SPIFFE mode this would be replaced by the SVID TTL check.
+    if let openstack_keystone_config::RaftTlsConfiguration::Tls(tls) = &ds_config.tls_configuration
+        && let Some(cert_content) = tls.tls_cert_content.as_ref()
+    {
+        use secrecy::ExposeSecret;
+        let cert_bytes = cert_content.expose_secret().to_vec();
+        CertExpiryWatchdog::spawn(cert_bytes, false);
+    }
 
     // Create Raft instance
     let raft = Raft::new(
@@ -115,11 +174,30 @@ pub async fn init_storage(config_manager: &Arc<ConfigManager>) -> Result<Storage
     )
     .await?;
 
+    // Refuse to start if our node_id is already in the cluster under a different
+    // address.
+    let rpc_addr = ds_config.node_cluster_addr.to_string();
+    check_node_id_uniqueness(&raft, ds_config.node_id, &rpc_addr).await?;
+
+    // Derive the per-node audit HMAC key from the current DEK epoch (ADR §3.1).
+    let audit_key = {
+        let guard = current_dek.read().unwrap();
+        guard
+            .derive_audit_key(ds_config.node_id)
+            .expect("derive audit key from DEK")
+    };
+    let (audit_forwarder, _audit_task) = AuditForwarder::spawn(audit_key);
+
     Ok(Storage {
         connection_pool: DashMap::new(),
         raft,
+        node_id: ds_config.node_id,
         state_machine_store,
         tls_watcher,
+        kek,
+        current_dek,
+        audit_forwarder,
+        pending_rotations,
     })
 }
 
@@ -132,7 +210,14 @@ pub async fn init_storage(config_manager: &Arc<ConfigManager>) -> Result<Storage
 /// A `Result` containing the `Routes`, or a `StoreError`.
 pub async fn get_app_server(storage: &Storage) -> Result<Routes, StoreError> {
     let raft_svc_impl = RaftServiceImpl::new(storage.raft.clone());
-    let cluster_admin_svc_impl = ClusterAdminServiceImpl::new(storage.raft.clone());
+    let cluster_admin_svc_impl = ClusterAdminServiceImpl::new(
+        storage.raft.clone(),
+        storage.node_id,
+        storage.kek.clone(),
+        storage.current_dek.clone(),
+        storage.audit_forwarder.clone(),
+        storage.pending_rotations.clone(),
+    );
     let storage_svc_impl = StorageServiceImpl::new(storage.raft.clone());
 
     let mut router = Routes::builder();
@@ -152,8 +237,20 @@ pub struct Storage {
     tls_watcher: watch::Receiver<ClientTlsConfig>,
     /// Raft instance.
     pub raft: Raft,
+    /// This node's Raft ID (used to tag audit records for per-node
+    /// attribution).
+    node_id: u64,
     /// The state machine store for direct reads.
     state_machine_store: Arc<StateMachineStore>,
+    /// Key Encryption Key for wrapping new DEKs during rotation.
+    kek: Arc<dyn KekProvider>,
+    /// Shared current DEK epoch, used by rotate_dek to determine the next
+    /// version.
+    current_dek: Arc<RwLock<Arc<DekEpoch>>>,
+    /// Audit record forwarder (non-blocking, HMAC-signed).
+    pub audit_forwarder: AuditForwarder,
+    /// Pending emergency DEK rotations (shared with FjallStateMachine).
+    pending_rotations: Arc<Mutex<HashMap<String, crate::store_command::PendingRotation>>>,
 }
 
 #[async_trait]

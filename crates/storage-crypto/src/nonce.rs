@@ -21,18 +21,18 @@
 //! The counter must be unique for every log encryption and must survive
 //! crashes without reuse.  This is achieved via **forward reservation**:
 //!
-//! 1. On startup, a reservation block of [`RESERVE_BLOCK`] is pre-committed
-//!    to durable storage.  The in-memory counter starts at the PREVIOUS
+//! 1. On startup, a reservation block of [`RESERVE_BLOCK`] is pre-committed to
+//!    durable storage.  The in-memory counter starts at the PREVIOUS
 //!    reservation point, so the new reservation covers the next range.
-//! 2. Each call to [`NonceManager::next_nonce`] returns the current counter
-//!    and advances it.  When the in-memory counter reaches the end of the
-//!    current reserved block, a new block is committed.
+//! 2. Each call to [`NonceManager::next_nonce`] returns the current counter and
+//!    advances it.  When the in-memory counter reaches the end of the current
+//!    reserved block, a new block is committed.
 //! 3. After each reservation write, the value is read back and compared; a
 //!    mismatch causes [`CryptoError::NonceReadbackMismatch`].
 //! 4. A High-Water Mark (`nonce_hwm`) records the largest reservation ever
-//!    written.  On startup, if the persisted counter is strictly less than
-//!    the HWM, [`CryptoError::NonceCounterRollback`] is returned and the
-//!    node must not start.
+//!    written.  On startup, if the persisted counter is strictly less than the
+//!    HWM, [`CryptoError::NonceCounterRollback`] is returned and the node must
+//!    not start.
 //!
 //! ## Rotation threshold
 //!
@@ -82,7 +82,7 @@ pub struct NonceManager {
 }
 
 impl NonceManager {
-    /// Initialise the nonce manager for a given `node_id`.
+    /// Initialize the nonce manager for a given `node_id`.
     ///
     /// Reads persisted state, validates against the HWM, then immediately
     /// reserves the next block.

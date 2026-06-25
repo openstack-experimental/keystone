@@ -188,8 +188,22 @@ external-default-features = "allow"
 allow = [
     #"ansi_term@0.11.0",
     #{ crate = "ansi_term@0.11.0", reason = "you can specify a reason it is allowed" },
-]
+ ]
 # List of crates to deny
+#
+# ADR 0016-v2 §11: crates that store cryptographic key material must implement
+# ZeroizeOnDrop. Our own crypto code (storage-crypto) uses aes-gcm / hkdf / sha2
+# which integrate with the zeroize ecosystem. The `mem_forget` clippy lint
+# enforced in storage-crypto and storage crates prevents accidental bypass of
+# drop-based zeroization.
+#
+# NOTE: `ring` crate is not banned here because it's unavoidable as a transitive
+# dependency via openidconnect -> oauth2 -> reqwest 0.12 (no aws-lc-rs feature).
+# Ring key types are NOT used directly by our code — storage-crypto uses
+# aes-gcm/hkdf/sha2 with zeroize. `ring` is only in the dependency tree
+# due to Cargo feature unification (reqwest 0.12 enables __rustls-ring).
+# When openidconnect or its deps update to reqwest 0.13 with aws-lc-rs support,
+# this exception can be reconsidered.
 deny = [
     #"ansi_term@0.11.0",
     #{ crate = "ansi_term@0.11.0", reason = "you can specify a reason it is banned" },

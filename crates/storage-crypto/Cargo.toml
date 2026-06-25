@@ -10,16 +10,30 @@ repository.workspace = true
 homepage.workspace = true
 exclude.workspace = true
 
-[lints]
-workspace = true
+# This crate intentionally does NOT inherit workspace lints so that it can set
+# `unsafe_code = "deny"` (rather than "forbid") for the mlock.rs module, which
+# requires unsafe for posix_memalign, mlock/munlock, and raw-pointer access.
+# All other workspace crates use `unsafe_code = "forbid"` via the workspace
+# default.  All other lint settings below mirror the workspace lints exactly.
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+enum_glob_use = "deny"
+expect_used = "deny"
+print_stdout = "deny"
+unwrap_used = "deny"
+doc_paragraphs_missing_punctuation = "warn"
 
 [dependencies]
 aes-gcm.workspace = true
 hkdf.workspace = true
-# sha2 pinned to 0.10 to match hkdf 0.12's digest 0.10 trait boundary.
-# The workspace uses sha2 0.11 (digest 0.11), which is incompatible with
-# hkdf 0.12's type parameters. Both versions coexist in the dependency graph.
+# sha2/hmac pinned to 0.10/0.12 to match hkdf 0.12's digest 0.10 trait
+# boundary. The workspace uses sha2 0.11 + hmac 0.13 (digest 0.11), which are
+# incompatible with hkdf 0.12's type parameters.
+hmac = "0.12"
 sha2 = "0.10"
+nix = { workspace = true, features = ["mman", "feature"] }
 rand.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
