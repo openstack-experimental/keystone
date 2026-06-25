@@ -46,7 +46,7 @@ impl PasswordHasher for PlaintextHasher {
 
 #[cfg(test)]
 mod tests {
-    use super::super::test_support::mock_config;
+    use super::super::mock_config;
     use super::super::{hash_password, verify_password};
     use openstack_keystone_config::PasswordHashingAlgo;
 

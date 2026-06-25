@@ -296,28 +296,26 @@ pub async fn verify_password<P: AsRef<[u8]>, H: AsRef<str>>(
     }
 }
 
-/// Shared test helpers used by every per-algorithm submodule's `tests`.
+/// Password reused across the Keystone cross-compatibility test vectors.
 #[cfg(test)]
-pub(crate) mod test_support {
-    use openstack_keystone_config::{Config, PasswordHashingAlgo};
+const TEST_PASSWORD: &str = "openstack123";
 
-    /// Password reused across the Keystone cross-compatibility test vectors.
-    pub(crate) const TEST_PASSWORD: &str = "openstack123";
-
-    /// Build a `Config` with the password-hashing fields set, bypassing the
-    /// manual nested-struct instantiation each test would otherwise need.
-    pub(crate) fn mock_config(algo: PasswordHashingAlgo, max_len: usize) -> Config {
-        let mut conf = Config::default();
-        conf.identity.password_hashing_algorithm = algo;
-        conf.identity.password_hash_rounds = Some(12);
-        conf.identity.max_password_length = max_len;
-        conf
-    }
+/// Build a `Config` with the password-hashing fields set.
+///
+/// Accessible from every child module's test block via `super::super::mock_config`
+/// without needing `pub(crate)` — child modules can reach private items in their
+/// ancestor modules.
+#[cfg(test)]
+fn mock_config(algo: openstack_keystone_config::PasswordHashingAlgo, max_len: usize) -> Config {
+    let mut conf = Config::default();
+    conf.identity.password_hashing_algorithm = algo;
+    conf.identity.password_hash_rounds = Some(12);
+    conf.identity.max_password_length = max_len;
+    conf
 }
 
 #[cfg(test)]
 mod tests {
-    use super::test_support::mock_config;
     use super::*;
     use openstack_keystone_config::PasswordHashingAlgo;
     use rand::distr::{Alphanumeric, SampleString};

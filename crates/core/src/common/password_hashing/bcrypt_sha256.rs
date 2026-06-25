@@ -221,7 +221,7 @@ fn compute_hmac_sha256(salt: &[u8], password: &[u8]) -> Result<[u8; 32], Passwor
 
 #[cfg(test)]
 mod tests {
-    use super::super::test_support::mock_config;
+    use super::super::mock_config;
     use super::super::{hash_password, verify_password};
     use openstack_keystone_config::PasswordHashingAlgo;
 
