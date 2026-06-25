@@ -243,6 +243,19 @@ service ClusterAdminService {
   // DEK rotation. Must be invoked within 5 minutes of the initial
   // RotateDekRequest{emergency: true} by a second storage-operator.
   rpc ConfirmRotateDek(ConfirmRotateDekRequest) returns (AdminResponse) {}
+
+  // Backup builds a fresh Fjall snapshot, encrypts it with the Backup DEK, and
+  // streams the encrypted bytes to the operator. The final chunk carries the
+  // snapshot_utc_epoch and dek_version from the backup envelope header for
+  // client-side verification. Requires operator access over the internal
+  // management network.
+  rpc Backup(BackupRequest) returns (stream BackupChunk) {}
+
+  // Restore accepts a client-streamed encrypted snapshot (produced by Backup),
+  // validates the backup envelope, decrypts it, and installs it into the Raft
+  // state machine. Only invoke against a freshly-bootstrapped single-node
+  // cluster before adding learners (see ADR 0016-v2 §7).
+  rpc Restore(stream RestoreChunk) returns (AdminResponse) {}
 }
 
 message ClearQuarantineRequest {
@@ -260,5 +273,24 @@ message RotateDekRequest {
 message ConfirmRotateDekRequest {
   // The rotation_id of the pending emergency rotation that requires confirmation.
   string rotation_id = 1;
+}
+
+// BackupRequest initiates a server-side operator snapshot export.
+message BackupRequest {}
+
+// BackupChunk is one chunk of the streaming encrypted snapshot response.
+// The final chunk carries snapshot_utc_epoch and dek_version so the client
+// can verify the backup envelope without decrypting it.
+message BackupChunk {
+  bytes data = 1;
+  // Only set in the final chunk.
+  optional uint64 snapshot_utc_epoch = 2;
+  // Only set in the final chunk.
+  optional uint32 dek_version = 3;
+}
+
+// RestoreChunk is one chunk of the client-to-server encrypted snapshot upload.
+message RestoreChunk {
+  bytes data = 1;
 }
 

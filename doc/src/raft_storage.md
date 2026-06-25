@@ -27,11 +27,35 @@ gRPC) and `openstack-keystone-storage-crypto` (all cryptographic primitives).
     - [Adding Nodes](#adding-nodes)
     - [TLS Certificate Management](#tls-certificate-management)
 11. [Operational Runbook](#operational-runbook)
+    - [Cluster Metrics](#cluster-metrics)
     - [Scheduled DEK Rotation](#scheduled-dek-rotation)
     - [Emergency DEK Rotation](#emergency-dek-rotation)
     - [Clearing a Quarantined Partition](#clearing-a-quarantined-partition)
     - [Backup and Restore](#backup-and-restore)
 12. [Security Invariants](#security-invariants)
+
+---
+
+## CLI Reference
+
+All cluster management operations use `keystone-manage storage <subcommand>`. The
+`--addr` flag (type `URI`) selects which cluster member to contact; it defaults to
+`node_cluster_addr` from the config file when omitted.
+
+| Subcommand | Description |
+|---|---|
+| `init` | Bootstrap a new single-node cluster |
+| `join <cluster-addr>` | Join the local node as a Raft learner |
+| `promote <node-id>` | Promote a learner to voting member |
+| `demote <node-id>` | Demote a voter to non-voting learner |
+| `remove-peer <node-id>` | Remove a peer from the cluster membership |
+| `list-peers` | Show cluster peers in a table |
+| `metrics` | Show raw cluster metrics and leader status |
+| `clear-quarantine [--addr] [--partition]` | Clear a GCM-failure quarantine (operator-only) |
+| `rotate-dek [--addr] [--emergency]` | Rotate the Data Encryption Key |
+| `confirm-rotate-dek [--addr] --rotation-id` | Confirm a pending emergency DEK rotation |
+| `backup [--addr] --output` | Create an encrypted Fjall snapshot |
+| `restore [--addr] --snapshot` | Restore an encrypted snapshot to the cluster |
 
 ---
 
@@ -487,37 +511,37 @@ keystone --config /etc/keystone/keystone.conf
 
 Each node starts and waits; Raft is not yet initialized.
 
-**Step 2 — Initialize the first node** as a single-node cluster:
+**Step 2 — Initialize the first node** as a single-node cluster.
+
+Run from node 1's host (node address and ID come from the config file):
 
 ```sh
-keystone-manage storage init \
-  --node-addr https://10.0.0.1:8310 \
-  --node-id 1
+keystone-manage storage init
 ```
 
 Node 1 becomes the leader of a 1-node cluster. Wait for it to report a leader
-(check `keystone-manage storage metrics --node-addr https://10.0.0.1:8310`).
+(check `keystone-manage storage metrics --addr https://10.0.0.1:8310`).
 
-**Step 3 — Add learners:**
+**Step 3 — Add learners.**
+
+Run from node 2 and node 3's hosts respectively. The positional argument is the
+address of any existing cluster member to contact:
 
 ```sh
-keystone-manage storage join \
-  --leader-addr https://10.0.0.1:8310 \
-  --node-addr   https://10.0.0.2:8310 \
-  --node-id 2
+# On node 2's host:
+keystone-manage storage join https://10.0.0.1:8310
 
-keystone-manage storage join \
-  --leader-addr https://10.0.0.1:8310 \
-  --node-addr   https://10.0.0.3:8310 \
-  --node-id 3
+# On node 3's host:
+keystone-manage storage join https://10.0.0.1:8310
 ```
 
-**Step 4 — Promote learners to voting members:**
+**Step 4 — Promote learners to voting members.**
+
+Run from any node. Repeat once per learner to promote:
 
 ```sh
-keystone-manage storage promote \
-  --leader-addr https://10.0.0.1:8310 \
-  --members 1,2,3
+keystone-manage storage promote 2
+keystone-manage storage promote 3
 ```
 
 ### Adding Nodes
@@ -527,16 +551,11 @@ To add a new node to a running cluster:
 ```sh
 # 1. Start the new node process (it will wait for a join instruction).
 
-# 2. From any existing cluster member:
-keystone-manage storage join \
-  --leader-addr https://10.0.0.1:8310 \
-  --node-addr   https://10.0.0.4:8310 \
-  --node-id 4
+# 2. On the new node's host, join to an existing cluster member:
+keystone-manage storage join https://10.0.0.1:8310
 
-# 3. Optionally promote to voting member:
-keystone-manage storage promote \
-  --leader-addr https://10.0.0.1:8310 \
-  --members 1,2,3,4
+# 3. Optionally promote to voting member (run from any node):
+keystone-manage storage promote 4
 ```
 
 ### TLS Certificate Management
@@ -555,6 +574,27 @@ The node refuses connections from SVIDs with < 5 minutes remaining validity.
 
 ## Operational Runbook
 
+### Cluster Metrics
+
+Quick health check — shows current leader, voter set, and raw OpenRaft metrics:
+
+```sh
+keystone-manage storage metrics --addr https://10.0.0.1:8310
+```
+
+Sample output:
+
+```
+Current leader : node 1
+Voters         : [1, 2, 3]
+All nodes      : [1=10.0.0.1:8310, 2=10.0.0.2:8310, 3=10.0.0.3:8310]
+
+Raw metrics:
+Metrics{id:1, Leader, term:3, ...}
+```
+
+For a formatted peer table use `list-peers` instead.
+
 ### Scheduled DEK Rotation
 
 Automatic rotation fires after `dek_rotation_days` (default: 90) or when the
@@ -562,7 +602,7 @@ log-encrypt counter approaches 2^31. Manual rotation:
 
 ```sh
 keystone-manage storage rotate-dek \
-  --leader-addr https://10.0.0.1:8310
+  --addr https://10.0.0.1:8310
 ```
 
 Monitor the audit log (`event_type = "DEK_ROTATION"`) and the post-rotation
@@ -575,13 +615,13 @@ Use when a DEK is suspected compromised.
 ```sh
 # Operator A — initiates rotation, receives rotation_id:
 keystone-manage storage rotate-dek \
-  --leader-addr https://10.0.0.1:8310 \
+  --addr https://10.0.0.1:8310 \
   --emergency
 # Output: rotation_id=550e8400-e29b-41d4-a716-446655440000
 
 # Operator B — confirms within 5 minutes:
 keystone-manage storage confirm-rotate-dek \
-  --leader-addr https://10.0.0.1:8310 \
+  --addr https://10.0.0.1:8310 \
   --rotation-id 550e8400-e29b-41d4-a716-446655440000
 ```
 
@@ -599,7 +639,7 @@ keys are rejected with a `QUARANTINED` violation.
 
 ```sh
 # Check node metrics for quarantine state:
-keystone-manage storage metrics --node-addr https://10.0.0.1:8310
+keystone-manage storage metrics --addr https://10.0.0.1:8310
 ```
 
 Root-cause the GCM failures (hardware fault, storage corruption, or unauthorized
@@ -609,7 +649,7 @@ modification) before clearing quarantine.
 
 ```sh
 keystone-manage storage clear-quarantine \
-  --node-addr https://10.0.0.1:8310 \
+  --addr https://10.0.0.1:8310 \
   --partition <partition-name>
 ```
 
@@ -621,9 +661,13 @@ This commits a Raft proposal (visible cluster-wide) and emits an audit entry.
 
 ```sh
 keystone-manage storage backup \
-  --node-addr https://10.0.0.1:8310 \
+  --addr https://10.0.0.1:8310 \
   --output /mnt/backups/keystone-$(date +%Y%m%d).snap
 ```
+
+The command triggers a fresh Fjall snapshot on the target node, then streams the
+AES-256-GCM encrypted bytes to `--output`. The final output includes the
+`snapshot_utc_epoch` and `dek_version` printed on completion for verification.
 
 The snapshot is wrapped in a backup-specific AES-256-GCM envelope with the
 Backup DEK and a DEK manifest. Both are bound to the snapshot timestamp and
@@ -632,13 +676,18 @@ current DEK epoch.
 **Restore:**
 
 ```sh
-# 1. Bootstrap fresh cluster nodes (Step 1 from bootstrap guide).
+# 1. Bootstrap a fresh single-node cluster (Step 1–2 from bootstrap guide).
 # 2. Restore the snapshot to the leader:
 keystone-manage storage restore \
-  --leader-addr https://10.0.0.1:8310 \
+  --addr https://10.0.0.1:8310 \
   --snapshot /mnt/backups/keystone-20260101.snap
 # 3. Add remaining nodes as learners (Steps 3–4 from bootstrap guide).
 ```
+
+The restore command validates the AES-256-GCM backup envelope (AD binding: epoch
++ dek_version), decrypts it using the Backup DEK from the KMS, and installs the
+snapshot into the Raft state machine via `install_full_snapshot`. The KMS must
+hold the `backup_dek` role key for the DEK epoch encoded in the snapshot.
 
 **Retired DEK retention:** Retired DEKs must be retained in the KMS for at least
 365 days to allow offline decryption of archived backups. Use a separate

@@ -333,6 +333,52 @@ impl FjallStateMachine {
         &self.meta
     }
 
+    /// Return the path to the snapshot directory.
+    pub fn snapshot_dir(&self) -> &std::path::Path {
+        &self.snapshot_dir
+    }
+
+    /// Validate and decrypt an operator backup blob (produced by the `Backup`
+    /// gRPC RPC) and return an OpenRaft `Snapshot` ready for
+    /// `Raft::install_full_snapshot`.
+    ///
+    /// The blob format is `[dek_version_u32_BE; 4] ++ [utc_epoch_u64_BE; 8] ++
+    /// AES-256-GCM(snapshot_file_msgpack)`.  Returns the decoded `Snapshot`
+    /// together with the (utc_epoch, dek_version) pair for audit logging.
+    pub fn decode_backup_blob(
+        &self,
+        bytes: &[u8],
+    ) -> Result<(crate::types::Snapshot, u64, u32), crate::StoreError> {
+        const HEADER_LEN: usize = 4 + 8;
+        if bytes.len() < HEADER_LEN {
+            return Err(crate::StoreError::Other(eyre::eyre!(
+                "backup blob too short: {} bytes",
+                bytes.len()
+            )));
+        }
+        let dek_version = u32::from_be_bytes(
+            bytes[..4]
+                .try_into()
+                .map_err(|_| crate::StoreError::Other(eyre::eyre!("invalid version prefix")))?,
+        );
+        let utc_epoch = u64::from_be_bytes(
+            bytes[4..12]
+                .try_into()
+                .map_err(|_| crate::StoreError::Other(eyre::eyre!("invalid epoch bytes")))?,
+        );
+
+        let snapshot_file = decrypt_snapshot_file(bytes, &self.dek, &self.old_deks)?;
+
+        let data_bytes = rmp_serde::to_vec(&snapshot_file.data)
+            .map_err(|e| crate::StoreError::Other(eyre::eyre!("snapshot re-serialize: {e}")))?;
+
+        let snapshot = openraft::storage::Snapshot {
+            meta: snapshot_file.meta,
+            snapshot: data_bytes,
+        };
+        Ok((snapshot, utc_epoch, dek_version))
+    }
+
     /// Get the Fjall `keyspace` handle by name.
     pub fn keyspace<S: AsRef<str>>(&self, name: S) -> Result<Keyspace, StoreError> {
         Ok(match name.as_ref() {

@@ -12,13 +12,16 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 use std::collections::{BTreeMap, HashMap};
+use std::fs;
 use std::sync::{Arc, Mutex, RwLock};
 
+use openraft::RaftSnapshotBuilder;
 use openraft::async_runtime::WatchReceiver;
 use openstack_keystone_storage_crypto::{DekEpoch, KekProvider, generate_dek};
 use tonic::Request;
 use tonic::Response;
 use tonic::Status;
+use tonic::Streaming;
 use tracing::trace;
 
 use crate::StoreError;
@@ -84,6 +87,8 @@ pub struct ClusterAdminServiceImpl {
     audit: AuditForwarder,
     /// Pending emergency DEK rotations (shared with FjallStateMachine).
     pending_rotations: Arc<Mutex<HashMap<String, PendingRotation>>>,
+    /// State machine store — used for backup snapshot building and restore.
+    sm: Arc<StateMachineStore>,
 }
 
 impl ClusterAdminServiceImpl {
@@ -105,6 +110,7 @@ impl ClusterAdminServiceImpl {
         current_dek: Arc<RwLock<Arc<DekEpoch>>>,
         audit: AuditForwarder,
         pending_rotations: Arc<Mutex<HashMap<String, PendingRotation>>>,
+        sm: Arc<StateMachineStore>,
     ) -> Self {
         Self {
             raft_node,
@@ -113,6 +119,7 @@ impl ClusterAdminServiceImpl {
             current_dek,
             audit,
             pending_rotations,
+            sm,
         }
     }
 
@@ -556,6 +563,145 @@ impl ClusterAdminService for ClusterAdminServiceImpl {
             confirmer = actor,
             "SECURITY: emergency DEK rotation confirmed via dual-control"
         );
+        Ok(Response::new(pb::raft::AdminResponse::default()))
+    }
+
+    type BackupStream = std::pin::Pin<
+        Box<dyn futures::Stream<Item = Result<pb::raft::BackupChunk, Status>> + Send>,
+    >;
+
+    /// Build a fresh Fjall snapshot and stream the encrypted bytes to the
+    /// operator.
+    ///
+    /// Encryption is performed by `build_snapshot` using the Backup DEK (see
+    /// ADR 0016-v2 §7).  Chunks are 256 KiB; the final chunk carries the
+    /// snapshot_utc_epoch and dek_version parsed from the on-disk header so
+    /// the client can verify the backup envelope without decrypting it.
+    #[tracing::instrument(level = "trace", skip(self))]
+    async fn backup(
+        &self,
+        request: Request<pb::raft::BackupRequest>,
+    ) -> Result<Response<Self::BackupStream>, Status> {
+        let actor = extract_peer_identity(&request);
+        trace!(actor, "operator backup requested");
+
+        // Trigger snapshot build via the snapshot builder trait.
+        let mut builder = self.sm.clone();
+        builder
+            .build_snapshot()
+            .await
+            .map_err(|e| Status::internal(format!("snapshot build failed: {e}")))?;
+
+        // Find latest snapshot file in the snapshot directory.
+        let snapshot_dir = self.sm.snapshot_dir().to_owned();
+        let latest = fs::read_dir(&snapshot_dir)
+            .map_err(|e| Status::internal(format!("cannot read snapshot dir: {e}")))?
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().is_file())
+            .max_by_key(|e| e.file_name())
+            .ok_or_else(|| Status::not_found("no snapshot available after build"))?;
+
+        let disk_bytes = fs::read(latest.path())
+            .map_err(|e| Status::internal(format!("cannot read snapshot file: {e}")))?;
+
+        // Parse header: [dek_version_u32_BE; 4] ++ [utc_epoch_u64_BE; 8]
+        if disk_bytes.len() < 12 {
+            return Err(Status::internal("snapshot file too short"));
+        }
+        let dek_version = u32::from_be_bytes(disk_bytes[..4].try_into().unwrap_or_default());
+        let utc_epoch = u64::from_be_bytes(disk_bytes[4..12].try_into().unwrap_or_default());
+
+        let dek_ver_for_audit = self
+            .current_dek
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
+            .version;
+        self.audit.emit(AuditRecord::now(
+            "BACKUP_CREATED",
+            &actor,
+            self.node_id,
+            dek_ver_for_audit,
+            serde_json::json!({
+                "snapshot_utc_epoch": utc_epoch,
+                "dek_version": dek_version,
+                "bytes": disk_bytes.len(),
+            }),
+        ));
+
+        // Stream in 256 KiB chunks; tag the final chunk with the header metadata.
+        const CHUNK_SIZE: usize = 256 * 1024;
+        let total = disk_bytes.len();
+        let chunks: Vec<Result<pb::raft::BackupChunk, Status>> = disk_bytes
+            .chunks(CHUNK_SIZE)
+            .enumerate()
+            .map(|(i, slice)| {
+                let offset = i * CHUNK_SIZE;
+                let is_last = offset + slice.len() == total;
+                Ok(pb::raft::BackupChunk {
+                    data: slice.to_vec(),
+                    snapshot_utc_epoch: if is_last { Some(utc_epoch) } else { None },
+                    dek_version: if is_last { Some(dek_version) } else { None },
+                })
+            })
+            .collect();
+
+        let stream = futures::stream::iter(chunks);
+        Ok(Response::new(Box::pin(stream)))
+    }
+
+    /// Accept a client-streamed encrypted backup, validate its envelope,
+    /// and install it into the Raft state machine via
+    /// `Raft::install_full_snapshot`.
+    ///
+    /// Only call this against a freshly-bootstrapped single-node cluster
+    /// before adding learners (see ADR 0016-v2 §7 / doc Restore runbook).
+    #[tracing::instrument(level = "trace", skip(self, request))]
+    async fn restore(
+        &self,
+        request: Request<Streaming<pb::raft::RestoreChunk>>,
+    ) -> Result<Response<pb::raft::AdminResponse>, Status> {
+        let actor = extract_peer_identity(&request);
+        trace!(actor, "operator restore requested");
+
+        let mut stream = request.into_inner();
+        let mut buf: Vec<u8> = Vec::new();
+        while let Some(chunk) = stream.message().await? {
+            buf.extend_from_slice(&chunk.data);
+        }
+        if buf.is_empty() {
+            return Err(Status::invalid_argument("restore stream was empty"));
+        }
+
+        let (snapshot, utc_epoch, dek_version) = self
+            .sm
+            .decode_backup_blob(&buf)
+            .map_err(|e| Status::invalid_argument(format!("invalid backup blob: {e}")))?;
+
+        // Get the current committed vote to authenticate the install.
+        let vote = self.raft_node.metrics().borrow_watched().vote.clone();
+
+        self.raft_node
+            .install_full_snapshot(vote, snapshot)
+            .await
+            .map_err(|e| Status::internal(format!("snapshot install failed: {e}")))?;
+
+        let dek_ver_for_audit = self
+            .current_dek
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
+            .version;
+        self.audit.emit(AuditRecord::now(
+            "BACKUP_RESTORED",
+            &actor,
+            self.node_id,
+            dek_ver_for_audit,
+            serde_json::json!({
+                "snapshot_utc_epoch": utc_epoch,
+                "backup_dek_version": dek_version,
+            }),
+        ));
+
+        tracing::info!(actor, utc_epoch, dek_version, "backup restore complete");
         Ok(Response::new(pb::raft::AdminResponse::default()))
     }
 }

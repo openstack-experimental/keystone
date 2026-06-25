@@ -3958,6 +3958,7 @@ dependencies = [
  "color-eyre",
  "comfy-table",
  "eyre",
+ "futures",
  "httpmock",
  "inventory",
  "openstack-keystone",

@@ -24,22 +24,32 @@ use openstack_keystone_distributed_storage::{
     protobuf::raft::cluster_admin_service_client::ClusterAdminServiceClient,
 };
 
+mod backup;
 mod clear_quarantine;
+mod confirm_rotate_dek;
 mod demote;
 mod init;
 mod join;
 mod list_peers;
+mod metrics;
 mod promote;
 mod remove_peer;
+mod restore;
+mod rotate_dek;
 
 use crate::PerformAction;
+use crate::storage::backup::BackupCommand;
 use crate::storage::clear_quarantine::ClearQuarantineCommand;
+use crate::storage::confirm_rotate_dek::ConfirmRotateDekCommand;
 use crate::storage::demote::DemoteCommand;
 use crate::storage::init::InitCommand;
 use crate::storage::join::JoinCommand;
 use crate::storage::list_peers::ListPeersCommand;
+use crate::storage::metrics::MetricsCommand;
 use crate::storage::promote::PromoteCommand;
 use crate::storage::remove_peer::RemovePeerCommand;
+use crate::storage::restore::RestoreCommand;
+use crate::storage::rotate_dek::RotateDekCommand;
 
 /// Distributed storage.
 ///
@@ -55,26 +65,36 @@ pub struct StorageCommand {
 impl PerformAction for StorageCommand {
     async fn take_action(self, config: &Config) -> Result<(), Report> {
         match self.command {
+            StorageCommands::Backup(e) => e.take_action(config).await,
             StorageCommands::ClearQuarantine(e) => e.take_action(config).await,
+            StorageCommands::ConfirmRotateDek(e) => e.take_action(config).await,
             StorageCommands::Demote(e) => e.take_action(config).await,
             StorageCommands::Init(e) => e.take_action(config).await,
             StorageCommands::Join(e) => e.take_action(config).await,
             StorageCommands::ListPeers(e) => e.take_action(config).await,
+            StorageCommands::Metrics(e) => e.take_action(config).await,
             StorageCommands::Promote(e) => e.take_action(config).await,
             StorageCommands::RemovePeer(e) => e.take_action(config).await,
+            StorageCommands::Restore(e) => e.take_action(config).await,
+            StorageCommands::RotateDek(e) => e.take_action(config).await,
         }
     }
 }
 
 #[derive(Subcommand)]
 enum StorageCommands {
+    Backup(BackupCommand),
     ClearQuarantine(ClearQuarantineCommand),
+    ConfirmRotateDek(ConfirmRotateDekCommand),
     Demote(DemoteCommand),
     Init(InitCommand),
     Join(JoinCommand),
     ListPeers(ListPeersCommand),
+    Metrics(MetricsCommand),
     Promote(PromoteCommand),
     RemovePeer(RemovePeerCommand),
+    Restore(RestoreCommand),
+    RotateDek(RotateDekCommand),
 }
 
 async fn get_grpc_client(
