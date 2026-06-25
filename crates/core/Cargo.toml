@@ -18,6 +18,7 @@ derive_builder.workspace = true
 eyre.workspace = true
 hmac.workspace = true
 dashmap.workspace = true
+governor.workspace = true
 inventory.workspace = true
 openstack-keystone-api-types = { workspace = true, optional = true }
 openstack-keystone-core-types.workspace = true

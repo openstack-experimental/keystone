@@ -274,7 +274,10 @@ async fn main() -> Result<(), Report> {
         .await?,
     );
 
-    spawn(cleanup(cloned_token, shared_state.clone()));
+    spawn(cleanup(cloned_token.clone(), shared_state.clone()));
+    // Evict stale entries from rate-limit keyed state stores every 60 s
+    // (ADR-0022 §Consequences: memory overhead and store eviction).
+    spawn(rate_limit_eviction(cloned_token, shared_state.clone()));
 
     shared_state
         .event_dispatcher
@@ -612,6 +615,31 @@ async fn cleanup(cancel: CancellationToken, state: ServiceState) {
             () = cancel.cancelled() => {
                 info!("Cancellation requested. Stopping cleanup task.");
                 break; // Exit the loop
+            }
+        }
+    }
+}
+
+/// Periodically evict stale entries from rate-limit keyed state stores.
+///
+/// Runs every 60 seconds, mirroring the [`cleanup`] task pattern. Calls
+/// [`RateLimitState::retain_recent`] on all active buckets so that keys that
+/// have not been seen within the last quota window are removed, preventing
+/// unbounded memory growth under adversarial unique-key flooding (ADR-0022
+/// §Consequences: memory overhead and store eviction).
+async fn rate_limit_eviction(cancel: CancellationToken, state: ServiceState) {
+    let mut interval = time::interval(Duration::from_secs(60));
+    interval.tick().await;
+    info!("Start the rate-limit eviction task");
+    loop {
+        tokio::select! {
+            _ = interval.tick() => {
+                trace!("rate-limit eviction tick");
+                state.rate_limiters.retain_recent();
+            },
+            () = cancel.cancelled() => {
+                info!("Cancellation requested. Stopping rate-limit eviction task.");
+                break;
             }
         }
     }

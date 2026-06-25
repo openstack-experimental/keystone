@@ -24,6 +24,7 @@ use crate::error::KeystoneError;
 use crate::events::EventDispatcher;
 use crate::policy::PolicyEnforcer;
 use crate::provider::Provider;
+use crate::rate_limit::RateLimitState;
 
 // Placing ServiceState behind Arc is necessary to address DatabaseConnection
 // not implementing Clone.
@@ -46,6 +47,13 @@ pub struct Service {
 
     /// Distributed storage instance (when configured).
     pub storage: Option<Arc<dyn StorageApi>>,
+
+    /// Rate-limiting state (ADR-0022).
+    ///
+    /// Holds one `governor` keyed limiter per active bucket. `None` fields
+    /// mean the corresponding bucket is disabled in `keystone.conf` and
+    /// requests bypass that check entirely.
+    pub rate_limiters: RateLimitState,
 
     /// Shutdown flag.
     pub shutdown: bool,
@@ -73,6 +81,13 @@ impl Service {
         policy_enforcer: Arc<dyn PolicyEnforcer>,
         storage: Option<Arc<dyn StorageApi>>,
     ) -> Result<Self, KeystoneError> {
+        // Build rate-limiting state from config. Fails fast (Invariant 2) if
+        // any enabled bucket has zero burst or replenish rate.
+        let rate_limiters = {
+            let config = cfg.config.read().await;
+            RateLimitState::from_config(&config)?
+        };
+
         Ok(Self {
             config_manager: cfg,
             provider,
@@ -80,6 +95,7 @@ impl Service {
             db,
             policy_enforcer,
             storage,
+            rate_limiters,
             shutdown: false,
         })
     }

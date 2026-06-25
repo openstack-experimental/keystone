@@ -74,6 +74,7 @@ eyre = { version = "0.6" }
 fernet = { version = "0.2", default-features = false }
 futures = { version = "0.3" }
 futures-util = { version = "0.3" }
+governor = { version = "0.10" }
 http-body-util = "0.1"
 http = { version = "1.4" }
 hyper = { version = "1.10" }

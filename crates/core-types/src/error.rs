@@ -157,6 +157,12 @@ pub enum KeystoneError {
     #[error("raft storage is not available")]
     RaftNotAvailable,
 
+    /// Rate limit configuration is invalid (e.g. replenish rate or burst is
+    /// zero while the limiter is enabled). The application must refuse to
+    /// start when this error is returned (ADR-0022, Invariant 2).
+    #[error("invalid rate limit configuration: {0}")]
+    RateLimitConfig(String),
+
     /// Resource provider.
     #[error(transparent)]
     ResourceProvider {

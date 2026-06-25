@@ -13,9 +13,11 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Create token (authenticate).
 
+use std::net::SocketAddr;
+
 use axum::{
-    Json,
-    extract::{Query, State},
+    Extension, Json,
+    extract::{ConnectInfo, Query, State},
     http::StatusCode,
     response::IntoResponse,
 };
@@ -46,11 +48,34 @@ use crate::keystone::ServiceState;
 )]
 #[tracing::instrument(name = "api::v3::token::post", level = "debug", skip(state, req))]
 pub(super) async fn create(
+    // In axum 0.8, `Option<T>` is a valid extractor only when
+    // `T: OptionalFromRequestParts` — `ConnectInfo<T>` does NOT implement
+    // that trait, but `Extension<ConnectInfo<T>>` does (since
+    // `Extension<T>: OptionalFromRequestParts` for any `T`).
+    // ConnectInfo is stored in request extensions, so this is equivalent.
+    // `Option<…>` so the handler compiles on the SPIFFE/internal and admin
+    // interfaces, which do not populate ConnectInfo (no SocketAddr).
+    // On those interfaces rate limiting is bypassed (they are
+    // mutually-authenticated; the public TCP listener is the untrusted front
+    // door). See ADR-0022 and PR #358 / PR #842.
+    client_addr: Option<Extension<ConnectInfo<SocketAddr>>>,
     Query(query): Query<CreateTokenParameters>,
     State(state): State<ServiceState>,
     TracedJson(req): TracedJson<AuthRequest>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
     req.validate()?;
+
+    // Global per-IP rate-limit check (ADR-0022, Invariant 4).
+    // Fires BEFORE authenticate_request to avoid consuming CPU on password
+    // hashing for rejected requests.
+    if let Some(Extension(ConnectInfo(addr))) = client_addr {
+        if let Err(retry_after) = state.rate_limiters.check_ip(addr.ip()) {
+            return Err(KeystoneApiError::TooManyRequests {
+                retry_after: retry_after.as_secs().max(1),
+            });
+        }
+    }
+
     let auth_res = authenticate_request(&state, &req).await?;
     let ctx = SecurityContext::try_from(auth_res)?;
     let provider_scope: Option<ProviderScope> = req.auth.scope.clone().map(Into::into);
@@ -110,19 +135,21 @@ pub(super) async fn create(
 mod tests {
     use axum::{
         body::Body,
+        extract::ConnectInfo,
         http::{Request, StatusCode, header},
     };
     use http_body_util::BodyExt; // for `collect`
     use sea_orm::DatabaseConnection;
     use serde_json::json;
+    use std::net::SocketAddr;
     use std::sync::Arc;
     use tower::ServiceExt; // for `call`, `oneshot`, and `ready`
     use tower_http::trace::TraceLayer;
     use tracing_test::traced_test;
 
-    use openstack_keystone_config::{Config, ConfigManager};
+    use openstack_keystone_config::{Config, ConfigManager, RateLimitSection};
     use openstack_keystone_core_types::auth::*;
-    use openstack_keystone_core_types::identity::UserPasswordAuthRequest;
+    use openstack_keystone_core_types::identity::{IdentityProviderError, UserPasswordAuthRequest};
     use openstack_keystone_core_types::resource::{Domain, DomainBuilder, Project};
     use openstack_keystone_core_types::token::{ProjectScopePayload, TokenProviderError};
 
@@ -634,5 +661,159 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    // Build a minimal JSON body that passes `req.validate()`.
+    fn auth_body() -> Vec<u8> {
+        serde_json::to_vec(&json!({
+            "auth": {
+                "identity": {
+                    "methods": ["password"],
+                    "password": {
+                        "user": {
+                            "id": "uid",
+                            "name": "uname",
+                            "domain": { "id": "udid", "name": "udname" },
+                            "password": "pass"
+                        }
+                    }
+                }
+            }
+        }))
+        .unwrap()
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_rate_limit_returns_429_after_burst_exhausted() {
+        // burst_size=1: the first request consumes the single burst token and
+        // passes through to auth; the second must be rejected with 429 before
+        // authenticate_request is ever called.
+        let mut config = Config::default();
+        config.rate_limit_global_ip = RateLimitSection {
+            enabled: true,
+            burst_size: 1,
+            replenish_rate_per_second: 1,
+        };
+
+        // The first request reaches identity — we return an error so we don't
+        // need the full auth fixture.  The second must never reach identity at
+        // all (rate limited before authenticate_request).
+        let mut identity_mock = MockIdentityProvider::default();
+        identity_mock
+            .expect_authenticate_by_password()
+            .once()
+            .returning(|_, _| Err(IdentityProviderError::UserNotFound("uid".into())));
+
+        let provider = Provider::mocked_builder()
+            .mock_identity(identity_mock)
+            .build()
+            .unwrap();
+
+        let state = Arc::new(
+            Service::new(
+                ConfigManager::not_watched(config),
+                DatabaseConnection::Disconnected,
+                provider,
+                Arc::new(MockPolicy::default()),
+                None,
+            )
+            .await
+            .unwrap(),
+        );
+
+        let client_addr: SocketAddr = "203.0.113.1:1234".parse().unwrap();
+
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state.clone());
+
+        // First request — passes the rate limit, fails at auth → not 429.
+        let mut req1 = Request::builder()
+            .uri("/")
+            .method("POST")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(auth_body()))
+            .unwrap();
+        req1.extensions_mut().insert(ConnectInfo(client_addr));
+        let resp1 = api.as_service().oneshot(req1).await.unwrap();
+        assert_ne!(
+            resp1.status(),
+            StatusCode::TOO_MANY_REQUESTS,
+            "first request must not be rate-limited"
+        );
+
+        // Second request from the same IP — burst exhausted → 429 + Retry-After.
+        let mut req2 = Request::builder()
+            .uri("/")
+            .method("POST")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(auth_body()))
+            .unwrap();
+        req2.extensions_mut().insert(ConnectInfo(client_addr));
+        let resp2 = api.as_service().oneshot(req2).await.unwrap();
+        assert_eq!(resp2.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert!(
+            resp2.headers().contains_key(header::RETRY_AFTER),
+            "429 response must carry Retry-After header"
+        );
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_rate_limit_does_not_apply_without_connect_info() {
+        // When there is no ConnectInfo in extensions (SPIFFE/internal interface),
+        // requests must never be rate-limited regardless of the configured quota.
+        let mut config = Config::default();
+        config.rate_limit_global_ip = RateLimitSection {
+            enabled: true,
+            burst_size: 1,
+            replenish_rate_per_second: 1,
+        };
+
+        let mut identity_mock = MockIdentityProvider::default();
+        // Two calls expected — both reach identity, neither is rate-limited.
+        identity_mock
+            .expect_authenticate_by_password()
+            .times(2)
+            .returning(|_, _| Err(IdentityProviderError::UserNotFound("uid".into())));
+
+        let provider = Provider::mocked_builder()
+            .mock_identity(identity_mock)
+            .build()
+            .unwrap();
+
+        let state = Arc::new(
+            Service::new(
+                ConfigManager::not_watched(config),
+                DatabaseConnection::Disconnected,
+                provider,
+                Arc::new(MockPolicy::default()),
+                None,
+            )
+            .await
+            .unwrap(),
+        );
+
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state.clone());
+
+        // Neither request carries ConnectInfo — both must reach identity.
+        for _ in 0..2 {
+            let resp = api
+                .as_service()
+                .oneshot(
+                    Request::builder()
+                        .uri("/")
+                        .method("POST")
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .body(Body::from(auth_body()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_ne!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+        }
     }
 }
