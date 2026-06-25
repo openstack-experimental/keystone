@@ -37,6 +37,8 @@ pub(super) struct OidcProviderMetadata {
 }
 
 /// Fetch and parse OIDC discovery metadata from `{issuer_url}/.well-known/openid-configuration`.
+///
+/// Validates per RFC 8414 §3 that the returned `issuer` matches the URL used for discovery.
 pub(super) async fn discover(
     issuer_url: &str,
     client: &reqwest::Client,
@@ -53,6 +55,16 @@ pub(super) async fn discover(
         .json::<OidcProviderMetadata>()
         .await
         .map_err(OidcError::from)?;
+
+    // RFC 8414 §3: issuer in the document MUST match the URL used for discovery.
+    let returned_issuer = metadata.issuer.trim_end_matches('/');
+    if returned_issuer != base {
+        return Err(OidcError::IssuerMismatch {
+            expected: base.to_string(),
+            actual: returned_issuer.to_string(),
+        });
+    }
+
     Ok(metadata)
 }
 
@@ -227,8 +239,7 @@ pub(super) fn verify_jwt(
         for jwk in &jwks.keys {
             match DecodingKey::from_jwk(jwk) {
                 Ok(key) => {
-                    let mut val = build_validation(header.alg, issuer, audiences);
-                    val.validate_exp = true;
+                    let val = build_validation(header.alg, issuer, audiences);
                     match decode::<serde_json::Value>(token, &key, &val) {
                         Ok(data) => {
                             check_nonce(&data, expected_nonce)?;
@@ -287,4 +298,566 @@ pub(super) fn build_http_client() -> Result<reqwest::Client, OidcError> {
         .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(OidcError::from)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::{TimeDelta, Utc};
+    use httpmock::prelude::*;
+    use jsonwebtoken::{Algorithm, EncodingKey, Header as JwtHeader, encode, jwk::JwkSet};
+    use serde_json::json;
+
+    // RSA-2048 test key pair (PKCS#8 PEM + corresponding JWK n/e).
+    // Generated offline with openssl and verified against jsonwebtoken.
+    const TEST_RSA_PRIVATE_KEY: &str = "-----BEGIN PRIVATE KEY-----\n\
+MIIEvAIBADANBgkqhkiG9w0BAQEFAASCBKYwggSiAgEAAoIBAQCV6tfl03xepqw6\n\
+7fphuiONQC1PI1r3po83jDOoX3fhdp7zUQa6m8pueK5tJK+y/iwwK0ok9bRQl5OF\n\
+R08myyW6fPbz9sw2JUNyLfSmAht4dzj+m0FOITMbURCu0mpgDI8ciqcQVuKK4EDT\n\
+FBa8p+/9pf5ROQKgewbJnTjAJcDcOOkLjmPyUfEknbCsRuTLesVRb++PLV/vCz7u\n\
+3nvMG1/9NYPH2BxM7oBxcdX3tQRNtcjcdAkks5zZUQjLLny4UgicIKw8Jxn+bf16\n\
+FZEPkS4vfKtAYTscmjZrsT0nZtvTEFATNd39TMEj6U47Dae/AibVSU4/zbNFO3G8\n\
+hr1ySf1PAgMBAAECgf8qnnxQS7K6UjX5pzwVNvIA4JMdXiiasKKxC3/c7CqaQ3QJ\n\
+DVUxt8MNpM9/xe4tEPibY7MiJA0Caoa+ldx41YCrZxQi8bEcXiZAMwk9fc2mxuil\n\
+6tKJgAMj3Vmn57fkQQMY/acrjDJpSKyzVR8hn0co8UCUSGfojNgoP/vFwLz2wXIL\n\
+mcy5banAlgUwJOAcgTfR/dI7wtSKaHqqt12lCkpyV4LVBIppn+/lAbiTU0eqzCoz\n\
+DxA2HlSWmvpZp6rNRFlk3086VTes+TX+TnPn/nemJTeJnxJ1mFRa2m97Vp60BiOR\n\
+XU8+B/H/y09TVPELfh2Drbp5xbRDoult/x7zxGkCgYEA0nXoELcW09K5BOi0rKBl\n\
+qip2c8JQKOz/GLCM6fe8ZrOODcS9M5GwsM5EFl4Z2rKT+d0Cj959MrxaFBvs7oT8\n\
+UyuVMavNgbXQFohHMWbexrcMf61EbfQC9TWPMJw405HqjyUjNo/amfPrCDX6U1S8\n\
+AxcJ5hj8zxIUKYkbl25eth0CgYEAtltAeGPbjzNQK5Tfxe0qOaq7bbhySqlFJGqT\n\
+5cNPLR7IDKe+JDBNYxyJYnyFZKYxpGgu42nrz/sv+xgetaHIeak4GayTb5sxpcp3\n\
+Nd9oAMNHNnX6N5LlxkXnxQOSgtT3BGrvIMxk/HrHQCCFsBwkWtOv5XWRVWo8jMGd\n\
+lZW0dVsCgYAVwBO0rodQauWuKTKK6KS5GlxViE5qfFu8vHpDr9OrtYDH0X5QNw1Q\n\
+qHCG80CuxmfemcWrAq5jsO2KSHyLBflhyw5HLN83OYgA3CKna184oDBNfaWly2MG\n\
+3nsm5e5Fhz37fzYNbH6GDJxMo+9z7zzjAN2IBysRZ2foBwBv/PsSzQKBgQCvY5rh\n\
+b+HHnGnaUOjdHBtFtaFpiUJb7uwyd1NiZHQtiHKOQXPOqKp1zgeRMwS1ZmdOomme\n\
+jsygkA546Zz3wu/nm8r6XpK7gD/DHrWDmikUur0uc1BCzUW0ap3dTm9G6H/gvtzZ\n\
+5dynPYuQcPdEB/0rYnjGMEqlJXWxR7NCIOedCwKBgQCemeC5iU+EdVONhRj5XRMK\n\
+1kMeZZVAywqI9sOJXFIC7FWbMw796lCD62SNYeER6dDGj3+2pkMHgZrncOzRSX2G\n\
+aAmc9ACPh/hdBmHlSF++nRg+5t+4okyZHe3dgCYUM7n5tq5OFvyrfZ1lmGQlHcyD\n\
+w61t8gqclj1jTxn4LURp0Q==\n\
+-----END PRIVATE KEY-----\n";
+
+    // Base64urlUInt-encoded RSA modulus (n) for the key above — 256 raw bytes, no leading zero.
+    const TEST_JWK_N: &str = "lerX5dN8XqasOu36YbojjUAtTyNa96aPN4wzqF934Xae81EGupvKbniubSSvsv4s\
+MCtKJPW0UJeThUdPJsslunz28_bMNiVDci30pgIbeHc4_ptBTiEzG1EQrtJqYAyP\
+HIqnEFbiiuBA0xQWvKfv_aX-UTkCoHsGyZ04wCXA3DjpC45j8lHxJJ2wrEbky3rF\
+UW_vjy1f7ws-7t57zBtf_TWDx9gcTO6AcXHV97UETbXI3HQJJLOc2VEIyy58uFII\
+nCCsPCcZ_m39ehWRD5EuL3yrQGE7HJo2a7E9J2bb0xBQEzXd_UzBI-lOOw2nvwIm\
+1UlOP82zRTtxvIa9ckn9Tw";
+
+    const TEST_JWK_E: &str = "AQAB";
+    const TEST_KID: &str = "test-kid";
+
+    fn rsa_encoding_key() -> EncodingKey {
+        EncodingKey::from_rsa_pem(TEST_RSA_PRIVATE_KEY.as_bytes())
+            .expect("hard-coded test RSA private key must parse")
+    }
+
+    fn rsa_jwk(kid: &str) -> jsonwebtoken::jwk::Jwk {
+        serde_json::from_value(json!({
+            "kty": "RSA",
+            "use": "sig",
+            "alg": "RS256",
+            "kid": kid,
+            "n": TEST_JWK_N,
+            "e": TEST_JWK_E,
+        }))
+        .expect("hard-coded test JWK must deserialize")
+    }
+
+    fn make_jwt(claims: &serde_json::Value, kid: Option<&str>) -> String {
+        let mut header = JwtHeader::new(Algorithm::RS256);
+        header.kid = kid.map(str::to_owned);
+        encode(&header, claims, &rsa_encoding_key()).expect("test JWT must encode")
+    }
+
+    fn valid_claims(iss: &str, aud: &str, nonce: Option<&str>) -> serde_json::Value {
+        let exp = (Utc::now() + TimeDelta::hours(1)).timestamp();
+        let mut c = json!({
+            "sub": "user123",
+            "iss": iss,
+            "aud": aud,
+            "exp": exp,
+            "iat": Utc::now().timestamp(),
+        });
+        if let Some(n) = nonce {
+            c["nonce"] = json!(n);
+        }
+        c
+    }
+
+    // ── PKCE ─────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn pkce_challenge_is_sha256_of_verifier() {
+        let pkce = generate_pkce();
+        let expected = URL_SAFE_NO_PAD.encode(Sha256::digest(pkce.verifier.as_bytes()));
+        assert_eq!(pkce.challenge, expected);
+    }
+
+    #[test]
+    fn pkce_verifier_is_base64url_no_padding() {
+        let pkce = generate_pkce();
+        assert!(!pkce.verifier.contains('+'), "must not use + (standard base64)");
+        assert!(!pkce.verifier.contains('/'), "must not use / (standard base64)");
+        assert!(!pkce.verifier.contains('='), "must not have padding");
+        // 32 raw bytes → 43 base64url chars; RFC 7636 requires 43–128 chars.
+        assert!(
+            (43..=128).contains(&pkce.verifier.len()),
+            "verifier length {} out of RFC 7636 range",
+            pkce.verifier.len()
+        );
+    }
+
+    #[test]
+    fn pkce_pairs_are_unique() {
+        let p1 = generate_pkce();
+        let p2 = generate_pkce();
+        assert_ne!(p1.verifier, p2.verifier);
+        assert_ne!(p1.challenge, p2.challenge);
+    }
+
+    // ── Random token ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn random_token_is_base64url_no_padding() {
+        let t = generate_random_token();
+        assert!(!t.contains('+'));
+        assert!(!t.contains('/'));
+        assert!(!t.contains('='));
+    }
+
+    #[test]
+    fn random_tokens_are_unique() {
+        let t1 = generate_random_token();
+        let t2 = generate_random_token();
+        assert_ne!(t1, t2);
+    }
+
+    // ── build_auth_url ────────────────────────────────────────────────────────
+
+    #[test]
+    fn auth_url_contains_required_params() {
+        let url = build_auth_url(
+            "https://idp.example.com/authorize",
+            "my-client",
+            "https://app.example.com/callback",
+            &[],
+            "state123",
+            "nonce456",
+            "challenge789",
+        )
+        .unwrap();
+
+        assert!(url.contains("response_type=code"), "missing response_type");
+        assert!(url.contains("client_id=my-client"), "missing client_id");
+        assert!(url.contains("state=state123"), "missing state");
+        assert!(url.contains("nonce=nonce456"), "missing nonce");
+        assert!(url.contains("code_challenge=challenge789"), "missing code_challenge");
+        assert!(url.contains("code_challenge_method=S256"), "missing code_challenge_method");
+    }
+
+    #[test]
+    fn auth_url_always_includes_openid_scope() {
+        let url = build_auth_url(
+            "https://idp.example.com/auth",
+            "cid",
+            "https://app.example.com/cb",
+            &[],
+            "s",
+            "n",
+            "c",
+        )
+        .unwrap();
+
+        let parsed = Url::parse(&url).unwrap();
+        let scope: String = parsed
+            .query_pairs()
+            .find(|(k, _)| k == "scope")
+            .map(|(_, v)| v.into_owned())
+            .unwrap_or_default();
+        assert!(
+            scope.split_whitespace().any(|s| s == "openid"),
+            "openid scope missing from '{scope}'"
+        );
+    }
+
+    #[test]
+    fn auth_url_includes_extra_scopes() {
+        let extra = vec!["profile".to_string(), "email".to_string()];
+        let url = build_auth_url(
+            "https://idp.example.com/auth",
+            "cid",
+            "https://app.example.com/cb",
+            &extra,
+            "s",
+            "n",
+            "c",
+        )
+        .unwrap();
+
+        let parsed = Url::parse(&url).unwrap();
+        let scope: String = parsed
+            .query_pairs()
+            .find(|(k, _)| k == "scope")
+            .map(|(_, v)| v.into_owned())
+            .unwrap_or_default();
+        let scopes: Vec<&str> = scope.split_whitespace().collect();
+        assert!(scopes.contains(&"openid"));
+        assert!(scopes.contains(&"profile"));
+        assert!(scopes.contains(&"email"));
+    }
+
+    #[test]
+    fn auth_url_rejects_invalid_endpoint() {
+        let result = build_auth_url("not-a-url", "cid", "https://cb", &[], "s", "n", "c");
+        assert!(matches!(result, Err(OidcError::UrlParse { .. })));
+    }
+
+    // ── discover ──────────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn discover_success() {
+        let server = MockServer::start();
+        let base_url = server.base_url();
+        server.mock(|when, then| {
+            when.method(GET).path("/.well-known/openid-configuration");
+            then.status(200).json_body(json!({
+                "issuer": base_url,
+                "authorization_endpoint": format!("{base_url}/auth"),
+                "token_endpoint": format!("{base_url}/token"),
+                "jwks_uri": format!("{base_url}/jwks"),
+            }));
+        });
+
+        let client = reqwest::Client::new();
+        let metadata = discover(&base_url, &client).await.unwrap();
+        assert_eq!(metadata.issuer, base_url);
+        assert!(metadata.authorization_endpoint.ends_with("/auth"));
+    }
+
+    #[tokio::test]
+    async fn discover_strips_trailing_slash() {
+        let server = MockServer::start();
+        let base_url = server.base_url();
+        server.mock(|when, then| {
+            when.method(GET).path("/.well-known/openid-configuration");
+            then.status(200).json_body(json!({
+                "issuer": base_url,
+                "authorization_endpoint": format!("{base_url}/auth"),
+                "token_endpoint": format!("{base_url}/token"),
+                "jwks_uri": format!("{base_url}/jwks"),
+            }));
+        });
+
+        let client = reqwest::Client::new();
+        let url_with_slash = format!("{base_url}/");
+        // Should succeed even though trailing slash was appended by caller.
+        discover(&url_with_slash, &client).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn discover_returns_error_on_http_failure() {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET).path("/.well-known/openid-configuration");
+            then.status(404);
+        });
+
+        let client = reqwest::Client::new();
+        let result = discover(&server.base_url(), &client).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn discover_rejects_issuer_mismatch() {
+        // RFC 8414 §3: returned issuer must equal the URL used for discovery.
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET).path("/.well-known/openid-configuration");
+            then.status(200).json_body(json!({
+                "issuer": "https://attacker.example.com",
+                "authorization_endpoint": "https://attacker.example.com/auth",
+                "token_endpoint": "https://attacker.example.com/token",
+                "jwks_uri": "https://attacker.example.com/jwks",
+            }));
+        });
+
+        let client = reqwest::Client::new();
+        let result = discover(&server.base_url(), &client).await;
+        assert!(
+            matches!(result, Err(OidcError::IssuerMismatch { .. })),
+            "expected IssuerMismatch, got {result:?}"
+        );
+    }
+
+    // ── fetch_jwks ────────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn fetch_jwks_parses_key_set() {
+        let server = MockServer::start();
+        let jwk_val = json!({
+            "kty": "RSA", "use": "sig", "alg": "RS256", "kid": "k1",
+            "n": TEST_JWK_N, "e": TEST_JWK_E,
+        });
+        server.mock(|when, then| {
+            when.method(GET).path("/jwks.json");
+            then.status(200).json_body(json!({"keys": [jwk_val]}));
+        });
+
+        let client = reqwest::Client::new();
+        let jwks = fetch_jwks(&format!("{}/jwks.json", server.base_url()), &client)
+            .await
+            .unwrap();
+        assert_eq!(jwks.keys.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn fetch_jwks_returns_error_on_http_failure() {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET).path("/jwks.json");
+            then.status(500);
+        });
+
+        let client = reqwest::Client::new();
+        let result = fetch_jwks(&format!("{}/jwks.json", server.base_url()), &client).await;
+        assert!(result.is_err());
+    }
+
+    // ── exchange_code ─────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn exchange_code_success() {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(POST).path("/token");
+            then.status(200).json_body(json!({
+                "access_token": "at-value",
+                "token_type": "Bearer",
+                "id_token": "id.token.value",
+                "expires_in": 3600,
+            }));
+        });
+
+        let client = reqwest::Client::new();
+        let resp = exchange_code(
+            &format!("{}/token", server.base_url()),
+            "client-id",
+            None,
+            "auth-code",
+            "https://app.example.com/cb",
+            "pkce-verifier",
+            &client,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resp.access_token, "at-value");
+        assert_eq!(resp.id_token, Some("id.token.value".to_string()));
+    }
+
+    #[tokio::test]
+    async fn exchange_code_passes_client_secret() {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(POST).path("/token").body_includes("client_secret=s3cr3t");
+            then.status(200).json_body(json!({
+                "access_token": "at",
+                "token_type": "Bearer",
+            }));
+        });
+
+        let client = reqwest::Client::new();
+        exchange_code(
+            &format!("{}/token", server.base_url()),
+            "cid",
+            Some("s3cr3t"),
+            "code",
+            "https://cb",
+            "verifier",
+            &client,
+        )
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn exchange_code_returns_error_on_http_failure() {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(POST).path("/token");
+            then.status(400);
+        });
+
+        let client = reqwest::Client::new();
+        let result = exchange_code(
+            &format!("{}/token", server.base_url()),
+            "cid",
+            None,
+            "code",
+            "https://cb",
+            "v",
+            &client,
+        )
+        .await;
+        assert!(result.is_err());
+    }
+
+    // ── verify_jwt ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn verify_jwt_rejects_symmetric_hs256() {
+        let key = EncodingKey::from_secret(b"symmetric-secret");
+        let exp = (Utc::now() + TimeDelta::hours(1)).timestamp();
+        let claims = json!({"sub": "user", "exp": exp});
+        let token = encode(&JwtHeader::default(), &claims, &key).unwrap();
+
+        let jwks: JwkSet = serde_json::from_value(json!({"keys": []})).unwrap();
+        let result = verify_jwt(&token, &jwks, None, None, &[]);
+        assert!(
+            matches!(result, Err(OidcError::UnsupportedAlgorithm(_))),
+            "expected UnsupportedAlgorithm, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn verify_jwt_valid_rs256_with_kid() {
+        let jwks = JwkSet { keys: vec![rsa_jwk(TEST_KID)] };
+        let claims = valid_claims("https://iss.example.com", "my-client", None);
+        let token = make_jwt(&claims, Some(TEST_KID));
+
+        let result = verify_jwt(
+            &token,
+            &jwks,
+            Some("https://iss.example.com"),
+            None,
+            &["my-client"],
+        );
+        assert!(result.is_ok(), "{result:?}");
+        assert_eq!(result.unwrap()["sub"], "user123");
+    }
+
+    #[test]
+    fn verify_jwt_rejects_wrong_issuer() {
+        let jwks = JwkSet { keys: vec![rsa_jwk(TEST_KID)] };
+        let claims = valid_claims("https://iss.example.com", "my-client", None);
+        let token = make_jwt(&claims, Some(TEST_KID));
+
+        let result = verify_jwt(
+            &token,
+            &jwks,
+            Some("https://other-issuer.example.com"),
+            None,
+            &["my-client"],
+        );
+        assert!(matches!(result, Err(OidcError::JwtDecode { .. })));
+    }
+
+    #[test]
+    fn verify_jwt_rejects_nonce_mismatch() {
+        let jwks = JwkSet { keys: vec![rsa_jwk(TEST_KID)] };
+        let claims = valid_claims("https://iss.example.com", "my-client", Some("correct-nonce"));
+        let token = make_jwt(&claims, Some(TEST_KID));
+
+        let result = verify_jwt(
+            &token,
+            &jwks,
+            Some("https://iss.example.com"),
+            Some("wrong-nonce"),
+            &["my-client"],
+        );
+        assert!(matches!(result, Err(OidcError::NonceMismatch)));
+    }
+
+    #[test]
+    fn verify_jwt_accepts_correct_nonce() {
+        let jwks = JwkSet { keys: vec![rsa_jwk(TEST_KID)] };
+        let claims = valid_claims("https://iss.example.com", "my-client", Some("my-nonce"));
+        let token = make_jwt(&claims, Some(TEST_KID));
+
+        let result = verify_jwt(
+            &token,
+            &jwks,
+            Some("https://iss.example.com"),
+            Some("my-nonce"),
+            &["my-client"],
+        );
+        assert!(result.is_ok(), "{result:?}");
+    }
+
+    #[test]
+    fn verify_jwt_rejects_unknown_kid() {
+        let jwks = JwkSet { keys: vec![rsa_jwk("other-kid")] };
+        let claims = valid_claims("https://iss.example.com", "my-client", None);
+        let token = make_jwt(&claims, Some(TEST_KID)); // signed with TEST_KID
+
+        let result = verify_jwt(
+            &token,
+            &jwks,
+            Some("https://iss.example.com"),
+            None,
+            &["my-client"],
+        );
+        assert!(
+            matches!(result, Err(OidcError::JwkNotFound(_))),
+            "expected JwkNotFound, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn verify_jwt_falls_back_to_kidless_key_scan() {
+        // Token has no kid in header; verify_jwt should try all JWKS keys.
+        let jwks = JwkSet { keys: vec![rsa_jwk(TEST_KID)] };
+        let claims = valid_claims("https://iss.example.com", "my-client", None);
+        let token = make_jwt(&claims, None); // no kid in header
+
+        let result = verify_jwt(
+            &token,
+            &jwks,
+            Some("https://iss.example.com"),
+            None,
+            &["my-client"],
+        );
+        assert!(result.is_ok(), "{result:?}");
+    }
+
+    #[test]
+    fn verify_jwt_empty_jwks_returns_no_keys_error() {
+        // No kid in header, empty JWKS → NoJwksKeys.
+        let jwks: JwkSet = serde_json::from_value(json!({"keys": []})).unwrap();
+        let claims = valid_claims("https://iss.example.com", "my-client", None);
+        let token = make_jwt(&claims, None);
+
+        let result = verify_jwt(&token, &jwks, None, None, &[]);
+        assert!(
+            matches!(result, Err(OidcError::NoJwksKeys)),
+            "expected NoJwksKeys, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn verify_jwt_rejects_expired_token() {
+        let jwks = JwkSet { keys: vec![rsa_jwk(TEST_KID)] };
+        let exp = (Utc::now() - TimeDelta::hours(1)).timestamp();
+        let claims = json!({
+            "sub": "user",
+            "iss": "https://iss.example.com",
+            "aud": "my-client",
+            "exp": exp,
+            "iat": exp - 3600,
+        });
+        let token = make_jwt(&claims, Some(TEST_KID));
+
+        let result = verify_jwt(
+            &token,
+            &jwks,
+            Some("https://iss.example.com"),
+            None,
+            &["my-client"],
+        );
+        assert!(matches!(result, Err(OidcError::JwtDecode { .. })));
+    }
 }

@@ -181,9 +181,7 @@ pub async fn login(
     if let Some(discovery_url) = &idp.oidc_discovery_url
         && (idp.bound_issuer.is_none() || idp.jwks_url.is_none())
     {
-        let metadata = discover(discovery_url, &http_client)
-            .await
-            .map_err(|err| OidcError::discovery(discovery_url.as_str(), &err))?;
+        let metadata = discover(discovery_url, &http_client).await?;
         discovered_issuer = Some(metadata.issuer);
         discovered_jwks_uri = Some(metadata.jwks_uri);
     } else {

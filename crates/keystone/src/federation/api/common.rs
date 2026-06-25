@@ -33,7 +33,10 @@ pub(super) fn validate_bound_claims(
         let actual_sub = claims_as_json
             .get("sub")
             .and_then(|v| v.as_str())
-            .unwrap_or("");
+            .ok_or_else(|| OidcError::BoundSubjectMismatch {
+                expected: bound_subject.clone(),
+                found: "<missing>".to_string(),
+            })?;
         if bound_subject != actual_sub {
             return Err(OidcError::BoundSubjectMismatch {
                 expected: bound_subject.to_string(),

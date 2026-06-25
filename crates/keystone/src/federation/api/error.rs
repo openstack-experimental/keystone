@@ -142,6 +142,10 @@ pub enum OidcError {
     #[error("no jwt issuer can be determined")]
     NoJwtIssuer,
 
+    /// Issuer in discovery document does not match the requested issuer URL (RFC 8414 §3).
+    #[error("issuer mismatch: expected `{expected}`, got `{actual}`")]
+    IssuerMismatch { expected: String, actual: String },
+
     /// User not found.
     #[error("token user not found")]
     UserNotFound(String),
@@ -248,6 +252,11 @@ impl From<OidcError> for KeystoneApiError {
             }
             OidcError::AuthStateExpired => {
                 KeystoneApiError::BadRequest("Authentication has expired. Please start again.".to_string())
+            }
+            OidcError::IssuerMismatch { expected, actual } => {
+                KeystoneApiError::BadRequest(format!(
+                    "OIDC issuer mismatch: expected `{expected}`, got `{actual}`"
+                ))
             }
             OidcError::NonJwtMapping | OidcError::NoJwtIssuer => {
                 // Not exposing info about mapping and idp existence.

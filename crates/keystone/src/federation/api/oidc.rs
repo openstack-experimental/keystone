@@ -140,9 +140,7 @@ pub async fn callback(
         .ok_or(OidcError::ClientWithoutDiscoveryNotSupported)?;
 
     let http_client = build_http_client()?;
-    let metadata = discover(discovery_url, &http_client)
-        .await
-        .map_err(|err| OidcError::discovery(discovery_url, &err))?;
+    let metadata = discover(discovery_url, &http_client).await?;
 
     let client_id = idp
         .oidc_client_id
