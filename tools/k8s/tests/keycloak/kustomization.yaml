@@ -5,3 +5,6 @@
 resources:
   #- deployment.yaml
   - https://raw.githubusercontent.com/keycloak/keycloak-quickstarts/refs/heads/main/kubernetes/keycloak.yaml
+
+patchesStrategicMerge:
+  - keycloak-replica-patch.yaml
