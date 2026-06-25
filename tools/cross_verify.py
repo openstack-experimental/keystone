@@ -16,7 +16,14 @@ Run from a real Keystone Python checkout so the imports resolve:
 Algorithms: bcrypt, bcrypt_sha256, scrypt, pbkdf2_sha512
 """
 
+import os
 import sys
+
+# When invoked as `python /abs/path/cross_verify.py`, Python sets sys.path[0]
+# to the script's directory, not the working directory. Insert cwd explicitly
+# so that `import keystone` finds the checkout the caller placed us in via
+# current_dir (or by cd-ing before running the script directly).
+sys.path.insert(0, os.getcwd())
 
 
 def main() -> int:

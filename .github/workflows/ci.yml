@@ -62,10 +62,10 @@ jobs:
         with:
           python-version: '3.x'
 
-      - name: Clone Python Keystone and install password hashing deps
+      - name: Clone Python Keystone and install dependencies
         run: |
           git clone --depth=1 https://github.com/openstack/keystone.git /tmp/keystone-python
-          pip install bcrypt cryptography
+          pip install -r /tmp/keystone-python/requirements.txt
 
       - name: Run tests (unit)
         env:
