@@ -15,34 +15,20 @@
 
 use axum::{Json, debug_handler, extract::State, http::StatusCode, response::IntoResponse};
 use chrono::Utc;
-use eyre::WrapErr;
-use tracing::{debug, trace};
 use url::Url;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
-use openidconnect::core::CoreProviderMetadata;
-use openidconnect::reqwest;
-use openidconnect::{
-    AuthorizationCode, ClientId, ClientSecret, IssuerUrl, Nonce, PkceCodeVerifier, RedirectUrl,
-    TokenResponse,
-};
-
+use crate::api::error::KeystoneApiError;
 use crate::api::v4::auth::token::types::TokenResponse as KeystoneTokenResponse;
-use crate::api::{
-    KeystoneApiError,
-    types::{Catalog, CatalogService},
-};
-use crate::auth::*;
 use crate::federation::api::error::OidcError;
+use crate::federation::api::types::*;
 use crate::keystone::ServiceState;
-use openstack_keystone_api_types::v3::auth::token::TokenBuilder;
-use openstack_keystone_core::api::common::get_authz_info;
 use openstack_keystone_core_types::auth::AuthenticationResult;
 use openstack_keystone_core_types::mapping::auth::MappingAuthRequest;
 use openstack_keystone_core_types::mapping::resolution::IdentitySource;
 
 use super::common;
-use super::types::*;
+use super::oidc_utils::{build_http_client, discover, exchange_code, fetch_jwks, verify_jwt};
 
 pub(super) fn openapi_router() -> OpenApiRouter<ServiceState> {
     OpenApiRouter::new().routes(routes!(callback))
@@ -51,7 +37,8 @@ pub(super) fn openapi_router() -> OpenApiRouter<ServiceState> {
 #[utoipa::path(
     post,
     path = "/oidc/callback",
-    operation_id = "/federation/oidc:callback",
+    operation_id = "federation/oidc/callback",
+    request_body = AuthCallbackParameters,
     responses(
         (
             status = OK,
@@ -108,69 +95,88 @@ pub async fn callback(
     }
 
     // Build the HTTP client with strict redirect policy.
-    let http_client = reqwest::ClientBuilder::new()
-        // Following redirects opens the client up to SSRF vulnerabilities.
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .map_err(OidcError::from)?;
+    let http_client = build_http_client()?;
 
-    let client = if let Some(discovery_url) = &idp.oidc_discovery_url {
-        let provider_metadata = CoreProviderMetadata::discover_async(
-            IssuerUrl::new(discovery_url.to_string()).map_err(OidcError::from)?,
-            &http_client,
-        )
+    let discovery_url = idp
+        .oidc_discovery_url
+        .as_deref()
+        .ok_or(OidcError::ClientWithoutDiscoveryNotSupported)?;
+
+    let metadata = discover(discovery_url, &http_client)
         .await
         .map_err(|err| OidcError::discovery(discovery_url, &err))?;
-        OidcClient::from_provider_metadata(
-            provider_metadata,
-            ClientId::new(
-                idp.oidc_client_id
-                    .clone()
-                    .ok_or(OidcError::ClientIdRequired)?,
-            ),
-            idp.oidc_client_secret.clone().map(ClientSecret::new),
-        )
-        // Set the redirect_uri to protect the authorization code from being stolen.
-        .set_redirect_uri(RedirectUrl::new(auth_state.redirect_uri).map_err(OidcError::from)?)
-    } else {
-        return Err(OidcError::ClientWithoutDiscoveryNotSupported.into());
-    };
 
-    // Exchange the authorization code for the token.
-    let token_response = client
-        .exchange_code(AuthorizationCode::new(query.code))
-        .map_err(OidcError::from)?
-        // Set the PKCE code verifier to prevent authorization code injection.
-        .set_pkce_verifier(PkceCodeVerifier::new(auth_state.pkce_verifier))
-        .request_async(&http_client)
+    let jwks = fetch_jwks(metadata.jwks_uri.as_str(), &http_client)
         .await
-        .map_err(|err| OidcError::request_token(&err))?;
+        .map_err(|err| OidcError::discovery(&metadata.jwks_uri, &err))?;
 
-    // Extract the ID token claims after verifying its authenticity and nonce.
-    let id_token = token_response.id_token().ok_or(OidcError::NoToken)?;
-    let claims = id_token
-        .claims(&client.id_token_verifier(), &Nonce::new(auth_state.nonce))
-        .map_err(OidcError::from)?;
+    let client_id = idp
+        .oidc_client_id
+        .as_deref()
+        .ok_or(OidcError::ClientIdRequired)?;
+
+    // Exchange the authorization code for tokens.
+    let token_response = exchange_code(
+        &metadata.token_endpoint,
+        client_id,
+        idp.oidc_client_secret.as_deref(),
+        &query.code,
+        &auth_state.redirect_uri,
+        &auth_state.pkce_verifier,
+        &http_client,
+    )
+    .await?;
+
+    let id_token = token_response.id_token.ok_or(OidcError::NoToken)?;
+
+    // Verify OIDC ID token and extract claims. OIDC Core §3.1.3.7: the `aud`
+    // claim MUST contain the RP's client ID.  Validate issuer, nonce, and
+    // audience in a single verification pass.
+    let claims_value: serde_json::Value = verify_jwt(
+        &id_token,
+        &jwks,
+        Some(metadata.issuer.as_str()),
+        Some(&auth_state.nonce),
+        &[client_id],
+    )?;
 
     // Validate the bound_issuer against the claims issuer URL to prevent token
     // reuse across different IdPs.
-    if let Some(bound_issuer) = &idp.bound_issuer
-        && Url::parse(bound_issuer)
-            .map_err(OidcError::from)
-            .wrap_err_with(|| {
-                format!("while parsing the mapping bound_issuer url: {bound_issuer}")
-            })?
-            == *claims.issuer().url()
-    {}
+    if let Some(bound_issuer) = &idp.bound_issuer {
+        let claims_issuer = claims_value["iss"].as_str().ok_or_else(|| {
+            KeystoneApiError::BadRequest("ID token does not contain issuer claim".to_string())
+        })?;
 
-    let claims_json = serde_json::to_value(claims)?;
-    debug!("Claims data {claims_json}");
+        let bound = Url::parse(bound_issuer).map_err(OidcError::from)?;
+        let issuer = Url::parse(claims_issuer).map_err(OidcError::from)?;
+        if bound != issuer {
+            return Err(OidcError::IssuerMismatch {
+                expected: bound_issuer.clone(),
+                actual: claims_issuer.to_string(),
+            }
+            .into());
+        }
+    }
+
+    tracing::trace!(
+        "Claims count: {}",
+        claims_value.as_object().map(|m| m.len()).unwrap_or(0)
+    );
 
     // Delegate to the mapping engine for identity resolution. The
     // `default_mapping_name` from the IdP, when set, is used as a rule name
     // hint for targeted rule matching.
-    let flattened = common::flatten_federation_claims(&claims_json).map_err(OidcError::from)?;
-    let unique_workload_id = claims.subject().as_str().to_string();
+    let flattened = common::flatten_federation_claims(&claims_value)
+        .map_err(|_| OidcError::ClaimsMapTooLarge)?;
+
+    // Extract the unique workload identifier from the required `sub` claim.
+    // OIDC Core §3.1.2: "REQUIRED subject identifier"
+    let unique_workload_id = claims_value["sub"]
+        .as_str()
+        .ok_or_else(|| {
+            KeystoneApiError::BadRequest("`sub` claim is missing from ID token".to_string())
+        })?
+        .to_string();
 
     let domain_id = idp.domain_id.clone().ok_or_else(|| {
         KeystoneApiError::BadRequest("Cannot identify domain_id of the user.".to_string())
@@ -195,51 +201,14 @@ pub async fn callback(
     // Resolve scope from the original auth request. The scope may be None
     // (unscoped) or a specific project/domain scope that was requested during
     // OIDC auth init.
-    let authz_info = get_authz_info(&state, auth_state.scope.as_ref()).await?;
-    trace!("Granting the scope: {:?}", authz_info);
+    let (token_str, api_token) =
+        common::build_token_response(&state, &auth_result, auth_state.scope.as_ref()).await?;
 
-    // Issue token with validated security context.
-    let vsc = state
-        .provider
-        .get_token_provider()
-        .issue_token_context(
-            &state,
-            &SecurityContext::try_from(auth_result)?,
-            &authz_info,
-        )
-        .await?;
-
-    let mut api_token = KeystoneTokenResponse {
-        token: TokenBuilder::try_from(&vsc)?.build()?,
-    };
-    let catalog: Catalog = Catalog(
-        state
-            .provider
-            .get_catalog_provider()
-            .get_catalog(&state, true)
-            .await?
-            .into_iter()
-            .map(|(s, es)| CatalogService {
-                id: s.id.clone(),
-                name: s.name(),
-                r#type: s.r#type,
-                endpoints: es.into_iter().map(Into::into).collect(),
-            })
-            .collect::<Vec<_>>(),
-    );
-    api_token.token.catalog = Some(catalog);
-
-    trace!("Token response is {:?}", api_token);
+    tracing::trace!("Token response is {:?}", api_token);
     Ok((
         StatusCode::OK,
-        [(
-            "X-Subject-Token",
-            state
-                .provider
-                .get_token_provider()
-                .encode_token(vsc.token()?)?,
-        )],
-        Json(api_token),
+        [("x-subject-token", token_str)],
+        axum::Json(api_token),
     )
         .into_response())
 }

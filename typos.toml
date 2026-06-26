@@ -31,7 +31,8 @@ extend-glob = []
 extend-ignore-identifiers-re = ["INSERT"]
 extend-ignore-words-re = ["udid", "typ"]
 extend-ignore-re = [
-  "gAA.*\\b"
+  "gAA.*\\b",
+  "TEST_JWK_N.*[A-Za-z0-9+/=_-]{20,}",
 ]
 
 [type.rust.extend-identifiers]
@@ -43,6 +44,8 @@ rule_ba = "rule_ba"
 ro = "ro"
 ser = "ser"
 COSE = "COSE"
+BA = "BA"
+UE = "UE"
 
 [type.lock]
 extend-glob = []
