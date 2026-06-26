@@ -74,10 +74,12 @@ pub async fn authenticate_by_password(
     // attacker from distinguishing between "user not found" and "wrong
     // password" via timing analysis.
     if !user_found {
-        let dummy_hash = password_hashing::generate_dummy_hash(config)
+        // Fetch the pre-calculated dummy hash instantly from the cache
+        let dummy_hash = password_hashing::get_or_init_dummy_hash(config)
             .await
             .map_err(IdentityProviderError::password_hash)?;
-        let _ = password_hashing::verify_password(config, &auth.password, &dummy_hash)
+
+        let _ = password_hashing::verify_password(config, &auth.password, dummy_hash)
             .await
             .map_err(IdentityProviderError::password_hash)?;
         return Err(AuthenticationError::UserNameOrPasswordWrong.into());
