@@ -276,6 +276,16 @@ async fn main() -> Result<(), Report> {
 
     spawn(cleanup(cloned_token, shared_state.clone()));
 
+    // Reset the dummy-password-hash cache whenever the configuration is
+    // hot-reloaded. The cache is keyed by (algorithm, rounds); if the operator
+    // changes `password_hashing_algorithm` or `password_hash_rounds` at runtime,
+    // stale entries would otherwise keep being served and reintroduce the very
+    // timing side-channel the dummy hash exists to close.
+    spawn(reset_dummy_hash_on_reload(
+        token.clone(),
+        shared_state.clone(),
+    ));
+
     shared_state
         .event_dispatcher
         .subscribe(Arc::new(ApplicationCredentialHook::new(
@@ -612,6 +622,48 @@ async fn cleanup(cancel: CancellationToken, state: ServiceState) {
             () = cancel.cancelled() => {
                 info!("Cancellation requested. Stopping cleanup task.");
                 break; // Exit the loop
+            }
+        }
+    }
+}
+
+/// Clear the dummy-password-hash cache on every configuration reload.
+///
+/// Subscribes to `ConfigManager::notify_tx` — the broadcast channel the config
+/// watcher fires `()` on after each successful `Config::load_all()`. On every
+/// notification we drop all cached `(algorithm, rounds)` dummy hashes so the
+/// next authentication of a non-existent user recomputes one matching the new
+/// configuration. A lagged receiver (more than the channel's 16-slot buffer of
+/// reloads occurred between ticks) is treated like a normal reload: we still
+/// clear the cache, which is always safe.
+async fn reset_dummy_hash_on_reload(cancel: CancellationToken, state: ServiceState) {
+    let mut reload_rx = state.config_manager.notify_tx.subscribe();
+    loop {
+        tokio::select! {
+            recv = reload_rx.recv() => {
+                match recv {
+                    Ok(()) => {
+                        debug!("Configuration reloaded; clearing dummy-hash cache");
+                        openstack_keystone_core::common::password_hashing::reset_dummy_hash_cache()
+                            .await;
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                        // We fell behind the reload stream; the cache may hold
+                        // entries for a superseded config. Clearing is the safe
+                        // response regardless of how many ticks we missed.
+                        warn!(skipped, "Lagged behind config reloads; clearing dummy-hash cache");
+                        openstack_keystone_core::common::password_hashing::reset_dummy_hash_cache()
+                            .await;
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                        // Sender dropped — config manager is gone, nothing more to do.
+                        break;
+                    }
+                }
+            }
+            () = cancel.cancelled() => {
+                info!("Cancellation requested. Stopping dummy-hash reset task.");
+                break;
             }
         }
     }

@@ -68,6 +68,12 @@ pub enum PasswordHashingAlgo {
     /// Bcrypt.
     #[default]
     Bcrypt,
+    /// Bcrypt combined with SHA256.
+    BcryptSha256,
+    /// PBKDF2 with SHA512.
+    Pbkdf2Sha512,
+    /// Scrypt.
+    Scrypt,
     // #[cfg(test)]
     /// None. Should not be used outside of testing where expected value is
     /// necessary.
