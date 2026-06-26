@@ -158,7 +158,7 @@ fn pbkdf2_hmac_sha512(
 
 #[cfg(test)]
 mod tests {
-    use super::super::{TEST_PASSWORD, mock_config};
+    use super::super::tests::{TEST_PASSWORD, mock_config};
     use super::super::{hash_password, verify_password};
     use openstack_keystone_config::PasswordHashingAlgo;
 

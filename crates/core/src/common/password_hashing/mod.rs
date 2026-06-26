@@ -296,30 +296,25 @@ pub async fn verify_password<P: AsRef<[u8]>, H: AsRef<str>>(
     }
 }
 
-/// Password reused across the Keystone cross-compatibility test vectors.
-#[cfg(test)]
-const TEST_PASSWORD: &str = "openstack123";
-
-/// Build a `Config` with the password-hashing fields set.
-///
-/// Accessible from every child module's test block via `super::super::mock_config`
-/// without needing `pub(crate)` — child modules can reach private items in their
-/// ancestor modules.
-#[cfg(test)]
-fn mock_config(algo: openstack_keystone_config::PasswordHashingAlgo, max_len: usize) -> Config {
-    let mut conf = Config::default();
-    conf.identity.password_hashing_algorithm = algo;
-    conf.identity.password_hash_rounds = Some(12);
-    conf.identity.max_password_length = max_len;
-    conf
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use openstack_keystone_config::PasswordHashingAlgo;
     use rand::distr::{Alphanumeric, SampleString};
     use tracing_test::traced_test;
+
+    pub(super) const TEST_PASSWORD: &str = "openstack123";
+
+    pub(super) fn mock_config(
+        algo: openstack_keystone_config::PasswordHashingAlgo,
+        max_len: usize,
+    ) -> Config {
+        let mut conf = Config::default();
+        conf.identity.password_hashing_algorithm = algo;
+        conf.identity.password_hash_rounds = Some(12);
+        conf.identity.max_password_length = max_len;
+        conf
+    }
 
     // --- Core truncation & schema alignment tests ---
 
@@ -525,21 +520,28 @@ mod tests {
     // These tests close the loop the per-algorithm KAT vectors only check one
     // way: the KATs prove Rust can *verify* a Python-produced hash; the tests
     // below prove Python can *verify* a Rust-produced hash. They shell out to
-    // tools/cross_verify.py inside a real Keystone Python checkout, so they are
-    // gated on the KEYSTONE_PYTHON_CHECKOUT env var and silently skip when it is
-    // unset (the common case in CI without a Python install). To run:
+    // tools/cross_verify.py and require `pip install keystone`. They skip
+    // silently when `import keystone` is unavailable (the common case in local
+    // dev without a Python install). To run locally:
     //
-    //   KEYSTONE_PYTHON_CHECKOUT=~/Projects/openstack/keystone \
-    //     cargo test -p openstack-keystone-core -- cross_verify
-    //
-    // The checkout must have the `bcrypt` and `cryptography` packages installed.
+    //   pip install keystone
+    //   cargo test -p openstack-keystone-core -- cross_verify
 
     /// Run a Rust-produced hash through tools/cross_verify.py against the Python
     /// hashers. Returns the script's exit code (0 = verified, 1 = rejected,
-    /// 2 = error). Returns `None` when no Python checkout is configured so the
-    /// caller can skip.
+    /// 2 = error). Returns `None` when the `keystone` Python package is not
+    /// installed, so the caller can skip.
     async fn python_cross_verify(algo_name: &str, password: &str, hash: &str) -> Option<i32> {
-        let checkout = std::env::var("KEYSTONE_PYTHON_CHECKOUT").ok()?;
+        // Skip if `import keystone` fails — no Python Keystone installed.
+        let importable = tokio::process::Command::new("python")
+            .args(["-c", "import keystone"])
+            .status()
+            .await
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if !importable {
+            return None;
+        }
 
         // cross_verify.py lives in <repo>/tools; this crate is <repo>/crates/core.
         let script =
@@ -550,8 +552,6 @@ mod tests {
             .arg(algo_name)
             .arg(password)
             .arg(hash)
-            // Run inside the checkout so `import keystone...` resolves.
-            .current_dir(checkout)
             .status()
             .await
             .expect("failed to spawn python cross_verify.py");
