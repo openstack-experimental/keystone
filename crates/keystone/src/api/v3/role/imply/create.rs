@@ -27,6 +27,7 @@ use openstack_keystone_api_types::v3::role::RoleImplyResponse;
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
+use openstack_keystone_core::auth::ExecutionContext;
 
 /// Create a role imply rule.
 #[utoipa::path(
@@ -77,7 +78,11 @@ pub(super) async fn create(
     let role_imply = state
         .provider
         .get_role_provider()
-        .create_role_imply_rule(&state, &prior_role_id, &implied_role_id)
+        .create_role_imply_rule(
+            &ExecutionContext::from_auth(&state, &user_auth),
+            &prior_role_id,
+            &implied_role_id,
+        )
         .await?;
 
     Ok((

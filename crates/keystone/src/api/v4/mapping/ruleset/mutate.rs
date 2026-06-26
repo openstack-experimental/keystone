@@ -28,6 +28,7 @@ use openstack_keystone_api_types::v4::mapping::{
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
+use openstack_keystone_core::auth::ExecutionContext;
 
 /// Mutate rules within a mapping ruleset imperatively.
 ///
@@ -62,7 +63,10 @@ pub(super) async fn mutate(
     let current = state
         .provider
         .get_mapping_provider()
-        .get_ruleset(&state, &mapping_id)
+        .get_ruleset(
+            &ExecutionContext::from_auth(&state, &user_auth),
+            &mapping_id,
+        )
         .await?
         .ok_or_else(|| KeystoneApiError::NotFound {
             resource: "mapping ruleset".into(),
@@ -82,7 +86,11 @@ pub(super) async fn mutate(
     let res = state
         .provider
         .get_mapping_provider()
-        .mutate_rules(&state, &mapping_id, req.into())
+        .mutate_rules(
+            &ExecutionContext::from_auth(&state, &user_auth),
+            &mapping_id,
+            req.into(),
+        )
         .await?;
 
     Ok((

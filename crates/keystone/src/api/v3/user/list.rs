@@ -25,6 +25,7 @@ use super::types::{User, UserList, UserListParameters};
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
+use openstack_keystone_core::auth::ExecutionContext;
 
 /// List users
 #[utoipa::path(
@@ -57,7 +58,10 @@ pub(super) async fn list(
     let users: Vec<User> = state
         .provider
         .get_identity_provider()
-        .list_users(&state, &query.into())
+        .list_users(
+            &ExecutionContext::from_auth(&state, &user_auth),
+            &query.into(),
+        )
         .await?
         .into_iter()
         .map(Into::into)

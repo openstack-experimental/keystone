@@ -14,8 +14,8 @@
 use eyre::Result;
 use std::sync::Arc;
 
-use openstack_keystone::assignment::AssignmentApi;
 use openstack_keystone::keystone::Service;
+use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core_types::assignment::*;
 
 mod grant;
@@ -30,7 +30,7 @@ pub async fn grant_role_to_user_on_project<U: Into<String>, P: Into<String>, R: 
         .provider
         .get_assignment_provider()
         .create_grant(
-            state,
+            &ExecutionContext::internal(&state),
             AssignmentCreate::user_project(user, project, role, false),
         )
         .await?;
@@ -69,7 +69,7 @@ pub async fn check_grant(state: &Arc<Service>, assignment: &Assignment) -> Resul
     let assignments = state
         .provider
         .get_assignment_provider()
-        .list_role_assignments(state, &params.build()?)
+        .list_role_assignments(&ExecutionContext::internal(&state), &params.build()?)
         .await?;
     Ok(!assignments.is_empty())
 }

@@ -11,7 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-//! Get existing k8s auth provider.
+//! # Get existing k8s auth provider
 use sea_orm::DatabaseConnection;
 use sea_orm::entity::*;
 

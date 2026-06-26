@@ -24,6 +24,7 @@ use super::types::{RoleCreateRequest, RoleResponse};
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
+use openstack_keystone_core::auth::ExecutionContext;
 
 /// Create a new Role.
 #[utoipa::path(
@@ -58,7 +59,10 @@ pub(super) async fn create(
     let created_role = state
         .provider
         .get_role_provider()
-        .create_role(&state, payload.into())
+        .create_role(
+            &ExecutionContext::from_auth(&state, &user_auth),
+            payload.into(),
+        )
         .await?;
 
     // Return response with 201 Created status

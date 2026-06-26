@@ -23,6 +23,7 @@ use super::types::{Group, GroupResponse};
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
+use openstack_keystone_core::auth::ExecutionContext;
 
 /// Get a single user group by ID.
 #[utoipa::path(
@@ -44,7 +45,7 @@ pub async fn show(
     let current = state
         .provider
         .get_identity_provider()
-        .get_group(&state, &group_id)
+        .get_group(&ExecutionContext::from_auth(&state, &user_auth), &group_id)
         .await?;
     state
         .policy_enforcer

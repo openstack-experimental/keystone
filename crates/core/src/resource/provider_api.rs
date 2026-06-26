@@ -16,7 +16,7 @@ use async_trait::async_trait;
 
 use openstack_keystone_core_types::resource::*;
 
-use crate::keystone::ServiceState;
+use crate::auth::ExecutionContext;
 use crate::resource::ResourceProviderError;
 
 /// Resource API.
@@ -31,7 +31,7 @@ pub trait ResourceApi: Send + Sync {
     /// or an `Error`.
     async fn get_domain_enabled<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         domain_id: &'a str,
     ) -> Result<bool, ResourceProviderError>;
 
@@ -41,9 +41,9 @@ pub trait ResourceApi: Send + Sync {
     /// * `domain` - The domain details to create.
     ///
     /// A `Result` containing the created `Domain`, or an `Error`.
-    async fn create_domain(
+    async fn create_domain<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         domain: DomainCreate,
     ) -> Result<Domain, ResourceProviderError>;
 
@@ -53,9 +53,9 @@ pub trait ResourceApi: Send + Sync {
     /// * `project` - The project details to create.
     ///
     /// A `Result` containing the created `Project`, or an `Error`.
-    async fn create_project(
+    async fn create_project<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         project: ProjectCreate,
     ) -> Result<Project, ResourceProviderError>;
 
@@ -67,7 +67,7 @@ pub trait ResourceApi: Send + Sync {
     /// A `Result` containing `()` if successful, or an `Error`.
     async fn delete_domain<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         id: &'a str,
     ) -> Result<(), ResourceProviderError>;
 
@@ -79,7 +79,7 @@ pub trait ResourceApi: Send + Sync {
     /// A `Result` containing `()` if successful, or an `Error`.
     async fn delete_project<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         id: &'a str,
     ) -> Result<(), ResourceProviderError>;
 
@@ -92,7 +92,7 @@ pub trait ResourceApi: Send + Sync {
     /// `Error`.
     async fn get_domain<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         domain_id: &'a str,
     ) -> Result<Option<Domain>, ResourceProviderError>;
 
@@ -105,7 +105,7 @@ pub trait ResourceApi: Send + Sync {
     /// `Error`.
     async fn get_project<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         project_id: &'a str,
     ) -> Result<Option<Project>, ResourceProviderError>;
 
@@ -119,7 +119,7 @@ pub trait ResourceApi: Send + Sync {
     /// `Error`.
     async fn get_project_by_name<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         name: &'a str,
         domain_id: &'a str,
     ) -> Result<Option<Project>, ResourceProviderError>;
@@ -133,7 +133,7 @@ pub trait ResourceApi: Send + Sync {
     /// an `Error`.
     async fn get_project_parents<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         project_id: &'a str,
     ) -> Result<Option<Vec<Project>>, ResourceProviderError>;
 
@@ -146,7 +146,7 @@ pub trait ResourceApi: Send + Sync {
     /// `Error`.
     async fn find_domain_by_name<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         domain_name: &'a str,
     ) -> Result<Option<Domain>, ResourceProviderError>;
 
@@ -156,9 +156,9 @@ pub trait ResourceApi: Send + Sync {
     /// * `params` - The list parameters.
     ///
     /// A `Result` containing a `Vec<Domain>`, or an `Error`.
-    async fn list_domains(
+    async fn list_domains<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         params: &DomainListParameters,
     ) -> Result<Vec<Domain>, ResourceProviderError>;
 
@@ -168,9 +168,9 @@ pub trait ResourceApi: Send + Sync {
     /// * `params` - The list parameters.
     ///
     /// A `Result` containing a `Vec<Project>`, or an `Error`.
-    async fn list_projects(
+    async fn list_projects<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         params: &ProjectListParameters,
     ) -> Result<Vec<Project>, ResourceProviderError>;
 }

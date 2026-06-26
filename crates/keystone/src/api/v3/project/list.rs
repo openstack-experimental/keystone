@@ -26,6 +26,7 @@ use super::types::{ProjectListParameters, ProjectShortList};
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
+use openstack_keystone_core::auth::ExecutionContext;
 
 /// List projects
 #[utoipa::path(
@@ -58,7 +59,10 @@ pub(super) async fn list(
     let projects: Vec<super::types::ProjectShort> = state
         .provider
         .get_resource_provider()
-        .list_projects(&state, &query.into())
+        .list_projects(
+            &ExecutionContext::from_auth(&state, &user_auth),
+            &query.into(),
+        )
         .await?
         .into_iter()
         .map(Into::into)

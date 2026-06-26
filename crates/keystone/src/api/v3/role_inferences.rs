@@ -25,6 +25,7 @@ use openstack_keystone_api_types::v3::role::{ImplyGroup, RoleInferencesList};
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
+use openstack_keystone_core::auth::ExecutionContext;
 
 /// List all role inference rules.
 #[utoipa::path(
@@ -56,10 +57,11 @@ pub(super) async fn list(
         .await?;
 
     // Get all imply rules
+    let exec = &ExecutionContext::from_auth(&state, &user_auth);
     let all_rules = state
         .provider
         .get_role_provider()
-        .list_role_imply_rules(&state)
+        .list_role_imply_rules(exec)
         .await?;
 
     // Group rules by prior role to build ImplyGroup entries

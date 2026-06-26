@@ -24,6 +24,7 @@ use super::types::{Group, GroupList, GroupListParameters};
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
+use openstack_keystone_core::auth::ExecutionContext;
 
 /// List user groups.
 #[utoipa::path(
@@ -56,7 +57,10 @@ pub async fn list(
     let groups: Vec<Group> = state
         .provider
         .get_identity_provider()
-        .list_groups(&state, &query.into())
+        .list_groups(
+            &ExecutionContext::from_auth(&state, &user_auth),
+            &query.into(),
+        )
         .await?
         .into_iter()
         .map(Into::into)

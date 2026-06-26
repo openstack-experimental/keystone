@@ -25,6 +25,7 @@ use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
 use crate::federation::api::types::*;
 use crate::keystone::ServiceState;
+use openstack_keystone_core::auth::ExecutionContext;
 
 /// Get single identity provider.
 ///
@@ -57,7 +58,7 @@ pub(super) async fn show(
     let current = state
         .provider
         .get_federation_provider()
-        .get_identity_provider(&state, &idp_id)
+        .get_identity_provider(&ExecutionContext::from_auth(&state, &user_auth), &idp_id)
         .await
         .map(|x| {
             x.ok_or_else(|| KeystoneApiError::NotFound {

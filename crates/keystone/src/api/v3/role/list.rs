@@ -24,6 +24,7 @@ use super::types::{Role, RoleList, RoleListParameters};
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
+use openstack_keystone_core::auth::ExecutionContext;
 
 /// List roles
 #[utoipa::path(
@@ -55,7 +56,10 @@ pub(super) async fn list(
     let roles: Vec<Role> = state
         .provider
         .get_role_provider()
-        .list_roles(&state, &query.into())
+        .list_roles(
+            &ExecutionContext::from_auth(&state, &user_auth),
+            &query.into(),
+        )
         .await?
         .into_iter()
         .map(Into::into)

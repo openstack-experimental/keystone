@@ -20,6 +20,7 @@ use openstack_keystone_config::Config;
 use openstack_keystone_core_types::resource::Domain;
 
 use crate::api::KeystoneApiError;
+use crate::auth::ExecutionContext;
 use crate::keystone::ServiceState;
 
 /// Get the domain by ID or Name.
@@ -36,11 +37,12 @@ pub async fn get_domain<I: AsRef<str>, N: AsRef<str>>(
     id: Option<I>,
     name: Option<N>,
 ) -> Result<Domain, KeystoneApiError> {
+    let exec = ExecutionContext::internal(state);
     if let Some(did) = &id {
         state
             .provider
             .get_resource_provider()
-            .get_domain(state, did.as_ref())
+            .get_domain(&exec, did.as_ref())
             .await?
             .ok_or_else(|| KeystoneApiError::NotFound {
                 resource: "domain".into(),
@@ -50,7 +52,7 @@ pub async fn get_domain<I: AsRef<str>, N: AsRef<str>>(
         state
             .provider
             .get_resource_provider()
-            .find_domain_by_name(state, name.as_ref())
+            .find_domain_by_name(&exec, name.as_ref())
             .await?
             .ok_or_else(|| KeystoneApiError::NotFound {
                 resource: "domain".into(),
@@ -137,7 +139,7 @@ mod tests {
         let mut resource_mock = MockResourceProvider::default();
         resource_mock
             .expect_get_domain()
-            .withf(|_, id: &'_ str| id == "domain_id")
+            .withf(|_exec, id: &'_ str| id == "domain_id")
             .returning(|_, _| {
                 Ok(Some(Domain {
                     id: "domain_id".into(),
@@ -147,7 +149,7 @@ mod tests {
             });
         resource_mock
             .expect_find_domain_by_name()
-            .withf(|_, id: &'_ str| id == "domain_name")
+            .withf(|_exec, id: &'_ str| id == "domain_name")
             .returning(|_, _| {
                 Ok(Some(Domain {
                     id: "domain_id".into(),

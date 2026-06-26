@@ -23,6 +23,7 @@ use openstack_keystone_config::Config;
 use openstack_keystone_core_types::resource::{Domain, Project};
 use openstack_keystone_core_types::scope::Scope as ProviderScope;
 
+use crate::auth::ExecutionContext;
 use crate::keystone::ServiceState;
 
 /// Get the scope [ProjectBuilder] for the given Project.
@@ -67,20 +68,22 @@ pub async fn get_domain<I: AsRef<str>, N: AsRef<str>>(
     name: Option<N>,
 ) -> Result<Domain, KeystoneApiError> {
     if let Some(did) = &id {
+        let exec = ExecutionContext::internal(state);
         state
             .provider
             .get_resource_provider()
-            .get_domain(state, did.as_ref())
+            .get_domain(&exec, did.as_ref())
             .await?
             .ok_or_else(|| KeystoneApiError::NotFound {
                 resource: "domain".into(),
                 identifier: did.as_ref().to_string(),
             })
     } else if let Some(name) = &name {
+        let exec = ExecutionContext::internal(state);
         state
             .provider
             .get_resource_provider()
-            .find_domain_by_name(state, name.as_ref())
+            .find_domain_by_name(&exec, name.as_ref())
             .await?
             .ok_or_else(|| KeystoneApiError::NotFound {
                 resource: "domain".into(),
@@ -105,13 +108,15 @@ pub async fn find_project_from_scope(
     scope: &ScopeProject,
 ) -> Result<Option<Project>, KeystoneApiError> {
     let project = if let Some(pid) = &scope.id {
+        let exec = ExecutionContext::internal(state);
         state
             .provider
             .get_resource_provider()
-            .get_project(state, pid)
+            .get_project(&exec, pid)
             .await?
     } else if let Some(name) = &scope.name {
         if let Some(domain) = &scope.domain {
+            let exec = ExecutionContext::internal(state);
             let domain_id = match &domain.id {
                 Some(id) => id.clone(),
                 None => {
@@ -119,7 +124,7 @@ pub async fn find_project_from_scope(
                         .provider
                         .get_resource_provider()
                         .find_domain_by_name(
-                            state,
+                            &exec,
                             &domain
                                 .name
                                 .clone()
@@ -139,7 +144,7 @@ pub async fn find_project_from_scope(
             state
                 .provider
                 .get_resource_provider()
-                .get_project_by_name(state, name, &domain_id)
+                .get_project_by_name(&exec, name, &domain_id)
                 .await?
         } else {
             return Err(KeystoneApiError::ProjectDomain);

@@ -28,6 +28,7 @@ use openstack_keystone_core_types::federation::IdentityProviderListParameters as
 
 use crate::api::{KeystoneApiError, auth::Auth, common::build_pagination_links};
 use crate::keystone::ServiceState;
+use openstack_keystone_core::auth::ExecutionContext;
 
 /// List identity providers.
 ///
@@ -98,7 +99,10 @@ pub(super) async fn list(
     let identity_providers: Vec<IdentityProvider> = state
         .provider
         .get_federation_provider()
-        .list_identity_providers(&state, &provider_list_params)
+        .list_identity_providers(
+            &ExecutionContext::from_auth(&state, &user_auth),
+            &provider_list_params,
+        )
         .await?
         .into_iter()
         .map(Into::into)

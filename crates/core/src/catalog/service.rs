@@ -20,8 +20,8 @@ use openstack_keystone_config::Config;
 use openstack_keystone_core_types::catalog::*;
 use openstack_keystone_core_types::events::{Event, EventPayload, Operation};
 
+use crate::auth::ExecutionContext;
 use crate::catalog::{CatalogApi, CatalogProviderError, backend::CatalogBackend};
-use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManagerApi;
 
 pub struct CatalogService {
@@ -60,15 +60,18 @@ impl CatalogApi for CatalogService {
     /// # Returns
     /// A `Result` containing the created `Endpoint`, or a
     /// `CatalogProviderError`.
-    async fn create_endpoint(
+    async fn create_endpoint<'a>(
         &self,
-        state: &ServiceState,
+        exec: &ExecutionContext<'a>,
         endpoint: EndpointCreate,
     ) -> Result<Endpoint, CatalogProviderError> {
         endpoint.validate()?;
-        let endpoint = self.backend_driver.create_endpoint(state, endpoint).await?;
+        let endpoint = self
+            .backend_driver
+            .create_endpoint(exec.state(), endpoint)
+            .await?;
 
-        state
+        exec.state()
             .event_dispatcher
             .emit(Event::new(
                 Operation::Create,
@@ -89,15 +92,18 @@ impl CatalogApi for CatalogService {
     ///
     /// # Returns
     /// A `Result` containing the created `Region`, or a `CatalogProviderError`.
-    async fn create_region(
+    async fn create_region<'a>(
         &self,
-        state: &ServiceState,
+        exec: &ExecutionContext<'a>,
         region: RegionCreate,
     ) -> Result<Region, CatalogProviderError> {
         region.validate()?;
-        let region = self.backend_driver.create_region(state, region).await?;
+        let region = self
+            .backend_driver
+            .create_region(exec.state(), region)
+            .await?;
 
-        state
+        exec.state()
             .event_dispatcher
             .emit(Event::new(
                 Operation::Create,
@@ -119,15 +125,18 @@ impl CatalogApi for CatalogService {
     /// # Returns
     /// A `Result` containing the created `Service`, or a
     /// `CatalogProviderError`.
-    async fn create_service(
+    async fn create_service<'a>(
         &self,
-        state: &ServiceState,
+        exec: &ExecutionContext<'a>,
         service: ServiceCreate,
     ) -> Result<Service, CatalogProviderError> {
         service.validate()?;
-        let service = self.backend_driver.create_service(state, service).await?;
+        let service = self
+            .backend_driver
+            .create_service(exec.state(), service)
+            .await?;
 
-        state
+        exec.state()
             .event_dispatcher
             .emit(Event::new(
                 Operation::Create,
@@ -150,12 +159,14 @@ impl CatalogApi for CatalogService {
     /// A `Result` indicating success or a `CatalogProviderError`.
     async fn delete_endpoint<'a>(
         &self,
-        state: &ServiceState,
+        exec: &ExecutionContext<'a>,
         id: &'a str,
     ) -> Result<(), CatalogProviderError> {
-        self.backend_driver.delete_endpoint(state, id).await?;
+        self.backend_driver
+            .delete_endpoint(exec.state(), id)
+            .await?;
 
-        state
+        exec.state()
             .event_dispatcher
             .emit(Event::new(
                 Operation::Delete,
@@ -176,12 +187,12 @@ impl CatalogApi for CatalogService {
     /// A `Result` indicating success or a `CatalogProviderError`.
     async fn delete_region<'a>(
         &self,
-        state: &ServiceState,
+        exec: &ExecutionContext<'a>,
         id: &'a str,
     ) -> Result<(), CatalogProviderError> {
-        self.backend_driver.delete_region(state, id).await?;
+        self.backend_driver.delete_region(exec.state(), id).await?;
 
-        state
+        exec.state()
             .event_dispatcher
             .emit(Event::new(
                 Operation::Delete,
@@ -202,12 +213,12 @@ impl CatalogApi for CatalogService {
     /// A `Result` indicating success or a `CatalogProviderError`.
     async fn delete_service<'a>(
         &self,
-        state: &ServiceState,
+        exec: &ExecutionContext<'a>,
         id: &'a str,
     ) -> Result<(), CatalogProviderError> {
-        self.backend_driver.delete_service(state, id).await?;
+        self.backend_driver.delete_service(exec.state(), id).await?;
 
-        state
+        exec.state()
             .event_dispatcher
             .emit(Event::new(
                 Operation::Delete,
@@ -227,12 +238,12 @@ impl CatalogApi for CatalogService {
     /// # Returns
     /// A `Result` containing a vector of tuples of `Service` and its associated
     /// `Endpoint`s, or a `CatalogProviderError`.
-    async fn get_catalog(
+    async fn get_catalog<'a>(
         &self,
-        state: &ServiceState,
+        exec: &ExecutionContext<'a>,
         enabled: bool,
     ) -> Result<Vec<(Service, Vec<Endpoint>)>, CatalogProviderError> {
-        self.backend_driver.get_catalog(state, enabled).await
+        self.backend_driver.get_catalog(exec.state(), enabled).await
     }
 
     /// Get single endpoint by ID.
@@ -246,10 +257,10 @@ impl CatalogApi for CatalogService {
     /// `Error`.
     async fn get_endpoint<'a>(
         &self,
-        state: &ServiceState,
+        exec: &ExecutionContext<'a>,
         id: &'a str,
     ) -> Result<Option<Endpoint>, CatalogProviderError> {
-        self.backend_driver.get_endpoint(state, id).await
+        self.backend_driver.get_endpoint(exec.state(), id).await
     }
 
     /// Get single region by ID.
@@ -263,10 +274,10 @@ impl CatalogApi for CatalogService {
     /// `Error`.
     async fn get_region<'a>(
         &self,
-        state: &ServiceState,
+        exec: &ExecutionContext<'a>,
         id: &'a str,
     ) -> Result<Option<Region>, CatalogProviderError> {
-        self.backend_driver.get_region(state, id).await
+        self.backend_driver.get_region(exec.state(), id).await
     }
 
     /// Get single service by ID.
@@ -280,10 +291,10 @@ impl CatalogApi for CatalogService {
     /// `Error`.
     async fn get_service<'a>(
         &self,
-        state: &ServiceState,
+        exec: &ExecutionContext<'a>,
         id: &'a str,
     ) -> Result<Option<Service>, CatalogProviderError> {
-        self.backend_driver.get_service(state, id).await
+        self.backend_driver.get_service(exec.state(), id).await
     }
 
     /// List Endpoints.
@@ -295,13 +306,15 @@ impl CatalogApi for CatalogService {
     /// # Returns
     /// A `Result` containing a vector of `Endpoint` objects or a
     /// `CatalogProviderError`.
-    async fn list_endpoints(
+    async fn list_endpoints<'a>(
         &self,
-        state: &ServiceState,
+        exec: &ExecutionContext<'a>,
         params: &EndpointListParameters,
     ) -> Result<Vec<Endpoint>, CatalogProviderError> {
         params.validate()?;
-        self.backend_driver.list_endpoints(state, params).await
+        self.backend_driver
+            .list_endpoints(exec.state(), params)
+            .await
     }
 
     /// List regions.
@@ -313,13 +326,13 @@ impl CatalogApi for CatalogService {
     /// # Returns
     /// A `Result` containing a vector of `Region` objects or a
     /// `CatalogProviderError`.
-    async fn list_regions(
+    async fn list_regions<'a>(
         &self,
-        state: &ServiceState,
+        exec: &ExecutionContext<'a>,
         params: &RegionListParameters,
     ) -> Result<Vec<Region>, CatalogProviderError> {
         params.validate()?;
-        self.backend_driver.list_regions(state, params).await
+        self.backend_driver.list_regions(exec.state(), params).await
     }
 
     /// List services.
@@ -331,13 +344,15 @@ impl CatalogApi for CatalogService {
     /// # Returns
     /// A `Result` containing a vector of `Service` objects or a
     /// `CatalogProviderError`.
-    async fn list_services(
+    async fn list_services<'a>(
         &self,
-        state: &ServiceState,
+        exec: &ExecutionContext<'a>,
         params: &ServiceListParameters,
     ) -> Result<Vec<Service>, CatalogProviderError> {
         params.validate()?;
-        self.backend_driver.list_services(state, params).await
+        self.backend_driver
+            .list_services(exec.state(), params)
+            .await
     }
 
     /// Update an existing endpoint.
@@ -352,16 +367,16 @@ impl CatalogApi for CatalogService {
     /// `CatalogProviderError`.
     async fn update_endpoint<'a>(
         &self,
-        state: &ServiceState,
+        exec: &ExecutionContext<'a>,
         id: &'a str,
         endpoint: EndpointUpdate,
     ) -> Result<Endpoint, CatalogProviderError> {
         endpoint.validate()?;
         let updated = self
             .backend_driver
-            .update_endpoint(state, id, endpoint)
+            .update_endpoint(exec.state(), id, endpoint)
             .await?;
-        state
+        exec.state()
             .event_dispatcher
             .emit(Event::new(
                 Operation::Update,
@@ -382,13 +397,16 @@ impl CatalogApi for CatalogService {
     /// A `Result` containing the updated `Region`, or a `CatalogProviderError`.
     async fn update_region<'a>(
         &self,
-        state: &ServiceState,
+        exec: &ExecutionContext<'a>,
         id: &'a str,
         region: RegionUpdate,
     ) -> Result<Region, CatalogProviderError> {
         region.validate()?;
-        let updated = self.backend_driver.update_region(state, id, region).await?;
-        state
+        let updated = self
+            .backend_driver
+            .update_region(exec.state(), id, region)
+            .await?;
+        exec.state()
             .event_dispatcher
             .emit(Event::new(
                 Operation::Delete,
@@ -410,16 +428,16 @@ impl CatalogApi for CatalogService {
     /// `CatalogProviderError`.
     async fn update_service<'a>(
         &self,
-        state: &ServiceState,
+        exec: &ExecutionContext<'a>,
         id: &'a str,
         service: ServiceUpdate,
     ) -> Result<Service, CatalogProviderError> {
         service.validate()?;
         let updated = self
             .backend_driver
-            .update_service(state, id, service)
+            .update_service(exec.state(), id, service)
             .await?;
-        state
+        exec.state()
             .event_dispatcher
             .emit(Event::new(
                 Operation::Delete,

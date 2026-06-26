@@ -16,7 +16,7 @@
 use eyre::Result;
 use tracing_test::traced_test;
 
-use openstack_keystone_core::mapping::MappingApi;
+use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core_types::mapping::rule::MappingRule;
 use openstack_keystone_core_types::mapping::*;
 
@@ -57,7 +57,11 @@ async fn test_update() -> Result<()> {
     let res = state
         .provider
         .get_mapping_provider()
-        .update_ruleset(&state, &ruleset.mapping_id, req)
+        .update_ruleset(
+            &ExecutionContext::internal(&state),
+            &ruleset.mapping_id,
+            req,
+        )
         .await?;
 
     assert_eq!(ruleset.mapping_id, res.mapping_id);
@@ -89,7 +93,11 @@ async fn test_update_allowed_domains() -> Result<()> {
     let res = state
         .provider
         .get_mapping_provider()
-        .update_ruleset(&state, &ruleset.mapping_id, req)
+        .update_ruleset(
+            &ExecutionContext::internal(&state),
+            &ruleset.mapping_id,
+            req,
+        )
         .await?;
 
     assert_eq!(ruleset.mapping_id, res.mapping_id);
@@ -137,7 +145,11 @@ async fn test_update_global() -> Result<()> {
     let res = state
         .provider
         .get_mapping_provider()
-        .update_ruleset(&state, &ruleset.mapping_id, req)
+        .update_ruleset(
+            &ExecutionContext::internal(&state),
+            &ruleset.mapping_id,
+            req,
+        )
         .await?;
 
     assert_eq!(ruleset.mapping_id, res.mapping_id);
@@ -157,7 +169,7 @@ async fn test_update_missing() -> Result<()> {
         .provider
         .get_mapping_provider()
         .update_ruleset(
-            &state,
+            &ExecutionContext::internal(&state),
             &uuid::Uuid::new_v4().simple().to_string(),
             MappingRuleSetUpdate::default(),
         )

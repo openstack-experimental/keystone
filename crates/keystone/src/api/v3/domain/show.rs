@@ -25,6 +25,7 @@ use super::types::{Domain, DomainResponse};
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
+use openstack_keystone_core::auth::ExecutionContext;
 
 /// Get single domain
 #[utoipa::path(
@@ -46,7 +47,7 @@ pub(super) async fn show(
     let current = state
         .provider
         .get_resource_provider()
-        .get_domain(&state, &domain_id)
+        .get_domain(&ExecutionContext::from_auth(&state, &user_auth), &domain_id)
         .await?;
 
     state

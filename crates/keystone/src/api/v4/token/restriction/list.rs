@@ -27,6 +27,7 @@ use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
 use crate::api::v4::token::types::*;
 use crate::keystone::ServiceState;
+use openstack_keystone_core::auth::ExecutionContext;
 
 /// List token restrictions.
 ///
@@ -71,7 +72,10 @@ pub(super) async fn list(
     let token_restrictions: Vec<TokenRestriction> = state
         .provider
         .get_token_provider()
-        .list_token_restrictions(&state, &provider_list_params)
+        .list_token_restrictions(
+            &ExecutionContext::from_auth(&state, &user_auth),
+            &provider_list_params,
+        )
         .await?
         .into_iter()
         .map(Into::into)

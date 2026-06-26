@@ -16,11 +16,10 @@
 use eyre::Result;
 use tracing_test::traced_test;
 
-use openstack_keystone::resource::ResourceApi;
-
 use crate::common::get_state;
 use crate::create_domain;
 use crate::create_project;
+use openstack_keystone_core::auth::ExecutionContext;
 
 #[traced_test]
 #[tokio::test]
@@ -32,7 +31,7 @@ async fn test_get_project() -> Result<()> {
     let res = state
         .provider
         .get_resource_provider()
-        .get_project(&state, &project.id)
+        .get_project(&ExecutionContext::internal(&state), &project.id)
         .await?
         .expect("project should be there");
     assert_eq!(res.id, project.id);
@@ -51,7 +50,10 @@ async fn test_get_project_missing() -> Result<()> {
         state
             .provider
             .get_resource_provider()
-            .get_project(&state, &uuid::Uuid::new_v4().to_string())
+            .get_project(
+                &ExecutionContext::internal(&state),
+                &uuid::Uuid::new_v4().to_string()
+            )
             .await?
             .is_none()
     );

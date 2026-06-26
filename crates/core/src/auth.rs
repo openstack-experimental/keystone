@@ -101,7 +101,7 @@ impl ValidatedSecurityContext {
             let user_domain = state
                 .provider
                 .get_resource_provider()
-                .get_domain(state, domain_id)
+                .get_domain(&ExecutionContext::internal(state), domain_id)
                 .await
                 .auth_context("fetching user domain")?
                 .ok_or(ResourceProviderError::DomainNotFound(domain_id.clone()))
@@ -140,7 +140,7 @@ impl ValidatedSecurityContext {
                 state
                     .provider
                     .get_trust_provider()
-                    .validate_trust_delegation_chain(state, trust)
+                    .validate_trust_delegation_chain(&ExecutionContext::internal(state), trust)
                     .await
                     .auth_context("validating trust delegation chain")?;
 
@@ -153,7 +153,7 @@ impl ValidatedSecurityContext {
                 let trustor = state
                     .provider
                     .get_identity_provider()
-                    .get_user(state, &trust.trustor_user_id)
+                    .get_user(&ExecutionContext::internal(state), &trust.trustor_user_id)
                     .await
                     .auth_context("fetching trustor user")?
                     .ok_or(IdentityProviderError::UserNotFound(
@@ -175,7 +175,10 @@ impl ValidatedSecurityContext {
                         let trustor_domain_enabled = state
                             .provider
                             .get_resource_provider()
-                            .get_domain_enabled(state, &trustor.domain_id)
+                            .get_domain_enabled(
+                                &ExecutionContext::internal(state),
+                                &trustor.domain_id,
+                            )
                             .await
                             .auth_context("get_trustor_domain_enabled")?;
                         if !trustor_domain_enabled {
@@ -193,7 +196,7 @@ impl ValidatedSecurityContext {
                 let vu = state
                     .provider
                     .get_mapping_provider()
-                    .get_virtual_user(state, &mc.virtual_user_id)
+                    .get_virtual_user(&ExecutionContext::internal(state), &mc.virtual_user_id)
                     .await
                     .auth_context("fetching virtual user for scope resolution")?
                     .ok_or(AuthenticationError::ActorHasNoRolesOnTarget)
@@ -313,6 +316,73 @@ impl Deref for ValidatedSecurityContext {
     }
 }
 
+/// ExecutionContext bundles service state and optional security context.
+///
+/// Passed to all provider methods instead of separate `state` and `ctx`
+/// parameters. For authenticated HTTP requests, constructed with
+/// `from_auth(state, user_auth)`. For internal auth-flow code (e.g.
+/// fernet token validation) where no security context exists yet,
+/// constructed with `internal(state)`.
+///
+/// This eliminates the need for `stub()` patterns and makes the distinction
+/// between authenticated and internal calls explicit.
+#[derive(Clone)]
+pub struct ExecutionContext<'a> {
+    /// The current service state, providing access to providers, configuration,
+    /// and other shared resources.
+    state: &'a ServiceState,
+
+    /// Optional validated security context from the authenticated request.
+    /// `None` when called from internal code paths that have no auth context
+    /// yet (e.g., token validation, internal provider delegation).
+    ctx: Option<&'a ValidatedSecurityContext>,
+}
+
+impl<'a> ExecutionContext<'a> {
+    /// Construct from an authenticated request context.
+    #[must_use]
+    pub fn from_auth(state: &'a ServiceState, ctx: &'a ValidatedSecurityContext) -> Self {
+        Self {
+            state,
+            ctx: Some(ctx),
+        }
+    }
+
+    /// Construct for internal calls where no security context exists yet
+    /// (e.g. token validation, trust chain resolution).
+    #[must_use]
+    pub fn internal(state: &'a ServiceState) -> Self {
+        Self { state, ctx: None }
+    }
+
+    /// The service state.
+    #[must_use]
+    pub fn state(&self) -> &ServiceState {
+        self.state
+    }
+
+    /// The security context, if available.
+    #[must_use]
+    pub fn ctx(&self) -> Option<&ValidatedSecurityContext> {
+        self.ctx
+    }
+
+    /// Returns whether a security context is present (i.e., not an internal
+    /// call).
+    #[must_use]
+    pub fn has_auth(&self) -> bool {
+        self.ctx.is_some()
+    }
+}
+
+impl<'a> Deref for ExecutionContext<'a> {
+    type Target = ServiceState;
+
+    fn deref(&self) -> &Self::Target {
+        self.state
+    }
+}
+
 // Expand scope role information.
 //
 // Compute the effective roles that the principal has on the scope taking into
@@ -378,7 +448,7 @@ async fn resolve_domain_roles(
         .provider
         .get_assignment_provider()
         .list_role_assignments(
-            state,
+            &ExecutionContext::internal(state),
             &RoleAssignmentListParametersBuilder::default()
                 .user_id(&user_id)
                 .domain_id(domain_id)
@@ -429,7 +499,7 @@ async fn resolve_project_token_restriction_roles(
     state
         .provider
         .get_role_provider()
-        .expand_implied_roles(state, &mut roles)
+        .expand_implied_roles(&ExecutionContext::internal(state), &mut roles)
         .await
         .auth_context("expanding token restriction roles")?;
     Ok(roles)
@@ -446,7 +516,7 @@ async fn resolve_project_default_roles(
         .provider
         .get_assignment_provider()
         .list_role_assignments(
-            state,
+            &ExecutionContext::internal(state),
             &RoleAssignmentListParametersBuilder::default()
                 .user_id(&user_id)
                 .project_id(project_id)
@@ -489,7 +559,7 @@ async fn resolve_system_roles(
             .provider
             .get_role_provider()
             .list_roles(
-                state,
+                &ExecutionContext::internal(state),
                 &RoleListParameters {
                     name: Some("reader".into()),
                     ..Default::default()
@@ -508,7 +578,7 @@ async fn resolve_system_roles(
         .provider
         .get_assignment_provider()
         .list_role_assignments(
-            state,
+            &ExecutionContext::internal(state),
             &RoleAssignmentListParametersBuilder::default()
                 .user_id(&user_id)
                 .system_id(system_id)
@@ -532,7 +602,7 @@ async fn resolve_trust_roles(
         .provider
         .get_assignment_provider()
         .list_role_assignments(
-            state,
+            &ExecutionContext::internal(state),
             &RoleAssignmentListParametersBuilder::default()
                 .user_id(tpi.trust.trustor_user_id.clone())
                 .project_id(tpi.project.id.clone())
@@ -554,7 +624,7 @@ async fn resolve_trust_roles(
         state
             .provider
             .get_role_provider()
-            .expand_implied_roles(state, &mut trust_roles)
+            .expand_implied_roles(&ExecutionContext::internal(state), &mut trust_roles)
             .await
             .auth_context("expanding implied roles for trust")?;
 
@@ -907,7 +977,7 @@ mod tests {
                     && q.domain_id.is_none()
                     && q.system_id.is_none()
             })
-            .returning(move |_state, _q| Ok(vec![assignment_with_role(rid1)]));
+            .returning(move |_e, _q| Ok(vec![assignment_with_role(rid1)]));
         let state = get_mocked_state(
             None,
             Some(Provider::mocked_builder().mock_assignment(assignment_mock)),
@@ -941,7 +1011,7 @@ mod tests {
                     && q.project_id.is_none()
                     && q.system_id.is_none()
             })
-            .returning(move |_state, _q| Ok(vec![assignment_with_role(rid1)]));
+            .returning(move |_e, _q| Ok(vec![assignment_with_role(rid1)]));
         let state = get_mocked_state(
             None,
             Some(Provider::mocked_builder().mock_assignment(assignment_mock)),
@@ -975,7 +1045,7 @@ mod tests {
                     && q.domain_id.is_none()
                     && q.project_id.is_none()
             })
-            .returning(move |_state, _q| Ok(vec![assignment_with_role(rid1)]));
+            .returning(move |_e, _q| Ok(vec![assignment_with_role(rid1)]));
         let state = get_mocked_state(
             None,
             Some(Provider::mocked_builder().mock_assignment(assignment_mock)),
@@ -1007,11 +1077,11 @@ mod tests {
                     && q.project_id.as_deref() == Some(pid)
                     && q.effective == Some(true)
             })
-            .returning(move |_state, _q| Ok(vec![assignment_with_role(rid1)]));
+            .returning(move |_e, _q| Ok(vec![assignment_with_role(rid1)]));
         let mut role_mock = MockRoleProvider::default();
         role_mock
             .expect_expand_implied_roles()
-            .returning(|_state, _roles| Ok(()));
+            .returning(|_e, _roles| Ok(()));
         let state = get_mocked_state(
             None,
             Some(
@@ -1046,7 +1116,7 @@ mod tests {
                     && q.project_id.as_deref() == Some(pid)
                     && q.effective == Some(true)
             })
-            .returning(move |_state, _q| Ok(vec![assignment_with_role("rid1")]));
+            .returning(move |_e, _q| Ok(vec![assignment_with_role("rid1")]));
         let state = get_mocked_state(
             None,
             Some(Provider::mocked_builder().mock_assignment(assignment_mock)),
@@ -1108,7 +1178,7 @@ mod tests {
                     && q.effective == Some(true)
                     && q.include_names == Some(true)
             })
-            .returning(move |_state, _q| Ok(vec![assignment_with_role(admin_rid)]));
+            .returning(move |_e, _q| Ok(vec![assignment_with_role(admin_rid)]));
         let ac = openstack_keystone_core_types::application_credential::ApplicationCredential {
             id: "ac1".to_string(),
             user_id: uid.to_string(),
@@ -1162,8 +1232,8 @@ mod tests {
         let mut role_mock = MockRoleProvider::default();
         role_mock
             .expect_expand_implied_roles()
-            .withf(move |_state, roles| roles.len() == 2 && roles.iter().any(|r| r.id == rid1))
-            .returning(move |_state, roles| {
+            .withf(move |_e, roles| roles.len() == 2 && roles.iter().any(|r| r.id == rid1))
+            .returning(move |_e, roles| {
                 for role in roles.iter_mut() {
                     if role.id == rid1 {
                         role.name = Some("admin".to_string());
@@ -1198,11 +1268,11 @@ mod tests {
                     && q.project_id.as_deref() == Some(pid)
                     && q.effective == Some(true)
             })
-            .returning(move |_state, _q| Ok(vec![assignment_with_role(trustor_rid)]));
+            .returning(move |_e, _q| Ok(vec![assignment_with_role(trustor_rid)]));
         let mut role_mock = MockRoleProvider::default();
         role_mock
             .expect_expand_implied_roles()
-            .returning(|_state, _roles| Ok(()));
+            .returning(|_e, _roles| Ok(()));
         let state = get_mocked_state(
             None,
             Some(
@@ -1242,13 +1312,13 @@ mod tests {
                     && q.project_id.as_deref() == Some(pid)
                     && q.effective == Some(true)
             })
-            .returning(move |_state, _q| {
+            .returning(move |_e, _q| {
                 Ok(vec![assignment_with_role(rid1), assignment_with_role(rid2)])
             });
         let mut role_mock = MockRoleProvider::default();
         role_mock
             .expect_expand_implied_roles()
-            .returning(|_state, _roles| Ok(()));
+            .returning(|_e, _roles| Ok(()));
         let state = get_mocked_state(
             None,
             Some(
@@ -1282,7 +1352,7 @@ mod tests {
                     && q.domain_id.as_deref() == Some(did)
                     && q.effective == Some(true)
             })
-            .returning(move |_state, _q| Ok(Vec::<Assignment>::new()));
+            .returning(move |_e, _q| Ok(Vec::<Assignment>::new()));
         let state = get_mocked_state(
             None,
             Some(Provider::mocked_builder().mock_assignment(assignment_mock)),
@@ -1402,7 +1472,7 @@ mod tests {
                     && q.effective == Some(true)
                     && q.include_names == Some(true)
             })
-            .returning(move |_state, _q| Ok(Vec::<Assignment>::new()));
+            .returning(move |_e, _q| Ok(Vec::<Assignment>::new()));
         let state = get_mocked_state(
             None,
             Some(Provider::mocked_builder().mock_assignment(assignment_mock)),
@@ -1434,7 +1504,7 @@ mod tests {
                     && q.effective == Some(true)
                     && q.include_names == Some(true)
             })
-            .returning(move |_state, _q| Ok(Vec::<Assignment>::new()));
+            .returning(move |_e, _q| Ok(Vec::<Assignment>::new()));
         let state = get_mocked_state(
             None,
             Some(Provider::mocked_builder().mock_assignment(assignment_mock)),
@@ -1469,7 +1539,7 @@ mod tests {
                     && q.effective == Some(true)
                     && q.include_names == Some(true)
             })
-            .returning(move |_state, _q| {
+            .returning(move |_e, _q| {
                 Ok(vec![
                     assignment_with_role(admin_rid),
                     assignment_with_role(viewer_rid),
@@ -1547,7 +1617,7 @@ mod tests {
                     && q.effective == Some(true)
                     && q.include_names == Some(true)
             })
-            .returning(move |_state, _q| Ok(vec![]));
+            .returning(move |_e, _q| Ok(vec![]));
         let state = get_mocked_state(
             None,
             Some(Provider::mocked_builder().mock_assignment(assignment_mock)),
@@ -1588,7 +1658,7 @@ mod tests {
                     && q.project_id.as_deref() == Some(pid)
                     && q.effective == Some(true)
             })
-            .returning(move |_state, _q| {
+            .returning(move |_e, _q| {
                 Ok(vec![
                     assignment_with_role_actor(base_rid, trustor),
                     assignment_with_role_actor(implied_rid, trustor),
@@ -1597,7 +1667,7 @@ mod tests {
         let mut role_mock = MockRoleProvider::default();
         role_mock
             .expect_expand_implied_roles()
-            .returning(move |_state, roles| {
+            .returning(move |_e, roles| {
                 roles.push(role_ref(implied_rid, "implied"));
                 Ok(())
             });
@@ -1636,7 +1706,7 @@ mod tests {
                     && q.domain_id.as_deref() == Some(did)
                     && q.effective == Some(true)
             })
-            .returning(move |_state, _q| Err(AssignmentProviderError::Driver("db down".into())));
+            .returning(move |_e, _q| Err(AssignmentProviderError::Driver("db down".into())));
         let state = get_mocked_state(
             None,
             Some(Provider::mocked_builder().mock_assignment(assignment_mock)),
@@ -1665,7 +1735,7 @@ mod tests {
                     && q.effective == Some(true)
                     && q.include_names == Some(true)
             })
-            .returning(move |_state, _q| Err(AssignmentProviderError::Driver("db down".into())));
+            .returning(move |_e, _q| Err(AssignmentProviderError::Driver("db down".into())));
         let state = get_mocked_state(
             None,
             Some(Provider::mocked_builder().mock_assignment(assignment_mock)),
@@ -1694,7 +1764,7 @@ mod tests {
                     && q.effective == Some(true)
                     && q.include_names == Some(true)
             })
-            .returning(move |_state, _q| Err(AssignmentProviderError::Driver("db down".into())));
+            .returning(move |_e, _q| Err(AssignmentProviderError::Driver("db down".into())));
         let state = get_mocked_state(
             None,
             Some(Provider::mocked_builder().mock_assignment(assignment_mock)),
@@ -1722,7 +1792,7 @@ mod tests {
                     && q.project_id.as_deref() == Some(pid)
                     && q.effective == Some(true)
             })
-            .returning(move |_state, _q| Err(AssignmentProviderError::Driver("db down".into())));
+            .returning(move |_e, _q| Err(AssignmentProviderError::Driver("db down".into())));
         let state = get_mocked_state(
             None,
             Some(Provider::mocked_builder().mock_assignment(assignment_mock)),
@@ -1752,11 +1822,11 @@ mod tests {
                     && q.project_id.as_deref() == Some(pid)
                     && q.effective == Some(true)
             })
-            .returning(move |_state, _q| Ok(vec![assignment_with_role(trust_rid)]));
+            .returning(move |_e, _q| Ok(vec![assignment_with_role(trust_rid)]));
         let mut role_mock = MockRoleProvider::default();
         role_mock
             .expect_expand_implied_roles()
-            .returning(move |_state, _roles| Err(RoleProviderError::Driver("db down".into())));
+            .returning(move |_e, _roles| Err(RoleProviderError::Driver("db down".into())));
         let state = get_mocked_state(
             None,
             Some(
@@ -1797,7 +1867,7 @@ mod tests {
         let mut role_mock = MockRoleProvider::default();
         role_mock
             .expect_expand_implied_roles()
-            .returning(move |_state, _roles| Err(RoleProviderError::Driver("db".into())));
+            .returning(move |_e, _roles| Err(RoleProviderError::Driver("db".into())));
         let state =
             get_mocked_state(None, Some(Provider::mocked_builder().mock_role(role_mock))).await;
         let scope = make_project_scope("pid");
@@ -1819,7 +1889,7 @@ mod tests {
                     && q.effective == Some(true)
                     && q.include_names == Some(true)
             })
-            .returning(move |_state, _q| Ok(vec![assignment_with_role("admin")]));
+            .returning(move |_e, _q| Ok(vec![assignment_with_role("admin")]));
         let ac = openstack_keystone_core_types::application_credential::ApplicationCredential {
             id: "ac1".to_string(),
             user_id: uid.to_string(),
@@ -1865,7 +1935,7 @@ mod tests {
                     && q.effective == Some(true)
                     && q.include_names == Some(true)
             })
-            .returning(move |_state, _q| Ok(vec![assignment_with_role("admin")]));
+            .returning(move |_e, _q| Ok(vec![assignment_with_role("admin")]));
         let ac = openstack_keystone_core_types::application_credential::ApplicationCredential {
             id: "ac1".to_string(),
             user_id: uid.to_string(),
@@ -1914,11 +1984,11 @@ mod tests {
                     && q.project_id.as_deref() == Some(pid)
                     && q.effective == Some(true)
             })
-            .returning(move |_state, _q| Ok(vec![assignment_with_role_actor(base_rid, trustor)]));
+            .returning(move |_e, _q| Ok(vec![assignment_with_role_actor(base_rid, trustor)]));
         let mut role_mock = MockRoleProvider::default();
         role_mock
             .expect_expand_implied_roles()
-            .returning(move |_state, roles| {
+            .returning(move |_e, roles| {
                 roles.push(role_ref(extra_rid, "extra"));
                 Ok(())
             });
@@ -1958,7 +2028,7 @@ mod tests {
                     && q.project_id.as_deref() == Some(pid)
                     && q.effective == Some(true)
             })
-            .returning(move |_state, _q| Ok(Vec::<Assignment>::new()));
+            .returning(move |_e, _q| Ok(Vec::<Assignment>::new()));
         let state = get_mocked_state(
             None,
             Some(Provider::mocked_builder().mock_assignment(assignment_mock)),
@@ -2008,7 +2078,7 @@ mod tests {
                     && q.effective == Some(true)
                     && q.include_names == Some(true)
             })
-            .returning(move |_state, _q| Ok(Vec::<Assignment>::new()));
+            .returning(move |_e, _q| Ok(Vec::<Assignment>::new()));
         let state = get_mocked_state(
             None,
             Some(Provider::mocked_builder().mock_assignment(assignment_mock)),
@@ -2074,7 +2144,7 @@ mod tests {
                     && q.domain_id.is_none()
                     && q.system_id.is_none()
             })
-            .returning(move |_state, _q| Ok(vec![assignment_with_role(rid)]));
+            .returning(move |_e, _q| Ok(vec![assignment_with_role(rid)]));
 
         let state = get_mocked_state(
             None,
@@ -2192,7 +2262,7 @@ mod tests {
         let mut mapping_mock = MockMappingProvider::new();
         mapping_mock
             .expect_get_virtual_user()
-            .returning(move |_state, id: &str| {
+            .returning(move |_e, id: &str| {
                 if id == vir_id {
                     Ok(Some(vu.clone()))
                 } else {
@@ -2262,7 +2332,7 @@ mod tests {
         let mut mapping_mock = MockMappingProvider::new();
         mapping_mock
             .expect_get_virtual_user()
-            .returning(move |_state, id: &str| {
+            .returning(move |_e, id: &str| {
                 if id == vir_id {
                     Ok(Some(vu.clone()))
                 } else {
@@ -2331,7 +2401,7 @@ mod tests {
         let mut mapping_mock = MockMappingProvider::new();
         mapping_mock
             .expect_get_virtual_user()
-            .returning(move |_state, id: &str| {
+            .returning(move |_e, id: &str| {
                 if id == vir_id {
                     Ok(Some(vu.clone()))
                 } else {
@@ -2403,7 +2473,7 @@ mod tests {
         let mut mapping_mock = MockMappingProvider::new();
         mapping_mock
             .expect_get_virtual_user()
-            .returning(move |_state, id: &str| {
+            .returning(move |_e, id: &str| {
                 if id == vir_id {
                     Ok(Some(vu.clone()))
                 } else {
@@ -2459,7 +2529,7 @@ mod tests {
         let mut mapping_mock = MockMappingProvider::new();
         mapping_mock
             .expect_get_virtual_user()
-            .returning(move |_state, _| Ok(None::<VirtualUser>));
+            .returning(move |_e, _| Ok(None::<VirtualUser>));
 
         let state = get_mocked_state(
             None,
@@ -2508,7 +2578,7 @@ mod tests {
         let mut mapping_mock = MockMappingProvider::new();
         mapping_mock
             .expect_get_virtual_user()
-            .returning(move |_state, id: &str| {
+            .returning(move |_e, id: &str| {
                 if id == vir_id {
                     Ok(Some(vu.clone()))
                 } else {
@@ -2581,7 +2651,7 @@ mod tests {
         let mut mapping_mock = MockMappingProvider::new();
         mapping_mock
             .expect_get_virtual_user()
-            .returning(move |_state, id: &str| {
+            .returning(move |_e, id: &str| {
                 if id == vir_id {
                     Ok(Some(vu.clone()))
                 } else {
@@ -2655,7 +2725,7 @@ mod tests {
         let mut mapping_mock = MockMappingProvider::new();
         mapping_mock
             .expect_get_virtual_user()
-            .returning(move |_state, id: &str| {
+            .returning(move |_e, id: &str| {
                 if id == vir_id {
                     Ok(Some(vu.clone()))
                 } else {

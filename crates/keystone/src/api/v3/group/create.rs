@@ -19,6 +19,7 @@ use super::types::{Group, GroupCreateRequest, GroupResponse};
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
+use openstack_keystone_core::auth::ExecutionContext;
 
 /// Create new user group.
 #[utoipa::path(
@@ -50,7 +51,7 @@ pub async fn create(
     let res = state
         .provider
         .get_identity_provider()
-        .create_group(&state, req.into())
+        .create_group(&ExecutionContext::from_auth(&state, &user_auth), req.into())
         .await?;
     Ok((
         StatusCode::CREATED,

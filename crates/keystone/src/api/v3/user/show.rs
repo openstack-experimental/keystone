@@ -24,6 +24,7 @@ use super::types::{User, UserResponse};
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
+use openstack_keystone_core::auth::ExecutionContext;
 
 /// Get single user
 #[utoipa::path(
@@ -45,7 +46,7 @@ pub(super) async fn show(
     let current = state
         .provider
         .get_identity_provider()
-        .get_user(&state, &user_id)
+        .get_user(&ExecutionContext::from_auth(&state, &user_auth), &user_id)
         .await?;
 
     state

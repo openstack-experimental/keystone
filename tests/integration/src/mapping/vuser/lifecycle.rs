@@ -16,7 +16,7 @@ use std::collections::HashMap;
 
 use eyre::Result;
 
-use openstack_keystone_core::mapping::MappingApi;
+use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core_types::auth::AuthenticationContext;
 use openstack_keystone_core_types::mapping::resolution::IdentitySource;
 use openstack_keystone_core_types::mapping::rule::{ClaimCondition, MatchCondition, MatchCriteria};
@@ -69,7 +69,7 @@ async fn test_virtual_user_lifecycle() -> Result<()> {
     let auth_result = state
         .provider
         .get_mapping_provider()
-        .authenticate_by_mapping(&state, &request)
+        .authenticate_by_mapping(&ExecutionContext::internal(&state), &request)
         .await?;
 
     let virtual_user_id = match auth_result.context {
@@ -80,7 +80,7 @@ async fn test_virtual_user_lifecycle() -> Result<()> {
     let vu = state
         .provider
         .get_mapping_provider()
-        .get_virtual_user(&state, &virtual_user_id)
+        .get_virtual_user(&ExecutionContext::internal(&state), &virtual_user_id)
         .await?
         .expect("virtual user should exist");
     assert!(vu.enabled);
@@ -88,14 +88,14 @@ async fn test_virtual_user_lifecycle() -> Result<()> {
     let disabled_vu = state
         .provider
         .get_mapping_provider()
-        .disable_virtual_user(&state, &virtual_user_id)
+        .disable_virtual_user(&ExecutionContext::internal(&state), &virtual_user_id)
         .await?;
     assert!(!disabled_vu.enabled);
 
     let vu_check = state
         .provider
         .get_mapping_provider()
-        .get_virtual_user(&state, &virtual_user_id)
+        .get_virtual_user(&ExecutionContext::internal(&state), &virtual_user_id)
         .await?
         .expect("virtual user should still exist");
     assert!(!vu_check.enabled);
@@ -103,14 +103,14 @@ async fn test_virtual_user_lifecycle() -> Result<()> {
     let enabled_vu = state
         .provider
         .get_mapping_provider()
-        .enable_virtual_user(&state, &virtual_user_id)
+        .enable_virtual_user(&ExecutionContext::internal(&state), &virtual_user_id)
         .await?;
     assert!(enabled_vu.enabled);
 
     let vu_final = state
         .provider
         .get_mapping_provider()
-        .get_virtual_user(&state, &virtual_user_id)
+        .get_virtual_user(&ExecutionContext::internal(&state), &virtual_user_id)
         .await?
         .expect("virtual user should still exist");
     assert!(vu_final.enabled);
@@ -159,7 +159,7 @@ async fn test_virtual_user_lifecycle_global() -> Result<()> {
     let auth_result = state
         .provider
         .get_mapping_provider()
-        .authenticate_by_mapping(&state, &request)
+        .authenticate_by_mapping(&ExecutionContext::internal(&state), &request)
         .await?;
 
     let virtual_user_id = match auth_result.context {
@@ -170,7 +170,7 @@ async fn test_virtual_user_lifecycle_global() -> Result<()> {
     let vu = state
         .provider
         .get_mapping_provider()
-        .get_virtual_user(&state, &virtual_user_id)
+        .get_virtual_user(&ExecutionContext::internal(&state), &virtual_user_id)
         .await?
         .expect("virtual user should exist");
     assert!(vu.enabled);
@@ -179,14 +179,14 @@ async fn test_virtual_user_lifecycle_global() -> Result<()> {
     let disabled_vu = state
         .provider
         .get_mapping_provider()
-        .disable_virtual_user(&state, &virtual_user_id)
+        .disable_virtual_user(&ExecutionContext::internal(&state), &virtual_user_id)
         .await?;
     assert!(!disabled_vu.enabled);
 
     let vu_check = state
         .provider
         .get_mapping_provider()
-        .get_virtual_user(&state, &virtual_user_id)
+        .get_virtual_user(&ExecutionContext::internal(&state), &virtual_user_id)
         .await?
         .expect("virtual user should still exist");
     assert!(!vu_check.enabled);
@@ -194,14 +194,14 @@ async fn test_virtual_user_lifecycle_global() -> Result<()> {
     let enabled_vu = state
         .provider
         .get_mapping_provider()
-        .enable_virtual_user(&state, &virtual_user_id)
+        .enable_virtual_user(&ExecutionContext::internal(&state), &virtual_user_id)
         .await?;
     assert!(enabled_vu.enabled);
 
     let vu_final = state
         .provider
         .get_mapping_provider()
-        .get_virtual_user(&state, &virtual_user_id)
+        .get_virtual_user(&ExecutionContext::internal(&state), &virtual_user_id)
         .await?
         .expect("virtual user should still exist");
     assert!(vu_final.enabled);

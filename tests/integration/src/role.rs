@@ -19,7 +19,7 @@ use eyre::Result;
 
 use openstack_keystone::keystone::Service;
 use openstack_keystone::keystone::ServiceState;
-use openstack_keystone::role::RoleApi;
+use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core_types::role::*;
 
 use crate::common::*;
@@ -38,7 +38,7 @@ pub async fn create_role(
     let res = state
         .provider
         .get_role_provider()
-        .create_role(state, data)
+        .create_role(&ExecutionContext::internal(&state), data)
         .await
         .unwrap();
     Ok(AsyncResourceGuard::new(res, state.clone()))

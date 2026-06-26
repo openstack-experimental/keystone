@@ -18,7 +18,7 @@ use eyre::Result;
 use tracing_test::traced_test;
 use uuid::Uuid;
 
-use openstack_keystone::identity::IdentityApi;
+use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core_types::auth::AuthenticationError;
 use openstack_keystone_core_types::identity::*;
 
@@ -37,7 +37,7 @@ async fn test_update_password_basic() -> Result<()> {
     let prov = state.provider.get_identity_provider();
 
     prov.create_user(
-        &state,
+        &ExecutionContext::internal(&state),
         UserCreateBuilder::default()
             .id(&uid)
             .name("testuser")
@@ -51,7 +51,7 @@ async fn test_update_password_basic() -> Result<()> {
     // Old password works
     let auth = prov
         .authenticate_by_password(
-            &state,
+            &ExecutionContext::internal(&state),
             &UserPasswordAuthRequestBuilder::default()
                 .id(&uid)
                 .password("old_pass")
@@ -62,7 +62,7 @@ async fn test_update_password_basic() -> Result<()> {
 
     // Update password
     prov.update_user(
-        &state,
+        &ExecutionContext::internal(&state),
         &uid,
         UserUpdateBuilder::default().password("new_pass").build()?,
     )
@@ -71,7 +71,7 @@ async fn test_update_password_basic() -> Result<()> {
     // Old password is rejected
     match prov
         .authenticate_by_password(
-            &state,
+            &ExecutionContext::internal(&state),
             &UserPasswordAuthRequestBuilder::default()
                 .id(&uid)
                 .password("old_pass")
@@ -90,7 +90,7 @@ async fn test_update_password_basic() -> Result<()> {
     // New password works
     let auth = prov
         .authenticate_by_password(
-            &state,
+            &ExecutionContext::internal(&state),
             &UserPasswordAuthRequestBuilder::default()
                 .id(&uid)
                 .password("new_pass")
@@ -113,7 +113,7 @@ async fn test_update_password_with_expiry() -> Result<()> {
     let prov = state.provider.get_identity_provider();
 
     prov.create_user(
-        &state,
+        &ExecutionContext::internal(&state),
         UserCreateBuilder::default()
             .id(&uid)
             .name("testuser")
@@ -126,7 +126,10 @@ async fn test_update_password_with_expiry() -> Result<()> {
 
     // Check expires_at after create
     let now_create = Utc::now();
-    let user = prov.get_user(&state, &uid).await?.expect("user found");
+    let user = prov
+        .get_user(&ExecutionContext::internal(&state), &uid)
+        .await?
+        .expect("user found");
     assert!(
         user.password_expires_at.is_some(),
         "expires_at should be set after create"
@@ -135,7 +138,7 @@ async fn test_update_password_with_expiry() -> Result<()> {
 
     // Update password
     prov.update_user(
-        &state,
+        &ExecutionContext::internal(&state),
         &uid,
         UserUpdateBuilder::default().password("new_pass").build()?,
     )
@@ -143,7 +146,10 @@ async fn test_update_password_with_expiry() -> Result<()> {
 
     // Check expires_at after update — should be ~90 days from update time
     let now_update = Utc::now();
-    let user = prov.get_user(&state, &uid).await?.expect("user found");
+    let user = prov
+        .get_user(&ExecutionContext::internal(&state), &uid)
+        .await?
+        .expect("user found");
     assert!(
         user.password_expires_at.is_some(),
         "expires_at should still be set after update"
@@ -153,7 +159,7 @@ async fn test_update_password_with_expiry() -> Result<()> {
     // New password works
     let auth = prov
         .authenticate_by_password(
-            &state,
+            &ExecutionContext::internal(&state),
             &UserPasswordAuthRequestBuilder::default()
                 .id(&uid)
                 .password("new_pass")
@@ -176,7 +182,7 @@ async fn test_update_password_no_expiry_configured() -> Result<()> {
 
     // Create user with password (default config: no expiry)
     prov.create_user(
-        &state,
+        &ExecutionContext::internal(&state),
         UserCreateBuilder::default()
             .id(&uid)
             .name("testuser")
@@ -187,7 +193,10 @@ async fn test_update_password_no_expiry_configured() -> Result<()> {
     )
     .await?;
 
-    let user = prov.get_user(&state, &uid).await?.expect("user found");
+    let user = prov
+        .get_user(&ExecutionContext::internal(&state), &uid)
+        .await?
+        .expect("user found");
     assert!(
         user.password_expires_at.is_none(),
         "expires_at should be None without config"
@@ -195,14 +204,17 @@ async fn test_update_password_no_expiry_configured() -> Result<()> {
 
     // Update password
     prov.update_user(
-        &state,
+        &ExecutionContext::internal(&state),
         &uid,
         UserUpdateBuilder::default().password("new_pass").build()?,
     )
     .await?;
 
     // Still no expiry
-    let user = prov.get_user(&state, &uid).await?.expect("user found");
+    let user = prov
+        .get_user(&ExecutionContext::internal(&state), &uid)
+        .await?
+        .expect("user found");
     assert!(
         user.password_expires_at.is_none(),
         "expires_at should still be None after update"
@@ -223,7 +235,7 @@ async fn test_update_password_with_history() -> Result<()> {
 
     // Create with pass1
     prov.create_user(
-        &state,
+        &ExecutionContext::internal(&state),
         UserCreateBuilder::default()
             .id(&uid)
             .name("testuser")
@@ -237,7 +249,7 @@ async fn test_update_password_with_history() -> Result<()> {
     // pass1 works
     let auth = prov
         .authenticate_by_password(
-            &state,
+            &ExecutionContext::internal(&state),
             &UserPasswordAuthRequestBuilder::default()
                 .id(&uid)
                 .password("pass1")
@@ -248,7 +260,7 @@ async fn test_update_password_with_history() -> Result<()> {
 
     // Update to pass2
     prov.update_user(
-        &state,
+        &ExecutionContext::internal(&state),
         &uid,
         UserUpdateBuilder::default().password("pass2").build()?,
     )
@@ -257,7 +269,7 @@ async fn test_update_password_with_history() -> Result<()> {
     // pass1 rejected
     match prov
         .authenticate_by_password(
-            &state,
+            &ExecutionContext::internal(&state),
             &UserPasswordAuthRequestBuilder::default()
                 .id(&uid)
                 .password("pass1")
@@ -276,7 +288,7 @@ async fn test_update_password_with_history() -> Result<()> {
     // pass2 accepted
     let auth = prov
         .authenticate_by_password(
-            &state,
+            &ExecutionContext::internal(&state),
             &UserPasswordAuthRequestBuilder::default()
                 .id(&uid)
                 .password("pass2")
@@ -299,7 +311,7 @@ async fn test_update_name_and_password_combined() -> Result<()> {
 
     // Create user
     prov.create_user(
-        &state,
+        &ExecutionContext::internal(&state),
         UserCreateBuilder::default()
             .id(&uid)
             .name("old_name")
@@ -313,7 +325,7 @@ async fn test_update_name_and_password_combined() -> Result<()> {
     // Update both name and password
     let updated = prov
         .update_user(
-            &state,
+            &ExecutionContext::internal(&state),
             &uid,
             UserUpdateBuilder::default()
                 .name("new_name")
@@ -326,7 +338,7 @@ async fn test_update_name_and_password_combined() -> Result<()> {
     // Old password rejected
     match prov
         .authenticate_by_password(
-            &state,
+            &ExecutionContext::internal(&state),
             &UserPasswordAuthRequestBuilder::default()
                 .id(&uid)
                 .password("old_pass")
@@ -345,7 +357,7 @@ async fn test_update_name_and_password_combined() -> Result<()> {
     // New password works
     let auth = prov
         .authenticate_by_password(
-            &state,
+            &ExecutionContext::internal(&state),
             &UserPasswordAuthRequestBuilder::default()
                 .id(&uid)
                 .password("new_pass")
@@ -369,7 +381,7 @@ async fn test_update_password_with_expiry_and_history() -> Result<()> {
 
     // Create with pass1
     prov.create_user(
-        &state,
+        &ExecutionContext::internal(&state),
         UserCreateBuilder::default()
             .id(&uid)
             .name("testuser")
@@ -382,7 +394,7 @@ async fn test_update_password_with_expiry_and_history() -> Result<()> {
 
     // Update to pass2
     prov.update_user(
-        &state,
+        &ExecutionContext::internal(&state),
         &uid,
         UserUpdateBuilder::default().password("pass2").build()?,
     )
@@ -391,7 +403,7 @@ async fn test_update_password_with_expiry_and_history() -> Result<()> {
     // pass1 rejected
     match prov
         .authenticate_by_password(
-            &state,
+            &ExecutionContext::internal(&state),
             &UserPasswordAuthRequestBuilder::default()
                 .id(&uid)
                 .password("pass1")
@@ -410,7 +422,7 @@ async fn test_update_password_with_expiry_and_history() -> Result<()> {
     // pass2 accepted
     let auth = prov
         .authenticate_by_password(
-            &state,
+            &ExecutionContext::internal(&state),
             &UserPasswordAuthRequestBuilder::default()
                 .id(&uid)
                 .password("pass2")
@@ -421,7 +433,10 @@ async fn test_update_password_with_expiry_and_history() -> Result<()> {
 
     // expires_at ≈ 90d from update
     let now = Utc::now();
-    let user = prov.get_user(&state, &uid).await?.expect("user found");
+    let user = prov
+        .get_user(&ExecutionContext::internal(&state), &uid)
+        .await?
+        .expect("user found");
     assert_expires_at_approx(user.password_expires_at.as_ref(), now, 90);
 
     Ok(())
@@ -438,7 +453,7 @@ async fn test_update_password_expiry_config_change() -> Result<()> {
 
     // Create with default config (no expiry)
     prov.create_user(
-        &state,
+        &ExecutionContext::internal(&state),
         UserCreateBuilder::default()
             .id(&uid)
             .name("testuser")
@@ -449,7 +464,10 @@ async fn test_update_password_expiry_config_change() -> Result<()> {
     )
     .await?;
 
-    let user = prov.get_user(&state, &uid).await?.expect("user found");
+    let user = prov
+        .get_user(&ExecutionContext::internal(&state), &uid)
+        .await?
+        .expect("user found");
     assert!(
         user.password_expires_at.is_none(),
         "expires_at should be None without config"
@@ -459,7 +477,7 @@ async fn test_update_password_expiry_config_change() -> Result<()> {
     setup_test_config(&state, Some(90), None).await;
 
     prov.update_user(
-        &state,
+        &ExecutionContext::internal(&state),
         &uid,
         UserUpdateBuilder::default().password("new_pass").build()?,
     )
@@ -467,7 +485,10 @@ async fn test_update_password_expiry_config_change() -> Result<()> {
 
     // Now expires_at should be set
     let now = Utc::now();
-    let user = prov.get_user(&state, &uid).await?.expect("user found");
+    let user = prov
+        .get_user(&ExecutionContext::internal(&state), &uid)
+        .await?
+        .expect("user found");
     assert!(
         user.password_expires_at.is_some(),
         "expires_at should be set after config change + update"
@@ -477,7 +498,7 @@ async fn test_update_password_expiry_config_change() -> Result<()> {
     // New password works
     let auth = prov
         .authenticate_by_password(
-            &state,
+            &ExecutionContext::internal(&state),
             &UserPasswordAuthRequestBuilder::default()
                 .id(&uid)
                 .password("new_pass")

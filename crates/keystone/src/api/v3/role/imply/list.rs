@@ -27,6 +27,7 @@ use openstack_keystone_api_types::v3::role::{ImplyGroup, RoleInferenceRules};
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
+use openstack_keystone_core::auth::ExecutionContext;
 
 /// List role imply rules for a prior role.
 #[utoipa::path(
@@ -74,7 +75,10 @@ pub(super) async fn list(
     let all_rules = state
         .provider
         .get_role_provider()
-        .list_role_imply_rules_by_prior(&state, &prior_role_id)
+        .list_role_imply_rules_by_prior(
+            &ExecutionContext::from_auth(&state, &user_auth),
+            &prior_role_id,
+        )
         .await?;
 
     // Get the prior role reference from the first match or resolve via get_role
@@ -84,7 +88,10 @@ pub(super) async fn list(
         let role = state
             .provider
             .get_role_provider()
-            .get_role(&state, &prior_role_id)
+            .get_role(
+                &ExecutionContext::from_auth(&state, &user_auth),
+                &prior_role_id,
+            )
             .await?;
         if let Some(role) = role {
             let role_ref: openstack_keystone_core_types::role::RoleRef = role.into();

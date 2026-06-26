@@ -27,6 +27,7 @@ use validator::Validate;
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
+use openstack_keystone_core::auth::ExecutionContext;
 
 /// Update a mapping ruleset.
 #[utoipa::path(
@@ -60,7 +61,10 @@ pub(super) async fn update(
     let current = state
         .provider
         .get_mapping_provider()
-        .get_ruleset(&state, &mapping_id)
+        .get_ruleset(
+            &ExecutionContext::from_auth(&state, &user_auth),
+            &mapping_id,
+        )
         .await?
         .ok_or_else(|| KeystoneApiError::NotFound {
             resource: "mapping ruleset".into(),
@@ -80,7 +84,11 @@ pub(super) async fn update(
     let res = state
         .provider
         .get_mapping_provider()
-        .update_ruleset(&state, &mapping_id, req.mapping.into())
+        .update_ruleset(
+            &ExecutionContext::from_auth(&state, &user_auth),
+            &mapping_id,
+            req.mapping.into(),
+        )
         .await?;
 
     Ok((

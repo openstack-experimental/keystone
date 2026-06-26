@@ -18,7 +18,7 @@ use std::collections::HashMap;
 use eyre::Result;
 use tracing_test::traced_test;
 
-use openstack_keystone_core::catalog::CatalogApi;
+use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core_types::catalog::RegionCreate;
 
 use crate::catalog::create_region;
@@ -85,7 +85,7 @@ async fn test_create_description_too_long() -> Result<()> {
         .provider
         .get_catalog_provider()
         .create_region(
-            &state,
+            &ExecutionContext::internal(&state),
             RegionCreate {
                 id: None,
                 description: Some(too_long),

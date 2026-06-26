@@ -23,6 +23,7 @@ use serde_json::json;
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
+use openstack_keystone_core::auth::ExecutionContext;
 
 /// Delete K8s auth instance.
 ///
@@ -55,7 +56,7 @@ pub(super) async fn remove(
     let current = state
         .provider
         .get_k8s_auth_provider()
-        .get_auth_instance(&state, &id)
+        .get_auth_instance(&ExecutionContext::from_auth(&state, &user_auth), &id)
         .await?;
 
     state
@@ -72,7 +73,7 @@ pub(super) async fn remove(
         state
             .provider
             .get_k8s_auth_provider()
-            .delete_auth_instance(&state, &id)
+            .delete_auth_instance(&ExecutionContext::from_auth(&state, &user_auth), &id)
             .await?;
     } else {
         return Err(KeystoneApiError::NotFound {

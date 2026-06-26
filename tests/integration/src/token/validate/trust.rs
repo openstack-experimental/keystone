@@ -21,10 +21,9 @@ use tracing_test::traced_test;
 use openstack_keystone_trust_driver_sql::entity::{trust as db_trust, trust_role as db_trust_role};
 
 use openstack_keystone::keystone::Service;
-use openstack_keystone::resource::ResourceApi;
 use openstack_keystone::token::{FernetToken, TokenApi, TokenProviderError};
-use openstack_keystone::trust::TrustApi;
 use openstack_keystone_api_types::v3::auth::token::TokenBuilder;
+use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core_types::auth::*;
 use openstack_keystone_core_types::trust::*;
 
@@ -75,7 +74,7 @@ async fn get_trust<U: AsRef<str>>(state: &Arc<Service>, id: U) -> Result<Option<
     Ok(state
         .provider
         .get_trust_provider()
-        .get_trust(state, id.as_ref())
+        .get_trust(&ExecutionContext::internal(&state), id.as_ref())
         .await?)
 }
 
@@ -122,13 +121,19 @@ async fn test_valid() -> Result<(), Report> {
     let trust_project = state
         .provider
         .get_resource_provider()
-        .get_project(&state, &trust.project_id.clone().unwrap())
+        .get_project(
+            &ExecutionContext::internal(&state),
+            &trust.project_id.clone().unwrap(),
+        )
         .await?
         .expect("trust project exists");
     let project_domain = state
         .provider
         .get_resource_provider()
-        .get_domain(&state, &trust_project.domain_id)
+        .get_domain(
+            &ExecutionContext::internal(&state),
+            &trust_project.domain_id,
+        )
         .await?
         .expect("trust project domain exists");
 
@@ -136,7 +141,7 @@ async fn test_valid() -> Result<(), Report> {
         .provider
         .get_token_provider()
         .issue_token_context(
-            &state,
+            &ExecutionContext::internal(&state),
             &ctx,
             &ScopeInfo::TrustProject(Box::new(TrustProjectInfo {
                 trust: trust.clone(),
@@ -154,7 +159,12 @@ async fn test_valid() -> Result<(), Report> {
     let vsc_result = state
         .provider
         .get_token_provider()
-        .validate_to_context(&state, &encoded_token, None, None)
+        .validate_to_context(
+            &ExecutionContext::internal(&state),
+            &encoded_token,
+            None,
+            None,
+        )
         .await;
 
     if let Ok(ref vsc_result) = vsc_result {
@@ -228,13 +238,19 @@ async fn test_valid_redelegated() -> Result<(), Report> {
     let trust_project = state
         .provider
         .get_resource_provider()
-        .get_project(&state, &trust.project_id.clone().unwrap())
+        .get_project(
+            &ExecutionContext::internal(&state),
+            &trust.project_id.clone().unwrap(),
+        )
         .await?
         .expect("trust project exists");
     let project_domain = state
         .provider
         .get_resource_provider()
-        .get_domain(&state, &trust_project.domain_id)
+        .get_domain(
+            &ExecutionContext::internal(&state),
+            &trust_project.domain_id,
+        )
         .await?
         .expect("trust project domain exists");
 
@@ -242,7 +258,7 @@ async fn test_valid_redelegated() -> Result<(), Report> {
         .provider
         .get_token_provider()
         .issue_token_context(
-            &state,
+            &ExecutionContext::internal(&state),
             &ctx,
             &ScopeInfo::TrustProject(Box::new(TrustProjectInfo {
                 trust: trust.clone(),
@@ -260,7 +276,12 @@ async fn test_valid_redelegated() -> Result<(), Report> {
     let vsc_result = state
         .provider
         .get_token_provider()
-        .validate_to_context(&state, &encoded_token, None, None)
+        .validate_to_context(
+            &ExecutionContext::internal(&state),
+            &encoded_token,
+            None,
+            None,
+        )
         .await;
 
     if let Ok(ref vsc_result) = vsc_result {
@@ -334,13 +355,19 @@ async fn test_fewer_roles() -> Result<(), Report> {
     let trust_project = state
         .provider
         .get_resource_provider()
-        .get_project(&state, &trust.project_id.clone().unwrap())
+        .get_project(
+            &ExecutionContext::internal(&state),
+            &trust.project_id.clone().unwrap(),
+        )
         .await?
         .expect("trust project exists");
     let project_domain = state
         .provider
         .get_resource_provider()
-        .get_domain(&state, &trust_project.domain_id)
+        .get_domain(
+            &ExecutionContext::internal(&state),
+            &trust_project.domain_id,
+        )
         .await?
         .expect("trust project domain exists");
 
@@ -348,7 +375,7 @@ async fn test_fewer_roles() -> Result<(), Report> {
         .provider
         .get_token_provider()
         .issue_token_context(
-            &state,
+            &ExecutionContext::internal(&state),
             &ctx,
             &ScopeInfo::TrustProject(Box::new(TrustProjectInfo {
                 trust: trust.clone(),
@@ -368,7 +395,12 @@ async fn test_fewer_roles() -> Result<(), Report> {
     let unpacked_token = state
         .provider
         .get_token_provider()
-        .validate_to_context(&state, &encoded_token, None, None)
+        .validate_to_context(
+            &ExecutionContext::internal(&state),
+            &encoded_token,
+            None,
+            None,
+        )
         .await;
 
     if let Err(TokenProviderError::Authentication(AuthenticationError::ActorHasNoRolesOnTarget)) =
@@ -431,13 +463,19 @@ async fn test_exclude_local_roles() -> Result<(), Report> {
     let trust_project = state
         .provider
         .get_resource_provider()
-        .get_project(&state, &trust.project_id.clone().unwrap())
+        .get_project(
+            &ExecutionContext::internal(&state),
+            &trust.project_id.clone().unwrap(),
+        )
         .await?
         .expect("trust project exists");
     let project_domain = state
         .provider
         .get_resource_provider()
-        .get_domain(&state, &trust_project.domain_id)
+        .get_domain(
+            &ExecutionContext::internal(&state),
+            &trust_project.domain_id,
+        )
         .await?
         .expect("trust project domain exists");
 
@@ -445,7 +483,7 @@ async fn test_exclude_local_roles() -> Result<(), Report> {
         .provider
         .get_token_provider()
         .issue_token_context(
-            &state,
+            &ExecutionContext::internal(&state),
             &ctx,
             &ScopeInfo::TrustProject(Box::new(TrustProjectInfo {
                 trust: trust.clone(),
@@ -463,7 +501,12 @@ async fn test_exclude_local_roles() -> Result<(), Report> {
     let vsc_result = state
         .provider
         .get_token_provider()
-        .validate_to_context(&state, &encoded_token, None, None)
+        .validate_to_context(
+            &ExecutionContext::internal(&state),
+            &encoded_token,
+            None,
+            None,
+        )
         .await;
 
     if let Ok(ref vsc_result) = vsc_result {
@@ -549,13 +592,19 @@ async fn test_trust_populated_in_api_token_response() -> Result<(), Report> {
     let trust_project = state
         .provider
         .get_resource_provider()
-        .get_project(&state, &trust.project_id.clone().unwrap())
+        .get_project(
+            &ExecutionContext::internal(&state),
+            &trust.project_id.clone().unwrap(),
+        )
         .await?
         .expect("trust project exists");
     let project_domain = state
         .provider
         .get_resource_provider()
-        .get_domain(&state, &trust_project.domain_id)
+        .get_domain(
+            &ExecutionContext::internal(&state),
+            &trust_project.domain_id,
+        )
         .await?
         .expect("trust project domain exists");
 
@@ -563,7 +612,7 @@ async fn test_trust_populated_in_api_token_response() -> Result<(), Report> {
         .provider
         .get_token_provider()
         .issue_token_context(
-            &state,
+            &ExecutionContext::internal(&state),
             &ctx,
             &ScopeInfo::TrustProject(Box::new(TrustProjectInfo {
                 trust: trust.clone(),

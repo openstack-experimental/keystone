@@ -29,7 +29,7 @@ use openstack_keystone_core_types::mapping::auth::MappingAuthRequest;
 use openstack_keystone_core_types::mapping::resolution::IdentitySource;
 
 use crate::api::KeystoneApiError;
-use crate::auth::ValidatedSecurityContext;
+use crate::auth::{ExecutionContext, ValidatedSecurityContext};
 use crate::keystone::ServiceState;
 
 #[derive(Debug, Clone)]
@@ -135,7 +135,10 @@ where
             let result = state
                 .provider
                 .get_mapping_provider()
-                .authenticate_by_mapping(&state, &flat_spiffe_claims(svid))
+                .authenticate_by_mapping(
+                    &ExecutionContext::internal(&state),
+                    &flat_spiffe_claims(svid),
+                )
                 .await?;
             let ctx = SecurityContext::try_from(result)?;
             let vsc =
@@ -153,7 +156,12 @@ where
             let vsc = state
                 .provider
                 .get_token_provider()
-                .authorize_by_token(&state, auth_header, Some(false), None)
+                .authorize_by_token(
+                    &ExecutionContext::internal(&state),
+                    auth_header,
+                    Some(false),
+                    None,
+                )
                 .await
                 .inspect_err(|e| error!("{:#?}", e))
                 .map_err(|_| KeystoneApiError::UnauthorizedNoContext)?;
@@ -298,7 +306,7 @@ mod tests {
         let config_manager = ConfigManager::not_watched(config);
 
         let mut role_mock = MockRoleProvider::new();
-        role_mock.expect_list_roles().returning(|_, params| {
+        role_mock.expect_list_roles().returning(|_e, params| {
             let name = params
                 .name
                 .clone()
@@ -456,7 +464,7 @@ mod tests {
         let config_manager = ConfigManager::not_watched(config);
 
         let mut role_mock = MockRoleProvider::new();
-        role_mock.expect_list_roles().returning(|_, params| {
+        role_mock.expect_list_roles().returning(|_e, params| {
             let name = params
                 .name
                 .clone()
@@ -507,7 +515,7 @@ mod tests {
 
         let mut token_mock = MockTokenProvider::new();
         token_mock.expect_authorize_by_token().once().returning(
-            move |_state, _token, _allow_rescope, _restrict_to| {
+            move |_exec, _token, _allow_rescope, _restrict_to| {
                 let mut security_context = SecurityContextTestingBuilder::default()
                     .authentication_context(AuthenticationContext::Password)
                     .principal(

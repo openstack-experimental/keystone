@@ -22,6 +22,7 @@ use validator::Validate;
 
 use openstack_keystone_api_types::error::KeystoneApiError;
 use openstack_keystone_core::api::auth::Auth;
+use openstack_keystone_core::auth::ExecutionContext;
 
 use crate::{
     WebauthnError,
@@ -61,7 +62,7 @@ pub(super) async fn finish(
         .core
         .provider
         .get_identity_provider()
-        .get_user(&state.core, &user_id)
+        .get_user(&ExecutionContext::internal(&state.core), &user_id)
         .await
         .map(|x| {
             x.ok_or_else(|| KeystoneApiError::NotFound {
@@ -84,7 +85,10 @@ pub(super) async fn finish(
     let Some(s) = state
         .extension
         .provider
-        .get_user_webauthn_credential_registration_state(&state.core, &user_id)
+        .get_user_webauthn_credential_registration_state(
+            &ExecutionContext::internal(&state.core),
+            &user_id,
+        )
         .await?
     else {
         return Err(KeystoneApiError::UnauthorizedNoContext);
@@ -102,7 +106,10 @@ pub(super) async fn finish(
     state
         .extension
         .provider
-        .delete_user_webauthn_credential_registration_state(&state.core, &user_id)
+        .delete_user_webauthn_credential_registration_state(
+            &ExecutionContext::internal(&state.core),
+            &user_id,
+        )
         .await?;
 
     let passkey = match state
@@ -116,7 +123,7 @@ pub(super) async fn finish(
             state
                 .extension
                 .provider
-                .create_user_webauthn_credential(&state.core, &cred)
+                .create_user_webauthn_credential(&ExecutionContext::internal(&state.core), &cred)
                 .await?
         }
         Err(err) => {

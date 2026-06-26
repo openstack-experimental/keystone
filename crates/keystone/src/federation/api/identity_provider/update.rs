@@ -26,6 +26,7 @@ use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
 use crate::federation::api::types::*;
 use crate::keystone::ServiceState;
+use openstack_keystone_core::auth::ExecutionContext;
 
 /// Update single identity provider.
 ///
@@ -61,7 +62,7 @@ pub(super) async fn update(
     let current = state
         .provider
         .get_federation_provider()
-        .get_identity_provider(&state, &idp_id)
+        .get_identity_provider(&ExecutionContext::from_auth(&state, &user_auth), &idp_id)
         .await?;
 
     state
@@ -77,7 +78,11 @@ pub(super) async fn update(
     let res = state
         .provider
         .get_federation_provider()
-        .update_identity_provider(&state, &idp_id, req.into())
+        .update_identity_provider(
+            &ExecutionContext::from_auth(&state, &user_auth),
+            &idp_id,
+            req.into(),
+        )
         .await?;
     Ok((
         StatusCode::OK,

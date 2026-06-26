@@ -18,7 +18,7 @@ use tracing_test::traced_test;
 use uuid::Uuid;
 
 use chrono::Utc;
-use openstack_keystone::identity::IdentityApi;
+use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core_types::auth::AuthenticationError;
 use openstack_keystone_core_types::identity::*;
 
@@ -38,7 +38,7 @@ async fn test_create_local_with_password() -> Result<()> {
         .provider
         .get_identity_provider()
         .create_user(
-            &state,
+            &ExecutionContext::internal(&state),
             UserCreateBuilder::default()
                 .id(&uid)
                 .name("name")
@@ -71,7 +71,7 @@ async fn test_create_local_with_no_password() -> Result<()> {
         .provider
         .get_identity_provider()
         .create_user(
-            &state,
+            &ExecutionContext::internal(&state),
             UserCreateBuilder::default()
                 .id(&uid)
                 .name("name")
@@ -103,7 +103,7 @@ async fn test_create_with_password_and_expiry_days() -> eyre::Result<()> {
     let prov = state.provider.get_identity_provider();
     let user = prov
         .create_user(
-            &state,
+            &ExecutionContext::internal(&state),
             UserCreateBuilder::default()
                 .id(&uid)
                 .name("testuser")
@@ -134,7 +134,7 @@ async fn test_create_with_password_and_authenticate() -> Result<()> {
 
     let prov = state.provider.get_identity_provider();
     prov.create_user(
-        &state,
+        &ExecutionContext::internal(&state),
         UserCreateBuilder::default()
             .id(&uid)
             .name("testuser")
@@ -148,7 +148,7 @@ async fn test_create_with_password_and_authenticate() -> Result<()> {
     // Authenticate with the created password
     let auth = prov
         .authenticate_by_password(
-            &state,
+            &ExecutionContext::internal(&state),
             &UserPasswordAuthRequestBuilder::default()
                 .id(&uid)
                 .password("initial")
@@ -173,7 +173,7 @@ async fn test_create_with_password_and_unique_count() -> Result<()> {
 
     let prov = state.provider.get_identity_provider();
     prov.create_user(
-        &state,
+        &ExecutionContext::internal(&state),
         UserCreateBuilder::default()
             .id(&uid)
             .name("testuser")
@@ -187,7 +187,7 @@ async fn test_create_with_password_and_unique_count() -> Result<()> {
     // Authenticate with the created password (should still work)
     let auth = prov
         .authenticate_by_password(
-            &state,
+            &ExecutionContext::internal(&state),
             &UserPasswordAuthRequestBuilder::default()
                 .id(&uid)
                 .password("initial")
@@ -212,7 +212,7 @@ async fn test_create_disabled_user_with_password() -> Result<()> {
     let prov = state.provider.get_identity_provider();
     let user = prov
         .create_user(
-            &state,
+            &ExecutionContext::internal(&state),
             UserCreateBuilder::default()
                 .id(&uid)
                 .name("disabled_user")
@@ -228,7 +228,7 @@ async fn test_create_disabled_user_with_password() -> Result<()> {
     // Try to authenticate - should fail
     match prov
         .authenticate_by_password(
-            &state,
+            &ExecutionContext::internal(&state),
             &UserPasswordAuthRequestBuilder::default()
                 .id(&uid)
                 .password("initial")
@@ -258,7 +258,7 @@ async fn test_create_with_password_and_default_project_id() -> Result<()> {
     let prov = state.provider.get_identity_provider();
     let user = prov
         .create_user(
-            &state,
+            &ExecutionContext::internal(&state),
             UserCreateBuilder::default()
                 .id(&uid)
                 .name("testuser")
@@ -289,7 +289,7 @@ async fn test_create_with_password_and_get_user() -> Result<()> {
 
     let prov = state.provider.get_identity_provider();
     prov.create_user(
-        &state,
+        &ExecutionContext::internal(&state),
         UserCreateBuilder::default()
             .id(&uid)
             .name("testuser")
@@ -302,7 +302,7 @@ async fn test_create_with_password_and_get_user() -> Result<()> {
 
     // Fetch user and verify password_expires_at is populated
     let user = prov
-        .get_user(&state, &uid)
+        .get_user(&ExecutionContext::internal(&state), &uid)
         .await?
         .expect("user should be found");
     assert!(
@@ -324,7 +324,7 @@ async fn test_create_with_expiry_and_authenticate() -> Result<()> {
 
     let prov = state.provider.get_identity_provider();
     prov.create_user(
-        &state,
+        &ExecutionContext::internal(&state),
         UserCreateBuilder::default()
             .id(&uid)
             .name("testuser")
@@ -338,7 +338,7 @@ async fn test_create_with_expiry_and_authenticate() -> Result<()> {
     // Authenticate should work (password is fresh, not expired)
     let auth = prov
         .authenticate_by_password(
-            &state,
+            &ExecutionContext::internal(&state),
             &UserPasswordAuthRequestBuilder::default()
                 .id(&uid)
                 .password("initial")
@@ -352,7 +352,7 @@ async fn test_create_with_expiry_and_authenticate() -> Result<()> {
 
     // Verify password_expires_at is set in response
     let user = prov
-        .get_user(&state, &uid)
+        .get_user(&ExecutionContext::internal(&state), &uid)
         .await?
         .expect("user should be found");
     assert!(user.password_expires_at.is_some());
@@ -371,7 +371,7 @@ async fn test_create_with_expiry_and_unique_count() -> Result<()> {
     let prov = state.provider.get_identity_provider();
     let user = prov
         .create_user(
-            &state,
+            &ExecutionContext::internal(&state),
             UserCreateBuilder::default()
                 .id(&uid)
                 .name("testuser")
@@ -390,7 +390,7 @@ async fn test_create_with_expiry_and_unique_count() -> Result<()> {
     // Authenticate should work
     let auth = prov
         .authenticate_by_password(
-            &state,
+            &ExecutionContext::internal(&state),
             &UserPasswordAuthRequestBuilder::default()
                 .id(&uid)
                 .password("initial")

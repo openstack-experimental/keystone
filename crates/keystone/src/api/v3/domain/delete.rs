@@ -22,6 +22,7 @@ use serde_json::json;
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
+use openstack_keystone_core::auth::ExecutionContext;
 
 /// Delete domain by ID.
 #[utoipa::path(
@@ -43,7 +44,7 @@ pub(super) async fn remove(
     let current = state
         .provider
         .get_resource_provider()
-        .get_domain(&state, &id)
+        .get_domain(&ExecutionContext::from_auth(&state, &user_auth), &id)
         .await?;
 
     state
@@ -61,7 +62,7 @@ pub(super) async fn remove(
             state
                 .provider
                 .get_resource_provider()
-                .delete_domain(&state, &id)
+                .delete_domain(&ExecutionContext::from_auth(&state, &user_auth), &id)
                 .await?;
             Ok((StatusCode::NO_CONTENT).into_response())
         }

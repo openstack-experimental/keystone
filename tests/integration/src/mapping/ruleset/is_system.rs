@@ -14,7 +14,7 @@
 
 use eyre::Result;
 
-use openstack_keystone_core::mapping::MappingApi;
+use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core_types::mapping::error::MappingProviderError;
 use openstack_keystone_core_types::mapping::*;
 
@@ -53,7 +53,7 @@ async fn test_system_ruleset_immutable() -> Result<()> {
         .provider
         .get_mapping_provider()
         .update_ruleset(
-            &state,
+            &ExecutionContext::internal(&state),
             &mapping_id,
             MappingRuleSetUpdate {
                 enabled: Some(false),
@@ -74,7 +74,7 @@ async fn test_system_ruleset_immutable() -> Result<()> {
         .provider
         .get_mapping_provider()
         .mutate_rules(
-            &state,
+            &ExecutionContext::internal(&state),
             &mapping_id,
             RuleMutations {
                 mutations: vec![RuleMutation::Delete {
@@ -94,7 +94,7 @@ async fn test_system_ruleset_immutable() -> Result<()> {
     let delete_result = state
         .provider
         .get_mapping_provider()
-        .delete_ruleset(&state, &mapping_id)
+        .delete_ruleset(&ExecutionContext::internal(&state), &mapping_id)
         .await;
 
     assert!(delete_result.is_err());
@@ -135,7 +135,7 @@ async fn test_system_global_ruleset_immutable() -> Result<()> {
         .provider
         .get_mapping_provider()
         .update_ruleset(
-            &state,
+            &ExecutionContext::internal(&state),
             &mapping_id,
             MappingRuleSetUpdate {
                 enabled: Some(false),
@@ -156,7 +156,7 @@ async fn test_system_global_ruleset_immutable() -> Result<()> {
         .provider
         .get_mapping_provider()
         .mutate_rules(
-            &state,
+            &ExecutionContext::internal(&state),
             &mapping_id,
             RuleMutations {
                 mutations: vec![RuleMutation::Delete {
@@ -176,7 +176,7 @@ async fn test_system_global_ruleset_immutable() -> Result<()> {
     let delete_result = state
         .provider
         .get_mapping_provider()
-        .delete_ruleset(&state, &mapping_id)
+        .delete_ruleset(&ExecutionContext::internal(&state), &mapping_id)
         .await;
 
     assert!(delete_result.is_err());

@@ -82,7 +82,7 @@ tools/start-spire.sh
 
 cargo build --bins
 
-SPIFFE_ENDPOINT_SOCKET=$SPIFFE_ENDPOINT_SOCKET ./target/debug/keystone --config "$CONFIG_FILE" &
+KEYSTONE_DEV_KEK=4242424242424242424242424242424242424242424242424242424242424242 SPIFFE_ENDPOINT_SOCKET=$SPIFFE_ENDPOINT_SOCKET ./target/debug/keystone --config "$CONFIG_FILE" &
 AXUM_PID=$!
 
 echo "$AXUM_PID" > "$STATE_DIR/keystone.pid"
@@ -95,7 +95,7 @@ for i in {1..30}; do
         until [ -S "${STATE_DIR}/keystone.sock" ]; do
           sleep 0.5
         done
-        SPIFFE_ENDPOINT_SOCKET=${SPIFFE_ENDPOINT_SOCKET} ./target/debug/keystone-manage --config "${CONFIG_FILE}" bootstrap --bootstrap-password password
+        KEYSTONE_DEV_KEK=4242424242424242424242424242424242424242424242424242424242424242 SPIFFE_ENDPOINT_SOCKET=${SPIFFE_ENDPOINT_SOCKET} ./target/debug/keystone-manage --config "${CONFIG_FILE}" bootstrap --bootstrap-password password
 
         # Export env vars for nextest to inject into test processes
         echo "KEYSTONE_URL=http://localhost:8080" >> "$NEXTEST_ENV"
@@ -105,6 +105,7 @@ for i in {1..30}; do
         echo "OS_USER_DOMAIN_ID=default" >> "$NEXTEST_ENV"
         echo "OS_PROJECT_NAME=admin" >> "$NEXTEST_ENV"
         echo "OS_PROJECT_DOMAIN_ID=default" >> "$NEXTEST_ENV"
+        echo "KEYSTONE_DEV_KEK=4242424242424242424242424242424242424242424242424242424242424242" >> "$NEXTEST_ENV"
         echo "Server started and bootstrapped successfully."
         exit 0
     fi

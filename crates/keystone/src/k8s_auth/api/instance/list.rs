@@ -22,6 +22,8 @@ use axum::{
 use serde_json::json;
 use validator::Validate;
 
+use openstack_keystone_core::auth::ExecutionContext;
+
 use openstack_keystone_api_types::k8s_auth::*;
 use openstack_keystone_core_types::k8s_auth as provider_types;
 
@@ -82,7 +84,10 @@ pub(super) async fn list(
     let instances: Vec<K8sAuthInstance> = state
         .provider
         .get_k8s_auth_provider()
-        .list_auth_instances(&state, &list_params)
+        .list_auth_instances(
+            &ExecutionContext::from_auth(&state, &user_auth),
+            &list_params,
+        )
         .await?
         .into_iter()
         .map(Into::into)

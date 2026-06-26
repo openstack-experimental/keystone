@@ -17,9 +17,8 @@ use eyre::Result;
 use std::collections::BTreeSet;
 use tracing_test::traced_test;
 
-use openstack_keystone::assignment::AssignmentApi;
-use openstack_keystone::identity::IdentityApi;
 use openstack_keystone::keystone::ServiceState;
+use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core_types::assignment::*;
 
 use crate::common::get_state;
@@ -32,7 +31,7 @@ async fn list_grants(
     Ok(state
         .provider
         .get_assignment_provider()
-        .list_role_assignments(state, params)
+        .list_role_assignments(&ExecutionContext::internal(&state), params)
         .await?
         .into_iter()
         .map(|grant| grant.role_id)
@@ -61,7 +60,7 @@ async fn test_list_user_roles() -> Result<()> {
     state
         .provider
         .get_identity_provider()
-        .add_user_to_group(&state, &user.id, &group.id)
+        .add_user_to_group(&ExecutionContext::internal(&state), &user.id, &group.id)
         .await?;
     for assignment in [
         AssignmentCreate::user_domain(&user.id, &domain.id, &role_a.id, false),
@@ -76,7 +75,7 @@ async fn test_list_user_roles() -> Result<()> {
         state
             .provider
             .get_assignment_provider()
-            .create_grant(&state, assignment)
+            .create_grant(&ExecutionContext::internal(&state), assignment)
             .await?;
     }
 
@@ -219,7 +218,7 @@ async fn test_list_role_assignments_by_user_same_role_multiple_scopes() -> Resul
         state
             .provider
             .get_assignment_provider()
-            .create_grant(&state, assignment)
+            .create_grant(&ExecutionContext::internal(&state), assignment)
             .await?;
     }
 
@@ -227,7 +226,7 @@ async fn test_list_role_assignments_by_user_same_role_multiple_scopes() -> Resul
         .provider
         .get_assignment_provider()
         .list_role_assignments(
-            &state,
+            &ExecutionContext::internal(&state),
             &RoleAssignmentListParametersBuilder::default()
                 .user_id(user.id.clone())
                 .build()?,
@@ -263,7 +262,7 @@ async fn test_list_role_assignments_by_role_id_same_role_multiple_scopes() -> Re
         state
             .provider
             .get_assignment_provider()
-            .create_grant(&state, assignment)
+            .create_grant(&ExecutionContext::internal(&state), assignment)
             .await?;
     }
 
@@ -271,7 +270,7 @@ async fn test_list_role_assignments_by_role_id_same_role_multiple_scopes() -> Re
         .provider
         .get_assignment_provider()
         .list_role_assignments(
-            &state,
+            &ExecutionContext::internal(&state),
             &RoleAssignmentListParametersBuilder::default()
                 .role_id(role.id.clone())
                 .build()?,

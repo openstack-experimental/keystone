@@ -22,7 +22,7 @@ use openstack_keystone_config::Config;
 use openstack_keystone_core_types::events::{Event, EventPayload, Operation};
 use openstack_keystone_core_types::role::*;
 
-use crate::keystone::ServiceState;
+use crate::auth::ExecutionContext;
 use crate::plugin_manager::PluginManagerApi;
 use crate::role::{RoleApi, RoleProviderError, backend::RoleBackend};
 
@@ -54,9 +54,9 @@ impl RoleApi for RoleService {
     /// # Arguments
     /// * `state` - The current service state.
     /// * `params` - The parameters for creating a role.
-    async fn create_role(
+    async fn create_role<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         params: RoleCreate,
     ) -> Result<Role, RoleProviderError> {
         params.validate()?;
@@ -66,9 +66,12 @@ impl RoleApi for RoleService {
         if new_params.id.is_none() {
             new_params.id = Some(Uuid::new_v4().simple().to_string());
         }
-        let role = self.backend_driver.create_role(state, new_params).await?;
+        let role = self
+            .backend_driver
+            .create_role(ctx.state(), new_params)
+            .await?;
 
-        state
+        ctx.state()
             .event_dispatcher
             .emit(Event::new(
                 Operation::Create,
@@ -89,16 +92,16 @@ impl RoleApi for RoleService {
     /// * `implied_role_id` - The ID of the implied role.
     async fn create_role_imply_rule<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         prior_role_id: &'a str,
         implied_role_id: &'a str,
     ) -> Result<RoleImply, RoleProviderError> {
         let rule = self
             .backend_driver
-            .create_role_imply_rule(state, prior_role_id, implied_role_id)
+            .create_role_imply_rule(ctx.state(), prior_role_id, implied_role_id)
             .await?;
 
-        state
+        ctx.state()
             .event_dispatcher
             .emit(Event::new(
                 Operation::Create,
@@ -120,12 +123,12 @@ impl RoleApi for RoleService {
     /// * `implied_role_id` - The ID of the implied role.
     async fn check_role_imply_rule<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         prior_role_id: &'a str,
         implied_role_id: &'a str,
     ) -> Result<bool, RoleProviderError> {
         self.backend_driver
-            .check_role_imply_rule(state, prior_role_id, implied_role_id)
+            .check_role_imply_rule(ctx.state(), prior_role_id, implied_role_id)
             .await
     }
 
@@ -136,12 +139,12 @@ impl RoleApi for RoleService {
     /// * `id` - The ID of the role to delete.
     async fn delete_role<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         id: &'a str,
     ) -> Result<(), RoleProviderError> {
-        self.backend_driver.delete_role(state, id).await?;
+        self.backend_driver.delete_role(ctx.state(), id).await?;
 
-        state
+        ctx.state()
             .event_dispatcher
             .emit(Event::new(
                 Operation::Delete,
@@ -160,15 +163,15 @@ impl RoleApi for RoleService {
     /// * `implied_role_id` - The ID of the implied role.
     async fn delete_role_imply_rule<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         prior_role_id: &'a str,
         implied_role_id: &'a str,
     ) -> Result<(), RoleProviderError> {
         self.backend_driver
-            .delete_role_imply_rule(state, prior_role_id, implied_role_id)
+            .delete_role_imply_rule(ctx.state(), prior_role_id, implied_role_id)
             .await?;
 
-        state
+        ctx.state()
             .event_dispatcher
             .emit(Event::new(
                 Operation::Delete,
@@ -189,16 +192,16 @@ impl RoleApi for RoleService {
     /// # Arguments
     /// * `state` - The current service state.
     /// * `roles` - The list of roles to expand.
-    async fn expand_implied_roles(
+    async fn expand_implied_roles<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         roles: &mut Vec<RoleRef>,
     ) -> Result<(), RoleProviderError> {
         // In most of the cases a logic for expanding the roles may be implemented by
         // the provider itself, but some backend drivers may have more efficient
         // methods.
         self.backend_driver
-            .expand_implied_roles(state, roles)
+            .expand_implied_roles(ctx.state(), roles)
             .await?;
         Ok(())
     }
@@ -212,10 +215,10 @@ impl RoleApi for RoleService {
     /// `Error`.
     async fn get_role<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         id: &'a str,
     ) -> Result<Option<Role>, RoleProviderError> {
-        self.backend_driver.get_role(state, id).await
+        self.backend_driver.get_role(ctx.state(), id).await
     }
 
     /// Get a role imply rule.
@@ -226,12 +229,12 @@ impl RoleApi for RoleService {
     /// * `implied_role_id` - The ID of the implied role.
     async fn get_role_imply_rule<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         prior_role_id: &'a str,
         implied_role_id: &'a str,
     ) -> Result<Option<RoleImply>, RoleProviderError> {
         self.backend_driver
-            .get_role_imply_rule(state, prior_role_id, implied_role_id)
+            .get_role_imply_rule(ctx.state(), prior_role_id, implied_role_id)
             .await
     }
 
@@ -239,11 +242,11 @@ impl RoleApi for RoleService {
     ///
     /// # Arguments
     /// * `state` - The current service state.
-    async fn list_role_imply_rules(
+    async fn list_role_imply_rules<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
     ) -> Result<Vec<RoleImply>, RoleProviderError> {
-        self.backend_driver.list_role_imply_rules(state).await
+        self.backend_driver.list_role_imply_rules(ctx.state()).await
     }
 
     /// List role imply rules for a specific prior role.
@@ -253,11 +256,11 @@ impl RoleApi for RoleService {
     /// * `prior_role_id` - The ID of the prior role.
     async fn list_role_imply_rules_by_prior<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         prior_role_id: &'a str,
     ) -> Result<Vec<RoleImply>, RoleProviderError> {
         self.backend_driver
-            .list_role_imply_rules_by_prior(state, prior_role_id)
+            .list_role_imply_rules_by_prior(ctx.state(), prior_role_id)
             .await
     }
 
@@ -266,12 +269,12 @@ impl RoleApi for RoleService {
     /// # Arguments
     /// * `state` - The current service state.
     /// * `params` - The parameters for listing roles.
-    async fn list_roles(
+    async fn list_roles<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         params: &RoleListParameters,
     ) -> Result<Vec<Role>, RoleProviderError> {
         params.validate()?;
-        self.backend_driver.list_roles(state, params).await
+        self.backend_driver.list_roles(ctx.state(), params).await
     }
 }

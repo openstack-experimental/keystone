@@ -18,7 +18,7 @@ use std::collections::HashMap;
 use eyre::Result;
 use tracing_test::traced_test;
 
-use openstack_keystone_core::catalog::CatalogApi;
+use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core_types::catalog::{ServiceCreate, ServiceUpdate};
 
 use crate::catalog::create_service;
@@ -43,7 +43,7 @@ async fn test_update() -> Result<()> {
         .provider
         .get_catalog_provider()
         .update_service(
-            &state,
+            &ExecutionContext::internal(&state),
             &service.id,
             ServiceUpdate {
                 enabled: Some(false),
@@ -59,7 +59,7 @@ async fn test_update() -> Result<()> {
     let fetched = state
         .provider
         .get_catalog_provider()
-        .get_service(&state, &service.id)
+        .get_service(&ExecutionContext::internal(&state), &service.id)
         .await?
         .unwrap();
     assert!(!fetched.enabled);
@@ -75,7 +75,7 @@ async fn test_update_not_found() -> Result<()> {
         .provider
         .get_catalog_provider()
         .update_service(
-            &state,
+            &ExecutionContext::internal(&state),
             "missing",
             ServiceUpdate {
                 enabled: Some(true),
@@ -110,7 +110,7 @@ async fn test_update_type_too_long() -> Result<()> {
         .provider
         .get_catalog_provider()
         .update_service(
-            &state,
+            &ExecutionContext::internal(&state),
             &service.id,
             ServiceUpdate {
                 r#type: Some(too_long),
@@ -161,7 +161,7 @@ async fn test_update_extra_overwrites() -> Result<()> {
         .provider
         .get_catalog_provider()
         .update_service(
-            &state,
+            &ExecutionContext::internal(&state),
             &service.id,
             ServiceUpdate {
                 extra: update_extra,

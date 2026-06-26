@@ -25,7 +25,7 @@ use openstack_keystone_config::Config;
 use openstack_keystone_core_types::role::*;
 use openstack_keystone_core_types::trust::*;
 
-use crate::keystone::ServiceState;
+use crate::auth::ExecutionContext;
 use crate::plugin_manager::PluginManagerApi;
 use crate::trust::{TrustApi, TrustProviderError, backend::TrustBackend};
 
@@ -69,16 +69,16 @@ impl TrustApi for TrustService {
     ///   `Option` with the trust if found, or an `Error`.
     async fn get_trust<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         id: &'a str,
     ) -> Result<Option<Trust>, TrustProviderError> {
-        if let Some(mut trust) = self.backend_driver.get_trust(state, id).await? {
+        if let Some(mut trust) = self.backend_driver.get_trust(ctx.state(), id).await? {
             let all_roles: HashMap<String, Role> = HashMap::from_iter(
-                state
+                ctx.state()
                     .provider
                     .get_role_provider()
                     .list_roles(
-                        state,
+                        ctx,
                         &RoleListParameters {
                             domain_id: Some(None),
                             ..Default::default()
@@ -116,11 +116,11 @@ impl TrustApi for TrustService {
     ///   `Error`.
     async fn get_trust_delegation_chain<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         id: &'a str,
     ) -> Result<Option<Vec<Trust>>, TrustProviderError> {
         self.backend_driver
-            .get_trust_delegation_chain(state, id)
+            .get_trust_delegation_chain(ctx.state(), id)
             .await
     }
 
@@ -133,19 +133,19 @@ impl TrustApi for TrustService {
     /// # Returns
     /// - `Result<Vec<Trust>, TrustProviderError>` - A list of trusts or an
     ///   error.
-    async fn list_trusts(
+    async fn list_trusts<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         params: &TrustListParameters,
     ) -> Result<Vec<Trust>, TrustProviderError> {
-        let mut trusts = self.backend_driver.list_trusts(state, params).await?;
+        let mut trusts = self.backend_driver.list_trusts(ctx.state(), params).await?;
 
         let all_roles: HashMap<String, Role> = HashMap::from_iter(
-            state
+            ctx.state()
                 .provider
                 .get_role_provider()
                 .list_roles(
-                    state,
+                    ctx,
                     &RoleListParameters {
                         domain_id: Some(None),
                         ..Default::default()
@@ -187,15 +187,15 @@ impl TrustApi for TrustService {
     /// # Returns
     /// - `Result<bool, TrustProviderError>` - Ok(true) if the chain is valid,
     ///   or an error.
-    async fn validate_trust_delegation_chain(
+    async fn validate_trust_delegation_chain<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         trust: &Trust,
     ) -> Result<bool, TrustProviderError> {
         if trust.redelegated_trust_id.is_some()
-            && let Some(chain) = self.get_trust_delegation_chain(state, &trust.id).await?
+            && let Some(chain) = self.get_trust_delegation_chain(ctx, &trust.id).await?
         {
-            let config = state.config_manager.config.read().await;
+            let config = ctx.state().config_manager.config.read().await;
             if chain.len() > config.trust.max_redelegation_count {
                 return Err(TrustProviderError::RedelegationDeepnessExceed {
                     length: chain.len(),
@@ -321,7 +321,7 @@ mod tests {
         let trust_provider = create_trust_service(backend);
 
         let trust: Trust = trust_provider
-            .get_trust(&state, "fake_trust")
+            .get_trust(&ExecutionContext::internal(&state), "fake_trust")
             .await
             .unwrap()
             .expect("trust found");
@@ -364,7 +364,7 @@ mod tests {
         let trust_provider = create_trust_service(backend);
 
         let chain = trust_provider
-            .get_trust_delegation_chain(&state, "fake_trust")
+            .get_trust_delegation_chain(&ExecutionContext::internal(&state), "fake_trust")
             .await
             .unwrap()
             .expect("chain fetched");
@@ -399,12 +399,12 @@ mod tests {
 
         let trust_provider = create_trust_service(backend);
         let trust = trust_provider
-            .get_trust(&state, "fake_trust")
+            .get_trust(&ExecutionContext::internal(&state), "fake_trust")
             .await
             .unwrap()
             .expect("trust found");
         trust_provider
-            .validate_trust_delegation_chain(&state, &trust)
+            .validate_trust_delegation_chain(&ExecutionContext::internal(&state), &trust)
             .await
             .unwrap();
     }
@@ -453,12 +453,12 @@ mod tests {
 
         let trust_provider = create_trust_service(backend);
         let trust = trust_provider
-            .get_trust(&state, "redelegated_trust")
+            .get_trust(&ExecutionContext::internal(&state), "redelegated_trust")
             .await
             .unwrap()
             .expect("trust found");
         trust_provider
-            .validate_trust_delegation_chain(&state, &trust)
+            .validate_trust_delegation_chain(&ExecutionContext::internal(&state), &trust)
             .await
             .unwrap();
     }
@@ -514,12 +514,12 @@ mod tests {
 
         let trust_provider = create_trust_service(backend);
         let trust = trust_provider
-            .get_trust(&state, "redelegated_trust2")
+            .get_trust(&ExecutionContext::internal(&state), "redelegated_trust2")
             .await
             .unwrap()
             .expect("trust found");
         if let Err(TrustProviderError::ExpirationImpossible) = trust_provider
-            .validate_trust_delegation_chain(&state, &trust)
+            .validate_trust_delegation_chain(&ExecutionContext::internal(&state), &trust)
             .await
         {
         } else {
@@ -588,13 +588,13 @@ mod tests {
 
         let trust_provider = create_trust_service(backend);
         let trust = trust_provider
-            .get_trust(&state, "redelegated_trust")
+            .get_trust(&ExecutionContext::internal(&state), "redelegated_trust")
             .await
             .unwrap()
             .expect("trust found");
 
         if let Err(TrustProviderError::RedelegatedRolesNotAvailable) = trust_provider
-            .validate_trust_delegation_chain(&state, &trust)
+            .validate_trust_delegation_chain(&ExecutionContext::internal(&state), &trust)
             .await
         {
         } else {
@@ -653,12 +653,12 @@ mod tests {
 
         let trust_provider = create_trust_service(backend);
         let trust = trust_provider
-            .get_trust(&state, "redelegated_trust2")
+            .get_trust(&ExecutionContext::internal(&state), "redelegated_trust2")
             .await
             .unwrap()
             .expect("trust found");
         match trust_provider
-            .validate_trust_delegation_chain(&state, &trust)
+            .validate_trust_delegation_chain(&ExecutionContext::internal(&state), &trust)
             .await
         {
             Err(TrustProviderError::RedelegatedImpersonationNotAllowed) => {}
@@ -758,12 +758,12 @@ mod tests {
 
         let trust_provider = create_trust_service(backend);
         let trust = trust_provider
-            .get_trust(&state, "redelegated_trust2")
+            .get_trust(&ExecutionContext::internal(&state), "redelegated_trust2")
             .await
             .unwrap()
             .expect("trust found");
         match trust_provider
-            .validate_trust_delegation_chain(&state, &trust)
+            .validate_trust_delegation_chain(&ExecutionContext::internal(&state), &trust)
             .await
         {
             Err(TrustProviderError::RedelegationDeepnessExceed { .. }) => {}
@@ -776,12 +776,15 @@ mod tests {
         }
 
         let trust = trust_provider
-            .get_trust(&state, "redelegated_trust_long")
+            .get_trust(
+                &ExecutionContext::internal(&state),
+                "redelegated_trust_long",
+            )
             .await
             .unwrap()
             .expect("trust found");
         match trust_provider
-            .validate_trust_delegation_chain(&state, &trust)
+            .validate_trust_delegation_chain(&ExecutionContext::internal(&state), &trust)
             .await
         {
             Err(TrustProviderError::RedelegationDeepnessExceed { .. }) => {}
@@ -827,7 +830,10 @@ mod tests {
         let trust_provider = create_trust_service(backend);
 
         let list = trust_provider
-            .list_trusts(&state, &TrustListParameters::default())
+            .list_trusts(
+                &ExecutionContext::internal(&state),
+                &TrustListParameters::default(),
+            )
             .await
             .unwrap();
         assert_eq!(list.len(), 2);

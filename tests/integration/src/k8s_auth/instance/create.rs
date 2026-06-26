@@ -16,7 +16,7 @@
 use eyre::Result;
 use tracing_test::traced_test;
 
-use openstack_keystone::k8s_auth::K8sAuthApi;
+use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core_types::k8s_auth::*;
 
 use crate::common::get_state;
@@ -39,7 +39,7 @@ async fn test_create() -> Result<()> {
     let res = state
         .provider
         .get_k8s_auth_provider()
-        .create_auth_instance(&state, sot.clone())
+        .create_auth_instance(&ExecutionContext::internal(&state), sot.clone())
         .await?;
     assert_eq!(sot.name, res.name);
     assert_eq!(sot.id.unwrap(), res.id);
@@ -50,7 +50,7 @@ async fn test_create() -> Result<()> {
     state
         .provider
         .get_k8s_auth_provider()
-        .delete_auth_instance(&state, &res.id)
+        .delete_auth_instance(&ExecutionContext::internal(&state), &res.id)
         .await?;
     Ok(())
 }

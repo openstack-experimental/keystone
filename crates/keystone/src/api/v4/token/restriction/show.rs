@@ -25,6 +25,7 @@ use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
 use crate::api::v4::token::types::*;
 use crate::keystone::ServiceState;
+use openstack_keystone_core::auth::ExecutionContext;
 
 /// Get single token restriction.
 ///
@@ -57,7 +58,7 @@ pub(super) async fn show(
     let current = state
         .provider
         .get_token_provider()
-        .get_token_restriction(&state, &id, true)
+        .get_token_restriction(&ExecutionContext::from_auth(&state, &user_auth), &id, true)
         .await
         .map(|x| {
             x.ok_or_else(|| KeystoneApiError::NotFound {

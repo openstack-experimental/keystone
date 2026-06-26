@@ -22,8 +22,8 @@ use uuid::Uuid;
 use openstack_keystone_config::Config;
 use openstack_keystone_core_types::federation::*;
 
+use crate::auth::ExecutionContext;
 use crate::federation::{FederationApi, FederationProviderError, backend::FederationBackend};
-use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManagerApi;
 
 pub struct FederationService {
@@ -57,13 +57,13 @@ impl FederationApi for FederationService {
     /// Cleanup expired resources.
     ///
     /// # Parameters
-    /// - `state`: The service state.
+    /// - `exec`: The execution context.
     ///
     /// # Returns
     /// - `Result<(), FederationProviderError>` - Ok if successful, or a
     ///   federation provider error.
-    async fn cleanup(&self, state: &ServiceState) -> Result<(), FederationProviderError> {
-        self.backend_driver.cleanup(state).await
+    async fn cleanup<'a>(&self, ctx: &ExecutionContext<'a>) -> Result<(), FederationProviderError> {
+        self.backend_driver.cleanup(ctx.state()).await
     }
 
     /// Create new auth state.
@@ -75,13 +75,13 @@ impl FederationApi for FederationService {
     /// # Returns
     /// - `Result<AuthState, FederationProviderError>` - The created `AuthState`
     ///   or an error.
-    async fn create_auth_state(
+    async fn create_auth_state<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         auth_state: AuthState,
     ) -> Result<AuthState, FederationProviderError> {
         self.backend_driver
-            .create_auth_state(state, auth_state)
+            .create_auth_state(ctx.state(), auth_state)
             .await
     }
 
@@ -94,9 +94,9 @@ impl FederationApi for FederationService {
     /// # Returns
     /// - `Result<IdentityProvider, FederationProviderError>` - The created
     ///   `IdentityProvider` or an error.
-    async fn create_identity_provider(
+    async fn create_identity_provider<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         idp: IdentityProviderCreate,
     ) -> Result<IdentityProvider, FederationProviderError> {
         let mut mod_idp = idp;
@@ -105,7 +105,7 @@ impl FederationApi for FederationService {
         }
 
         self.backend_driver
-            .create_identity_provider(state, mod_idp)
+            .create_identity_provider(ctx.state(), mod_idp)
             .await
     }
 
@@ -119,10 +119,10 @@ impl FederationApi for FederationService {
     /// - `Result<(), FederationProviderError>` - Ok if successful, or an error.
     async fn delete_auth_state<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         id: &'a str,
     ) -> Result<(), FederationProviderError> {
-        self.backend_driver.delete_auth_state(state, id).await
+        self.backend_driver.delete_auth_state(ctx.state(), id).await
     }
 
     /// Delete identity provider.
@@ -135,11 +135,11 @@ impl FederationApi for FederationService {
     /// - `Result<(), FederationProviderError>` - Ok if successful, or an error.
     async fn delete_identity_provider<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         id: &'a str,
     ) -> Result<(), FederationProviderError> {
         self.backend_driver
-            .delete_identity_provider(state, id)
+            .delete_identity_provider(ctx.state(), id)
             .await
     }
 
@@ -154,10 +154,10 @@ impl FederationApi for FederationService {
     ///   containing an `Option` with the auth state if found, or an `Error`.
     async fn get_auth_state<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         id: &'a str,
     ) -> Result<Option<AuthState>, FederationProviderError> {
-        self.backend_driver.get_auth_state(state, id).await
+        self.backend_driver.get_auth_state(ctx.state(), id).await
     }
 
     /// Get single IDP by ID.
@@ -172,10 +172,12 @@ impl FederationApi for FederationService {
     ///   or an `Error`.
     async fn get_identity_provider<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         id: &'a str,
     ) -> Result<Option<IdentityProvider>, FederationProviderError> {
-        self.backend_driver.get_identity_provider(state, id).await
+        self.backend_driver
+            .get_identity_provider(ctx.state(), id)
+            .await
     }
 
     /// List IDP.
@@ -187,13 +189,13 @@ impl FederationApi for FederationService {
     /// # Returns
     /// - `Result<Vec<IdentityProvider>, FederationProviderError>` - A list of
     ///   identity providers or an error.
-    async fn list_identity_providers(
+    async fn list_identity_providers<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         params: &IdentityProviderListParameters,
     ) -> Result<Vec<IdentityProvider>, FederationProviderError> {
         self.backend_driver
-            .list_identity_providers(state, params)
+            .list_identity_providers(ctx.state(), params)
             .await
     }
 
@@ -209,12 +211,12 @@ impl FederationApi for FederationService {
     ///   `IdentityProvider` or an error.
     async fn update_identity_provider<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         id: &'a str,
         idp: IdentityProviderUpdate,
     ) -> Result<IdentityProvider, FederationProviderError> {
         self.backend_driver
-            .update_identity_provider(state, id, idp)
+            .update_identity_provider(ctx.state(), id, idp)
             .await
     }
 }

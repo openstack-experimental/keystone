@@ -21,7 +21,7 @@ use openstack_keystone_config::Config;
 use openstack_keystone_core_types::events::{Event, EventPayload, Operation};
 use openstack_keystone_core_types::resource::*;
 
-use crate::keystone::ServiceState;
+use crate::auth::ExecutionContext;
 use crate::plugin_manager::PluginManagerApi;
 use crate::resource::{ResourceApi, ResourceProviderError, backend::ResourceBackend};
 
@@ -64,11 +64,11 @@ impl ResourceApi for ResourceService {
     ///   or an error.
     async fn get_domain_enabled<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         domain_id: &'a str,
     ) -> Result<bool, ResourceProviderError> {
         self.backend_driver
-            .get_domain_enabled(state, domain_id)
+            .get_domain_enabled(ctx.state(), domain_id)
             .await
     }
 
@@ -81,9 +81,9 @@ impl ResourceApi for ResourceService {
     /// # Returns
     /// - `Result<Domain, ResourceProviderError>` - The created `Domain` or an
     ///   error.
-    async fn create_domain(
+    async fn create_domain<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         domain: DomainCreate,
     ) -> Result<Domain, ResourceProviderError> {
         let mut new_domain = domain;
@@ -92,9 +92,12 @@ impl ResourceApi for ResourceService {
             new_domain.id = Some(Uuid::new_v4().simple().to_string());
         }
         new_domain.validate()?;
-        let domain = self.backend_driver.create_domain(state, new_domain).await?;
+        let domain = self
+            .backend_driver
+            .create_domain(ctx.state(), new_domain)
+            .await?;
 
-        state
+        ctx.state()
             .event_dispatcher
             .emit(Event::new(
                 Operation::Create,
@@ -116,9 +119,9 @@ impl ResourceApi for ResourceService {
     /// # Returns
     /// - `Result<Project, ResourceProviderError>` - The created `Project` or an
     ///   error.
-    async fn create_project(
+    async fn create_project<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         project: ProjectCreate,
     ) -> Result<Project, ResourceProviderError> {
         let mut new_project = project;
@@ -129,10 +132,10 @@ impl ResourceApi for ResourceService {
         new_project.validate()?;
         let project = self
             .backend_driver
-            .create_project(state, new_project)
+            .create_project(ctx.state(), new_project)
             .await?;
 
-        state
+        ctx.state()
             .event_dispatcher
             .emit(Event::new(
                 Operation::Create,
@@ -156,12 +159,12 @@ impl ResourceApi for ResourceService {
     ///   error.
     async fn delete_domain<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         id: &'a str,
     ) -> Result<(), ResourceProviderError> {
-        self.backend_driver.delete_domain(state, id).await?;
+        self.backend_driver.delete_domain(ctx.state(), id).await?;
 
-        state
+        ctx.state()
             .event_dispatcher
             .emit(Event::new(
                 Operation::Delete,
@@ -183,12 +186,12 @@ impl ResourceApi for ResourceService {
     ///   error.
     async fn delete_project<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         id: &'a str,
     ) -> Result<(), ResourceProviderError> {
-        self.backend_driver.delete_project(state, id).await?;
+        self.backend_driver.delete_project(ctx.state(), id).await?;
 
-        state
+        ctx.state()
             .event_dispatcher
             .emit(Event::new(
                 Operation::Delete,
@@ -210,10 +213,10 @@ impl ResourceApi for ResourceService {
     ///   `Error`.
     async fn get_domain<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         domain_id: &'a str,
     ) -> Result<Option<Domain>, ResourceProviderError> {
-        self.backend_driver.get_domain(state, domain_id).await
+        self.backend_driver.get_domain(ctx.state(), domain_id).await
     }
 
     /// Get a single project.
@@ -227,10 +230,12 @@ impl ResourceApi for ResourceService {
     ///   `Error`.
     async fn get_project<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         project_id: &'a str,
     ) -> Result<Option<Project>, ResourceProviderError> {
-        self.backend_driver.get_project(state, project_id).await
+        self.backend_driver
+            .get_project(ctx.state(), project_id)
+            .await
     }
 
     /// Get a single project by name and domain ID.
@@ -245,12 +250,12 @@ impl ResourceApi for ResourceService {
     ///   `Error`.
     async fn get_project_by_name<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         name: &'a str,
         domain_id: &'a str,
     ) -> Result<Option<Project>, ResourceProviderError> {
         self.backend_driver
-            .get_project_by_name(state, name, domain_id)
+            .get_project_by_name(ctx.state(), name, domain_id)
             .await
     }
 
@@ -265,11 +270,11 @@ impl ResourceApi for ResourceService {
     ///   an `Error`.
     async fn get_project_parents<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         project_id: &'a str,
     ) -> Result<Option<Vec<Project>>, ResourceProviderError> {
         self.backend_driver
-            .get_project_parents(state, project_id)
+            .get_project_parents(ctx.state(), project_id)
             .await
     }
 
@@ -284,11 +289,11 @@ impl ResourceApi for ResourceService {
     ///   `Error`.
     async fn find_domain_by_name<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         domain_name: &'a str,
     ) -> Result<Option<Domain>, ResourceProviderError> {
         self.backend_driver
-            .get_domain_by_name(state, domain_name)
+            .get_domain_by_name(ctx.state(), domain_name)
             .await
     }
 
@@ -301,12 +306,12 @@ impl ResourceApi for ResourceService {
     /// # Returns
     /// - `Result<Vec<Domain>, ResourceProviderError>` - A list of domains or an
     ///   error.
-    async fn list_domains(
+    async fn list_domains<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         params: &DomainListParameters,
     ) -> Result<Vec<Domain>, ResourceProviderError> {
-        self.backend_driver.list_domains(state, params).await
+        self.backend_driver.list_domains(ctx.state(), params).await
     }
 
     /// List projects.
@@ -318,11 +323,11 @@ impl ResourceApi for ResourceService {
     /// # Returns
     /// - `Result<Vec<Project>, ResourceProviderError>` - A list of projects or
     ///   an error.
-    async fn list_projects(
+    async fn list_projects<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         params: &ProjectListParameters,
     ) -> Result<Vec<Project>, ResourceProviderError> {
-        self.backend_driver.list_projects(state, params).await
+        self.backend_driver.list_projects(ctx.state(), params).await
     }
 }

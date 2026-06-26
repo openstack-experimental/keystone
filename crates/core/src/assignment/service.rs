@@ -22,7 +22,7 @@ use openstack_keystone_core_types::revoke::RevocationEventCreate;
 use openstack_keystone_core_types::role::{Role, RoleListParameters};
 
 use crate::assignment::{AssignmentApi, AssignmentProviderError, backend::AssignmentBackend};
-use crate::keystone::ServiceState;
+use crate::auth::ExecutionContext;
 use crate::plugin_manager::PluginManagerApi;
 
 pub struct AssignmentService {
@@ -62,14 +62,14 @@ impl AssignmentApi for AssignmentService {
     /// # Returns
     /// - `Result<Assignment, AssignmentProviderError>` - The created assignment
     ///   or an error.
-    async fn create_grant(
+    async fn create_grant<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         grant: AssignmentCreate,
     ) -> Result<Assignment, AssignmentProviderError> {
-        let assignment = self.backend_driver.create_grant(state, grant).await?;
+        let assignment = self.backend_driver.create_grant(ctx.state(), grant).await?;
 
-        state
+        ctx.state()
             .event_dispatcher
             .emit(Event::new(
                 Operation::Create,
@@ -121,17 +121,21 @@ impl AssignmentApi for AssignmentService {
     /// # Returns
     /// - `Result<Vec<Assignment>, AssignmentProviderError>` - A list of
     ///   assignments or an error.
-    async fn list_role_assignments(
+    async fn list_role_assignments<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         params: &RoleAssignmentListParameters,
     ) -> Result<Vec<Assignment>, AssignmentProviderError> {
-        let mut assignments = self.backend_driver.list_assignments(state, params).await?;
+        let mut assignments = self
+            .backend_driver
+            .list_assignments(ctx.state(), params)
+            .await?;
         if !assignments.is_empty() && params.include_names.is_some_and(|x| x) {
-            let roles: BTreeMap<String, Role> = state
+            let roles: BTreeMap<String, Role> = ctx
+                .state()
                 .provider
                 .get_role_provider()
-                .list_roles(state, &RoleListParameters::default())
+                .list_roles(ctx, &RoleListParameters::default())
                 .await?
                 .into_iter()
                 .map(|x| (x.id.clone(), x))
@@ -152,13 +156,15 @@ impl AssignmentApi for AssignmentService {
     ///
     /// # Returns
     /// - `Result<(), AssignmentProviderError>` - Ok on success, or an error.
-    async fn revoke_grant(
+    async fn revoke_grant<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         grant: Assignment,
     ) -> Result<(), AssignmentProviderError> {
         // Call backend with reference (no move)
-        self.backend_driver.revoke_grant(state, &grant).await?;
+        self.backend_driver
+            .revoke_grant(ctx.state(), &grant)
+            .await?;
 
         // Determine user_id or group_id
         let user_id = match &grant.r#type {
@@ -197,13 +203,13 @@ impl AssignmentApi for AssignmentService {
             revoked_at: chrono::Utc::now(),
         };
 
-        state
+        ctx.state()
             .provider
             .get_revoke_provider()
-            .create_revocation_event(state, revocation_event)
+            .create_revocation_event(ctx, revocation_event)
             .await?;
 
-        state
+        ctx.state()
             .event_dispatcher
             .emit(Event::new(
                 Operation::Delete,
@@ -280,7 +286,7 @@ mod tests {
         assert!(
             provider
                 .create_grant(
-                    &state,
+                    &ExecutionContext::internal(&state),
                     AssignmentCreate::user_project("actor_id", "target_id", "role_id", false)
                 )
                 .await
@@ -303,7 +309,7 @@ mod tests {
         assert!(
             provider
                 .list_role_assignments(
-                    &state,
+                    &ExecutionContext::internal(&state),
                     &RoleAssignmentListParameters {
                         role_id: Some("rid".into()),
                         resolve_implied_roles: false,
@@ -358,7 +364,7 @@ mod tests {
 
         let res = provider
             .list_role_assignments(
-                &state,
+                &ExecutionContext::internal(&state),
                 &RoleAssignmentListParameters {
                     role_id: Some("rid".into()),
                     include_names: Some(true),
@@ -409,6 +415,11 @@ mod tests {
             backend_driver: Arc::new(backend),
         };
 
-        assert!(provider.revoke_grant(&state, assignment).await.is_ok());
+        assert!(
+            provider
+                .revoke_grant(&ExecutionContext::internal(&state), assignment)
+                .await
+                .is_ok()
+        );
     }
 }

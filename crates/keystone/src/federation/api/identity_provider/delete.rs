@@ -23,6 +23,7 @@ use serde_json::json;
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
+use openstack_keystone_core::auth::ExecutionContext;
 
 /// Delete Identity provider.
 ///
@@ -58,7 +59,7 @@ pub(super) async fn remove(
     let current = state
         .provider
         .get_federation_provider()
-        .get_identity_provider(&state, &id)
+        .get_identity_provider(&ExecutionContext::from_auth(&state, &user_auth), &id)
         .await?;
 
     state
@@ -78,7 +79,7 @@ pub(super) async fn remove(
         state
             .provider
             .get_federation_provider()
-            .delete_identity_provider(&state, &id)
+            .delete_identity_provider(&ExecutionContext::from_auth(&state, &user_auth), &id)
             .await?;
     } else {
         return Err(KeystoneApiError::NotFound {

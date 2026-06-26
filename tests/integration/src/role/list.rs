@@ -18,7 +18,7 @@ use std::collections::BTreeSet;
 use uuid::Uuid;
 
 use openstack_keystone::keystone::ServiceState;
-use openstack_keystone::role::RoleApi;
+use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core_types::role::*;
 
 use crate::common::get_state;
@@ -28,7 +28,7 @@ async fn list_roles(state: &ServiceState, params: &RoleListParameters) -> Result
     Ok(state
         .provider
         .get_role_provider()
-        .list_roles(state, params)
+        .list_roles(&ExecutionContext::internal(&state), params)
         .await?
         .into_iter()
         .map(|role| role.id)

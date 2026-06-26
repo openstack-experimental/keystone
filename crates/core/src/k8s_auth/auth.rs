@@ -26,8 +26,8 @@ use openstack_keystone_core_types::mapping::auth::MappingAuthRequest;
 use openstack_keystone_core_types::mapping::resolution::IdentitySource;
 
 use super::K8sAuthApi;
+use crate::auth::ExecutionContext;
 use crate::k8s_auth::{K8sAuthProviderError, service::K8sAuthService};
-use crate::keystone::ServiceState;
 
 impl K8sAuthService {
     /// Authenticate via K8s TokenReview + mapping engine.
@@ -45,12 +45,12 @@ impl K8sAuthService {
     /// * `K8sAuthProviderError` if authentication fails.
     pub(super) async fn authenticate_by_mapping(
         &self,
-        state: &ServiceState,
+        exec: &ExecutionContext<'_>,
         req: &K8sAuthRequest,
     ) -> Result<AuthenticationResult, K8sAuthProviderError> {
         // Fetch k8s auth instance.
         let instance = self
-            .get_auth_instance(state, &req.auth_instance_id)
+            .get_auth_instance(exec, &req.auth_instance_id)
             .await?
             .ok_or(K8sAuthProviderError::AuthInstanceNotFound(
                 req.auth_instance_id.clone(),
@@ -83,10 +83,10 @@ impl K8sAuthService {
             rule_name: req.rule_name.clone(),
         };
 
-        let auth_result = state
+        let auth_result = exec
             .provider
             .get_mapping_provider()
-            .authenticate_by_mapping(state, &mapping_req)
+            .authenticate_by_mapping(exec, &mapping_req)
             .await
             .map_err(|e| K8sAuthProviderError::MappingEngine(e.to_string()))?;
 
@@ -307,7 +307,7 @@ mod tests {
         let service = make_service(backend);
         let result = service
             .authenticate_by_mapping(
-                &state,
+                &ExecutionContext::internal(&state),
                 &K8sAuthRequest {
                     auth_instance_id: "missing".into(),
                     jwt: SecretString::new("jwt".into()),
@@ -340,7 +340,7 @@ mod tests {
         let service = make_service(backend);
         let result = service
             .authenticate_by_mapping(
-                &state,
+                &ExecutionContext::internal(&state),
                 &K8sAuthRequest {
                     auth_instance_id: "cid".into(),
                     jwt: SecretString::new("jwt".into()),

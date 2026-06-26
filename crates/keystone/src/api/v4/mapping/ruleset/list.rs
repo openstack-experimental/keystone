@@ -29,6 +29,7 @@ use openstack_keystone_core_types::mapping::MappingRuleSetListParameters as Prov
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
+use openstack_keystone_core::auth::ExecutionContext;
 
 /// List mapping rulesets.
 #[utoipa::path(
@@ -74,7 +75,10 @@ pub(super) async fn list(
     let rulesets: Vec<MappingRuleSet> = state
         .provider
         .get_mapping_provider()
-        .list_rulesets(&state, &provider_list_params)
+        .list_rulesets(
+            &ExecutionContext::from_auth(&state, &user_auth),
+            &provider_list_params,
+        )
         .await?
         .into_iter()
         .map(Into::into)

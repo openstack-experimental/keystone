@@ -17,7 +17,7 @@ use eyre::Result;
 use tracing_test::traced_test;
 use uuid::Uuid;
 
-use openstack_keystone::identity::IdentityApi;
+use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core_types::identity::*;
 
 use crate::common::get_state;
@@ -33,7 +33,7 @@ async fn test_get_local() -> Result<()> {
         .provider
         .get_identity_provider()
         .create_user(
-            &state,
+            &ExecutionContext::internal(&state),
             UserCreateBuilder::default()
                 .name(Uuid::new_v4().to_string())
                 .domain_id(domain.id.clone())
@@ -45,7 +45,7 @@ async fn test_get_local() -> Result<()> {
     let user = state
         .provider
         .get_identity_provider()
-        .get_user(&state, &sot.id)
+        .get_user(&ExecutionContext::internal(&state), &sot.id)
         .await?
         .expect("user found");
     assert_eq!(user.default_project_id, sot.default_project_id);

@@ -18,7 +18,7 @@ use std::collections::HashMap;
 use eyre::Result;
 use tracing_test::traced_test;
 
-use openstack_keystone_core::catalog::CatalogApi;
+use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core_types::catalog::ServiceCreate;
 
 use crate::catalog::create_service;
@@ -47,7 +47,7 @@ async fn test_get() -> Result<()> {
     let fetched = state
         .provider
         .get_catalog_provider()
-        .get_service(&state, &service.id)
+        .get_service(&ExecutionContext::internal(&state), &service.id)
         .await?;
 
     assert!(fetched.is_some());
@@ -65,7 +65,7 @@ async fn test_get_not_found() -> Result<()> {
     let fetched = state
         .provider
         .get_catalog_provider()
-        .get_service(&state, "does-not-exist")
+        .get_service(&ExecutionContext::internal(&state), "does-not-exist")
         .await?;
     assert!(fetched.is_none());
     Ok(())

@@ -26,6 +26,7 @@ use openstack_keystone_api_types::k8s_auth::*;
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
+use openstack_keystone_core::auth::ExecutionContext;
 
 /// Get single K8s auth instance.
 ///
@@ -58,7 +59,7 @@ pub(super) async fn show(
     let current = state
         .provider
         .get_k8s_auth_provider()
-        .get_auth_instance(&state, &id)
+        .get_auth_instance(&ExecutionContext::from_auth(&state, &user_auth), &id)
         .await
         .map(|x| {
             x.ok_or_else(|| KeystoneApiError::NotFound {

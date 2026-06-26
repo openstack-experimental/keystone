@@ -21,6 +21,7 @@ use serde_json::json;
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
+use openstack_keystone_core::auth::ExecutionContext;
 
 /// Delete group by ID.
 #[utoipa::path(
@@ -42,7 +43,7 @@ pub async fn delete(
     let current = state
         .provider
         .get_identity_provider()
-        .get_group(&state, &group_id)
+        .get_group(&ExecutionContext::from_auth(&state, &user_auth), &group_id)
         .await?;
 
     state
@@ -60,7 +61,7 @@ pub async fn delete(
             state
                 .provider
                 .get_identity_provider()
-                .delete_group(&state, &group_id)
+                .delete_group(&ExecutionContext::from_auth(&state, &user_auth), &group_id)
                 .await?;
             Ok((StatusCode::NO_CONTENT).into_response())
         }

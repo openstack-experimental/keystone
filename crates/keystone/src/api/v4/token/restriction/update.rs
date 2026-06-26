@@ -26,6 +26,7 @@ use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
 use crate::api::v4::token::types::*;
 use crate::keystone::ServiceState;
+use openstack_keystone_core::auth::ExecutionContext;
 
 /// Update existing token restriction by the ID.
 ///
@@ -65,7 +66,7 @@ pub(super) async fn update(
     let current = state
         .provider
         .get_token_provider()
-        .get_token_restriction(&state, &id, false)
+        .get_token_restriction(&ExecutionContext::from_auth(&state, &user_auth), &id, false)
         .await?;
     let existing_restriction = current.as_ref().map(|c| json!({"restriction": c}));
 
@@ -82,7 +83,11 @@ pub(super) async fn update(
     let res = state
         .provider
         .get_token_provider()
-        .update_token_restriction(&state, &id, req.into())
+        .update_token_restriction(
+            &ExecutionContext::from_auth(&state, &user_auth),
+            &id,
+            req.into(),
+        )
         .await?;
     Ok((
         StatusCode::OK,

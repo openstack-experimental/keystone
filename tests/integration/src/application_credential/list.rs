@@ -16,7 +16,7 @@
 use eyre::Report;
 use tracing_test::traced_test;
 
-use openstack_keystone::application_credential::ApplicationCredentialApi;
+use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core_types::application_credential::*;
 
 use crate::common::get_state;
@@ -37,7 +37,7 @@ async fn test_list() -> Result<(), Report> {
         .provider
         .get_application_credential_provider()
         .list_application_credentials(
-            &state,
+            &ExecutionContext::internal(&state),
             &ApplicationCredentialListParameters {
                 user_id: user.id.clone(),
                 ..Default::default()
@@ -52,7 +52,7 @@ async fn test_list() -> Result<(), Report> {
         .provider
         .get_application_credential_provider()
         .list_application_credentials(
-            &state,
+            &ExecutionContext::internal(&state),
             &ApplicationCredentialListParameters {
                 user_id: "missing".into(),
                 ..Default::default()
@@ -85,7 +85,7 @@ async fn test_list_limit() -> Result<(), Report> {
         .provider
         .get_application_credential_provider()
         .list_application_credentials(
-            &state,
+            &ExecutionContext::internal(&state),
             &ApplicationCredentialListParameters {
                 user_id: user.id.clone(),
                 limit: Some(5),
@@ -120,7 +120,7 @@ async fn test_list_by_name() -> Result<(), Report> {
         .provider
         .get_application_credential_provider()
         .list_application_credentials(
-            &state,
+            &ExecutionContext::internal(&state),
             &ApplicationCredentialListParameters {
                 user_id: user.id.clone(),
                 name: Some(ac1.name.clone()),

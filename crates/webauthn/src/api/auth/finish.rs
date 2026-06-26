@@ -25,6 +25,7 @@ use crate::{
 use openstack_keystone_api_types::error::KeystoneApiError;
 use openstack_keystone_api_types::v3::auth::token::TokenBuilder;
 use openstack_keystone_api_types::v3::auth::token::TokenResponse;
+use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core::auth::*;
 
 /// Finish user passkey authentication.
@@ -61,7 +62,10 @@ pub async fn finish(
     let Some(s) = state
         .extension
         .provider
-        .get_user_webauthn_credential_authentication_state(&state.core, &user_id)
+        .get_user_webauthn_credential_authentication_state(
+            &ExecutionContext::internal(&state.core),
+            &user_id,
+        )
         .await?
     else {
         return Err(KeystoneApiError::UnauthorizedNoContext);
@@ -78,7 +82,10 @@ pub async fn finish(
     state
         .extension
         .provider
-        .delete_user_webauthn_credential_authentication_state(&state.core, &user_id)
+        .delete_user_webauthn_credential_authentication_state(
+            &ExecutionContext::internal(&state.core),
+            &user_id,
+        )
         .await?;
 
     let auth_result = match state
@@ -107,7 +114,7 @@ pub async fn finish(
     let mut credential = state
         .extension
         .provider
-        .get_user_webauthn_credential(&state.core, &user_id, &cred_id)
+        .get_user_webauthn_credential(&ExecutionContext::internal(&state.core), &user_id, &cred_id)
         .await?
         .ok_or(WebauthnError::CredentialNotFound(cred_id))?;
 
@@ -136,7 +143,7 @@ pub async fn finish(
         .extension
         .provider
         .update_user_webauthn_credential(
-            &state.core,
+            &ExecutionContext::internal(&state.core),
             &user_id,
             &credential.credential_id,
             &credential,
@@ -147,7 +154,7 @@ pub async fn finish(
         .core
         .provider
         .get_identity_provider()
-        .get_user(&state.core, &user_id)
+        .get_user(&ExecutionContext::internal(&state.core), &user_id)
         .await?
         .ok_or(KeystoneApiError::Conflict("user not found".into()))?;
     let auth = AuthenticationResultBuilder::default()

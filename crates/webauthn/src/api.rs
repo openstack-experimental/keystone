@@ -23,6 +23,7 @@ use utoipa::OpenApi;
 use utoipa_axum::router::OpenApiRouter;
 use webauthn_rs::WebauthnBuilder;
 
+use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core::error::KeystoneError;
 use openstack_keystone_core::keystone::ServiceState;
 
@@ -152,7 +153,7 @@ async fn cleanup(cancel: CancellationToken, state: CombinedExtensionState) {
         tokio::select! {
             _ = interval.tick() => {
                 trace!("cleanup job tick");
-                if let Err(e) = state.extension.provider.cleanup(&state.core).await {
+                if let Err(e) = state.extension.provider.cleanup(&ExecutionContext::internal(&state.core)).await {
                     error!("Error during cleanup job: {}", e);
                 }
             },

@@ -18,7 +18,7 @@ use std::collections::HashMap;
 use eyre::Result;
 use tracing_test::traced_test;
 
-use openstack_keystone_core::catalog::CatalogApi;
+use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core_types::catalog::{RegionCreate, RegionListParameters};
 
 use crate::catalog::create_region;
@@ -52,7 +52,10 @@ async fn test_list() -> Result<()> {
     let regions = state
         .provider
         .get_catalog_provider()
-        .list_regions(&state, &RegionListParameters::default())
+        .list_regions(
+            &ExecutionContext::internal(&state),
+            &RegionListParameters::default(),
+        )
         .await?;
 
     let ids: Vec<&str> = regions.iter().map(|r| r.id.as_str()).collect();
@@ -110,7 +113,7 @@ async fn test_list_filter_by_parent() -> Result<()> {
         .provider
         .get_catalog_provider()
         .list_regions(
-            &state,
+            &ExecutionContext::internal(&state),
             &RegionListParameters {
                 parent_region_id: Some("parent".to_string()),
             },

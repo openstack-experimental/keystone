@@ -22,7 +22,7 @@ use eyre::Result;
 
 use openstack_keystone::keystone::Service;
 use openstack_keystone::keystone::ServiceState;
-use openstack_keystone::resource::ResourceApi;
+use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core_types::resource::*;
 
 use crate::common::*;
@@ -38,7 +38,7 @@ pub async fn create_project(
     let res = state
         .provider
         .get_resource_provider()
-        .create_project(state, data)
+        .create_project(&ExecutionContext::internal(&state), data)
         .await
         .unwrap();
     Ok(AsyncResourceGuard::new(res, state.clone()))
@@ -51,7 +51,7 @@ pub async fn create_domain(
     let res = state
         .provider
         .get_resource_provider()
-        .create_domain(state, data)
+        .create_domain(&ExecutionContext::internal(&state), data)
         .await
         .unwrap();
     Ok(AsyncResourceGuard::new(res, state.clone()))

@@ -18,6 +18,7 @@ use uuid::Uuid;
 use webauthn_authenticator_rs::WebauthnAuthenticator;
 use webauthn_authenticator_rs::softtoken::SoftToken;
 
+use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_webauthn::types::*;
 
 mod common;
@@ -28,6 +29,7 @@ use common::{generate_webauthn_credential, get_state};
 async fn test_webauthn_register() -> Result<()> {
     let (state, _dir) = get_state(None).await?;
     let user_id = Uuid::new_v4();
+    let exec = ExecutionContext::internal(&state.core);
 
     let (_ccr, reg_state) = state.extension.webauthn.start_passkey_registration(
         user_id,
@@ -38,16 +40,12 @@ async fn test_webauthn_register() -> Result<()> {
     state
         .extension
         .provider
-        .save_user_webauthn_credential_registration_state(
-            &state.core,
-            &user_id.to_string(),
-            &reg_state,
-        )
+        .save_user_webauthn_credential_registration_state(&exec, &user_id.to_string(), &reg_state)
         .await?;
     let reg_state_2 = state
         .extension
         .provider
-        .get_user_webauthn_credential_registration_state(&state.core, &user_id.to_string())
+        .get_user_webauthn_credential_registration_state(&exec, &user_id.to_string())
         .await?
         .unwrap();
     assert_eq!(
@@ -57,13 +55,13 @@ async fn test_webauthn_register() -> Result<()> {
     state
         .extension
         .provider
-        .delete_user_webauthn_credential_registration_state(&state.core, &user_id.to_string())
+        .delete_user_webauthn_credential_registration_state(&exec, &user_id.to_string())
         .await?;
     assert!(
         state
             .extension
             .provider
-            .get_user_webauthn_credential_registration_state(&state.core, &user_id.to_string())
+            .get_user_webauthn_credential_registration_state(&exec, &user_id.to_string())
             .await?
             .is_none()
     );
@@ -75,6 +73,7 @@ async fn test_webauthn_register() -> Result<()> {
 async fn test_webauthn_auth() -> Result<()> {
     let (state, _dir) = get_state(None).await?;
     let user_id = Uuid::new_v4();
+    let exec = ExecutionContext::internal(&state.core);
 
     let mut authenticator = WebauthnAuthenticator::new(SoftToken::new(true)?.0);
     let cred = generate_webauthn_credential(&state, &mut authenticator, user_id)?;
@@ -88,7 +87,7 @@ async fn test_webauthn_auth() -> Result<()> {
         .extension
         .provider
         .save_user_webauthn_credential_authentication_state(
-            &state.core,
+            &exec,
             &user_id.to_string(),
             &auth_state,
         )
@@ -96,7 +95,7 @@ async fn test_webauthn_auth() -> Result<()> {
     let auth_state_2 = state
         .extension
         .provider
-        .get_user_webauthn_credential_authentication_state(&state.core, &user_id.to_string())
+        .get_user_webauthn_credential_authentication_state(&exec, &user_id.to_string())
         .await?
         .unwrap();
     assert_eq!(
@@ -106,13 +105,13 @@ async fn test_webauthn_auth() -> Result<()> {
     state
         .extension
         .provider
-        .delete_user_webauthn_credential_authentication_state(&state.core, &user_id.to_string())
+        .delete_user_webauthn_credential_authentication_state(&exec, &user_id.to_string())
         .await?;
     assert!(
         state
             .extension
             .provider
-            .get_user_webauthn_credential_authentication_state(&state.core, &user_id.to_string())
+            .get_user_webauthn_credential_authentication_state(&exec, &user_id.to_string())
             .await?
             .is_none()
     );
@@ -142,6 +141,7 @@ async fn test_webauthn_credential() -> Result<()> {
     let authenticator_backend = SoftToken::new(true)?.0;
     let mut authenticator = WebauthnAuthenticator::new(authenticator_backend);
     let user_id = Uuid::new_v4();
+    let exec = ExecutionContext::internal(&state.core);
 
     let mut cred1 = generate_webauthn_credential(&state, &mut authenticator, user_id)?;
     let cred2 = generate_webauthn_credential(&state, &mut authenticator, user_id)?;
@@ -149,19 +149,19 @@ async fn test_webauthn_credential() -> Result<()> {
     let res = state
         .extension
         .provider
-        .create_user_webauthn_credential(&state.core, &cred1)
+        .create_user_webauthn_credential(&exec, &cred1)
         .await?;
     compare_credential(&res, &cred1);
     state
         .extension
         .provider
-        .create_user_webauthn_credential(&state.core, &cred2)
+        .create_user_webauthn_credential(&exec, &cred2)
         .await?;
 
     let list = state
         .extension
         .provider
-        .list_user_webauthn_credentials(&state.core, &user_id.to_string())
+        .list_user_webauthn_credentials(&exec, &user_id.to_string())
         .await?;
     assert_eq!(2, list.len());
     assert!(
@@ -178,26 +178,26 @@ async fn test_webauthn_credential() -> Result<()> {
     let res = state
         .extension
         .provider
-        .update_user_webauthn_credential(&state.core, &cred1.user_id, &cred1.credential_id, &cred1)
+        .update_user_webauthn_credential(&exec, &cred1.user_id, &cred1.credential_id, &cred1)
         .await?;
     compare_credential(&cred1, &res);
     let updated_cred = state
         .extension
         .provider
-        .get_user_webauthn_credential(&state.core, &cred1.user_id, &cred1.credential_id)
+        .get_user_webauthn_credential(&exec, &cred1.user_id, &cred1.credential_id)
         .await?
         .expect("must be found");
     compare_credential(&cred1, &updated_cred);
     state
         .extension
         .provider
-        .delete_user_webauthn_credential(&state.core, &cred1.user_id, &cred1.credential_id)
+        .delete_user_webauthn_credential(&exec, &cred1.user_id, &cred1.credential_id)
         .await?;
     assert!(
         state
             .extension
             .provider
-            .get_user_webauthn_credential(&state.core, &cred1.user_id, &cred1.credential_id)
+            .get_user_webauthn_credential(&exec, &cred1.user_id, &cred1.credential_id)
             .await?
             .is_none()
     );
@@ -205,7 +205,7 @@ async fn test_webauthn_credential() -> Result<()> {
         &state
             .extension
             .provider
-            .get_user_webauthn_credential(&state.core, &cred2.user_id, &cred2.credential_id)
+            .get_user_webauthn_credential(&exec, &cred2.user_id, &cred2.credential_id)
             .await?
             .expect("must be present"),
         &cred2,
@@ -220,6 +220,7 @@ async fn test_webauthn_roundtrip() -> Result<()> {
     let authenticator_backend = SoftToken::new(true)?.0;
     let origin = Url::parse("https://keystone.local")?;
     let mut authenticator = WebauthnAuthenticator::new(authenticator_backend);
+    let exec = ExecutionContext::internal(&state.core);
 
     // init new cred registration
     let (ccr, reg_state) = state.extension.webauthn.start_passkey_registration(
@@ -232,11 +233,7 @@ async fn test_webauthn_roundtrip() -> Result<()> {
     state
         .extension
         .provider
-        .save_user_webauthn_credential_registration_state(
-            &state.core,
-            &user_id.to_string(),
-            &reg_state,
-        )
+        .save_user_webauthn_credential_registration_state(&exec, &user_id.to_string(), &reg_state)
         .await?;
 
     // user signs request
@@ -245,7 +242,7 @@ async fn test_webauthn_roundtrip() -> Result<()> {
     let reg_state_2 = state
         .extension
         .provider
-        .get_user_webauthn_credential_registration_state(&state.core, &user_id.to_string())
+        .get_user_webauthn_credential_registration_state(&exec, &user_id.to_string())
         .await?
         .unwrap();
 
@@ -262,7 +259,7 @@ async fn test_webauthn_roundtrip() -> Result<()> {
     state
         .extension
         .provider
-        .create_user_webauthn_credential(&state.core, &cred)
+        .create_user_webauthn_credential(&exec, &cred)
         .await?;
 
     // user inits authentication
@@ -276,7 +273,7 @@ async fn test_webauthn_roundtrip() -> Result<()> {
         .extension
         .provider
         .save_user_webauthn_credential_authentication_state(
-            &state.core,
+            &exec,
             &user_id.to_string(),
             &auth_state,
         )
@@ -295,7 +292,7 @@ async fn test_webauthn_roundtrip() -> Result<()> {
     let auth_state_2 = state
         .extension
         .provider
-        .get_user_webauthn_credential_authentication_state(&state.core, &user_id.to_string())
+        .get_user_webauthn_credential_authentication_state(&exec, &user_id.to_string())
         .await?
         .unwrap();
 

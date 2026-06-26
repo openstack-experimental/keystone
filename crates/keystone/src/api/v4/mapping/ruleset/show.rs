@@ -24,6 +24,7 @@ use openstack_keystone_api_types::v4::mapping::{MappingRuleSet, MappingRuleSetRe
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
+use openstack_keystone_core::auth::ExecutionContext;
 
 /// Show a mapping ruleset by ID.
 #[utoipa::path(
@@ -53,7 +54,10 @@ pub(super) async fn show(
     let current = state
         .provider
         .get_mapping_provider()
-        .get_ruleset(&state, &mapping_id)
+        .get_ruleset(
+            &ExecutionContext::from_auth(&state, &user_auth),
+            &mapping_id,
+        )
         .await?
         .ok_or_else(|| KeystoneApiError::NotFound {
             resource: "mapping ruleset".into(),

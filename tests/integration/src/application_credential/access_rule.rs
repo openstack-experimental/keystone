@@ -17,9 +17,8 @@ use eyre::Report;
 use tracing_test::traced_test;
 use uuid::Uuid;
 
-use openstack_keystone::application_credential::{
-    ApplicationCredentialApi, ApplicationCredentialProviderError,
-};
+use openstack_keystone::application_credential::ApplicationCredentialProviderError;
+use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core_types::application_credential::*;
 
 use crate::common::get_state;
@@ -36,7 +35,7 @@ async fn test_access_rule_crd() -> Result<(), Report> {
     // Create
     let created = provider
         .create_access_rule(
-            &state,
+            &ExecutionContext::internal(&state),
             AccessRuleCreate {
                 id: None,
                 path: Some("/v2.1/servers".into()),
@@ -54,13 +53,15 @@ async fn test_access_rule_crd() -> Result<(), Report> {
 
     // Get
     let fetched = provider
-        .get_access_rule(&state, &user.id, &created.id)
+        .get_access_rule(&ExecutionContext::internal(&state), &user.id, &created.id)
         .await?
         .expect("access rule is present");
     assert_eq!(fetched, created, "fetched rule matches the created one");
 
     // List
-    let listed = provider.list_access_rules(&state, &user.id).await?;
+    let listed = provider
+        .list_access_rules(&ExecutionContext::internal(&state), &user.id)
+        .await?;
     assert!(
         listed.iter().any(|r| r.id == created.id),
         "created rule is listed"
@@ -68,11 +69,11 @@ async fn test_access_rule_crd() -> Result<(), Report> {
 
     // Delete
     provider
-        .delete_access_rule(&state, &user.id, &created.id)
+        .delete_access_rule(&ExecutionContext::internal(&state), &user.id, &created.id)
         .await?;
     assert!(
         provider
-            .get_access_rule(&state, &user.id, &created.id)
+            .get_access_rule(&ExecutionContext::internal(&state), &user.id, &created.id)
             .await?
             .is_none(),
         "rule is gone after delete"
@@ -91,7 +92,7 @@ async fn test_delete_access_rule_not_found() -> Result<(), Report> {
     let result = state
         .provider
         .get_application_credential_provider()
-        .delete_access_rule(&state, &user.id, "missing")
+        .delete_access_rule(&ExecutionContext::internal(&state), &user.id, "missing")
         .await;
 
     assert!(
@@ -118,7 +119,7 @@ async fn test_delete_access_rule_in_use() -> Result<(), Report> {
     let rule_id = Uuid::new_v4().to_string();
     provider
         .create_application_credential(
-            &state,
+            &ExecutionContext::internal(&state),
             ApplicationCredentialCreate {
                 access_rules: Some(vec![AccessRuleCreate {
                     id: Some(rule_id.clone()),
@@ -137,7 +138,7 @@ async fn test_delete_access_rule_in_use() -> Result<(), Report> {
         .await?;
 
     let result = provider
-        .delete_access_rule(&state, &user.id, &rule_id)
+        .delete_access_rule(&ExecutionContext::internal(&state), &user.id, &rule_id)
         .await;
 
     assert!(

@@ -16,7 +16,7 @@ use async_trait::async_trait;
 use chrono::Utc;
 use webauthn_rs::prelude::{PasskeyAuthentication, PasskeyRegistration};
 
-use openstack_keystone_core::keystone::ServiceState;
+use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_distributed_storage::{
     ApiStoreError, Metadata, StorageApi, StoreDataEnvelope,
 };
@@ -320,33 +320,20 @@ impl RaftDriver {
 
 #[async_trait]
 impl WebauthnApi for RaftDriver {
-    /// Cleanup expired Webauthn states.
-    ///
-    /// # Parameters
-    /// - `_state`: The service state.
-    ///
-    /// # Returns
-    /// A `Result` indicating success or failure.
     #[tracing::instrument(level = "debug", skip_all())]
-    async fn cleanup(&self, _state: &ServiceState) -> Result<(), WebauthnError> {
+    async fn cleanup<'a>(&self, _exec: &ExecutionContext<'a>) -> Result<(), WebauthnError> {
         Ok(())
     }
 
     /// Create webauthn credential for the user.
-    ///
-    /// # Parameters
-    /// - `state`: The service state.
-    /// - `credential`: The credential to create.
-    ///
-    /// # Returns
-    /// A `Result` containing the created credential, or an `Error`.
-    #[tracing::instrument(level = "debug", skip(self, state))]
-    async fn create_user_webauthn_credential(
+    #[tracing::instrument(level = "debug", skip(self, exec))]
+    async fn create_user_webauthn_credential<'a>(
         &self,
-        state: &ServiceState,
+        exec: &ExecutionContext<'a>,
         credential: &WebauthnCredential,
     ) -> Result<WebauthnCredential, WebauthnError> {
-        let raft = state
+        let raft = exec
+            .state()
             .storage
             .as_deref()
             .ok_or(WebauthnError::RaftNotAvailable)?;
@@ -356,23 +343,15 @@ impl WebauthnApi for RaftDriver {
     }
 
     /// Get webauthn credential of the user by the credential_id.
-    ///
-    /// # Parameters
-    /// - `state`: The service state.
-    /// - `user_id`: The user ID.
-    /// - `credential_id`: The credential ID.
-    ///
-    /// # Returns
-    /// A `Result` containing an `Option` with the WebauthnCredential if found,
-    /// or an `Error`.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(level = "debug", skip(self, exec))]
     async fn get_user_webauthn_credential<'a>(
         &self,
-        state: &ServiceState,
-        user_id: &'a str,
-        credential_id: &'a str,
+        exec: &ExecutionContext<'a>,
+        user_id: &str,
+        credential_id: &str,
     ) -> Result<Option<WebauthnCredential>, WebauthnError> {
-        let raft = state
+        let raft = exec
+            .state()
             .storage
             .as_deref()
             .ok_or(WebauthnError::RaftNotAvailable)?;
@@ -382,22 +361,15 @@ impl WebauthnApi for RaftDriver {
     }
 
     /// Delete credential for the user.
-    ///
-    /// # Parameters
-    /// - `state`: The service state.
-    /// - `user_id`: The user ID.
-    /// - `credential_id`: The credential ID.
-    ///
-    /// # Returns
-    /// A `Result` indicating success or failure.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(level = "debug", skip(self, exec))]
     async fn delete_user_webauthn_credential<'a>(
         &self,
-        state: &ServiceState,
-        user_id: &'a str,
-        credential_id: &'a str,
+        exec: &ExecutionContext<'a>,
+        user_id: &str,
+        credential_id: &str,
     ) -> Result<(), WebauthnError> {
-        let raft = state
+        let raft = exec
+            .state()
             .storage
             .as_deref()
             .ok_or(WebauthnError::RaftNotAvailable)?;
@@ -407,20 +379,14 @@ impl WebauthnApi for RaftDriver {
     }
 
     /// Delete webauthn credential auth state for a user.
-    ///
-    /// # Parameters
-    /// - `state`: The service state.
-    /// - `user_id`: The user ID.
-    ///
-    /// # Returns
-    /// A `Result` indicating success or failure.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(level = "debug", skip(self, exec))]
     async fn delete_user_webauthn_credential_authentication_state<'a>(
         &self,
-        state: &ServiceState,
-        user_id: &'a str,
+        exec: &ExecutionContext<'a>,
+        user_id: &str,
     ) -> Result<(), WebauthnError> {
-        let raft = state
+        let raft = exec
+            .state()
             .storage
             .as_deref()
             .ok_or(WebauthnError::RaftNotAvailable)?;
@@ -435,20 +401,14 @@ impl WebauthnApi for RaftDriver {
     }
 
     /// Delete webauthn credential registration state for the user.
-    ///
-    /// # Parameters
-    /// - `state`: The service state.
-    /// - `user_id`: The user ID.
-    ///
-    /// # Returns
-    /// A `Result` indicating success or failure.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(level = "debug", skip(self, exec))]
     async fn delete_user_webauthn_credential_registration_state<'a>(
         &self,
-        state: &ServiceState,
-        user_id: &'a str,
+        exec: &ExecutionContext<'a>,
+        user_id: &str,
     ) -> Result<(), WebauthnError> {
-        let raft = state
+        let raft = exec
+            .state()
             .storage
             .as_deref()
             .ok_or(WebauthnError::RaftNotAvailable)?;
@@ -459,21 +419,14 @@ impl WebauthnApi for RaftDriver {
     }
 
     /// Get webauthn credential auth state.
-    ///
-    /// # Parameters
-    /// - `state`: The service state.
-    /// - `user_id`: The user ID.
-    ///
-    /// # Returns
-    /// A `Result` containing an `Option` with the PasskeyAuthentication if
-    /// found, or an `Error`.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(level = "debug", skip(self, exec))]
     async fn get_user_webauthn_credential_authentication_state<'a>(
         &self,
-        state: &ServiceState,
-        user_id: &'a str,
+        exec: &ExecutionContext<'a>,
+        user_id: &str,
     ) -> Result<Option<PasskeyAuthentication>, WebauthnError> {
-        let raft = state
+        let raft = exec
+            .state()
             .storage
             .as_deref()
             .ok_or(WebauthnError::RaftNotAvailable)?;
@@ -484,21 +437,14 @@ impl WebauthnApi for RaftDriver {
     }
 
     /// Get webauthn credential registration state.
-    ///
-    /// # Parameters
-    /// - `state`: The service state.
-    /// - `user_id`: The user ID.
-    ///
-    /// # Returns
-    /// A `Result` containing an `Option` with the PasskeyRegistration if found,
-    /// or an `Error`.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(level = "debug", skip(self, exec))]
     async fn get_user_webauthn_credential_registration_state<'a>(
         &self,
-        state: &ServiceState,
-        user_id: &'a str,
+        exec: &ExecutionContext<'a>,
+        user_id: &str,
     ) -> Result<Option<PasskeyRegistration>, WebauthnError> {
-        let raft = state
+        let raft = exec
+            .state()
             .storage
             .as_deref()
             .ok_or(WebauthnError::RaftNotAvailable)?;
@@ -509,20 +455,14 @@ impl WebauthnApi for RaftDriver {
     }
 
     /// List user webauthn credentials.
-    ///
-    /// # Parameters
-    /// - `state`: The service state.
-    /// - `user_id`: The user ID.
-    ///
-    /// # Returns
-    /// A `Result` containing a list of credentials, or an `Error`.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(level = "debug", skip(self, exec))]
     async fn list_user_webauthn_credentials<'a>(
         &self,
-        state: &ServiceState,
-        user_id: &'a str,
+        exec: &ExecutionContext<'a>,
+        user_id: &str,
     ) -> Result<Vec<WebauthnCredential>, WebauthnError> {
-        let raft = state
+        let raft = exec
+            .state()
             .storage
             .as_deref()
             .ok_or(WebauthnError::RaftNotAvailable)?;
@@ -532,22 +472,15 @@ impl WebauthnApi for RaftDriver {
     }
 
     /// Save webauthn credential auth state.
-    ///
-    /// # Parameters
-    /// - `state`: The service state.
-    /// - `user_id`: The user ID.
-    /// - `auth_state`: The authentication state to save.
-    ///
-    /// # Returns
-    /// A `Result` indicating success or failure.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(level = "debug", skip(self, exec))]
     async fn save_user_webauthn_credential_authentication_state<'a>(
         &self,
-        state: &ServiceState,
-        user_id: &'a str,
+        exec: &ExecutionContext<'a>,
+        user_id: &str,
         auth_state: &PasskeyAuthentication,
     ) -> Result<(), WebauthnError> {
-        let raft = state
+        let raft = exec
+            .state()
             .storage
             .as_deref()
             .ok_or(WebauthnError::RaftNotAvailable)?;
@@ -563,22 +496,15 @@ impl WebauthnApi for RaftDriver {
     }
 
     /// Save webauthn credential registration state.
-    ///
-    /// # Parameters
-    /// - `state`: The service state.
-    /// - `user_id`: The user ID.
-    /// - `reg_state`: The registration state to save.
-    ///
-    /// # Returns
-    /// A `Result` indicating success or failure.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(level = "debug", skip(self, exec))]
     async fn save_user_webauthn_credential_registration_state<'a>(
         &self,
-        state: &ServiceState,
-        user_id: &'a str,
+        exec: &ExecutionContext<'a>,
+        user_id: &str,
         reg_state: &PasskeyRegistration,
     ) -> Result<(), WebauthnError> {
-        let raft = state
+        let raft = exec
+            .state()
             .storage
             .as_deref()
             .ok_or(WebauthnError::RaftNotAvailable)?;
@@ -594,24 +520,16 @@ impl WebauthnApi for RaftDriver {
     }
 
     /// Update credential data.
-    ///
-    /// # Parameters
-    /// - `state`: The service state.
-    /// - `user_id`: The user ID.
-    /// - `credential_id`: The credential ID.
-    /// - `credential`: The credential data to update.
-    ///
-    /// # Returns
-    /// A `Result` containing the updated credential, or an `Error`.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(level = "debug", skip(self, exec))]
     async fn update_user_webauthn_credential<'a>(
         &self,
-        state: &ServiceState,
-        user_id: &'a str,
-        credential_id: &'a str,
+        exec: &ExecutionContext<'a>,
+        user_id: &str,
+        credential_id: &str,
         credential: &WebauthnCredential,
     ) -> Result<WebauthnCredential, WebauthnError> {
-        let raft = state
+        let raft = exec
+            .state()
             .storage
             .as_deref()
             .ok_or(WebauthnError::RaftNotAvailable)?;
@@ -636,7 +554,7 @@ mod tests {
     const STATE_KEYSPACE: &str = "webauth_state_test";
 
     #[tokio::test]
-    async fn test_credential_storage() {
+    async fn test_credential_storage<'a>() {
         let driver = RaftDriver::default();
         let storage = MockStorage::default();
 
@@ -667,7 +585,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_credential_keys() {
+    async fn test_credential_keys<'a>() {
         let driver = RaftDriver::default();
         assert_eq!(
             driver.get_cred_key_name("user-1", "cred-1"),
@@ -677,7 +595,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_state_auth_key() {
+    async fn test_state_auth_key<'a>() {
         let driver = RaftDriver::default();
         assert_eq!(
             driver.get_user_cred_auth_state_key_name("user-1"),
@@ -686,7 +604,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_state_reg_key() {
+    async fn test_state_reg_key<'a>() {
         let driver = RaftDriver::default();
         assert_eq!(
             driver.get_user_cred_registration_state_key_name("user-1"),
@@ -695,7 +613,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_auth_state_save_and_get() {
+    async fn test_auth_state_save_and_get<'a>() {
         let driver = RaftDriver::default();
         let storage = MockStorage::default();
 
@@ -726,7 +644,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_reg_state_save_and_get() {
+    async fn test_reg_state_save_and_get<'a>() {
         let driver = RaftDriver::default();
         let storage = MockStorage::default();
 
@@ -757,7 +675,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_credential_deletion() {
+    async fn test_credential_deletion<'a>() {
         let driver = RaftDriver::default();
         let storage = MockStorage::default();
 
@@ -788,7 +706,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_state_deletion() {
+    async fn test_state_deletion<'a>() {
         let driver = RaftDriver::default();
         let storage = MockStorage::default();
 

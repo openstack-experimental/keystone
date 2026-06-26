@@ -24,6 +24,7 @@ use openstack_keystone_api_types::k8s_auth::{
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
+use openstack_keystone_core::auth::ExecutionContext;
 
 /// Create the K8s auth instance.
 ///
@@ -64,7 +65,7 @@ pub(super) async fn create(
     let res = state
         .provider
         .get_k8s_auth_provider()
-        .create_auth_instance(&state, req.into())
+        .create_auth_instance(&ExecutionContext::from_auth(&state, &user_auth), req.into())
         .await?;
     Ok((
         StatusCode::CREATED,

@@ -19,8 +19,7 @@ use async_trait::async_trait;
 use openstack_keystone_core_types::revoke::*;
 use openstack_keystone_core_types::token::FernetToken;
 
-use crate::auth::ValidatedSecurityContext;
-use crate::keystone::ServiceState;
+use crate::auth::{ExecutionContext, ValidatedSecurityContext};
 use crate::revoke::RevokeProviderError;
 
 /// Revocation Provider interface.
@@ -31,9 +30,9 @@ pub trait RevokeApi: Send + Sync {
     /// # Arguments
     /// * `state` - The current service state.
     /// * `event` - The revocation event to create.
-    async fn create_revocation_event(
+    async fn create_revocation_event<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         event: RevocationEventCreate,
     ) -> Result<RevocationEvent, RevokeProviderError>;
 
@@ -46,9 +45,9 @@ pub trait RevokeApi: Send + Sync {
     /// * `state` - The current service state.
     /// * `token_security_context` - A `ValidatedSecurityContext` of the Token.
     /// * `token` - The token to check.
-    async fn is_token_revoked(
+    async fn is_token_revoked<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         token_security_context: &ValidatedSecurityContext,
     ) -> Result<bool, RevokeProviderError>;
 
@@ -60,9 +59,9 @@ pub trait RevokeApi: Send + Sync {
     /// # Arguments
     /// * `state` - The current service state.
     /// * `token` - The token to revoke.
-    async fn revoke_token(
+    async fn revoke_token<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         token: &FernetToken,
     ) -> Result<(), RevokeProviderError>;
 }

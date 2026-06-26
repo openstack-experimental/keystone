@@ -31,7 +31,7 @@ use crate::application_credential::{
     ApplicationCredentialApi, ApplicationCredentialProviderError,
     backend::ApplicationCredentialBackend,
 };
-use crate::keystone::ServiceState;
+use crate::auth::ExecutionContext;
 use crate::plugin_manager::PluginManagerApi;
 
 /// Application Credential Provider.
@@ -72,9 +72,9 @@ impl ApplicationCredentialApi for ApplicationCredentialService {
     /// # Returns
     /// - `Result<AccessRule, ApplicationCredentialProviderError>` - The created
     ///   access rule or an error.
-    async fn create_access_rule(
+    async fn create_access_rule<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         rule: AccessRuleCreate,
     ) -> Result<AccessRule, ApplicationCredentialProviderError> {
         let mut rule = rule;
@@ -84,9 +84,12 @@ impl ApplicationCredentialApi for ApplicationCredentialService {
             rule.id = Some(Uuid::new_v4().simple().to_string());
         }
         let user_id = rule.user_id.clone();
-        let access_rule = self.backend_driver.create_access_rule(state, rule).await?;
+        let access_rule = self
+            .backend_driver
+            .create_access_rule(ctx.state(), rule)
+            .await?;
 
-        state
+        ctx.state()
             .event_dispatcher
             .emit(Event::new(
                 Operation::Create,
@@ -110,17 +113,18 @@ impl ApplicationCredentialApi for ApplicationCredentialService {
     /// - `Result<ApplicationCredentialCreateResponse,
     ///   ApplicationCredentialProviderError>` - The creation response or an
     ///   error.
-    async fn create_application_credential(
+    async fn create_application_credential<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         rec: ApplicationCredentialCreate,
     ) -> Result<ApplicationCredentialCreateResponse, ApplicationCredentialProviderError> {
         rec.validate()?;
         // TODO: implement some filters.
-        let roles: HashSet<String> = state
+        let roles: HashSet<String> = ctx
+            .state()
             .provider
             .get_role_provider()
-            .list_roles(state, &RoleListParameters::default())
+            .list_roles(ctx, &RoleListParameters::default())
             .await?
             .iter()
             .map(|role| role.id.clone())
@@ -150,10 +154,10 @@ impl ApplicationCredentialApi for ApplicationCredentialService {
         }
         let response = self
             .backend_driver
-            .create_application_credential(state, new_rec.clone())
+            .create_application_credential(ctx.state(), new_rec.clone())
             .await?;
 
-        state
+        ctx.state()
             .event_dispatcher
             .emit(Event::new(
                 Operation::Create,
@@ -179,15 +183,15 @@ impl ApplicationCredentialApi for ApplicationCredentialService {
     ///   an error.
     async fn delete_access_rule<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         user_id: &'a str,
         id: &'a str,
     ) -> Result<(), ApplicationCredentialProviderError> {
         self.backend_driver
-            .delete_access_rule(state, user_id, id)
+            .delete_access_rule(ctx.state(), user_id, id)
             .await?;
 
-        state
+        ctx.state()
             .event_dispatcher
             .emit(Event::new(
                 Operation::Delete,
@@ -213,12 +217,12 @@ impl ApplicationCredentialApi for ApplicationCredentialService {
     ///   access rule if found, or an error.
     async fn get_access_rule<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         user_id: &'a str,
         id: &'a str,
     ) -> Result<Option<AccessRule>, ApplicationCredentialProviderError> {
         self.backend_driver
-            .get_access_rule(state, user_id, id)
+            .get_access_rule(ctx.state(), user_id, id)
             .await
     }
 
@@ -234,18 +238,19 @@ impl ApplicationCredentialApi for ApplicationCredentialService {
     ///   error.
     async fn get_application_credential<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         id: &'a str,
     ) -> Result<Option<ApplicationCredential>, ApplicationCredentialProviderError> {
         if let Some(mut app_cred) = self
             .backend_driver
-            .get_application_credential(state, id)
+            .get_application_credential(ctx.state(), id)
             .await?
         {
-            let roles: BTreeMap<String, Role> = state
+            let roles: BTreeMap<String, Role> = ctx
+                .state()
                 .provider
                 .get_role_provider()
-                .list_roles(state, &RoleListParameters::default())
+                .list_roles(ctx, &RoleListParameters::default())
                 .await?
                 .into_iter()
                 .map(|x| (x.id.clone(), x))
@@ -273,10 +278,12 @@ impl ApplicationCredentialApi for ApplicationCredentialService {
     ///   of access rules or an error.
     async fn list_access_rules<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         user_id: &'a str,
     ) -> Result<Vec<AccessRule>, ApplicationCredentialProviderError> {
-        self.backend_driver.list_access_rules(state, user_id).await
+        self.backend_driver
+            .list_access_rules(ctx.state(), user_id)
+            .await
     }
 
     /// List application credentials.
@@ -289,21 +296,22 @@ impl ApplicationCredentialApi for ApplicationCredentialService {
     /// - `Result<Vec<ApplicationCredential>,
     ///   ApplicationCredentialProviderError>` - A list of application
     ///   credentials or an error.
-    async fn list_application_credentials(
+    async fn list_application_credentials<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         params: &ApplicationCredentialListParameters,
     ) -> Result<Vec<ApplicationCredential>, ApplicationCredentialProviderError> {
         params.validate()?;
         let mut creds = self
             .backend_driver
-            .list_application_credentials(state, params)
+            .list_application_credentials(ctx.state(), params)
             .await?;
 
-        let roles: BTreeMap<String, Role> = state
+        let roles: BTreeMap<String, Role> = ctx
+            .state()
             .provider
             .get_role_provider()
-            .list_roles(state, &RoleListParameters::default())
+            .list_roles(ctx, &RoleListParameters::default())
             .await?
             .into_iter()
             .map(|x| (x.id.clone(), x))

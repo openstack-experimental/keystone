@@ -21,6 +21,7 @@ use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
 use crate::federation::api::types::*;
 use crate::keystone::ServiceState;
+use openstack_keystone_core::auth::ExecutionContext;
 
 /// Create the identity provider.
 ///
@@ -64,7 +65,7 @@ pub(super) async fn create(
     let res = state
         .provider
         .get_federation_provider()
-        .create_identity_provider(&state, req.into())
+        .create_identity_provider(&ExecutionContext::from_auth(&state, &user_auth), req.into())
         .await?;
     Ok((
         StatusCode::CREATED,

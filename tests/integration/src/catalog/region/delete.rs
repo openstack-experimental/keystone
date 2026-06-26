@@ -18,7 +18,7 @@ use std::collections::HashMap;
 use eyre::Result;
 use tracing_test::traced_test;
 
-use openstack_keystone_core::catalog::CatalogApi;
+use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core_types::catalog::RegionCreate;
 
 use crate::common::get_state;
@@ -31,7 +31,7 @@ async fn test_delete() -> Result<()> {
 
     let region = provider
         .create_region(
-            &state,
+            &ExecutionContext::internal(&state),
             RegionCreate {
                 id: Some("del".to_string()),
                 description: None,
@@ -41,9 +41,13 @@ async fn test_delete() -> Result<()> {
         )
         .await?;
 
-    provider.delete_region(&state, &region.id).await?;
+    provider
+        .delete_region(&ExecutionContext::internal(&state), &region.id)
+        .await?;
 
-    let fetched = provider.get_region(&state, &region.id).await?;
+    let fetched = provider
+        .get_region(&ExecutionContext::internal(&state), &region.id)
+        .await?;
     assert!(fetched.is_none(), "region should be gone after delete");
     Ok(())
 }

@@ -17,6 +17,7 @@ use axum::{Json, extract::State, response::IntoResponse};
 use validator::Validate;
 
 use openstack_keystone_api_types::error::KeystoneApiError;
+use openstack_keystone_core::auth::ExecutionContext;
 
 use crate::api::types::{CombinedExtensionState, auth::*};
 
@@ -51,7 +52,10 @@ pub async fn start(
     let allow_credentials: Vec<webauthn_rs::prelude::Passkey> = state
         .extension
         .provider
-        .list_user_webauthn_credentials(&state.core, &req.passkey.user_id)
+        .list_user_webauthn_credentials(
+            &ExecutionContext::internal(&state.core),
+            &req.passkey.user_id,
+        )
         .await?
         .into_iter()
         .map(|x| x.data)
@@ -66,7 +70,7 @@ pub async fn start(
                 .extension
                 .provider
                 .save_user_webauthn_credential_authentication_state(
-                    &state.core,
+                    &ExecutionContext::internal(&state.core),
                     &req.passkey.user_id,
                     &auth_state,
                 )

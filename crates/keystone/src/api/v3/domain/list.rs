@@ -26,6 +26,7 @@ use super::types::{Domain, DomainList, DomainListParameters};
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
+use openstack_keystone_core::auth::ExecutionContext;
 
 /// List domains
 #[utoipa::path(
@@ -58,7 +59,10 @@ pub(super) async fn list(
     let domains: Vec<Domain> = state
         .provider
         .get_resource_provider()
-        .list_domains(&state, &query.into())
+        .list_domains(
+            &ExecutionContext::from_auth(&state, &user_auth),
+            &query.into(),
+        )
         .await?
         .into_iter()
         .map(Into::into)

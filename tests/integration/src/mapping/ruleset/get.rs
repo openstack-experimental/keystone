@@ -16,10 +16,9 @@
 use eyre::Result;
 use tracing_test::traced_test;
 
-use openstack_keystone_core::mapping::MappingApi;
-
 use super::create_ruleset;
 use super::sample_ruleset_create;
+use openstack_keystone_core::auth::ExecutionContext;
 
 use crate::common::get_state;
 use crate::create_domain;
@@ -35,7 +34,7 @@ async fn test_get() -> Result<()> {
     let res = state
         .provider
         .get_mapping_provider()
-        .get_ruleset(&state, &ruleset.mapping_id)
+        .get_ruleset(&ExecutionContext::internal(&state), &ruleset.mapping_id)
         .await?
         .expect("ruleset should be present");
 
@@ -59,7 +58,7 @@ async fn test_get_global() -> Result<()> {
     let res = state
         .provider
         .get_mapping_provider()
-        .get_ruleset(&state, &ruleset.mapping_id)
+        .get_ruleset(&ExecutionContext::internal(&state), &ruleset.mapping_id)
         .await?
         .expect("ruleset should be present");
 
@@ -78,7 +77,10 @@ async fn test_get_missing() -> Result<()> {
     let res = state
         .provider
         .get_mapping_provider()
-        .get_ruleset(&state, &uuid::Uuid::new_v4().simple().to_string())
+        .get_ruleset(
+            &ExecutionContext::internal(&state),
+            &uuid::Uuid::new_v4().simple().to_string(),
+        )
         .await?;
 
     assert!(res.is_none());

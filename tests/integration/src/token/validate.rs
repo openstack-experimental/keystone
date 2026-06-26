@@ -17,6 +17,7 @@ use eyre::Report;
 use std::sync::Arc;
 
 use openstack_keystone_core::assignment::AssignmentApi;
+use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core::keystone::Service;
 use openstack_keystone_core_types::assignment::*;
 
@@ -33,7 +34,7 @@ async fn grant_role_to_user_on_project<U: Into<String>, P: Into<String>, R: Into
         .provider
         .get_assignment_provider()
         .create_grant(
-            state,
+            &ExecutionContext::internal(&state),
             AssignmentCreate::user_project(user, project, role, false),
         )
         .await?;
@@ -50,7 +51,7 @@ async fn revoke_role_from_user_on_project<U: Into<String>, P: Into<String>, R: I
         .provider
         .get_assignment_provider()
         .revoke_grant(
-            state,
+            &ExecutionContext::internal(&state),
             AssignmentBuilder::default()
                 .actor_id(user)
                 .role_id(role)

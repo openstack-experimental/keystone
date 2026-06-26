@@ -18,7 +18,7 @@ use std::collections::HashMap;
 use eyre::Result;
 use tracing_test::traced_test;
 
-use openstack_keystone_core::catalog::CatalogApi;
+use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core_types::catalog::ServiceCreate;
 
 use crate::common::get_state;
@@ -31,7 +31,7 @@ async fn test_delete() -> Result<()> {
 
     let service = provider
         .create_service(
-            &state,
+            &ExecutionContext::internal(&state),
             ServiceCreate {
                 enabled: true,
                 extra: HashMap::new(),
@@ -41,9 +41,13 @@ async fn test_delete() -> Result<()> {
         )
         .await?;
 
-    provider.delete_service(&state, &service.id).await?;
+    provider
+        .delete_service(&ExecutionContext::internal(&state), &service.id)
+        .await?;
 
-    let fetched = provider.get_service(&state, &service.id).await?;
+    let fetched = provider
+        .get_service(&ExecutionContext::internal(&state), &service.id)
+        .await?;
     assert!(fetched.is_none(), "service should be gone after delete");
     Ok(())
 }

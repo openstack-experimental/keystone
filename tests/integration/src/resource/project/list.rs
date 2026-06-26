@@ -16,7 +16,7 @@
 use eyre::Result;
 use tracing_test::traced_test;
 
-use openstack_keystone::resource::ResourceApi;
+use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core_types::resource::*;
 
 use crate::common::get_state;
@@ -34,7 +34,10 @@ async fn test_list() -> Result<()> {
     let res = state
         .provider
         .get_resource_provider()
-        .list_projects(&state, &ProjectListParameters::default())
+        .list_projects(
+            &ExecutionContext::internal(&state),
+            &ProjectListParameters::default(),
+        )
         .await?;
     assert!(res.contains(&project.resource));
     assert!(res.contains(&project2.resource));
@@ -53,7 +56,7 @@ async fn test_list_by_id() -> Result<()> {
         .provider
         .get_resource_provider()
         .list_projects(
-            &state,
+            &ExecutionContext::internal(&state),
             &ProjectListParameters {
                 ids: Some(std::collections::HashSet::from_iter(vec![
                     project.id.clone(),

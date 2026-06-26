@@ -17,7 +17,7 @@ use async_trait::async_trait;
 
 use openstack_keystone_core_types::trust::*;
 
-use crate::keystone::ServiceState;
+use crate::auth::ExecutionContext;
 use crate::trust::TrustProviderError;
 
 /// Trust extension provider interface.
@@ -32,7 +32,7 @@ pub trait TrustApi: Send + Sync {
     /// `Error`.
     async fn get_trust<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         id: &'a str,
     ) -> Result<Option<Trust>, TrustProviderError>;
 
@@ -45,7 +45,7 @@ pub trait TrustApi: Send + Sync {
     /// `Error`.
     async fn get_trust_delegation_chain<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         id: &'a str,
     ) -> Result<Option<Vec<Trust>>, TrustProviderError>;
 
@@ -58,9 +58,9 @@ pub trait TrustApi: Send + Sync {
     /// # Returns
     /// - `Result<Vec<Trust>, TrustProviderError>` - A list of trusts or an
     ///   error.
-    async fn list_trusts(
+    async fn list_trusts<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         params: &TrustListParameters,
     ) -> Result<Vec<Trust>, TrustProviderError>;
 
@@ -73,9 +73,9 @@ pub trait TrustApi: Send + Sync {
     /// # Returns
     /// - `Result<bool, TrustProviderError>` - Ok(true) if the chain is valid,
     ///   or an error.
-    async fn validate_trust_delegation_chain(
+    async fn validate_trust_delegation_chain<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         trust: &Trust,
     ) -> Result<bool, TrustProviderError>;
 }

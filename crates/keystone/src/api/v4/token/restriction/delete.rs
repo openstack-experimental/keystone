@@ -24,6 +24,7 @@ use serde_json::json;
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
+use openstack_keystone_core::auth::ExecutionContext;
 
 /// Delete Token restriction.
 ///
@@ -56,7 +57,7 @@ pub(super) async fn remove(
     let current = state
         .provider
         .get_token_provider()
-        .get_token_restriction(&state, &id, false)
+        .get_token_restriction(&ExecutionContext::from_auth(&state, &user_auth), &id, false)
         .await?;
 
     state
@@ -73,7 +74,7 @@ pub(super) async fn remove(
         state
             .provider
             .get_token_provider()
-            .delete_token_restriction(&state, &id)
+            .delete_token_restriction(&ExecutionContext::from_auth(&state, &user_auth), &id)
             .await?;
     } else {
         return Err(KeystoneApiError::NotFound {

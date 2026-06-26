@@ -75,6 +75,7 @@ use openstack_keystone::token::TokenHook;
 use openstack_keystone::trust::TrustHook;
 use openstack_keystone::webauthn;
 use openstack_keystone::{api, common};
+use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core::db::sync_schema;
 use openstack_keystone_core::error::KeystoneError;
 use openstack_keystone_distributed_storage::{StorageApi, app::Storage};
@@ -605,7 +606,7 @@ async fn cleanup(cancel: CancellationToken, state: ServiceState) {
         tokio::select! {
             _ = interval.tick() => {
                 trace!("cleanup job tick");
-                if let Err(e) = state.provider.get_federation_provider().cleanup(&state).await {
+                if let Err(e) = state.provider.get_federation_provider().cleanup(&ExecutionContext::internal(&state)).await {
                     error!("Error during cleanup job: {}", e);
                 }
             },

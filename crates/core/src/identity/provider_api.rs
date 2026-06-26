@@ -20,8 +20,8 @@ use std::collections::HashSet;
 use openstack_keystone_core_types::identity::*;
 
 use crate::auth::AuthenticationResult;
+use crate::auth::ExecutionContext;
 use crate::identity::IdentityProviderError;
-use crate::keystone::ServiceState;
 
 #[async_trait]
 pub trait IdentityApi: Send + Sync {
@@ -33,7 +33,7 @@ pub trait IdentityApi: Send + Sync {
     /// - `group_id`: The ID of the group.
     async fn add_user_to_group<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         user_id: &'a str,
         group_id: &'a str,
     ) -> Result<(), IdentityProviderError>;
@@ -47,7 +47,7 @@ pub trait IdentityApi: Send + Sync {
     /// - `idp_id`: The ID of the identity provider.
     async fn add_user_to_group_expiring<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         user_id: &'a str,
         group_id: &'a str,
         idp_id: &'a str,
@@ -60,7 +60,7 @@ pub trait IdentityApi: Send + Sync {
     /// - `memberships`: A list of (user ID, group ID) tuples.
     async fn add_users_to_groups<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         memberships: Vec<(&'a str, &'a str)>,
     ) -> Result<(), IdentityProviderError>;
 
@@ -72,7 +72,7 @@ pub trait IdentityApi: Send + Sync {
     /// - `idp_id`: The ID of the identity provider.
     async fn add_users_to_groups_expiring<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         memberships: Vec<(&'a str, &'a str)>,
         idp_id: &'a str,
     ) -> Result<(), IdentityProviderError>;
@@ -82,9 +82,9 @@ pub trait IdentityApi: Send + Sync {
     /// # Parameters
     /// - `state`: The service state.
     /// - `auth`: The password authentication request.
-    async fn authenticate_by_password(
+    async fn authenticate_by_password<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         auth: &UserPasswordAuthRequest,
     ) -> Result<AuthenticationResult, IdentityProviderError>;
 
@@ -93,9 +93,9 @@ pub trait IdentityApi: Send + Sync {
     /// # Parameters
     /// - `state`: The service state.
     /// - `group`: The group details to create.
-    async fn create_group(
+    async fn create_group<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         group: GroupCreate,
     ) -> Result<Group, IdentityProviderError>;
 
@@ -104,9 +104,9 @@ pub trait IdentityApi: Send + Sync {
     /// # Parameters
     /// - `state`: The service state.
     /// - `sa`: The service account details to create.
-    async fn create_service_account(
+    async fn create_service_account<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         sa: ServiceAccountCreate,
     ) -> Result<ServiceAccount, IdentityProviderError>;
 
@@ -115,9 +115,9 @@ pub trait IdentityApi: Send + Sync {
     /// # Parameters
     /// - `state`: The service state.
     /// - `user`: The user details to create.
-    async fn create_user(
+    async fn create_user<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         user: UserCreate,
     ) -> Result<UserResponse, IdentityProviderError>;
 
@@ -128,7 +128,7 @@ pub trait IdentityApi: Send + Sync {
     /// - `user_id`: The ID of the user to delete.
     async fn delete_user<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         user_id: &'a str,
     ) -> Result<(), IdentityProviderError>;
 
@@ -143,7 +143,7 @@ pub trait IdentityApi: Send + Sync {
     ///   an `Option` with the group if found, or an `Error`.
     async fn get_group<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         group_id: &'a str,
     ) -> Result<Option<Group>, IdentityProviderError>;
 
@@ -159,7 +159,7 @@ pub trait IdentityApi: Send + Sync {
     ///   `Error`.
     async fn get_service_account<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         user_id: &'a str,
     ) -> Result<Option<ServiceAccount>, IdentityProviderError>;
 
@@ -174,7 +174,7 @@ pub trait IdentityApi: Send + Sync {
     ///   containing an `Option` with the user if found, or an `Error`.
     async fn get_user<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         user_id: &'a str,
     ) -> Result<Option<UserResponse>, IdentityProviderError>;
 
@@ -185,7 +185,7 @@ pub trait IdentityApi: Send + Sync {
     /// - `user_id`: The ID of the user.
     async fn get_user_domain_id<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         user_id: &'a str,
     ) -> Result<String, IdentityProviderError>;
 
@@ -201,7 +201,7 @@ pub trait IdentityApi: Send + Sync {
     ///   containing an `Option` with the user if found, or an `Error`.
     async fn find_federated_user<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         idp_id: &'a str,
         unique_id: &'a str,
     ) -> Result<Option<UserResponse>, IdentityProviderError>;
@@ -211,9 +211,9 @@ pub trait IdentityApi: Send + Sync {
     /// # Parameters
     /// - `state`: The service state.
     /// - `params`: The parameters for listing groups.
-    async fn list_groups(
+    async fn list_groups<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         params: &GroupListParameters,
     ) -> Result<Vec<Group>, IdentityProviderError>;
 
@@ -222,9 +222,9 @@ pub trait IdentityApi: Send + Sync {
     /// # Parameters
     /// - `state`: The service state.
     /// - `params`: The parameters for listing users.
-    async fn list_users(
+    async fn list_users<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         params: &UserListParameters,
     ) -> Result<Vec<UserResponse>, IdentityProviderError>;
 
@@ -235,7 +235,7 @@ pub trait IdentityApi: Send + Sync {
     /// - `group_id`: The ID of the group to delete.
     async fn delete_group<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         group_id: &'a str,
     ) -> Result<(), IdentityProviderError>;
 
@@ -246,7 +246,7 @@ pub trait IdentityApi: Send + Sync {
     /// - `user_id`: The ID of the user.
     async fn list_groups_of_user<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         user_id: &'a str,
     ) -> Result<Vec<Group>, IdentityProviderError>;
 
@@ -258,7 +258,7 @@ pub trait IdentityApi: Send + Sync {
     /// - `group_id`: The ID of the group.
     async fn remove_user_from_group<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         user_id: &'a str,
         group_id: &'a str,
     ) -> Result<(), IdentityProviderError>;
@@ -272,7 +272,7 @@ pub trait IdentityApi: Send + Sync {
     /// - `idp_id`: The ID of the identity provider.
     async fn remove_user_from_group_expiring<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         user_id: &'a str,
         group_id: &'a str,
         idp_id: &'a str,
@@ -286,7 +286,7 @@ pub trait IdentityApi: Send + Sync {
     /// - `group_ids`: A set of group IDs.
     async fn remove_user_from_groups<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         user_id: &'a str,
         group_ids: HashSet<&'a str>,
     ) -> Result<(), IdentityProviderError>;
@@ -300,7 +300,7 @@ pub trait IdentityApi: Send + Sync {
     /// - `idp_id`: The ID of the identity provider.
     async fn remove_user_from_groups_expiring<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         user_id: &'a str,
         group_ids: HashSet<&'a str>,
         idp_id: &'a str,
@@ -314,7 +314,7 @@ pub trait IdentityApi: Send + Sync {
     /// - `group_ids`: A set of group IDs.
     async fn set_user_groups<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         user_id: &'a str,
         group_ids: HashSet<&'a str>,
     ) -> Result<(), IdentityProviderError>;
@@ -327,7 +327,7 @@ pub trait IdentityApi: Send + Sync {
     /// - `user`: The user details to update.
     async fn update_user<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         user_id: &'a str,
         user: UserUpdate,
     ) -> Result<UserResponse, IdentityProviderError>;
@@ -344,7 +344,7 @@ pub trait IdentityApi: Send + Sync {
     /// - `new_password`: The new password to set.
     async fn update_user_password<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         user_id: &'a str,
         original_password: SecretString,
         new_password: SecretString,
@@ -360,7 +360,7 @@ pub trait IdentityApi: Send + Sync {
     /// - `last_verified`: The last verified date, if any.
     async fn set_user_groups_expiring<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         user_id: &'a str,
         group_ids: HashSet<&'a str>,
         idp_id: &'a str,

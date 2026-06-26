@@ -16,10 +16,9 @@
 use eyre::Result;
 use uuid::Uuid;
 
-use openstack_keystone::role::RoleApi;
-
 use crate::common::get_state;
 use crate::create_role;
+use openstack_keystone_core::auth::ExecutionContext;
 
 #[tokio::test]
 async fn test_create_imply_rule() -> Result<()> {
@@ -30,7 +29,11 @@ async fn test_create_imply_rule() -> Result<()> {
     let rule = state
         .provider
         .get_role_provider()
-        .create_role_imply_rule(&state, &prior_role.id, &implied_role.id)
+        .create_role_imply_rule(
+            &ExecutionContext::internal(&state),
+            &prior_role.id,
+            &implied_role.id,
+        )
         .await?;
 
     assert_eq!(rule.prior_role.id, prior_role.id);
@@ -60,7 +63,11 @@ async fn test_create_imply_rule_with_domain_roles() -> Result<()> {
     let rule = state
         .provider
         .get_role_provider()
-        .create_role_imply_rule(&state, &prior_role.id, &implied_role.id)
+        .create_role_imply_rule(
+            &ExecutionContext::internal(&state),
+            &prior_role.id,
+            &implied_role.id,
+        )
         .await?;
 
     assert_eq!(rule.prior_role.id, prior_role.id);
@@ -85,7 +92,11 @@ async fn test_create_imply_rule_global_roles() -> Result<()> {
     let rule = state
         .provider
         .get_role_provider()
-        .create_role_imply_rule(&state, &prior_role.id, &implied_role.id)
+        .create_role_imply_rule(
+            &ExecutionContext::internal(&state),
+            &prior_role.id,
+            &implied_role.id,
+        )
         .await?;
 
     assert_eq!(rule.prior_role.id, prior_role.id);

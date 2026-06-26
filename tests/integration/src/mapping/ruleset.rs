@@ -19,7 +19,7 @@ use eyre::Result;
 
 use openstack_keystone::keystone::Service;
 use openstack_keystone::keystone::ServiceState;
-use openstack_keystone_core::mapping::MappingApi;
+use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core_types::mapping::*;
 
 mod create;
@@ -35,10 +35,11 @@ use crate::common::*;
 impl ResourceDeleter<MappingRuleSet> for Arc<Service> {
     fn delete(&self, resource: MappingRuleSet) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
         Box::pin(async move {
+            let exec = ExecutionContext::internal(self);
             let _ = self
                 .provider
                 .get_mapping_provider()
-                .delete_ruleset(self, &resource.mapping_id)
+                .delete_ruleset(&exec, &resource.mapping_id)
                 .await;
         })
     }
@@ -51,7 +52,7 @@ pub async fn create_ruleset(
     let res = state
         .provider
         .get_mapping_provider()
-        .create_ruleset(state, data)
+        .create_ruleset(&ExecutionContext::internal(&state), data)
         .await
         .unwrap();
     Ok(AsyncResourceGuard::new(res, state.clone()))

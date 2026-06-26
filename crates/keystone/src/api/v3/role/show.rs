@@ -25,6 +25,7 @@ use openstack_keystone_api_types::v3::role::{Role, RoleResponse};
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
+use openstack_keystone_core::auth::ExecutionContext;
 
 /// Get single role
 #[utoipa::path(
@@ -47,7 +48,7 @@ pub(super) async fn show(
     let current = state
         .provider
         .get_role_provider()
-        .get_role(&state, &role_id)
+        .get_role(&ExecutionContext::from_auth(&state, &user_auth), &role_id)
         .await?;
 
     state

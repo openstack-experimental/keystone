@@ -25,6 +25,7 @@ use openstack_keystone_api_types::v3::auth::token::TokenBuilder;
 use openstack_keystone_core_types::auth::*;
 
 use openstack_keystone_core::api::common::get_authz_info;
+use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core_types::scope::Scope as ProviderScope;
 
 use crate::api::v3::auth::token::common::authenticate_request;
@@ -75,11 +76,12 @@ pub(super) async fn create(
         token: TokenBuilder::try_from(&vsc)?.build()?,
     };
     if !query.nocatalog.is_some_and(|x| x) {
+        let exec = ExecutionContext::internal(&state);
         let catalog: Catalog = Catalog(
             state
                 .provider
                 .get_catalog_provider()
-                .get_catalog(&state, true)
+                .get_catalog(&exec, true)
                 .await?
                 .into_iter()
                 .map(|(s, es)| CatalogService {

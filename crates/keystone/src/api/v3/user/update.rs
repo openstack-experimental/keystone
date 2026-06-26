@@ -25,6 +25,7 @@ use super::types::{User, UserResponse, UserUpdateRequest};
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
+use openstack_keystone_core::auth::ExecutionContext;
 
 /// Update existing user
 #[utoipa::path(
@@ -53,7 +54,7 @@ pub(super) async fn update(
     let current = state
         .provider
         .get_identity_provider()
-        .get_user(&state, &user_id)
+        .get_user(&ExecutionContext::from_auth(&state, &user_auth), &user_id)
         .await?;
 
     let existing_user = current.as_ref().map(|c| json!({"user": c}));
@@ -73,7 +74,11 @@ pub(super) async fn update(
             let user = state
                 .provider
                 .get_identity_provider()
-                .update_user(&state, &user_id, req.into())
+                .update_user(
+                    &ExecutionContext::from_auth(&state, &user_auth),
+                    &user_id,
+                    req.into(),
+                )
                 .await?;
             Ok((
                 StatusCode::OK,

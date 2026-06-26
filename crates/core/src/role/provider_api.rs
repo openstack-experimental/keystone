@@ -16,7 +16,7 @@ use async_trait::async_trait;
 
 use openstack_keystone_core_types::role::*;
 
-use crate::keystone::ServiceState;
+use crate::auth::ExecutionContext;
 use crate::role::RoleProviderError;
 
 /// A trait defining the role API.
@@ -30,9 +30,9 @@ pub trait RoleApi: Send + Sync {
     /// # Arguments
     /// * `state` - The current service state.
     /// * `params` - The parameters for creating a role.
-    async fn create_role(
+    async fn create_role<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         params: RoleCreate,
     ) -> Result<Role, RoleProviderError>;
 
@@ -44,7 +44,7 @@ pub trait RoleApi: Send + Sync {
     /// * `implied_role_id` - The ID of the implied role.
     async fn create_role_imply_rule<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         prior_role_id: &'a str,
         implied_role_id: &'a str,
     ) -> Result<RoleImply, RoleProviderError>;
@@ -57,7 +57,7 @@ pub trait RoleApi: Send + Sync {
     /// * `implied_role_id` - The ID of the implied role.
     async fn check_role_imply_rule<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         prior_role_id: &'a str,
         implied_role_id: &'a str,
     ) -> Result<bool, RoleProviderError>;
@@ -69,7 +69,7 @@ pub trait RoleApi: Send + Sync {
     /// * `id` - The ID of the role to delete.
     async fn delete_role<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         id: &'a str,
     ) -> Result<(), RoleProviderError>;
 
@@ -81,7 +81,7 @@ pub trait RoleApi: Send + Sync {
     /// * `implied_role_id` - The ID of the implied role.
     async fn delete_role_imply_rule<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         prior_role_id: &'a str,
         implied_role_id: &'a str,
     ) -> Result<(), RoleProviderError>;
@@ -91,9 +91,9 @@ pub trait RoleApi: Send + Sync {
     /// # Arguments
     /// * `state` - The current service state.
     /// * `roles` - The list of roles to expand.
-    async fn expand_implied_roles(
+    async fn expand_implied_roles<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         roles: &mut Vec<RoleRef>,
     ) -> Result<(), RoleProviderError>;
 
@@ -106,7 +106,7 @@ pub trait RoleApi: Send + Sync {
     /// `Error`.
     async fn get_role<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         role_id: &'a str,
     ) -> Result<Option<Role>, RoleProviderError>;
 
@@ -118,7 +118,7 @@ pub trait RoleApi: Send + Sync {
     /// * `implied_role_id` - The ID of the implied role.
     async fn get_role_imply_rule<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         prior_role_id: &'a str,
         implied_role_id: &'a str,
     ) -> Result<Option<RoleImply>, RoleProviderError>;
@@ -127,9 +127,9 @@ pub trait RoleApi: Send + Sync {
     ///
     /// # Arguments
     /// * `state` - The current service state.
-    async fn list_role_imply_rules(
+    async fn list_role_imply_rules<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
     ) -> Result<Vec<RoleImply>, RoleProviderError>;
 
     /// List role imply rules for a specific prior role.
@@ -139,7 +139,7 @@ pub trait RoleApi: Send + Sync {
     /// * `prior_role_id` - The ID of the prior role.
     async fn list_role_imply_rules_by_prior<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         prior_role_id: &'a str,
     ) -> Result<Vec<RoleImply>, RoleProviderError>;
 
@@ -148,9 +148,9 @@ pub trait RoleApi: Send + Sync {
     /// # Arguments
     /// * `state` - The current service state.
     /// * `params` - The parameters for listing roles.
-    async fn list_roles(
+    async fn list_roles<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         params: &RoleListParameters,
     ) -> Result<Vec<Role>, RoleProviderError>;
 }

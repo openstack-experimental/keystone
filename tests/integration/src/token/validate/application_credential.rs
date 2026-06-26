@@ -15,13 +15,12 @@
 
 use chrono::Utc;
 use eyre::Report;
-use openstack_keystone::revoke::RevokeApi;
 use tracing_test::traced_test;
 use uuid::Uuid;
 
-use openstack_keystone::application_credential::ApplicationCredentialApi;
 use openstack_keystone::auth::*;
 use openstack_keystone::token::{FernetToken, TokenApi, TokenProviderError};
+use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core_types::application_credential::*;
 use openstack_keystone_core_types::resource::{DomainBuilder, ProjectBuilder};
 use openstack_keystone_core_types::role::*;
@@ -48,7 +47,7 @@ async fn test_valid() -> Result<(), Report> {
         .provider
         .get_application_credential_provider()
         .create_application_credential(
-            &state,
+            &ExecutionContext::internal(&state),
             ApplicationCredentialCreate {
                 access_rules: None,
                 name: Uuid::new_v4().to_string(),
@@ -81,7 +80,7 @@ async fn test_valid() -> Result<(), Report> {
         .provider
         .get_token_provider()
         .issue_token_context(
-            &state,
+            &ExecutionContext::internal(&state),
             &ctx,
             &ScopeInfo::Project {
                 project: ProjectBuilder::default()
@@ -107,7 +106,12 @@ async fn test_valid() -> Result<(), Report> {
     let unpacked_token = state
         .provider
         .get_token_provider()
-        .validate_to_context(&state, &encoded_token, None, None)
+        .validate_to_context(
+            &ExecutionContext::internal(&state),
+            &encoded_token,
+            None,
+            None,
+        )
         .await;
 
     if let Ok(ref vsc_result) = unpacked_token {
@@ -151,7 +155,7 @@ async fn test_expired() -> Result<(), Report> {
         .provider
         .get_application_credential_provider()
         .create_application_credential(
-            &state,
+            &ExecutionContext::internal(&state),
             ApplicationCredentialCreate {
                 access_rules: None,
                 expires_at: Some(Utc::now()),
@@ -184,7 +188,7 @@ async fn test_expired() -> Result<(), Report> {
         .provider
         .get_token_provider()
         .issue_token_context(
-            &state,
+            &ExecutionContext::internal(&state),
             &ctx,
             &ScopeInfo::Project {
                 project: ProjectBuilder::default()
@@ -232,7 +236,7 @@ async fn test_valid_fewer_roles() -> Result<(), Report> {
         .provider
         .get_application_credential_provider()
         .create_application_credential(
-            &state,
+            &ExecutionContext::internal(&state),
             ApplicationCredentialCreate {
                 access_rules: None,
                 name: Uuid::new_v4().to_string(),
@@ -265,7 +269,7 @@ async fn test_valid_fewer_roles() -> Result<(), Report> {
         .provider
         .get_token_provider()
         .issue_token_context(
-            &state,
+            &ExecutionContext::internal(&state),
             &ctx,
             &ScopeInfo::Project {
                 project: ProjectBuilder::default()
@@ -291,7 +295,12 @@ async fn test_valid_fewer_roles() -> Result<(), Report> {
     let unpacked_token = state
         .provider
         .get_token_provider()
-        .validate_to_context(&state, &encoded_token, None, None)
+        .validate_to_context(
+            &ExecutionContext::internal(&state),
+            &encoded_token,
+            None,
+            None,
+        )
         .await;
 
     if let Ok(ref vsc_result) = unpacked_token {
@@ -339,7 +348,7 @@ async fn test_valid_all_roles_revoked() -> Result<(), Report> {
         .provider
         .get_application_credential_provider()
         .create_application_credential(
-            &state,
+            &ExecutionContext::internal(&state),
             ApplicationCredentialCreate {
                 access_rules: None,
                 name: Uuid::new_v4().to_string(),
@@ -372,7 +381,7 @@ async fn test_valid_all_roles_revoked() -> Result<(), Report> {
         .provider
         .get_token_provider()
         .issue_token_context(
-            &state,
+            &ExecutionContext::internal(&state),
             &ctx,
             &ScopeInfo::Project {
                 project: ProjectBuilder::default()
@@ -398,7 +407,12 @@ async fn test_valid_all_roles_revoked() -> Result<(), Report> {
     let unpacked_token = state
         .provider
         .get_token_provider()
-        .validate_to_context(&state, &encoded_token, None, None)
+        .validate_to_context(
+            &ExecutionContext::internal(&state),
+            &encoded_token,
+            None,
+            None,
+        )
         .await;
 
     if let Err(TokenProviderError::Authentication(AuthenticationError::ActorHasNoRolesOnTarget)) =
@@ -428,7 +442,7 @@ async fn test_token_revoked() -> Result<(), Report> {
         .provider
         .get_application_credential_provider()
         .create_application_credential(
-            &state,
+            &ExecutionContext::internal(&state),
             ApplicationCredentialCreate {
                 access_rules: None,
                 name: Uuid::new_v4().to_string(),
@@ -461,7 +475,7 @@ async fn test_token_revoked() -> Result<(), Report> {
         .provider
         .get_token_provider()
         .issue_token_context(
-            &state,
+            &ExecutionContext::internal(&state),
             &ctx,
             &ScopeInfo::Project {
                 project: ProjectBuilder::default()
@@ -487,20 +501,28 @@ async fn test_token_revoked() -> Result<(), Report> {
     let vsc = state
         .provider
         .get_token_provider()
-        .validate_to_context(&state, &encoded_token, None, None)
+        .validate_to_context(
+            &ExecutionContext::internal(&state),
+            &encoded_token,
+            None,
+            None,
+        )
         .await?;
 
     state
         .provider
         .get_revoke_provider()
-        .revoke_token(&state, vsc.inner().token().unwrap())
+        .revoke_token(
+            &ExecutionContext::internal(&state),
+            vsc.inner().token().unwrap(),
+        )
         .await?;
 
     assert!(
         state
             .provider
             .get_revoke_provider()
-            .is_token_revoked(&state, &vsc)
+            .is_token_revoked(&ExecutionContext::internal(&state), &vsc)
             .await?
     );
     Ok(())

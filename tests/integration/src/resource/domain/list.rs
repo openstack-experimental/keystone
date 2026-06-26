@@ -16,7 +16,7 @@
 use eyre::Result;
 use tracing_test::traced_test;
 
-use openstack_keystone::resource::ResourceApi;
+use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core_types::resource::*;
 
 use crate::common::get_state;
@@ -32,7 +32,10 @@ async fn test_list() -> Result<()> {
     let res = state
         .provider
         .get_resource_provider()
-        .list_domains(&state, &DomainListParameters::default())
+        .list_domains(
+            &ExecutionContext::internal(&state),
+            &DomainListParameters::default(),
+        )
         .await?;
     // Check that created domains are in the list
     assert!(res.iter().any(|d| d.id == domain.id));
@@ -51,7 +54,7 @@ async fn test_list_by_id() -> Result<()> {
         .provider
         .get_resource_provider()
         .list_domains(
-            &state,
+            &ExecutionContext::internal(&state),
             &DomainListParameters {
                 ids: Some(std::collections::HashSet::from_iter(vec![
                     domain.id.clone(),

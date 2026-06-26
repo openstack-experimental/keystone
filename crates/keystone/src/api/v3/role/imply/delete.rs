@@ -24,6 +24,7 @@ use serde_json::json;
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
+use openstack_keystone_core::auth::ExecutionContext;
 
 /// Delete a role imply rule.
 #[utoipa::path(
@@ -74,7 +75,11 @@ pub(super) async fn delete(
     state
         .provider
         .get_role_provider()
-        .delete_role_imply_rule(&state, &prior_role_id, &implied_role_id)
+        .delete_role_imply_rule(
+            &ExecutionContext::from_auth(&state, &user_auth),
+            &prior_role_id,
+            &implied_role_id,
+        )
         .await?;
 
     Ok(StatusCode::NO_CONTENT.into_response())

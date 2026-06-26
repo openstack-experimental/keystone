@@ -14,7 +14,7 @@
 
 use eyre::Result;
 
-use openstack_keystone_core::mapping::MappingApi;
+use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core_types::mapping::error::MappingProviderError;
 use openstack_keystone_core_types::mapping::mutation::{RuleMutation, RuleMutations, RulePosition};
 use openstack_keystone_core_types::mapping::*;
@@ -52,7 +52,7 @@ async fn test_mutate_rules_insert_before() -> Result<()> {
         .provider
         .get_mapping_provider()
         .mutate_rules(
-            &state,
+            &ExecutionContext::internal(&state),
             &ruleset_guard.mapping_id,
             RuleMutations {
                 mutations: vec![RuleMutation::Insert {
@@ -94,7 +94,7 @@ async fn test_mutate_rules_update() -> Result<()> {
         .provider
         .get_mapping_provider()
         .mutate_rules(
-            &state,
+            &ExecutionContext::internal(&state),
             &ruleset_guard.mapping_id,
             RuleMutations {
                 mutations: vec![RuleMutation::Update {
@@ -135,7 +135,7 @@ async fn test_mutate_rules_delete() -> Result<()> {
         .provider
         .get_mapping_provider()
         .mutate_rules(
-            &state,
+            &ExecutionContext::internal(&state),
             &ruleset_guard.mapping_id,
             RuleMutations {
                 mutations: vec![RuleMutation::Delete {
@@ -178,7 +178,7 @@ async fn test_mutate_rules_global() -> Result<()> {
         .provider
         .get_mapping_provider()
         .mutate_rules(
-            &state,
+            &ExecutionContext::internal(&state),
             &ruleset_guard.mapping_id,
             RuleMutations {
                 mutations: vec![RuleMutation::Insert {
@@ -215,7 +215,7 @@ async fn test_mutate_rules_invalid_anchor() -> Result<()> {
         .provider
         .get_mapping_provider()
         .mutate_rules(
-            &state,
+            &ExecutionContext::internal(&state),
             &ruleset_guard.mapping_id,
             RuleMutations {
                 mutations: vec![RuleMutation::Insert {

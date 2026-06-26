@@ -18,7 +18,7 @@ use std::collections::HashMap;
 use eyre::Result;
 use tracing_test::traced_test;
 
-use openstack_keystone_core::catalog::CatalogApi;
+use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core_types::catalog::{RegionCreate, RegionUpdate};
 
 use crate::catalog::create_region;
@@ -43,7 +43,7 @@ async fn test_update() -> Result<()> {
         .provider
         .get_catalog_provider()
         .update_region(
-            &state,
+            &ExecutionContext::internal(&state),
             &region.id,
             RegionUpdate {
                 description: Some("new".to_string()),
@@ -58,7 +58,7 @@ async fn test_update() -> Result<()> {
     let fetched = state
         .provider
         .get_catalog_provider()
-        .get_region(&state, &region.id)
+        .get_region(&ExecutionContext::internal(&state), &region.id)
         .await?
         .unwrap();
     assert_eq!(fetched.description.as_deref(), Some("new"));
@@ -73,7 +73,7 @@ async fn test_update_not_found() -> Result<()> {
         .provider
         .get_catalog_provider()
         .update_region(
-            &state,
+            &ExecutionContext::internal(&state),
             "missing",
             RegionUpdate {
                 description: Some("x".to_string()),
@@ -109,7 +109,7 @@ async fn test_update_description_too_long() -> Result<()> {
         .provider
         .get_catalog_provider()
         .update_region(
-            &state,
+            &ExecutionContext::internal(&state),
             &region.id,
             RegionUpdate {
                 description: Some(too_long),

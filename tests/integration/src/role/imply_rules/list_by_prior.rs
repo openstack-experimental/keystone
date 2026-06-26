@@ -16,10 +16,9 @@
 use eyre::Result;
 use uuid::Uuid;
 
-use openstack_keystone::role::RoleApi;
-
 use crate::common::get_state;
 use crate::create_role;
+use openstack_keystone_core::auth::ExecutionContext;
 
 #[tokio::test]
 async fn test_list_imply_rules_by_prior_empty() -> Result<()> {
@@ -29,7 +28,7 @@ async fn test_list_imply_rules_by_prior_empty() -> Result<()> {
     let rules = state
         .provider
         .get_role_provider()
-        .list_role_imply_rules_by_prior(&state, &prior_role.id)
+        .list_role_imply_rules_by_prior(&ExecutionContext::internal(&state), &prior_role.id)
         .await?;
 
     assert!(rules.is_empty());
@@ -46,13 +45,17 @@ async fn test_list_imply_rules_by_prior_single() -> Result<()> {
     state
         .provider
         .get_role_provider()
-        .create_role_imply_rule(&state, &prior_role.id, &implied_role.id)
+        .create_role_imply_rule(
+            &ExecutionContext::internal(&state),
+            &prior_role.id,
+            &implied_role.id,
+        )
         .await?;
 
     let rules = state
         .provider
         .get_role_provider()
-        .list_role_imply_rules_by_prior(&state, &prior_role.id)
+        .list_role_imply_rules_by_prior(&ExecutionContext::internal(&state), &prior_role.id)
         .await?;
 
     assert_eq!(rules.len(), 1);
@@ -74,28 +77,28 @@ async fn test_list_imply_rules_by_prior_multiple() -> Result<()> {
     state
         .provider
         .get_role_provider()
-        .create_role_imply_rule(&state, &role_a.id, &role_b.id)
+        .create_role_imply_rule(&ExecutionContext::internal(&state), &role_a.id, &role_b.id)
         .await?;
     state
         .provider
         .get_role_provider()
-        .create_role_imply_rule(&state, &role_a.id, &role_c.id)
+        .create_role_imply_rule(&ExecutionContext::internal(&state), &role_a.id, &role_c.id)
         .await?;
     state
         .provider
         .get_role_provider()
-        .create_role_imply_rule(&state, &role_a.id, &role_d.id)
+        .create_role_imply_rule(&ExecutionContext::internal(&state), &role_a.id, &role_d.id)
         .await?;
     state
         .provider
         .get_role_provider()
-        .create_role_imply_rule(&state, &role_b.id, &role_e.id)
+        .create_role_imply_rule(&ExecutionContext::internal(&state), &role_b.id, &role_e.id)
         .await?;
 
     let rules_a = state
         .provider
         .get_role_provider()
-        .list_role_imply_rules_by_prior(&state, &role_a.id)
+        .list_role_imply_rules_by_prior(&ExecutionContext::internal(&state), &role_a.id)
         .await?;
 
     assert_eq!(rules_a.len(), 3);
@@ -106,7 +109,7 @@ async fn test_list_imply_rules_by_prior_multiple() -> Result<()> {
     let rules_b = state
         .provider
         .get_role_provider()
-        .list_role_imply_rules_by_prior(&state, &role_b.id)
+        .list_role_imply_rules_by_prior(&ExecutionContext::internal(&state), &role_b.id)
         .await?;
 
     assert_eq!(rules_b.len(), 1);
@@ -126,18 +129,18 @@ async fn test_list_imply_rules_by_prior_filters_out_other_prior_roles() -> Resul
     state
         .provider
         .get_role_provider()
-        .create_role_imply_rule(&state, &prior1.id, &implied.id)
+        .create_role_imply_rule(&ExecutionContext::internal(&state), &prior1.id, &implied.id)
         .await?;
     state
         .provider
         .get_role_provider()
-        .create_role_imply_rule(&state, &prior2.id, &implied.id)
+        .create_role_imply_rule(&ExecutionContext::internal(&state), &prior2.id, &implied.id)
         .await?;
 
     let rules1 = state
         .provider
         .get_role_provider()
-        .list_role_imply_rules_by_prior(&state, &prior1.id)
+        .list_role_imply_rules_by_prior(&ExecutionContext::internal(&state), &prior1.id)
         .await?;
 
     assert_eq!(rules1.len(), 1);
@@ -146,7 +149,7 @@ async fn test_list_imply_rules_by_prior_filters_out_other_prior_roles() -> Resul
     let rules2 = state
         .provider
         .get_role_provider()
-        .list_role_imply_rules_by_prior(&state, &prior2.id)
+        .list_role_imply_rules_by_prior(&ExecutionContext::internal(&state), &prior2.id)
         .await?;
 
     assert_eq!(rules2.len(), 1);

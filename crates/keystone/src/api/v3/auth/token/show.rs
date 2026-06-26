@@ -33,6 +33,8 @@ use tracing::error;
 
 use openstack_keystone_api_types::v3::auth::token::TokenBuilder;
 
+use openstack_keystone_core::auth::ExecutionContext;
+
 use crate::api::v3::auth::token::types::{TokenResponse, ValidateTokenParameters};
 use crate::api::{Catalog, CatalogService, auth::Auth, error::KeystoneApiError};
 use crate::keystone::ServiceState;
@@ -78,7 +80,12 @@ pub(super) async fn show(
     let vsc = state
         .provider
         .get_token_provider()
-        .validate_to_context(&state, &subject_token, query.allow_expired, None)
+        .validate_to_context(
+            &ExecutionContext::from_auth(&state, &user_auth),
+            &subject_token,
+            query.allow_expired,
+            None,
+        )
         .await
         .inspect_err(|e| error!("{:?}", e.to_string()))
         .map_err(|_| KeystoneApiError::NotFound {
@@ -105,7 +112,7 @@ pub(super) async fn show(
             state
                 .provider
                 .get_catalog_provider()
-                .get_catalog(&state, true)
+                .get_catalog(&ExecutionContext::from_auth(&state, &user_auth), true)
                 .await?
                 .into_iter()
                 .map(|(s, es)| CatalogService {
@@ -187,17 +194,17 @@ mod tests {
         let mut token_mock = MockTokenProvider::default();
         token_mock
             .expect_validate_to_context()
-            .returning(move |_, _, _, _| Ok(vsc_for_mock.clone()));
+            .returning(move |_exec, _, _, _| Ok(vsc_for_mock.clone()));
         let mut catalog_mock = MockCatalogProvider::default();
         catalog_mock
             .expect_get_catalog()
-            .returning(|_, _| Ok(Vec::new()));
+            .returning(|_exec, _| Ok(Vec::new()));
 
         let mut resource_mock = MockResourceProvider::default();
         resource_mock
             .expect_get_domain()
-            .withf(|_, id: &'_ str| id == "user_domain_id")
-            .returning(|_, _| {
+            .withf(|_exec, id: &'_ str| id == "user_domain_id")
+            .returning(|_exec, _| {
                 Ok(Some(CoreDomain {
                     id: "user_domain_id".into(),
                     ..Default::default()
@@ -298,18 +305,18 @@ mod tests {
             .withf(|_, token: &'_ str, allow_expired: &Option<bool>, _| {
                 token == "bar" && *allow_expired == Some(true)
             })
-            .returning(move |_, _, _, _| Ok(vsc_for_mock.clone()));
+            .returning(move |_exec, _, _, _| Ok(vsc_for_mock.clone()));
 
         let mut catalog_mock = MockCatalogProvider::default();
         catalog_mock
             .expect_get_catalog()
-            .returning(|_, _| Ok(Vec::new()));
+            .returning(|_exec, _| Ok(Vec::new()));
 
         let mut resource_mock = MockResourceProvider::default();
         resource_mock
             .expect_get_domain()
-            .withf(|_, id: &'_ str| id == "user_domain_id")
-            .returning(|_, _| {
+            .withf(|_exec, id: &'_ str| id == "user_domain_id")
+            .returning(|_exec, _| {
                 Ok(Some(CoreDomain {
                     id: "user_domain_id".into(),
                     ..Default::default()
@@ -350,7 +357,7 @@ mod tests {
         token_mock
             .expect_validate_to_context()
             .withf(|_, token: &'_ str, _, _| token == "baz")
-            .returning(|_, _, _, _| Err(TokenProviderError::Expired));
+            .returning(|_exec, _, _, _| Err(TokenProviderError::Expired));
 
         let provider = Provider::mocked_builder().mock_token(token_mock);
         let vsc = test_fixture_scoped();
@@ -382,7 +389,7 @@ mod tests {
         token_mock
             .expect_validate_to_context()
             .withf(|_, token: &'_ str, _, _| token == "baz")
-            .returning(|_, _, _, _| Err(TokenProviderError::TokenRevoked));
+            .returning(|_exec, _, _, _| Err(TokenProviderError::TokenRevoked));
 
         let provider = Provider::mocked_builder().mock_token(token_mock);
 

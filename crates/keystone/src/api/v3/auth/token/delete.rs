@@ -21,6 +21,8 @@ use axum::{
 use serde_json::{json, to_value};
 use tracing::error;
 
+use openstack_keystone_core::auth::ExecutionContext;
+
 use crate::api::{auth::Auth, error::KeystoneApiError};
 use crate::keystone::ServiceState;
 
@@ -61,7 +63,12 @@ pub(super) async fn delete(
     let vsc = state
         .provider
         .get_token_provider()
-        .validate_to_context(&state, &subject_token, None, None)
+        .validate_to_context(
+            &ExecutionContext::from_auth(&state, &user_auth),
+            &subject_token,
+            None,
+            None,
+        )
         .await
         .inspect_err(|e| error!("{:?}", e.to_string()))
         .map_err(|_| KeystoneApiError::NotFound {
@@ -82,7 +89,10 @@ pub(super) async fn delete(
     state
         .provider
         .get_revoke_provider()
-        .revoke_token(&state, vsc.token()?)
+        .revoke_token(
+            &ExecutionContext::from_auth(&state, &user_auth),
+            vsc.token()?,
+        )
         .await
         .map_err(KeystoneApiError::forbidden)?;
 
@@ -149,7 +159,7 @@ mod tests {
         token_mock
             .expect_validate_to_context()
             .withf(|_, token: &'_ str, _, _| token == "foo")
-            .returning(move |_, _, _, _| Ok(vsc.clone()));
+            .returning(move |_state, _, _, _| Ok(vsc.clone()));
 
         token_mock
     }
@@ -200,14 +210,14 @@ mod tests {
         token_mock
             .expect_validate_to_context()
             .withf(|_, token: &'_ str, _, _| token == "baz")
-            .returning(move |_, _, _, _| Ok(vsc_for_mock.clone()));
+            .returning(move |_state, _, _, _| Ok(vsc_for_mock.clone()));
 
         let mut revoke_mock = MockRevokeProvider::default();
         // subject token revoked
         revoke_mock
             .expect_revoke_token()
             .withf(move |_, token: &ProviderToken| *token == fernet_for_revoke)
-            .returning(|_, _| Ok(()));
+            .returning(|_exec, _| Ok(()));
 
         let provider = Provider::mocked_builder()
             .mock_token(token_mock)
@@ -244,7 +254,7 @@ mod tests {
         token_mock
             .expect_validate_to_context()
             .withf(|_, token: &'_ str, _, _| token == "baz")
-            .returning(move |_, _, _, _| Err(TokenProviderError::Expired));
+            .returning(move |_state, _, _, _| Err(TokenProviderError::Expired));
 
         let provider = Provider::mocked_builder().mock_token(token_mock);
 
@@ -279,7 +289,7 @@ mod tests {
         token_mock
             .expect_validate_to_context()
             .withf(|_, token: &'_ str, _, _| token == "baz")
-            .returning(move |_, _, _, _| Err(TokenProviderError::TokenRevoked));
+            .returning(move |_state, _, _, _| Err(TokenProviderError::TokenRevoked));
 
         let provider = Provider::mocked_builder().mock_token(token_mock);
         let vsc = test_fixture_scoped();

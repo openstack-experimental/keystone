@@ -16,10 +16,9 @@
 use eyre::Result;
 use tracing_test::traced_test;
 
-use openstack_keystone::resource::ResourceApi;
-
 use crate::common::get_state;
 use crate::create_domain;
+use openstack_keystone_core::auth::ExecutionContext;
 
 #[traced_test]
 #[tokio::test]
@@ -30,13 +29,13 @@ async fn test_delete() -> Result<()> {
     state
         .provider
         .get_resource_provider()
-        .delete_domain(&state, &domain.id)
+        .delete_domain(&ExecutionContext::internal(&state), &domain.id)
         .await?;
     assert!(
         state
             .provider
             .get_resource_provider()
-            .get_domain(&state, &domain.id)
+            .get_domain(&ExecutionContext::internal(&state), &domain.id)
             .await?
             .is_none()
     );

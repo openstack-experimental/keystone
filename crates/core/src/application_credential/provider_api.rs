@@ -15,7 +15,7 @@
 use async_trait::async_trait;
 
 use crate::application_credential::error::ApplicationCredentialProviderError;
-use crate::keystone::ServiceState;
+use crate::auth::ExecutionContext;
 use openstack_keystone_core_types::application_credential::*;
 
 /// Application credentials API.
@@ -31,9 +31,9 @@ pub trait ApplicationCredentialApi: Send + Sync {
     /// # Returns
     /// - `Result<AccessRule, ApplicationCredentialProviderError>` - The created
     ///   access rule or an error.
-    async fn create_access_rule(
+    async fn create_access_rule<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         rule: AccessRuleCreate,
     ) -> Result<AccessRule, ApplicationCredentialProviderError>;
 
@@ -47,9 +47,9 @@ pub trait ApplicationCredentialApi: Send + Sync {
     /// - `Result<ApplicationCredentialCreateResponse,
     ///   ApplicationCredentialProviderError>` - The creation response or an
     ///   error.
-    async fn create_application_credential(
+    async fn create_application_credential<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         rec: ApplicationCredentialCreate,
     ) -> Result<ApplicationCredentialCreateResponse, ApplicationCredentialProviderError>;
 
@@ -65,7 +65,7 @@ pub trait ApplicationCredentialApi: Send + Sync {
     ///   an error.
     async fn delete_access_rule<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         user_id: &'a str,
         id: &'a str,
     ) -> Result<(), ApplicationCredentialProviderError>;
@@ -82,7 +82,7 @@ pub trait ApplicationCredentialApi: Send + Sync {
     ///   access rule if found, or an error.
     async fn get_access_rule<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         user_id: &'a str,
         id: &'a str,
     ) -> Result<Option<AccessRule>, ApplicationCredentialProviderError>;
@@ -99,7 +99,7 @@ pub trait ApplicationCredentialApi: Send + Sync {
     ///   error.
     async fn get_application_credential<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         id: &'a str,
     ) -> Result<Option<ApplicationCredential>, ApplicationCredentialProviderError>;
 
@@ -114,7 +114,7 @@ pub trait ApplicationCredentialApi: Send + Sync {
     ///   of access rules or an error.
     async fn list_access_rules<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         user_id: &'a str,
     ) -> Result<Vec<AccessRule>, ApplicationCredentialProviderError>;
 
@@ -128,9 +128,9 @@ pub trait ApplicationCredentialApi: Send + Sync {
     /// - `Result<Vec<ApplicationCredential>,
     ///   ApplicationCredentialProviderError>` - A list of application
     ///   credentials or an error.
-    async fn list_application_credentials(
+    async fn list_application_credentials<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         params: &ApplicationCredentialListParameters,
     ) -> Result<Vec<ApplicationCredential>, ApplicationCredentialProviderError>;
 }

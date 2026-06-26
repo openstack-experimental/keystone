@@ -23,6 +23,7 @@ use openstack_keystone_api_types::v4::mapping::MappingRuleSet;
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
+use openstack_keystone_core::auth::ExecutionContext;
 
 /// Delete a mapping ruleset by ID.
 #[utoipa::path(
@@ -52,7 +53,10 @@ pub(super) async fn remove(
     let current = state
         .provider
         .get_mapping_provider()
-        .get_ruleset(&state, &mapping_id)
+        .get_ruleset(
+            &ExecutionContext::from_auth(&state, &user_auth),
+            &mapping_id,
+        )
         .await?;
 
     if let Some(current) = current {
@@ -69,7 +73,10 @@ pub(super) async fn remove(
         state
             .provider
             .get_mapping_provider()
-            .delete_ruleset(&state, &mapping_id)
+            .delete_ruleset(
+                &ExecutionContext::from_auth(&state, &user_auth),
+                &mapping_id,
+            )
             .await?;
     }
 

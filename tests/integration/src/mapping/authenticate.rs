@@ -16,7 +16,7 @@ use std::collections::HashMap;
 
 use eyre::Result;
 
-use openstack_keystone_core::mapping::MappingApi;
+use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core_types::auth::AuthenticationContext;
 use openstack_keystone_core_types::mapping::resolution::IdentitySource;
 use openstack_keystone_core_types::mapping::rule::{ClaimCondition, MatchCondition, MatchCriteria};
@@ -71,7 +71,7 @@ async fn test_authenticate_happy_path() -> Result<()> {
     let result = state
         .provider
         .get_mapping_provider()
-        .authenticate_by_mapping(&state, &request)
+        .authenticate_by_mapping(&ExecutionContext::internal(&state), &request)
         .await?;
 
     if let AuthenticationContext::Mapping(ctx) = result.context {
@@ -82,7 +82,7 @@ async fn test_authenticate_happy_path() -> Result<()> {
         let vuser = state
             .provider
             .get_mapping_provider()
-            .get_virtual_user(&state, &ctx.virtual_user_id)
+            .get_virtual_user(&ExecutionContext::internal(&state), &ctx.virtual_user_id)
             .await?
             .expect("virtual user should exist");
 
@@ -139,7 +139,7 @@ async fn test_authenticate_global_ruleset() -> Result<()> {
     let result = state
         .provider
         .get_mapping_provider()
-        .authenticate_by_mapping(&state, &request)
+        .authenticate_by_mapping(&ExecutionContext::internal(&state), &request)
         .await?;
 
     if let AuthenticationContext::Mapping(ctx) = result.context {
@@ -150,7 +150,7 @@ async fn test_authenticate_global_ruleset() -> Result<()> {
         let vuser = state
             .provider
             .get_mapping_provider()
-            .get_virtual_user(&state, &ctx.virtual_user_id)
+            .get_virtual_user(&ExecutionContext::internal(&state), &ctx.virtual_user_id)
             .await?
             .expect("virtual user should exist");
 

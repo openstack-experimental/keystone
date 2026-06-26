@@ -22,6 +22,7 @@ use serde_json::json;
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
+use openstack_keystone_core::auth::ExecutionContext;
 
 /// Delete project by ID.
 #[utoipa::path(
@@ -43,7 +44,7 @@ pub async fn remove(
     let current = state
         .provider
         .get_resource_provider()
-        .get_project(&state, &id)
+        .get_project(&ExecutionContext::from_auth(&state, &user_auth), &id)
         .await?;
 
     state
@@ -60,7 +61,7 @@ pub async fn remove(
             state
                 .provider
                 .get_resource_provider()
-                .delete_project(&state, &id)
+                .delete_project(&ExecutionContext::from_auth(&state, &user_auth), &id)
                 .await?;
             Ok((StatusCode::NO_CONTENT).into_response())
         }

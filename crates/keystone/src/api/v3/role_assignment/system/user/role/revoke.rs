@@ -25,6 +25,7 @@ use tracing::info;
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
+use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core_types::assignment::{AssignmentBuilder, AssignmentType};
 
 /// Revoke role from user on system
@@ -59,15 +60,13 @@ pub(super) async fn revoke(
     Path((user_id, role_id)): Path<(String, String)>,
     State(state): State<ServiceState>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
+    let exec = &ExecutionContext::from_auth(&state, &user_auth);
     let (user, role) = tokio::join!(
         state
             .provider
             .get_identity_provider()
-            .get_user(&state, &user_id),
-        state
-            .provider
-            .get_role_provider()
-            .get_role(&state, &role_id)
+            .get_user(exec, &user_id),
+        state.provider.get_role_provider().get_role(exec, &role_id)
     );
     let user = user?.ok_or_else(|| {
         info!("User {} was not found", user_id);
@@ -105,7 +104,7 @@ pub(super) async fn revoke(
     state
         .provider
         .get_assignment_provider()
-        .revoke_grant(&state, grant)
+        .revoke_grant(exec, grant)
         .await?;
 
     Ok(StatusCode::NO_CONTENT.into_response())

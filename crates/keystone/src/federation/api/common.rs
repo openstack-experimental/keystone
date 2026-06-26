@@ -17,6 +17,7 @@ use std::collections::HashMap;
 
 use serde_json::Value;
 
+use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core_types::mapping::error::MappingProviderError;
 use openstack_keystone_core_types::scope::Scope;
 
@@ -197,7 +198,7 @@ pub(super) async fn build_token_response(
         state
             .provider
             .get_catalog_provider()
-            .get_catalog(state, true)
+            .get_catalog(&ExecutionContext::internal(&state), true)
             .await?
             .into_iter()
             .map(|(s, es)| CatalogService {

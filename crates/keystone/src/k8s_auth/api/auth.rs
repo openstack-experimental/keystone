@@ -25,6 +25,7 @@ use validator::Validate;
 use openstack_keystone_api_types::error::KeystoneApiError;
 use openstack_keystone_api_types::k8s_auth::K8sAuthRequest;
 use openstack_keystone_api_types::v3::auth::token::TokenBuilder;
+use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core::keystone::ServiceState;
 use openstack_keystone_core_types::auth::{AuthenticationContext, ScopeInfo, SecurityContext};
 use openstack_keystone_core_types::mapping::authorization::Authorization;
@@ -74,10 +75,11 @@ pub async fn post(
 
     let (ctx, scope) = mapping_auth(&state, &req.to_provider_with_instance_id(instance_id)).await?;
 
+    let exec = ExecutionContext::internal(&state);
     let vsc = state
         .provider
         .get_token_provider()
-        .issue_token_context(&state, &ctx, &scope)
+        .issue_token_context(exec.state(), &ctx, &scope)
         .await?;
 
     let mut api_token = TokenResponse {
@@ -89,7 +91,7 @@ pub async fn post(
         state
             .provider
             .get_catalog_provider()
-            .get_catalog(&state, true)
+            .get_catalog(&exec, true)
             .await?
             .into_iter()
             .map(|(s, es)| CatalogService {
@@ -129,7 +131,7 @@ async fn mapping_auth(
     let auth_result = state
         .provider
         .get_k8s_auth_provider()
-        .authenticate_by_k8s_mapping(state, req)
+        .authenticate_by_k8s_mapping(&ExecutionContext::internal(state), req)
         .await?;
 
     let ctx = SecurityContext::try_from(auth_result)?;
@@ -151,7 +153,10 @@ async fn mapping_auth(
         let vu = state
             .provider
             .get_mapping_provider()
-            .get_virtual_user(state, &mapping_ctx.virtual_user_id)
+            .get_virtual_user(
+                &ExecutionContext::internal(state),
+                &mapping_ctx.virtual_user_id,
+            )
             .await?
             .expect("virtual user should exist after mapping auth");
 

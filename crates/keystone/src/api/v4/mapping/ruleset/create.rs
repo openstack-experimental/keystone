@@ -22,6 +22,7 @@ use validator::Validate;
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
+use openstack_keystone_core::auth::ExecutionContext;
 
 /// Create a new mapping ruleset.
 #[utoipa::path(
@@ -61,7 +62,7 @@ pub(super) async fn create(
     let res = state
         .provider
         .get_mapping_provider()
-        .create_ruleset(&state, req.into())
+        .create_ruleset(&ExecutionContext::from_auth(&state, &user_auth), req.into())
         .await?;
 
     Ok((

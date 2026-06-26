@@ -24,6 +24,7 @@ use serde_json::json;
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
+use openstack_keystone_core::auth::ExecutionContext;
 
 /// Check if a role imply rule exists.
 #[utoipa::path(
@@ -74,7 +75,11 @@ pub(super) async fn check(
     let exists = state
         .provider
         .get_role_provider()
-        .check_role_imply_rule(&state, &prior_role_id, &implied_role_id)
+        .check_role_imply_rule(
+            &ExecutionContext::from_auth(&state, &user_auth),
+            &prior_role_id,
+            &implied_role_id,
+        )
         .await?;
 
     if exists {

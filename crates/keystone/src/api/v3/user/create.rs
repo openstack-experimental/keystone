@@ -25,6 +25,7 @@ use super::types::{User, UserCreateRequest, UserListParameters, UserResponse};
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
+use openstack_keystone_core::auth::ExecutionContext;
 
 /// Create user
 #[utoipa::path(
@@ -57,7 +58,7 @@ pub(super) async fn create(
     let user = state
         .provider
         .get_identity_provider()
-        .create_user(&state, req.into())
+        .create_user(&ExecutionContext::from_auth(&state, &user_auth), req.into())
         .await?;
     Ok((
         StatusCode::CREATED,

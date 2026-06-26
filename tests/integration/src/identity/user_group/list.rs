@@ -23,11 +23,10 @@ use openstack_keystone_identity_driver_sql::entity::{
     prelude::ExpiringUserGroupMembership as DbExpiringUserGroupMembership,
 };
 
-use openstack_keystone::identity::IdentityApi;
-
 use super::*;
 use crate::common::get_state;
 use crate::{create_domain, create_group, create_user};
+use openstack_keystone_core::auth::ExecutionContext;
 
 #[tokio::test]
 async fn test_list_user_groups() -> Result<(), Report> {
@@ -38,7 +37,7 @@ async fn test_list_user_groups() -> Result<(), Report> {
     state
         .provider
         .get_identity_provider()
-        .add_user_to_group(&state, &user.id, &group.id)
+        .add_user_to_group(&ExecutionContext::internal(&state), &user.id, &group.id)
         .await?;
 
     assert_eq!(
@@ -66,14 +65,19 @@ async fn test_expiring_groups() -> Result<(), Report> {
     state
         .provider
         .get_identity_provider()
-        .add_user_to_group(&state, &user.id, &group_a.id)
+        .add_user_to_group(&ExecutionContext::internal(&state), &user.id, &group_a.id)
         .await?;
 
     // non expired membership
     state
         .provider
         .get_identity_provider()
-        .add_user_to_group_expiring(&state, &user.id, &group_b.id, "idp_id")
+        .add_user_to_group_expiring(
+            &ExecutionContext::internal(&state),
+            &user.id,
+            &group_b.id,
+            "idp_id",
+        )
         .await?;
 
     // TODO: Find a way to add expired group membership for the test

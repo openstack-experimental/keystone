@@ -18,10 +18,11 @@ macro_rules! impl_deleter {
         impl ResourceDeleter<$resource> for Arc<$state> {
             fn delete(&self, resource: $resource) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
                 Box::pin(async move {
+                    let exec = openstack_keystone_core::auth::ExecutionContext::internal(&self);
                     let _ = self
                         .provider
                         .$provider_getter()
-                        .$method(self, &resource.id)
+                        .$method(&exec, &resource.id)
                         .await;
                 })
             }

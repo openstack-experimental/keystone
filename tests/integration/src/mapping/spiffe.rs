@@ -16,7 +16,7 @@ use std::collections::HashMap;
 
 use eyre::Result;
 
-use openstack_keystone_core::mapping::MappingApi;
+use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core_types::auth::AuthenticationContext;
 use openstack_keystone_core_types::mapping::error::MappingProviderError;
 use openstack_keystone_core_types::mapping::resolution::IdentitySource;
@@ -92,7 +92,7 @@ async fn test_spiffe_happy_path() -> Result<()> {
     let result = state
         .provider
         .get_mapping_provider()
-        .authenticate_by_mapping(&state, &request)
+        .authenticate_by_mapping(&ExecutionContext::internal(&state), &request)
         .await?;
 
     if let AuthenticationContext::Mapping(ctx) = result.context {
@@ -103,7 +103,7 @@ async fn test_spiffe_happy_path() -> Result<()> {
         let vuser = state
             .provider
             .get_mapping_provider()
-            .get_virtual_user(&state, &ctx.virtual_user_id)
+            .get_virtual_user(&ExecutionContext::internal(&state), &ctx.virtual_user_id)
             .await?
             .expect("virtual user should exist");
 
@@ -148,7 +148,7 @@ async fn test_spiffe_no_fallback_when_no_matching_rule() -> Result<()> {
     let result = state
         .provider
         .get_mapping_provider()
-        .authenticate_by_mapping(&state, &request)
+        .authenticate_by_mapping(&ExecutionContext::internal(&state), &request)
         .await;
 
     assert!(result.is_err());
@@ -209,7 +209,7 @@ async fn test_spiffe_system_ruleset() -> Result<()> {
     let result = state
         .provider
         .get_mapping_provider()
-        .authenticate_by_mapping(&state, &request)
+        .authenticate_by_mapping(&ExecutionContext::internal(&state), &request)
         .await?;
 
     if let AuthenticationContext::Mapping(ctx) = result.context {
@@ -219,7 +219,7 @@ async fn test_spiffe_system_ruleset() -> Result<()> {
         let vuser = state
             .provider
             .get_mapping_provider()
-            .get_virtual_user(&state, &ctx.virtual_user_id)
+            .get_virtual_user(&ExecutionContext::internal(&state), &ctx.virtual_user_id)
             .await?
             .expect("virtual user should exist");
 
@@ -287,7 +287,7 @@ async fn test_spiffe_claim_condition_any_of() -> Result<()> {
     let result = state
         .provider
         .get_mapping_provider()
-        .authenticate_by_mapping(&state, &request)
+        .authenticate_by_mapping(&ExecutionContext::internal(&state), &request)
         .await?;
 
     if let AuthenticationContext::Mapping(ctx) = result.context {
@@ -297,7 +297,7 @@ async fn test_spiffe_claim_condition_any_of() -> Result<()> {
         let vuser = state
             .provider
             .get_mapping_provider()
-            .get_virtual_user(&state, &ctx.virtual_user_id)
+            .get_virtual_user(&ExecutionContext::internal(&state), &ctx.virtual_user_id)
             .await?
             .expect("virtual user should exist");
 
@@ -361,7 +361,7 @@ async fn test_spiffe_any_of_no_match() -> Result<()> {
     let result = state
         .provider
         .get_mapping_provider()
-        .authenticate_by_mapping(&state, &request)
+        .authenticate_by_mapping(&ExecutionContext::internal(&state), &request)
         .await;
 
     assert!(result.is_err());
@@ -426,7 +426,7 @@ async fn test_spiffe_matches_regex() -> Result<()> {
     let result = state
         .provider
         .get_mapping_provider()
-        .authenticate_by_mapping(&state, &request)
+        .authenticate_by_mapping(&ExecutionContext::internal(&state), &request)
         .await?;
 
     if let AuthenticationContext::Mapping(ctx) = result.context {
@@ -436,7 +436,7 @@ async fn test_spiffe_matches_regex() -> Result<()> {
         let vuser = state
             .provider
             .get_mapping_provider()
-            .get_virtual_user(&state, &ctx.virtual_user_id)
+            .get_virtual_user(&ExecutionContext::internal(&state), &ctx.virtual_user_id)
             .await?
             .expect("virtual user should exist");
 
@@ -517,7 +517,7 @@ async fn test_spiffe_all_of_strict_with_auth() -> Result<()> {
     let result = state
         .provider
         .get_mapping_provider()
-        .authenticate_by_mapping(&state, &request)
+        .authenticate_by_mapping(&ExecutionContext::internal(&state), &request)
         .await?;
 
     if let AuthenticationContext::Mapping(ctx) = result.context {
@@ -527,7 +527,7 @@ async fn test_spiffe_all_of_strict_with_auth() -> Result<()> {
         let vuser = state
             .provider
             .get_mapping_provider()
-            .get_virtual_user(&state, &ctx.virtual_user_id)
+            .get_virtual_user(&ExecutionContext::internal(&state), &ctx.virtual_user_id)
             .await?
             .expect("virtual user should exist");
 

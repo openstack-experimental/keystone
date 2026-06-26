@@ -24,6 +24,7 @@ use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
 use crate::api::v3::group::types::{Group, GroupList};
 use crate::keystone::ServiceState;
+use openstack_keystone_core::auth::ExecutionContext;
 use types::{User, UserCreateRequest, UserList, UserListParameters, UserResponse};
 
 pub mod types;
@@ -56,7 +57,10 @@ async fn list(
     let users: Vec<User> = state
         .provider
         .get_identity_provider()
-        .list_users(&state, &query.into())
+        .list_users(
+            &ExecutionContext::from_auth(&state, &user_auth),
+            &query.into(),
+        )
         .await?
         .into_iter()
         .map(Into::into)
@@ -88,7 +92,7 @@ async fn show(
                 state
                     .provider
                     .get_identity_provider()
-                    .get_user(&state, &user_id)
+                    .get_user(&ExecutionContext::from_auth(&state, &user_auth), &user_id)
                     .await
                     .map(|x| {
                         x.ok_or_else(|| KeystoneApiError::NotFound {
@@ -122,7 +126,7 @@ async fn create(
     let user = state
         .provider
         .get_identity_provider()
-        .create_user(&state, req.into())
+        .create_user(&ExecutionContext::from_auth(&state, &user_auth), req.into())
         .await?;
     Ok((
         StatusCode::CREATED,
@@ -154,7 +158,7 @@ async fn remove(
     state
         .provider
         .get_identity_provider()
-        .delete_user(&state, &user_id)
+        .delete_user(&ExecutionContext::from_auth(&state, &user_auth), &user_id)
         .await?;
     Ok((StatusCode::NO_CONTENT).into_response())
 }
@@ -179,7 +183,7 @@ async fn groups(
     let groups: Vec<Group> = state
         .provider
         .get_identity_provider()
-        .list_groups_of_user(&state, &user_id)
+        .list_groups_of_user(&ExecutionContext::from_auth(&state, &user_auth), &user_id)
         .await?
         .into_iter()
         .map(Into::into)

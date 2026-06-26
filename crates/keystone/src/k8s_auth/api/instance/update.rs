@@ -27,6 +27,7 @@ use openstack_keystone_api_types::k8s_auth::*;
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
+use openstack_keystone_core::auth::ExecutionContext;
 
 /// Update single K8s auth instance.
 ///
@@ -62,7 +63,10 @@ pub(super) async fn update(
     let current = state
         .provider
         .get_k8s_auth_provider()
-        .get_auth_instance(&state, &instance_id)
+        .get_auth_instance(
+            &ExecutionContext::from_auth(&state, &user_auth),
+            &instance_id,
+        )
         .await?;
 
     state
@@ -78,7 +82,11 @@ pub(super) async fn update(
     let res = state
         .provider
         .get_k8s_auth_provider()
-        .update_auth_instance(&state, &instance_id, req.into())
+        .update_auth_instance(
+            &ExecutionContext::from_auth(&state, &user_auth),
+            &instance_id,
+            req.into(),
+        )
         .await?;
     Ok((
         StatusCode::OK,

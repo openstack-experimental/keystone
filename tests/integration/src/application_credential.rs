@@ -13,10 +13,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use eyre::Report;
+use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core_types::application_credential::ApplicationCredentialCreate;
 use std::sync::Arc;
 
-use openstack_keystone::application_credential::ApplicationCredentialApi;
 use openstack_keystone_core::keystone::Service;
 use openstack_keystone_core_types::application_credential as types;
 
@@ -35,7 +35,7 @@ async fn create_application_credential(
     let res = state
         .provider
         .get_application_credential_provider()
-        .create_application_credential(state, data)
+        .create_application_credential(&ExecutionContext::internal(&state), data)
         .await?;
     Ok(res)
 }

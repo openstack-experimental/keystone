@@ -16,8 +16,8 @@ use async_trait::async_trait;
 
 use openstack_keystone_core_types::catalog::*;
 
+use crate::auth::ExecutionContext;
 use crate::catalog::CatalogProviderError;
-use crate::keystone::ServiceState;
 
 #[async_trait]
 pub trait CatalogApi: Send + Sync {
@@ -30,9 +30,9 @@ pub trait CatalogApi: Send + Sync {
     /// # Returns
     /// A `Result` containing the created `Endpoint`, or a
     /// `CatalogProviderError`.
-    async fn create_endpoint(
+    async fn create_endpoint<'a>(
         &self,
-        state: &ServiceState,
+        exec: &ExecutionContext<'a>,
         endpoint: EndpointCreate,
     ) -> Result<Endpoint, CatalogProviderError>;
 
@@ -44,9 +44,9 @@ pub trait CatalogApi: Send + Sync {
     ///
     /// # Returns
     /// A `Result` containing the created `Region`, or a `CatalogProviderError`.
-    async fn create_region(
+    async fn create_region<'a>(
         &self,
-        state: &ServiceState,
+        exec: &ExecutionContext<'a>,
         region: RegionCreate,
     ) -> Result<Region, CatalogProviderError>;
 
@@ -59,9 +59,9 @@ pub trait CatalogApi: Send + Sync {
     /// # Returns
     /// A `Result` containing the created `Service`, or a
     /// `CatalogProviderError`.
-    async fn create_service(
+    async fn create_service<'a>(
         &self,
-        state: &ServiceState,
+        exec: &ExecutionContext<'a>,
         service: ServiceCreate,
     ) -> Result<Service, CatalogProviderError>;
 
@@ -75,7 +75,7 @@ pub trait CatalogApi: Send + Sync {
     /// A `Result` indicating success or a `CatalogProviderError`.
     async fn delete_endpoint<'a>(
         &self,
-        state: &ServiceState,
+        exec: &ExecutionContext<'a>,
         id: &'a str,
     ) -> Result<(), CatalogProviderError>;
 
@@ -89,7 +89,7 @@ pub trait CatalogApi: Send + Sync {
     /// A `Result` indicating success or a `CatalogProviderError`.
     async fn delete_region<'a>(
         &self,
-        state: &ServiceState,
+        exec: &ExecutionContext<'a>,
         id: &'a str,
     ) -> Result<(), CatalogProviderError>;
 
@@ -103,7 +103,7 @@ pub trait CatalogApi: Send + Sync {
     /// A `Result` indicating success or a `CatalogProviderError`.
     async fn delete_service<'a>(
         &self,
-        state: &ServiceState,
+        exec: &ExecutionContext<'a>,
         id: &'a str,
     ) -> Result<(), CatalogProviderError>;
 
@@ -116,9 +116,9 @@ pub trait CatalogApi: Send + Sync {
     /// # Returns
     /// A `Result` containing a vector of tuples of `Service` and its associated
     /// `Endpoint`s, or a `CatalogProviderError`.
-    async fn get_catalog(
+    async fn get_catalog<'a>(
         &self,
-        state: &ServiceState,
+        exec: &ExecutionContext<'a>,
         enabled: bool,
     ) -> Result<Vec<(Service, Vec<Endpoint>)>, CatalogProviderError>;
 
@@ -133,7 +133,7 @@ pub trait CatalogApi: Send + Sync {
     /// `CatalogProviderError`.
     async fn get_endpoint<'a>(
         &self,
-        state: &ServiceState,
+        exec: &ExecutionContext<'a>,
         id: &'a str,
     ) -> Result<Option<Endpoint>, CatalogProviderError>;
 
@@ -148,7 +148,7 @@ pub trait CatalogApi: Send + Sync {
     /// `CatalogProviderError`.
     async fn get_region<'a>(
         &self,
-        state: &ServiceState,
+        exec: &ExecutionContext<'a>,
         id: &'a str,
     ) -> Result<Option<Region>, CatalogProviderError>;
 
@@ -163,7 +163,7 @@ pub trait CatalogApi: Send + Sync {
     /// `CatalogProviderError`.
     async fn get_service<'a>(
         &self,
-        state: &ServiceState,
+        exec: &ExecutionContext<'a>,
         id: &'a str,
     ) -> Result<Option<Service>, CatalogProviderError>;
 
@@ -176,9 +176,9 @@ pub trait CatalogApi: Send + Sync {
     /// # Returns
     /// A `Result` containing a vector of `Endpoint` objects or a
     /// `CatalogProviderError`.
-    async fn list_endpoints(
+    async fn list_endpoints<'a>(
         &self,
-        state: &ServiceState,
+        exec: &ExecutionContext<'a>,
         params: &EndpointListParameters,
     ) -> Result<Vec<Endpoint>, CatalogProviderError>;
 
@@ -191,9 +191,9 @@ pub trait CatalogApi: Send + Sync {
     /// # Returns
     /// A `Result` containing a vector of `Region` objects or a
     /// `CatalogProviderError`.
-    async fn list_regions(
+    async fn list_regions<'a>(
         &self,
-        state: &ServiceState,
+        exec: &ExecutionContext<'a>,
         params: &RegionListParameters,
     ) -> Result<Vec<Region>, CatalogProviderError>;
 
@@ -206,9 +206,9 @@ pub trait CatalogApi: Send + Sync {
     /// # Returns
     /// A `Result` containing a vector of `Service` objects or a
     /// `CatalogProviderError`.
-    async fn list_services(
+    async fn list_services<'a>(
         &self,
-        state: &ServiceState,
+        exec: &ExecutionContext<'a>,
         params: &ServiceListParameters,
     ) -> Result<Vec<Service>, CatalogProviderError>;
 
@@ -224,7 +224,7 @@ pub trait CatalogApi: Send + Sync {
     /// `CatalogProviderError`.
     async fn update_endpoint<'a>(
         &self,
-        state: &ServiceState,
+        exec: &ExecutionContext<'a>,
         id: &'a str,
         endpoint: EndpointUpdate,
     ) -> Result<Endpoint, CatalogProviderError>;
@@ -240,7 +240,7 @@ pub trait CatalogApi: Send + Sync {
     /// A `Result` containing the updated `Region`, or a `CatalogProviderError`.
     async fn update_region<'a>(
         &self,
-        state: &ServiceState,
+        exec: &ExecutionContext<'a>,
         id: &'a str,
         region: RegionUpdate,
     ) -> Result<Region, CatalogProviderError>;
@@ -257,7 +257,7 @@ pub trait CatalogApi: Send + Sync {
     /// `CatalogProviderError`.
     async fn update_service<'a>(
         &self,
-        state: &ServiceState,
+        exec: &ExecutionContext<'a>,
         id: &'a str,
         service: ServiceUpdate,
     ) -> Result<Service, CatalogProviderError>;

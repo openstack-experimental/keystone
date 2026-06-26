@@ -20,8 +20,8 @@ use std::sync::Arc;
 use openstack_keystone_config::Config;
 use openstack_keystone_core_types::idmapping::*;
 
+use crate::auth::ExecutionContext;
 use crate::idmapping::{IdMappingApi, IdMappingProviderError, backend::IdMappingBackend};
-use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManagerApi;
 
 pub struct IdMappingService {
@@ -64,13 +64,13 @@ impl IdMappingApi for IdMappingService {
     ///   containing an `Option` with the `IdMapping` if found, or an `Error`.
     async fn get_by_local_id<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         local_id: &'a str,
         domain_id: &'a str,
         entity_type: IdMappingEntityType,
     ) -> Result<Option<IdMapping>, IdMappingProviderError> {
         self.backend_driver
-            .get_by_local_id(state, local_id, domain_id, entity_type)
+            .get_by_local_id(ctx.state(), local_id, domain_id, entity_type)
             .await
     }
 
@@ -85,10 +85,12 @@ impl IdMappingApi for IdMappingService {
     ///   containing an `Option` with the `IdMapping` if found, or an `Error`.
     async fn get_by_public_id<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         public_id: &'a str,
     ) -> Result<Option<IdMapping>, IdMappingProviderError> {
-        self.backend_driver.get_by_public_id(state, public_id).await
+        self.backend_driver
+            .get_by_public_id(ctx.state(), public_id)
+            .await
     }
 }
 
@@ -126,7 +128,12 @@ mod tests {
         let provider = create_provider(backend);
 
         let res: IdMapping = provider
-            .get_by_local_id(&state, "lid", "did", IdMappingEntityType::User)
+            .get_by_local_id(
+                &ExecutionContext::internal(&state),
+                "lid",
+                "did",
+                IdMappingEntityType::User,
+            )
             .await
             .unwrap()
             .expect("id mapping should be there");
@@ -151,7 +158,7 @@ mod tests {
         let provider = create_provider(backend);
 
         let res: IdMapping = provider
-            .get_by_public_id(&state, "pid")
+            .get_by_public_id(&ExecutionContext::internal(&state), "pid")
             .await
             .unwrap()
             .expect("id mapping should be there");

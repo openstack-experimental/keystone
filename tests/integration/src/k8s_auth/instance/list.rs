@@ -16,7 +16,7 @@
 use eyre::Result;
 use tracing_test::traced_test;
 
-use openstack_keystone::k8s_auth::K8sAuthApi;
+use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core_types::k8s_auth::*;
 
 use super::create_k8s_auth_instance;
@@ -60,7 +60,10 @@ async fn test_list() -> Result<()> {
     let res = state
         .provider
         .get_k8s_auth_provider()
-        .list_auth_instances(&state, &K8sAuthInstanceListParameters::default())
+        .list_auth_instances(
+            &ExecutionContext::internal(&state),
+            &K8sAuthInstanceListParameters::default(),
+        )
         .await?;
     assert!(res.contains(&k8s_conf));
     assert!(res.contains(&k8s_conf2));
@@ -103,7 +106,7 @@ async fn test_list_name() -> Result<()> {
         .provider
         .get_k8s_auth_provider()
         .list_auth_instances(
-            &state,
+            &ExecutionContext::internal(&state),
             &K8sAuthInstanceListParameters {
                 name: k8s_conf.name.clone(),
                 ..Default::default()
@@ -151,7 +154,7 @@ async fn test_list_domain() -> Result<()> {
         .provider
         .get_k8s_auth_provider()
         .list_auth_instances(
-            &state,
+            &ExecutionContext::internal(&state),
             &K8sAuthInstanceListParameters {
                 domain_id: Some(domain.id.clone()),
                 ..Default::default()

@@ -40,6 +40,7 @@ use openstack_keystone_core_types::token::{
 };
 use openstack_keystone_core_types::trust::TrustProviderError;
 
+use crate::auth::ExecutionContext;
 use crate::auth::*;
 use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManagerApi;
@@ -108,12 +109,13 @@ impl TokenService {
         state: &ServiceState,
         token: &FernetToken,
     ) -> Result<AuthzInfo, TokenProviderError> {
+        let ctx = ExecutionContext::internal(state);
         let scope = match token {
             FernetToken::ApplicationCredential(data) => {
                 let project = state
                     .provider
                     .get_resource_provider()
-                    .get_project(state, &data.project_id)
+                    .get_project(&ctx, &data.project_id)
                     .await?
                     .ok_or(ResourceProviderError::ProjectNotFound(
                         data.project_id.clone(),
@@ -121,7 +123,7 @@ impl TokenService {
                 let project_domain = state
                     .provider
                     .get_resource_provider()
-                    .get_domain(state, &project.domain_id)
+                    .get_domain(&ctx, &project.domain_id)
                     .await?
                     .ok_or(ResourceProviderError::DomainNotFound(
                         project.domain_id.clone(),
@@ -135,7 +137,7 @@ impl TokenService {
                 state
                     .provider
                     .get_resource_provider()
-                    .get_domain(state, &data.domain_id)
+                    .get_domain(&ctx, &data.domain_id)
                     .await?
                     .ok_or(ResourceProviderError::DomainNotFound(
                         data.domain_id.clone(),
@@ -145,7 +147,7 @@ impl TokenService {
                 let project = state
                     .provider
                     .get_resource_provider()
-                    .get_project(state, &data.project_id)
+                    .get_project(&ctx, &data.project_id)
                     .await?
                     .ok_or(ResourceProviderError::ProjectNotFound(
                         data.project_id.clone(),
@@ -153,7 +155,7 @@ impl TokenService {
                 let project_domain = state
                     .provider
                     .get_resource_provider()
-                    .get_domain(state, &project.domain_id)
+                    .get_domain(&ctx, &project.domain_id)
                     .await?
                     .ok_or(ResourceProviderError::DomainNotFound(
                         project.domain_id.clone(),
@@ -167,7 +169,7 @@ impl TokenService {
                 state
                     .provider
                     .get_resource_provider()
-                    .get_domain(state, &data.domain_id)
+                    .get_domain(&ctx, &data.domain_id)
                     .await?
                     .ok_or(ResourceProviderError::DomainNotFound(
                         data.domain_id.clone(),
@@ -177,7 +179,7 @@ impl TokenService {
                 let project = state
                     .provider
                     .get_resource_provider()
-                    .get_project(state, &data.project_id)
+                    .get_project(&ctx, &data.project_id)
                     .await?
                     .ok_or(ResourceProviderError::ProjectNotFound(
                         data.project_id.clone(),
@@ -185,7 +187,7 @@ impl TokenService {
                 let project_domain = state
                     .provider
                     .get_resource_provider()
-                    .get_domain(state, &project.domain_id)
+                    .get_domain(&ctx, &project.domain_id)
                     .await?
                     .ok_or(ResourceProviderError::DomainNotFound(
                         project.domain_id.clone(),
@@ -200,7 +202,7 @@ impl TokenService {
                 let project = state
                     .provider
                     .get_resource_provider()
-                    .get_project(state, &data.project_id)
+                    .get_project(&ctx, &data.project_id)
                     .await?
                     .ok_or(ResourceProviderError::ProjectNotFound(
                         data.project_id.clone(),
@@ -208,7 +210,7 @@ impl TokenService {
                 let project_domain = state
                     .provider
                     .get_resource_provider()
-                    .get_domain(state, &project.domain_id)
+                    .get_domain(&ctx, &project.domain_id)
                     .await?
                     .ok_or(ResourceProviderError::DomainNotFound(
                         project.domain_id.clone(),
@@ -216,7 +218,7 @@ impl TokenService {
                 let trust = state
                     .provider
                     .get_trust_provider()
-                    .get_trust(state, &data.trust_id)
+                    .get_trust(&ctx, &data.trust_id)
                     .await?
                     .ok_or(TrustProviderError::TrustNotFound(data.trust_id.clone()))?;
                 ScopeInfo::TrustProject(Box::new(TrustProjectInfo {
@@ -229,7 +231,7 @@ impl TokenService {
                 let project = state
                     .provider
                     .get_resource_provider()
-                    .get_project(state, &data.project_id)
+                    .get_project(&ctx, &data.project_id)
                     .await?
                     .ok_or(ResourceProviderError::ProjectNotFound(
                         data.project_id.clone(),
@@ -237,7 +239,7 @@ impl TokenService {
                 let project_domain = state
                     .provider
                     .get_resource_provider()
-                    .get_domain(state, &project.domain_id)
+                    .get_domain(&ctx, &project.domain_id)
                     .await?
                     .ok_or(ResourceProviderError::DomainNotFound(
                         project.domain_id.clone(),
@@ -260,12 +262,13 @@ impl TokenService {
     /// returns the locked context.
     async fn validate_to_context_impl(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'_>,
         credential: &str,
         allow_expired: Option<bool>,
         window_seconds: Option<i64>,
     ) -> Result<ValidatedSecurityContext, TokenProviderError> {
         let token = self.backend_driver.decode(credential)?;
+        let state = ctx.state();
 
         let latest_expiration_cutof = Utc::now()
             .checked_add_signed(TimeDelta::seconds(window_seconds.unwrap_or(0)))
@@ -288,7 +291,7 @@ impl TokenService {
                     application_credential: state
                         .provider
                         .get_application_credential_provider()
-                        .get_application_credential(state, &data.application_credential_id)
+                        .get_application_credential(ctx, &data.application_credential_id)
                         .await?
                         .ok_or_else(|| {
                             ApplicationCredentialProviderError::ApplicationCredentialNotFound(
@@ -302,7 +305,7 @@ impl TokenService {
                 trust: state
                     .provider
                     .get_trust_provider()
-                    .get_trust(state, &data.trust_id)
+                    .get_trust(ctx, &data.trust_id)
                     .await?
                     .ok_or_else(|| TrustProviderError::TrustNotFound(data.trust_id.clone()))?,
                 token: Some(token.clone()),
@@ -313,20 +316,21 @@ impl TokenService {
         let user = state
             .provider
             .get_identity_provider()
-            .get_user(state, token.user_id())
+            .get_user(ctx, token.user_id())
             .await?
             .ok_or(TokenProviderError::UserNotFound(token.user_id().clone()))?;
         let user_domain = state
             .provider
             .get_resource_provider()
-            .get_domain(state, &user.domain_id)
+            .get_domain(ctx, &user.domain_id)
             .await?
             .ok_or(ResourceProviderError::DomainNotFound(
                 user.domain_id.clone(),
             ))?;
-        let mut ctx = AuthenticationResultBuilder::default();
+        let mut auth_result_builder = AuthenticationResultBuilder::default();
 
-        ctx.context(auth_context)
+        auth_result_builder
+            .context(auth_context)
             .principal(PrincipalInfo {
                 identity: IdentityInfo::User(
                     UserIdentityInfoBuilder::default()
@@ -349,15 +353,15 @@ impl TokenService {
             let token_restriction = &state
                 .provider
                 .get_token_provider()
-                .get_token_restriction(state, &restriction.token_restriction_id, false)
+                .get_token_restriction(ctx, &restriction.token_restriction_id, false)
                 .await?
                 .ok_or(TokenProviderError::TokenRestrictionNotFound(
                     restriction.token_restriction_id.clone(),
                 ))?;
-            ctx.token_restriction(token_restriction.to_owned());
+            auth_result_builder.token_restriction(token_restriction.to_owned());
         }
 
-        let auth_result = ctx.build()?;
+        let auth_result = auth_result_builder.build()?;
 
         let mut sc = SecurityContext::try_from(auth_result)?;
         sc.set_token(token.clone());
@@ -371,7 +375,7 @@ impl TokenService {
         if state
             .provider
             .get_revoke_provider()
-            .is_token_revoked(state, &vsc)
+            .is_token_revoked(ctx, &vsc)
             .await?
         {
             return Err(TokenProviderError::TokenRevoked);
@@ -401,13 +405,13 @@ impl TokenApi for TokenService {
     ///   information or an error.
     async fn authorize_by_token<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         credential: &'a str,
         allow_expired: Option<bool>,
         window_seconds: Option<i64>,
     ) -> Result<ValidatedSecurityContext, TokenProviderError> {
         let vsc = self
-            .validate_to_context_impl(state, credential, allow_expired, window_seconds)
+            .validate_to_context_impl(ctx, credential, allow_expired, window_seconds)
             .await?;
 
         if let FernetToken::Restricted(restriction) = vsc.token()?
@@ -421,12 +425,12 @@ impl TokenApi for TokenService {
     /// Validate the token and produce a [`ValidatedSecurityContext`].
     async fn validate_to_context<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         credential: &'a str,
         allow_expired: Option<bool>,
         window_seconds: Option<i64>,
     ) -> Result<ValidatedSecurityContext, TokenProviderError> {
-        self.validate_to_context_impl(state, credential, allow_expired, window_seconds)
+        self.validate_to_context_impl(ctx, credential, allow_expired, window_seconds)
             .await
     }
 
@@ -497,21 +501,22 @@ impl TokenApi for TokenService {
     ///   `Error`.
     async fn get_token_restriction<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         id: &'a str,
         expand_roles: bool,
     ) -> Result<Option<TokenRestriction>, TokenProviderError> {
         let mut res = self
             .tr_backend_driver
-            .get_token_restriction(state, id)
+            .get_token_restriction(ctx.state(), id)
             .await?;
         if let Some(ref mut tr) = res
             && expand_roles
         {
-            let roles: HashMap<String, Role> = state
+            let roles: HashMap<String, Role> = ctx
+                .state()
                 .provider
                 .get_role_provider()
-                .list_roles(state, &RoleListParameters::default())
+                .list_roles(ctx, &RoleListParameters::default())
                 .await?
                 .into_iter()
                 .map(|role| (role.id.clone(), role))
@@ -522,10 +527,10 @@ impl TokenApi for TokenService {
                 .iter()
                 .filter_map(|rid| roles.get(rid).map(|role| role.into()))
                 .collect();
-            state
+            ctx.state()
                 .provider
                 .get_role_provider()
-                .expand_implied_roles(state, &mut filtered_roles)
+                .expand_implied_roles(ctx, &mut filtered_roles)
                 .await?;
             tr.roles.get_or_insert_default().extend(filtered_roles);
         }
@@ -544,7 +549,7 @@ impl TokenApi for TokenService {
     ///   restriction or an error.
     async fn create_token_restriction<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         restriction: TokenRestrictionCreate,
     ) -> Result<TokenRestriction, TokenProviderError> {
         let mut restriction = restriction;
@@ -552,7 +557,7 @@ impl TokenApi for TokenService {
             restriction.id = Uuid::new_v4().simple().to_string();
         }
         self.tr_backend_driver
-            .create_token_restriction(state, restriction)
+            .create_token_restriction(ctx.state(), restriction)
             .await
     }
 
@@ -567,11 +572,11 @@ impl TokenApi for TokenService {
     ///   restrictions or an error.
     async fn list_token_restrictions<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         params: &TokenRestrictionListParameters,
     ) -> Result<Vec<TokenRestriction>, TokenProviderError> {
         self.tr_backend_driver
-            .list_token_restrictions(state, params)
+            .list_token_restrictions(ctx.state(), params)
             .await
     }
 
@@ -587,12 +592,12 @@ impl TokenApi for TokenService {
     ///   restriction or an error.
     async fn update_token_restriction<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         id: &'a str,
         restriction: TokenRestrictionUpdate,
     ) -> Result<TokenRestriction, TokenProviderError> {
         self.tr_backend_driver
-            .update_token_restriction(state, id, restriction)
+            .update_token_restriction(ctx.state(), id, restriction)
             .await
     }
 
@@ -606,11 +611,11 @@ impl TokenApi for TokenService {
     /// - `Result<(), TokenProviderError>` - Ok on success, or an error.
     async fn delete_token_restriction<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         id: &'a str,
     ) -> Result<(), TokenProviderError> {
         self.tr_backend_driver
-            .delete_token_restriction(state, id)
+            .delete_token_restriction(ctx.state(), id)
             .await
     }
 }
@@ -754,8 +759,9 @@ mod tests {
         let state = get_mocked_state(Some(config), Some(provider)).await;
 
         let credential = token_provider.encode_token(&token).unwrap();
+        let ctx = ExecutionContext::internal(&state);
         match token_provider
-            .validate_to_context(&state, &credential, Some(false), None)
+            .validate_to_context(&ctx, &credential, Some(false), None)
             .await
         {
             Err(TokenProviderError::TokenRevoked) => {}

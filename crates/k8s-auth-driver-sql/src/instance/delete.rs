@@ -11,7 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-//! Delete k8s auth provider
+//! # Delete k8s auth provider
 
 use sea_orm::DatabaseConnection;
 use sea_orm::entity::*;

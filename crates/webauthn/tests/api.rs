@@ -31,6 +31,7 @@ use webauthn_authenticator_rs::softtoken::SoftToken;
 
 use openstack_keystone_api_types::webauthn::*;
 use openstack_keystone_core::assignment::MockAssignmentProvider;
+use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core::identity::MockIdentityProvider;
 use openstack_keystone_core::provider::{Provider, ProviderBuilder};
 use openstack_keystone_core::resource::MockResourceProvider;
@@ -151,7 +152,6 @@ fn get_provider_mocks(user_id: &Uuid) -> ProviderBuilder {
     let mut assignment_mock = MockAssignmentProvider::default();
     assignment_mock
         .expect_list_role_assignments()
-        .withf(|_, _s| true)
         .returning(|_, _| {
             Ok(vec![Assignment {
                 role_id: "role".into(),
@@ -165,13 +165,13 @@ fn get_provider_mocks(user_id: &Uuid) -> ProviderBuilder {
         });
     let mut identity_mock = MockIdentityProvider::default();
     let uid = user_id.to_string().clone();
-    identity_mock.expect_get_user().returning(move |_, _| {
+    identity_mock.expect_get_user().returning(move |_exec, _| {
         Ok(Some(
             UserResponseBuilder::default()
                 .id(uid.clone())
-                .domain_id("user_domain_id")
+                .domain_id(user.domain_id.clone())
                 .enabled(true)
-                .name("name")
+                .name(user.name.clone())
                 .build()
                 .unwrap(),
         ))
@@ -180,16 +180,10 @@ fn get_provider_mocks(user_id: &Uuid) -> ProviderBuilder {
 
     resource_mock
         .expect_get_project()
-        .withf(|_, id: &'_ str| id == "project_id")
-        .returning(move |_, _| Ok(Some(project.clone())));
+        .returning(move |_exec, _| Ok(Some(project.clone())));
     resource_mock
         .expect_get_domain()
-        .withf(|_, id: &'_ str| id == "user_domain_id")
-        .returning(move |_, _| Ok(Some(user_domain.clone())));
-    resource_mock
-        .expect_get_domain()
-        .withf(|_, id: &'_ str| id == "project_domain_id")
-        .returning(move |_, _| Ok(Some(project_domain.clone())));
+        .returning(move |_exec, _| Ok(Some(user_domain.clone())));
 
     provider_builder
         .mock_assignment(assignment_mock)
@@ -270,14 +264,11 @@ async fn test_webauthn_roundtrip() -> Result<()> {
         .await?;
 
     // Check the credential is actually saved in the storage
+    let exec = ExecutionContext::internal(&state.core);
     state
         .extension
         .provider
-        .get_user_webauthn_credential(
-            &state.core,
-            &user_id.to_string(),
-            &passkey.passkey.credential_id,
-        )
+        .get_user_webauthn_credential(&exec, &user_id.to_string(), &passkey.passkey.credential_id)
         .await?
         .expect("must be found");
 

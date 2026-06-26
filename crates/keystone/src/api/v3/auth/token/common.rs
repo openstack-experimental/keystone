@@ -12,6 +12,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use openstack_keystone_core::auth::ExecutionContext;
+
 use crate::api::error::KeystoneApiError;
 use crate::api::v3::auth::token::types::AuthRequest;
 use crate::auth::*;
@@ -35,7 +37,7 @@ pub(super) async fn authenticate_request(
                     state
                         .provider
                         .get_identity_provider()
-                        .authenticate_by_password(state, &req)
+                        .authenticate_by_password(&ExecutionContext::internal(state), &req)
                         .await?,
                 );
             }
@@ -45,7 +47,12 @@ pub(super) async fn authenticate_request(
             let vsc = state
                 .provider
                 .get_token_provider()
-                .authorize_by_token(state, &token.id, Some(false), None)
+                .authorize_by_token(
+                    &ExecutionContext::internal(state),
+                    &token.id,
+                    Some(false),
+                    None,
+                )
                 .await?;
             let auth_res = AuthenticationResult {
                 audit_id: vsc.inner().audit_ids().first().cloned().unwrap_or_default(),
@@ -178,12 +185,12 @@ mod tests {
                     id == "fake_token" && *allow_expired == Some(false) && window.is_none()
                 },
             )
-            .returning(move |_, _, _, _| Ok(vsc_clone.clone()));
+            .returning(move |_state, _, _, _| Ok(vsc_clone.clone()));
         let mut identity_mock = MockIdentityProvider::default();
         identity_mock
             .expect_get_user()
-            .withf(|_, id: &'_ str| id == "uid")
-            .returning(move |_, _| Ok(Some(user.clone())));
+            .withf(|_exec, id: &'_ str| id == "uid")
+            .returning(move |_exec, _| Ok(Some(user.clone())));
 
         let provider = Provider::mocked_builder()
             .mock_identity(identity_mock)

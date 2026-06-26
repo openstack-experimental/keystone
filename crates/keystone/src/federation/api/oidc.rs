@@ -23,6 +23,7 @@ use crate::api::v4::auth::token::types::TokenResponse as KeystoneTokenResponse;
 use crate::federation::api::error::OidcError;
 use crate::federation::api::types::*;
 use crate::keystone::ServiceState;
+use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core_types::auth::AuthenticationResult;
 use openstack_keystone_core_types::mapping::auth::MappingAuthRequest;
 use openstack_keystone_core_types::mapping::resolution::IdentitySource;
@@ -63,11 +64,12 @@ pub async fn callback(
     State(state): State<ServiceState>,
     Json(query): Json<AuthCallbackParameters>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
+    let exec = ExecutionContext::internal(&state);
     // Validate auth state
     let auth_state = state
         .provider
         .get_federation_provider()
-        .get_auth_state(&state, &query.state)
+        .get_auth_state(&exec, &query.state)
         .await?
         .ok_or_else(|| KeystoneApiError::NotFound {
             resource: "auth state".into(),
@@ -81,7 +83,7 @@ pub async fn callback(
     let idp = state
         .provider
         .get_federation_provider()
-        .get_identity_provider(&state, &auth_state.idp_id)
+        .get_identity_provider(&exec, &auth_state.idp_id)
         .await
         .map(|x| {
             x.ok_or_else(|| KeystoneApiError::NotFound {
@@ -195,7 +197,7 @@ pub async fn callback(
     let auth_result: AuthenticationResult = state
         .provider
         .get_mapping_provider()
-        .authenticate_by_mapping(&state, &mapping_req)
+        .authenticate_by_mapping(&exec, &mapping_req)
         .await?;
 
     // Resolve scope from the original auth request. The scope may be None

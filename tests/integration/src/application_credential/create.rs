@@ -19,9 +19,8 @@ use secrecy::ExposeSecret;
 use tracing_test::traced_test;
 use uuid::Uuid;
 
-use openstack_keystone::application_credential::{
-    ApplicationCredentialApi, ApplicationCredentialProviderError,
-};
+use openstack_keystone::application_credential::ApplicationCredentialProviderError;
+use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core_types::application_credential::*;
 use openstack_keystone_core_types::role::*;
 
@@ -55,7 +54,7 @@ async fn test_create_basic() -> Result<(), Report> {
     let cred: ApplicationCredentialCreateResponse = state
         .provider
         .get_application_credential_provider()
-        .create_application_credential(&state, sot.clone())
+        .create_application_credential(&ExecutionContext::internal(&state), sot.clone())
         .await?;
 
     assert!(
@@ -101,7 +100,7 @@ async fn test_create_id_reuse() -> Result<(), Report> {
     let cred: ApplicationCredentialCreateResponse = state
         .provider
         .get_application_credential_provider()
-        .create_application_credential(&state, sot.clone())
+        .create_application_credential(&ExecutionContext::internal(&state), sot.clone())
         .await?;
 
     assert_eq!(
@@ -125,7 +124,7 @@ async fn test_create_secret_reuse() -> Result<(), Report> {
         .provider
         .get_application_credential_provider()
         .create_application_credential(
-            &state,
+            &ExecutionContext::internal(&state),
             ApplicationCredentialCreate {
                 name: Uuid::new_v4().to_string(),
                 project_id: project.id.clone(),
@@ -157,7 +156,7 @@ async fn test_create_nonexisting_role() -> Result<(), Report> {
         .provider
         .get_application_credential_provider()
         .create_application_credential(
-            &state,
+            &ExecutionContext::internal(&state),
             ApplicationCredentialCreate {
                 name: Uuid::new_v4().to_string(),
                 project_id: project.id.clone(),
@@ -192,7 +191,7 @@ async fn test_create_role() -> Result<(), Report> {
         .provider
         .get_application_credential_provider()
         .create_application_credential(
-            &state,
+            &ExecutionContext::internal(&state),
             ApplicationCredentialCreate {
                 name: Uuid::new_v4().to_string(),
                 project_id: project.id.clone(),

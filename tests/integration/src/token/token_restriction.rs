@@ -19,7 +19,7 @@ use eyre::Result;
 
 use openstack_keystone::keystone::Service;
 use openstack_keystone::keystone::ServiceState;
-use openstack_keystone::token::TokenApi;
+use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core_types::token::*;
 
 use crate::common::*;
@@ -39,7 +39,7 @@ pub async fn create_token_restriction(
     let res = state
         .provider
         .get_token_provider()
-        .create_token_restriction(state, data)
+        .create_token_restriction(&ExecutionContext::internal(&state), data)
         .await
         .unwrap();
     Ok(AsyncResourceGuard::new(res, state.clone()))

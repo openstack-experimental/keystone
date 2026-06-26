@@ -26,6 +26,7 @@ use crate::api::v3::role_assignment::types::{
     Assignment, AssignmentList, RoleAssignmentListParameters,
 };
 use crate::keystone::ServiceState;
+use openstack_keystone_core::auth::ExecutionContext;
 
 /// List role assignments.
 #[utoipa::path(
@@ -61,7 +62,10 @@ pub(super) async fn list(
     let assignments: Result<Vec<Assignment>, _> = state
         .provider
         .get_assignment_provider()
-        .list_role_assignments(&state, &query.try_into()?)
+        .list_role_assignments(
+            &ExecutionContext::from_auth(&state, &user_auth),
+            &query.try_into()?,
+        )
         .await?
         .into_iter()
         .map(TryInto::try_into)

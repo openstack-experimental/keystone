@@ -16,8 +16,8 @@ use async_trait::async_trait;
 
 use openstack_keystone_core_types::idmapping::*;
 
+use crate::auth::ExecutionContext;
 use crate::idmapping::IdMappingProviderError;
-use crate::keystone::ServiceState;
 
 /// IdMapping provider API.
 #[async_trait]
@@ -35,7 +35,7 @@ pub trait IdMappingApi: Send + Sync {
     ///   containing an `Option` with the `IdMapping` if found, or an `Error`.
     async fn get_by_local_id<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         local_id: &'a str,
         domain_id: &'a str,
         entity_type: IdMappingEntityType,
@@ -52,7 +52,7 @@ pub trait IdMappingApi: Send + Sync {
     ///   containing an `Option` with the `IdMapping` if found, or an `Error`.
     async fn get_by_public_id<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         public_id: &'a str,
     ) -> Result<Option<IdMapping>, IdMappingProviderError>;
 }

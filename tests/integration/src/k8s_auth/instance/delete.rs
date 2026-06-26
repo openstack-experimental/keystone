@@ -16,7 +16,7 @@
 use eyre::Result;
 use tracing_test::traced_test;
 
-use openstack_keystone::k8s_auth::K8sAuthApi;
+use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core_types::k8s_auth::*;
 
 use crate::common::get_state;
@@ -31,7 +31,7 @@ async fn test_delete() -> Result<()> {
         .provider
         .get_k8s_auth_provider()
         .create_auth_instance(
-            &state,
+            &ExecutionContext::internal(&state),
             K8sAuthInstanceCreate {
                 ca_cert: Some("ca".into()),
                 disable_local_ca_jwt: Some(true),
@@ -47,7 +47,7 @@ async fn test_delete() -> Result<()> {
     state
         .provider
         .get_k8s_auth_provider()
-        .delete_auth_instance(&state, &res.id)
+        .delete_auth_instance(&ExecutionContext::internal(&state), &res.id)
         .await?;
     Ok(())
 }

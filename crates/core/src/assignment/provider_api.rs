@@ -15,7 +15,7 @@
 use async_trait::async_trait;
 
 use crate::assignment::AssignmentProviderError;
-use crate::keystone::ServiceState;
+use crate::auth::ExecutionContext;
 use openstack_keystone_core_types::assignment::*;
 
 /// The trait covering [`Role`](crate::role::types::Role) assignments between
@@ -31,9 +31,9 @@ pub trait AssignmentApi: Send + Sync {
     /// # Returns
     /// - `Result<Assignment, AssignmentProviderError>` - The created assignment
     ///   or an error.
-    async fn create_grant(
+    async fn create_grant<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         params: AssignmentCreate,
     ) -> Result<Assignment, AssignmentProviderError>;
 
@@ -53,9 +53,9 @@ pub trait AssignmentApi: Send + Sync {
     /// # Returns
     /// - `Result<Vec<Assignment>, AssignmentProviderError>` - A list of
     ///   assignments or an error.
-    async fn list_role_assignments(
+    async fn list_role_assignments<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         params: &RoleAssignmentListParameters,
     ) -> Result<Vec<Assignment>, AssignmentProviderError>;
 
@@ -67,9 +67,9 @@ pub trait AssignmentApi: Send + Sync {
     ///
     /// # Returns
     /// - `Result<(), AssignmentProviderError>` - Ok on success, or an error.
-    async fn revoke_grant(
+    async fn revoke_grant<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         params: Assignment,
     ) -> Result<(), AssignmentProviderError>;
 }

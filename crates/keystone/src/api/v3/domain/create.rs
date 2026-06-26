@@ -24,6 +24,7 @@ use super::types::{DomainCreateRequest, DomainResponse};
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
+use openstack_keystone_core::auth::ExecutionContext;
 
 /// Create domain.
 ///
@@ -62,7 +63,10 @@ pub(super) async fn create(
     let created_domain = state
         .provider
         .get_resource_provider()
-        .create_domain(&state, payload.domain.into())
+        .create_domain(
+            &ExecutionContext::from_auth(&state, &user_auth),
+            payload.domain.into(),
+        )
         .await?;
 
     // Return response with 201 CREATED status

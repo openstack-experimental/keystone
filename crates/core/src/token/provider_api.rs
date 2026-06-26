@@ -17,7 +17,7 @@ use async_trait::async_trait;
 
 use openstack_keystone_core_types::token::*;
 
-use crate::auth::{ScopeInfo, SecurityContext, ValidatedSecurityContext};
+use crate::auth::{ExecutionContext, ScopeInfo, SecurityContext, ValidatedSecurityContext};
 use crate::keystone::ServiceState;
 use crate::token::TokenProviderError;
 
@@ -37,7 +37,7 @@ pub trait TokenApi: Send + Sync {
     ///   information or an error.
     async fn authorize_by_token<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         credential: &'a str,
         allow_expired: Option<bool>,
         window_seconds: Option<i64>,
@@ -50,7 +50,7 @@ pub trait TokenApi: Send + Sync {
     /// roles, and returns the locked context.
     ///
     /// # Parameters
-    /// - `state`: The current service state.
+    /// - `exec`: The execution context.
     /// - `credential`: The token credential string.
     /// - `allow_expired`: Whether to allow expired tokens.
     /// - `window_seconds`: Expiration buffer in seconds.
@@ -60,7 +60,7 @@ pub trait TokenApi: Send + Sync {
     ///   and expanded security context or an error.
     async fn validate_to_context<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         credential: &'a str,
         allow_expired: Option<bool>,
         window_seconds: Option<i64>,
@@ -112,7 +112,7 @@ pub trait TokenApi: Send + Sync {
     ///   `Error`.
     async fn get_token_restriction<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         id: &'a str,
         expand_roles: bool,
     ) -> Result<Option<TokenRestriction>, TokenProviderError>;
@@ -128,7 +128,7 @@ pub trait TokenApi: Send + Sync {
     ///   restriction or an error.
     async fn create_token_restriction<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         restriction: TokenRestrictionCreate,
     ) -> Result<TokenRestriction, TokenProviderError>;
 
@@ -143,7 +143,7 @@ pub trait TokenApi: Send + Sync {
     ///   restrictions or an error.
     async fn list_token_restrictions<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         params: &TokenRestrictionListParameters,
     ) -> Result<Vec<TokenRestriction>, TokenProviderError>;
 
@@ -159,7 +159,7 @@ pub trait TokenApi: Send + Sync {
     ///   restriction or an error.
     async fn update_token_restriction<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         id: &'a str,
         restriction: TokenRestrictionUpdate,
     ) -> Result<TokenRestriction, TokenProviderError>;
@@ -174,7 +174,7 @@ pub trait TokenApi: Send + Sync {
     /// - `Result<(), TokenProviderError>` - Ok on success, or an error.
     async fn delete_token_restriction<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         id: &'a str,
     ) -> Result<(), TokenProviderError>;
 }

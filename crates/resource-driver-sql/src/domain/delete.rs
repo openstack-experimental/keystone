@@ -11,7 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-//! Delete domain
+//! # Delete domain
 
 use sea_orm::DatabaseConnection;
 use sea_orm::entity::*;

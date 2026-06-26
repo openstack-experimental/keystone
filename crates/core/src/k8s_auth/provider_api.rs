@@ -18,8 +18,8 @@ use async_trait::async_trait;
 use openstack_keystone_core_types::k8s_auth::*;
 
 use crate::auth::AuthenticationResult;
+use crate::auth::ExecutionContext;
 use crate::k8s_auth::K8sAuthProviderError;
-use crate::keystone::ServiceState;
 
 /// The trait for managing the K8s_auth functionality.
 #[async_trait]
@@ -37,9 +37,9 @@ pub trait K8sAuthApi: Send + Sync {
     /// # Returns
     /// * Success with [`AuthenticationResult`] via mapping engine.
     /// * `K8sAuthProviderError` if authentication fails.
-    async fn authenticate_by_k8s_mapping(
+    async fn authenticate_by_k8s_mapping<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         req: &K8sAuthRequest,
     ) -> Result<AuthenticationResult, K8sAuthProviderError>;
 
@@ -52,9 +52,9 @@ pub trait K8sAuthApi: Send + Sync {
     /// # Returns
     /// * Success with the created [`K8sAuthInstance`].
     /// * Error if the instance could not be created.
-    async fn create_auth_instance(
+    async fn create_auth_instance<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         config: K8sAuthInstanceCreate,
     ) -> Result<K8sAuthInstance, K8sAuthProviderError>;
 
@@ -69,7 +69,7 @@ pub trait K8sAuthApi: Send + Sync {
     /// * Error if the deletion failed.
     async fn delete_auth_instance<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         id: &'a str,
     ) -> Result<(), K8sAuthProviderError>;
 
@@ -84,7 +84,7 @@ pub trait K8sAuthApi: Send + Sync {
     /// or an `Error`.
     async fn get_auth_instance<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         id: &'a str,
     ) -> Result<Option<K8sAuthInstance>, K8sAuthProviderError>;
 
@@ -97,9 +97,9 @@ pub trait K8sAuthApi: Send + Sync {
     /// # Returns
     /// * Success with a list of [`K8sAuthInstance`].
     /// * Error if the listing failed.
-    async fn list_auth_instances(
+    async fn list_auth_instances<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         params: &K8sAuthInstanceListParameters,
     ) -> Result<Vec<K8sAuthInstance>, K8sAuthProviderError>;
 
@@ -115,7 +115,7 @@ pub trait K8sAuthApi: Send + Sync {
     /// * Error if the update failed.
     async fn update_auth_instance<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         id: &'a str,
         data: K8sAuthInstanceUpdate,
     ) -> Result<K8sAuthInstance, K8sAuthProviderError>;

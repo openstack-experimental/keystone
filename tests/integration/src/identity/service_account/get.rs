@@ -17,7 +17,7 @@ use eyre::Result;
 use tracing_test::traced_test;
 use uuid::Uuid;
 
-use openstack_keystone::identity::IdentityApi;
+use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core_types::identity::*;
 
 use crate::common::get_state;
@@ -34,7 +34,7 @@ async fn test_get() -> Result<()> {
         .provider
         .get_identity_provider()
         .create_service_account(
-            &state,
+            &ExecutionContext::internal(&state),
             ServiceAccountCreate {
                 domain_id: domain.id.clone(),
                 enabled: Some(true),
@@ -47,14 +47,14 @@ async fn test_get() -> Result<()> {
     let _user = state
         .provider
         .get_identity_provider()
-        .get_user(&state, &sa.id)
+        .get_user(&ExecutionContext::internal(&state), &sa.id)
         .await?
         .expect("user found");
 
     let _sa = state
         .provider
         .get_identity_provider()
-        .get_service_account(&state, &sa.id)
+        .get_service_account(&ExecutionContext::internal(&state), &sa.id)
         .await?
         .expect("sa found");
     Ok(())

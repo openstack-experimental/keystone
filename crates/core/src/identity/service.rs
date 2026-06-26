@@ -27,9 +27,8 @@ use openstack_keystone_config::Config;
 use openstack_keystone_core_types::events::{Event, EventPayload, Operation};
 use openstack_keystone_core_types::identity::*;
 
-use crate::auth::AuthenticationResult;
+use crate::auth::{AuthenticationResult, ExecutionContext};
 use crate::identity::{IdentityApi, IdentityProviderError, backend::IdentityBackend};
-use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManagerApi;
 use crate::resource::error::ResourceProviderError;
 
@@ -88,12 +87,12 @@ impl IdentityApi for IdentityService {
     /// - `group_id`: The ID of the group.
     async fn add_user_to_group<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         user_id: &'a str,
         group_id: &'a str,
     ) -> Result<(), IdentityProviderError> {
         self.backend_driver
-            .add_user_to_group(state, user_id, group_id)
+            .add_user_to_group(ctx.state(), user_id, group_id)
             .await
     }
 
@@ -106,13 +105,13 @@ impl IdentityApi for IdentityService {
     /// - `idp_id`: The ID of the identity provider.
     async fn add_user_to_group_expiring<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         user_id: &'a str,
         group_id: &'a str,
         idp_id: &'a str,
     ) -> Result<(), IdentityProviderError> {
         self.backend_driver
-            .add_user_to_group_expiring(state, user_id, group_id, idp_id)
+            .add_user_to_group_expiring(ctx.state(), user_id, group_id, idp_id)
             .await
     }
 
@@ -123,11 +122,11 @@ impl IdentityApi for IdentityService {
     /// - `memberships`: A list of (user ID, group ID) tuples.
     async fn add_users_to_groups<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         memberships: Vec<(&'a str, &'a str)>,
     ) -> Result<(), IdentityProviderError> {
         self.backend_driver
-            .add_users_to_groups(state, memberships)
+            .add_users_to_groups(ctx.state(), memberships)
             .await
     }
 
@@ -139,12 +138,12 @@ impl IdentityApi for IdentityService {
     /// - `idp_id`: The ID of the identity provider.
     async fn add_users_to_groups_expiring<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         memberships: Vec<(&'a str, &'a str)>,
         idp_id: &'a str,
     ) -> Result<(), IdentityProviderError> {
         self.backend_driver
-            .add_users_to_groups_expiring(state, memberships, idp_id)
+            .add_users_to_groups_expiring(ctx.state(), memberships, idp_id)
             .await
     }
 
@@ -153,11 +152,12 @@ impl IdentityApi for IdentityService {
     /// # Parameters
     /// - `state`: The service state.
     /// - `auth`: The password authentication request.
-    async fn authenticate_by_password(
+    async fn authenticate_by_password<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         auth: &UserPasswordAuthRequest,
     ) -> Result<AuthenticationResult, IdentityProviderError> {
+        let state = ctx.state();
         let mut auth = auth.clone();
         if auth.id.is_none() {
             if auth.name.is_none() {
@@ -169,7 +169,7 @@ impl IdentityApi for IdentityService {
                     let d = state
                         .provider
                         .get_resource_provider()
-                        .find_domain_by_name(state, dname)
+                        .find_domain_by_name(ctx, dname)
                         .await?
                         .ok_or(ResourceProviderError::DomainNotFound(dname.clone()))?;
                     domain.id = Some(d.id);
@@ -191,18 +191,18 @@ impl IdentityApi for IdentityService {
     /// # Parameters
     /// - `state`: The service state.
     /// - `group`: The group details to create.
-    async fn create_group(
+    async fn create_group<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         group: GroupCreate,
     ) -> Result<Group, IdentityProviderError> {
         let mut res = group;
         if res.id.is_none() {
             res.id = Some(Uuid::new_v4().simple().to_string());
         }
-        let group = self.backend_driver.create_group(state, res).await?;
+        let group = self.backend_driver.create_group(ctx.state(), res).await?;
 
-        state
+        ctx.state()
             .event_dispatcher
             .emit(Event::new(
                 Operation::Create,
@@ -220,9 +220,9 @@ impl IdentityApi for IdentityService {
     /// # Parameters
     /// - `state`: The service state.
     /// - `sa`: The service account details to create.
-    async fn create_service_account(
+    async fn create_service_account<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         sa: ServiceAccountCreate,
     ) -> Result<ServiceAccount, IdentityProviderError> {
         let mut mod_sa = sa;
@@ -234,7 +234,7 @@ impl IdentityApi for IdentityService {
         }
         mod_sa.validate()?;
         self.backend_driver
-            .create_service_account(state, mod_sa)
+            .create_service_account(ctx.state(), mod_sa)
             .await
     }
 
@@ -243,9 +243,9 @@ impl IdentityApi for IdentityService {
     /// # Parameters
     /// - `state`: The service state.
     /// - `user`: The user details to create.
-    async fn create_user(
+    async fn create_user<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         user: UserCreate,
     ) -> Result<UserResponse, IdentityProviderError> {
         let mut mod_user = user;
@@ -258,13 +258,16 @@ impl IdentityApi for IdentityService {
         mod_user.validate()?;
         // Validate password against configured regex pattern.
         if let Some(ref password) = mod_user.password {
-            let cfg = state.config_manager.config.read().await;
+            let cfg = ctx.state().config_manager.config.read().await;
             cfg.security_compliance
                 .validate_password(&SecretString::from(password.as_str()))?;
         }
-        let user = self.backend_driver.create_user(state, mod_user).await?;
+        let user = self
+            .backend_driver
+            .create_user(ctx.state(), mod_user)
+            .await?;
 
-        state
+        ctx.state()
             .event_dispatcher
             .emit(Event::new(
                 Operation::Create,
@@ -284,12 +287,14 @@ impl IdentityApi for IdentityService {
     /// - `group_id`: The ID of the group to delete.
     async fn delete_group<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         group_id: &'a str,
     ) -> Result<(), IdentityProviderError> {
-        self.backend_driver.delete_group(state, group_id).await?;
+        self.backend_driver
+            .delete_group(ctx.state(), group_id)
+            .await?;
 
-        state
+        ctx.state()
             .event_dispatcher
             .emit(Event::new(
                 Operation::Delete,
@@ -309,15 +314,17 @@ impl IdentityApi for IdentityService {
     /// - `user_id`: The ID of the user to delete.
     async fn delete_user<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         user_id: &'a str,
     ) -> Result<(), IdentityProviderError> {
-        self.backend_driver.delete_user(state, user_id).await?;
+        self.backend_driver
+            .delete_user(ctx.state(), user_id)
+            .await?;
         if self.caching {
             self.user_id_domain_id_cache.write().await.remove(user_id);
         }
 
-        state
+        ctx.state()
             .event_dispatcher
             .emit(Event::new(
                 Operation::Delete,
@@ -342,11 +349,11 @@ impl IdentityApi for IdentityService {
     ///   `Error`.
     async fn get_service_account<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         user_id: &'a str,
     ) -> Result<Option<ServiceAccount>, IdentityProviderError> {
         self.backend_driver
-            .get_service_account(state, user_id)
+            .get_service_account(ctx.state(), user_id)
             .await
     }
 
@@ -361,10 +368,10 @@ impl IdentityApi for IdentityService {
     ///   containing an `Option` with the user if found, or an `Error`.
     async fn get_user<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         user_id: &'a str,
     ) -> Result<Option<UserResponse>, IdentityProviderError> {
-        let user = self.backend_driver.get_user(state, user_id).await?;
+        let user = self.backend_driver.get_user(ctx.state(), user_id).await?;
         if self.caching
             && let Some(user) = &user
         {
@@ -389,7 +396,7 @@ impl IdentityApi for IdentityService {
     /// from the cache.
     async fn get_user_domain_id<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         user_id: &'a str,
     ) -> Result<String, IdentityProviderError> {
         if self.caching {
@@ -398,7 +405,7 @@ impl IdentityApi for IdentityService {
             } else {
                 let domain_id = self
                     .backend_driver
-                    .get_user_domain_id(state, user_id)
+                    .get_user_domain_id(ctx.state(), user_id)
                     .await?;
                 self.user_id_domain_id_cache
                     .write()
@@ -409,7 +416,7 @@ impl IdentityApi for IdentityService {
         } else {
             Ok(self
                 .backend_driver
-                .get_user_domain_id(state, user_id)
+                .get_user_domain_id(ctx.state(), user_id)
                 .await?)
         }
     }
@@ -426,12 +433,12 @@ impl IdentityApi for IdentityService {
     ///   containing an `Option` with the user if found, or an `Error`.
     async fn find_federated_user<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         idp_id: &'a str,
         unique_id: &'a str,
     ) -> Result<Option<UserResponse>, IdentityProviderError> {
         self.backend_driver
-            .find_federated_user(state, idp_id, unique_id)
+            .find_federated_user(ctx.state(), idp_id, unique_id)
             .await
     }
 
@@ -440,12 +447,12 @@ impl IdentityApi for IdentityService {
     /// # Parameters
     /// - `state`: The service state.
     /// - `params`: The parameters for listing users.
-    async fn list_users(
+    async fn list_users<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         params: &UserListParameters,
     ) -> Result<Vec<UserResponse>, IdentityProviderError> {
-        self.backend_driver.list_users(state, params).await
+        self.backend_driver.list_users(ctx.state(), params).await
     }
 
     /// List groups.
@@ -453,12 +460,12 @@ impl IdentityApi for IdentityService {
     /// # Parameters
     /// - `state`: The service state.
     /// - `params`: The parameters for listing groups.
-    async fn list_groups(
+    async fn list_groups<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         params: &GroupListParameters,
     ) -> Result<Vec<Group>, IdentityProviderError> {
-        self.backend_driver.list_groups(state, params).await
+        self.backend_driver.list_groups(ctx.state(), params).await
     }
 
     /// Get single group.
@@ -472,10 +479,10 @@ impl IdentityApi for IdentityService {
     ///   an `Option` with the group if found, or an `Error`.
     async fn get_group<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         group_id: &'a str,
     ) -> Result<Option<Group>, IdentityProviderError> {
-        self.backend_driver.get_group(state, group_id).await
+        self.backend_driver.get_group(ctx.state(), group_id).await
     }
 
     /// List groups a user is a member of.
@@ -485,11 +492,11 @@ impl IdentityApi for IdentityService {
     /// - `user_id`: The ID of the user.
     async fn list_groups_of_user<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         user_id: &'a str,
     ) -> Result<Vec<Group>, IdentityProviderError> {
         self.backend_driver
-            .list_groups_of_user(state, user_id)
+            .list_groups_of_user(ctx.state(), user_id)
             .await
     }
 
@@ -501,12 +508,12 @@ impl IdentityApi for IdentityService {
     /// - `group_id`: The ID of the group.
     async fn remove_user_from_group<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         user_id: &'a str,
         group_id: &'a str,
     ) -> Result<(), IdentityProviderError> {
         self.backend_driver
-            .remove_user_from_group(state, user_id, group_id)
+            .remove_user_from_group(ctx.state(), user_id, group_id)
             .await
     }
 
@@ -519,13 +526,13 @@ impl IdentityApi for IdentityService {
     /// - `idp_id`: The ID of the identity provider.
     async fn remove_user_from_group_expiring<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         user_id: &'a str,
         group_id: &'a str,
         idp_id: &'a str,
     ) -> Result<(), IdentityProviderError> {
         self.backend_driver
-            .remove_user_from_group_expiring(state, user_id, group_id, idp_id)
+            .remove_user_from_group_expiring(ctx.state(), user_id, group_id, idp_id)
             .await
     }
 
@@ -537,12 +544,12 @@ impl IdentityApi for IdentityService {
     /// - `group_ids`: A set of group IDs.
     async fn remove_user_from_groups<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         user_id: &'a str,
         group_ids: HashSet<&'a str>,
     ) -> Result<(), IdentityProviderError> {
         self.backend_driver
-            .remove_user_from_groups(state, user_id, group_ids)
+            .remove_user_from_groups(ctx.state(), user_id, group_ids)
             .await
     }
 
@@ -555,13 +562,13 @@ impl IdentityApi for IdentityService {
     /// - `idp_id`: The ID of the identity provider.
     async fn remove_user_from_groups_expiring<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         user_id: &'a str,
         group_ids: HashSet<&'a str>,
         idp_id: &'a str,
     ) -> Result<(), IdentityProviderError> {
         self.backend_driver
-            .remove_user_from_groups_expiring(state, user_id, group_ids, idp_id)
+            .remove_user_from_groups_expiring(ctx.state(), user_id, group_ids, idp_id)
             .await
     }
 
@@ -573,12 +580,12 @@ impl IdentityApi for IdentityService {
     /// - `group_ids`: A set of group IDs.
     async fn set_user_groups<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         user_id: &'a str,
         group_ids: HashSet<&'a str>,
     ) -> Result<(), IdentityProviderError> {
         self.backend_driver
-            .set_user_groups(state, user_id, group_ids)
+            .set_user_groups(ctx.state(), user_id, group_ids)
             .await
     }
 
@@ -590,23 +597,23 @@ impl IdentityApi for IdentityService {
     /// - `user`: The user details to update.
     async fn update_user<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         user_id: &'a str,
         user: UserUpdate,
     ) -> Result<UserResponse, IdentityProviderError> {
         user.validate()?;
         // Validate password against configured regex pattern.
         if let Some(ref password) = user.password {
-            let cfg = state.config_manager.config.read().await;
+            let cfg = ctx.state().config_manager.config.read().await;
             cfg.security_compliance
                 .validate_password(&SecretString::from(password.as_str()))?;
         }
         let user = self
             .backend_driver
-            .update_user(state, user_id, user)
+            .update_user(ctx.state(), user_id, user)
             .await?;
 
-        state
+        ctx.state()
             .event_dispatcher
             .emit(Event::new(
                 Operation::Update,
@@ -628,15 +635,15 @@ impl IdentityApi for IdentityService {
     /// - `new_password`: The new password to set.
     async fn update_user_password<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         user_id: &'a str,
         original_password: SecretString,
         new_password: SecretString,
     ) -> Result<(), IdentityProviderError> {
-        let cfg = state.config_manager.config.read().await;
+        let cfg = ctx.state().config_manager.config.read().await;
         cfg.security_compliance.validate_password(&new_password)?;
         self.backend_driver
-            .update_user_password(state, user_id, original_password, new_password)
+            .update_user_password(ctx.state(), user_id, original_password, new_password)
             .await
     }
 
@@ -650,14 +657,14 @@ impl IdentityApi for IdentityService {
     /// - `last_verified`: The last verified date, if any.
     async fn set_user_groups_expiring<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         user_id: &'a str,
         group_ids: HashSet<&'a str>,
         idp_id: &'a str,
         last_verified: Option<&'a DateTime<Utc>>,
     ) -> Result<(), IdentityProviderError> {
         self.backend_driver
-            .set_user_groups_expiring(state, user_id, group_ids, idp_id, last_verified)
+            .set_user_groups_expiring(ctx.state(), user_id, group_ids, idp_id, last_verified)
             .await
     }
 }
@@ -699,7 +706,7 @@ mod tests {
         assert_eq!(
             provider
                 .create_user(
-                    &state,
+                    &ExecutionContext::internal(&state),
                     UserCreateBuilder::default()
                         .name("uname")
                         .domain_id("did")
@@ -740,7 +747,7 @@ mod tests {
 
         assert_eq!(
             provider
-                .get_user(&state, "uid")
+                .get_user(&ExecutionContext::internal(&state), "uid")
                 .await
                 .unwrap()
                 .expect("user should be there"),
@@ -771,23 +778,32 @@ mod tests {
         provider.caching = true;
 
         assert_eq!(
-            provider.get_user_domain_id(&state, "uid").await.unwrap(),
+            provider
+                .get_user_domain_id(&ExecutionContext::internal(&state), "uid")
+                .await
+                .unwrap(),
             "did"
         );
         assert_eq!(
-            provider.get_user_domain_id(&state, "uid").await.unwrap(),
+            provider
+                .get_user_domain_id(&ExecutionContext::internal(&state), "uid")
+                .await
+                .unwrap(),
             "did",
             "second time data extracted from cache"
         );
         assert!(
             provider
-                .get_user_domain_id(&state, "missing")
+                .get_user_domain_id(&ExecutionContext::internal(&state), "missing")
                 .await
                 .is_err()
         );
         provider.caching = false;
         assert_eq!(
-            provider.get_user_domain_id(&state, "uid").await.unwrap(),
+            provider
+                .get_user_domain_id(&ExecutionContext::internal(&state), "uid")
+                .await
+                .unwrap(),
             "did",
             "third time backend is again triggered causing total of 2 invocations"
         );
@@ -803,7 +819,12 @@ mod tests {
             .returning(|_, _| Ok(()));
         let provider = IdentityService::from_driver(backend);
 
-        assert!(provider.delete_user(&state, "uid").await.is_ok());
+        assert!(
+            provider
+                .delete_user(&ExecutionContext::internal(&state), "uid")
+                .await
+                .is_ok()
+        );
     }
 
     /// Password regex rejects invalid password on user creation.
@@ -815,7 +836,7 @@ mod tests {
 
         let result = provider
             .create_user(
-                &state,
+                &ExecutionContext::internal(&state),
                 UserCreateBuilder::default()
                     .name("uname")
                     .domain_id("did")
@@ -852,7 +873,7 @@ mod tests {
         assert!(
             provider
                 .create_user(
-                    &state,
+                    &ExecutionContext::internal(&state),
                     UserCreateBuilder::default()
                         .name("uname")
                         .domain_id("did")
@@ -886,7 +907,7 @@ mod tests {
         assert!(
             provider
                 .create_user(
-                    &state,
+                    &ExecutionContext::internal(&state),
                     UserCreateBuilder::default()
                         .name("uname")
                         .domain_id("did")
@@ -908,7 +929,7 @@ mod tests {
 
         let result = provider
             .update_user(
-                &state,
+                &ExecutionContext::internal(&state),
                 "uid",
                 UserUpdateBuilder::default()
                     .password("short")
@@ -946,7 +967,7 @@ mod tests {
         assert!(
             provider
                 .update_user(
-                    &state,
+                    &ExecutionContext::internal(&state),
                     "uid",
                     UserUpdateBuilder::default()
                         .password("Abc1")
@@ -981,7 +1002,7 @@ mod tests {
         assert!(
             provider
                 .update_user(
-                    &state,
+                    &ExecutionContext::internal(&state),
                     "uid",
                     UserUpdateBuilder::default()
                         .name("new_name")

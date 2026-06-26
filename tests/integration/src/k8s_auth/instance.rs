@@ -17,9 +17,9 @@ use std::sync::Arc;
 
 use eyre::Result;
 
-use openstack_keystone::k8s_auth::K8sAuthApi;
 use openstack_keystone::keystone::Service;
 use openstack_keystone::keystone::ServiceState;
+use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core_types::k8s_auth::*;
 
 mod create;
@@ -45,7 +45,7 @@ pub async fn create_k8s_auth_instance(
     let res = state
         .provider
         .get_k8s_auth_provider()
-        .create_auth_instance(state, data)
+        .create_auth_instance(&ExecutionContext::internal(&state), data)
         .await
         .unwrap();
     Ok(AsyncResourceGuard::new(res, state.clone()))

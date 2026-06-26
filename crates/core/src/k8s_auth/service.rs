@@ -20,9 +20,8 @@ use async_trait::async_trait;
 use openstack_keystone_config::Config;
 use openstack_keystone_core_types::k8s_auth::*;
 
-use crate::auth::AuthenticationResult;
+use crate::auth::{AuthenticationResult, ExecutionContext};
 use crate::k8s_auth::{K8sAuthApi, K8sAuthProviderError, K8sHttpClient, backend::K8sAuthBackend};
-use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManagerApi;
 
 /// K8s Auth provider.
@@ -70,12 +69,12 @@ impl K8sAuthApi for K8sAuthService {
     /// # Returns
     /// * Success with [`AuthenticationResult`] via mapping engine.
     /// * Error if authentication fails.
-    async fn authenticate_by_k8s_mapping(
+    async fn authenticate_by_k8s_mapping<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         req: &K8sAuthRequest,
     ) -> Result<AuthenticationResult, K8sAuthProviderError> {
-        self.authenticate_by_mapping(state, req).await
+        self.authenticate_by_mapping(ctx, req).await
     }
 
     /// Register new K8s auth instance.
@@ -87,16 +86,18 @@ impl K8sAuthApi for K8sAuthService {
     /// # Returns
     /// * Success with the created [`K8sAuthInstance`].
     /// * Error if the instance could not be created.
-    async fn create_auth_instance(
+    async fn create_auth_instance<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         instance: K8sAuthInstanceCreate,
     ) -> Result<K8sAuthInstance, K8sAuthProviderError> {
         let mut new = instance;
         if new.id.is_none() {
             new.id = Some(uuid::Uuid::new_v4().simple().to_string());
         }
-        self.backend_driver.create_auth_instance(state, new).await
+        self.backend_driver
+            .create_auth_instance(ctx.state(), new)
+            .await
     }
 
     /// Delete K8s auth provider.
@@ -110,10 +111,12 @@ impl K8sAuthApi for K8sAuthService {
     /// * Error if the deletion failed.
     async fn delete_auth_instance<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         id: &'a str,
     ) -> Result<(), K8sAuthProviderError> {
-        self.backend_driver.delete_auth_instance(state, id).await
+        self.backend_driver
+            .delete_auth_instance(ctx.state(), id)
+            .await
     }
 
     /// Fetch auth instance.
@@ -127,10 +130,10 @@ impl K8sAuthApi for K8sAuthService {
     /// or an `Error`.
     async fn get_auth_instance<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         id: &'a str,
     ) -> Result<Option<K8sAuthInstance>, K8sAuthProviderError> {
-        self.backend_driver.get_auth_instance(state, id).await
+        self.backend_driver.get_auth_instance(ctx.state(), id).await
     }
 
     /// List K8s auth instances.
@@ -142,12 +145,14 @@ impl K8sAuthApi for K8sAuthService {
     /// # Returns
     /// * Success with a list of [`K8sAuthInstance`].
     /// * Error if the listing failed.
-    async fn list_auth_instances(
+    async fn list_auth_instances<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         params: &K8sAuthInstanceListParameters,
     ) -> Result<Vec<K8sAuthInstance>, K8sAuthProviderError> {
-        self.backend_driver.list_auth_instances(state, params).await
+        self.backend_driver
+            .list_auth_instances(ctx.state(), params)
+            .await
     }
 
     /// Update K8s auth instance.
@@ -162,12 +167,12 @@ impl K8sAuthApi for K8sAuthService {
     /// * Error if the update failed.
     async fn update_auth_instance<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         id: &'a str,
         data: K8sAuthInstanceUpdate,
     ) -> Result<K8sAuthInstance, K8sAuthProviderError> {
         self.backend_driver
-            .update_auth_instance(state, id, data)
+            .update_auth_instance(ctx.state(), id, data)
             .await
     }
 }
@@ -223,7 +228,7 @@ mod tests {
         assert!(
             provider
                 .create_auth_instance(
-                    &state,
+                    &ExecutionContext::internal(&state),
                     K8sAuthInstanceCreate {
                         ca_cert: Some("ca".into()),
                         disable_local_ca_jwt: Some(true),

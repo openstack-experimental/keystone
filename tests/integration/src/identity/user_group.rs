@@ -14,7 +14,7 @@
 
 use eyre::Report;
 
-use openstack_keystone_core::identity::IdentityApi;
+use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core::keystone::ServiceState;
 use openstack_keystone_core_types::identity::*;
 
@@ -28,7 +28,7 @@ where
     Ok(state
         .provider
         .get_identity_provider()
-        .list_groups_of_user(state, user_id.as_ref())
+        .list_groups_of_user(&ExecutionContext::internal(&state), user_id.as_ref())
         .await?
         .into_iter()
         .collect())

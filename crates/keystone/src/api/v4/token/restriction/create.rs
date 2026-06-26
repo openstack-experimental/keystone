@@ -21,6 +21,7 @@ use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
 use crate::api::v4::token::types::*;
 use crate::keystone::ServiceState;
+use openstack_keystone_core::auth::ExecutionContext;
 
 /// Create the token restriction.
 ///
@@ -64,7 +65,7 @@ pub(super) async fn create(
     let res = state
         .provider
         .get_token_provider()
-        .create_token_restriction(&state, req.into())
+        .create_token_restriction(&ExecutionContext::from_auth(&state, &user_auth), req.into())
         .await?;
     Ok((
         StatusCode::CREATED,

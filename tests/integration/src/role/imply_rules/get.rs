@@ -16,10 +16,9 @@
 use eyre::Result;
 use uuid::Uuid;
 
-use openstack_keystone::role::RoleApi;
-
 use crate::common::get_state;
 use crate::create_role;
+use openstack_keystone_core::auth::ExecutionContext;
 
 #[tokio::test]
 async fn test_get_imply_rule() -> Result<()> {
@@ -30,13 +29,21 @@ async fn test_get_imply_rule() -> Result<()> {
     state
         .provider
         .get_role_provider()
-        .create_role_imply_rule(&state, &prior_role.id, &implied_role.id)
+        .create_role_imply_rule(
+            &ExecutionContext::internal(&state),
+            &prior_role.id,
+            &implied_role.id,
+        )
         .await?;
 
     let rule = state
         .provider
         .get_role_provider()
-        .get_role_imply_rule(&state, &prior_role.id, &implied_role.id)
+        .get_role_imply_rule(
+            &ExecutionContext::internal(&state),
+            &prior_role.id,
+            &implied_role.id,
+        )
         .await?
         .unwrap();
 
@@ -59,7 +66,11 @@ async fn test_get_nonexistent_imply_rule() -> Result<()> {
     let rule = state
         .provider
         .get_role_provider()
-        .get_role_imply_rule(&state, &prior_role.id, &implied_role.id)
+        .get_role_imply_rule(
+            &ExecutionContext::internal(&state),
+            &prior_role.id,
+            &implied_role.id,
+        )
         .await?;
 
     assert!(rule.is_none());
@@ -84,13 +95,21 @@ async fn test_get_imply_rule_with_domain_roles() -> Result<()> {
     state
         .provider
         .get_role_provider()
-        .create_role_imply_rule(&state, &prior_role.id, &implied_role.id)
+        .create_role_imply_rule(
+            &ExecutionContext::internal(&state),
+            &prior_role.id,
+            &implied_role.id,
+        )
         .await?;
 
     let rule = state
         .provider
         .get_role_provider()
-        .get_role_imply_rule(&state, &prior_role.id, &implied_role.id)
+        .get_role_imply_rule(
+            &ExecutionContext::internal(&state),
+            &prior_role.id,
+            &implied_role.id,
+        )
         .await?
         .unwrap();
 
@@ -114,27 +133,27 @@ async fn test_get_imply_rule_wrong_pair() -> Result<()> {
     state
         .provider
         .get_role_provider()
-        .create_role_imply_rule(&state, &role_a.id, &role_b.id)
+        .create_role_imply_rule(&ExecutionContext::internal(&state), &role_a.id, &role_b.id)
         .await?;
 
     let rule_ab = state
         .provider
         .get_role_provider()
-        .get_role_imply_rule(&state, &role_a.id, &role_b.id)
+        .get_role_imply_rule(&ExecutionContext::internal(&state), &role_a.id, &role_b.id)
         .await?;
     assert!(rule_ab.is_some());
 
     let rule_ac = state
         .provider
         .get_role_provider()
-        .get_role_imply_rule(&state, &role_a.id, &role_c.id)
+        .get_role_imply_rule(&ExecutionContext::internal(&state), &role_a.id, &role_c.id)
         .await?;
     assert!(rule_ac.is_none());
 
     let rule_ba = state
         .provider
         .get_role_provider()
-        .get_role_imply_rule(&state, &role_b.id, &role_a.id)
+        .get_role_imply_rule(&ExecutionContext::internal(&state), &role_b.id, &role_a.id)
         .await?;
     assert!(rule_ba.is_none());
 

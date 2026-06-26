@@ -27,6 +27,7 @@ use openstack_keystone_core_types::assignment::RoleAssignmentListParameters;
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
+use openstack_keystone_core::auth::ExecutionContext;
 
 /// Check whether user has role assignment on project.
 ///
@@ -68,23 +69,21 @@ pub(super) async fn check(
     };
     // Use join instead of try_join to have more constant latency preventing timing
     // attacks.
+    let exec = &ExecutionContext::from_auth(&state, &user_auth);
     let (user, role, project, assignments) = tokio::join!(
         state
             .provider
             .get_identity_provider()
-            .get_user(&state, &user_id),
-        state
-            .provider
-            .get_role_provider()
-            .get_role(&state, &role_id),
+            .get_user(exec, &user_id),
+        state.provider.get_role_provider().get_role(exec, &role_id),
         state
             .provider
             .get_resource_provider()
-            .get_project(&state, &project_id),
+            .get_project(exec, &project_id),
         state
             .provider
             .get_assignment_provider()
-            .list_role_assignments(&state, &query_params)
+            .list_role_assignments(exec, &query_params)
     );
     let user = user?.ok_or_else(|| {
         info!("User {} was not found", user_id);

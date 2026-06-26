@@ -19,9 +19,9 @@ use webauthn_rs::prelude::{PasskeyAuthentication, PasskeyRegistration};
 
 use openstack_keystone_core::SqlDriver as CoreSqlDriver;
 use openstack_keystone_core::SqlDriverRegistration;
+use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core::db::create_table;
 use openstack_keystone_core::error::DatabaseError;
-use openstack_keystone_core::keystone::ServiceState;
 
 use crate::{
     WebauthnError,
@@ -46,222 +46,115 @@ inventory::submit! {
 
 #[async_trait]
 impl WebauthnApi for SqlDriver {
-    /// Cleanup expired Webauthn states.
-    ///
-    /// # Parameters
-    /// - `state`: The service state.
-    ///
-    /// # Returns
-    /// A `Result` containing `()` on success, or a `WebauthnError`.
-    #[tracing::instrument(level = "debug", skip(self, state))]
-    async fn cleanup(&self, state: &ServiceState) -> Result<(), WebauthnError> {
-        state::delete_expired(&state.db).await
+    #[tracing::instrument(level = "debug", skip(self, exec))]
+    async fn cleanup<'a>(&self, exec: &ExecutionContext<'a>) -> Result<(), WebauthnError> {
+        state::delete_expired(&exec.state().db).await
     }
 
-    /// Create webauthn credential for the user.
-    ///
-    /// # Parameters
-    /// - `state`: The service state.
-    /// - `credential`: The credential to create.
-    ///
-    /// # Returns
-    /// A `Result` containing the created `WebauthnCredential`, or a
-    /// `WebauthnError`.
-    #[tracing::instrument(level = "debug", skip(self, state))]
-    async fn create_user_webauthn_credential(
+    #[tracing::instrument(level = "debug", skip(self, exec))]
+    async fn create_user_webauthn_credential<'a>(
         &self,
-        state: &ServiceState,
+        exec: &ExecutionContext<'a>,
         credential: &WebauthnCredential,
     ) -> Result<WebauthnCredential, WebauthnError> {
-        credential::create(&state.db, credential).await
+        credential::create(&exec.state().db, credential).await
     }
 
-    /// Get webauthn credential of the user by the credential_id.
-    ///
-    /// # Parameters
-    /// - `state`: The service state.
-    /// - `user_id`: The user ID.
-    /// - `credential_id`: The credential ID.
-    ///
-    /// # Returns
-    /// A `Result` containing an `Option` with the `WebauthnCredential` if
-    /// found, or an `Error`.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(level = "debug", skip(self, exec))]
     async fn get_user_webauthn_credential<'a>(
         &self,
-        state: &ServiceState,
-        user_id: &'a str,
-        credential_id: &'a str,
+        exec: &ExecutionContext<'a>,
+        user_id: &str,
+        credential_id: &str,
     ) -> Result<Option<WebauthnCredential>, WebauthnError> {
-        credential::find(&state.db, user_id, credential_id).await
+        credential::find(&exec.state().db, user_id, credential_id).await
     }
 
-    /// Delete credential for the user.
-    ///
-    /// # Parameters
-    /// - `state`: The service state.
-    /// - `user_id`: The user ID.
-    /// - `credential_id`: The credential ID.
-    ///
-    /// # Returns
-    /// A `Result` containing `()` on success, or a `WebauthnError`.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(level = "debug", skip(self, exec))]
     async fn delete_user_webauthn_credential<'a>(
         &self,
-        state: &ServiceState,
-        user_id: &'a str,
-        credential_id: &'a str,
+        exec: &ExecutionContext<'a>,
+        user_id: &str,
+        credential_id: &str,
     ) -> Result<(), WebauthnError> {
-        credential::delete(&state.db, user_id, credential_id).await?;
+        credential::delete(&exec.state().db, user_id, credential_id).await?;
         Ok(())
     }
 
-    /// Delete webauthn credential auth state for a user.
-    ///
-    /// # Parameters
-    /// - `state`: The service state.
-    /// - `user_id`: The user ID.
-    ///
-    /// # Returns
-    /// A `Result` containing `()` on success, or a `WebauthnError`.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(level = "debug", skip(self, exec))]
     async fn delete_user_webauthn_credential_authentication_state<'a>(
         &self,
-        state: &ServiceState,
-        user_id: &'a str,
+        exec: &ExecutionContext<'a>,
+        user_id: &str,
     ) -> Result<(), WebauthnError> {
-        state::delete(&state.db, user_id, StateType::Auth).await
+        state::delete(&exec.state().db, user_id, StateType::Auth).await
     }
 
-    /// Delete webauthn credential registration state for the user.
-    ///
-    /// # Parameters
-    /// - `state`: The service state.
-    /// - `user_id`: The user ID.
-    ///
-    /// # Returns
-    /// A `Result` containing `()` on success, or a `WebauthnError`.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(level = "debug", skip(self, exec))]
     async fn delete_user_webauthn_credential_registration_state<'a>(
         &self,
-        state: &ServiceState,
-        user_id: &'a str,
+        exec: &ExecutionContext<'a>,
+        user_id: &str,
     ) -> Result<(), WebauthnError> {
-        state::delete(&state.db, user_id, StateType::Register).await
+        state::delete(&exec.state().db, user_id, StateType::Register).await
     }
 
-    /// Get webauthn credential auth state.
-    ///
-    /// # Parameters
-    /// - `state`: The service state.
-    /// - `user_id`: The user ID.
-    ///
-    /// # Returns
-    /// A `Result` containing an `Option` with the `PasskeyAuthentication` if
-    /// found, or an `Error`.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(level = "debug", skip(self, exec))]
     async fn get_user_webauthn_credential_authentication_state<'a>(
         &self,
-        state: &ServiceState,
-        user_id: &'a str,
+        exec: &ExecutionContext<'a>,
+        user_id: &str,
     ) -> Result<Option<PasskeyAuthentication>, WebauthnError> {
-        state::get_auth(&state.db, user_id).await
+        state::get_auth(&exec.state().db, user_id).await
     }
 
-    /// Get webauthn credential registration state.
-    ///
-    /// # Parameters
-    /// - `state`: The service state.
-    /// - `user_id`: The user ID.
-    ///
-    /// # Returns
-    /// A `Result` containing an `Option` with the `PasskeyRegistration` if
-    /// found, or an `Error`.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(level = "debug", skip(self, exec))]
     async fn get_user_webauthn_credential_registration_state<'a>(
         &self,
-        state: &ServiceState,
-        user_id: &'a str,
+        exec: &ExecutionContext<'a>,
+        user_id: &str,
     ) -> Result<Option<PasskeyRegistration>, WebauthnError> {
-        state::get_register(&state.db, user_id).await
+        state::get_register(&exec.state().db, user_id).await
     }
 
-    /// List user webauthn credentials.
-    ///
-    /// # Parameters
-    /// - `state`: The service state.
-    /// - `user_id`: The user ID.
-    ///
-    /// # Returns
-    /// A `Result` containing a `Vec` of `WebauthnCredential`, or a
-    /// `WebauthnError`.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(level = "debug", skip(self, exec))]
     async fn list_user_webauthn_credentials<'a>(
         &self,
-        state: &ServiceState,
-        user_id: &'a str,
+        exec: &ExecutionContext<'a>,
+        user_id: &str,
     ) -> Result<Vec<WebauthnCredential>, WebauthnError> {
-        credential::list(&state.db, user_id).await
+        credential::list(&exec.state().db, user_id).await
     }
 
-    /// Save webauthn credential auth state.
-    ///
-    /// # Parameters
-    /// - `state`: The service state.
-    /// - `user_id`: The user ID.
-    /// - `auth_state`: The authentication state to save.
-    ///
-    /// # Returns
-    /// A `Result` containing `()` on success, or a `WebauthnError`.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(level = "debug", skip(self, exec))]
     async fn save_user_webauthn_credential_authentication_state<'a>(
         &self,
-        state: &ServiceState,
-        user_id: &'a str,
+        exec: &ExecutionContext<'a>,
+        user_id: &str,
         auth_state: &PasskeyAuthentication,
     ) -> Result<(), WebauthnError> {
-        state::create_auth(&state.db, user_id, auth_state).await
+        state::create_auth(&exec.state().db, user_id, auth_state).await
     }
 
-    /// Save webauthn credential registration state.
-    ///
-    /// # Parameters
-    /// - `state`: The service state.
-    /// - `user_id`: The user ID.
-    /// - `reg_state`: The registration state to save.
-    ///
-    /// # Returns
-    /// A `Result` containing `()` on success, or a `WebauthnError`.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(level = "debug", skip(self, exec))]
     async fn save_user_webauthn_credential_registration_state<'a>(
         &self,
-        state: &ServiceState,
-        user_id: &'a str,
+        exec: &ExecutionContext<'a>,
+        user_id: &str,
         reg_state: &PasskeyRegistration,
     ) -> Result<(), WebauthnError> {
-        state::create_register(&state.db, user_id, reg_state).await
+        state::create_register(&exec.state().db, user_id, reg_state).await
     }
 
-    /// Update credential data.
-    ///
-    /// # Parameters
-    /// - `state`: The service state.
-    /// - `user_id`: The user ID.
-    /// - `credential_id`: The credential ID.
-    /// - `credential`: The updated credential data.
-    ///
-    /// # Returns
-    /// A `Result` containing the updated `WebauthnCredential`, or a
-    /// `WebauthnError`.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(level = "debug", skip(self, exec))]
     async fn update_user_webauthn_credential<'a>(
         &self,
-        state: &ServiceState,
-        user_id: &'a str,
-        credential_id: &'a str,
+        exec: &ExecutionContext<'a>,
+        user_id: &str,
+        credential_id: &str,
         credential: &WebauthnCredential,
     ) -> Result<WebauthnCredential, WebauthnError> {
-        credential::update(&state.db, user_id, credential_id, credential).await
+        credential::update(&exec.state().db, user_id, credential_id, credential).await
     }
 }
 

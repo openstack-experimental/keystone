@@ -16,7 +16,7 @@
 use eyre::Result;
 use tracing_test::traced_test;
 
-use openstack_keystone_core::mapping::MappingApi;
+use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core_types::mapping::MappingRuleSetListParameters;
 
 use super::create_ruleset;
@@ -37,7 +37,10 @@ async fn test_list() -> Result<()> {
     let res = state
         .provider
         .get_mapping_provider()
-        .list_rulesets(&state, &MappingRuleSetListParameters::default())
+        .list_rulesets(
+            &ExecutionContext::internal(&state),
+            &MappingRuleSetListParameters::default(),
+        )
         .await?;
 
     assert!(res.contains(&ruleset1));
@@ -60,7 +63,7 @@ async fn test_list_domain() -> Result<()> {
         .provider
         .get_mapping_provider()
         .list_rulesets(
-            &state,
+            &ExecutionContext::internal(&state),
             &MappingRuleSetListParameters {
                 domain_id: Some(domain.id.clone()),
                 ..Default::default()
@@ -85,7 +88,10 @@ async fn test_list_global() -> Result<()> {
     let res = state
         .provider
         .get_mapping_provider()
-        .list_rulesets(&state, &MappingRuleSetListParameters::default())
+        .list_rulesets(
+            &ExecutionContext::internal(&state),
+            &MappingRuleSetListParameters::default(),
+        )
         .await?;
 
     assert!(res.contains(&ruleset1));
@@ -97,7 +103,7 @@ async fn test_list_global() -> Result<()> {
         .provider
         .get_mapping_provider()
         .list_rulesets(
-            &state,
+            &ExecutionContext::internal(&state),
             &MappingRuleSetListParameters {
                 domain_id: Some(domain.id.clone()),
                 ..Default::default()
@@ -127,7 +133,7 @@ async fn test_list_enabled() -> Result<()> {
         .provider
         .get_mapping_provider()
         .list_rulesets(
-            &state,
+            &ExecutionContext::internal(&state),
             &MappingRuleSetListParameters {
                 enabled: Some(true),
                 ..Default::default()

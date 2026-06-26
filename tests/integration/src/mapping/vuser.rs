@@ -16,7 +16,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use openstack_keystone::keystone::Service;
-use openstack_keystone_core::mapping::MappingApi;
+use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core_types::mapping::VirtualUser;
 
 mod delete;
@@ -31,7 +31,7 @@ impl ResourceDeleter<VirtualUser> for Arc<Service> {
             let _ = self
                 .provider
                 .get_mapping_provider()
-                .delete_virtual_user(self, &resource.user_id)
+                .delete_virtual_user(&ExecutionContext::internal(self), &resource.user_id)
                 .await;
         })
     }

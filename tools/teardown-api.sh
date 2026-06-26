@@ -11,5 +11,6 @@ if [ -f "$PID_FILE" ]; then
 fi
 if [ -f "$SPIRE_PID_DIR/agent.pid" ]; then kill "$(cat "$SPIRE_PID_DIR/agent.pid")" 2>/dev/null || true; fi
 if [ -f "$SPIRE_PID_DIR/server.pid" ]; then kill "$(cat "$SPIRE_PID_DIR/server.pid")" 2>/dev/null || true; fi
+rm -rf /tmp/nextest/keystone/raft
 
 echo "Cleanup complete. Logs preserved in $STATE_DIR and $SPIRE_PID_DIR."

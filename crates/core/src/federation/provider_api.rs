@@ -19,8 +19,8 @@ use async_trait::async_trait;
 
 use openstack_keystone_core_types::federation::*;
 
+use crate::auth::ExecutionContext;
 use crate::federation::error::FederationProviderError;
-use crate::keystone::ServiceState;
 
 /// Federation provider interface.
 #[async_trait]
@@ -33,7 +33,7 @@ pub trait FederationApi: Send + Sync {
     /// # Returns
     /// - `Result<(), FederationProviderError>` - Ok if successful, or a
     ///   federation provider error.
-    async fn cleanup(&self, state: &ServiceState) -> Result<(), FederationProviderError>;
+    async fn cleanup<'a>(&self, ctx: &ExecutionContext<'a>) -> Result<(), FederationProviderError>;
 
     /// Create identity provider.
     ///
@@ -44,9 +44,9 @@ pub trait FederationApi: Send + Sync {
     /// # Returns
     /// - `Result<IdentityProvider, FederationProviderError>` - The created
     ///   `IdentityProvider` or an error.
-    async fn create_identity_provider(
+    async fn create_identity_provider<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         idp: IdentityProviderCreate,
     ) -> Result<IdentityProvider, FederationProviderError>;
 
@@ -59,9 +59,9 @@ pub trait FederationApi: Send + Sync {
     /// # Returns
     /// - `Result<AuthState, FederationProviderError>` - The created `AuthState`
     ///   or an error.
-    async fn create_auth_state(
+    async fn create_auth_state<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         state: AuthState,
     ) -> Result<AuthState, FederationProviderError>;
 
@@ -75,7 +75,7 @@ pub trait FederationApi: Send + Sync {
     /// - `Result<(), FederationProviderError>` - Ok if successful, or an error.
     async fn delete_auth_state<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         id: &'a str,
     ) -> Result<(), FederationProviderError>;
 
@@ -89,7 +89,7 @@ pub trait FederationApi: Send + Sync {
     /// - `Result<(), FederationProviderError>` - Ok if successful, or an error.
     async fn delete_identity_provider<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         id: &'a str,
     ) -> Result<(), FederationProviderError>;
 
@@ -104,7 +104,7 @@ pub trait FederationApi: Send + Sync {
     ///   containing an `Option` with the AuthState if found, or an `Error`.
     async fn get_auth_state<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         id: &'a str,
     ) -> Result<Option<AuthState>, FederationProviderError>;
 
@@ -120,7 +120,7 @@ pub trait FederationApi: Send + Sync {
     ///   an `Error`.
     async fn get_identity_provider<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         id: &'a str,
     ) -> Result<Option<IdentityProvider>, FederationProviderError>;
 
@@ -133,9 +133,9 @@ pub trait FederationApi: Send + Sync {
     /// # Returns
     /// - `Result<Vec<IdentityProvider>, FederationProviderError>` - A list of
     ///   identity providers or an error.
-    async fn list_identity_providers(
+    async fn list_identity_providers<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         params: &IdentityProviderListParameters,
     ) -> Result<Vec<IdentityProvider>, FederationProviderError>;
 
@@ -151,7 +151,7 @@ pub trait FederationApi: Send + Sync {
     ///   `IdentityProvider` or an error.
     async fn update_identity_provider<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         id: &'a str,
         idp: IdentityProviderUpdate,
     ) -> Result<IdentityProvider, FederationProviderError>;

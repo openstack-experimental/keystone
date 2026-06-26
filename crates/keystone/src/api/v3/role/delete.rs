@@ -24,6 +24,7 @@ use serde_json::json;
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
+use openstack_keystone_core::auth::ExecutionContext;
 
 /// Delete a role.
 #[utoipa::path(
@@ -46,7 +47,7 @@ pub(super) async fn delete(
     let current = state
         .provider
         .get_role_provider()
-        .get_role(&state, &role_id)
+        .get_role(&ExecutionContext::from_auth(&state, &user_auth), &role_id)
         .await?;
 
     state
@@ -64,7 +65,7 @@ pub(super) async fn delete(
             state
                 .provider
                 .get_role_provider()
-                .delete_role(&state, &role_id)
+                .delete_role(&ExecutionContext::from_auth(&state, &user_auth), &role_id)
                 .await?;
 
             Ok(StatusCode::NO_CONTENT.into_response())

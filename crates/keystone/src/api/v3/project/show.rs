@@ -25,6 +25,7 @@ use super::types::{Project, ProjectResponse};
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
+use openstack_keystone_core::auth::ExecutionContext;
 
 /// Get single project
 #[utoipa::path(
@@ -46,7 +47,10 @@ pub(super) async fn show(
     let current = state
         .provider
         .get_resource_provider()
-        .get_project(&state, &project_id)
+        .get_project(
+            &ExecutionContext::from_auth(&state, &user_auth),
+            &project_id,
+        )
         .await?;
 
     state

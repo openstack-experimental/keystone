@@ -26,6 +26,7 @@ use crate::api::error::KeystoneApiError;
 use crate::api::v4::auth::token::types::TokenResponse as KeystoneTokenResponse;
 use crate::federation::api::error::OidcError;
 use crate::keystone::ServiceState;
+use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core_types::auth::AuthenticationResult;
 use openstack_keystone_core_types::mapping::auth::MappingAuthRequest;
 use openstack_keystone_core_types::mapping::resolution::IdentitySource;
@@ -108,7 +109,7 @@ pub async fn login(
     let idp = state
         .provider
         .get_federation_provider()
-        .get_identity_provider(&state, &idp_id)
+        .get_identity_provider(&ExecutionContext::internal(&state), &idp_id)
         .await
         .map(|x| {
             x.ok_or_else(|| KeystoneApiError::NotFound {
@@ -197,7 +198,7 @@ pub async fn login(
     let auth_result: AuthenticationResult = state
         .provider
         .get_mapping_provider()
-        .authenticate_by_mapping(&state, &mapping_req)
+        .authenticate_by_mapping(&ExecutionContext::internal(&state), &mapping_req)
         .await?;
 
     // No scope is requested in JWT flow, so we resolve unscoped token.

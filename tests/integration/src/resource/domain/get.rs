@@ -16,10 +16,9 @@
 use eyre::Result;
 use tracing_test::traced_test;
 
-use openstack_keystone::resource::ResourceApi;
-
 use crate::common::get_state;
 use crate::create_domain;
+use openstack_keystone_core::auth::ExecutionContext;
 
 #[traced_test]
 #[tokio::test]
@@ -30,7 +29,7 @@ async fn test_get_domain() -> Result<()> {
     let res = state
         .provider
         .get_resource_provider()
-        .get_domain(&state, &domain.id)
+        .get_domain(&ExecutionContext::internal(&state), &domain.id)
         .await?
         .expect("domain should be there");
     assert_eq!(res.id, domain.id);
@@ -48,7 +47,10 @@ async fn test_get_domain_missing() -> Result<()> {
         state
             .provider
             .get_resource_provider()
-            .get_domain(&state, &uuid::Uuid::new_v4().to_string())
+            .get_domain(
+                &ExecutionContext::internal(&state),
+                &uuid::Uuid::new_v4().to_string()
+            )
             .await?
             .is_none()
     );

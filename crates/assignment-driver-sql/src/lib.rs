@@ -25,6 +25,8 @@ use openstack_keystone_core::keystone::ServiceState;
 use openstack_keystone_core::{SqlDriver, SqlDriverRegistration};
 use openstack_keystone_core_types::assignment::*;
 
+use openstack_keystone_core::auth::ExecutionContext;
+
 mod assignment;
 pub mod entity;
 
@@ -58,10 +60,11 @@ impl SqlBackend {
         state: &ServiceState,
         assignments: Vec<Assignment>,
     ) -> Result<Vec<Assignment>, AssignmentProviderError> {
+        let exec = ExecutionContext::internal(state);
         let rules = state
             .provider
             .get_role_provider()
-            .list_role_imply_rules(state)
+            .list_role_imply_rules(&exec)
             .await?;
         let mut imply_rules: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
         for rule in &rules {
@@ -252,7 +255,7 @@ impl AssignmentBackend for SqlBackend {
             let users = state
                 .provider
                 .get_identity_provider()
-                .list_groups_of_user(state, uid)
+                .list_groups_of_user(&ExecutionContext::internal(state), uid)
                 .await?;
             actors.extend(users.into_iter().map(|x| x.id));
         };
@@ -265,7 +268,7 @@ impl AssignmentBackend for SqlBackend {
             if let Some(parents) = state
                 .provider
                 .get_resource_provider()
-                .get_project_parents(state, val)
+                .get_project_parents(&ExecutionContext::internal(state), val)
                 .await?
             {
                 // All assignments for parent projects having `inherited=true` must be included.
@@ -354,7 +357,7 @@ mod tests {
             .into_connection();
 
         let mut role_mock = MockRoleProvider::default();
-        role_mock.expect_list_role_imply_rules().returning(|_| {
+        role_mock.expect_list_role_imply_rules().returning(|_e| {
             Ok(vec![
                 RoleImplyBuilder::default()
                     .prior_role(RoleRef {
@@ -477,7 +480,7 @@ mod tests {
             .into_connection();
 
         let mut role_mock = MockRoleProvider::default();
-        role_mock.expect_list_role_imply_rules().returning(|_| {
+        role_mock.expect_list_role_imply_rules().returning(|_e| {
             Ok(vec![
                 RoleImplyBuilder::default()
                     .prior_role(RoleRef {

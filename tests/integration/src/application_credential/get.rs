@@ -18,7 +18,7 @@ use std::collections::BTreeSet;
 use tracing_test::traced_test;
 use uuid::Uuid;
 
-use openstack_keystone::application_credential::ApplicationCredentialApi;
+use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core_types::application_credential::*;
 use openstack_keystone_core_types::role::*;
 
@@ -38,7 +38,7 @@ async fn test_get() -> Result<(), Report> {
         .provider
         .get_application_credential_provider()
         .create_application_credential(
-            &state,
+            &ExecutionContext::internal(&state),
             ApplicationCredentialCreate {
                 access_rules: Some(vec![AccessRuleCreate {
                     id: None,
@@ -60,7 +60,7 @@ async fn test_get() -> Result<(), Report> {
     let cred: ApplicationCredential = state
         .provider
         .get_application_credential_provider()
-        .get_application_credential(&state, &sot.id)
+        .get_application_credential(&ExecutionContext::internal(&state), &sot.id)
         .await?
         .expect("appcred found");
 

@@ -16,10 +16,9 @@
 use eyre::Result;
 use uuid::Uuid;
 
-use openstack_keystone::role::RoleApi;
-
 use crate::common::get_state;
 use crate::create_role;
+use openstack_keystone_core::auth::ExecutionContext;
 
 #[tokio::test]
 async fn test_delete_imply_rule() -> Result<()> {
@@ -30,14 +29,22 @@ async fn test_delete_imply_rule() -> Result<()> {
     state
         .provider
         .get_role_provider()
-        .create_role_imply_rule(&state, &prior_role.id, &implied_role.id)
+        .create_role_imply_rule(
+            &ExecutionContext::internal(&state),
+            &prior_role.id,
+            &implied_role.id,
+        )
         .await?;
 
     assert!(
         state
             .provider
             .get_role_provider()
-            .get_role_imply_rule(&state, &prior_role.id, &implied_role.id)
+            .get_role_imply_rule(
+                &ExecutionContext::internal(&state),
+                &prior_role.id,
+                &implied_role.id
+            )
             .await?
             .is_some()
     );
@@ -45,14 +52,22 @@ async fn test_delete_imply_rule() -> Result<()> {
     state
         .provider
         .get_role_provider()
-        .delete_role_imply_rule(&state, &prior_role.id, &implied_role.id)
+        .delete_role_imply_rule(
+            &ExecutionContext::internal(&state),
+            &prior_role.id,
+            &implied_role.id,
+        )
         .await?;
 
     assert!(
         state
             .provider
             .get_role_provider()
-            .get_role_imply_rule(&state, &prior_role.id, &implied_role.id)
+            .get_role_imply_rule(
+                &ExecutionContext::internal(&state),
+                &prior_role.id,
+                &implied_role.id
+            )
             .await?
             .is_none()
     );
@@ -69,7 +84,11 @@ async fn test_delete_nonexistent_imply_rule() -> Result<()> {
     state
         .provider
         .get_role_provider()
-        .delete_role_imply_rule(&state, &prior_role.id, &implied_role.id)
+        .delete_role_imply_rule(
+            &ExecutionContext::internal(&state),
+            &prior_role.id,
+            &implied_role.id,
+        )
         .await?;
 
     Ok(())
@@ -92,20 +111,32 @@ async fn test_delete_imply_rule_with_domain_roles() -> Result<()> {
     state
         .provider
         .get_role_provider()
-        .create_role_imply_rule(&state, &prior_role.id, &implied_role.id)
+        .create_role_imply_rule(
+            &ExecutionContext::internal(&state),
+            &prior_role.id,
+            &implied_role.id,
+        )
         .await?;
 
     state
         .provider
         .get_role_provider()
-        .delete_role_imply_rule(&state, &prior_role.id, &implied_role.id)
+        .delete_role_imply_rule(
+            &ExecutionContext::internal(&state),
+            &prior_role.id,
+            &implied_role.id,
+        )
         .await?;
 
     assert!(
         state
             .provider
             .get_role_provider()
-            .get_role_imply_rule(&state, &prior_role.id, &implied_role.id)
+            .get_role_imply_rule(
+                &ExecutionContext::internal(&state),
+                &prior_role.id,
+                &implied_role.id
+            )
             .await?
             .is_none()
     );

@@ -26,6 +26,7 @@ use openstack_keystone_core_types::assignment::AssignmentCreate;
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
+use openstack_keystone_core::auth::ExecutionContext;
 
 /// Assign role to user on system
 ///
@@ -56,15 +57,13 @@ pub(super) async fn grant(
     Path((user_id, role_id)): Path<(String, String)>,
     State(state): State<ServiceState>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
+    let exec = &ExecutionContext::from_auth(&state, &user_auth);
     let (user, role) = tokio::join!(
         state
             .provider
             .get_identity_provider()
-            .get_user(&state, &user_id),
-        state
-            .provider
-            .get_role_provider()
-            .get_role(&state, &role_id),
+            .get_user(exec, &user_id),
+        state.provider.get_role_provider().get_role(exec, &role_id),
     );
     let user = user?.ok_or_else(|| {
         info!("User {} was not found", user_id);
@@ -95,7 +94,7 @@ pub(super) async fn grant(
         .provider
         .get_assignment_provider()
         .create_grant(
-            &state,
+            exec,
             AssignmentCreate::user_system(user.id, "system", role.id, false),
         )
         .await?;

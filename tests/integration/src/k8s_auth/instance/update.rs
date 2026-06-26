@@ -16,7 +16,7 @@
 use eyre::Result;
 use tracing_test::traced_test;
 
-use openstack_keystone::k8s_auth::K8sAuthApi;
+use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core_types::k8s_auth::*;
 
 use super::create_k8s_auth_instance;
@@ -50,7 +50,7 @@ async fn test_update() -> Result<()> {
     let res = state
         .provider
         .get_k8s_auth_provider()
-        .update_auth_instance(&state, &k8s_conf.id, req)
+        .update_auth_instance(&ExecutionContext::internal(&state), &k8s_conf.id, req)
         .await?;
     assert_eq!(k8s_conf.id, res.id);
     assert_eq!(Some("new_name".into()), res.name);

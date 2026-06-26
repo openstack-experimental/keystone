@@ -17,7 +17,7 @@ use eyre::Result;
 use tracing_test::traced_test;
 use uuid::Uuid;
 
-use openstack_keystone::identity::IdentityApi;
+use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core_types::identity::*;
 
 use crate::common::get_state;
@@ -35,7 +35,7 @@ async fn test_list() -> Result<()> {
             .provider
             .get_identity_provider()
             .create_user(
-                &state,
+                &ExecutionContext::internal(&state),
                 UserCreateBuilder::default()
                     .name(Uuid::new_v4().to_string())
                     .domain_id(domain.id.clone())
@@ -48,7 +48,10 @@ async fn test_list() -> Result<()> {
     let users: Vec<UserResponse> = state
         .provider
         .get_identity_provider()
-        .list_users(&state, &UserListParameters::default())
+        .list_users(
+            &ExecutionContext::internal(&state),
+            &UserListParameters::default(),
+        )
         .await?
         .into_iter()
         .collect();

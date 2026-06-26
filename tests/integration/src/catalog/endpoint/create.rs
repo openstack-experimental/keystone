@@ -18,7 +18,7 @@ use std::collections::HashMap;
 use eyre::Result;
 use tracing_test::traced_test;
 
-use openstack_keystone_core::catalog::CatalogApi;
+use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core_types::catalog::{EndpointCreate, ServiceCreate};
 
 use crate::catalog::{create_endpoint, create_service};
@@ -72,7 +72,7 @@ async fn test_create_id_too_long() -> Result<()> {
         .provider
         .get_catalog_provider()
         .create_endpoint(
-            &state,
+            &ExecutionContext::internal(&state),
             EndpointCreate {
                 enabled: true,
                 extra: HashMap::new(),

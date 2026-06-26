@@ -16,9 +16,8 @@
 use eyre::Result;
 use tracing_test::traced_test;
 
-use openstack_keystone_core::mapping::MappingApi;
-
 use crate::common::get_state;
+use openstack_keystone_core::auth::ExecutionContext;
 
 #[traced_test]
 #[tokio::test]
@@ -27,7 +26,10 @@ async fn test_get_missing() -> Result<()> {
     let res = state
         .provider
         .get_mapping_provider()
-        .get_virtual_user(&state, &uuid::Uuid::new_v4().simple().to_string())
+        .get_virtual_user(
+            &ExecutionContext::internal(&state),
+            &uuid::Uuid::new_v4().simple().to_string(),
+        )
         .await?;
 
     assert!(res.is_none());

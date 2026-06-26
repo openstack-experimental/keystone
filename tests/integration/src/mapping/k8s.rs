@@ -16,7 +16,7 @@ use std::collections::HashMap;
 
 use eyre::Result;
 
-use openstack_keystone_core::mapping::MappingApi;
+use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core_types::auth::AuthenticationContext;
 use openstack_keystone_core_types::mapping::error::MappingProviderError;
 use openstack_keystone_core_types::mapping::resolution::IdentitySource;
@@ -102,7 +102,7 @@ async fn test_k8s_happy_path() -> Result<()> {
     let result = state
         .provider
         .get_mapping_provider()
-        .authenticate_by_mapping(&state, &request)
+        .authenticate_by_mapping(&ExecutionContext::internal(&state), &request)
         .await?;
 
     if let AuthenticationContext::Mapping(ctx) = result.context {
@@ -113,7 +113,7 @@ async fn test_k8s_happy_path() -> Result<()> {
         let vuser = state
             .provider
             .get_mapping_provider()
-            .get_virtual_user(&state, &ctx.virtual_user_id)
+            .get_virtual_user(&ExecutionContext::internal(&state), &ctx.virtual_user_id)
             .await?
             .expect("virtual user should exist");
 
@@ -183,7 +183,7 @@ async fn test_k8s_no_matching_rule() -> Result<()> {
     let result = state
         .provider
         .get_mapping_provider()
-        .authenticate_by_mapping(&state, &request)
+        .authenticate_by_mapping(&ExecutionContext::internal(&state), &request)
         .await;
 
     assert!(result.is_err());
@@ -255,7 +255,7 @@ async fn test_k8s_any_of_match() -> Result<()> {
     let result = state
         .provider
         .get_mapping_provider()
-        .authenticate_by_mapping(&state, &request)
+        .authenticate_by_mapping(&ExecutionContext::internal(&state), &request)
         .await?;
 
     if let AuthenticationContext::Mapping(ctx) = result.context {
@@ -265,7 +265,7 @@ async fn test_k8s_any_of_match() -> Result<()> {
         let vuser = state
             .provider
             .get_mapping_provider()
-            .get_virtual_user(&state, &ctx.virtual_user_id)
+            .get_virtual_user(&ExecutionContext::internal(&state), &ctx.virtual_user_id)
             .await?
             .expect("virtual user should exist");
 
@@ -334,7 +334,7 @@ async fn test_k8s_matches_regex() -> Result<()> {
     let result = state
         .provider
         .get_mapping_provider()
-        .authenticate_by_mapping(&state, &request)
+        .authenticate_by_mapping(&ExecutionContext::internal(&state), &request)
         .await?;
 
     if let AuthenticationContext::Mapping(ctx) = result.context {
@@ -344,7 +344,7 @@ async fn test_k8s_matches_regex() -> Result<()> {
         let vuser = state
             .provider
             .get_mapping_provider()
-            .get_virtual_user(&state, &ctx.virtual_user_id)
+            .get_virtual_user(&ExecutionContext::internal(&state), &ctx.virtual_user_id)
             .await?
             .expect("virtual user should exist");
 
@@ -417,7 +417,7 @@ async fn test_k8s_all_of_strict() -> Result<()> {
     let result = state
         .provider
         .get_mapping_provider()
-        .authenticate_by_mapping(&state, &request)
+        .authenticate_by_mapping(&ExecutionContext::internal(&state), &request)
         .await?;
 
     if let AuthenticationContext::Mapping(ctx) = result.context {
@@ -447,7 +447,7 @@ async fn test_k8s_all_of_strict() -> Result<()> {
     let result_missing = state
         .provider
         .get_mapping_provider()
-        .authenticate_by_mapping(&state, &request_missing)
+        .authenticate_by_mapping(&ExecutionContext::internal(&state), &request_missing)
         .await;
 
     assert!(result_missing.is_err());
@@ -519,7 +519,7 @@ async fn test_k8s_with_authorizations() -> Result<()> {
     let result = state
         .provider
         .get_mapping_provider()
-        .authenticate_by_mapping(&state, &request)
+        .authenticate_by_mapping(&ExecutionContext::internal(&state), &request)
         .await?;
 
     if let AuthenticationContext::Mapping(ctx) = result.context {
@@ -529,7 +529,7 @@ async fn test_k8s_with_authorizations() -> Result<()> {
         let vuser = state
             .provider
             .get_mapping_provider()
-            .get_virtual_user(&state, &ctx.virtual_user_id)
+            .get_virtual_user(&ExecutionContext::internal(&state), &ctx.virtual_user_id)
             .await?
             .expect("virtual user should exist");
 
@@ -603,7 +603,7 @@ async fn test_k8s_template_interpolation() -> Result<()> {
     let result = state
         .provider
         .get_mapping_provider()
-        .authenticate_by_mapping(&state, &request)
+        .authenticate_by_mapping(&ExecutionContext::internal(&state), &request)
         .await?;
 
     if let AuthenticationContext::Mapping(ctx) = result.context {
@@ -613,7 +613,7 @@ async fn test_k8s_template_interpolation() -> Result<()> {
         let vuser = state
             .provider
             .get_mapping_provider()
-            .get_virtual_user(&state, &ctx.virtual_user_id)
+            .get_virtual_user(&ExecutionContext::internal(&state), &ctx.virtual_user_id)
             .await?
             .expect("virtual user should exist");
 
@@ -676,7 +676,7 @@ async fn test_k8s_disabled_ruleset() -> Result<()> {
     let result = state
         .provider
         .get_mapping_provider()
-        .authenticate_by_mapping(&state, &request)
+        .authenticate_by_mapping(&ExecutionContext::internal(&state), &request)
         .await;
 
     assert!(result.is_err());
@@ -739,7 +739,7 @@ async fn test_k8s_unique_workload_id() -> Result<()> {
     let result = state
         .provider
         .get_mapping_provider()
-        .authenticate_by_mapping(&state, &request)
+        .authenticate_by_mapping(&ExecutionContext::internal(&state), &request)
         .await?;
 
     let first_vuser_id = match result.context {
@@ -762,7 +762,7 @@ async fn test_k8s_unique_workload_id() -> Result<()> {
     let result2 = state
         .provider
         .get_mapping_provider()
-        .authenticate_by_mapping(&state, &request2)
+        .authenticate_by_mapping(&ExecutionContext::internal(&state), &request2)
         .await?;
 
     let second_vuser_id = match result2.context {
@@ -777,7 +777,7 @@ async fn test_k8s_unique_workload_id() -> Result<()> {
     let vuser = state
         .provider
         .get_mapping_provider()
-        .get_virtual_user(&state, &first_vuser_id)
+        .get_virtual_user(&ExecutionContext::internal(&state), &first_vuser_id)
         .await?
         .expect("virtual user should exist");
 
@@ -851,7 +851,7 @@ async fn test_k8s_aud_claim_passthrough() -> Result<()> {
     let result = state
         .provider
         .get_mapping_provider()
-        .authenticate_by_mapping(&state, &request)
+        .authenticate_by_mapping(&ExecutionContext::internal(&state), &request)
         .await?;
 
     if let AuthenticationContext::Mapping(ctx) = result.context {
@@ -943,7 +943,7 @@ async fn test_k8s_rule_priority() -> Result<()> {
     let result = state
         .provider
         .get_mapping_provider()
-        .authenticate_by_mapping(&state, &request)
+        .authenticate_by_mapping(&ExecutionContext::internal(&state), &request)
         .await?;
 
     if let AuthenticationContext::Mapping(ctx) = result.context {
@@ -1025,7 +1025,7 @@ async fn test_k8s_project_authorization() -> Result<()> {
     let result = state
         .provider
         .get_mapping_provider()
-        .authenticate_by_mapping(&state, &request)
+        .authenticate_by_mapping(&ExecutionContext::internal(&state), &request)
         .await?;
 
     if let AuthenticationContext::Mapping(ctx) = result.context {
@@ -1035,7 +1035,7 @@ async fn test_k8s_project_authorization() -> Result<()> {
         let vuser = state
             .provider
             .get_mapping_provider()
-            .get_virtual_user(&state, &ctx.virtual_user_id)
+            .get_virtual_user(&ExecutionContext::internal(&state), &ctx.virtual_user_id)
             .await?
             .expect("virtual user should exist");
 
@@ -1152,7 +1152,7 @@ async fn test_k8s_rule_name_hint() -> Result<()> {
     let result = state
         .provider
         .get_mapping_provider()
-        .authenticate_by_mapping(&state, &request)
+        .authenticate_by_mapping(&ExecutionContext::internal(&state), &request)
         .await?;
 
     if let AuthenticationContext::Mapping(ctx) = result.context {
@@ -1188,7 +1188,7 @@ async fn test_k8s_rule_name_hint() -> Result<()> {
     let result_fallback = state
         .provider
         .get_mapping_provider()
-        .authenticate_by_mapping(&state, &request_fallback)
+        .authenticate_by_mapping(&ExecutionContext::internal(&state), &request_fallback)
         .await?;
 
     if let AuthenticationContext::Mapping(ctx) = result_fallback.context {
@@ -1224,7 +1224,7 @@ async fn test_k8s_rule_name_hint() -> Result<()> {
     let result_standard = state
         .provider
         .get_mapping_provider()
-        .authenticate_by_mapping(&state, &request_standard)
+        .authenticate_by_mapping(&ExecutionContext::internal(&state), &request_standard)
         .await?;
 
     if let AuthenticationContext::Mapping(ctx) = result_standard.context {
@@ -1258,7 +1258,7 @@ async fn test_k8s_rule_name_hint() -> Result<()> {
     let result_missing_hint = state
         .provider
         .get_mapping_provider()
-        .authenticate_by_mapping(&state, &request_missing_hint)
+        .authenticate_by_mapping(&ExecutionContext::internal(&state), &request_missing_hint)
         .await?;
 
     if let AuthenticationContext::Mapping(ctx) = result_missing_hint.context {

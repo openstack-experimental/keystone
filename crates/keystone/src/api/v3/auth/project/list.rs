@@ -23,6 +23,7 @@ use openstack_keystone_core_types::resource::ProjectListParameters;
 use crate::api::v3::project::types::ProjectShortList;
 use crate::api::{auth::Auth, error::KeystoneApiError};
 use crate::keystone::ServiceState;
+use openstack_keystone_core::auth::ExecutionContext;
 
 /// Get available project scopes.
 ///
@@ -50,11 +51,12 @@ pub(super) async fn list(
         .enforce("identity/auth/project/list", &user_auth, Value::Null, None)
         .await?;
 
+    let exec = ExecutionContext::from_auth(&state, &user_auth);
     let project_ids: HashSet<String> = state
         .provider
         .get_assignment_provider()
         .list_role_assignments(
-            &state,
+            &exec,
             &RoleAssignmentListParameters {
                 user_id: Some(user_auth.principal().get_user_id().clone()),
                 effective: Some(true),
@@ -80,7 +82,7 @@ pub(super) async fn list(
                     .provider
                     .get_resource_provider()
                     .list_projects(
-                        &state,
+                        &exec,
                         &ProjectListParameters {
                             ids: Some(project_ids),
                             ..Default::default()
@@ -128,12 +130,12 @@ mod tests {
         let mut assignment_mock = MockAssignmentProvider::default();
         assignment_mock
             .expect_list_role_assignments()
-            .withf(|_, params: &RoleAssignmentListParameters| {
+            .withf(|_exec, params: &RoleAssignmentListParameters| {
                 params.user_id.as_ref().is_some_and(|x| x == "uid")
                     && params.effective.is_some_and(|x| x)
                     && params.include_names.is_some_and(|x| !x)
             })
-            .returning(|_, _| {
+            .returning(|_exec, _| {
                 Ok(vec![
                     Assignment {
                         role_id: "role_id".into(),
@@ -167,13 +169,13 @@ mod tests {
         let mut resource_mock = MockResourceProvider::default();
         resource_mock
             .expect_list_projects()
-            .withf(|_, params: &ProjectListParameters| {
+            .withf(|_exec, params: &ProjectListParameters| {
                 params
                     .ids
                     .as_ref()
                     .is_some_and(|x| *x == HashSet::from(["p1".to_string(), "p2".to_string()]))
             })
-            .returning(|_, _| {
+            .returning(|_exec, _| {
                 Ok(vec![
                     ProviderProject {
                         description: None,

@@ -24,6 +24,7 @@ use super::types::{ProjectCreateRequest, ProjectResponse};
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
+use openstack_keystone_core::auth::ExecutionContext;
 
 /// Create project.
 ///
@@ -62,7 +63,10 @@ pub(super) async fn create(
     let created_project = state
         .provider
         .get_resource_provider()
-        .create_project(&state, payload.project.into())
+        .create_project(
+            &ExecutionContext::from_auth(&state, &user_auth),
+            payload.project.into(),
+        )
         .await?;
 
     // Return response with 201 CREATED status

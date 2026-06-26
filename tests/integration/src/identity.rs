@@ -17,9 +17,9 @@ use std::sync::Arc;
 
 use eyre::Result;
 
-use openstack_keystone::identity::IdentityApi;
 use openstack_keystone::keystone::Service;
 use openstack_keystone::keystone::ServiceState;
+use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core_types::identity::*;
 
 use crate::common::*;
@@ -39,7 +39,7 @@ pub async fn create_user(
     let res = state
         .provider
         .get_identity_provider()
-        .create_user(state, data)
+        .create_user(&ExecutionContext::internal(&state), data)
         .await
         .unwrap();
     Ok(AsyncResourceGuard::new(res, state.clone()))
@@ -52,7 +52,7 @@ pub async fn create_group(
     let res = state
         .provider
         .get_identity_provider()
-        .create_group(state, data)
+        .create_group(&ExecutionContext::internal(&state), data)
         .await?;
     Ok(AsyncResourceGuard::new(res, state.clone()))
 }

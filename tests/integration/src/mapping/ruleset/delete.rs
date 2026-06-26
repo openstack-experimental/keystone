@@ -16,10 +16,9 @@
 use eyre::Result;
 use tracing_test::traced_test;
 
-use openstack_keystone_core::mapping::MappingApi;
-
 use super::create_ruleset;
 use super::sample_ruleset_create;
+use openstack_keystone_core::auth::ExecutionContext;
 
 use crate::common::get_state;
 use crate::create_domain;
@@ -34,13 +33,13 @@ async fn test_delete() -> Result<()> {
     state
         .provider
         .get_mapping_provider()
-        .delete_ruleset(&state, &ruleset.mapping_id)
+        .delete_ruleset(&ExecutionContext::internal(&state), &ruleset.mapping_id)
         .await?;
 
     let res = state
         .provider
         .get_mapping_provider()
-        .get_ruleset(&state, &ruleset.mapping_id)
+        .get_ruleset(&ExecutionContext::internal(&state), &ruleset.mapping_id)
         .await?;
 
     assert!(res.is_none());
@@ -56,13 +55,13 @@ async fn test_delete_global() -> Result<()> {
     state
         .provider
         .get_mapping_provider()
-        .delete_ruleset(&state, &ruleset.mapping_id)
+        .delete_ruleset(&ExecutionContext::internal(&state), &ruleset.mapping_id)
         .await?;
 
     let res = state
         .provider
         .get_mapping_provider()
-        .get_ruleset(&state, &ruleset.mapping_id)
+        .get_ruleset(&ExecutionContext::internal(&state), &ruleset.mapping_id)
         .await?;
 
     assert!(res.is_none());
@@ -76,7 +75,10 @@ async fn test_delete_missing() -> Result<()> {
     state
         .provider
         .get_mapping_provider()
-        .delete_ruleset(&state, &uuid::Uuid::new_v4().simple().to_string())
+        .delete_ruleset(
+            &ExecutionContext::internal(&state),
+            &uuid::Uuid::new_v4().simple().to_string(),
+        )
         .await?;
     Ok(())
 }

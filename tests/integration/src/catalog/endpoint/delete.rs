@@ -18,7 +18,7 @@ use std::collections::HashMap;
 use eyre::Result;
 use tracing_test::traced_test;
 
-use openstack_keystone_core::catalog::CatalogApi;
+use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core_types::catalog::{EndpointCreate, ServiceCreate};
 
 use crate::catalog::create_service;
@@ -43,7 +43,7 @@ async fn test_delete() -> Result<()> {
 
     let endpoint = provider
         .create_endpoint(
-            &state,
+            &ExecutionContext::internal(&state),
             EndpointCreate {
                 enabled: true,
                 extra: HashMap::new(),
@@ -56,9 +56,13 @@ async fn test_delete() -> Result<()> {
         )
         .await?;
 
-    provider.delete_endpoint(&state, &endpoint.id).await?;
+    provider
+        .delete_endpoint(&ExecutionContext::internal(&state), &endpoint.id)
+        .await?;
 
-    let fetched = provider.get_endpoint(&state, &endpoint.id).await?;
+    let fetched = provider
+        .get_endpoint(&ExecutionContext::internal(&state), &endpoint.id)
+        .await?;
     assert!(fetched.is_none(), "endpoint should be gone after delete");
     Ok(())
 }

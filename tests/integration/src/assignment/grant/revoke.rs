@@ -19,10 +19,9 @@ use std::ops::Deref;
 use tracing_test::traced_test;
 use uuid::Uuid;
 
-use openstack_keystone::application_credential::ApplicationCredentialApi;
-use openstack_keystone::assignment::AssignmentApi;
 use openstack_keystone::auth::*;
 use openstack_keystone::token::{TokenApi, TokenProviderError};
+use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core_types::application_credential::*;
 use openstack_keystone_core_types::assignment::*;
 use openstack_keystone_core_types::resource::*;
@@ -61,7 +60,7 @@ async fn test_revoke_user_project_grant() -> Result<()> {
     state
         .provider
         .get_assignment_provider()
-        .revoke_grant(&state, assignment.clone())
+        .revoke_grant(&ExecutionContext::internal(&state), assignment.clone())
         .await?;
 
     // Verify grant no longer exists
@@ -117,7 +116,7 @@ async fn test_revoke_user_project_grant_auth_impact() -> Result<()> {
         .provider
         .get_application_credential_provider()
         .create_application_credential(
-            &state,
+            &ExecutionContext::internal(&state),
             ApplicationCredentialCreate {
                 access_rules: None,
                 name: Uuid::new_v4().to_string(),
@@ -162,7 +161,7 @@ async fn test_revoke_user_project_grant_auth_impact() -> Result<()> {
     let pre_revoke_token_context = state
         .provider
         .get_token_provider()
-        .issue_token_context(&state, &ctx, &authz.clone())
+        .issue_token_context(&ExecutionContext::internal(&state), &ctx, &authz.clone())
         .await?;
     let pre_revoke_encoded = state
         .provider
@@ -174,7 +173,12 @@ async fn test_revoke_user_project_grant_auth_impact() -> Result<()> {
         state
             .provider
             .get_token_provider()
-            .validate_to_context(&state, &pre_revoke_encoded, None, None)
+            .validate_to_context(
+                &ExecutionContext::internal(&state),
+                &pre_revoke_encoded,
+                None,
+                None
+            )
             .await
             .is_ok(),
         "Token should be valid before revocation"
@@ -184,7 +188,7 @@ async fn test_revoke_user_project_grant_auth_impact() -> Result<()> {
     state
         .provider
         .get_assignment_provider()
-        .revoke_grant(&state, assignment_a.clone())
+        .revoke_grant(&ExecutionContext::internal(&state), assignment_a.clone())
         .await?;
     // CHECK 1: listing roles no longer returns the revoked role
     assert!(
@@ -198,7 +202,12 @@ async fn test_revoke_user_project_grant_auth_impact() -> Result<()> {
             state
                 .provider
                 .get_token_provider()
-                .validate_to_context(&state, &pre_revoke_encoded, None, None)
+                .validate_to_context(
+                    &ExecutionContext::internal(&state),
+                    &pre_revoke_encoded,
+                    None,
+                    None
+                )
                 .await,
             Err(TokenProviderError::TokenRevoked)
         ),
@@ -213,7 +222,7 @@ async fn test_revoke_user_project_grant_auth_impact() -> Result<()> {
     let post_revoke_token_ctx = state
         .provider
         .get_token_provider()
-        .issue_token_context(&state, &ctx, &authz.clone())
+        .issue_token_context(&ExecutionContext::internal(&state), &ctx, &authz.clone())
         .await?;
     let post_revoke_encoded = state
         .provider
@@ -223,7 +232,12 @@ async fn test_revoke_user_project_grant_auth_impact() -> Result<()> {
     let validated = state
         .provider
         .get_token_provider()
-        .validate_to_context(&state, &post_revoke_encoded, None, None)
+        .validate_to_context(
+            &ExecutionContext::internal(&state),
+            &post_revoke_encoded,
+            None,
+            None,
+        )
         .await?;
 
     let roles = validated

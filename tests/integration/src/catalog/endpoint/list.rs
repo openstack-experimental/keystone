@@ -18,7 +18,7 @@ use std::collections::HashMap;
 use eyre::Result;
 use tracing_test::traced_test;
 
-use openstack_keystone_core::catalog::CatalogApi;
+use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core_types::catalog::{
     EndpointCreate, EndpointListParameters, ServiceCreate,
 };
@@ -59,7 +59,10 @@ async fn test_list() -> Result<()> {
     let endpoints = state
         .provider
         .get_catalog_provider()
-        .list_endpoints(&state, &EndpointListParameters::default())
+        .list_endpoints(
+            &ExecutionContext::internal(&state),
+            &EndpointListParameters::default(),
+        )
         .await?;
 
     let ids: Vec<&str> = endpoints.iter().map(|e| e.id.as_str()).collect();
@@ -90,7 +93,7 @@ async fn test_list_filter_by_interface() -> Result<()> {
         .provider
         .get_catalog_provider()
         .list_endpoints(
-            &state,
+            &ExecutionContext::internal(&state),
             &EndpointListParameters {
                 interface: Some("public".to_string()),
                 service_id: Some(service.id.clone()),

@@ -24,6 +24,7 @@ use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
 use crate::api::v3::group::types::{Group, GroupList};
 use crate::keystone::ServiceState;
+use openstack_keystone_core::auth::ExecutionContext;
 
 /// List groups a user is member of
 ///
@@ -55,7 +56,7 @@ pub(super) async fn groups(
     let current = state
         .provider
         .get_identity_provider()
-        .get_user(&state, &user_id)
+        .get_user(&ExecutionContext::from_auth(&state, &user_auth), &user_id)
         .await?;
 
     state
@@ -72,7 +73,7 @@ pub(super) async fn groups(
             let groups: Vec<Group> = state
                 .provider
                 .get_identity_provider()
-                .list_groups_of_user(&state, &user_id)
+                .list_groups_of_user(&ExecutionContext::from_auth(&state, &user_auth), &user_id)
                 .await?
                 .into_iter()
                 .map(Into::into)

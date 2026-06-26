@@ -27,6 +27,7 @@ use validator::Validate;
 use crate::api::error::KeystoneApiError;
 use crate::federation::{api::error::OidcError, api::types::*};
 use crate::keystone::ServiceState;
+use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core_types::federation::AuthState;
 
 use super::oidc_utils::{
@@ -93,7 +94,7 @@ pub async fn post(
     let idp = state
         .provider
         .get_federation_provider()
-        .get_identity_provider(&state, &idp_id)
+        .get_identity_provider(&ExecutionContext::internal(&state), &idp_id)
         .await
         .map(|x| {
             x.ok_or_else(|| KeystoneApiError::NotFound {
@@ -160,7 +161,7 @@ pub async fn post(
         .provider
         .get_federation_provider()
         .create_auth_state(
-            &state,
+            &ExecutionContext::internal(&state),
             AuthState {
                 state: csrf_token.clone(),
                 nonce: nonce.clone(),

@@ -18,7 +18,7 @@ use std::collections::HashMap;
 use eyre::Result;
 use tracing_test::traced_test;
 
-use openstack_keystone_core::catalog::CatalogApi;
+use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core_types::catalog::{EndpointCreate, EndpointUpdate, ServiceCreate};
 
 use crate::catalog::{create_endpoint, create_service};
@@ -57,7 +57,7 @@ async fn test_update() -> Result<()> {
         .provider
         .get_catalog_provider()
         .update_endpoint(
-            &state,
+            &ExecutionContext::internal(&state),
             &endpoint.id,
             EndpointUpdate {
                 enabled: Some(false),
@@ -73,7 +73,7 @@ async fn test_update() -> Result<()> {
     let fetched = state
         .provider
         .get_catalog_provider()
-        .get_endpoint(&state, &endpoint.id)
+        .get_endpoint(&ExecutionContext::internal(&state), &endpoint.id)
         .await?
         .unwrap();
     assert!(!fetched.enabled);
@@ -89,7 +89,7 @@ async fn test_update_not_found() -> Result<()> {
         .provider
         .get_catalog_provider()
         .update_endpoint(
-            &state,
+            &ExecutionContext::internal(&state),
             "missing",
             EndpointUpdate {
                 enabled: Some(true),
@@ -138,7 +138,7 @@ async fn test_update_interface_too_long() -> Result<()> {
         .provider
         .get_catalog_provider()
         .update_endpoint(
-            &state,
+            &ExecutionContext::internal(&state),
             &endpoint.id,
             EndpointUpdate {
                 interface: Some(too_long),

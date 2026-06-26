@@ -39,6 +39,9 @@ const KEY_PURGED: &[u8] = b"purged";
 /// `[dek_version_u32; 4] ++ [term_u64; 8] ++ log_encrypt([nonce_12 ++
 /// ciphertext ++ tag_16])`.
 const DEK_VERSION_PREFIX_LEN: usize = 4;
+/// On-disk prefix length for a log entry: 8 bytes for term (BE u64).
+/// Full layout: [term_u64_BE (8)] ++ log_encrypt output [nonce_12 ++ ciphertext
+/// ++ tag_16].
 const TERM_PREFIX_LEN: usize = 8;
 /// Minimum stored size: dek_version(4) + term(8) + nonce(12) + tag(16) = 40.
 const LOG_ENTRY_MIN_LEN: usize = DEK_VERSION_PREFIX_LEN + TERM_PREFIX_LEN + 12 + 16;

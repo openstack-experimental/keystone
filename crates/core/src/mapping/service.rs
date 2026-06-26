@@ -33,6 +33,7 @@ use openstack_keystone_core_types::identity::{
 };
 use openstack_keystone_core_types::mapping::*;
 
+use crate::auth::ExecutionContext;
 use crate::keystone::ServiceState;
 use crate::mapping::{
     MappingApi, MappingProviderError, backend::MappingBackend, engine, hmac, validation, version,
@@ -72,12 +73,12 @@ impl MappingService {
     ///
     /// Evaluates claims against the ruleset, performs a shadow registry upsert,
     /// and emits `AuthenticationResult`.
-    pub(super) async fn authenticate_by_mapping_internal(
+    pub(super) async fn authenticate_by_mapping_internal<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         req: &MappingAuthRequest,
     ) -> Result<AuthenticationResult, MappingProviderError> {
-        let cfg = state.config_manager.config.read().await;
+        let cfg = ctx.state().config_manager.config.read().await;
         let salt = cfg
             .mapping
             .cluster_salt
@@ -90,14 +91,14 @@ impl MappingService {
                 )
             })?;
 
-        self.authenticate_by_mapping_with_salt(state, req, &salt)
+        self.authenticate_by_mapping_with_salt(ctx, req, &salt)
             .await
     }
 
     /// Authenticate a principal with an explicit salt.
-    pub(super) async fn authenticate_by_mapping_with_salt(
+    pub(super) async fn authenticate_by_mapping_with_salt<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         req: &MappingAuthRequest,
         salt: &[u8],
     ) -> Result<AuthenticationResult, MappingProviderError> {
@@ -105,7 +106,7 @@ impl MappingService {
         let domain_id = req.domain_id.as_deref().unwrap_or("global");
         let ruleset = self
             .backend_driver
-            .get_ruleset_by_source(state, domain_id, &req.source)
+            .get_ruleset_by_source(ctx.state(), domain_id, &req.source)
             .await?
             .ok_or(MappingProviderError::NoMatchingRule)?;
 
@@ -136,11 +137,11 @@ impl MappingService {
         // 5. Branch on identity mode
         match identity_mode {
             IdentityMode::Local => {
-                self.authenticate_local(state, &match_result, &ruleset, req)
+                self.authenticate_local(ctx.state(), &match_result, &ruleset, req)
                     .await
             }
             IdentityMode::Ephemeral => {
-                self.authenticate_ephemeral(state, &match_result, &ruleset, req, salt)
+                self.authenticate_ephemeral(ctx.state(), &match_result, &ruleset, req, salt)
                     .await
             }
         }
@@ -160,7 +161,7 @@ impl MappingService {
 
         let virtual_user = self
             .upsert_virtual_user_shadow(
-                state,
+                &ExecutionContext::internal(state),
                 &virtual_user_id,
                 match_result,
                 ruleset,
@@ -247,7 +248,7 @@ impl MappingService {
         let user_groups = state
             .provider
             .get_identity_provider()
-            .list_groups_of_user(state, &user.id)
+            .list_groups_of_user(&ExecutionContext::internal(state), &user.id)
             .await
             .map_err(MappingProviderError::driver)?;
 
@@ -289,10 +290,11 @@ impl MappingService {
         user_name: &str,
         unique_workload_id: &str,
     ) -> Result<UserResponse, MappingProviderError> {
+        let ctx = ExecutionContext::internal(state);
         let idp = state
             .provider
             .get_federation_provider()
-            .get_identity_provider(state, idp_id)
+            .get_identity_provider(&ctx, idp_id)
             .await
             .map_err(MappingProviderError::driver)?
             .ok_or_else(|| {
@@ -306,7 +308,7 @@ impl MappingService {
         let identity_provider = state.provider.get_identity_provider();
 
         if let Some(existing) = identity_provider
-            .find_federated_user(state, idp_id, unique_workload_id)
+            .find_federated_user(&ctx, idp_id, unique_workload_id)
             .await
             .map_err(MappingProviderError::driver)?
         {
@@ -335,7 +337,7 @@ impl MappingService {
 
         let user = identity_provider
             .create_user(
-                state,
+                &ctx,
                 user_builder.build().map_err(MappingProviderError::driver)?,
             )
             .await
@@ -352,11 +354,12 @@ impl MappingService {
         match_result: &MatchResult,
         idp_id: &str,
     ) -> Result<(), MappingProviderError> {
+        let ctx = ExecutionContext::internal(state);
         let identity_provider = state.provider.get_identity_provider();
 
         let domain_groups: HashMap<String, String> = identity_provider
             .list_groups(
-                state,
+                &ctx,
                 &GroupListParameters {
                     domain_id: Some(user.domain_id.clone()),
                     ..Default::default()
@@ -382,7 +385,7 @@ impl MappingService {
                         .unwrap_or_default();
                     let created = identity_provider
                         .create_group(
-                            state,
+                            &ctx,
                             GroupCreate {
                                 domain_id,
                                 name: group_name.clone(),
@@ -400,7 +403,7 @@ impl MappingService {
         if !group_ids.is_empty() {
             identity_provider
                 .set_user_groups_expiring(
-                    state,
+                    &ctx,
                     &user.id,
                     HashSet::from_iter(group_ids.iter().map(|s| s.as_str())),
                     idp_id,
@@ -418,9 +421,9 @@ impl MappingService {
     /// If the record exists, refresh fields while preserving `created_at` and
     /// `is_system` (immutable from initial creation). If new, create fresh.
     /// Retries on `CasConflict` with exponential backoff.
-    pub(super) async fn upsert_virtual_user_shadow(
+    pub(super) async fn upsert_virtual_user_shadow<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         virtual_user_id: &str,
         match_result: &MatchResult,
         ruleset: &MappingRuleSet,
@@ -432,7 +435,7 @@ impl MappingService {
         for attempt in 0..max_retries {
             let existing = self
                 .backend_driver
-                .get_virtual_user(state, virtual_user_id)
+                .get_virtual_user(ctx.state(), virtual_user_id)
                 .await?;
 
             let result = if let Some(mut vu) = existing {
@@ -450,7 +453,7 @@ impl MappingService {
 
                 // Persist updated record (CAS-protected at storage layer)
                 self.backend_driver
-                    .update_virtual_user(state, virtual_user_id, vu.clone())
+                    .update_virtual_user(ctx.state(), virtual_user_id, vu.clone())
                     .await
             } else {
                 // Insert path: create fresh record
@@ -471,7 +474,7 @@ impl MappingService {
                 };
 
                 self.backend_driver
-                    .create_virtual_user(state, vu.clone())
+                    .create_virtual_user(ctx.state(), vu.clone())
                     .await
             };
 
@@ -501,9 +504,9 @@ impl MappingApi for MappingService {
     ///
     /// Validates the payload, generates UUID, computes content-aware version,
     /// then delegates to the backend driver.
-    async fn create_ruleset(
+    async fn create_ruleset<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         mut ruleset: MappingRuleSetCreate,
     ) -> Result<MappingRuleSet, MappingProviderError> {
         // 1. Write-time validation
@@ -532,7 +535,7 @@ impl MappingApi for MappingService {
         // 5. Delegate to backend
         let created = self
             .backend_driver
-            .create_ruleset(state, ruleset_obj)
+            .create_ruleset(ctx.state(), ruleset_obj)
             .await?;
 
         // 6. Return the created ruleset
@@ -550,13 +553,16 @@ impl MappingApi for MappingService {
     /// Delete a mapping ruleset.
     async fn delete_ruleset<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         mapping_id: &'a str,
     ) -> Result<(), MappingProviderError> {
         let max_retries = 5u64;
         for attempt in 0..max_retries {
             // Check immutability: if ruleset contains `is_system` rules, reject
-            if let Some(existing) = self.backend_driver.get_ruleset(state, mapping_id).await?
+            if let Some(existing) = self
+                .backend_driver
+                .get_ruleset(ctx.state(), mapping_id)
+                .await?
                 && existing.rules.iter().any(|r| r.identity.is_system)
             {
                 return Err(MappingProviderError::RulesetImmutable(
@@ -564,7 +570,11 @@ impl MappingApi for MappingService {
                 ));
             }
 
-            match self.backend_driver.delete_ruleset(state, mapping_id).await {
+            match self
+                .backend_driver
+                .delete_ruleset(ctx.state(), mapping_id)
+                .await
+            {
                 Ok(()) => return Ok(()),
                 Err(MappingProviderError::CasConflict { .. }) if attempt + 1 < max_retries => {
                     let backoff_ms = 50 * (1u64 << attempt);
@@ -585,14 +595,14 @@ impl MappingApi for MappingService {
     /// Delete a virtual user shadow record.
     async fn delete_virtual_user<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         user_id: &'a str,
     ) -> Result<(), MappingProviderError> {
         let max_retries = 5u64;
         for attempt in 0..max_retries {
             match self
                 .backend_driver
-                .delete_virtual_user(state, user_id)
+                .delete_virtual_user(ctx.state(), user_id)
                 .await
             {
                 Ok(()) => return Ok(()),
@@ -615,40 +625,44 @@ impl MappingApi for MappingService {
     /// Fetch a mapping ruleset by ID.
     async fn get_ruleset<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         mapping_id: &'a str,
     ) -> Result<Option<MappingRuleSet>, MappingProviderError> {
-        self.backend_driver.get_ruleset(state, mapping_id).await
+        self.backend_driver
+            .get_ruleset(ctx.state(), mapping_id)
+            .await
     }
 
     /// Fetch a ruleset by its (domain_id, source) composite index.
     async fn get_ruleset_by_source<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         domain_id: &'a str,
         source: &'a IdentitySource,
     ) -> Result<Option<MappingRuleSet>, MappingProviderError> {
         self.backend_driver
-            .get_ruleset_by_source(state, domain_id, source)
+            .get_ruleset_by_source(ctx.state(), domain_id, source)
             .await
     }
 
     /// Fetch a virtual user shadow record by user ID.
     async fn get_virtual_user<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         user_id: &'a str,
     ) -> Result<Option<VirtualUser>, MappingProviderError> {
-        self.backend_driver.get_virtual_user(state, user_id).await
+        self.backend_driver
+            .get_virtual_user(ctx.state(), user_id)
+            .await
     }
 
     /// List mapping rulesets.
-    async fn list_rulesets(
+    async fn list_rulesets<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         params: &MappingRuleSetListParameters,
     ) -> Result<Vec<MappingRuleSet>, MappingProviderError> {
-        self.backend_driver.list_rulesets(state, params).await
+        self.backend_driver.list_rulesets(ctx.state(), params).await
     }
 
     /// Mutate rules within a mapping ruleset imperatively.
@@ -657,14 +671,14 @@ impl MappingApi for MappingService {
     /// in memory, re-validates, computes new version, then delegates update.
     async fn mutate_rules<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         mapping_id: &'a str,
         mutations: RuleMutations,
     ) -> Result<MappingRuleSet, MappingProviderError> {
         // 1. Fetch current ruleset
         let existing = self
             .backend_driver
-            .get_ruleset(state, mapping_id)
+            .get_ruleset(ctx.state(), mapping_id)
             .await?
             .ok_or_else(|| MappingProviderError::NotFound(mapping_id.to_string()))?;
 
@@ -761,7 +775,7 @@ impl MappingApi for MappingService {
 
         let updated = self
             .backend_driver
-            .update_ruleset(state, mapping_id, update_payload)
+            .update_ruleset(ctx.state(), mapping_id, update_payload)
             .await?;
 
         // 7. Return with new version
@@ -782,14 +796,14 @@ impl MappingApi for MappingService {
     /// new version, then delegates to the backend driver.
     async fn update_ruleset<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         mapping_id: &'a str,
         data: MappingRuleSetUpdate,
     ) -> Result<MappingRuleSet, MappingProviderError> {
         // 1. Fetch existing ruleset
         let existing = self
             .backend_driver
-            .get_ruleset(state, mapping_id)
+            .get_ruleset(ctx.state(), mapping_id)
             .await?
             .ok_or_else(|| MappingProviderError::NotFound(mapping_id.to_string()))?;
 
@@ -817,7 +831,7 @@ impl MappingApi for MappingService {
         // 5. Delegate to backend
         let updated = self
             .backend_driver
-            .update_ruleset(state, mapping_id, data)
+            .update_ruleset(ctx.state(), mapping_id, data)
             .await?;
 
         // 6. Return with updated version
@@ -835,38 +849,40 @@ impl MappingApi for MappingService {
     /// Disable a virtual user shadow record.
     async fn disable_virtual_user<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         user_id: &'a str,
     ) -> Result<VirtualUser, MappingProviderError> {
         self.backend_driver
-            .disable_virtual_user(state, user_id)
+            .disable_virtual_user(ctx.state(), user_id)
             .await
     }
 
     /// Enable (reactivate) a virtual user shadow record.
     async fn enable_virtual_user<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         user_id: &'a str,
     ) -> Result<VirtualUser, MappingProviderError> {
         self.backend_driver
-            .enable_virtual_user(state, user_id)
+            .enable_virtual_user(ctx.state(), user_id)
             .await
     }
 
     /// Authenticate a principal through the unified mapping engine.
-    async fn authenticate_by_mapping(
+    async fn authenticate_by_mapping<'a>(
         &self,
-        state: &ServiceState,
-        req: &MappingAuthRequest,
+        exec: &ExecutionContext<'a>,
+        req: &'a MappingAuthRequest,
     ) -> Result<AuthenticationResult, MappingProviderError> {
-        self.authenticate_by_mapping_internal(state, req).await
+        self.authenticate_by_mapping_internal(exec, req).await
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::auth::ExecutionContext;
+    use crate::keystone::ServiceState;
     use crate::mapping::backend::MockMappingBackend;
     use crate::tests::get_mocked_state;
     use openstack_keystone_config::Config;
@@ -909,7 +925,10 @@ mod tests {
 
         let service = MappingService::from_driver(mock_backend);
 
-        let result = service.get_ruleset(&state, mapping_id).await.unwrap();
+        let result = service
+            .get_ruleset(&ExecutionContext::internal(&state), mapping_id)
+            .await
+            .unwrap();
 
         assert!(result.is_some());
         assert_eq!(result.unwrap().mapping_id, "test-id");
@@ -949,7 +968,7 @@ mod tests {
         let service = MappingService::from_driver(mock_backend);
 
         let result = service
-            .create_ruleset(&state, ruleset_create)
+            .create_ruleset(&ExecutionContext::internal(&state), ruleset_create)
             .await
             .unwrap();
 
@@ -991,7 +1010,10 @@ mod tests {
 
         let service = MappingService::from_driver(mock_backend);
 
-        service.delete_ruleset(&state, mapping_id).await.unwrap();
+        service
+            .delete_ruleset(&ExecutionContext::internal(&state), mapping_id)
+            .await
+            .unwrap();
     }
 
     fn make_ruleset(mapping_id: &str, is_system: bool) -> MappingRuleSet {
@@ -1052,7 +1074,10 @@ mod tests {
 
         let service = MappingService::from_driver(mock_backend);
 
-        service.delete_virtual_user(&state, user_id).await.unwrap();
+        service
+            .delete_virtual_user(&ExecutionContext::internal(&state), user_id)
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
@@ -1091,7 +1116,9 @@ mod tests {
             });
 
         let service = MappingService::from_driver(mock_backend);
-        let result = service.delete_ruleset(&state, mapping_id).await;
+        let result = service
+            .delete_ruleset(&ExecutionContext::internal(&state), mapping_id)
+            .await;
 
         assert!(result.is_err());
         assert!(matches!(
@@ -1131,7 +1158,9 @@ mod tests {
             .returning(|_, _| Ok(()));
 
         let service = MappingService::from_driver(mock_backend);
-        let result = service.delete_ruleset(&state, mapping_id).await;
+        let result = service
+            .delete_ruleset(&ExecutionContext::internal(&state), mapping_id)
+            .await;
 
         assert!(result.is_ok());
     }
@@ -1154,7 +1183,9 @@ mod tests {
             });
 
         let service = MappingService::from_driver(mock_backend);
-        let result = service.delete_virtual_user(&state, user_id).await;
+        let result = service
+            .delete_virtual_user(&ExecutionContext::internal(&state), user_id)
+            .await;
 
         assert!(result.is_err());
         assert!(matches!(
@@ -1178,7 +1209,10 @@ mod tests {
 
         let service = MappingService::from_driver(mock_backend);
 
-        let result = service.get_virtual_user(&state, user_id).await.unwrap();
+        let result = service
+            .get_virtual_user(&ExecutionContext::internal(&state), user_id)
+            .await
+            .unwrap();
 
         assert!(result.is_some());
         assert_eq!(result.unwrap().user_id, user_id);
@@ -1198,7 +1232,10 @@ mod tests {
         let service = MappingService::from_driver(mock_backend);
 
         let result = service
-            .list_rulesets(&state, &MappingRuleSetListParameters::default())
+            .list_rulesets(
+                &ExecutionContext::internal(&state),
+                &MappingRuleSetListParameters::default(),
+            )
             .await
             .unwrap();
 
@@ -1219,7 +1256,9 @@ mod tests {
 
         let service = MappingService::from_driver(mock_backend);
 
-        let result = service.delete_ruleset(&state, mapping_id).await;
+        let result = service
+            .delete_ruleset(&ExecutionContext::internal(&state), mapping_id)
+            .await;
 
         assert!(result.is_err());
         assert!(matches!(
@@ -1250,7 +1289,7 @@ mod tests {
 
         let result = service
             .update_ruleset(
-                &state,
+                &ExecutionContext::internal(&state),
                 mapping_id,
                 MappingRuleSetUpdate {
                     enabled: Some(true),
@@ -1280,7 +1319,7 @@ mod tests {
 
         let result = service
             .update_ruleset(
-                &state,
+                &ExecutionContext::internal(&state),
                 mapping_id,
                 MappingRuleSetUpdate {
                     enabled: Some(true),
@@ -1430,7 +1469,7 @@ mod tests {
 
         let result = service
             .mutate_rules(
-                &state,
+                &ExecutionContext::internal(&state),
                 mapping_id,
                 RuleMutations {
                     mutations: vec![RuleMutation::Insert {
@@ -1463,7 +1502,7 @@ mod tests {
 
         let result = service
             .mutate_rules(
-                &state,
+                &ExecutionContext::internal(&state),
                 mapping_id,
                 RuleMutations {
                     mutations: vec![RuleMutation::Delete {
@@ -1492,7 +1531,7 @@ mod tests {
 
         let result = service
             .mutate_rules(
-                &state,
+                &ExecutionContext::internal(&state),
                 mapping_id,
                 RuleMutations {
                     mutations: vec![RuleMutation::Delete {
@@ -1540,7 +1579,7 @@ mod tests {
 
         let result = service
             .mutate_rules(
-                &state,
+                &ExecutionContext::internal(&state),
                 mapping_id,
                 RuleMutations {
                     mutations: vec![RuleMutation::Insert {
@@ -1577,7 +1616,7 @@ mod tests {
 
         let result = service
             .authenticate_by_mapping(
-                &state,
+                &ExecutionContext::internal(&state),
                 &MappingAuthRequest {
                     domain_id: Some("default-domain".to_string()),
                     source: source.clone(),
@@ -1620,7 +1659,7 @@ mod tests {
 
         let result = service
             .authenticate_by_mapping(
-                &state,
+                &ExecutionContext::internal(&state),
                 &MappingAuthRequest {
                     domain_id: Some("default-domain".to_string()),
                     source: IdentitySource::Federation {
@@ -1665,7 +1704,7 @@ mod tests {
 
         let result = service
             .authenticate_by_mapping(
-                &state,
+                &ExecutionContext::internal(&state),
                 &MappingAuthRequest {
                     domain_id: Some("default-domain".to_string()),
                     source: IdentitySource::Federation {
@@ -1714,7 +1753,10 @@ mod tests {
 
         let service = MappingService::from_driver(mock_backend);
 
-        let result = service.enable_virtual_user(&state, user_id).await.unwrap();
+        let result = service
+            .enable_virtual_user(&ExecutionContext::internal(&state), user_id)
+            .await
+            .unwrap();
 
         assert_eq!(result.user_id, user_id);
         assert!(result.enabled);
@@ -1750,7 +1792,10 @@ mod tests {
 
         let service = MappingService::from_driver(mock_backend);
 
-        let result = service.disable_virtual_user(&state, user_id).await.unwrap();
+        let result = service
+            .disable_virtual_user(&ExecutionContext::internal(&state), user_id)
+            .await
+            .unwrap();
 
         assert_eq!(result.user_id, user_id);
         assert!(!result.enabled);
@@ -1783,7 +1828,11 @@ mod tests {
         let service = MappingService::from_driver(mock_backend);
 
         let result = service
-            .get_ruleset_by_source(&state, "default-domain", &source)
+            .get_ruleset_by_source(
+                &ExecutionContext::internal(&state),
+                "default-domain",
+                &source,
+            )
             .await
             .unwrap();
 
@@ -1858,7 +1907,7 @@ mod tests {
 
         let result = service
             .authenticate_by_mapping(
-                &state,
+                &ExecutionContext::internal(&state),
                 &MappingAuthRequest {
                     domain_id: Some("default-domain".to_string()),
                     source: source.clone(),

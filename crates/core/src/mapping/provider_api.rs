@@ -18,7 +18,7 @@ use async_trait::async_trait;
 use openstack_keystone_core_types::auth::AuthenticationResult;
 use openstack_keystone_core_types::mapping::*;
 
-use crate::keystone::ServiceState;
+use crate::auth::ExecutionContext;
 use crate::mapping::error::MappingProviderError;
 
 /// Mapping provider interface.
@@ -33,9 +33,9 @@ pub trait MappingApi: Send + Sync {
     /// # Returns
     /// - `Result<MappingRuleSet, MappingProviderError>` - The created
     ///   `MappingRuleSet` or an error.
-    async fn create_ruleset(
+    async fn create_ruleset<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         ruleset: MappingRuleSetCreate,
     ) -> Result<MappingRuleSet, MappingProviderError>;
 
@@ -49,7 +49,7 @@ pub trait MappingApi: Send + Sync {
     /// - `Result<(), MappingProviderError>` - Ok if successful, or an error.
     async fn delete_ruleset<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         mapping_id: &'a str,
     ) -> Result<(), MappingProviderError>;
 
@@ -69,7 +69,7 @@ pub trait MappingApi: Send + Sync {
     /// - `Result<(), MappingProviderError>` - Ok if successful, or an error.
     async fn delete_virtual_user<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         user_id: &'a str,
     ) -> Result<(), MappingProviderError>;
 
@@ -85,7 +85,7 @@ pub trait MappingApi: Send + Sync {
     ///   error.
     async fn get_ruleset<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         mapping_id: &'a str,
     ) -> Result<Option<MappingRuleSet>, MappingProviderError>;
 
@@ -102,7 +102,7 @@ pub trait MappingApi: Send + Sync {
     ///   error.
     async fn get_ruleset_by_source<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         domain_id: &'a str,
         source: &'a IdentitySource,
     ) -> Result<Option<MappingRuleSet>, MappingProviderError>;
@@ -118,7 +118,7 @@ pub trait MappingApi: Send + Sync {
     ///   containing an `Option` with the `VirtualUser` if found, or an error.
     async fn get_virtual_user<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         user_id: &'a str,
     ) -> Result<Option<VirtualUser>, MappingProviderError>;
 
@@ -131,9 +131,9 @@ pub trait MappingApi: Send + Sync {
     /// # Returns
     /// - `Result<Vec<MappingRuleSet>, MappingProviderError>` - A list of
     ///   `MappingRuleSet` entries or an error.
-    async fn list_rulesets(
+    async fn list_rulesets<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         params: &MappingRuleSetListParameters,
     ) -> Result<Vec<MappingRuleSet>, MappingProviderError>;
 
@@ -152,7 +152,7 @@ pub trait MappingApi: Send + Sync {
     ///   `MappingRuleSet` with mutations applied, or an error.
     async fn mutate_rules<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         mapping_id: &'a str,
         mutations: RuleMutations,
     ) -> Result<MappingRuleSet, MappingProviderError>;
@@ -169,7 +169,7 @@ pub trait MappingApi: Send + Sync {
     ///   `MappingRuleSet` or an error.
     async fn update_ruleset<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         mapping_id: &'a str,
         data: MappingRuleSetUpdate,
     ) -> Result<MappingRuleSet, MappingProviderError>;
@@ -188,7 +188,7 @@ pub trait MappingApi: Send + Sync {
     ///   `VirtualUser` or an error.
     async fn disable_virtual_user<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         user_id: &'a str,
     ) -> Result<VirtualUser, MappingProviderError>;
 
@@ -205,7 +205,7 @@ pub trait MappingApi: Send + Sync {
     ///   `VirtualUser` or an error.
     async fn enable_virtual_user<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         user_id: &'a str,
     ) -> Result<VirtualUser, MappingProviderError>;
 
@@ -224,9 +224,9 @@ pub trait MappingApi: Send + Sync {
     /// # Returns
     /// - `Result<AuthenticationResult, MappingProviderError>` - The
     ///   authentication result on success, or an error.
-    async fn authenticate_by_mapping(
+    async fn authenticate_by_mapping<'a>(
         &self,
-        state: &ServiceState,
-        req: &MappingAuthRequest,
+        ctx: &ExecutionContext<'a>,
+        req: &'a MappingAuthRequest,
     ) -> Result<AuthenticationResult, MappingProviderError>;
 }

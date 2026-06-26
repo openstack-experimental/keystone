@@ -22,6 +22,7 @@ use validator::Validate;
 
 use openstack_keystone_core::api::KeystoneApiError;
 use openstack_keystone_core::api::auth::Auth;
+use openstack_keystone_core::auth::ExecutionContext;
 
 use crate::{
     WebauthnError,
@@ -64,7 +65,7 @@ pub(super) async fn start(
         .core
         .provider
         .get_identity_provider()
-        .get_user(&state.core, &user_id)
+        .get_user(&ExecutionContext::internal(&state.core), &user_id)
         .await
         .map(|x| {
             x.ok_or_else(|| KeystoneApiError::NotFound {
@@ -96,7 +97,11 @@ pub(super) async fn start(
             state
                 .extension
                 .provider
-                .save_user_webauthn_credential_registration_state(&state.core, &user_id, &reg_state)
+                .save_user_webauthn_credential_registration_state(
+                    &ExecutionContext::internal(&state.core),
+                    &user_id,
+                    &reg_state,
+                )
                 .await?;
             Json(UserPasskeyRegistrationStartResponse::try_from(ccr).map_err(WebauthnError::from)?)
         }
