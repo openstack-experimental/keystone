@@ -20,7 +20,7 @@ use tonic::transport::{Channel, Uri};
 
 use openstack_keystone_config::{Config, RaftTlsConfiguration};
 use openstack_keystone_distributed_storage::{
-    network::{get_client_tls_config, get_spiffe_client_tls_config},
+    network::{get_client_tls_config, get_spiffe_grpc_channel},
     protobuf::raft::cluster_admin_service_client::ClusterAdminServiceClient,
 };
 
@@ -88,14 +88,15 @@ async fn get_grpc_client(
 
     let target_addr = addr.unwrap_or_else(|| ds.node_cluster_addr.clone());
 
-    let tls_config = match &ds.tls_configuration {
+    let channel = match &ds.tls_configuration {
         RaftTlsConfiguration::Spiffe(spiffe_cfg) => {
-            get_spiffe_client_tls_config(&spiffe_cfg.trust_domains).await?
+            get_spiffe_grpc_channel(target_addr, &spiffe_cfg.trust_domains).await?
         }
-        RaftTlsConfiguration::Tls(_) => get_client_tls_config(cfg)?,
+        RaftTlsConfiguration::Tls(_) => {
+            let tls_config = get_client_tls_config(cfg)?;
+            Channel::builder(target_addr).tls_config(tls_config)?.connect().await?
+        }
     };
 
-    let ep = Channel::builder(target_addr).tls_config(tls_config)?;
-    let client = ClusterAdminServiceClient::new(ep.connect().await?);
-    Ok(client)
+    Ok(ClusterAdminServiceClient::new(channel))
 }
