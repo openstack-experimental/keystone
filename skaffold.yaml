@@ -68,10 +68,6 @@ build:
       context: .
       docker:
         dockerfile: Dockerfile
-    - image: keystone-opa
-      context: .
-      docker:
-        dockerfile: tools/Dockerfile.opa
     - image: keystone-tests
       context: .
       docker:
@@ -235,4 +231,3 @@ verify:
           value: "http://dex:5556"
     executionMode:
       kubernetesCluster: {}
-
