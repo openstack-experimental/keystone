@@ -88,6 +88,7 @@ validator = { workspace = true, features = ["derive"] }
 toml = { version = "1.1", default-features = false, features = ["parse", "serde"] }
 
 [dev-dependencies]
+rcgen.workspace = true
 http-body-util.workspace = true
 httpmock = { version = "0.8", features = ["http2"] }
 openstack-keystone-core = { workspace = true, features = ["api", "mock"] }

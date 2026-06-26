@@ -28,6 +28,8 @@ use openraft::raft::{StreamAppendError, StreamAppendResult, TransferLeaderReques
 use openraft::{AnyError, OptionalSend, RaftNetworkFactory};
 use openstack_keystone_config::RaftTlsConfiguration;
 use secrecy::ExposeSecret;
+use spiffe::X509Source;
+use spiffe_rustls::{authorizer, mtls_client};
 use tokio::sync::watch;
 use tonic::transport::{Certificate, Channel, ClientTlsConfig, Identity, ServerTlsConfig};
 use tracing::error;
@@ -41,25 +43,108 @@ use crate::protobuf::raft::VoteResponse as PbVoteResponse;
 use crate::protobuf::raft::raft_service_client::RaftServiceClient;
 use crate::types::*;
 
+/// TLS client mode for Raft peer connections.
+///
+/// * `Spiffe` — SPIFFE mTLS using a `rustls::ClientConfig` built from a live
+///   X.509 SVID source.  Certificate verification is done by
+///   `SpiffeServerCertVerifier` (URI SAN, not hostname).  SVID rotation is
+///   handled internally by `spiffe-rustls`'s `MaterialWatcher`.
+/// * `Static` — Static file-based mTLS.  The `ClientTlsConfig` is refreshed
+///   via a tokio `watch` channel whenever the config file changes.
+#[derive(Clone)]
+pub enum RaftTlsClient {
+    Spiffe(Arc<rustls::ClientConfig>),
+    Static(watch::Receiver<ClientTlsConfig>),
+}
+
+impl RaftTlsClient {
+    /// Build a gRPC [`Channel`] to `addr` using the configured TLS mode.
+    ///
+    /// In `Static` mode the channel is created lazily (no connection until the
+    /// first RPC).  In `Spiffe` mode `connect_with_connector` establishes the
+    /// connection eagerly so that TLS errors surface immediately.
+    pub async fn connect(&self, addr: &str) -> Result<Channel, StoreError> {
+        match self {
+            Self::Static(rx) => {
+                let tls_cfg = rx.borrow().clone();
+                Ok(
+                    tonic::transport::Endpoint::from_shared(format!("https://{addr}"))?
+                        .tls_config(tls_cfg)?
+                        .connect_lazy(),
+                )
+            }
+            Self::Spiffe(cfg) => {
+                let connector = SpiffeConnector { tls: cfg.clone() };
+                Channel::builder(format!("http://{addr}").parse()?)
+                    .connect_with_connector(connector)
+                    .await
+                    .map_err(|e| StoreError::Other(eyre::eyre!("SPIFFE gRPC connect failed: {e}")))
+            }
+        }
+    }
+}
+
+/// Tower `Service<Uri>` connector that establishes a SPIFFE mTLS connection.
+///
+/// Tonic's built-in TLS uses hostname verification, which fails for SPIFFE
+/// certificates that carry URI SANs (`spiffe://trust-domain/path`) instead of
+/// DNS SANs.  This connector bypasses tonic's TLS layer entirely: the Raft
+/// node address is passed as an `http://` URI so tonic hands the raw TCP
+/// stream directly to us, and we wrap it with `tokio-rustls` using the
+/// SPIFFE-aware `rustls::ClientConfig` produced by `spiffe_rustls::mtls_client`.
+#[derive(Clone)]
+struct SpiffeConnector {
+    tls: Arc<rustls::ClientConfig>,
+}
+
+impl tower::Service<http::Uri> for SpiffeConnector {
+    type Response = hyper_util::rt::TokioIo<tokio_rustls::client::TlsStream<tokio::net::TcpStream>>;
+    type Error = std::io::Error;
+    type Future = std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<Self::Response, Self::Error>> + Send>,
+    >;
+
+    fn poll_ready(
+        &mut self,
+        _cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(), Self::Error>> {
+        std::task::Poll::Ready(Ok(()))
+    }
+
+    fn call(&mut self, uri: http::Uri) -> Self::Future {
+        let tls = self.tls.clone();
+        Box::pin(async move {
+            let host = uri
+                .host()
+                .ok_or_else(|| {
+                    std::io::Error::new(std::io::ErrorKind::InvalidInput, "URI missing host")
+                })?
+                .to_owned();
+            let port = uri.port_u16().unwrap_or(443);
+            let tcp = tokio::net::TcpStream::connect(format!("{host}:{port}")).await?;
+            let connector = tokio_rustls::TlsConnector::from(tls);
+            // `SpiffeServerCertVerifier` validates the peer's SPIFFE URI SAN and
+            // ignores the DNS server name, so any valid constant name is fine here.
+            let server_name =
+                rustls::pki_types::ServerName::try_from("keystone-raft-peer.internal")
+                    .expect("constant DNS name is valid");
+            let tls_stream = connector.connect(server_name, tcp).await?;
+            Ok(hyper_util::rt::TokioIo::new(tls_stream))
+        })
+    }
+}
+
 /// Network implementation for gRPC-based Raft communication.
 /// Provides the networking layer for Raft nodes to communicate with each other.
 #[derive(Clone)]
 pub struct NetworkManager {
-    /// Tls client config watcher.
-    tls_config_watcher: watch::Receiver<ClientTlsConfig>,
-    //config_manager: Arc<ConfigManager>,
+    tls_client: RaftTlsClient,
 }
 
 impl NetworkManager {
     /// Create a new `NetworkManager`.
-    ///
-    /// # Parameters
-    /// - `config_manager`: The Keystone [`ConfigManager`] instance.
-    ///
-    /// # Returns
-    /// A `Result` containing the `NetworkManager`, or a `StoreError`.
-    pub fn new(tls_config_watcher: watch::Receiver<ClientTlsConfig>) -> Result<Self, StoreError> {
-        Ok(Self { tls_config_watcher })
+    pub fn new(tls_client: RaftTlsClient) -> Result<Self, StoreError> {
+        Ok(Self { tls_client })
     }
 }
 
@@ -71,7 +156,7 @@ impl RaftNetworkFactory<TypeConfig> for Arc<NetworkManager> {
 
     #[tracing::instrument(level = "debug", skip_all)]
     async fn new_client(&mut self, _: NodeId, node: &Node) -> Self::Network {
-        NetworkConnection::new(node.clone(), self.tls_config_watcher.clone())
+        NetworkConnection::new(node.clone(), self.tls_client.clone())
     }
 }
 
@@ -80,45 +165,56 @@ impl RaftNetworkFactory<TypeConfig> for Arc<NetworkManager> {
 pub struct NetworkConnection {
     /// Target node.
     target_node: pb::raft::Node,
-    /// Watcher of the ClientTlsConfig.
-    tls_config_watcher: watch::Receiver<ClientTlsConfig>,
+    /// TLS client mode (SPIFFE or static).
+    tls_client: RaftTlsClient,
 }
 
 impl NetworkConnection {
     /// Creates a new `NetworkConnection` with the provided gRPC client.
-    ///
-    /// # Parameters
-    /// - `target_node`: Target node.
-    /// - `tls_config_watcher`: Watcher of the ClientTlsConfig.
-    ///
-    /// # Returns
-    /// A new `NetworkConnection` instance.
-    pub fn new(target_node: Node, tls_config_watcher: watch::Receiver<ClientTlsConfig>) -> Self {
+    pub fn new(target_node: Node, tls_client: RaftTlsClient) -> Self {
         NetworkConnection {
             target_node,
-            tls_config_watcher,
+            tls_client,
         }
     }
 
     /// Creates a gRPC client to the target node.
-    ///
-    /// # Returns
-    /// A `Result` containing the `RaftServiceClient`, or an `RPCError`.
     pub async fn make_client(&self) -> Result<RaftServiceClient<Channel>, RPCError> {
-        let server_addr = &self.target_node.rpc_addr;
+        let addr = &self.target_node.rpc_addr;
 
-        let ep = Channel::builder(
-            format!("https://{}", server_addr)
-                .parse()
-                .map_err(|e| RPCError::Unreachable(Unreachable::new(&e)))?,
-        )
-        .tls_config(self.tls_config_watcher.borrow().clone())
-        .map_err(|e| RPCError::Unreachable(Unreachable::new(&e)))?;
+        let channel = match &self.tls_client {
+            RaftTlsClient::Static(rx) => {
+                // Clone the config out of the Ref before any await so the
+                // non-Send `watch::Ref` guard is dropped before the future
+                // needs to cross thread boundaries.
+                let tls_cfg = rx.borrow().clone();
+                Channel::builder(
+                    format!("https://{addr}")
+                        .parse()
+                        .map_err(|e| RPCError::Unreachable(Unreachable::new(&e)))?,
+                )
+                .tls_config(tls_cfg)
+                .map_err(|e| RPCError::Unreachable(Unreachable::new(&e)))?
+                .connect()
+                .await
+                .map_err(|e| RPCError::Unreachable(Unreachable::<TypeConfig>::new(&e)))?
+            }
 
-        let channel = ep
-            .connect()
-            .await
-            .map_err(|e| RPCError::Unreachable(Unreachable::<TypeConfig>::new(&e)))?;
+            RaftTlsClient::Spiffe(cfg) => {
+                let connector = SpiffeConnector { tls: cfg.clone() };
+                // Use `http://` so tonic forwards the URI directly to our
+                // connector without attempting its own hostname-based TLS.
+                Channel::builder(
+                    format!("http://{addr}")
+                        .parse()
+                        .map_err(|e| RPCError::Unreachable(Unreachable::new(&e)))?,
+                )
+                .connect_with_connector(connector)
+                .await
+                .map_err(|e| RPCError::Unreachable(Unreachable::<TypeConfig>::new(&e)))?
+            }
+        };
+
         Ok(RaftServiceClient::new(channel))
     }
 
@@ -126,12 +222,6 @@ impl NetworkConnection {
     ///
     /// For `StreamAppend`, conflict is encoded as `conflict = true` plus a
     /// required `last_log_id` carrying the conflict log id.
-    ///
-    /// # Parameters
-    /// - `resp`: The append entries response.
-    ///
-    /// # Returns
-    /// A `Result` containing the `StreamAppendResult`, or an `RPCError`.
     fn pb_to_stream_result(
         resp: pb::raft::AppendEntriesResponse,
     ) -> Result<StreamAppendResult<TypeConfig>, RPCError> {
@@ -151,14 +241,6 @@ impl NetworkConnection {
         Ok(Ok(resp.last_log_id.map(Into::into)))
     }
 
-    /// Sends snapshot data in chunks through the provided channel.
-    ///
-    /// # Parameters
-    /// - `tx`: The sender channel.
-    /// - `snapshot_data`: The snapshot data.
-    ///
-    /// # Returns
-    /// A `Result` indicating success, or a `NetworkError`.
     async fn send_snapshot_chunks(
         tx: &mut mpsc::Sender<pb::raft::SnapshotRequest>,
         snapshot_data: &[u8],
@@ -304,60 +386,8 @@ impl NetTransferLeader<TypeConfig> for NetworkConnection {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 9 — SPIFFE Mode (ADR 0016-v2 §4.1 / F4)
+// TLS certificate expiry watchdog (manual-TLS fallback path)
 // ---------------------------------------------------------------------------
-
-/// SVID TTL ceiling enforced per ADR 0016-v2 §4.1.
-const SVID_MAX_TTL_SECS: u64 = 3600;
-/// Minimum remaining SVID validity before rejection (force-renewal window).
-const SVID_MIN_REMAINING_SECS: u64 = 300;
-
-/// SPIFFE Workload API provider — interface stub.
-///
-/// In production this contacts the SPIRE agent at
-/// `unix:///tmp/spire-agent/public/api.sock`, retrieves a JWT or X.509 SVID,
-/// and enforces the TTL ceiling.
-///
-/// This implementation always returns [`StoreError::Other`] (SPIFFE workload
-/// API not yet implemented).  The struct is defined to lock in the abstraction
-/// boundary before the SPIRE client is wired up.
-pub struct SpiffeTlsProvider {
-    /// SPIFFE trust domain, e.g. `"example.org"`.
-    pub trust_domain: String,
-    /// Expected role path component, e.g. `"storage"`.
-    pub role: String,
-}
-
-impl SpiffeTlsProvider {
-    pub fn new(trust_domain: impl Into<String>, role: impl Into<String>) -> Self {
-        Self {
-            trust_domain: trust_domain.into(),
-            role: role.into(),
-        }
-    }
-
-    /// Validate that a SPIFFE ID matches the expected pattern:
-    /// `spiffe://<trust_domain>/keystone/storage/<role>`.
-    pub fn validate_spiffe_id(&self, spiffe_id: &str) -> Result<(), StoreError> {
-        let expected_prefix = format!("spiffe://{}/keystone/storage/", self.trust_domain);
-        if !spiffe_id.starts_with(&expected_prefix) {
-            return Err(StoreError::Other(eyre::eyre!(
-                "SPIFFE ID {spiffe_id:?} does not match expected pattern \
-                 spiffe://{}/keystone/storage/<role>",
-                self.trust_domain
-            )));
-        }
-        let role_suffix = &spiffe_id[expected_prefix.len()..];
-        if role_suffix != self.role {
-            return Err(StoreError::Other(eyre::eyre!(
-                "SPIFFE ID {spiffe_id:?} role component {role_suffix:?} does not match \
-                 expected role {:?}",
-                self.role
-            )));
-        }
-        Ok(())
-    }
-}
 
 /// TLS certificate expiry watchdog for the manual-TLS fallback path.
 ///
@@ -407,7 +437,6 @@ fn check_cert_expiry(cert_pem: &[u8], shutdown_on_expiry: bool) {
     };
 
     let not_after = cert.validity().not_after;
-    // x509-parser uses its own ASN1Time; convert via timestamp.
     let expiry_secs = not_after.timestamp();
     let now_secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -445,50 +474,11 @@ fn check_cert_expiry(cert_pem: &[u8], shutdown_on_expiry: bool) {
     }
 }
 
-/// Validate SVID remaining TTL against enforcement thresholds.
-///
-/// Called before accepting a connection in SPIFFE mode.
-///
-/// Returns `Err` if the SVID has expired, has less than
-/// [`SVID_MIN_REMAINING_SECS`] remaining, or exceeds [`SVID_MAX_TTL_SECS`]
-/// (which would violate the ADR §4.1 TTL ceiling).
-pub fn validate_svid_ttl(issued_at_secs: u64, expires_at_secs: u64) -> Result<(), StoreError> {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-
-    let ttl = expires_at_secs.saturating_sub(issued_at_secs);
-    if ttl > SVID_MAX_TTL_SECS {
-        return Err(StoreError::Other(eyre::eyre!(
-            "SVID TTL {ttl}s exceeds maximum allowed {SVID_MAX_TTL_SECS}s"
-        )));
-    }
-
-    let remaining = expires_at_secs.saturating_sub(now);
-    if remaining < SVID_MIN_REMAINING_SECS {
-        return Err(StoreError::Other(eyre::eyre!(
-            "SVID has only {remaining}s remaining validity \
-             (minimum {SVID_MIN_REMAINING_SECS}s required); force-renew SVID"
-        )));
-    }
-
-    Ok(())
-}
+// ---------------------------------------------------------------------------
+// Static mTLS config helpers (Tls variant of RaftTlsConfiguration)
+// ---------------------------------------------------------------------------
 
 /// Build the tonic [`ClientTlsConfig`] from the Keystone [`Config`].
-///
-/// Initialize the [`ClientTlsConfig`] from the distributed_storage or the
-/// listener configuration of the Keystone [`Config`].
-///
-/// For all of the [`tls_client_ca`, `tls_cert`, `tls_key`] the corresponding
-/// value is searched in the distributed_storage configuration.
-///
-/// # Parameters
-/// - `config`: The Keystone [`Config`] instance.
-///
-/// # Returns
-/// A `Result` containing the `ClientTlsConfig`, or a `StoreError`.
 pub fn get_client_tls_config(config: &Config) -> Result<ClientTlsConfig, StoreError> {
     if let Some(ds) = &config.distributed_storage
         && let RaftTlsConfiguration::Tls(tls) = &ds.tls_configuration
@@ -515,18 +505,6 @@ pub fn get_client_tls_config(config: &Config) -> Result<ClientTlsConfig, StoreEr
 }
 
 /// Build tonic [`ServerTlsConfig`] from the Keystone [`Config`].
-///
-/// Initialize the [`ServerTlsConfig`] from the distributed_storage or the
-/// listener configuration of the Keystone [`Config`].
-///
-/// For all of the [`tls_client_ca`, `tls_cert`, `tls_key`] the corresponding
-/// value is searched in the distributed_storage configuration.
-///
-/// # Parameters
-/// - `config`: The Keystone [`Config`] instance.
-///
-/// # Returns
-/// A `Result` containing the `ServerTlsConfig`, or a `StoreError`.
 pub fn get_server_tls_config(config: &Config) -> Result<ServerTlsConfig, StoreError> {
     if let Some(ds) = &config.distributed_storage
         && let RaftTlsConfiguration::Tls(tls) = &ds.tls_configuration
@@ -552,25 +530,113 @@ pub fn get_server_tls_config(config: &Config) -> Result<ServerTlsConfig, StoreEr
     }
 }
 
-/// Initialize the [ClientTlsConfig] configuration watcher.
+// ---------------------------------------------------------------------------
+// SPIFFE mTLS helpers (Spiffe variant of RaftTlsConfiguration — ADR 0016-v2)
+// ---------------------------------------------------------------------------
+
+/// Initialize a SPIFFE-backed [`RaftTlsClient`] for Raft peer connections.
 ///
-/// # Parameters
-/// - `config_manager`: The Keystone [`ConfigManager`].
+/// Connects to the SPIRE Workload API and builds a `rustls::ClientConfig` via
+/// [`spiffe_rustls::mtls_client`].  SVID rotation is managed internally by
+/// `spiffe-rustls`'s `MaterialWatcher`; no separate watcher task is needed.
+async fn init_spiffe_raft_tls(trust_domains: Vec<String>) -> Result<RaftTlsClient, StoreError> {
+    let source = X509Source::new()
+        .await
+        .map_err(|e| StoreError::Other(eyre::eyre!("SPIFFE X509Source init failed: {e}")))?;
+
+    let mut rustls_config = mtls_client(source)
+        .authorize(
+            authorizer::trust_domains(trust_domains)
+                .map_err(|e| StoreError::Other(eyre::eyre!("Invalid SPIFFE trust domain: {e}")))?,
+        )
+        .build()
+        .map_err(|e| StoreError::Other(eyre::eyre!("Failed to build SPIFFE rustls config: {e}")))?;
+
+    // gRPC requires h2 ALPN; tonic's built-in TLS connector adds this
+    // automatically, but when bypassing it via connect_with_connector we must
+    // set it ourselves.
+    rustls_config.alpn_protocols = vec![b"h2".to_vec()];
+
+    Ok(RaftTlsClient::Spiffe(Arc::new(rustls_config)))
+}
+
+/// Build a gRPC [`Channel`] to `target_addr` using SPIFFE mTLS.
 ///
-/// # Returns
-/// A `Result` containing the `watch::Receiver<ClientTlsConfig>`, or a
-/// `StoreError`.
+/// Intended for CLI tools that establish a single connection and exit.
+/// The channel uses a [`SpiffeConnector`] so that SPIFFE URI SAN verification
+/// is applied instead of standard hostname verification.
+pub async fn get_spiffe_grpc_channel(
+    target_addr: http::Uri,
+    trust_domains: &[String],
+) -> Result<Channel, StoreError> {
+    let source = X509Source::new()
+        .await
+        .map_err(|e| StoreError::Other(eyre::eyre!("SPIFFE X509Source init failed: {e}")))?;
+
+    let mut rustls_config = mtls_client(source)
+        .authorize(
+            authorizer::trust_domains(trust_domains.to_vec())
+                .map_err(|e| StoreError::Other(eyre::eyre!("Invalid SPIFFE trust domain: {e}")))?,
+        )
+        .build()
+        .map_err(|e| StoreError::Other(eyre::eyre!("Failed to build SPIFFE rustls config: {e}")))?;
+
+    rustls_config.alpn_protocols = vec![b"h2".to_vec()];
+
+    let connector = SpiffeConnector {
+        tls: Arc::new(rustls_config),
+    };
+
+    // Rewrite the URI to `http://` so tonic doesn't attempt hostname-based TLS
+    // on top of our connector's own TLS.
+    let mut parts = target_addr.into_parts();
+    parts.scheme = Some(http::uri::Scheme::HTTP);
+    let http_uri = http::Uri::from_parts(parts)
+        .map_err(|e| StoreError::Other(eyre::eyre!("Invalid Raft peer URI: {e}")))?;
+
+    Channel::builder(http_uri)
+        .connect_with_connector(connector)
+        .await
+        .map_err(|e| StoreError::Other(eyre::eyre!("Failed to connect to Raft peer: {e}")))
+}
+
+// ---------------------------------------------------------------------------
+// TLS watcher — entry point called from app.rs
+// ---------------------------------------------------------------------------
+
+/// Initialize the [`RaftTlsClient`] for Raft peer connections.
+///
+/// Dispatches to either the SPIFFE Workload API path (when
+/// [`RaftTlsConfiguration::Spiffe`] is configured) or the static file-based
+/// TLS watcher (when [`RaftTlsConfiguration::Tls`] is configured).
 pub async fn init_tls_watcher(
     config_manager: &Arc<ConfigManager>,
-) -> Result<watch::Receiver<ClientTlsConfig>, StoreError> {
-    // 1. Initial Load: Try to load the certs once to start with a valid state
-    let cfg = config_manager.config.read().await;
-    let initial_config = get_client_tls_config(&cfg)?;
+) -> Result<RaftTlsClient, StoreError> {
+    let spiffe_trust_domains = {
+        let cfg = config_manager.config.read().await;
+        if let Some(ds) = &cfg.distributed_storage {
+            if let RaftTlsConfiguration::Spiffe(spiffe_cfg) = &ds.tls_configuration {
+                Some(spiffe_cfg.trust_domains.clone())
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    };
 
-    // 2. Create the channel
+    if let Some(trust_domains) = spiffe_trust_domains {
+        return init_spiffe_raft_tls(trust_domains).await;
+    }
+
+    // Static TLS fallback: load certificates from config files.
+    let initial_config = {
+        let cfg = config_manager.config.read().await;
+        get_client_tls_config(&cfg)?
+    };
+
     let (tx, rx) = watch::channel(initial_config);
 
-    // 3. Spawn the File Watcher Task
     let cm_clone = config_manager.clone();
     let mut reload_rx = config_manager.notify_tx.subscribe();
     tokio::spawn(async move {
@@ -578,7 +644,6 @@ pub async fn init_tls_watcher(
             let cfg = cm_clone.config.read().await;
             match get_client_tls_config(&cfg) {
                 Ok(new_config) => {
-                    // If the cert changed, broadcast to all receivers
                     let _ = tx.send(new_config);
                 }
                 Err(e) => {
@@ -588,6 +653,5 @@ pub async fn init_tls_watcher(
         }
     });
 
-    // 4. Return the Receiver to be cloned into your RaftNetworkFactory
-    Ok(rx)
+    Ok(RaftTlsClient::Static(rx))
 }

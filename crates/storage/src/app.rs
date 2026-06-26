@@ -24,10 +24,9 @@ use openstack_keystone_storage_crypto::{DekEpoch, EnvKek, KekProvider};
 use crate::protobuf as pb;
 use openraft::ReadPolicy;
 use openraft::errors::{ForwardToLeader, RaftError};
-use tokio::sync::watch;
 use tonic::Code;
 use tonic::service::Routes;
-use tonic::transport::{Channel, ClientTlsConfig, Endpoint};
+use tonic::transport::Channel;
 use tracing::debug;
 
 use openstack_keystone_config::ConfigManager;
@@ -42,7 +41,7 @@ use crate::audit::AuditForwarder;
 use crate::grpc::cluster_admin_service::ClusterAdminServiceImpl;
 use crate::grpc::raft_service::RaftServiceImpl;
 use crate::grpc::storage_service::StorageServiceImpl;
-use crate::network::{CertExpiryWatchdog, NetworkManager, init_tls_watcher};
+use crate::network::{CertExpiryWatchdog, NetworkManager, RaftTlsClient, init_tls_watcher};
 use crate::pb::api::Response;
 use crate::pb::raft::cluster_admin_service_server::ClusterAdminServiceServer;
 use crate::pb::raft::raft_service_server::RaftServiceServer;
@@ -151,11 +150,10 @@ pub async fn init_storage(config_manager: &Arc<ConfigManager>) -> Result<Storage
     let (log_store, sm, current_dek, _revoked_deks, pending_rotations) =
         crate::new::<crate::TypeConfig, _>(ds_config.path, ds_config.node_id, kek.clone()).await?;
     let state_machine_store = Arc::new(sm);
-    let tls_watcher = init_tls_watcher(config_manager).await?;
-    let network = Arc::new(NetworkManager::new(tls_watcher.clone())?);
+    let tls_client = init_tls_watcher(config_manager).await?;
+    let network = Arc::new(NetworkManager::new(tls_client.clone())?);
 
     // Spawn TLS cert expiry watchdog for manual-TLS fallback (ADR §4.2).
-    // In SPIFFE mode this would be replaced by the SVID TTL check.
     if let openstack_keystone_config::RaftTlsConfiguration::Tls(tls) = &ds_config.tls_configuration
         && let Some(cert_content) = tls.tls_cert_content.as_ref()
     {
@@ -193,7 +191,7 @@ pub async fn init_storage(config_manager: &Arc<ConfigManager>) -> Result<Storage
         raft,
         node_id: ds_config.node_id,
         state_machine_store,
-        tls_watcher,
+        tls_client,
         kek,
         current_dek,
         audit_forwarder,
@@ -234,8 +232,8 @@ pub async fn get_app_server(storage: &Storage) -> Result<Routes, StoreError> {
 pub struct Storage {
     /// Raft cluster nodes connection pool.
     connection_pool: DashMap<u64, Channel>,
-    /// Tls client config watcher.
-    tls_watcher: watch::Receiver<ClientTlsConfig>,
+    /// TLS client mode for Raft peer connections.
+    tls_client: RaftTlsClient,
     /// Raft instance.
     pub raft: Raft,
     /// This node's Raft ID (used to tag audit records for per-node
@@ -603,19 +601,16 @@ impl Storage {
     ///
     /// # Returns
     /// A `Result` containing the `Channel`, or a `StoreError`.
-    fn get_or_create_channel(&self, target: u64, addr: String) -> Result<Channel, StoreError> {
-        // 1. Return existing connection if valid
+    async fn get_or_create_channel(
+        &self,
+        target: u64,
+        addr: String,
+    ) -> Result<Channel, StoreError> {
         if let Some(channel) = self.connection_pool.get(&target) {
             return Ok(channel.clone());
         }
 
-        // 2. Otherwise, build it (applying Optional TLS)
-        let endpoint = Endpoint::from_shared(format!("https://{}", addr))?
-            .tls_config(self.tls_watcher.borrow().clone())?;
-
-        let channel = endpoint.connect_lazy();
-
-        // 3. Cache it
+        let channel = self.tls_client.connect(&addr).await?;
         self.connection_pool.insert(target, channel.clone());
         Ok(channel)
     }
@@ -684,7 +679,7 @@ impl Storage {
 
         for _attempt in 0..=max_retries {
             // Establish a gRPC channel to the given node
-            let channel = self.get_or_create_channel(node_id, node_addr)?;
+            let channel = self.get_or_create_channel(node_id, node_addr).await?;
             // Init the client
             let mut client = StorageServiceClient::new(channel);
             // Try to execute the command
