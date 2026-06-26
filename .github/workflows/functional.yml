@@ -8,6 +8,7 @@ on:
       - 'Cargo.toml'
       - 'Cargo.lock'
       - '.github/workflows/functional.yml'
+      - 'skaffold.yaml'
       - 'tests/**'
       - 'loadtest/**'
       - 'crates/**'
