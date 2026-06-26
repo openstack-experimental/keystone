@@ -14,11 +14,13 @@
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex, RwLock};
 
+use openraft::RaftSnapshotBuilder;
 use openraft::async_runtime::WatchReceiver;
 use openstack_keystone_storage_crypto::{DekEpoch, KekProvider, generate_dek};
 use tonic::Request;
 use tonic::Response;
 use tonic::Status;
+use tonic::Streaming;
 use tracing::trace;
 
 use crate::StoreError;
@@ -84,6 +86,8 @@ pub struct ClusterAdminServiceImpl {
     audit: AuditForwarder,
     /// Pending emergency DEK rotations (shared with FjallStateMachine).
     pending_rotations: Arc<Mutex<HashMap<String, PendingRotation>>>,
+    /// State machine store — used for backup snapshot building and restore.
+    sm: Arc<StateMachineStore>,
 }
 
 impl ClusterAdminServiceImpl {
@@ -105,6 +109,7 @@ impl ClusterAdminServiceImpl {
         current_dek: Arc<RwLock<Arc<DekEpoch>>>,
         audit: AuditForwarder,
         pending_rotations: Arc<Mutex<HashMap<String, PendingRotation>>>,
+        sm: Arc<StateMachineStore>,
     ) -> Self {
         Self {
             raft_node,
@@ -113,6 +118,7 @@ impl ClusterAdminServiceImpl {
             current_dek,
             audit,
             pending_rotations,
+            sm,
         }
     }
 
@@ -556,6 +562,213 @@ impl ClusterAdminService for ClusterAdminServiceImpl {
             confirmer = actor,
             "SECURITY: emergency DEK rotation confirmed via dual-control"
         );
+        Ok(Response::new(pb::raft::AdminResponse::default()))
+    }
+
+    type BackupStream = std::pin::Pin<
+        Box<dyn futures::Stream<Item = Result<pb::raft::BackupChunk, Status>> + Send>,
+    >;
+
+    /// Build a fresh Fjall snapshot and stream the encrypted bytes to the
+    /// operator.
+    ///
+    /// Encryption is performed by `build_snapshot` using the Backup DEK (see
+    /// ADR 0016-v2 §7).  Chunks are 256 KiB; the final chunk carries the
+    /// snapshot_utc_epoch and dek_version parsed from the on-disk header so
+    /// the client can verify the backup envelope without decrypting it.
+    #[tracing::instrument(level = "trace", skip(self))]
+    async fn backup(
+        &self,
+        request: Request<pb::raft::BackupRequest>,
+    ) -> Result<Response<Self::BackupStream>, Status> {
+        let actor = extract_peer_identity(&request);
+        trace!(actor, "operator backup requested");
+
+        // Ensure backup targets the leader to avoid stale data.
+        let current_leader = self.raft_node.metrics().borrow_watched().current_leader;
+        if current_leader.map_or(true, |l| l != self.node_id) {
+            return Err(Status::failed_precondition(
+                "backup must be directed at the current cluster leader",
+            ));
+        }
+
+        // Trigger snapshot build via the snapshot builder trait.
+        let mut builder = self.sm.clone();
+        let built = builder
+            .build_snapshot()
+            .await
+            .map_err(|e| Status::internal(format!("snapshot build failed: {e}")))?;
+
+        let snapshot_path = self.sm.snapshot_dir().join(&built.meta.snapshot_id);
+        let file = tokio::fs::File::open(&snapshot_path)
+            .await
+            .map_err(|e| Status::internal(format!("cannot open snapshot file: {e}")))?;
+        let file_size = file
+            .metadata()
+            .await
+            .map_err(|e| Status::internal(format!("cannot stat snapshot file: {e}")))?
+            .len() as usize;
+
+        if file_size < 12 {
+            return Err(Status::internal("snapshot file too short"));
+        }
+
+        // Read and parse the 12-byte header: [dek_version: u32_be][utc_epoch: u64_be].
+        let (file, header_bytes, dek_version, utc_epoch) = {
+            let mut file = file;
+            let mut header = [0u8; 12];
+            tokio::io::AsyncReadExt::read_exact(&mut file, &mut header)
+                .await
+                .map_err(|e| Status::internal(format!("cannot read snapshot header: {e}")))?;
+            let dv = u32::from_be_bytes(header[..4].try_into().unwrap());
+            let ue = u64::from_be_bytes(header[4..12].try_into().unwrap());
+            (file, header, dv, ue)
+        };
+
+        self.audit.emit(AuditRecord::now(
+            "BACKUP_CREATED",
+            &actor,
+            self.node_id,
+            self.current_dek
+                .read()
+                .unwrap_or_else(|p| p.into_inner())
+                .version,
+            serde_json::json!({
+                "snapshot_utc_epoch": utc_epoch,
+                "dek_version": dek_version,
+                "bytes": file_size,
+            }),
+        ));
+
+        // Stream the entire snapshot (header + body) in 256 KiB chunks. Only
+        // the final chunk carries metadata. State tracks (file, bytes_written,
+        // total_size, dek_version, utc_epoch, header_pending).
+        const CHUNK_SIZE: usize = 256 * 1024;
+        let stream = futures::stream::unfold(
+            (
+                file,
+                0usize,
+                file_size,
+                dek_version,
+                utc_epoch,
+                Some(header_bytes),
+            ),
+            |(mut file, written, total, dv, ue, header_opt)| async move {
+                // Terminated: nothing left to send.
+                if written >= total {
+                    return None;
+                }
+
+                // Determine how many bytes to prefill from the pending header.
+                let (header_len, header_data) =
+                    header_opt.map_or((0, Vec::new()), |h| (h.len(), h.to_vec()));
+                let mut buf = Vec::with_capacity(CHUNK_SIZE);
+                buf.extend(header_data);
+
+                let to_read = CHUNK_SIZE.saturating_sub(header_len);
+                let to_read = to_read.min(total.saturating_sub(written + header_len));
+                if to_read > 0 {
+                    let mut body = vec![0u8; to_read];
+                    if let Err(e) = tokio::io::AsyncReadExt::read_exact(&mut file, &mut body).await
+                    {
+                        return Some((
+                            Err(Status::internal(format!("read error: {e}"))),
+                            (file, written, total, dv, ue, None),
+                        ));
+                    }
+                    buf.extend(body);
+                }
+
+                let new_written = written + header_len + to_read;
+                if new_written >= total {
+                    return Some((
+                        Ok(pb::raft::BackupChunk {
+                            data: buf,
+                            snapshot_utc_epoch: Some(ue),
+                            dek_version: Some(dv),
+                        }),
+                        (file, new_written, total, dv, ue, None),
+                    ));
+                }
+
+                Some((
+                    Ok(pb::raft::BackupChunk {
+                        data: buf,
+                        snapshot_utc_epoch: None,
+                        dek_version: None,
+                    }),
+                    (file, new_written, total, dv, ue, None),
+                ))
+            },
+        );
+
+        Ok(Response::new(Box::pin(stream)))
+    }
+
+    /// Accept a client-streamed encrypted backup, validate its envelope,
+    /// and install it into the Raft state machine via
+    /// `Raft::install_full_snapshot`.
+    ///
+    /// Only call this against a freshly-bootstrapped single-node cluster
+    /// before adding learners (see ADR 0016-v2 §7 / doc Restore runbook).
+    #[tracing::instrument(level = "trace", skip(self, request))]
+    async fn restore(
+        &self,
+        request: Request<Streaming<pb::raft::RestoreChunk>>,
+    ) -> Result<Response<pb::raft::AdminResponse>, Status> {
+        let actor = extract_peer_identity(&request);
+        trace!(actor, "operator restore requested");
+
+        let mut stream = request.into_inner();
+        const MAX_RESTORE_SIZE: usize = 4 * 1024 * 1024 * 1024; // 4 GiB
+        let mut buf: Vec<u8> = Vec::new();
+        while let Some(chunk) = stream.message().await? {
+            if buf.len() + chunk.data.len() > MAX_RESTORE_SIZE {
+                return Err(Status::resource_exhausted(
+                    "restore stream exceeds maximum allowed size (4 GiB)",
+                ));
+            }
+            buf.extend_from_slice(&chunk.data);
+        }
+        if buf.is_empty() {
+            return Err(Status::invalid_argument("restore stream was empty"));
+        }
+
+        let (snapshot, utc_epoch, dek_version) = self
+            .sm
+            .decode_backup_blob(&buf)
+            .map_err(|e| Status::invalid_argument(format!("invalid backup blob: {e}")))?;
+
+        // install_full_snapshot requires the node to be a committed leader.
+        let vote = self.raft_node.metrics().borrow_watched().vote.clone();
+        if !vote.committed {
+            return Err(Status::failed_precondition(
+                "node is not a committed leader; direct restore to the current cluster leader",
+            ));
+        }
+
+        self.raft_node
+            .install_full_snapshot(vote, snapshot)
+            .await
+            .map_err(|e| Status::internal(format!("snapshot install failed: {e}")))?;
+
+        let dek_ver_for_audit = self
+            .current_dek
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
+            .version;
+        self.audit.emit(AuditRecord::now(
+            "BACKUP_RESTORED",
+            &actor,
+            self.node_id,
+            dek_ver_for_audit,
+            serde_json::json!({
+                "snapshot_utc_epoch": utc_epoch,
+                "backup_dek_version": dek_version,
+            }),
+        ));
+
+        tracing::info!(actor, utc_epoch, dek_version, "backup restore complete");
         Ok(Response::new(pb::raft::AdminResponse::default()))
     }
 }

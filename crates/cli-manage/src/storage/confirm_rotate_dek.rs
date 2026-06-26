@@ -23,42 +23,40 @@ use openstack_keystone_distributed_storage::protobuf as pb;
 use super::get_grpc_client;
 use crate::PerformAction;
 
-/// Clear a quarantined keyspace partition.
+/// Confirm a pending emergency DEK rotation (dual-control second factor).
 ///
-/// A partition is automatically quarantined after three AES-256-GCM tag
-/// verification failures within 60 seconds. This command issues a Raft
-/// proposal that propagates the clearance to all cluster members and removes
-/// the persistent quarantine marker.
+/// Must be invoked by a *different* `storage-operator` than the one who ran
+/// `rotate-dek --emergency`, within 5 minutes of that command. Both operator
+/// identities are recorded in the audit log.
 ///
-/// Only use this command after investigating the root cause of the GCM
-/// failures — quarantine protects against data corruption or active tampering.
+/// If the 5-minute window has already expired, the pending rotation has been
+/// automatically aborted and this command will return an error.
 #[derive(Parser)]
-pub(super) struct ClearQuarantineCommand {
-    /// Cluster member to contact (e.g. `https://127.0.0.1:50051`).
+pub(super) struct ConfirmRotateDekCommand {
+    /// Address of the target cluster (e.g. `https://127.0.0.1:50051`).
     #[arg(long)]
     pub cluster_addr: Option<Uri>,
 
-    /// The keyspace partition to un-quarantine.
-    ///
-    /// Common values: "data" (default application data), "meta", "index".
-    #[arg(default_value = "data")]
-    pub partition: String,
+    /// The rotation_id printed by `rotate-dek --emergency`.
+    #[arg(long)]
+    pub rotation_id: String,
 }
 
 #[async_trait]
-impl PerformAction for ClearQuarantineCommand {
+impl PerformAction for ConfirmRotateDekCommand {
+    #[allow(clippy::print_stdout)]
     async fn take_action(self, config: &Config) -> Result<(), Report> {
         let mut client = get_grpc_client(config, self.cluster_addr).await?;
 
         client
-            .clear_quarantine(pb::raft::ClearQuarantineRequest {
-                partition: self.partition.clone(),
+            .confirm_rotate_dek(pb::raft::ConfirmRotateDekRequest {
+                rotation_id: self.rotation_id.clone(),
             })
             .await?;
 
         println!(
-            "Quarantine cleared for partition '{}'. The partition is now writable on all nodes.",
-            self.partition
+            "Emergency DEK rotation {} confirmed. The compromised DEK is now revoked.",
+            self.rotation_id
         );
         Ok(())
     }
