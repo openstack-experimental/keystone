@@ -49,8 +49,8 @@ use crate::types::*;
 ///   X.509 SVID source.  Certificate verification is done by
 ///   `SpiffeServerCertVerifier` (URI SAN, not hostname).  SVID rotation is
 ///   handled internally by `spiffe-rustls`'s `MaterialWatcher`.
-/// * `Static` — Static file-based mTLS.  The `ClientTlsConfig` is refreshed
-///   via a tokio `watch` channel whenever the config file changes.
+/// * `Static` — Static file-based mTLS.  The `ClientTlsConfig` is refreshed via
+///   a tokio `watch` channel whenever the config file changes.
 #[derive(Clone)]
 pub enum RaftTlsClient {
     Spiffe(Arc<rustls::ClientConfig>),
@@ -91,7 +91,8 @@ impl RaftTlsClient {
 /// DNS SANs.  This connector bypasses tonic's TLS layer entirely: the Raft
 /// node address is passed as an `http://` URI so tonic hands the raw TCP
 /// stream directly to us, and we wrap it with `tokio-rustls` using the
-/// SPIFFE-aware `rustls::ClientConfig` produced by `spiffe_rustls::mtls_client`.
+/// SPIFFE-aware `rustls::ClientConfig` produced by
+/// `spiffe_rustls::mtls_client`.
 #[derive(Clone)]
 struct SpiffeConnector {
     tls: Arc<rustls::ClientConfig>,

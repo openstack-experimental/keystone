@@ -61,10 +61,13 @@ fn validate_spiffe_id(
         )));
     }
 
-    if !spiffe_id.path().starts_with("/keystone/storage/") {
+    // Accept paths starting with `/keystone/storage/` (custom format) or
+    // `/ns/<namespace>/sa/<service-account>` (standard SPIRE SpiffeID format).
+    let path = spiffe_id.path();
+    if !(path.starts_with("/keystone/storage/") || path.starts_with("/ns/")) {
         return Err(tonic::Status::permission_denied(format!(
-            "SPIFFE ID path {:?} does not match /keystone/storage/<role>",
-            spiffe_id.path()
+            "SPIFFE ID path {:?} does not match allowed prefix (expected `/keystone/storage/` or `/ns/<ns>/sa/<sa>`)",
+            path
         )));
     }
 
@@ -268,7 +271,15 @@ mod tests {
         let certs = Some(Arc::new(vec![cert]));
         let err = validate_spiffe_id(certs, &trust_domains).unwrap_err();
         assert_eq!(err.code(), tonic::Code::PermissionDenied);
-        assert!(err.message().contains("does not match /keystone/storage/"));
+        assert!(err.message().contains("does not match allowed prefix"));
+    }
+
+    #[test]
+    fn test_spiffe_id_standard_spire_path() {
+        let trust_domains = vec!["example.org".to_string()];
+        let cert = generate_spiffe_cert("example.org", "/ns/default/sa/keystone");
+        let certs = Some(Arc::new(vec![cert]));
+        assert!(validate_spiffe_id(certs, &trust_domains).is_ok());
     }
 
     #[test]

@@ -89,6 +89,7 @@ manifests:
     - tools/k8s/tests/cluster-issuer.yaml
     - tools/k8s/tests/keystone-ca.yaml
     - tools/k8s/tests/keystone-peer-cert.yaml
+    - tools/k8s/tests/keystone-raft-spiffe-id.yaml
 deploy:
   statusCheck: true
   statusCheckDeadlineSeconds: 300
@@ -105,6 +106,12 @@ deploy:
         - host:
             # This command will block Skaffold until the bootstrap job hits 'Completed'
             command: ["kubectl", "wait", "--for=condition=complete", "job/keystone-bootstrap", "--timeout=180s"]
+        - host:
+            # Wait for all Raft pods to be ready before join
+            command: ["kubectl", "wait", "--for=condition=ready", "pod", "-l", "app.kubernetes.io/name=keystone-rs", "--timeout=180s"]
+        - host:
+            # Join non-zero Raft nodes to the cluster (node 0 initialized by bootstrap)
+            command: ["sh", "-c", 'REPLICAS=$(kubectl get sts keystone-rs -o jsonpath="{.spec.replicas}"); for i in $(seq 1 $(($REPLICAS - 1))); do kubectl exec keystone-rs-$i -- keystone-manage storage join https://keystone-rs-0.keystone-rs-internal.default.svc.cluster.local:8300 || true; done']
 
 verify:
   - &api_test_v3
@@ -180,6 +187,22 @@ verify:
       kubernetesCluster:
         overrides: '{ "spec": { "template": { "spec": { "serviceAccountName": "keystone-k8s-auth-test-sa" } } } }'
 
+  - &spiffe
+    name: "raft-spiffe-test"
+    container:
+      image: "keystone-tests"
+      name: "raft-spiffe-test"
+      command: ["/tests/test-raft-spiffe", "--nocapture"]
+      env:
+        - name: "RUST_LOG"
+          value: "info,spiffe=info"
+        - name: "OS_DISTRIBUTED_STORAGE__TRUST_DOMAINS"
+          value: "example.org"
+        - name: "SPIFFE_ENDPOINT_SOCKET"
+          value: "unix:///run/spire/sockets/spire-agent.sock"
+    executionMode:
+      kubernetesCluster: {}
+
   - &keycloak
     name: "keycloak"
     container:
@@ -237,6 +260,7 @@ profiles:
       - *k8s_auth_test
       - *keycloak
       - *dex
+      - *spiffe
 
   - name: local
     build:
