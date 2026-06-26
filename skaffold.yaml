@@ -80,35 +80,6 @@ build:
   local:
     concurrency: 0
 
-profiles:
-  - name: github-ci
-    build:
-      local:
-        useBuildkit: true
-        concurrency: 0
-        tryImportMissing: true
-    verify:
-      - name: "github"
-        container:
-          image: "keystone-tests"
-          name: "github"
-          command: ["/tests/test-github", "--nocapture"]
-          env:
-            - name: "KEYSTONE_URL"
-              value: "http://keystone-rs:8080"
-            - name: "ACTIONS_ID_TOKEN_AUDIENCE"
-              value: "https://github.com"
-        executionMode:
-          kubernetesCluster: {}
-
-  - name: local
-    build:
-      insecureRegistries:
-        - localhost:5000
-      local:
-        useDockerCLI: true
-        concurrency: 0
-        push: true
 manifests:
   kustomize:
     paths:
@@ -136,7 +107,8 @@ deploy:
             command: ["kubectl", "wait", "--for=condition=complete", "job/keystone-bootstrap", "--timeout=180s"]
 
 verify:
-  - name: "api-test-v3"
+  - &api_test_v3
+    name: "api-test-v3"
     container:
       image: "keystone-tests"
       name: "api-test-v3"
@@ -159,7 +131,8 @@ verify:
     executionMode:
       kubernetesCluster: {}
 
-  - name: "api-test-v4"
+  - &api_test_v4
+    name: "api-test-v4"
     container:
       image: "keystone-tests"
       name: "api-test-v4"
@@ -182,7 +155,8 @@ verify:
     executionMode:
       kubernetesCluster: {}
 
-  - name: "k8s-auth-test"
+  - &k8s_auth_test
+    name: "k8s-auth-test"
     container:
       image: "keystone-tests"
       name: "k8s-auth-test"
@@ -206,7 +180,8 @@ verify:
       kubernetesCluster:
         overrides: '{ "spec": { "template": { "spec": { "serviceAccountName": "keystone-k8s-auth-test-sa" } } } }'
 
-  - name: "keycloak"
+  - &keycloak
+    name: "keycloak"
     container:
       image: "keystone-tests"
       name: "keycloak"
@@ -223,7 +198,8 @@ verify:
     executionMode:
       kubernetesCluster: {}
 
-  - name: "dex"
+  - &dex
+    name: "dex"
     container:
       image: "keystone-tests"
       name: "dex"
@@ -235,3 +211,38 @@ verify:
           value: "http://dex:5556"
     executionMode:
       kubernetesCluster: {}
+
+profiles:
+  - name: github-ci
+    build:
+      local:
+        useBuildkit: true
+        concurrency: 0
+        tryImportMissing: true
+    verify:
+      - name: "github"
+        container:
+          image: "keystone-tests"
+          name: "github"
+          command: ["/tests/test-github", "--nocapture"]
+          env:
+            - name: "KEYSTONE_URL"
+              value: "http://keystone-rs:8080"
+            - name: "ACTIONS_ID_TOKEN_AUDIENCE"
+              value: "https://github.com"
+        executionMode:
+          kubernetesCluster: {}
+      - *api_test_v3
+      - *api_test_v4
+      - *k8s_auth_test
+      - *keycloak
+      - *dex
+
+  - name: local
+    build:
+      insecureRegistries:
+        - localhost:5000
+      local:
+        useDockerCLI: true
+        concurrency: 0
+        push: true
