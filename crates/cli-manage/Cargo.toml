@@ -20,6 +20,7 @@ clap = { workspace = true, features = ["derive"] }
 color-eyre.workspace = true
 comfy-table = "7.2"
 eyre.workspace = true
+futures.workspace = true
 inventory.workspace = true
 openstack-keystone-api-types.workspace = true
 openstack-keystone = { version = "0.1", path = "../keystone" }

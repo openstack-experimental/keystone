@@ -217,6 +217,7 @@ pub async fn get_app_server(storage: &Storage) -> Result<Routes, StoreError> {
         storage.current_dek.clone(),
         storage.audit_forwarder.clone(),
         storage.pending_rotations.clone(),
+        storage.state_machine_store.clone(),
     );
     let storage_svc_impl = StorageServiceImpl::new(storage.raft.clone());
 
