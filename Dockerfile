@@ -1,9 +1,11 @@
 ################
 ##### Builder
-FROM rust:1.94.1-slim-trixie AS base
+FROM rust:1.96.0-slim-trixie AS base
+ENV CARGO_HOME=/usr/local/cargo
+ENV CARGO_TARGET_DIR=/app/target
 
 RUN cargo install --locked cargo-chef
-WORKDIR app
+WORKDIR /app
 
 ################
 ##### Plan
@@ -17,10 +19,9 @@ RUN cargo chef prepare --recipe-path recipe.json
 FROM base AS builder
 
 #RUN rustup target add x86_64-unknown-linux-gnu &&\
-RUN apt update &&\
-    apt install -y openssl libssl-dev libssl3 pkg-config \
-    protobuf-compiler &&\
-    update-ca-certificates
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    openssl libssl-dev libssl3 pkg-config protobuf-compiler libprotobuf-dev && \
+    rm -rf /var/lib/apt/lists/* && update-ca-certificates
 
 COPY --from=planner /app/recipe.json recipe.json
 
@@ -34,7 +35,6 @@ COPY tests tests
 COPY Cargo.toml Cargo.toml
 COPY Cargo.lock Cargo.lock
 
-# This is the actual application build.
 RUN cargo build --release --bins
 
 ################
@@ -44,7 +44,7 @@ FROM debian:trixie-slim AS runtime
 LABEL maintainer="Artem Goncharov"
 
 #RUN apk add --no-cache bash openssl ca-certificates
-RUN apt update && apt install -y ca-certificates libssl3 && update-ca-certificates
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates libssl3 && rm -rf /var/lib/apt/lists/* && update-ca-certificates
 
 # Copy application binary from builder image
 COPY --from=builder /app/target/release/keystone /usr/local/bin

@@ -187,7 +187,8 @@ pub struct Credentials {
     pub user_id: String,
 
     /// List of roles the principal has on the scope.
-    #[serde(rename(serialize = "roles"))]
+    #[builder(default)]
+    #[serde(default, rename(serialize = "roles"))]
     pub roles: Vec<String>,
 
     // TODO: replace scope info with a flattened enum

@@ -1,8 +1,10 @@
 # Stage 1: Base
-FROM rust:1.94.1-slim-trixie AS base
+FROM rust:1.96.0-slim-trixie AS base
+ENV CARGO_HOME=/usr/local/cargo
+ENV CARGO_TARGET_DIR=/app/target
 
 RUN cargo install --locked cargo-chef
-WORKDIR app
+WORKDIR /app
 
 # Stage 2: Plan
 FROM base AS planner
@@ -13,15 +15,14 @@ RUN cargo chef prepare --recipe-path recipe.json
 
 # Stage 3: Build
 FROM base AS builder
-RUN apt update &&\
-    apt install -y openssl libssl-dev libssl3 pkg-config \
-    protobuf-compiler &&\
-    update-ca-certificates
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    openssl libssl-dev libssl3 pkg-config protobuf-compiler libprotobuf-dev && \
+    rm -rf /var/lib/apt/lists/* && update-ca-certificates
 
 COPY --from=planner /app/recipe.json recipe.json
 
 # Build dependencies - this is the caching Docker layer!
-RUN cargo chef cook --release --tests --recipe-path recipe.json
+RUN cargo chef cook --release -p test_api -p test_federation --recipe-path recipe.json
 
 #COPY . .
 COPY crates crates
@@ -29,7 +30,7 @@ COPY tests tests
 COPY Cargo.toml Cargo.toml
 COPY Cargo.lock Cargo.lock
 
-# Compile the specific functional test file
+# Compile the specific functional test binaries
 RUN cargo test --release -p test_api --test integration_api_v3 --no-run && \
     cp $(find target/release/deps -name "integration_api_v3-*" -type f -executable) /app/test-api-v3
 RUN cargo test --release -p test_api --test integration_api_v4 --no-run && \
@@ -51,11 +52,12 @@ FROM debian:trixie-slim AS runtime
 LABEL org.opencontainers.image.authors="Artem Goncharov"
 LABEL description="Keystone-rs tests"
 
-RUN apt update &&\
-    apt install -y ca-certificates libssl-dev libssl3 pkg-config &&\
-    update-ca-certificates
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates libssl-dev libssl3 pkg-config && \
+    rm -rf /var/lib/apt/lists/* && update-ca-certificates
 
 WORKDIR /tests
 COPY --from=builder /app/test-* /tests/
+
 
 ENTRYPOINT ["/tests/api"]

@@ -37,7 +37,7 @@ opa_policies_path = policy
 methods = password,token,openid,application_credential,x509
 
 [DEFAULT]
-use_stderr = true
+use_stderr = false
 debug = true
 log_dir = ${STATE_DIR}
 
@@ -66,8 +66,6 @@ node_id = 0
 tls_client_ca_file = /etc/keystone/ca.crt
 tls_cert_file = /etc/keystone/ks.pem
 tls_key_file = /etc/keystone/ks.key
-
-
 dev_mode = true
 
 [webauthn]

@@ -152,8 +152,7 @@ async fn main() -> Result<(), Report> {
             "lsm_tree",
             match args.verbose {
                 0 | 1 => LevelFilter::WARN,
-                2 => LevelFilter::INFO,
-                _ => LevelFilter::DEBUG,
+                _ => LevelFilter::INFO,
             },
         );
 
@@ -201,16 +200,33 @@ async fn main() -> Result<(), Report> {
         // the guard exists outside the scope to make sure buffered logs get flushed to
         // output
         (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
+
+        let log_file_filter = Targets::new()
+            .with_default(if cfg.default.debug {
+                LevelFilter::DEBUG
+            } else {
+                LevelFilter::INFO
+            })
+            .with_target(
+                "openraft",
+                match args.verbose {
+                    0 | 1 => LevelFilter::WARN,
+                    _ => LevelFilter::INFO,
+                },
+            )
+            .with_target(
+                "lsm_tree",
+                match args.verbose {
+                    0 | 1 => LevelFilter::WARN,
+                    _ => LevelFilter::INFO,
+                },
+            );
         log_layers.push(
             tracing_subscriber::fmt::layer()
                 // No colors in the log file
                 .with_ansi(false)
                 .with_writer(non_blocking)
-                .with_filter(if cfg.default.debug {
-                    LevelFilter::DEBUG
-                } else {
-                    LevelFilter::INFO
-                })
+                .with_filter(log_file_filter)
                 .boxed(),
         );
     }

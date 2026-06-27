@@ -235,6 +235,7 @@ verify:
     executionMode:
       kubernetesCluster: {}
 
+
 profiles:
   - name: github-ci
     build:

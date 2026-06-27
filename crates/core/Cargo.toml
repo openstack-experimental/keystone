@@ -34,9 +34,8 @@ sha2.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 serde_urlencoded.workspace = true
-tempfile.workspace = true
 thiserror.workspace = true
-tokio = { workspace = true, features = ["fs"] }
+tokio = { workspace = true, default-features = false }
 tracing.workspace = true
 url = { workspace = true, features = ["serde"] }
 uuid = { workspace = true, features = ["v4"] }
@@ -50,6 +49,7 @@ mockall.workspace = true
 openstack-keystone-api-types = { workspace = true, features = ["builder", "conv"] }
 openstack-keystone-core-types = { workspace = true, features = ["mock"] }
 rstest.workspace = true
+tempfile.workspace = true
 tracing-test = { workspace = true, features = ["no-env-filter"] }
 url.workspace = true
 

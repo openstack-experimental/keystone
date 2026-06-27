@@ -138,7 +138,7 @@ thiserror = { version = "2.0" }
 tokio = { version = "1.52", default-features = false }
 tokio-rustls = "0.26.4"
 tokio-util = { version = "0.7" }
-tonic = { version = "0.14" }
+tonic = { version = "0.14", default-features = false }
 tonic-prost-build = { version = "0.14" }
 tonic-prost = { version = "0.14" }
 tower = { version = "0.5" }
