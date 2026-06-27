@@ -1,0 +1,12 @@
+apiVersion: spire.spiffe.io/v1alpha1
+kind: ClusterSPIFFEID
+metadata:
+  name: keystone-raft
+spec:
+  spiffeIDTemplate: "spiffe://{{ .TrustDomain }}/keystone/storage/{{ .PodSpec.ServiceAccountName }}"
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: keystone-rs
+  ttl: "1h"
+  dnsNameTemplates:
+    - "k8s-workload"

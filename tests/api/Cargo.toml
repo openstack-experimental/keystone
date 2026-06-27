@@ -20,16 +20,23 @@ eyre.workspace = true
 derive_builder.workspace = true
 http.workspace = true
 openstack-keystone-api-types = { workspace = true, features = ["builder"] }
+openstack-keystone-distributed-storage = { workspace = true }
 openstack_sdk = { version = "0.22" }
 reqwest = { workspace = true, features = ["json", "http2", "multipart", "gzip", "deflate"] }
 secrecy = { workspace = true, features = ["serde"] }
 serde.workspace = true
 serde_json.workspace = true
 serde_urlencoded.workspace = true
+spiffe = { workspace = true, features = ["x509-source"] }
+spiffe-rustls.workspace = true
 tracing.workspace = true
-tokio = { workspace = true, features = ["fs"] }
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+tokio = { workspace = true, features = ["fs", "rt-multi-thread", "macros"] }
+tokio-rustls.workspace = true
+tonic = { workspace = true, features = ["tls-aws-lc"] }
 tracing-test = { workspace = true, features = ["no-env-filter"] }
 webauthn-authenticator-rs = { workspace = true, features = ["softtoken"] }
+x509-parser = "0.16"
 url = { workspace = true }
 uuid = { workspace = true, features = ["v4"] }
 async-trait.workspace = true
@@ -47,4 +54,9 @@ test = false
 [[test]]
 name = "k8s_auth"
 path = "tests/k8s_auth.rs"
+test = false
+
+[[test]]
+name = "raft_spiffe"
+path = "tests/raft_spiffe.rs"
 test = false

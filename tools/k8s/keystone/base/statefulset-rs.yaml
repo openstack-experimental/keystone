@@ -5,7 +5,7 @@ metadata:
     app.kubernetes.io/name: keystone-rs
   name: keystone-rs
 spec:
-  replicas: 1
+  replicas: 2
   serviceName: keystone-rs-internal
   selector:
     matchLabels:
@@ -42,16 +42,14 @@ spec:
               # Extract the u64 ID
               NODE_ID=$(echo $POD_NAME | grep -o '[0-9]\+$')
 
-              # Write the identity file
+              # Write the identity file — SPIFFE mTLS mode (ADR 0016-v2 §4.1)
               cat <<EOF > /etc/keystone/site.toml
               [distributed_storage]
               node_id = $NODE_ID
               node_cluster_addr = "https://$POD_NAME.keystone-rs-internal.default.svc.cluster.local:8300"
               node_listener_addr = "0.0.0.0:8300"
               path = "/storage"
-              tls_client_ca_file = "/certs/ca.crt"
-              tls_cert_file = "/certs/tls.crt"
-              tls_key_file = "/certs/tls.key"
+              trust_domains = "example.org"
               EOF
       containers:
         - env:
@@ -110,7 +108,7 @@ spec:
             - mountPath: /etc/keystone/fernet-keys
               name: fernet
             - mountPath: /certs
-              name: keystone-tls
+              name: certs
               readOnly: true
             - mountPath: /etc/keystone
               name: raft-config-shared
@@ -171,11 +169,6 @@ spec:
                 path: "0"
               - key: "k1"
                 path: "1"
-        - name: keystone-tls
-          secret:
-            defaultMode: 420
-            optional: false
-            secretName: keystone-peer-tls
         - name: raft-storage
           emptyDir: {}
         - name: raft-config-shared

@@ -173,10 +173,11 @@ pub(crate) mod tests {
 
     /// Issue #358: the public listener captures the raw TCP peer address into a
     /// `ConnectInfo<SocketAddr>` request extension (the keystone-ng analogue of
-    /// Python Keystone's WSGI `REMOTE_ADDR`). This verifies the capture works and
-    /// composes with the #734 `NormalizePathLayer` wrap: a trailing-slash request
-    /// still normalizes while `ConnectInfo` is populated. Driven fully in-process
-    /// via `Connected<SocketAddr> for SocketAddr`, so no real socket is needed.
+    /// Python Keystone's WSGI `REMOTE_ADDR`). This verifies the capture works
+    /// and composes with the #734 `NormalizePathLayer` wrap: a
+    /// trailing-slash request still normalizes while `ConnectInfo` is
+    /// populated. Driven fully in-process via `Connected<SocketAddr> for
+    /// SocketAddr`, so no real socket is needed.
     #[tokio::test]
     async fn connect_info_is_captured_and_normalizes() {
         async fn echo_addr(ConnectInfo(addr): ConnectInfo<SocketAddr>) -> String {

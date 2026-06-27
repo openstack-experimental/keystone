@@ -34,7 +34,8 @@ struct IdpTokenResponse {
     value: String,
 }
 
-/// Resolve GitHub JWT: prefer `GITHUB_JWT`, then fetch via Actions OIDC API, then skip.
+/// Resolve GitHub JWT: prefer `GITHUB_JWT`, then fetch via Actions OIDC API,
+/// then skip.
 async fn resolve_jwt() -> Option<String> {
     // Direct JWT provided
     if let Ok(jwt) = env::var("GITHUB_JWT") {
