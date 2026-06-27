@@ -586,7 +586,7 @@ impl ClusterAdminService for ClusterAdminServiceImpl {
 
         // Ensure backup targets the leader to avoid stale data.
         let current_leader = self.raft_node.metrics().borrow_watched().current_leader;
-        if current_leader.map_or(true, |l| l != self.node_id) {
+        if current_leader != Some(self.node_id) {
             return Err(Status::failed_precondition(
                 "backup must be directed at the current cluster leader",
             ));
@@ -740,7 +740,7 @@ impl ClusterAdminService for ClusterAdminServiceImpl {
             .map_err(|e| Status::invalid_argument(format!("invalid backup blob: {e}")))?;
 
         // install_full_snapshot requires the node to be a committed leader.
-        let vote = self.raft_node.metrics().borrow_watched().vote.clone();
+        let vote = self.raft_node.metrics().borrow_watched().vote;
         if !vote.committed {
             return Err(Status::failed_precondition(
                 "node is not a committed leader; direct restore to the current cluster leader",

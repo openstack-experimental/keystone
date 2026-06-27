@@ -198,7 +198,7 @@ pub(super) async fn build_token_response(
         state
             .provider
             .get_catalog_provider()
-            .get_catalog(&ExecutionContext::internal(&state), true)
+            .get_catalog(&ExecutionContext::internal(state), true)
             .await?
             .into_iter()
             .map(|(s, es)| CatalogService {

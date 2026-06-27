@@ -20,7 +20,7 @@ use color_eyre::eyre::{Report, Result};
 use eyre::Context;
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use hyper_util::server::conn::auto::Builder;
-use spiffe::SpiffeId;
+use openstack_keystone_core::common::SpiffeId as CoreSpiffeId;
 use spiffe::cert::spiffe_id_from_der;
 use tokio::fs;
 use tokio::net::UnixListener;
@@ -120,11 +120,19 @@ pub async fn start_axum_app(
                     match acceptor.accept(stream).await {
                         Ok(tls_stream) => {
                             let (_, connection) = tls_stream.get_ref();
-                            let spiffe_id: Option<SpiffeId> = connection
+                            let spiffe_id: Option<CoreSpiffeId> = connection
                                 .peer_certificates()
                                 .and_then(|certs| certs.first())
                                 .map(|leaf| spiffe_id_from_der(leaf))
-                                .transpose().unwrap_or_default();
+                                .transpose()
+                                .unwrap_or_default()
+                                .and_then(|s| {
+                                    let id = CoreSpiffeId::new(&s.to_string());
+                                    if id.is_none() {
+                                        tracing::warn!("peer presented a SPIFFE certificate with an unparsable SVID '{}'; dropping identity", s);
+                                    }
+                                    id
+                                });
 
                             let hyper_service = hyper::service::service_fn(move |req: hyper::Request<hyper::body::Incoming>| {
                                 let mut app = app.clone();

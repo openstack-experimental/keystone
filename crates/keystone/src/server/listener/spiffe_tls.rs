@@ -24,6 +24,8 @@ use tower::Service;
 use tower_http::normalize_path::NormalizePath;
 use tracing::info;
 
+use openstack_keystone_core::common::SpiffeId as CoreSpiffeId;
+
 use crate::config::Interface;
 use crate::server::listener::spiffe_common;
 
@@ -60,10 +62,17 @@ pub async fn start_axum_app(
                 tokio::spawn(async move {
                     match acceptor.accept(stream).await {
                         Ok((tls_stream, peer_identity)) => {
+                            let spiffe_id = peer_identity.spiffe_id().and_then(|s| {
+                                let id = CoreSpiffeId::new(&s.to_string());
+                                if id.is_none() {
+                                    tracing::warn!("peer presented a SPIFFE certificate with an unparsable SVID '{}'; dropping identity", s);
+                                }
+                                id
+                            });
 
                             let hyper_service = hyper::service::service_fn(move |req: hyper::Request<hyper::body::Incoming>| {
                                 let mut app = app.clone();
-                                let spiffe_id = peer_identity.spiffe_id().cloned();
+                                let spiffe_id = spiffe_id.clone();
                                 let interface_clone = interface_clone.clone();
                                 async move {
                                     let mut req = req;

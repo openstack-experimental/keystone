@@ -20,7 +20,6 @@ use axum::{
     extract::{FromRef, FromRequestParts},
     http::request::Parts,
 };
-use spiffe::SpiffeId;
 use tracing::{debug, error};
 
 use openstack_keystone_config::Interface;
@@ -30,6 +29,7 @@ use openstack_keystone_core_types::mapping::resolution::IdentitySource;
 
 use crate::api::KeystoneApiError;
 use crate::auth::{ExecutionContext, ValidatedSecurityContext};
+use crate::common::SpiffeId;
 use crate::keystone::ServiceState;
 
 #[derive(Debug, Clone)]
@@ -209,7 +209,6 @@ mod tests {
     use openstack_keystone_config::{AdminInterface, Config, ConfigManager};
 
     use openstack_keystone_core_types::mapping::MappingProviderError;
-    use spiffe::SpiffeId;
     use std::sync::Arc;
 
     async fn create_test_state(mapping_provider: MockMappingProvider) -> ServiceState {

@@ -14,3 +14,5 @@
 //! # Common functionality
 
 pub mod password_hashing;
+pub mod spiffe_id;
+pub use spiffe_id::SpiffeId;
