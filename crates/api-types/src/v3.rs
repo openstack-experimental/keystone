@@ -12,6 +12,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //! # V3 API types
+pub mod application_credential;
 pub mod auth;
 pub mod credential;
 pub mod domain;
@@ -25,6 +26,8 @@ pub mod role_assignment;
 pub mod service;
 pub mod user;
 
+#[cfg(feature = "conv")]
+mod application_credential_conv;
 #[cfg(feature = "conv")]
 mod auth_conv;
 #[cfg(feature = "conv")]

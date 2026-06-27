@@ -11,35 +11,32 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-
+use utoipa::OpenApi;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
 use crate::keystone::ServiceState;
 
-pub mod application_credential;
 mod create;
 mod delete;
-mod groups;
 mod list;
-mod os_ec2;
-mod password;
 mod show;
 pub mod types;
-mod update;
 
-pub(super) fn openapi_router() -> OpenApiRouter<ServiceState> {
+/// OpenApi specification for the application-credential API.
+#[derive(OpenApi)]
+#[openapi(
+    tags(
+        (name="application_credentials", 
+        description=r#"Application Credentials are a way to authenticate to the OpenStack Identity service without using a user's password. They are useful for applications that need to interact with OpenStack services.
+"#),
+    )
+)]
+pub struct ApiDoc;
+
+pub(crate) fn openapi_router() -> OpenApiRouter<ServiceState> {
     OpenApiRouter::new()
-        .routes(routes!(list::list, create::create))
-        .routes(routes!(show::show, delete::delete))
-        .routes(routes!(update::update))
-        .routes(routes!(password::change_password))
-        .routes(routes!(groups::groups))
-        .merge(os_ec2::openapi_router())
-        .nest(
-            "/{user_id}/application_credentials",
-            application_credential::openapi_router(),
-        )
+        .routes(routes!(create::create))
+        .routes(routes!(delete::remove))
+        .routes(routes!(list::list))
+        .routes(routes!(show::show))
 }
-
-#[cfg(test)]
-mod tests {}
