@@ -21,6 +21,7 @@ use openstack_sdk::AsyncOpenStack;
 
 pub mod domain;
 pub mod project;
+pub mod project_v4;
 
 pub fn get_system_scope_config() -> Result<CloudConfig> {
     let mut cfg = CloudConfig::from_env()?;

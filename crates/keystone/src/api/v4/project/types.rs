@@ -11,14 +11,6 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-//! # V4 API types
-pub mod auth;
-pub mod mapping;
-pub mod project;
-pub mod token_restriction;
-pub mod user;
+//! Project API types.
 
-#[cfg(feature = "conv")]
-mod project_conv;
-#[cfg(feature = "conv")]
-mod token_restriction_conv;
+pub use openstack_keystone_api_types::v4::project::*;

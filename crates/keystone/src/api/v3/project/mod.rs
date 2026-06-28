@@ -52,3 +52,12 @@ pub(crate) fn openapi_router() -> OpenApiRouter<ServiceState> {
         .routes(routes!(list::list))
         .routes(routes!(show::show))
 }
+
+/// Public helper: returns a router with all v3 project handlers
+/// Used by v4 to reuse non-breaking endpoints
+pub(crate) fn v3_handlers_router() -> OpenApiRouter<ServiceState> {
+    OpenApiRouter::new()
+        .routes(routes!(delete::remove))
+        .routes(routes!(list::list))
+        .routes(routes!(show::show))
+}

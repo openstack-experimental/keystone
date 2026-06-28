@@ -11,14 +11,23 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-//! # V4 API types
-pub mod auth;
-pub mod mapping;
-pub mod project;
-pub mod token_restriction;
-pub mod user;
+//! Project API types.
 
-#[cfg(feature = "conv")]
-mod project_conv;
-#[cfg(feature = "conv")]
-mod token_restriction_conv;
+use openstack_keystone_core_types::resource as provider_types;
+
+use crate::v4::project as api_types;
+
+impl From<api_types::ProjectCreate> for provider_types::ProjectCreate {
+    fn from(value: api_types::ProjectCreate) -> Self {
+        Self {
+            description: value.description,
+            domain_id: value.domain_id,
+            enabled: value.enabled,
+            extra: value.extra,
+            id: value.id,
+            is_domain: value.is_domain,
+            name: value.name,
+            parent_id: value.parent_id,
+        }
+    }
+}

@@ -31,6 +31,7 @@ use crate::keystone::ServiceState;
 pub mod auth;
 pub mod group;
 pub mod mapping;
+pub mod project;
 pub mod role;
 pub mod role_assignment;
 pub mod token;
@@ -59,6 +60,7 @@ pub(super) fn openapi_router() -> OpenApiRouter<ServiceState> {
         .nest("/k8s_auth", k8s_auth::openapi_router())
         .nest("/role_assignments", role_assignment::openapi_router())
         .nest("/roles", role::openapi_router())
+        .nest("/projects", project::openapi_router())
         .nest("/tokens", token::openapi_router())
         .nest("/users", user::openapi_router())
         .routes(routes!(version))
