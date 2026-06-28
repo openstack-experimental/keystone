@@ -54,6 +54,54 @@ pub struct DistributedStorageConfiguration {
     /// CI/CD deployment validation check (ADR 0016-v2 §10 invariant 11).
     #[serde(default)]
     pub dev_mode: bool,
+
+    /// Nodes to attempt Raft cluster join against on startup (ADR 0016-v2
+    /// §4.3).
+    ///
+    /// CSV list of ``<node_id>=<address>`` pairs, analogous to HashCorp Vault's
+    /// ``[auto_join]``, ZooKeeper's ``initialMembers``, or etcd's
+    /// ``--initial-cluster``. Every node in the cluster should configure
+    /// the same list.
+    ///
+    /// The bootstrap node (``node_id == 0``) passes the full map to
+    /// ``Raft::initialize()`` so all members are known from the start.
+    /// Non-bootstrap nodes iterate the list and attempt ``add_learner`` at
+    /// each address until one succeeds.  If empty, non-bootstrap nodes will
+    /// not auto-join and must be joined manually via ``keystone-manage
+    /// storage join``.
+    ///
+    /// Example (INI / site.toml):
+    /// ```toml
+    /// retry_join_nodes = "0=https://keystone-rs-0.svc:8300,1=https://keystone-rs-1.svc:8300,2=https://keystone-rs-2.svc:8300"
+    /// ```
+    #[serde(default, deserialize_with = "deserialize_retry_join_nodes")]
+    pub retry_join_nodes: Vec<(u64, String)>,
+}
+
+/// Deserialize ``id=address`` pairs from a CSV string.
+///
+/// Format: ``"0=https://node0:8300,1=https://node1:8300"``.  Entries without
+/// an ``=`` separator or with invalid node IDs are silently skipped.
+fn deserialize_retry_join_nodes<'de, D>(deserializer: D) -> Result<Vec<(u64, String)>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let s = String::deserialize(deserializer)?;
+    let mut out = Vec::new();
+    for entry in s.split(',') {
+        let entry = entry.trim();
+        if entry.is_empty() {
+            continue;
+        }
+        let (id_part, addr) = entry.split_once('=').ok_or_else(|| {
+            serde::de::Error::custom(format!("expected 'id=addr' format, got '{}'", entry))
+        })?;
+        let id: u64 = id_part.trim().parse().map_err(|e| {
+            serde::de::Error::custom(format!("invalid node id '{}': {}", id_part.trim(), e))
+        })?;
+        out.push((id, addr.trim().to_string()));
+    }
+    Ok(out)
 }
 
 fn default_tcp_address() -> SocketAddr {
@@ -85,6 +133,39 @@ pub struct SpiffeTls {
     /// Trusted domains for SPIFFE verification.
     #[serde(deserialize_with = "csv")]
     pub trust_domains: Vec<String>,
+
+    /// SPIFFE path prefix required on all storage SVIDs (e.g.
+    /// `/keystone/storage/`). The role segment follows this prefix:
+    /// `spiffe://<td><spiffe_path_prefix><role>`.
+    #[serde(default = "default_spiffe_path_prefix")]
+    pub spiffe_path_prefix: String,
+
+    /// SPIFFE role that authorises sensitive management operations (backup,
+    /// restore, rotate DEK, clear quarantine, etc.).  Defaults to
+    /// `"storage-operator"`.
+    #[serde(default = "default_operator_role")]
+    pub operator_role: String,
+
+    /// Allow-list of SPIFFE SVIDs that may participate in peer-to-peer Raft
+    /// operations (`metrics`, `init`, `add_learner`, `change_membership`).
+    /// When empty the check falls back to trust-domain-only validation.
+    ///
+    /// Example:
+    /// ```yaml
+    /// allowed_peer_svids:
+    ///   - spiffe://example.org/ns/default/sa/keystone
+    ///   - spiffe://example.org/keystone/storage/node
+    /// ```
+    #[serde(default)]
+    pub allowed_peer_svids: Vec<String>,
+}
+
+fn default_spiffe_path_prefix() -> String {
+    "/keystone/storage/".to_string()
+}
+
+fn default_operator_role() -> String {
+    "storage-operator".to_string()
 }
 
 #[cfg(test)]
@@ -135,6 +216,34 @@ tls_client_ca_file = /baz
             assert_eq!(tls.tls_client_ca_file, Some(PathBuf::from("/baz")));
         } else {
             panic!("should be regular tls");
+        }
+    }
+
+    #[test]
+    fn test_spiffe_peer_svids_toml() {
+        let c = Config::builder()
+            .add_source(File::from_str(
+                r#"
+node_cluster_addr = "https://localhost:8310"
+node_id = 1
+path = "/keystone/storage"
+trust_domains = "example.org"
+allowed_peer_svids = ["spiffe://example.org/ns/default/sa/keystone"]
+"#,
+                FileFormat::Toml,
+            ))
+            .build()
+            .unwrap();
+        let cfg: DistributedStorageConfiguration = c.try_deserialize().unwrap();
+        assert_eq!(1, cfg.node_id);
+        if let RaftTlsConfiguration::Spiffe(spiffe) = &cfg.tls_configuration {
+            assert!(spiffe.trust_domains.contains(&"example.org".to_string()));
+            assert_eq!(
+                spiffe.allowed_peer_svids,
+                vec!["spiffe://example.org/ns/default/sa/keystone".to_string()]
+            );
+        } else {
+            panic!("should be spiffe");
         }
     }
 

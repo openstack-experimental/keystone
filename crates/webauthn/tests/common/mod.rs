@@ -151,6 +151,7 @@ pub async fn get_state(
             path: tmp_db_dir.path().to_path_buf(),
             tls_configuration: RaftTlsConfiguration::Tls(tls_configuration),
             dev_mode: true,
+            retry_join_nodes: vec![],
         });
     }
     let mut policy_enforcer_mock = MockPolicy::default();

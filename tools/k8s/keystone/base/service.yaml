@@ -41,6 +41,7 @@ metadata:
   name: keystone-rs-internal
 spec:
   clusterIP: None
+  publishNotReadyAddresses: true
   ports:
     - name: raft
       port: 8300

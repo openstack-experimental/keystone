@@ -13,15 +13,6 @@ repos:
       - id: check-merge-conflict
       - id: debug-statements
       - id: check-yaml
-        files: .*\.(yaml|yml)$
-        exclude: |
-          (?x)(
-            ^zuul.d/.*$|
-            skaffold.yaml
-          )
-      - id: check-yaml
-        name: check-yaml (skaffold)
-        files: ^skaffold\.yaml$
         args: [--allow-multiple-documents]
       - id: check-json
   - repo: https://github.com/crate-ci/typos

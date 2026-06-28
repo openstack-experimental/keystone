@@ -74,10 +74,10 @@ struct InstanceHolder {
 }
 
 impl InstanceHolder {
-    // from_env() removes KEYSTONE_DEV_KEK from the process environment after reading
-    // (ADR 0016-v2 §2.1).  In production each node is a separate process so removal
-    // happens once per process.  Here all test nodes share one process, so we re-set
-    // the variable before each init_storage call.
+    // from_env() removes KEYSTONE_DEV_KEK from the process environment after
+    // reading (ADR 0016-v2 §2.1).  In production each node is a separate
+    // process so removal happens once per process.  Here all test nodes share
+    // one process, so we re-set the variable before each init_storage call.
     // SAFETY: nodes are initialised sequentially before any async tasks that read
     // the environment are spawned, so there are no concurrent readers.
     #[allow(unsafe_code)]
@@ -514,5 +514,6 @@ fn get_ds_config(
         path: db_path,
         tls_configuration: openstack_keystone_config::RaftTlsConfiguration::Tls(tls_config.clone()),
         dev_mode: true,
+        retry_join_nodes: vec![],
     }
 }

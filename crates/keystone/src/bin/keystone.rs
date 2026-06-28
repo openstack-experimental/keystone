@@ -445,12 +445,19 @@ async fn main() -> Result<(), Report> {
         let raft_cancel_token = token.clone();
         let raft_config = cfg.clone();
         let raft_storage = concrete_storage.as_ref().expect("storage is None").clone();
+        let raft_storage_init = raft_storage.clone();
+
+        // Signal channel: start_raft_app sends `true` once the gRPC listener
+        // is bound. `ensure_raft_initialized` waits for this before calling
+        // join_cluster, ensuring the new node's listener can accept replication
+        // traffic from the leader immediately.
+        let (raft_bound_tx, raft_bound_rx) = tokio::sync::watch::channel(false);
         handles.spawn(async move {
-            raft_grpc::start_raft_app(raft_storage, raft_config, raft_cancel_token)
+            raft_grpc::start_raft_app(raft_storage, raft_config, raft_cancel_token, raft_bound_tx)
                 .await
                 .unwrap()
         });
-        raft_grpc::ensure_raft_initialized(shared_state.clone(), cfg.clone()).await?;
+        raft_grpc::ensure_raft_initialized(raft_storage_init, cfg.clone(), raft_bound_rx).await?;
     }
 
     // OPA Subprocess

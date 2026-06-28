@@ -44,15 +44,28 @@ impl PerformAction for JoinCommand {
             {
                 let mut client = get_grpc_client(config, Some(self.cluster_addr)).await?;
 
-                client
+                match client
                     .add_learner(pb::raft::AddLearnerRequest {
                         node: Some(pb::raft::Node {
                             node_id: cfg.node_id,
                             rpc_addr: format!("{host}:{port}"),
                         }),
                     })
-                    .await?;
-                Ok(())
+                    .await
+                {
+                    Ok(_) => Ok(()),
+                    Err(e) if e.code() == tonic::Code::AlreadyExists => {
+                        // Node is already registered in the cluster (likely via
+                        // auto-join from retry_join_nodes config). Idempotent
+                        // success, used by skaffold post-deploy hook.
+                        tracing::debug!(
+                            node_id = cfg.node_id,
+                            "node already registered in cluster, join is idempotent"
+                        );
+                        Ok(())
+                    }
+                    Err(e) => Err(eyre!("add_learner failed: {e}")),
+                }
             } else {
                 Err(eyre!(
                     "cannot determine the host:port of the current node to announce to the cluster"

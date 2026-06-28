@@ -50,7 +50,9 @@ spec:
               node_listener_addr = "0.0.0.0:8300"
               path = "/storage"
               trust_domains = "example.org"
+              allowed_peer_svids = ["spiffe://example.org/ns/default/sa/keystone"]
               dev_mode = true
+              retry_join_nodes = "0=https://keystone-rs-0.keystone-rs-internal.default.svc.cluster.local:8300,1=https://keystone-rs-1.keystone-rs-internal.default.svc.cluster.local:8300"
               EOF
       containers:
         - env:
@@ -92,7 +94,7 @@ spec:
           readinessProbe:
             failureThreshold: 3
             httpGet:
-              path: /
+              path: /ready
               port: keystone-rs
               scheme: HTTP
             periodSeconds: 10
@@ -101,7 +103,7 @@ spec:
           startupProbe:
             failureThreshold: 600
             httpGet:
-              path: /
+              path: /ready
               port: keystone-rs
               scheme: HTTP
             periodSeconds: 1

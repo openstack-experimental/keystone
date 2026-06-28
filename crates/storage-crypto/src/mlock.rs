@@ -68,6 +68,7 @@ struct AllocState {
 
 static ALLOC_STATE: OnceLock<AllocState> = OnceLock::new();
 
+#[allow(clippy::expect_used)]
 fn alloc_state() -> &'static AllocState {
     ALLOC_STATE.get_or_init(|| {
         let page_size = sysconf(SysconfVar::PAGE_SIZE)
@@ -120,6 +121,7 @@ impl LockedKey {
     /// Copy `bytes` into a fresh guard-paged allocation.
     ///
     /// Panics on OOM; allocation failure for key material is fatal.
+    #[allow(clippy::expect_used)]
     pub fn from_raw(bytes: [u8; KEY_SIZE]) -> Self {
         let mut key = Self::alloc().expect("OOM allocating LockedKey");
         key.as_mut().copy_from_slice(&bytes);

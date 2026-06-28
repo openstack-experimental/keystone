@@ -43,6 +43,16 @@ use crate::protobuf::raft::VoteResponse as PbVoteResponse;
 use crate::protobuf::raft::raft_service_client::RaftServiceClient;
 use crate::types::*;
 
+/// Strip a URI scheme (`https://`, `http://`, etc.) from `addr`, returning the
+/// remaining authority + path portion (e.g. `keystone-rs-0:8300`).
+///
+/// Used to normalize addresses that arrive from config files (which often carry
+/// an `https://` prefix) before passing them to tonic's channel builder, which
+/// prepends its own scheme.
+fn strip_scheme(addr: &str) -> &str {
+    addr.split_once("://").map(|(_, rest)| rest).unwrap_or(addr)
+}
+
 /// TLS client mode for Raft peer connections.
 ///
 /// * `Spiffe` — SPIFFE mTLS using a `rustls::ClientConfig` built from a live
@@ -67,15 +77,16 @@ impl RaftTlsClient {
         match self {
             Self::Static(rx) => {
                 let tls_cfg = rx.borrow().clone();
-                Ok(
-                    tonic::transport::Endpoint::from_shared(format!("https://{addr}"))?
-                        .tls_config(tls_cfg)?
-                        .connect_lazy(),
-                )
+                Ok(tonic::transport::Endpoint::from_shared(format!(
+                    "https://{}",
+                    strip_scheme(addr)
+                ))?
+                .tls_config(tls_cfg)?
+                .connect_lazy())
             }
             Self::Spiffe(cfg) => {
                 let connector = SpiffeConnector { tls: cfg.clone() };
-                Channel::builder(format!("http://{addr}").parse()?)
+                Channel::builder(format!("http://{}", strip_scheme(addr)).parse()?)
                     .connect_with_connector(connector)
                     .await
                     .map_err(|e| StoreError::Other(eyre::eyre!("SPIFFE gRPC connect failed: {e}")))
@@ -190,7 +201,7 @@ impl NetworkConnection {
                 // needs to cross thread boundaries.
                 let tls_cfg = rx.borrow().clone();
                 Channel::builder(
-                    format!("https://{addr}")
+                    format!("https://{}", strip_scheme(addr))
                         .parse()
                         .map_err(|e| RPCError::Unreachable(Unreachable::new(&e)))?,
                 )
@@ -206,7 +217,7 @@ impl NetworkConnection {
                 // Use `http://` so tonic forwards the URI directly to our
                 // connector without attempting its own hostname-based TLS.
                 Channel::builder(
-                    format!("http://{addr}")
+                    format!("http://{}", strip_scheme(addr))
                         .parse()
                         .map_err(|e| RPCError::Unreachable(Unreachable::new(&e)))?,
                 )
@@ -655,4 +666,40 @@ pub async fn init_tls_watcher(
     });
 
     Ok(RaftTlsClient::Static(rx))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_strip_scheme_https() {
+        assert_eq!(
+            strip_scheme("https://keystone-rs-0.svc:8300"),
+            "keystone-rs-0.svc:8300"
+        );
+    }
+
+    #[test]
+    fn test_strip_scheme_http() {
+        assert_eq!(strip_scheme("http://localhost:8300"), "localhost:8300");
+    }
+
+    #[test]
+    fn test_strip_scheme_no_scheme() {
+        assert_eq!(
+            strip_scheme("keystone-rs-0.svc:8300"),
+            "keystone-rs-0.svc:8300"
+        );
+    }
+
+    #[test]
+    fn test_strip_scheme_fqdn() {
+        assert_eq!(
+            strip_scheme(
+                "https://keystone-rs-0.keystone-rs-internal.default.svc.cluster.local:8300"
+            ),
+            "keystone-rs-0.keystone-rs-internal.default.svc.cluster.local:8300"
+        );
+    }
 }

@@ -386,6 +386,10 @@ impl StorageApi for MockStorage {
         Ok(false)
     }
 
+    async fn current_leader(&self) -> Option<u64> {
+        None
+    }
+
     async fn initialize(
         &self,
         _nodes: HashMap<u64, openstack_keystone_storage_api::Node>,

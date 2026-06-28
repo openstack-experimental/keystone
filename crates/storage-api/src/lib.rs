@@ -455,4 +455,10 @@ pub trait StorageApi: Send + Sync {
 
     /// Initializes the Raft cluster with the given node configuration.
     async fn initialize(&self, nodes: HashMap<u64, Node>) -> Result<(), StoreError>;
+
+    /// Returns the Raft leader node id, if a stable leader is elected.
+    /// The storage is considered operationally ready only when this returns
+    /// `Some(id)`, because without a leader writes will return
+    /// `ForwardToLeader(None, None)` (ADR 0016-v2 §4.2).
+    async fn current_leader(&self) -> Option<u64>;
 }

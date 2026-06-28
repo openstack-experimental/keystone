@@ -256,6 +256,12 @@ async fn check_database(state: &ServiceState) -> DatabaseStatus {
 }
 
 /// Perform Raft storage checks.
+///
+/// Returns OK when the cluster is initialized.  Leadership status is not
+/// checked: without a leader, writes return \[ForwardToLeader\] and clients
+/// can retry. Blocking the readiness probe on leader election causes
+/// startup-probe failures in k8s when the 1‑second probe fires before the
+/// Raft engine finishes its async step-up (ADR 0016-v2 §4.2).
 async fn check_storage(state: &ServiceState) -> RaftStatus {
     let Some(storage) = state.storage.as_deref() else {
         return RaftStatus::skipped();

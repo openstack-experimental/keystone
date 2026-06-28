@@ -188,6 +188,7 @@ impl DekEpoch {
 ///
 /// Returns the key in a `LockedKey` per ADR §9, Invariant 8.
 /// Panics on OOM; allocation failure for key material is fatal.
+#[allow(clippy::expect_used)]
 pub fn generate_dek() -> LockedKey {
     let mut dek = LockedKey::alloc().expect("OOM allocating DEK");
     // rand::fill is CSPRNG-backed (OsRng on all supported platforms).

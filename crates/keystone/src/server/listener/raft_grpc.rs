@@ -12,7 +12,6 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //! # Raft gRPC listener
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use color_eyre::eyre::{Report, Result};
@@ -27,9 +26,9 @@ use openstack_keystone_distributed_storage::{
     app::{Storage, get_app_server},
     network::get_server_tls_config,
 };
+use openstack_keystone_storage_api::StorageApi;
 
 use crate::config::Config;
-use crate::keystone::ServiceState;
 use crate::server::listener::spiffe_common;
 
 /// Validate a SPIFFE ID from the peer certificate chain against the allowed
@@ -40,6 +39,7 @@ use crate::server::listener::spiffe_common;
 fn validate_spiffe_id(
     peer_certs: Option<Arc<Vec<rustls::pki_types::CertificateDer<'static>>>>,
     trust_domains: &[String],
+    allowed_peer_svids: &[String],
 ) -> std::result::Result<(), tonic::Status> {
     use spiffe::cert::spiffe_id_from_der;
 
@@ -61,14 +61,26 @@ fn validate_spiffe_id(
         )));
     }
 
-    // Accept paths starting with `/keystone/storage/` (custom format) or
-    // `/ns/<namespace>/sa/<service-account>` (standard SPIRE SpiffeID format).
-    let path = spiffe_id.path();
-    if !(path.starts_with("/keystone/storage/") || path.starts_with("/ns/")) {
-        return Err(tonic::Status::permission_denied(format!(
-            "SPIFFE ID path {:?} does not match allowed prefix (expected `/keystone/storage/` or `/ns/<ns>/sa/<sa>`)",
-            path
-        )));
+    // If allowed_peer_svids is configured, enforce exact SVID match for tight
+    // identity control (ADR 0016-v2 §4.1). Otherwise fall back to prefix check.
+    let spiffe_uri = format!("spiffe://{}{}", td_name, spiffe_id.path());
+    if !allowed_peer_svids.is_empty() {
+        if !allowed_peer_svids.contains(&spiffe_uri) {
+            return Err(tonic::Status::permission_denied(format!(
+                "SPIFFE ID '{}' is not in the allowed peer SVID list",
+                spiffe_uri
+            )));
+        }
+    } else {
+        // Fallback: accept paths starting with `/keystone/storage/` (custom format) or
+        // `/ns/<namespace>/sa/<service-account>` (standard SPIRE SpiffeID format).
+        let path = spiffe_id.path();
+        if !(path.starts_with("/keystone/storage/") || path.starts_with("/ns/")) {
+            return Err(tonic::Status::permission_denied(format!(
+                "SPIFFE ID path {:?} does not match allowed prefix (expected `/keystone/storage/` or `/ns/<ns>/sa/<sa>`)",
+                path
+            )));
+        }
     }
 
     Ok(())
@@ -77,11 +89,13 @@ fn validate_spiffe_id(
 /// gRPC interceptor that enforces SPIFFE mTLS identity on Raft connections.
 ///
 /// Every inbound gRPC request must carry a peer certificate whose SPIFFE ID
-/// matches the pattern `spiffe://<trust_domain>/keystone/storage/<role>` for
-/// one of the configured trust domains (ADR 0016-v2 §4.1).
+/// matches one of the configured trust domains (ADR 0016-v2 §4.1).
+/// When `allowed_peer_svids` is configured, only those exact SVIDs are
+/// accepted.
 #[derive(Clone)]
 struct SpiffeIdInterceptor {
     trust_domains: Arc<Vec<String>>,
+    allowed_peer_svids: Arc<Vec<String>>,
 }
 
 impl tonic::service::Interceptor for SpiffeIdInterceptor {
@@ -89,16 +103,27 @@ impl tonic::service::Interceptor for SpiffeIdInterceptor {
         &mut self,
         req: tonic::Request<()>,
     ) -> std::result::Result<tonic::Request<()>, tonic::Status> {
-        validate_spiffe_id(req.peer_certs(), &self.trust_domains)?;
+        validate_spiffe_id(
+            req.peer_certs(),
+            &self.trust_domains,
+            &self.allowed_peer_svids,
+        )?;
         Ok(req)
     }
 }
 
 /// Start Raft backed distributed storage.
+///
+/// Broadcasts `true` on `bound_signal` once the Raft gRPC listener is bound
+/// and accepting connections.  Callers may use this to coordinate with
+/// [`ensure_raft_initialized`] — a non-bootstrap node should wait for its own
+/// listener to be ready before calling `add_learner`, otherwise the leader
+/// cannot replicate back to it.
 pub async fn start_raft_app(
     storage: Arc<Storage>,
     config: Config,
     cancel_token: CancellationToken,
+    bound_signal: tokio::sync::watch::Sender<bool>,
 ) -> Result<(), Report> {
     let Some(ds) = &config.distributed_storage else {
         return Ok(());
@@ -119,6 +144,7 @@ pub async fn start_raft_app(
     match &ds.tls_configuration {
         RaftTlsConfiguration::Spiffe(spiffe_cfg) => {
             let trust_domains = spiffe_cfg.trust_domains.clone();
+            let allowed_peer_svids = spiffe_cfg.allowed_peer_svids.clone();
 
             let server_config = match spiffe_common::build_spiffe_config(
                 cancel_token.clone(),
@@ -135,13 +161,14 @@ pub async fn start_raft_app(
 
             let interceptor = SpiffeIdInterceptor {
                 trust_domains: Arc::new(trust_domains),
+                allowed_peer_svids: Arc::new(allowed_peer_svids),
             };
 
             let mut server =
                 tonic::transport::Server::builder().layer(InterceptorLayer::new(interceptor));
             let tonic_router = server.add_routes(storage_app);
 
-            info!(
+            tracing::info!(
                 "Starting distributed storage at {:?} with SPIFFE mTLS",
                 grpc_addr
             );
@@ -179,6 +206,7 @@ pub async fn start_raft_app(
                 },
             );
 
+            _ = bound_signal.send(true);
             tonic_router
                 .serve_with_incoming_shutdown(incoming, async move {
                     cancel_token.cancelled().await;
@@ -191,8 +219,9 @@ pub async fn start_raft_app(
                 tonic::transport::Server::builder().tls_config(get_server_tls_config(&config)?)?;
             let tonic_router = server.add_routes(storage_app);
 
-            info!("Starting distributed storage at {:?}", grpc_addr);
+            tracing::info!("Starting distributed storage at {:?}", grpc_addr);
 
+            _ = bound_signal.send(true);
             tonic_router
                 .serve_with_shutdown(grpc_addr, async move {
                     cancel_token.cancelled().await;
@@ -204,26 +233,110 @@ pub async fn start_raft_app(
     Ok(())
 }
 
-/// Ensure Raft cluster is initialized with at least the current node.
-pub async fn ensure_raft_initialized(state: ServiceState, config: Config) -> Result<(), Report> {
-    if let Some(ds) = &config.distributed_storage
-        && let Some(storage) = state.storage.as_deref()
-        && !storage.is_initialized().await?
-        && ds.node_id == 0
-        && let (Some(host), Some(port)) = (ds.node_cluster_addr.host(), ds.node_cluster_addr.port())
-    {
-        info!("Initializing the integrated storage since it is not initialized.");
+/// Ensure Raft cluster is initialized with at least the current node, or join
+/// an existing cluster if this node is not the bootstrap node.
+///
+/// `listener_bound` is a watch channel that [`start_raft_app`] signals once the
+/// Raft gRPC listener is bound.  Non-bootstrap nodes wait for this signal
+/// before calling `add_learner`, ensuring their own listener is ready to accept
+/// replication traffic from the leader.
+pub async fn ensure_raft_initialized(
+    storage: Arc<Storage>,
+    config: Config,
+    mut listener_bound: tokio::sync::watch::Receiver<bool>,
+) -> Result<(), Report> {
+    let Some(ds) = &config.distributed_storage else {
+        return Ok(());
+    };
+
+    let node_id = storage.node_id();
+    let my_cluster_addr = ds.node_cluster_addr.to_string();
+
+    // Bootstrap node (node_id == 0): self-bootstrap as a single-node cluster.
+    // Known peers join later via [add_learner] (non-bootstrap path below).
+    if !storage.is_initialized().await? && node_id == 0 {
+        let self_node = openstack_keystone_storage_api::Node {
+            node_id,
+            rpc_addr: my_cluster_addr.clone(),
+        };
+
+        tracing::info!("Self-bootstrapping integrated storage as single-node cluster.");
         storage
-            .initialize(HashMap::from([(
-                0,
-                openstack_keystone_storage_api::Node {
-                    node_id: 0,
-                    rpc_addr: format!("{host}:{port}"),
-                },
-            )]))
+            .initialize([(node_id, self_node)].into_iter().collect())
             .await?;
+        return Ok(());
     }
-    Ok(())
+
+    // Non-bootstrap node: auto-join using known peer addresses.
+    if ds.retry_join_nodes.is_empty() {
+        if !storage.is_initialized().await? {
+            return Err(Report::msg(
+                "Raft cluster is not initialized and no retry_join_nodes configured - \
+                 set retry_join_nodes or join manually",
+            ));
+        }
+        return Ok(());
+    }
+
+    let join_addrs: Vec<&str> = ds
+        .retry_join_nodes
+        .iter()
+        .filter(|(pid, _)| *pid != node_id)
+        .map(|(_, addr)| addr.as_str())
+        .collect();
+
+    if join_addrs.is_empty() {
+        return Err(Report::msg(
+            "retry_join_nodes contains only this node - no peers to join",
+        ));
+    }
+
+    // Wait for our own Raft gRPC listener to be bound before calling
+    // add_learner.  Without this, the leader may try to replicate back to us
+    // before the port is accepting connections, causing join timeouts.
+    tokio::time::timeout(std::time::Duration::from_secs(30), async {
+        let _ = listener_bound.changed().await;
+    })
+    .await
+    .map_err(|_| Report::msg("Raft listener did not bind within 30s — aborting cluster join"))?;
+
+    // With publishNotReadyAddresses: true on the headless service, DNS records
+    // are available for non-ready pods.  The FQDN from config will resolve
+    // correctly, so the leader can replicate to us once replication starts.
+    tracing::info!(
+        node_id,
+        join_count = join_addrs.len(),
+        "Waiting for Raft cluster to be available before joining..."
+    );
+    for attempt in 0..60 {
+        for join_addr in &join_addrs {
+            match storage.join_cluster(join_addr, &my_cluster_addr).await {
+                Ok(()) => {
+                    tracing::info!(node_id, join_addr, "Successfully joined Raft cluster.");
+                    return Ok(());
+                }
+                Err(e) => {
+                    tracing::debug!(
+                        node_id,
+                        join_addr,
+                        ?e,
+                        "join attempt failed, trying next address"
+                    );
+                }
+            }
+        }
+        if attempt % 10 == 0 {
+            tracing::debug!(
+                node_id,
+                attempt,
+                "still waiting for join addresses to be available"
+            );
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    }
+    Err(Report::msg(
+        "timed out joining Raft cluster - none of the retry_join_nodes responded",
+    ))
 }
 
 #[cfg(test)]
@@ -251,7 +364,7 @@ mod tests {
         let trust_domains = vec!["example.org".to_string()];
         let cert = generate_spiffe_cert("example.org", "/keystone/storage/node-0");
         let certs = Some(Arc::new(vec![cert]));
-        assert!(validate_spiffe_id(certs, &trust_domains).is_ok());
+        assert!(validate_spiffe_id(certs, &trust_domains, &[]).is_ok());
     }
 
     #[test]
@@ -259,7 +372,7 @@ mod tests {
         let trust_domains = vec!["example.org".to_string()];
         let cert = generate_spiffe_cert("evil.org", "/keystone/storage/node-0");
         let certs = Some(Arc::new(vec![cert]));
-        let err = validate_spiffe_id(certs, &trust_domains).unwrap_err();
+        let err = validate_spiffe_id(certs, &trust_domains, &[]).unwrap_err();
         assert_eq!(err.code(), tonic::Code::PermissionDenied);
         assert!(err.message().contains("evil.org"));
     }
@@ -269,7 +382,7 @@ mod tests {
         let trust_domains = vec!["example.org".to_string()];
         let cert = generate_spiffe_cert("example.org", "/admin/delete");
         let certs = Some(Arc::new(vec![cert]));
-        let err = validate_spiffe_id(certs, &trust_domains).unwrap_err();
+        let err = validate_spiffe_id(certs, &trust_domains, &[]).unwrap_err();
         assert_eq!(err.code(), tonic::Code::PermissionDenied);
         assert!(err.message().contains("does not match allowed prefix"));
     }
@@ -279,13 +392,13 @@ mod tests {
         let trust_domains = vec!["example.org".to_string()];
         let cert = generate_spiffe_cert("example.org", "/ns/default/sa/keystone");
         let certs = Some(Arc::new(vec![cert]));
-        assert!(validate_spiffe_id(certs, &trust_domains).is_ok());
+        assert!(validate_spiffe_id(certs, &trust_domains, &[]).is_ok());
     }
 
     #[test]
     fn test_spiffe_id_no_certs() {
         let trust_domains = vec!["example.org".to_string()];
-        let err = validate_spiffe_id(None, &trust_domains).unwrap_err();
+        let err = validate_spiffe_id(None, &trust_domains, &[]).unwrap_err();
         assert_eq!(err.code(), tonic::Code::PermissionDenied);
         assert!(err.message().contains("no peer certificate"));
     }
@@ -294,7 +407,7 @@ mod tests {
     fn test_spiffe_id_empty_chain() {
         let trust_domains = vec!["example.org".to_string()];
         let certs = Some(Arc::new(vec![]));
-        let err = validate_spiffe_id(certs, &trust_domains).unwrap_err();
+        let err = validate_spiffe_id(certs, &trust_domains, &[]).unwrap_err();
         assert_eq!(err.code(), tonic::Code::PermissionDenied);
         assert!(err.message().contains("empty certificate chain"));
     }
@@ -305,7 +418,7 @@ mod tests {
         let certs = Some(Arc::new(vec![rustls::pki_types::CertificateDer::from(
             vec![0x00, 0x01],
         )]));
-        let err = validate_spiffe_id(certs, &trust_domains).unwrap_err();
+        let err = validate_spiffe_id(certs, &trust_domains, &[]).unwrap_err();
         assert_eq!(err.code(), tonic::Code::PermissionDenied);
         assert!(err.message().contains("Invalid SPIFFE ID"));
     }
@@ -316,7 +429,7 @@ mod tests {
         let cert_1 = generate_spiffe_cert("example.org", "/keystone/storage/node-0");
         let cert_2 = generate_spiffe_cert("example.net", "/keystone/storage/node-1");
 
-        assert!(validate_spiffe_id(Some(Arc::new(vec![cert_1])), &trust_domains).is_ok());
-        assert!(validate_spiffe_id(Some(Arc::new(vec![cert_2])), &trust_domains).is_ok());
+        assert!(validate_spiffe_id(Some(Arc::new(vec![cert_1])), &trust_domains, &[]).is_ok());
+        assert!(validate_spiffe_id(Some(Arc::new(vec![cert_2])), &trust_domains, &[]).is_ok());
     }
 }

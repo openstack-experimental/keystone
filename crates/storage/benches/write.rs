@@ -57,6 +57,7 @@ impl InstanceHolder {
                 tls_config.clone(),
             ),
             dev_mode: true,
+            retry_join_nodes: vec![],
         }
     }
 

@@ -47,6 +47,9 @@ use crate::pb::raft::cluster_admin_service_server::ClusterAdminServiceServer;
 use crate::pb::raft::raft_service_server::RaftServiceServer;
 use crate::protobuf::api::storage_service_client::StorageServiceClient;
 use crate::protobuf::api::storage_service_server::StorageServiceServer;
+use crate::protobuf::raft::AddLearnerRequest;
+use crate::protobuf::raft::Node as PbNode;
+use crate::protobuf::raft::cluster_admin_service_client::ClusterAdminServiceClient;
 use crate::store_command::*;
 use crate::types::*;
 use openstack_keystone_storage_api::Node;
@@ -195,6 +198,22 @@ pub async fn init_storage(config_manager: &Arc<ConfigManager>) -> Result<Storage
     };
     let (audit_forwarder, _audit_task) = AuditForwarder::spawn(audit_key);
 
+    // Extract SPIFFE configuration when the cluster is in SPIFFE mTLS mode
+    // so the admin service interceptor can validate SVID patterns.
+    let (spiffe_trust_domains, spiffe_path_prefix, operator_role, allowed_peer_svids) =
+        if let openstack_keystone_config::RaftTlsConfiguration::Spiffe(spiffe) =
+            &ds_config.tls_configuration
+        {
+            (
+                Some(spiffe.trust_domains.clone()),
+                spiffe.spiffe_path_prefix.clone(),
+                spiffe.operator_role.clone(),
+                spiffe.allowed_peer_svids.clone(),
+            )
+        } else {
+            (None, String::new(), String::new(), Vec::new())
+        };
+
     Ok(Storage {
         connection_pool: DashMap::new(),
         raft,
@@ -205,6 +224,10 @@ pub async fn init_storage(config_manager: &Arc<ConfigManager>) -> Result<Storage
         current_dek,
         audit_forwarder,
         pending_rotations,
+        spiffe_trust_domains,
+        spiffe_path_prefix,
+        operator_role,
+        allowed_peer_svids,
     })
 }
 
@@ -225,6 +248,10 @@ pub async fn get_app_server(storage: &Storage) -> Result<Routes, StoreError> {
         storage.audit_forwarder.clone(),
         storage.pending_rotations.clone(),
         storage.state_machine_store.clone(),
+        storage.spiffe_trust_domains.clone(),
+        storage.spiffe_path_prefix.clone(),
+        storage.operator_role.clone(),
+        storage.allowed_peer_svids.clone(),
     );
     let storage_svc_impl = StorageServiceImpl::new(storage.raft.clone());
 
@@ -242,7 +269,7 @@ pub struct Storage {
     /// Raft cluster nodes connection pool.
     connection_pool: DashMap<u64, Channel>,
     /// TLS client mode for Raft peer connections.
-    tls_client: RaftTlsClient,
+    pub(crate) tls_client: RaftTlsClient,
     /// Raft instance.
     pub raft: Raft,
     /// This node's Raft ID (used to tag audit records for per-node
@@ -259,6 +286,19 @@ pub struct Storage {
     pub audit_forwarder: AuditForwarder,
     /// Pending emergency DEK rotations (shared with FjallStateMachine).
     pending_rotations: Arc<Mutex<HashMap<String, crate::store_command::PendingRotation>>>,
+    /// SPIFFE trust domains for SVID pattern validation. `None` in
+    /// TLS-fallback mode — pattern and role checks are skipped.
+    pub spiffe_trust_domains: Option<Vec<String>>,
+    /// SPIFFE path prefix for SVID pattern validation (e.g.
+    /// `/keystone/storage/`). Empty when in TLS-fallback mode — pattern
+    /// checks are skipped.
+    pub spiffe_path_prefix: String,
+    /// SPIFFE role that authorizes sensitive management operations.  Empty when
+    /// in TLS-fallback mode — role checks are skipped.
+    pub operator_role: String,
+    /// Allow-list of SPIFFE SVIDs accepted for peer-to-peer Raft operations.
+    /// Empty list means trust-domain-only validation is used.
+    pub allowed_peer_svids: Vec<String>,
 }
 
 #[async_trait]
@@ -569,6 +609,10 @@ impl StorageApi for Storage {
             .map_err(|e| StoreError::RaftFatal { source: e })?)
     }
 
+    async fn current_leader(&self) -> Option<u64> {
+        self.raft.metrics().borrow_watched().current_leader
+    }
+
     async fn initialize(&self, nodes: HashMap<u64, Node>) -> Result<(), ApiStoreError> {
         let pb_nodes: HashMap<u64, pb::raft::Node> = nodes
             .into_iter()
@@ -591,12 +635,58 @@ impl StorageApi for Storage {
 }
 
 impl Storage {
-    /// Get the last log index processed by the node.
-    ///
-    /// # Returns
-    /// The last log index, if available.
     pub fn last_log_index(&self) -> Option<u64> {
         self.raft.metrics().borrow_watched().last_log_index
+    }
+
+    pub fn node_id(&self) -> u64 {
+        self.node_id
+    }
+
+    /// Return the current Raft leader node id, if elected.
+    pub fn current_leader(&self) -> Option<u64> {
+        self.raft.metrics().borrow_watched().current_leader
+    }
+
+    /// Join this node to the Raft cluster by calling [`add_learner`] on the
+    /// leader.  Returns `Ok(())` once the leader accepts the learner; the
+    /// actual Raft replication (heartbeats, log entries) happens asynchronously
+    /// via OpenRaft's built-in retry loop.
+    ///
+    /// # Parameters
+    /// - `leader_addr`: The gRPC address of the current cluster leader (e.g.
+    ///   `hostname:8300`).
+    /// - `my_cluster_addr`: This node's address that peers will connect to
+    ///   (e.g. `hostname:8300`).
+    pub async fn join_cluster(
+        &self,
+        leader_addr: &str,
+        my_cluster_addr: &str,
+    ) -> Result<(), StoreError> {
+        let channel = self.tls_client.connect(leader_addr).await?;
+        let mut client = ClusterAdminServiceClient::new(channel);
+
+        let _resp = client
+            .add_learner(tonic::Request::new(AddLearnerRequest {
+                node: Some(PbNode {
+                    node_id: self.node_id,
+                    rpc_addr: my_cluster_addr.to_string(),
+                }),
+            }))
+            .await
+            .map_err(|s| StoreError::Other(eyre::eyre!("add_learner gRPC call failed: {s}")))?;
+
+        tracing::info!(
+            my_id = self.node_id,
+            leader_addr,
+            my_cluster_addr,
+            "add_learner accepted, replication will start asynchronously"
+        );
+
+        // Replication is handled by OpenRaft's ReplicationHandler which retries
+        // on transient failures (DNS propagation delay, port not yet bound, etc.).
+        // No need to block here waiting for `current_leader()`.
+        Ok(())
     }
 
     /// Get the channel to the given node.

@@ -12,8 +12,10 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 use std::collections::{BTreeMap, HashMap};
+use std::num::NonZeroU32;
 use std::sync::{Arc, Mutex, RwLock};
 
+use governor::{DefaultKeyedRateLimiter, Quota, RateLimiter};
 use openraft::RaftSnapshotBuilder;
 use openraft::async_runtime::WatchReceiver;
 use openstack_keystone_storage_crypto::{DekEpoch, KekProvider, generate_dek};
@@ -29,6 +31,28 @@ use crate::pb;
 use crate::protobuf::raft::cluster_admin_service_server::ClusterAdminService;
 use crate::store_command::{MutationInner, PendingRotation, StoreCommand};
 use crate::types::*;
+
+// ---------------------------------------------------------------------------
+// Security constants (ADR 0016-v2 §1 and §4.1)
+// ---------------------------------------------------------------------------
+
+/// Maximum `RotateDek` invocations per operator per hour.
+const ROTATE_DEK_PER_HOUR: NonZeroU32 = {
+    match NonZeroU32::new(2) {
+        Some(v) => v,
+        None => panic!("rate limit constant must be non-zero"),
+    }
+};
+
+/// Maximum `ClearQuarantine` invocations per operator per hour.
+const CLEAR_QUARANTINE_PER_HOUR: NonZeroU32 = {
+    match NonZeroU32::new(10) {
+        Some(v) => v,
+        None => panic!("rate limit constant must be non-zero"),
+    }
+};
+
+type IdentityLimiter = DefaultKeyedRateLimiter<String>;
 
 /// Extract the peer TLS identity from the request: prefers SPIFFE URI SAN,
 /// falls back to CN, or returns `"unknown"` if no peer cert is present.
@@ -64,6 +88,152 @@ fn extract_peer_identity<T>(request: &tonic::Request<T>) -> String {
         .unwrap_or_else(|| "unknown".to_owned())
 }
 
+/// Validates a SPIFFE URI against the
+/// `spiffe://<trust-domain><spiffe_path_prefix><role>` pattern and configured
+/// trust domains. Returns the `<role>` segment.
+///
+/// Errors with `PERMISSION_DENIED` if the URI is malformed, the trust domain is
+/// not in the configured list, or the path does not match.
+fn parse_spiffe_storage_id(
+    id: &str,
+    trust_domains: &[String],
+    prefix: &str,
+) -> Result<String, Status> {
+    let rest = id
+        .strip_prefix("spiffe://")
+        .ok_or_else(|| Status::permission_denied("peer identity is not a SPIFFE URI"))?;
+
+    let slash = rest
+        .find('/')
+        .ok_or_else(|| Status::permission_denied("SPIFFE ID is missing a path component"))?;
+    let (domain, path) = rest.split_at(slash);
+
+    if !trust_domains.iter().any(|d| d == domain) {
+        return Err(Status::permission_denied(format!(
+            "SPIFFE trust domain '{domain}' is not in the configured trust domain list"
+        )));
+    }
+
+    // `path` starts with '/', strip the configured prefix to get the role.
+    let role = path
+        .strip_prefix(prefix)
+        .filter(|r| !r.is_empty() && !r.contains('/'))
+        .ok_or_else(|| {
+            Status::permission_denied(format!(
+                "SPIFFE ID '{id}' does not match the required pattern \
+                 spiffe://<trust-domain>{prefix}<role>"
+            ))
+        })?;
+
+    Ok(role.to_owned())
+}
+
+// ---------------------------------------------------------------------------
+// RBAC — operator role enforcement
+// ---------------------------------------------------------------------------
+
+/// Verifies the peer identity and, in SPIFFE mode, asserts the role matches
+/// the configured operator role (ADR 0016-v2 §1).
+///
+/// In TLS-fallback mode emits a security warning and allows the request
+/// through; network isolation is the compensating control per ADR 0016-v2 §4.2.
+fn require_operator<T>(
+    request: &tonic::Request<T>,
+    trust_domains: Option<&[String]>,
+    spiffe_path_prefix: &str,
+    operator_role: &str,
+) -> Result<String, Status> {
+    let identity = extract_peer_identity(request);
+
+    match trust_domains {
+        Some(domains) => {
+            if !identity.starts_with("spiffe://") {
+                return Err(Status::permission_denied(
+                    "SPIFFE mode is active; peer must present a SPIFFE URI SAN",
+                ));
+            }
+            let role = parse_spiffe_storage_id(&identity, domains, spiffe_path_prefix)?;
+            if role != operator_role {
+                return Err(Status::permission_denied(format!(
+                    "role '{role}' is not authorized for this operation; \
+                     required: '{operator_role}'"
+                )));
+            }
+        }
+        None => {
+            tracing::warn!(
+                identity,
+                "RBAC role check skipped in TLS-fallback mode; \
+                 upgrade to SPIFFE mTLS to enforce operator role-based access \
+                 control (ADR 0016-v2 §4.2)"
+            );
+        }
+    }
+
+    Ok(identity)
+}
+
+/// Validates the peer's SPIFFE identity for internal Raft operations.
+///
+/// When `allowed_peer_svids` is non-empty, the identity must match one of the
+/// allow-listed SVIDs. Otherwise falls back to trust-domain-only validation.
+///
+/// In TLS-fallback mode (`trust_domains = None`) the check is skipped entirely.
+fn check_peer_trust_domain<T>(
+    request: &tonic::Request<T>,
+    trust_domains: Option<&[String]>,
+    allowed_peer_svids: &[String],
+) -> Result<String, Status> {
+    let identity = extract_peer_identity(request);
+
+    if trust_domains.is_some() && !identity.starts_with("spiffe://") {
+        return Err(Status::permission_denied(
+            "SPIFFE mode is active; peer must present a SPIFFE URI SAN",
+        ));
+    }
+
+    if allowed_peer_svids.is_empty() {
+        // Fallback: trust-domain-only check. Skipped entirely in TLS-fallback
+        // mode (`trust_domains = None`), so this branch is a no-op there.
+        if let Some(domains) = trust_domains {
+            parse_spiffe_trust_domain(&identity, domains)?;
+        }
+    } else {
+        // Allow-list check. In TLS-fallback mode this code is unreachable
+        // because `allowed_peer_svids` is always empty when `trust_domains`
+        // is `None` (set in `app.rs`).
+        if !allowed_peer_svids.contains(&identity) {
+            return Err(Status::permission_denied(format!(
+                "SPIFFE ID '{identity}' is not in the allowed peer SVID list"
+            )));
+        }
+    }
+
+    Ok(identity)
+}
+
+/// Extract and validate only the SPIFFE trust domain from the peer identity,
+/// returning it on success. Unlike `parse_spiffe_storage_id`, this does not
+/// require a specific path prefix or role.
+fn parse_spiffe_trust_domain(id: &str, trust_domains: &[String]) -> Result<(), Status> {
+    let rest = id
+        .strip_prefix("spiffe://")
+        .ok_or_else(|| Status::permission_denied("peer identity is not a SPIFFE URI"))?;
+
+    let slash = rest
+        .find('/')
+        .ok_or_else(|| Status::permission_denied("SPIFFE ID is missing a path component"))?;
+    let (domain, _path) = rest.split_at(slash);
+
+    if !trust_domains.iter().any(|d| d == domain) {
+        return Err(Status::permission_denied(format!(
+            "SPIFFE trust domain '{domain}' is not in the configured trust domain list"
+        )));
+    }
+
+    Ok(())
+}
+
 /// Raft cluster administrative operations.
 ///
 /// # Responsibilities
@@ -88,6 +258,21 @@ pub struct ClusterAdminServiceImpl {
     pending_rotations: Arc<Mutex<HashMap<String, PendingRotation>>>,
     /// State machine store — used for backup snapshot building and restore.
     sm: Arc<StateMachineStore>,
+    /// SPIFFE trust domains for SVID pattern validation.
+    /// `None` in TLS-fallback mode — pattern and role checks are skipped.
+    spiffe_trust_domains: Option<Vec<String>>,
+    /// Per-identity rate limiter for RotateDek (ADR 0016-v2 §1: 2/hour).
+    rotate_dek_limiter: Arc<IdentityLimiter>,
+    /// Per-identity rate limiter for ClearQuarantine (ADR 0016-v2 §1: 10/hour).
+    clear_quarantine_limiter: Arc<IdentityLimiter>,
+    /// SPIFFE path prefix for SVID pattern validation. Empty in TLS-fallback.
+    spiffe_path_prefix: String,
+    /// SPIFFE role that authorises sensitive management operations. Empty in
+    /// TLS-fallback mode.
+    operator_role: String,
+    /// Allow-list of SVIDs permitted for peer-to-peer Raft operations.
+    /// When empty falls back to trust-domain-only check.
+    allowed_peer_svids: Vec<String>,
 }
 
 impl ClusterAdminServiceImpl {
@@ -110,6 +295,10 @@ impl ClusterAdminServiceImpl {
         audit: AuditForwarder,
         pending_rotations: Arc<Mutex<HashMap<String, PendingRotation>>>,
         sm: Arc<StateMachineStore>,
+        spiffe_trust_domains: Option<Vec<String>>,
+        spiffe_path_prefix: String,
+        operator_role: String,
+        allowed_peer_svids: Vec<String>,
     ) -> Self {
         Self {
             raft_node,
@@ -119,6 +308,14 @@ impl ClusterAdminServiceImpl {
             audit,
             pending_rotations,
             sm,
+            spiffe_trust_domains,
+            spiffe_path_prefix,
+            operator_role,
+            allowed_peer_svids,
+            rotate_dek_limiter: Arc::new(RateLimiter::keyed(Quota::per_hour(ROTATE_DEK_PER_HOUR))),
+            clear_quarantine_limiter: Arc::new(RateLimiter::keyed(Quota::per_hour(
+                CLEAR_QUARANTINE_PER_HOUR,
+            ))),
         }
     }
 
@@ -170,6 +367,11 @@ impl ClusterAdminService for ClusterAdminServiceImpl {
     #[tracing::instrument(level = "trace", skip(self))]
     async fn init(&self, request: Request<pb::raft::InitRequest>) -> Result<Response<()>, Status> {
         trace!("Initializing Raft cluster");
+        check_peer_trust_domain(
+            &request,
+            self.spiffe_trust_domains.as_deref(),
+            &self.allowed_peer_svids,
+        )?;
         let req = request.into_inner();
 
         // Initialize the cluster
@@ -195,6 +397,11 @@ impl ClusterAdminService for ClusterAdminServiceImpl {
         &self,
         request: Request<pb::raft::AddLearnerRequest>,
     ) -> Result<Response<pb::raft::AdminResponse>, Status> {
+        check_peer_trust_domain(
+            &request,
+            self.spiffe_trust_domains.as_deref(),
+            &self.allowed_peer_svids,
+        )?;
         let req = request.into_inner();
 
         let node = req
@@ -259,6 +466,11 @@ impl ClusterAdminService for ClusterAdminServiceImpl {
         &self,
         request: Request<pb::raft::ChangeMembershipRequest>,
     ) -> Result<Response<pb::raft::AdminResponse>, Status> {
+        check_peer_trust_domain(
+            &request,
+            self.spiffe_trust_domains.as_deref(),
+            &self.allowed_peer_svids,
+        )?;
         let req = request.into_inner();
 
         trace!(
@@ -286,9 +498,14 @@ impl ClusterAdminService for ClusterAdminServiceImpl {
     #[tracing::instrument(level = "trace", skip(self))]
     async fn metrics(
         &self,
-        _request: Request<()>,
+        request: Request<()>,
     ) -> Result<Response<pb::raft::MetricsResponse>, Status> {
         trace!("Collecting metrics");
+        check_peer_trust_domain(
+            &request,
+            self.spiffe_trust_domains.as_deref(),
+            &self.allowed_peer_svids,
+        )?;
         let metrics = self
             .get_metrics()
             .map_err(|e| Status::internal(format!("Failed to write to store: {}", e)))?;
@@ -318,7 +535,18 @@ impl ClusterAdminService for ClusterAdminServiceImpl {
         &self,
         request: Request<pb::raft::ClearQuarantineRequest>,
     ) -> Result<Response<()>, Status> {
-        let actor = extract_peer_identity(&request);
+        let actor = require_operator(
+            &request,
+            self.spiffe_trust_domains.as_deref(),
+            &self.spiffe_path_prefix,
+            &self.operator_role,
+        )?;
+        // rate limit - 10 per hour per operator identity.
+        self.clear_quarantine_limiter
+            .check_key(&actor)
+            .map_err(|_| {
+                Status::resource_exhausted("ClearQuarantine rate limit exceeded; try again later")
+            })?;
         let partition = request.into_inner().partition;
         if partition.is_empty() {
             return Err(Status::invalid_argument(
@@ -375,7 +603,16 @@ impl ClusterAdminService for ClusterAdminServiceImpl {
         &self,
         request: Request<pb::raft::RotateDekRequest>,
     ) -> Result<Response<pb::raft::AdminResponse>, Status> {
-        let actor = extract_peer_identity(&request);
+        let actor = require_operator(
+            &request,
+            self.spiffe_trust_domains.as_deref(),
+            &self.spiffe_path_prefix,
+            &self.operator_role,
+        )?;
+        // rate limit - 2 per hour per operator identity.
+        self.rotate_dek_limiter.check_key(&actor).map_err(|_| {
+            Status::resource_exhausted("RotateDek rate limit exceeded; try again later")
+        })?;
         let req = request.into_inner();
 
         let current_version = {
@@ -396,7 +633,7 @@ impl ClusterAdminService for ClusterAdminServiceImpl {
 
         if req.emergency {
             // Stage 1 of dual-control: persist the pending entry; the DEK is
-            // NOT yet active.  A second operator must call ConfirmRotateDek.
+            // NOT yet active. A second operator must call ConfirmRotateDek.
             let rotation_id = uuid::Uuid::new_v4().to_string();
             let expires_at = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -488,7 +725,12 @@ impl ClusterAdminService for ClusterAdminServiceImpl {
         &self,
         request: Request<pb::raft::ConfirmRotateDekRequest>,
     ) -> Result<Response<pb::raft::AdminResponse>, Status> {
-        let actor = extract_peer_identity(&request);
+        let actor = require_operator(
+            &request,
+            self.spiffe_trust_domains.as_deref(),
+            &self.spiffe_path_prefix,
+            &self.operator_role,
+        )?;
         let req = request.into_inner();
 
         if req.rotation_id.is_empty() {
@@ -502,7 +744,7 @@ impl ClusterAdminService for ClusterAdminServiceImpl {
         );
 
         // Fast pre-check on the in-memory map so we can return a clear error
-        // before proposing to Raft.  The authoritative check is in the state
+        // before proposing to Raft. The authoritative check is in the state
         // machine apply handler, but this avoids unnecessary log entries.
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -573,7 +815,7 @@ impl ClusterAdminService for ClusterAdminServiceImpl {
     /// operator.
     ///
     /// Encryption is performed by `build_snapshot` using the Backup DEK (see
-    /// ADR 0016-v2 §7).  Chunks are 256 KiB; the final chunk carries the
+    /// ADR 0016-v2 §7). Chunks are 256 KiB; the final chunk carries the
     /// snapshot_utc_epoch and dek_version parsed from the on-disk header so
     /// the client can verify the backup envelope without decrypting it.
     #[tracing::instrument(level = "trace", skip(self))]
@@ -581,7 +823,12 @@ impl ClusterAdminService for ClusterAdminServiceImpl {
         &self,
         request: Request<pb::raft::BackupRequest>,
     ) -> Result<Response<Self::BackupStream>, Status> {
-        let actor = extract_peer_identity(&request);
+        let actor = require_operator(
+            &request,
+            self.spiffe_trust_domains.as_deref(),
+            &self.spiffe_path_prefix,
+            &self.operator_role,
+        )?;
         trace!(actor, "operator backup requested");
 
         // Ensure backup targets the leader to avoid stale data.
@@ -716,7 +963,12 @@ impl ClusterAdminService for ClusterAdminServiceImpl {
         &self,
         request: Request<Streaming<pb::raft::RestoreChunk>>,
     ) -> Result<Response<pb::raft::AdminResponse>, Status> {
-        let actor = extract_peer_identity(&request);
+        let actor = require_operator(
+            &request,
+            self.spiffe_trust_domains.as_deref(),
+            &self.spiffe_path_prefix,
+            &self.operator_role,
+        )?;
         trace!(actor, "operator restore requested");
 
         let mut stream = request.into_inner();
@@ -770,5 +1022,161 @@ impl ClusterAdminService for ClusterAdminServiceImpl {
 
         tracing::info!(actor, utc_epoch, dek_version, "backup restore complete");
         Ok(Response::new(pb::raft::AdminResponse::default()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const TRUST_DOMAINS: &[&str] = &["example.com", "alt.example.com"];
+    const PREFIX: &str = "/keystone/storage/";
+    const OPERATOR_ROLE: &str = "storage-operator";
+
+    fn domains() -> Vec<String> {
+        TRUST_DOMAINS.iter().map(|s| s.to_string()).collect()
+    }
+
+    // parse_spiffe_storage_id — valid identities
+
+    #[test]
+    fn spiffe_id_valid_operator() {
+        let role = parse_spiffe_storage_id(
+            "spiffe://example.com/keystone/storage/storage-operator",
+            &domains(),
+            PREFIX,
+        )
+        .expect("valid SPIFFE ID");
+        assert_eq!(role, OPERATOR_ROLE);
+    }
+
+    #[test]
+    fn spiffe_id_valid_node_role() {
+        let role = parse_spiffe_storage_id(
+            "spiffe://alt.example.com/keystone/storage/node",
+            &domains(),
+            PREFIX,
+        )
+        .expect("valid SPIFFE ID");
+        assert_eq!(role, "node");
+    }
+
+    // parse_spiffe_storage_id — invalid identities
+
+    #[test]
+    fn spiffe_id_wrong_trust_domain() {
+        let err = parse_spiffe_storage_id(
+            "spiffe://untrusted.com/keystone/storage/storage-operator",
+            &domains(),
+            PREFIX,
+        )
+        .expect_err("untrusted domain should fail");
+        assert_eq!(err.code(), tonic::Code::PermissionDenied);
+    }
+
+    #[test]
+    fn spiffe_id_wrong_path_prefix() {
+        let err = parse_spiffe_storage_id(
+            "spiffe://example.com/other/service/storage-operator",
+            &domains(),
+            PREFIX,
+        )
+        .expect_err("wrong path prefix should fail");
+        assert_eq!(err.code(), tonic::Code::PermissionDenied);
+    }
+
+    #[test]
+    fn spiffe_id_empty_role() {
+        let err =
+            parse_spiffe_storage_id("spiffe://example.com/keystone/storage/", &domains(), PREFIX)
+                .expect_err("empty role should fail");
+        assert_eq!(err.code(), tonic::Code::PermissionDenied);
+    }
+
+    #[test]
+    fn spiffe_id_extra_path_segment() {
+        let err = parse_spiffe_storage_id(
+            "spiffe://example.com/keystone/storage/storage-operator/extra",
+            &domains(),
+            PREFIX,
+        )
+        .expect_err("extra path segment should fail");
+        assert_eq!(err.code(), tonic::Code::PermissionDenied);
+    }
+
+    #[test]
+    fn spiffe_id_not_a_spiffe_uri() {
+        let err = parse_spiffe_storage_id("https://example.com/foo", &domains(), PREFIX)
+            .expect_err("non-SPIFFE URI should fail");
+        assert_eq!(err.code(), tonic::Code::PermissionDenied);
+    }
+
+    // Rate limiter — basic token consumption
+
+    #[test]
+    fn rate_limiter_allows_up_to_burst() {
+        let limiter: Arc<IdentityLimiter> =
+            Arc::new(RateLimiter::keyed(Quota::per_hour(ROTATE_DEK_PER_HOUR)));
+        let key = "spiffe://example.com/keystone/storage/storage-operator".to_owned();
+        // Initial burst of 2 should be allowed.
+        assert!(limiter.check_key(&key).is_ok(), "first request allowed");
+        assert!(limiter.check_key(&key).is_ok(), "second request allowed");
+        // Third request within the same window should be denied.
+        assert!(
+            limiter.check_key(&key).is_err(),
+            "third request within burst window denied"
+        );
+    }
+
+    #[test]
+    fn rate_limiter_independent_keys() {
+        let limiter: Arc<IdentityLimiter> =
+            Arc::new(RateLimiter::keyed(Quota::per_hour(ROTATE_DEK_PER_HOUR)));
+        let key_a = "spiffe://example.com/keystone/storage/storage-operator".to_owned();
+        let key_b = "spiffe://example.com/keystone/storage/other-operator".to_owned();
+        // Exhaust key_a.
+        limiter.check_key(&key_a).ok();
+        limiter.check_key(&key_a).ok();
+        assert!(limiter.check_key(&key_a).is_err(), "key_a exhausted");
+        // key_b is independent and still has capacity.
+        assert!(limiter.check_key(&key_b).is_ok(), "key_b unaffected");
+    }
+
+    // Trust domain only — used for internal cluster operations
+
+    #[test]
+    fn spiffe_trust_domain_ok_standard_path() {
+        assert!(
+            parse_spiffe_trust_domain(
+                "spiffe://example.com/keystone/storage/storage-operator",
+                &domains(),
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn spiffe_trust_domain_ok_arbitrary_path() {
+        assert!(
+            parse_spiffe_trust_domain("spiffe://example.com/ns/default/sa/keystone", &domains(),)
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn spiffe_trust_domain_wrong_domain() {
+        assert!(
+            parse_spiffe_trust_domain("spiffe://untrusted.example.com/foo", &domains(),).is_err()
+        );
+    }
+
+    #[test]
+    fn spiffe_trust_domain_not_spiffe_uri() {
+        assert!(parse_spiffe_trust_domain("foo", &domains(),).is_err());
+    }
+
+    #[test]
+    fn spiffe_trust_domain_no_path() {
+        assert!(parse_spiffe_trust_domain("spiffe://example.com", &domains(),).is_err());
     }
 }
