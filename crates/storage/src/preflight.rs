@@ -11,19 +11,24 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-//! # Pre-flight security checks (Phase 4 / ADR §9)
+//! # Pre-flight security checks (ADR 0016-v2 §9 / §12)
 //!
 //! Called at the very start of `init_storage`, before any key material is
 //! loaded into memory.  Checks and enforces OS-level memory-protection
-//! invariants; logs CRITICAL on every failed check.
+//! invariants; logs `CRITICAL` (`tracing::error!`) on every failed check.
 //!
-//! TODO: add a `dev_mode: bool` parameter and make failures fatal in
-//! production mode once `DistributedStorageConfiguration.dev_mode` is
-//! implemented.  For now all failures emit tracing::error! and are
-//! non-fatal so that integration tests continue to run in CI.
+//! ## Production vs. development behaviour
+//!
+//! Pass `dev_mode = false` (the production default) to make failures **fatal**:
+//! the node refuses to start if any check fails, satisfying ADR 0016-v2 §9
+//! invariant 12.
+//!
+//! Pass `dev_mode = true` to relax the checks to non-fatal warnings so that
+//! CI and developer workstations — which commonly cannot raise `RLIMIT_MEMLOCK`
+//! or set `PR_SET_DUMPABLE` — can still run the storage stack.
 
 use nix::sys::resource::{Resource, getrlimit, setrlimit};
-use tracing::{error, warn};
+use tracing::error;
 
 /// Minimum bytes of mlockable memory the process should be allowed.
 /// 64 KiB: ample headroom for one DEK + sub-keys held in normal memory.
@@ -31,63 +36,90 @@ const MIN_MEMLOCK_BYTES: u64 = 64 * 1024;
 
 /// Run security pre-flight checks.
 ///
-/// Each check:
-/// * attempts to harden the process limits
-/// * logs `tracing::error!` on failure
+/// In **production mode** (`dev_mode = false`) any failed check causes this
+/// function to return an `Err` containing a summary of all failures, and the
+/// caller (`init_storage`) must treat this as a fatal startup error (ADR
+/// 0016-v2 §9 / §12).
 ///
-/// Returns `Ok(())` always so that test environments that cannot set
-/// these limits do not break the test suite.  Production deployments
-/// should verify the checks pass via the emitted log lines.
-pub fn preflight_check() {
-    disable_core_dumps();
-    set_not_dumpable();
-    check_memlock();
-}
+/// In **development mode** (`dev_mode = true`) failures are logged at
+/// `error!` level but `Ok(())` is always returned so that CI environments
+/// and developer workstations that cannot set strict OS limits are not broken.
+pub fn preflight_check(dev_mode: bool) -> Result<(), String> {
+    let mut failures: Vec<String> = Vec::new();
 
-fn disable_core_dumps() {
-    match setrlimit(Resource::RLIMIT_CORE, 0, 0) {
-        Ok(()) => {}
-        Err(e) => {
-            error!(
-                "SECURITY: could not set RLIMIT_CORE=0 — \
-                 core dumps may leak key material: {e}"
-            );
-        }
+    if let Err(msg) = check_core_dumps() {
+        error!("SECURITY: {msg}");
+        failures.push(msg);
     }
+
+    if let Err(msg) = check_dumpable() {
+        error!("SECURITY: {msg}");
+        failures.push(msg);
+    }
+
+    if let Err(msg) = check_memlock() {
+        error!("SECURITY: {msg}");
+        failures.push(msg);
+    }
+
+    if !dev_mode && !failures.is_empty() {
+        return Err(format!(
+            "startup pre-flight failed ({} check(s)); refusing to start in production mode: {}",
+            failures.len(),
+            failures.join("; ")
+        ));
+    }
+
+    Ok(())
 }
 
-/// Disable ptrace attachment and `/proc/…/mem` access via PR_SET_DUMPABLE.
-/// No-op on non-Linux platforms.
+/// Attempt to set `RLIMIT_CORE = 0` to disable core dumps.
+fn check_core_dumps() -> Result<(), String> {
+    setrlimit(Resource::RLIMIT_CORE, 0, 0)
+        .map_err(|e| format!("could not set RLIMIT_CORE=0 — core dumps may leak key material: {e}"))
+}
+
+/// Disable ptrace attachment and `/proc/…/mem` access via `PR_SET_DUMPABLE`.
+/// No-op on non-Linux platforms (returns `Ok`).
 #[cfg(target_os = "linux")]
-fn set_not_dumpable() {
+fn check_dumpable() -> Result<(), String> {
     use nix::sys::prctl;
-    match prctl::set_dumpable(false) {
-        Ok(()) => {}
-        Err(e) => {
-            error!(
-                "SECURITY: could not set PR_SET_DUMPABLE=0 — \
-                 ptrace may expose key material: {e}"
-            );
-        }
-    }
+    prctl::set_dumpable(false).map_err(|e| {
+        format!("could not set PR_SET_DUMPABLE=0 — ptrace may expose key material: {e}")
+    })
 }
 
 #[cfg(not(target_os = "linux"))]
-fn set_not_dumpable() {}
+fn check_dumpable() -> Result<(), String> {
+    Ok(())
+}
 
-fn check_memlock() {
-    match getrlimit(Resource::RLIMIT_MEMLOCK) {
-        Ok((soft, _hard)) => {
-            if soft < MIN_MEMLOCK_BYTES {
-                warn!(
-                    "SECURITY: RLIMIT_MEMLOCK soft limit is {soft} bytes \
-                     (minimum recommended: {MIN_MEMLOCK_BYTES}); \
-                     mlock'd key pools may fail"
-                );
-            }
-        }
-        Err(e) => {
-            error!("SECURITY: could not read RLIMIT_MEMLOCK: {e}");
-        }
+/// Verify that the process has enough mlockable memory headroom.
+fn check_memlock() -> Result<(), String> {
+    let (soft, _hard) = getrlimit(Resource::RLIMIT_MEMLOCK)
+        .map_err(|e| format!("could not read RLIMIT_MEMLOCK: {e}"))?;
+
+    if soft < MIN_MEMLOCK_BYTES {
+        return Err(format!(
+            "RLIMIT_MEMLOCK soft limit is {soft} bytes \
+             (minimum recommended: {MIN_MEMLOCK_BYTES}); \
+             mlock'd key pools may fail at runtime"
+        ));
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dev_mode_never_fails() {
+        // In dev mode the function must always return Ok regardless of the
+        // outcome of individual OS checks (CI environments may not permit
+        // the required resource-limit changes).
+        let result = preflight_check(true);
+        assert!(result.is_ok(), "dev_mode=true must not fail: {result:?}");
     }
 }

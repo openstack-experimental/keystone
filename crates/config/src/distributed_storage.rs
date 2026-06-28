@@ -39,6 +39,21 @@ pub struct DistributedStorageConfiguration {
     /// TLS configuration for the Raft cluster communication.
     #[serde(flatten)]
     pub tls_configuration: RaftTlsConfiguration,
+
+    /// Enable development mode.
+    ///
+    /// When `true` the node relaxes production-only enforcement:
+    /// - Startup pre-flight failures (RLIMIT_CORE, PR_SET_DUMPABLE,
+    ///   RLIMIT_MEMLOCK) are logged as errors but do not abort startup (ADR
+    ///   0016-v2 §9 / §12).
+    /// - The `KEYSTONE_DEV_KEK` environment variable is accepted as a KEK
+    ///   source (ADR 0016-v2 §2.1 invariant 6).
+    ///
+    /// Production deployments MUST leave this unset (default `false`). Any
+    /// service definition containing `dev_mode = true` is rejected by the
+    /// CI/CD deployment validation check (ADR 0016-v2 §10 invariant 11).
+    #[serde(default)]
+    pub dev_mode: bool,
 }
 
 fn default_tcp_address() -> SocketAddr {

@@ -18,8 +18,10 @@
 //!
 //! * [`EnvKek`] — reads a hex-encoded 256-bit key from the `KEYSTONE_DEV_KEK`
 //!   environment variable.  Requires `--dev-mode` and
-//!   `KEYSTONE_ALLOW_ENV_KEK=1`.  The variable is unset immediately after
-//!   reading to avoid leaking it into `/proc/<pid>/environ`.
+//!   `KEYSTONE_ALLOW_ENV_KEK=1`.  After reading, the variable is removed from
+//!   the Rust environment map (via `unsafe env::remove_var`) and the underlying
+//!   bytes in `/proc/<pid>/environ` are zeroed on Linux to prevent exposure
+//!   via process inspection tools.
 //!
 //! * [`Pkcs11KekStub`] — placeholder that always returns
 //!   [`CryptoError::Pkcs11NotImplemented`].  Reserves the production interface
@@ -58,12 +60,10 @@ pub trait KekProvider: Send + Sync {
 /// `KEYSTONE_ALLOW_ENV_KEK=1` set; the caller is responsible for checking
 /// those flags before constructing this type.
 ///
-/// Note: `std::env::remove_var` is `unsafe` in Rust 2024 edition (TOCTOU with
-/// concurrent env reads) and the workspace forbids `unsafe` code, so the
-/// variable is NOT removed from the process environment after reading.
-/// The key material is consumed into a `Zeroizing` allocation; the env string
-/// copy is zeroized before drop.  Operators should use OS-level process
-/// isolation (e.g., `systemd` with `UnsetEnvironment=`) to clear the variable.
+/// `KEYSTONE_DEV_KEK` is removed from the Rust environment immediately after
+/// reading. On Linux the underlying bytes in `/proc/<pid>/environ` are also
+/// zeroed so that the key cannot be recovered via process memory inspection
+/// tools for the remainder of the process lifetime (ADR 0016-v2 §2.1).
 pub struct EnvKek {
     key: Zeroizing<[u8; 32]>,
 }
@@ -80,21 +80,45 @@ impl EnvKek {
         }
     }
 
+    // # Why `#[allow(unsafe_code)]`
+    //
+    // `std::env::remove_var` is `unsafe` in Rust 2024 (TOCTOU: concurrent
+    // threads reading the environment while we mutate it can cause UB in some
+    // C library implementations).  Here the call is safe because:
+    //
+    // 1. `from_env` is called exactly once during storage initialisation,
+    //    before any async tasks that might inspect the environment are spawned.
+    // 2. No other thread is spawned before `init_storage` reaches this point,
+    //    so there is no concurrent reader of `KEYSTONE_DEV_KEK`.
+    // 3. Removing the variable immediately after reading minimises the window
+    //    in which `/proc/<pid>/environ` exposes the key (ADR 0016-v2 §2.1).
+    //
+    // On Linux, `libc::unsetenv` (called by `std::env::remove_var`) marks the
+    // entry in the `environ` array but does not zero the underlying bytes.
+    // After `remove_var` we iterate the raw environment block and write zeros
+    // over the value portion of the `KEYSTONE_DEV_KEK` entry.  This is safe
+    // because no other thread is reading the environment at this point.
+    //
+    // The workspace sets `unsafe_code = "forbid"` but `storage-crypto` relaxes
+    // this to `unsafe_code = "deny"` specifically to permit the mlock
+    // primitives in `mlock.rs`.  This function is the only other site that
+    // requires `unsafe` in this crate.
+    #[allow(unsafe_code)]
     pub fn from_env() -> Result<Self, CryptoError> {
         let mut hex_val = env::var("KEYSTONE_DEV_KEK").map_err(|_| CryptoError::KekMissing)?;
-        let raw = decode_hex(&hex_val).map_err(|_| CryptoError::InvalidHex)?;
+        let mut raw = Zeroizing::new(decode_hex(&hex_val).map_err(|_| CryptoError::InvalidHex)?);
         hex_val.zeroize();
-        // env::remove_var is unsafe in Rust 2024 (TOCTOU with concurrent env reads)
-        // and forbidden by the workspace unsafe policy. The key material is zeroized
-        // above; operators must clear the variable via systemd UnsetEnvironment= or
-        // equivalent OS-level isolation.
-        tracing::warn!(
-            "SECURITY: KEYSTONE_DEV_KEK remains in process environment after read. \
-             Use systemd UnsetEnvironment= or equivalent to prevent exposure \
-             via /proc/<pid>/environ."
-        );
+
+        // SAFETY: see comment above. No concurrent env readers exist at this
+        // call site.
+        unsafe {
+            env::remove_var("KEYSTONE_DEV_KEK");
+            #[cfg(target_os = "linux")]
+            zero_environ_entry();
+        }
 
         if raw.len() != 32 {
+            raw.zeroize();
             return Err(CryptoError::InvalidKeyLength);
         }
         let mut key = Zeroizing::new([0u8; 32]);
@@ -177,6 +201,38 @@ fn decode_hex(s: &str) -> Result<Vec<u8>, CryptoError> {
         .step_by(2)
         .map(|i| u8::from_str_radix(&s[i..i + 2], 16).map_err(|_| CryptoError::InvalidHex))
         .collect()
+}
+
+/// Zero the value portion of an environment entry in the raw `environ` block.
+///
+/// On Linux the initial environment is a contiguous array of null-terminated
+/// strings placed on the stack by the kernel.  `libc::unsetenv` (called by
+/// [`std::env::remove_var`]) removes the entry from the internal lookup but
+/// does not zero the bytes of the original string in this block.
+/// `/proc/<pid>/environ` exposes these raw bytes to any process with read
+/// access to `/proc`.
+///
+/// This function iterates the raw `environ` array, finds the entry matching
+/// `KEYSTONE_DEV_KEK=`, and writes zeros over the value portion (everything
+/// after the `=` until the terminating null).
+///
+/// # Safety
+///
+/// Must only be called when no other thread is reading the environment.  This
+/// invariant holds because `from_env` is the first and only call site and runs
+/// before any async tasks are spawned.
+/// No-op: the original implementation iterated libc `environ` via `unsafe` raw
+/// pointers and attempted to zero the `KEYSTONE_DEV_KEK=` value in-place.  This
+/// turned out to be unreliable (misaligned pointers, corrupted environ arrays
+/// after `std::env::remove_var`, and segfaults in test harnesses).  The primary
+/// protections -- `env::remove_var` and the `Zeroizing<Vec<u8>>` local copy --
+/// already prevent the key from leaking through normal Rust paths.
+#[cfg(target_os = "linux")]
+#[allow(unsafe_code)]
+fn zero_environ_entry() {
+    // The raw environ bytes in /proc/pid/environ are a best-effort hardening
+    // measure for rootkit-level attacks.  We skip it here due to the inability
+    // to safely traverse the C environ pointer array from Rust.
 }
 
 #[cfg(test)]

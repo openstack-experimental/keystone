@@ -27,7 +27,6 @@ use rcgen::{
     BasicConstraints, CertificateParams, DistinguishedName, DnType, ExtendedKeyUsagePurpose, IsCa,
     Issuer, KeyPair, KeyUsagePurpose, SanType,
 };
-use temp_env;
 use tempfile::TempDir;
 
 use tonic::transport::{Channel, ClientTlsConfig, Uri};
@@ -55,14 +54,15 @@ fn make_env<T: serde::Serialize + ?Sized>(
     })
 }
 
+/// Test-only KEK: 32 zero bytes encoded as hex.
+const TEST_KEK_HEX: &str = "0000000000000000000000000000000000000000000000000000000000000000";
+
 /// Set up a cluster of 3 nodes.
 /// Write to it and read from it.
 #[tracing_test::traced_test]
 #[test]
 fn test_cluster() {
-    temp_env::with_var("KEYSTONE_DEV_KEK", Some(&"00".repeat(32)), || {
-        TypeConfig::run(test_cluster_inner()).unwrap();
-    });
+    TypeConfig::run(test_cluster_inner()).unwrap();
 }
 
 #[allow(dead_code)]
@@ -74,11 +74,24 @@ struct InstanceHolder {
 }
 
 impl InstanceHolder {
+    // from_env() removes KEYSTONE_DEV_KEK from the process environment after reading
+    // (ADR 0016-v2 §2.1).  In production each node is a separate process so removal
+    // happens once per process.  Here all test nodes share one process, so we re-set
+    // the variable before each init_storage call.
+    // SAFETY: nodes are initialised sequentially before any async tasks that read
+    // the environment are spawned, so there are no concurrent readers.
+    #[allow(unsafe_code)]
     async fn new(node_id: u64, tls_config: TlsConfiguration) -> Result<Self> {
+        // Initialize node with dev KEK environment variables.
         let storage_dir = tempfile::TempDir::new().unwrap();
         let ds_config = get_ds_config(node_id, storage_dir.path().to_path_buf(), tls_config);
         let mut config = Config::default();
         config.distributed_storage = Some(ds_config);
+        // SAFETY: No concurrent reads of the environment at this point.
+        unsafe {
+            std::env::set_var("KEYSTONE_DEV_KEK", TEST_KEK_HEX);
+            std::env::set_var("KEYSTONE_ALLOW_ENV_KEK", "1");
+        }
         let storage = init_storage(&ConfigManager::not_watched(config.clone())).await?;
         Ok(Self {
             node_id,
@@ -500,5 +513,6 @@ fn get_ds_config(
         node_id,
         path: db_path,
         tls_configuration: openstack_keystone_config::RaftTlsConfiguration::Tls(tls_config.clone()),
+        dev_mode: true,
     }
 }

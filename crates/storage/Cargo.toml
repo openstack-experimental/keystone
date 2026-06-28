@@ -10,8 +10,20 @@ repository.workspace = true
 homepage.workspace = true
 exclude.workspace = true
 
-[lints]
-workspace = true
+# This crate intentionally does NOT inherit workspace lints so that it can set
+# `unsafe_code = "deny"` (rather than "forbid") for test code that re-sets the
+# `KEYSTONE_DEV_KEK` environment variable between sequential node initializations.
+# The `storage-crypto` crate uses the same override for mlock primitives. All
+# other workspace crates use `unsafe_code = "forbid"` via the workspace default.
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+enum_glob_use = "deny"
+expect_used = "deny"
+print_stdout = "deny"
+unwrap_used = "deny"
+doc_paragraphs_missing_punctuation = "warn"
 
 [[bench]]
 name = "write"

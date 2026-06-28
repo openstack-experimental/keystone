@@ -56,6 +56,7 @@ impl InstanceHolder {
             tls_configuration: openstack_keystone_config::RaftTlsConfiguration::Tls(
                 tls_config.clone(),
             ),
+            dev_mode: true,
         }
     }
 
@@ -259,9 +260,14 @@ fn bench_command_serde(c: &mut Criterion) {
 }
 
 fn bench_storage_cluster(_c: &mut Criterion) {
-    temp_env::with_var(
-        "KEYSTONE_DEV_KEK",
-        Some("4242424242424242424242424242424242424242424242424242424242424242"),
+    temp_env::with_vars(
+        [
+            (
+                "KEYSTONE_DEV_KEK",
+                Some("4242424242424242424242424242424242424242424242424242424242424242"),
+            ),
+            ("KEYSTONE_ALLOW_ENV_KEK", Some("1")),
+        ],
         || {
             let c = _c;
             let provider = rustls::crypto::aws_lc_rs::default_provider();

@@ -134,17 +134,26 @@ pub async fn init_storage(config_manager: &Arc<ConfigManager>) -> Result<Storage
         .ok_or(StoreError::ConfigMissing)?
         .clone();
 
-    // Run OS-level security pre-flight checks before loading any key material.
-    crate::preflight::preflight_check();
-
-    // Bootstrap the Key Encryption Key from the environment (dev mode).
-    // Production deployments should set kek_provider = "pkcs11" in config
-    // and the Pkcs11KekStub will be replaced by a live HSM driver in a
-    // future phase.
+    // Read and erase the Key Encryption Key from the environment before any
+    // further initialisation (ADR 0016-v2 §2.1).  Erasing it first means core
+    // dumps triggered during preflight cannot leak the key.
     let kek: Arc<dyn KekProvider> = Arc::new(
         EnvKek::from_env()
             .map_err(|e| StoreError::Other(eyre!("failed to load KEYSTONE_DEV_KEK: {e}")))?,
     );
+
+    // Run OS-level security pre-flight checks after key material is cleared.
+    // In production mode (dev_mode = false) any failure is fatal per ADR
+    // 0016-v2 §9 / §12 invariant 12.
+    crate::preflight::preflight_check(ds_config.dev_mode)
+        .map_err(|msg| StoreError::Other(eyre::eyre!("{msg}")))?;
+
+    if ds_config.dev_mode {
+        tracing::warn!(
+            "Distributed storage starting in dev_mode; production deployments \
+             should not enable this (ADR 0016-v2 §12)"
+        );
+    }
 
     // Create stores and network
     let (log_store, sm, current_dek, _revoked_deks, pending_rotations) =

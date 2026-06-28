@@ -50,6 +50,7 @@ spec:
               node_listener_addr = "0.0.0.0:8300"
               path = "/storage"
               trust_domains = "example.org"
+              dev_mode = true
               EOF
       containers:
         - env:
@@ -64,6 +65,8 @@ spec:
               value: "unix:///run/spire/sockets/spire-agent.sock"
             - name: "KEYSTONE_DEV_KEK"
               value: "4242424242424242424242424242424242424242424242424242424242424242"
+            - name: "KEYSTONE_ALLOW_ENV_KEK"
+              value: "1"
           command: ["keystone", "-vv"]
 
           image: keystone-rs

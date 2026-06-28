@@ -161,6 +161,7 @@ pub async fn get_state() -> Result<(Arc<Service>, TempDir)> {
             node_id: 1,
             path: tmp_db_dir.to_path_buf(),
             tls_configuration,
+            dev_mode: true,
         });
         cfg.k8s_auth.driver = "raft".to_string();
     }
