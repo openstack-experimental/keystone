@@ -227,6 +227,9 @@ mod tests {
             provider,
             event_dispatcher: crate::events::EventDispatcher::production(),
             storage: None,
+            rate_limiters: crate::rate_limit::RateLimitState {
+                global_ip_limiter: None,
+            },
             shutdown: false,
         };
         Arc::new(service)
@@ -330,6 +333,9 @@ mod tests {
                 .unwrap(),
             event_dispatcher: crate::events::EventDispatcher::production(),
             storage: None,
+            rate_limiters: crate::rate_limit::RateLimitState {
+                global_ip_limiter: None,
+            },
             shutdown: false,
         });
 
@@ -427,6 +433,9 @@ mod tests {
             provider,
             event_dispatcher: crate::events::EventDispatcher::production(),
             storage: None,
+            rate_limiters: crate::rate_limit::RateLimitState {
+                global_ip_limiter: None,
+            },
             shutdown: false,
         });
 
@@ -488,6 +497,9 @@ mod tests {
                 .unwrap(),
             event_dispatcher: crate::events::EventDispatcher::production(),
             storage: None,
+            rate_limiters: crate::rate_limit::RateLimitState {
+                global_ip_limiter: None,
+            },
             shutdown: false,
         });
 
@@ -548,6 +560,9 @@ mod tests {
             provider,
             event_dispatcher: crate::events::EventDispatcher::production(),
             storage: None,
+            rate_limiters: crate::rate_limit::RateLimitState {
+                global_ip_limiter: None,
+            },
             shutdown: false,
         });
 

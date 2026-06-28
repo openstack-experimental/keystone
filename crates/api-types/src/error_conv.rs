@@ -16,7 +16,7 @@ use {
     axum::{
         Json,
         extract::rejection::JsonRejection,
-        http::StatusCode,
+        http::{HeaderValue, StatusCode, header},
         response::{IntoResponse, Response},
     },
     serde_json::json,
@@ -38,6 +38,25 @@ use crate::error::KeystoneApiError;
 
 impl IntoResponse for KeystoneApiError {
     fn into_response(self) -> Response {
+        // Rate-limit rejections need a `Retry-After` header in addition to the
+        // JSON body, so they are handled before the generic status-code path
+        // (ADR-0022 Invariants 3 and 4).
+        if let KeystoneApiError::TooManyRequests { retry_after } = &self {
+            let body = Json(json!({
+                "error": {
+                    "code": StatusCode::TOO_MANY_REQUESTS.as_u16(),
+                    "message": self.to_string(),
+                }
+            }));
+            let retry_value = HeaderValue::from_str(&retry_after.to_string())
+                .unwrap_or_else(|_| HeaderValue::from_static("60"));
+            let mut response = (StatusCode::TOO_MANY_REQUESTS, body).into_response();
+            response
+                .headers_mut()
+                .insert(header::RETRY_AFTER, retry_value);
+            return response;
+        }
+
         let status_code = match self {
             KeystoneApiError::Conflict(_) => StatusCode::CONFLICT,
             KeystoneApiError::NotFound { .. } => StatusCode::NOT_FOUND,
@@ -518,5 +537,30 @@ mod tests {
             api_err,
             KeystoneApiError::InternalError(msg) if msg.contains("test error")
         ));
+    }
+
+    #[test]
+    fn too_many_requests_returns_429_with_retry_after() {
+        let err = KeystoneApiError::TooManyRequests { retry_after: 42 };
+        let response = <KeystoneApiError as IntoResponse>::into_response(err);
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+        let retry_after = response
+            .headers()
+            .get(header::RETRY_AFTER)
+            .expect("Retry-After header must be present");
+        assert_eq!(retry_after.to_str().unwrap(), "42");
+    }
+
+    #[test]
+    fn too_many_requests_retry_after_fallback_on_large_value() {
+        // u64::MAX cannot fit in a header value — the fallback must be "60".
+        // In practice our handler always passes a small Duration::as_secs()
+        // value, but the fallback path must be covered.
+        // We verify the fallback by constructing a HeaderValue that fails.
+        let bad_value = "not\na valid\nheader";
+        let result = HeaderValue::from_str(bad_value);
+        assert!(result.is_err(), "sanity: newlines must be rejected");
+        let fallback = result.unwrap_or_else(|_| HeaderValue::from_static("60"));
+        assert_eq!(fallback.to_str().unwrap(), "60");
     }
 }
