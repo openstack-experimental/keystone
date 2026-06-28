@@ -12,6 +12,24 @@ TMP_DIR=$(mktemp -d -t spire-test-XXXXXX)
 mkdir -p "$STATE_DIR"
 mkdir -p "$STATE_DIR/etc/fernet-keys"
 
+# Generate self-signed CA + leaf TLS certificates for distributed storage
+SSL_DIR="$STATE_DIR"
+openssl req -x509 -newkey rsa:4096 -nodes \
+    -keyout "${SSL_DIR}/ca.key" \
+    -out "${SSL_DIR}/ca.crt" \
+    -subj "/CN=Keystone-CA" \
+    -days 365 2>/dev/null
+openssl req -newkey rsa:4096 -nodes \
+    -keyout "${SSL_DIR}/ks.key" \
+    -out "${SSL_DIR}/ks.csr" \
+    -subj "/CN=127.0.0.1" \
+    -addext "subjectAltName=DNS:localhost,IP:127.0.0.1" 2>/dev/null
+openssl x509 -req -in "${SSL_DIR}/ks.csr" \
+    -CA "${SSL_DIR}/ca.crt" -CAkey "${SSL_DIR}/ca.key" \
+    -CAcreateserial -out "${SSL_DIR}/ks.pem" \
+    -days 365 -copy_extensions copyall 2>/dev/null
+rm -f "${SSL_DIR}/ks.csr"
+
 cleanup() {
   echo "Tearing down SPIRE daemons..." >&2
   PID_DIR="/tmp/spire-ci-test-harness"
@@ -63,9 +81,9 @@ path = ${STATE_DIR}/raft/db
 node_cluster_addr = https://127.0.0.1:50051
 node_listener_addr = 0.0.0.0:50051
 node_id = 0
-tls_client_ca_file = /etc/keystone/ca.crt
-tls_cert_file = /etc/keystone/ks.pem
-tls_key_file = /etc/keystone/ks.key
+tls_client_ca_file = ${STATE_DIR}/ca.crt
+tls_cert_file = ${STATE_DIR}/ks.pem
+tls_key_file = ${STATE_DIR}/ks.key
 dev_mode = true
 
 [webauthn]

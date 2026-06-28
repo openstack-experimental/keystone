@@ -57,13 +57,18 @@ jobs:
         with:
           tool: cargo-nextest
 
-      # - name: Install SPIRE server
-      #   run: |
-      #     wget https://github.com/spiffe/spire/releases/download/v${SPIRE_VERSION}/spire-${SPIRE_VERSION}-linux-amd64-musl.tar.gz
-      #     tar -xvf spire-${SPIRE_VERSION}-linux-amd64-musl.tar.gz
-      #     # Move binaries to a standard directory and add to PATH
-      #     sudo cp spire-${SPIRE_VERSION}/bin/spire-server /usr/local/bin/
-      #     sudo cp spire-${SPIRE_VERSION}/bin/spire-agent /usr/local/bin/
+      - name: Install SPIRE server
+        run: |
+          wget https://github.com/spiffe/spire/releases/download/v${SPIRE_VERSION}/spire-${SPIRE_VERSION}-linux-amd64-musl.tar.gz
+          tar -xvf spire-${SPIRE_VERSION}-linux-amd64-musl.tar.gz
+          # Move binaries to a standard directory and add to PATH
+          sudo cp spire-${SPIRE_VERSION}/bin/spire-server /usr/local/bin/
+          sudo cp spire-${SPIRE_VERSION}/bin/spire-agent /usr/local/bin/
+
+      - name: Setup OPA
+        uses: open-policy-agent/setup-opa@34a30e8a924d1b03ce2cf7abe97250bbb1f332b5 # v2.2.0
+        with:
+          version: latest
 
       - name: Rust Cache
         uses: swatinem/rust-cache@98c8021b550208e191a6a3145459bfc9fb29c4c0 # v2.8.0
@@ -83,8 +88,8 @@ jobs:
       - name: Run tests for raft drivers
         run: cargo nextest run -p test_integration --profile raft --no-capture
 
-      # - name: Run Rest API v3 tests
-      #   run: cargo nextest run -p test_api --profile api --no-capture --test integration_api_v3
+      - name: Run Rest API v3 tests
+        run: cargo nextest run -p test_api --profile api --no-capture --test integration_api_v3
 
       - name: Run Doc tests
         run: cargo test --doc
