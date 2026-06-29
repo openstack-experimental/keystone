@@ -7,10 +7,7 @@ on:
   schedule:
     - cron: '0 0 * * *'
   push:
-    paths:
-      - '.github/workflows/audit.yml'
-      - '**/Cargo.toml'
-      - '**/Cargo.lock'
+    branches: [ "main" ]
   pull_request:
     paths:
       - '.github/workflows/audit.yml'
@@ -26,11 +23,11 @@ env:
 jobs:
   cargo-deny:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        checks:
-          - advisories
-          - bans licenses sources
+    #strategy:
+    #  matrix:
+    #    checks:
+    #      - advisories
+    #      - bans licenses sources
 
     # Prevent sudden announcement of a new advisory from failing ci:
     continue-on-error: ${{ matrix.checks == 'advisories' }}
@@ -45,5 +42,5 @@ jobs:
 
       - uses: EmbarkStudios/cargo-deny-action@76cd80eb775d7bbbd2d80292136d74d39e1b4918 # v2.0.14
         with:
-          command: check ${{ matrix.checks }}
+          command: check
           rust-version: stable

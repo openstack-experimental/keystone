@@ -1,5 +1,5 @@
 ---
-# Build container image with the OpenStack cli
+# Build container image with the OpenStack Keystone-RS
 name: Create and publish container image
 
 # Configures this workflow to run every time a change is pushed to the branch called `release`.
@@ -115,7 +115,7 @@ jobs:
         uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
         with:
           context: .
-          target: runtime-opa
+          file: Dockerfile.opa
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -126,4 +126,3 @@ jobs:
           subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-opa
           subject-digest: ${{ steps.push.outputs.digest }}
           push-to-registry: true
-
