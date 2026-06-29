@@ -134,6 +134,10 @@ impl MakeRequestId for OpenStackRequestId {
 async fn main() -> Result<(), Report> {
     let args = Args::parse();
 
+    let external_deps_log_level = match args.verbose {
+        0 | 1 => LevelFilter::WARN,
+        _ => LevelFilter::INFO,
+    };
     let stderr_log_filter = Targets::new()
         .with_default(match args.verbose {
             0 => LevelFilter::WARN,
@@ -141,20 +145,11 @@ async fn main() -> Result<(), Report> {
             2 => LevelFilter::DEBUG,
             _ => LevelFilter::TRACE,
         })
-        .with_target(
-            "openraft",
-            match args.verbose {
-                0 | 1 => LevelFilter::WARN,
-                _ => LevelFilter::INFO,
-            },
-        )
-        .with_target(
-            "lsm_tree",
-            match args.verbose {
-                0 | 1 => LevelFilter::WARN,
-                _ => LevelFilter::INFO,
-            },
-        );
+        .with_target("h2", external_deps_log_level)
+        .with_target("rustls", external_deps_log_level)
+        .with_target("tower", external_deps_log_level)
+        .with_target("openraft", external_deps_log_level)
+        .with_target("lsm_tree", external_deps_log_level);
 
     // Build the stderr log layer.
     let stderr_layer = tracing_subscriber::fmt::layer()
@@ -207,20 +202,11 @@ async fn main() -> Result<(), Report> {
             } else {
                 LevelFilter::INFO
             })
-            .with_target(
-                "openraft",
-                match args.verbose {
-                    0 | 1 => LevelFilter::WARN,
-                    _ => LevelFilter::INFO,
-                },
-            )
-            .with_target(
-                "lsm_tree",
-                match args.verbose {
-                    0 | 1 => LevelFilter::WARN,
-                    _ => LevelFilter::INFO,
-                },
-            );
+            .with_target("h2", external_deps_log_level)
+            .with_target("rustls", external_deps_log_level)
+            .with_target("tower", external_deps_log_level)
+            .with_target("openraft", external_deps_log_level)
+            .with_target("lsm_tree", external_deps_log_level);
         log_layers.push(
             tracing_subscriber::fmt::layer()
                 // No colors in the log file

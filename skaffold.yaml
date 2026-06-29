@@ -67,15 +67,7 @@ build:
     - image: keystone-rs
       context: .
       docker:
-        dockerfile: Dockerfile
-    - image: keystone-opa
-      context: .
-      docker:
-        dockerfile: tools/Dockerfile.opa
-    - image: keystone-tests
-      context: .
-      docker:
-        dockerfile: tools/Dockerfile.functest
+        dockerfile: tools/Dockerfile.skaffold
 
   local:
     concurrency: 0
@@ -83,7 +75,7 @@ build:
 manifests:
   kustomize:
     paths:
-      - tools/k8s/keystone/overlays/dev
+      - tools/k8s/keystone/overlays/skaffold
   rawYaml:
     - tools/k8s/tests/k8s-auth-test-sa.yaml
     - tools/k8s/tests/cluster-issuer.yaml
@@ -117,7 +109,7 @@ verify:
   - &api_test_v3
     name: "api-test-v3"
     container:
-      image: "keystone-tests"
+      image: "keystone-rs"
       name: "api-test-v3"
       command: ["/tests/test-api-v3"]
       env:
@@ -141,7 +133,7 @@ verify:
   - &api_test_v4
     name: "api-test-v4"
     container:
-      image: "keystone-tests"
+      image: "keystone-rs"
       name: "api-test-v4"
       command: ["/tests/test-api-v4"]
       env:
@@ -165,7 +157,7 @@ verify:
   - &k8s_auth_test
     name: "k8s-auth-test"
     container:
-      image: "keystone-tests"
+      image: "keystone-rs"
       name: "k8s-auth-test"
       command: ["/tests/test-k8s-auth", "--nocapture"]
       env:
@@ -190,7 +182,7 @@ verify:
   - &spiffe
     name: "raft-spiffe-test"
     container:
-      image: "keystone-tests"
+      image: "keystone-rs"
       name: "raft-spiffe-test"
       command: ["/tests/test-raft-spiffe", "--nocapture"]
       env:
@@ -206,7 +198,7 @@ verify:
   - &keycloak
     name: "keycloak"
     container:
-      image: "keystone-tests"
+      image: "keystone-rs"
       name: "keycloak"
       command: ["/tests/test-keycloak", "--nocapture"]
       env:
@@ -224,7 +216,7 @@ verify:
   - &dex
     name: "dex"
     container:
-      image: "keystone-tests"
+      image: "keystone-rs"
       name: "dex"
       command: ["/tests/test-dex", "--nocapture"]
       env:
@@ -234,7 +226,6 @@ verify:
           value: "http://dex:5556"
     executionMode:
       kubernetesCluster: {}
-
 
 profiles:
   - name: github-ci
@@ -246,7 +237,7 @@ profiles:
     verify:
       - name: "github"
         container:
-          image: "keystone-tests"
+          image: "keystone-rs"
           name: "github"
           command: ["/tests/test-github", "--nocapture"]
           env:

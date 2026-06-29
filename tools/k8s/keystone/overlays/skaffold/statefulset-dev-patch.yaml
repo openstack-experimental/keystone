@@ -1,0 +1,59 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: keystone-rs
+spec:
+  template:
+    spec:
+      initContainers:
+        - name: db-waiter
+          image: busybox
+          imagePullPolicy: IfNotPresent
+          command: ['sh', '-c', 'echo "Waiting for PostgreSQL to be available..."; while ! nc -z -w 1 keystone-db-rw 5432; do echo "Still waiting for postgres-service..."; sleep 2; done; echo "PostgreSQL is available! Starting application."']
+        - name: identity-generator
+          image: busybox
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+          volumeMounts:
+            - name: raft-config-shared
+              mountPath: /etc/keystone
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              NODE_ID=$(echo $POD_NAME | grep -o '[0-9]\+$')
+              cat <<EOF > /etc/keystone/site.toml
+              [distributed_storage]
+              node_id = $NODE_ID
+              node_cluster_addr = "https://$POD_NAME.keystone-rs-internal.default.svc.cluster.local:8300"
+              node_listener_addr = "0.0.0.0:8300"
+              path = "/storage"
+              trust_domains = "example.org"
+              allowed_peer_svids = ["spiffe://example.org/ns/default/sa/keystone"]
+              dev_mode = true
+              retry_join_nodes = "0=https://keystone-rs-0.keystone-rs-internal.default.svc.cluster.local:8300,1=https://keystone-rs-1.keystone-rs-internal.default.svc.cluster.local:8300"
+              EOF
+              cat /etc/keystone/site.toml
+      containers:
+        - name: keystone
+          env:
+            - name: OS_DATABASE__CONNECTION
+              valueFrom:
+                secretKeyRef:
+                  key: "fqdn-uri"
+                  name: "keystone-db-app"
+            - name: KEYSTONE_SITE_VARS_FILE
+              value: /etc/keystone/site.toml
+            - name: SPIFFE_ENDPOINT_SOCKET
+              value: unix:///run/spire/sockets/spire-agent.sock
+            - name: KEYSTONE_DEV_KEK
+              value: "4242424242424242424242424242424242424242424242424242424242424242"
+            - name: KEYSTONE_ALLOW_ENV_KEK
+              value: "1"
+          command: ["keystone", "-vv"]

@@ -1,0 +1,83 @@
+FROM rust:1.96.0-slim-trixie AS base
+ENV CARGO_HOME=/usr/local/cargo
+ENV CARGO_TARGET_DIR=/app/target
+
+RUN cargo install --locked cargo-chef
+WORKDIR /app
+
+FROM base AS planner
+COPY . .
+RUN cargo chef prepare --recipe-path recipe.json
+
+FROM base AS builder
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    openssl libssl-dev libssl3 pkg-config protobuf-compiler libprotobuf-dev && \
+    rm -rf /var/lib/apt/lists/* && update-ca-certificates
+
+COPY --from=planner /app/recipe.json recipe.json
+
+# Single cargo-chef cook covering ALL packages - shared dependency cache
+RUN cargo chef cook -p openstack-keystone -p openstack-keystone-cli-manage -p test_api -p test_federation --recipe-path recipe.json --profile release-dev
+
+COPY crates crates
+COPY tests tests
+COPY Cargo.toml Cargo.toml
+COPY Cargo.lock Cargo.lock
+
+# Compile keystone + keystone-manage binaries
+RUN cargo build --profile release-dev \
+    -p openstack-keystone \
+    -p openstack-keystone-cli-manage && \
+    cp target/release-dev/keystone /app/keystone && \
+    cp target/release-dev/keystone-manage /app/keystone-manage
+
+# Compile all test_api functional test binaries (single RUN for shared incremental cache)
+RUN cargo test --profile release-dev -p test_api \
+    --test integration_api_v3 \
+    --test integration_api_v4 \
+    --test k8s_auth \
+    --test raft_spiffe \
+    --no-run && \
+    cp $(find target/release-dev/deps -name "integration_api_v3-*" -type f -executable) /app/test-api-v3 && \
+    cp $(find target/release-dev/deps -name "integration_api_v4-*" -type f -executable) /app/test-api-v4 && \
+    cp $(find target/release-dev/deps -name "k8s_auth-*" -type f -executable) /app/test-k8s-auth && \
+    cp $(find target/release-dev/deps -name "raft_spiffe-*" -type f -executable) /app/test-raft-spiffe
+
+# Compile all test_federation functional test binaries
+RUN cargo test --profile release-dev -p test_federation \
+    --test keycloak \
+    --test dex \
+    --test github \
+    --no-run && \
+    cp $(find target/release-dev/deps -name "keycloak-*" -type f -executable) /app/test-keycloak && \
+    cp $(find target/release-dev/deps -name "dex-*" -type f -executable) /app/test-dex && \
+    cp $(find target/release-dev/deps -name "github-*" -type f -executable) /app/test-github
+
+# Single runtime: keystone + keystone-manage + OPA + policies + all test binaries
+FROM debian:trixie-slim
+
+LABEL maintainer="Artem Goncharov"
+
+ARG OPA_VERSION=1.16.2
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates libssl-dev libssl3 pkg-config && \
+    rm -rf /var/lib/apt/lists/* && update-ca-certificates
+
+COPY --from=builder /app/keystone /usr/local/bin/
+COPY --from=builder /app/keystone-manage /usr/local/bin/
+
+ADD https://github.com/open-policy-agent/opa/releases/download/v${OPA_VERSION}/opa_linux_amd64_static /usr/local/bin/opa
+RUN chmod 755 /usr/local/bin/opa
+
+COPY policy /policy
+
+COPY --from=builder /app/test-api-v3 /tests/
+COPY --from=builder /app/test-api-v4 /tests/
+COPY --from=builder /app/test-k8s-auth /tests/
+COPY --from=builder /app/test-raft-spiffe /tests/
+COPY --from=builder /app/test-keycloak /tests/
+COPY --from=builder /app/test-dex /tests/
+COPY --from=builder /app/test-github /tests/
+
+CMD ["keystone"]
