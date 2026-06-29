@@ -17,6 +17,7 @@ use std::sync::Arc;
 use sea_orm::DatabaseConnection;
 use tracing::info;
 
+use openstack_keystone_audit::AuditDispatcher;
 use openstack_keystone_config::ConfigManager;
 use openstack_keystone_storage_api::StorageApi;
 
@@ -44,6 +45,9 @@ pub struct Service {
     /// Event dispatcher for inter-provider notifications.
     pub event_dispatcher: Arc<EventDispatcher>,
 
+    /// Audit dispatcher for fail-closed audit records.
+    pub audit_dispatcher: Arc<AuditDispatcher>,
+
     /// Distributed storage instance (when configured).
     pub storage: Option<Arc<dyn StorageApi>>,
 
@@ -61,6 +65,8 @@ impl Service {
     /// - `db`: The database connection.
     /// - `provider`: The provider for services/resources.
     /// - `policy_enforcer`: The policy enforcer instance.
+    /// - `audit_dispatcher`: The audit dispatcher for fail-closed audit
+    ///   records.
     /// - `storage`: Optional distributed storage instance.
     ///
     /// # Returns
@@ -71,12 +77,14 @@ impl Service {
         db: DatabaseConnection,
         provider: Provider,
         policy_enforcer: Arc<dyn PolicyEnforcer>,
+        audit_dispatcher: Arc<AuditDispatcher>,
         storage: Option<Arc<dyn StorageApi>>,
     ) -> Result<Self, KeystoneError> {
         Ok(Self {
             config_manager: cfg,
             provider,
             event_dispatcher: EventDispatcher::production(),
+            audit_dispatcher,
             db,
             policy_enforcer,
             storage,

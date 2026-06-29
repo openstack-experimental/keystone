@@ -81,6 +81,7 @@ pub mod api;
 pub mod application_credential;
 pub mod assignment;
 pub mod auth;
+pub mod cadf_hook;
 pub mod catalog;
 pub mod common;
 pub mod db;

@@ -20,7 +20,6 @@ use tokio::net::TcpListener;
 use tokio_rustls::TlsAcceptor;
 use tokio_util::sync::CancellationToken;
 use tonic::service::InterceptorLayer;
-use tracing::info;
 
 use openstack_keystone_distributed_storage::{
     app::{Storage, get_app_server},

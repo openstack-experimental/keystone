@@ -281,6 +281,36 @@ impl FernetToken {
     }
 }
 
+/// Opaque wrapper around a `FernetToken` that proves cryptographic verification
+/// passed.
+///
+/// The `_score: NonZeroU32` parameter in `from_verified` is an unforgeable
+/// proof: `NonZeroU32` cannot be zero-constructed in safe Rust, so callers
+/// must have obtained it from the token-verification path.
+pub struct VerifiedFernetToken(FernetToken);
+
+impl VerifiedFernetToken {
+    /// Construct a `VerifiedFernetToken`.
+    ///
+    /// Only callable from within the crate (or by the token provider, which
+    /// holds the `_score` from its HMAC/Fernet verification step).
+    pub fn from_verified(token: FernetToken, _score: std::num::NonZeroU32) -> Self {
+        Self(token)
+    }
+
+    pub fn user_id(&self) -> &str {
+        self.0.user_id()
+    }
+
+    pub fn domain_id(&self) -> Option<&str> {
+        self.0.domain_id().map(|s| s.as_str())
+    }
+
+    pub fn project_id(&self) -> Option<&str> {
+        self.0.project_id().map(|s| s.as_str())
+    }
+}
+
 impl Validate for FernetToken {
     fn validate(&self) -> Result<(), validator::ValidationErrors> {
         match self {

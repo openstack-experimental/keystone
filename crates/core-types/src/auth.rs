@@ -216,6 +216,14 @@ pub struct SecurityContext {
     /// Original token used for authentication.
     #[builder(default)]
     token: Option<FernetToken>,
+
+    /// Request correlation ID for linking perimeter and provider audit events.
+    ///
+    /// Set by the API handler from the `x-openstack-request-id` header
+    /// (always server-generated — see ADR 0023 §2.1). Defaults to `None`
+    /// for contexts created outside an HTTP request (e.g. tests, CLI).
+    #[builder(default)]
+    correlation_id: Option<String>,
 }
 
 /// Builder for constructing [`SecurityContext`] in test code.
@@ -289,6 +297,7 @@ impl SecurityContextTestingBuilder {
             interface: Interface::Public,
             token_restriction: self.token_restriction,
             token: self.token,
+            correlation_id: None,
         }
     }
 }
@@ -502,6 +511,22 @@ impl SecurityContext {
     ///   ID.
     pub fn set_token_restriction(&mut self, tr: TokenRestriction) {
         self.token_restriction = Some(tr);
+    }
+
+    /// Returns the request correlation ID, if set.
+    ///
+    /// Populated by the HTTP handler from the server-generated
+    /// `x-openstack-request-id` value (ADR 0023 §2.1). Absent for
+    /// contexts constructed outside an HTTP request.
+    pub fn correlation_id(&self) -> Option<&str> {
+        self.correlation_id.as_deref()
+    }
+
+    /// Attach a correlation ID to this context.
+    ///
+    /// Called by the auth handler immediately after the VSC is constructed.
+    pub fn set_correlation_id(&mut self, id: impl Into<String>) {
+        self.correlation_id = Some(id.into());
     }
 
     /// Construct a [`SecurityContext`] for testing and mocks via a builder.

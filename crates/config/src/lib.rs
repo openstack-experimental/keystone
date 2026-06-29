@@ -58,6 +58,7 @@ use validator::Validate;
 
 mod application_credentials;
 mod assignment;
+mod audit;
 mod auth;
 mod catalog;
 mod common;
@@ -84,6 +85,7 @@ mod webauthn;
 
 pub use application_credentials::*;
 pub use assignment::*;
+pub use audit::*;
 pub use auth::*;
 pub use catalog::*;
 pub use common::*;
@@ -114,6 +116,10 @@ pub struct Config {
     /// Application credentials provider configuration.
     #[serde(default)]
     pub application_credential: ApplicationCredentialProvider,
+
+    /// Audit framework configuration.
+    #[serde(default)]
+    pub audit: AuditConfig,
 
     /// API policy enforcement.
     #[serde(default)]

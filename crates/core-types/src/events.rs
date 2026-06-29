@@ -40,11 +40,24 @@ pub struct Event {
 }
 
 /// CRUD operation type.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub enum Operation {
     Create,
     Update,
     Delete,
+    /// Disable an entity (e.g. disable a user or project).
+    Disable,
+    /// Re-enable a previously disabled entity.
+    Enable,
+    /// Authenticate — issue or validate a credential.
+    Authenticate,
+    /// Revoke a token or credential.
+    Revoke,
+    /// Any other operation not covered by the variants above.
+    ///
+    /// The inner string is sanitized by `map_event_to_action` before
+    /// it reaches the audit record.
+    Other(String),
 }
 
 /// Entity-specific payload for each domain event.

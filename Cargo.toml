@@ -1,6 +1,7 @@
 [workspace]
 members = [
   "crates/api-types",
+  "crates/audit",
   "crates/appcred-driver-sql",
   "crates/assignment-driver-sql",
   "crates/catalog-driver-sql",
@@ -54,6 +55,7 @@ exclude = [
 
 [workspace.dependencies]
 aes-gcm = { version = "0.10" }
+arc-swap = { version = "1.7" }
 async-trait = { version = "0.1" }
 axum = { version = "0.8", default-features = false }
 axum-server = { version = "0.8", default-features = false }
@@ -79,7 +81,7 @@ http-body-util = "0.1"
 http = { version = "1.4" }
 hyper = { version = "1.10" }
 hyper-util = { version = "0.1" }
-hkdf = { version = "0.12" }
+hkdf = { version = "0.13" }
 hmac = { version = "0.13" }
 inventory = { version = "0.3" }
 itertools = { version = "0.15" }
@@ -88,6 +90,7 @@ mockall_double = { version = "0.3" }
 nix = { version = "0.31", default-features = false }
 openraft = { version = "=0.10.0-alpha.21" }
 openstack-keystone-api-types = { version = "0.1", features = ["openapi", "validate", "conv"], path = "crates/api-types" }
+openstack-keystone-audit = { version = "0.1.0", path = "crates/audit" }
 openstack-keystone-appcred-driver-sql = { version = "0.1", path = "crates/appcred-driver-sql/" }
 openstack-keystone-assignment-driver-sql = { version = "0.1", path = "crates/assignment-driver-sql/" }
 openstack-keystone-catalog-driver-sql = { version = "0.1", path = "crates/catalog-driver-sql/" }

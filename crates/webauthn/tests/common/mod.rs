@@ -31,6 +31,7 @@ use url::Url;
 use uuid::Uuid;
 use webauthn_authenticator_rs::{AuthenticatorBackend, WebauthnAuthenticator};
 
+use openstack_keystone_audit::AuditDispatcher;
 use openstack_keystone_config::{
     Config, ConfigManager, DistributedStorageConfiguration, RaftTlsConfiguration, RelyingParty,
     TlsConfiguration, TlsConfigurationBuilder,
@@ -177,6 +178,7 @@ pub async fn get_state(
                 .build()
                 .unwrap(),
             Arc::new(policy_enforcer_mock),
+            AuditDispatcher::noop(),
             Some(storage),
         )
         .await

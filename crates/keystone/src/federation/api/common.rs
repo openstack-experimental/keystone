@@ -316,7 +316,7 @@ mod tests {
         let vals: Vec<String> = (0..1000).map(|i| format!("key{i}").repeat(70)).collect();
         let mut map = serde_json::Map::new();
         for v in vals {
-            map.insert(v.clone(), serde_json::Value::String(("v".to_string() + &v)));
+            map.insert(v.clone(), serde_json::Value::String("v".to_string() + &v));
         }
         let claims = flatten_federation_claims(&Value::Object(map));
         assert!(

@@ -23,8 +23,9 @@ use std::time::Duration;
 
 use axum::{
     Router, ServiceExt,
-    extract::{ConnectInfo, DefaultBodyLimit},
-    http::{self, HeaderName, Request, header},
+    extract::{ConnectInfo, DefaultBodyLimit, State},
+    http::{self, HeaderName, Request, StatusCode, header},
+    response::IntoResponse,
 };
 use clap::{Parser, ValueEnum};
 use color_eyre::eyre::{Report, Result, WrapErr};
@@ -35,6 +36,7 @@ use tokio::{signal, spawn, time};
 use tokio_util::sync::CancellationToken;
 // `Layer` imported anonymously: its `.layer()` method is needed to wrap the
 // Router, but the name is already taken by `tracing_subscriber::Layer` below.
+use tower::util::MapRequestLayer;
 use tower::{Layer as _, ServiceBuilder};
 use tower_http::{
     LatencyUnit, ServiceBuilderExt,
@@ -75,7 +77,10 @@ use openstack_keystone::token::TokenHook;
 use openstack_keystone::trust::TrustHook;
 use openstack_keystone::webauthn;
 use openstack_keystone::{api, common};
+use openstack_keystone_audit::spool::{replay_spool, run_spool_writer, spool_path};
+use openstack_keystone_audit::{AuditDispatcher, HmacKeyStore, derive_audit_hmac_key};
 use openstack_keystone_core::auth::ExecutionContext;
+use openstack_keystone_core::cadf_hook::CadfAuditHook;
 use openstack_keystone_core::db::sync_schema;
 use openstack_keystone_core::error::KeystoneError;
 use openstack_keystone_distributed_storage::{StorageApi, app::Storage};
@@ -266,12 +271,114 @@ async fn main() -> Result<(), Report> {
         .map(Arc::clone)
         .map(|s| s as Arc<dyn StorageApi>);
 
+    let audit_cfg = cfg.audit.clone();
+    let spool_dir = audit_cfg.spool_dir.clone();
+    std::fs::create_dir_all(&spool_dir).wrap_err("failed to create audit spool directory")?;
+
+    // Load or generate the persisted 32-byte KEK.  The KEK itself is not
+    // used as the HMAC signing key — a per-node key is derived from it via
+    // HKDF-Expand (see `derive_audit_hmac_key`).  Storing the KEK means a
+    // restart can re-derive the same per-node key and replay the spool.
+    const AUDIT_HMAC_KEY_VERSION: u64 = 1;
+    let kek_file = spool_dir.join("hmac-key.bin");
+    let audit_kek: Vec<u8> = match std::fs::read(&kek_file) {
+        Ok(bytes) => {
+            if bytes.len() != 32 {
+                return Err(eyre::eyre!(
+                    "audit KEK at {} is {} bytes — expected 32; \
+                     delete the file to regenerate",
+                    kek_file.display(),
+                    bytes.len()
+                ));
+            }
+            bytes
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            use std::fs::OpenOptions;
+            use std::io::{Read as _, Write as _};
+            use std::os::unix::fs::OpenOptionsExt;
+            let mut raw = [0u8; 32];
+            std::fs::File::open("/dev/urandom")
+                .and_then(|mut f| f.read_exact(&mut raw))
+                .wrap_err("failed to generate audit KEK from /dev/urandom")?;
+            // Write to a temp file with restricted permissions, then atomically
+            // rename.  This avoids both a world-readable key file (permissions)
+            // and a TOCTOU window where two processes each generate independent
+            // keys.
+            let tmp_path = kek_file.with_extension("tmp");
+            let mut file = OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(&tmp_path)
+                .wrap_err("failed to create temporary audit KEK file")?;
+            file.write_all(&raw).wrap_err("failed to write audit KEK")?;
+            std::fs::rename(&tmp_path, &kek_file).wrap_err("failed to finalize audit KEK file")?;
+            info!(path = %kek_file.display(), "generated new audit KEK");
+            raw.to_vec()
+        }
+        Err(e) => {
+            // File exists but can't be read — permissions error or similar.
+            // Fall back to regenerating (the old file will be silently left).
+            return Err(e)
+                .wrap_err("failed to read audit KEK; fix permissions or delete the file")?;
+        }
+    };
+
+    // Derive the per-node signing key:
+    //   HKDF-Expand(KEK, info="keystone-audit-hmac-v1:{node_id}", L=32)
+    // Per ADR 0023 / ADR 0016-v2 §3.1: per-node derivation ensures a
+    // compromised node cannot forge records attributed to other nodes.
+    let audit_hmac_key: Arc<[u8]> =
+        Arc::from(derive_audit_hmac_key(&audit_kek, audit_cfg.node_id.as_str()).as_slice());
+
+    let (audit_dispatcher, audit_receivers) = AuditDispatcher::new(
+        audit_cfg.node_id.as_str(),
+        Uuid::new_v4().to_string(),
+        Arc::clone(&audit_hmac_key),
+        AUDIT_HMAC_KEY_VERSION,
+    );
+
+    // Replay the spool file left by the previous run (at-least-once delivery).
+    struct SingleKeyStore(u64, Arc<[u8]>);
+    impl HmacKeyStore for SingleKeyStore {
+        fn get_key(&self, version: u64) -> Option<Arc<[u8]>> {
+            if version == self.0 {
+                Some(Arc::clone(&self.1))
+            } else {
+                None
+            }
+        }
+    }
+    let spool_file = spool_path(&spool_dir, audit_cfg.node_id.as_str());
+    replay_spool(
+        &spool_file,
+        audit_cfg.node_id.as_str(),
+        &audit_dispatcher,
+        &SingleKeyStore(AUDIT_HMAC_KEY_VERSION, Arc::clone(&audit_hmac_key)),
+    )
+    .await
+    .wrap_err("audit spool replay failed")?;
+
+    // Start background spool writers for both QoS channels.
+    spawn(run_spool_writer(
+        audit_receivers.perimeter,
+        spool_dir.clone(),
+        audit_cfg.node_id.clone(),
+    ));
+    spawn(run_spool_writer(
+        audit_receivers.critical,
+        spool_dir,
+        audit_cfg.node_id.clone(),
+    ));
+
     let shared_state = Arc::new(
         KeystoneServiceState::new(
             cfg_mgr,
             conn,
             provider,
             Arc::new(policy),
+            audit_dispatcher,
             storage_for_service,
         )
         .await?,
@@ -330,6 +437,14 @@ async fn main() -> Result<(), Report> {
         .subscribe(Arc::new(TrustHook::new(shared_state.clone())))
         .await;
 
+    // Phase 3: subscribe the CADF audit hook (fail-closed provider auditing).
+    shared_state
+        .event_dispatcher
+        .subscribe_audit(Arc::new(CadfAuditHook::new(Arc::clone(
+            &shared_state.audit_dispatcher,
+        ))))
+        .await;
+
     let x_request_id = HeaderName::from_static("x-openstack-request-id");
     let sensitive_headers: Arc<[_]> = vec![
         header::AUTHORIZATION,
@@ -339,7 +454,14 @@ async fn main() -> Result<(), Report> {
     ]
     .into();
 
+    let strip_x_request_id = x_request_id.clone();
     let middleware = ServiceBuilder::new()
+        // Strip any client-supplied x-openstack-request-id before SetRequestIdLayer
+        // runs, so we always generate a fresh server-controlled UUID (ADR 0023 §2.1).
+        .layer(MapRequestLayer::new(move |mut req: Request<_>| {
+            req.headers_mut().remove(strip_x_request_id.clone());
+            req
+        }))
         // Inject x-request-id header into processing
         // make sure to set request ids before the request reaches `TraceLayer`
         .layer(SetRequestIdLayer::new(
@@ -383,7 +505,13 @@ async fn main() -> Result<(), Report> {
         .layer(PropagateRequestIdLayer::new(x_request_id));
     //.layer(middleware::from_fn(cert_extension_middleware));
 
-    let mut app = Router::new().merge(main_router.with_state(shared_state.clone()));
+    let metrics_router = Router::new()
+        .route("/metrics", axum::routing::get(metrics_handler))
+        .with_state(shared_state.clone());
+
+    let mut app = Router::new()
+        .merge(main_router.with_state(shared_state.clone()))
+        .merge(metrics_router);
 
     if shared_state
         .config_manager
@@ -605,6 +733,22 @@ async fn main() -> Result<(), Report> {
     handles.join_all().await;
     token.cancel();
     Ok(())
+}
+
+/// Prometheus scrape endpoint — returns the three audit counters in text
+/// exposition format (v0.0.4). No authentication required; operators are
+/// expected to firewall `:5000/metrics` (or expose it only on an internal
+/// interface).
+async fn metrics_handler(State(state): State<ServiceState>) -> impl IntoResponse {
+    let body = openstack_keystone_audit::metrics::format_prometheus_text(&state.audit_dispatcher);
+    (
+        StatusCode::OK,
+        [(
+            header::CONTENT_TYPE,
+            "text/plain; version=0.0.4; charset=utf-8",
+        )],
+        body,
+    )
 }
 
 async fn cleanup(cancel: CancellationToken, state: ServiceState) {

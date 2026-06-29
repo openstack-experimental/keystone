@@ -86,6 +86,7 @@ mod tests {
     use crate::api::tests::{get_mocked_state, test_fixture_scoped};
     use crate::identity::MockIdentityProvider;
     use crate::provider::Provider;
+    use openstack_keystone_core::auth::ExecutionContext;
     use openstack_keystone_core_types::identity::UserResponseBuilder;
 
     #[tokio::test]
@@ -113,7 +114,7 @@ mod tests {
 
         identity_mock
             .expect_delete_user()
-            .withf(|_, id: &'_ str| id == "bar")
+            .withf(|_ctx: &ExecutionContext<'_>, id: &'_ str| id == "bar")
             .returning(|_, _| Ok(()));
 
         let vsc = test_fixture_scoped();

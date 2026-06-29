@@ -16,6 +16,7 @@ use std::sync::Arc;
 
 use sea_orm::DatabaseConnection;
 
+use openstack_keystone_audit::AuditDispatcher;
 use openstack_keystone_config::{Config, ConfigManager};
 
 use crate::keystone::{Service, ServiceState};
@@ -35,6 +36,7 @@ pub async fn get_mocked_state(
                 .build()
                 .unwrap(),
             Arc::new(MockPolicy::default()),
+            AuditDispatcher::noop(),
             None,
         )
         .await

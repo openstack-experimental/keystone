@@ -28,6 +28,7 @@ use openstack_keystone_core_types::events::{Event, EventPayload, Operation};
 use openstack_keystone_core_types::identity::*;
 
 use crate::auth::{AuthenticationResult, ExecutionContext};
+use crate::events::AuditDispatchError;
 use crate::identity::{IdentityApi, IdentityProviderError, backend::IdentityBackend};
 use crate::plugin_manager::PluginManagerApi;
 use crate::resource::error::ResourceProviderError;
@@ -197,20 +198,43 @@ impl IdentityApi for IdentityService {
         group: GroupCreate,
     ) -> Result<Group, IdentityProviderError> {
         let mut res = group;
-        if res.id.is_none() {
-            res.id = Some(Uuid::new_v4().simple().to_string());
-        }
-        let group = self.backend_driver.create_group(ctx.state(), res).await?;
-
-        ctx.state()
-            .event_dispatcher
-            .emit(Event::new(
-                Operation::Create,
-                EventPayload::Group {
-                    id: group.id.clone(),
+        let group_id = if let Some(gid) = &res.id {
+            gid.clone()
+        } else {
+            let gid = Uuid::new_v4().simple().to_string();
+            res.id = Some(gid.clone());
+            gid
+        };
+        let group = if let Some(vsc) = ctx.ctx() {
+            let backend_driver = &self.backend_driver;
+            let state = ctx.state();
+            let res_clone = res.clone();
+            let dispatch = crate::audited_op! {
+                dispatcher: &ctx.state().event_dispatcher,
+                ctx: vsc,
+                event: Event::new(
+                    Operation::Create,
+                    EventPayload::Group { id: group_id },
+                ),
+                operation: async {
+                    backend_driver.create_group(state, res_clone).await
                 },
-            ))
-            .await;
+                on_audit_error: |_: AuditDispatchError| IdentityProviderError::Driver("audit dispatch failed".into()),
+            };
+            dispatch?
+        } else {
+            let group = self.backend_driver.create_group(ctx.state(), res).await?;
+            ctx.state()
+                .event_dispatcher
+                .emit(Event::new(
+                    Operation::Create,
+                    EventPayload::Group {
+                        id: group.id.clone(),
+                    },
+                ))
+                .await;
+            group
+        };
 
         Ok(group)
     }
@@ -249,9 +273,13 @@ impl IdentityApi for IdentityService {
         user: UserCreate,
     ) -> Result<UserResponse, IdentityProviderError> {
         let mut mod_user = user;
-        if mod_user.id.is_none() {
-            mod_user.id = Some(Uuid::new_v4().simple().to_string());
-        }
+        let user_id = if let Some(uid) = &mod_user.id {
+            uid.clone()
+        } else {
+            let uid = Uuid::new_v4().simple().to_string();
+            mod_user.id = Some(uid.clone());
+            uid
+        };
         if mod_user.enabled.is_none() {
             mod_user.enabled = Some(true);
         }
@@ -262,20 +290,37 @@ impl IdentityApi for IdentityService {
             cfg.security_compliance
                 .validate_password(&SecretString::from(password.as_str()))?;
         }
-        let user = self
-            .backend_driver
-            .create_user(ctx.state(), mod_user)
-            .await?;
-
-        ctx.state()
-            .event_dispatcher
-            .emit(Event::new(
-                Operation::Create,
-                EventPayload::User {
-                    id: user.id.clone(),
+        let user = if let Some(vsc) = ctx.ctx() {
+            let backend_driver = &self.backend_driver;
+            let state = ctx.state();
+            crate::audited_op! {
+                dispatcher: &ctx.state().event_dispatcher,
+                ctx: vsc,
+                event: Event::new(
+                    Operation::Create,
+                    EventPayload::User { id: user_id.clone() },
+                ),
+                operation: async {
+                    backend_driver.create_user(state, mod_user).await
                 },
-            ))
-            .await;
+                on_audit_error: |_: AuditDispatchError| IdentityProviderError::Driver("audit dispatch failed".into()),
+            }?
+        } else {
+            let user = self
+                .backend_driver
+                .create_user(ctx.state(), mod_user)
+                .await?;
+            ctx.state()
+                .event_dispatcher
+                .emit(Event::new(
+                    Operation::Create,
+                    EventPayload::User {
+                        id: user.id.clone(),
+                    },
+                ))
+                .await;
+            user
+        };
 
         Ok(user)
     }
@@ -290,19 +335,34 @@ impl IdentityApi for IdentityService {
         ctx: &ExecutionContext<'a>,
         group_id: &'a str,
     ) -> Result<(), IdentityProviderError> {
-        self.backend_driver
-            .delete_group(ctx.state(), group_id)
-            .await?;
-
-        ctx.state()
-            .event_dispatcher
-            .emit(Event::new(
-                Operation::Delete,
-                EventPayload::Group {
-                    id: group_id.to_string(),
+        if let Some(vsc) = ctx.ctx() {
+            crate::audited_op! {
+                dispatcher: &ctx.state().event_dispatcher,
+                ctx: vsc,
+                event: Event::new(
+                    Operation::Delete,
+                    EventPayload::Group { id: group_id.to_string() },
+                ),
+                operation: async {
+                    self.backend_driver.delete_group(ctx.state(), group_id).await?;
+                    Ok::<(), IdentityProviderError>(())
                 },
-            ))
-            .await;
+                on_audit_error: |_: AuditDispatchError| IdentityProviderError::Driver("audit dispatch failed".into()),
+            }?;
+        } else {
+            self.backend_driver
+                .delete_group(ctx.state(), group_id)
+                .await?;
+            ctx.state()
+                .event_dispatcher
+                .emit(Event::new(
+                    Operation::Delete,
+                    EventPayload::Group {
+                        id: group_id.to_string(),
+                    },
+                ))
+                .await;
+        }
 
         Ok(())
     }
@@ -317,22 +377,45 @@ impl IdentityApi for IdentityService {
         ctx: &ExecutionContext<'a>,
         user_id: &'a str,
     ) -> Result<(), IdentityProviderError> {
-        self.backend_driver
-            .delete_user(ctx.state(), user_id)
-            .await?;
-        if self.caching {
-            self.user_id_domain_id_cache.write().await.remove(user_id);
-        }
-
-        ctx.state()
-            .event_dispatcher
-            .emit(Event::new(
-                Operation::Delete,
-                EventPayload::User {
-                    id: user_id.to_string(),
+        if let Some(vsc) = ctx.ctx() {
+            // Audited delete – fail‑closed on pre‑audit failure.
+            crate::audited_op! {
+                dispatcher: &ctx.state().event_dispatcher,
+                ctx: vsc,
+                event: Event::new(
+                    Operation::Delete,
+                    EventPayload::User { id: user_id.to_string() },
+                ),
+                operation: async {
+                    self.backend_driver.delete_user(ctx.state(), user_id).await?;
+                    if self.caching {
+                        self.user_id_domain_id_cache
+                            .write()
+                            .await
+                            .remove(user_id);
+                    }
+                    Ok::<(), IdentityProviderError>(())
                 },
-            ))
-            .await;
+                on_audit_error: |_: AuditDispatchError| IdentityProviderError::Driver("audit dispatch failed".into()),
+            }?;
+        } else {
+            // No validated context – perform operation and emit on perimeter.
+            self.backend_driver
+                .delete_user(ctx.state(), user_id)
+                .await?;
+            if self.caching {
+                self.user_id_domain_id_cache.write().await.remove(user_id);
+            }
+            ctx.state()
+                .event_dispatcher
+                .emit(Event::new(
+                    Operation::Delete,
+                    EventPayload::User {
+                        id: user_id.to_string(),
+                    },
+                ))
+                .await;
+        }
 
         Ok(())
     }
@@ -608,20 +691,37 @@ impl IdentityApi for IdentityService {
             cfg.security_compliance
                 .validate_password(&SecretString::from(password.as_str()))?;
         }
-        let user = self
-            .backend_driver
-            .update_user(ctx.state(), user_id, user)
-            .await?;
-
-        ctx.state()
-            .event_dispatcher
-            .emit(Event::new(
-                Operation::Update,
-                EventPayload::User {
-                    id: user_id.to_string(),
+        let user = if let Some(vsc) = ctx.ctx() {
+            let backend_driver = &self.backend_driver;
+            let state = ctx.state();
+            crate::audited_op! {
+                dispatcher: &ctx.state().event_dispatcher,
+                ctx: vsc,
+                event: Event::new(
+                    Operation::Update,
+                    EventPayload::User { id: user_id.to_string() },
+                ),
+                operation: async {
+                    backend_driver.update_user(state, user_id, user).await
                 },
-            ))
-            .await;
+                on_audit_error: |_: AuditDispatchError| IdentityProviderError::Driver("audit dispatch failed".into()),
+            }?
+        } else {
+            let user = self
+                .backend_driver
+                .update_user(ctx.state(), user_id, user)
+                .await?;
+            ctx.state()
+                .event_dispatcher
+                .emit(Event::new(
+                    Operation::Update,
+                    EventPayload::User {
+                        id: user_id.to_string(),
+                    },
+                ))
+                .await;
+            user
+        };
 
         Ok(user)
     }

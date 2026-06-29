@@ -201,6 +201,7 @@ mod tests {
     use tower::ServiceExt; // for `call`, `oneshot`, and `ready`
     use tower_http::trace::TraceLayer;
 
+    use openstack_keystone_core::auth::ExecutionContext;
     use openstack_keystone_core_types::identity::*;
 
     use super::openapi_router;
@@ -479,12 +480,12 @@ mod tests {
         let mut identity_mock = MockIdentityProvider::default();
         identity_mock
             .expect_delete_user()
-            .withf(|_, id: &'_ str| id == "foo")
+            .withf(|_ctx: &ExecutionContext<'_>, id: &'_ str| id == "foo")
             .returning(|_, _| Err(IdentityProviderError::UserNotFound("foo".into())));
 
         identity_mock
             .expect_delete_user()
-            .withf(|_, id: &'_ str| id == "bar")
+            .withf(|_ctx: &ExecutionContext<'_>, id: &'_ str| id == "bar")
             .returning(|_, _| Ok(()));
 
         let state = get_mocked_state(

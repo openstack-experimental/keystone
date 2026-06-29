@@ -26,6 +26,7 @@ pub mod tests {
     use std::sync::Arc;
 
     use crate::auth::ValidatedSecurityContext;
+    use openstack_keystone_audit::AuditDispatcher;
     use openstack_keystone_config::{Config, ConfigManager};
     use openstack_keystone_core_types::auth::{
         AuthenticationContext, AuthzInfoBuilder, IdentityInfo, PrincipalInfo, ScopeInfo,
@@ -142,6 +143,7 @@ pub mod tests {
                 DatabaseConnection::Disconnected,
                 provider,
                 Arc::new(policy_enforcer_mock),
+                AuditDispatcher::noop(),
                 None,
             )
             .await

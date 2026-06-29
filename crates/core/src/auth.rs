@@ -302,6 +302,14 @@ impl ValidatedSecurityContext {
         self.0.token().ok_or(AuthenticationError::TokenNotInContext)
     }
 
+    /// Returns the request correlation ID, falling back to `"unknown"`.
+    ///
+    /// Used by `audited_op!` to stamp the compensating local log when the
+    /// post-audit critical channel is full.
+    pub fn correlation_id(&self) -> &str {
+        self.0.correlation_id().unwrap_or("unknown")
+    }
+
     /// Construct without validation. ONLY for tests and mocks.
     #[cfg(any(test, feature = "mock"))]
     pub fn test_new(ctx: SecurityContext) -> Self {

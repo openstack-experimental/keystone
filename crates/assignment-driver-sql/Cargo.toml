@@ -21,6 +21,7 @@ tokio = { workspace = true, features = ["macros"] }
 tracing.workspace = true
 
 [dev-dependencies]
+openstack-keystone-audit = { workspace = true, features = ["testing"] }
 openstack-keystone-core = { workspace = true, features = ["mock"] }
 sea-orm = { workspace = true, features = ["mock", "sqlx-sqlite" ]}
 
