@@ -32,6 +32,7 @@ use crate::application_credential::{
     backend::ApplicationCredentialBackend,
 };
 use crate::auth::ExecutionContext;
+use crate::events::AuditDispatchError;
 use crate::plugin_manager::PluginManagerApi;
 
 /// Application Credential Provider.
@@ -83,24 +84,39 @@ impl ApplicationCredentialApi for ApplicationCredentialService {
         if rule.id.is_none() {
             rule.id = Some(Uuid::new_v4().simple().to_string());
         }
-        let user_id = rule.user_id.clone();
-        let access_rule = self
-            .backend_driver
-            .create_access_rule(ctx.state(), rule)
-            .await?;
+        let rule_id = rule.id.clone().unwrap_or_default();
+        let rule_user_id = rule.user_id.clone();
 
-        ctx.state()
-            .event_dispatcher
-            .emit(Event::new(
-                Operation::Create,
-                EventPayload::AccessRule {
-                    id: access_rule.id.clone(),
-                    user_id,
-                },
-            ))
-            .await;
-
-        Ok(access_rule)
+        if let Some(vsc) = ctx.ctx() {
+            let backend_driver = &self.backend_driver;
+            let state = ctx.state();
+            crate::audited_op! {
+                dispatcher: &ctx.state().event_dispatcher,
+                ctx: vsc,
+                event: Event::new(Operation::Create, EventPayload::AccessRule {
+                    id: rule_id,
+                    user_id: rule_user_id,
+                }),
+                operation: async { backend_driver.create_access_rule(state, rule).await },
+                on_audit_error: |_: AuditDispatchError| ApplicationCredentialProviderError::Driver("audit dispatch failed".into()),
+            }
+        } else {
+            let access_rule = self
+                .backend_driver
+                .create_access_rule(ctx.state(), rule)
+                .await?;
+            ctx.state()
+                .event_dispatcher
+                .emit(Event::new(
+                    Operation::Create,
+                    EventPayload::AccessRule {
+                        id: access_rule.id.clone(),
+                        user_id: rule_user_id,
+                    },
+                ))
+                .await;
+            Ok(access_rule)
+        }
     }
 
     /// Create a new application credential.
@@ -152,23 +168,41 @@ impl ApplicationCredentialApi for ApplicationCredentialService {
         if new_rec.secret.is_none() {
             new_rec.secret = Some(generate_secret());
         }
-        let response = self
-            .backend_driver
-            .create_application_credential(ctx.state(), new_rec.clone())
-            .await?;
+        let app_cred_id = new_rec.id.clone().unwrap_or_default();
+        let app_cred_project_id = new_rec.project_id.clone();
 
-        ctx.state()
-            .event_dispatcher
-            .emit(Event::new(
-                Operation::Create,
-                EventPayload::ApplicationCredential {
-                    id: new_rec.id.unwrap_or_default(),
-                    project_id: new_rec.project_id.clone(),
+        if let Some(vsc) = ctx.ctx() {
+            let backend_driver = &self.backend_driver;
+            let state = ctx.state();
+            crate::audited_op! {
+                dispatcher: &ctx.state().event_dispatcher,
+                ctx: vsc,
+                event: Event::new(Operation::Create, EventPayload::ApplicationCredential {
+                    id: app_cred_id,
+                    project_id: app_cred_project_id,
+                }),
+                operation: async {
+                    backend_driver.create_application_credential(state, new_rec.clone()).await
                 },
-            ))
-            .await;
-
-        Ok(response)
+                on_audit_error: |_: AuditDispatchError| ApplicationCredentialProviderError::Driver("audit dispatch failed".into()),
+            }
+        } else {
+            let response = self
+                .backend_driver
+                .create_application_credential(ctx.state(), new_rec.clone())
+                .await?;
+            ctx.state()
+                .event_dispatcher
+                .emit(Event::new(
+                    Operation::Create,
+                    EventPayload::ApplicationCredential {
+                        id: app_cred_id,
+                        project_id: app_cred_project_id,
+                    },
+                ))
+                .await;
+            Ok(response)
+        }
     }
 
     /// Delete a user's access rule by its ID.
@@ -187,21 +221,37 @@ impl ApplicationCredentialApi for ApplicationCredentialService {
         user_id: &'a str,
         id: &'a str,
     ) -> Result<(), ApplicationCredentialProviderError> {
-        self.backend_driver
-            .delete_access_rule(ctx.state(), user_id, id)
-            .await?;
-
-        ctx.state()
-            .event_dispatcher
-            .emit(Event::new(
-                Operation::Delete,
-                EventPayload::AccessRule {
+        if let Some(vsc) = ctx.ctx() {
+            let backend_driver = &self.backend_driver;
+            let state = ctx.state();
+            crate::audited_op! {
+                dispatcher: &ctx.state().event_dispatcher,
+                ctx: vsc,
+                event: Event::new(Operation::Delete, EventPayload::AccessRule {
                     id: id.to_string(),
                     user_id: user_id.to_string(),
+                }),
+                operation: async {
+                    backend_driver.delete_access_rule(state, user_id, id).await?;
+                    Ok::<(), ApplicationCredentialProviderError>(())
                 },
-            ))
-            .await;
-
+                on_audit_error: |_: AuditDispatchError| ApplicationCredentialProviderError::Driver("audit dispatch failed".into()),
+            }?;
+        } else {
+            self.backend_driver
+                .delete_access_rule(ctx.state(), user_id, id)
+                .await?;
+            ctx.state()
+                .event_dispatcher
+                .emit(Event::new(
+                    Operation::Delete,
+                    EventPayload::AccessRule {
+                        id: id.to_string(),
+                        user_id: user_id.to_string(),
+                    },
+                ))
+                .await;
+        }
         Ok(())
     }
 

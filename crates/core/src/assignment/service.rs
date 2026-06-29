@@ -23,6 +23,7 @@ use openstack_keystone_core_types::role::{Role, RoleListParameters};
 
 use crate::assignment::{AssignmentApi, AssignmentProviderError, backend::AssignmentBackend};
 use crate::auth::ExecutionContext;
+use crate::events::AuditDispatchError;
 use crate::plugin_manager::PluginManagerApi;
 
 pub struct AssignmentService {
@@ -51,76 +52,93 @@ impl AssignmentService {
     }
 }
 
+/// Build a `RoleAssignment` event payload from assignment fields.
+fn role_assignment_payload(
+    role_id: String,
+    actor_id: &str,
+    target_id: &str,
+    assignment_type: &AssignmentType,
+) -> EventPayload {
+    EventPayload::RoleAssignment {
+        role_id,
+        user_id: match assignment_type {
+            AssignmentType::UserDomain
+            | AssignmentType::UserProject
+            | AssignmentType::UserSystem => Some(actor_id.to_string()),
+            _ => None,
+        },
+        group_id: match assignment_type {
+            AssignmentType::GroupDomain
+            | AssignmentType::GroupProject
+            | AssignmentType::GroupSystem => Some(actor_id.to_string()),
+            _ => None,
+        },
+        domain_id: match assignment_type {
+            AssignmentType::UserDomain | AssignmentType::GroupDomain => {
+                Some(target_id.to_string())
+            }
+            _ => None,
+        },
+        project_id: match assignment_type {
+            AssignmentType::UserProject | AssignmentType::GroupProject => {
+                Some(target_id.to_string())
+            }
+            _ => None,
+        },
+        system_id: match assignment_type {
+            AssignmentType::UserSystem | AssignmentType::GroupSystem => {
+                Some(target_id.to_string())
+            }
+            _ => None,
+        },
+    }
+}
+
 #[async_trait]
 impl AssignmentApi for AssignmentService {
-    /// Create assignment grant.
-    ///
-    /// # Parameters
-    /// - `state`: The current service state.
-    /// - `grant`: The assignment creation parameters.
-    ///
-    /// # Returns
-    /// - `Result<Assignment, AssignmentProviderError>` - The created assignment
-    ///   or an error.
     async fn create_grant<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
         grant: AssignmentCreate,
     ) -> Result<Assignment, AssignmentProviderError> {
-        let assignment = self.backend_driver.create_grant(ctx.state(), grant).await?;
-
-        ctx.state()
-            .event_dispatcher
-            .emit(Event::new(
+        if let Some(vsc) = ctx.ctx() {
+            // Pre-build event payload from grant fields before grant is consumed.
+            let event = Event::new(
                 Operation::Create,
-                EventPayload::RoleAssignment {
-                    role_id: assignment.role_id.clone(),
-                    user_id: match &assignment.r#type {
-                        AssignmentType::UserDomain
-                        | AssignmentType::UserProject
-                        | AssignmentType::UserSystem => Some(assignment.actor_id.clone()),
-                        _ => None,
-                    },
-                    group_id: match &assignment.r#type {
-                        AssignmentType::GroupDomain
-                        | AssignmentType::GroupProject
-                        | AssignmentType::GroupSystem => Some(assignment.actor_id.clone()),
-                        _ => None,
-                    },
-                    domain_id: match &assignment.r#type {
-                        AssignmentType::UserDomain | AssignmentType::GroupDomain => {
-                            Some(assignment.target_id.clone())
-                        }
-                        _ => None,
-                    },
-                    project_id: match &assignment.r#type {
-                        AssignmentType::UserProject | AssignmentType::GroupProject => {
-                            Some(assignment.target_id.clone())
-                        }
-                        _ => None,
-                    },
-                    system_id: match &assignment.r#type {
-                        AssignmentType::UserSystem | AssignmentType::GroupSystem => {
-                            Some(assignment.target_id.clone())
-                        }
-                        _ => None,
-                    },
-                },
-            ))
-            .await;
-
-        Ok(assignment)
+                role_assignment_payload(
+                    grant.role_id.clone(),
+                    &grant.actor_id,
+                    &grant.target_id,
+                    &grant.r#type,
+                ),
+            );
+            let backend_driver = &self.backend_driver;
+            let state = ctx.state();
+            crate::audited_op! {
+                dispatcher: &ctx.state().event_dispatcher,
+                ctx: vsc,
+                event: event,
+                operation: async { backend_driver.create_grant(state, grant).await },
+                on_audit_error: |_: AuditDispatchError| AssignmentProviderError::Driver("audit dispatch failed".into()),
+            }
+        } else {
+            let assignment = self.backend_driver.create_grant(ctx.state(), grant).await?;
+            ctx.state()
+                .event_dispatcher
+                .emit(Event::new(
+                    Operation::Create,
+                    role_assignment_payload(
+                        assignment.role_id.clone(),
+                        &assignment.actor_id,
+                        &assignment.target_id,
+                        &assignment.r#type,
+                    ),
+                ))
+                .await;
+            Ok(assignment)
+        }
     }
 
-    /// List role assignments.
-    ///
-    /// # Parameters
-    /// - `state`: The current service state.
-    /// - `params`: The parameters for listing assignments.
-    ///
-    /// # Returns
-    /// - `Result<Vec<Assignment>, AssignmentProviderError>` - A list of
-    ///   assignments or an error.
     async fn list_role_assignments<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -148,36 +166,18 @@ impl AssignmentApi for AssignmentService {
         Ok(assignments)
     }
 
-    /// Revoke grant.
-    ///
-    /// # Parameters
-    /// - `state`: The current service state.
-    /// - `grant`: The assignment to revoke.
-    ///
-    /// # Returns
-    /// - `Result<(), AssignmentProviderError>` - Ok on success, or an error.
     async fn revoke_grant<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
         grant: Assignment,
     ) -> Result<(), AssignmentProviderError> {
-        // Call backend with reference (no move)
-        self.backend_driver
-            .revoke_grant(ctx.state(), &grant)
-            .await?;
-
-        // Determine user_id or group_id
+        // Pre-extract fields needed for both revocation event and audit payload.
         let user_id = match &grant.r#type {
             AssignmentType::UserDomain
             | AssignmentType::UserProject
             | AssignmentType::UserSystem => Some(grant.actor_id.clone()),
-
-            AssignmentType::GroupDomain
-            | AssignmentType::GroupProject
-            | AssignmentType::GroupSystem => None,
+            _ => None,
         };
-
-        // Determine project_id or domain_id
         let (project_id, domain_id) = match &grant.r#type {
             AssignmentType::UserProject | AssignmentType::GroupProject => {
                 (Some(grant.target_id.clone()), None)
@@ -187,11 +187,10 @@ impl AssignmentApi for AssignmentService {
             }
             AssignmentType::UserSystem | AssignmentType::GroupSystem => (None, None),
         };
-
         let revocation_event = RevocationEventCreate {
-            domain_id,
-            project_id,
-            user_id,
+            domain_id: domain_id.clone(),
+            project_id: project_id.clone(),
+            user_id: user_id.clone(),
             role_id: Some(grant.role_id.clone()),
             trust_id: None,
             consumer_id: None,
@@ -203,52 +202,53 @@ impl AssignmentApi for AssignmentService {
             revoked_at: chrono::Utc::now(),
         };
 
-        ctx.state()
-            .provider
-            .get_revoke_provider()
-            .create_revocation_event(ctx, revocation_event)
-            .await?;
-
-        ctx.state()
-            .event_dispatcher
-            .emit(Event::new(
+        if let Some(vsc) = ctx.ctx() {
+            let event = Event::new(
                 Operation::Delete,
-                EventPayload::RoleAssignment {
-                    role_id: grant.role_id.clone(),
-                    user_id: match &grant.r#type {
-                        AssignmentType::UserDomain
-                        | AssignmentType::UserProject
-                        | AssignmentType::UserSystem => Some(grant.actor_id.clone()),
-                        _ => None,
-                    },
-                    group_id: match &grant.r#type {
-                        AssignmentType::GroupDomain
-                        | AssignmentType::GroupProject
-                        | AssignmentType::GroupSystem => Some(grant.actor_id.clone()),
-                        _ => None,
-                    },
-                    domain_id: match &grant.r#type {
-                        AssignmentType::UserDomain | AssignmentType::GroupDomain => {
-                            Some(grant.target_id.clone())
-                        }
-                        _ => None,
-                    },
-                    project_id: match &grant.r#type {
-                        AssignmentType::UserProject | AssignmentType::GroupProject => {
-                            Some(grant.target_id.clone())
-                        }
-                        _ => None,
-                    },
-                    system_id: match &grant.r#type {
-                        AssignmentType::UserSystem | AssignmentType::GroupSystem => {
-                            Some(grant.target_id.clone())
-                        }
-                        _ => None,
-                    },
+                role_assignment_payload(
+                    grant.role_id.clone(),
+                    &grant.actor_id,
+                    &grant.target_id,
+                    &grant.r#type,
+                ),
+            );
+            let backend_driver = &self.backend_driver;
+            let state = ctx.state();
+            crate::audited_op! {
+                dispatcher: &ctx.state().event_dispatcher,
+                ctx: vsc,
+                event: event,
+                operation: async {
+                    backend_driver.revoke_grant(state, &grant).await?;
+                    state
+                        .provider
+                        .get_revoke_provider()
+                        .create_revocation_event(ctx, revocation_event)
+                        .await?;
+                    Ok::<(), AssignmentProviderError>(())
                 },
-            ))
-            .await;
-
+                on_audit_error: |_: AuditDispatchError| AssignmentProviderError::Driver("audit dispatch failed".into()),
+            }?;
+        } else {
+            self.backend_driver.revoke_grant(ctx.state(), &grant).await?;
+            ctx.state()
+                .provider
+                .get_revoke_provider()
+                .create_revocation_event(ctx, revocation_event)
+                .await?;
+            ctx.state()
+                .event_dispatcher
+                .emit(Event::new(
+                    Operation::Delete,
+                    role_assignment_payload(
+                        grant.role_id.clone(),
+                        &grant.actor_id,
+                        &grant.target_id,
+                        &grant.r#type,
+                    ),
+                ))
+                .await;
+        }
         Ok(())
     }
 }

@@ -23,6 +23,7 @@ use openstack_keystone_core_types::events::{Event, EventPayload, Operation};
 use openstack_keystone_core_types::role::*;
 
 use crate::auth::ExecutionContext;
+use crate::events::AuditDispatchError;
 use crate::plugin_manager::PluginManagerApi;
 use crate::role::{RoleApi, RoleProviderError, backend::RoleBackend};
 
@@ -49,78 +50,81 @@ impl RoleService {
 
 #[async_trait]
 impl RoleApi for RoleService {
-    /// Create role.
-    ///
-    /// # Arguments
-    /// * `state` - The current service state.
-    /// * `params` - The parameters for creating a role.
     async fn create_role<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
         params: RoleCreate,
     ) -> Result<Role, RoleProviderError> {
         params.validate()?;
-
         let mut new_params = params;
-
         if new_params.id.is_none() {
             new_params.id = Some(Uuid::new_v4().simple().to_string());
         }
-        let role = self
-            .backend_driver
-            .create_role(ctx.state(), new_params)
-            .await?;
+        let role_id = new_params.id.clone().unwrap();
 
-        ctx.state()
-            .event_dispatcher
-            .emit(Event::new(
-                Operation::Create,
-                EventPayload::Role {
-                    id: role.id.clone(),
-                },
-            ))
-            .await;
-
-        Ok(role)
+        if let Some(vsc) = ctx.ctx() {
+            let backend_driver = &self.backend_driver;
+            let state = ctx.state();
+            crate::audited_op! {
+                dispatcher: &ctx.state().event_dispatcher,
+                ctx: vsc,
+                event: Event::new(Operation::Create, EventPayload::Role { id: role_id }),
+                operation: async { backend_driver.create_role(state, new_params).await },
+                on_audit_error: |_: AuditDispatchError| RoleProviderError::Driver("audit dispatch failed".into()),
+            }
+        } else {
+            let role = self.backend_driver.create_role(ctx.state(), new_params).await?;
+            ctx.state()
+                .event_dispatcher
+                .emit(Event::new(
+                    Operation::Create,
+                    EventPayload::Role { id: role.id.clone() },
+                ))
+                .await;
+            Ok(role)
+        }
     }
 
-    /// Create a role imply rule.
-    ///
-    /// # Arguments
-    /// * `state` - The current service state.
-    /// * `prior_role_id` - The ID of the prior role.
-    /// * `implied_role_id` - The ID of the implied role.
     async fn create_role_imply_rule<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
         prior_role_id: &'a str,
         implied_role_id: &'a str,
     ) -> Result<RoleImply, RoleProviderError> {
-        let rule = self
-            .backend_driver
-            .create_role_imply_rule(ctx.state(), prior_role_id, implied_role_id)
-            .await?;
-
-        ctx.state()
-            .event_dispatcher
-            .emit(Event::new(
-                Operation::Create,
-                EventPayload::RoleImply {
+        if let Some(vsc) = ctx.ctx() {
+            let backend_driver = &self.backend_driver;
+            let state = ctx.state();
+            crate::audited_op! {
+                dispatcher: &ctx.state().event_dispatcher,
+                ctx: vsc,
+                event: Event::new(Operation::Create, EventPayload::RoleImply {
                     prior_role_id: prior_role_id.to_string(),
                     implied_role_id: implied_role_id.to_string(),
+                }),
+                operation: async {
+                    backend_driver.create_role_imply_rule(state, prior_role_id, implied_role_id).await
                 },
-            ))
-            .await;
-
-        Ok(rule)
+                on_audit_error: |_: AuditDispatchError| RoleProviderError::Driver("audit dispatch failed".into()),
+            }
+        } else {
+            let rule = self
+                .backend_driver
+                .create_role_imply_rule(ctx.state(), prior_role_id, implied_role_id)
+                .await?;
+            ctx.state()
+                .event_dispatcher
+                .emit(Event::new(
+                    Operation::Create,
+                    EventPayload::RoleImply {
+                        prior_role_id: prior_role_id.to_string(),
+                        implied_role_id: implied_role_id.to_string(),
+                    },
+                ))
+                .await;
+            Ok(rule)
+        }
     }
 
-    /// Check if a role imply rule exists.
-    ///
-    /// # Arguments
-    /// * `state` - The current service state.
-    /// * `prior_role_id` - The ID of the prior role.
-    /// * `implied_role_id` - The ID of the implied role.
     async fn check_role_imply_rule<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -132,66 +136,79 @@ impl RoleApi for RoleService {
             .await
     }
 
-    /// Delete a role by the ID.
-    ///
-    /// # Arguments
-    /// * `state` - The current service state.
-    /// * `id` - The ID of the role to delete.
     async fn delete_role<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
         id: &'a str,
     ) -> Result<(), RoleProviderError> {
-        self.backend_driver.delete_role(ctx.state(), id).await?;
-
-        ctx.state()
-            .event_dispatcher
-            .emit(Event::new(
-                Operation::Delete,
-                EventPayload::Role { id: id.to_string() },
-            ))
-            .await;
-
+        if let Some(vsc) = ctx.ctx() {
+            let backend_driver = &self.backend_driver;
+            let state = ctx.state();
+            crate::audited_op! {
+                dispatcher: &ctx.state().event_dispatcher,
+                ctx: vsc,
+                event: Event::new(Operation::Delete, EventPayload::Role { id: id.to_string() }),
+                operation: async {
+                    backend_driver.delete_role(state, id).await?;
+                    Ok::<(), RoleProviderError>(())
+                },
+                on_audit_error: |_: AuditDispatchError| RoleProviderError::Driver("audit dispatch failed".into()),
+            }?;
+        } else {
+            self.backend_driver.delete_role(ctx.state(), id).await?;
+            ctx.state()
+                .event_dispatcher
+                .emit(Event::new(
+                    Operation::Delete,
+                    EventPayload::Role { id: id.to_string() },
+                ))
+                .await;
+        }
         Ok(())
     }
 
-    /// Delete a role imply rule.
-    ///
-    /// # Arguments
-    /// * `state` - The current service state.
-    /// * `prior_role_id` - The ID of the prior role.
-    /// * `implied_role_id` - The ID of the implied role.
     async fn delete_role_imply_rule<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
         prior_role_id: &'a str,
         implied_role_id: &'a str,
     ) -> Result<(), RoleProviderError> {
-        self.backend_driver
-            .delete_role_imply_rule(ctx.state(), prior_role_id, implied_role_id)
-            .await?;
-
-        ctx.state()
-            .event_dispatcher
-            .emit(Event::new(
-                Operation::Delete,
-                EventPayload::RoleImply {
+        if let Some(vsc) = ctx.ctx() {
+            let backend_driver = &self.backend_driver;
+            let state = ctx.state();
+            crate::audited_op! {
+                dispatcher: &ctx.state().event_dispatcher,
+                ctx: vsc,
+                event: Event::new(Operation::Delete, EventPayload::RoleImply {
                     prior_role_id: prior_role_id.to_string(),
                     implied_role_id: implied_role_id.to_string(),
+                }),
+                operation: async {
+                    backend_driver
+                        .delete_role_imply_rule(state, prior_role_id, implied_role_id)
+                        .await?;
+                    Ok::<(), RoleProviderError>(())
                 },
-            ))
-            .await;
-
+                on_audit_error: |_: AuditDispatchError| RoleProviderError::Driver("audit dispatch failed".into()),
+            }?;
+        } else {
+            self.backend_driver
+                .delete_role_imply_rule(ctx.state(), prior_role_id, implied_role_id)
+                .await?;
+            ctx.state()
+                .event_dispatcher
+                .emit(Event::new(
+                    Operation::Delete,
+                    EventPayload::RoleImply {
+                        prior_role_id: prior_role_id.to_string(),
+                        implied_role_id: implied_role_id.to_string(),
+                    },
+                ))
+                .await;
+        }
         Ok(())
     }
 
-    /// Expand implied roles.
-    ///
-    /// Return list of the roles with the imply rules being considered.
-    ///
-    /// # Arguments
-    /// * `state` - The current service state.
-    /// * `roles` - The list of roles to expand.
     async fn expand_implied_roles<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -206,13 +223,6 @@ impl RoleApi for RoleService {
         Ok(())
     }
 
-    /// Get single role.
-    ///
-    /// * `state` - The current service state.
-    /// * `id` - The ID of the role to retrieve.
-    ///
-    /// A `Result` containing an `Option` with the `Role` if found, or an
-    /// `Error`.
     async fn get_role<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -221,12 +231,6 @@ impl RoleApi for RoleService {
         self.backend_driver.get_role(ctx.state(), id).await
     }
 
-    /// Get a role imply rule.
-    ///
-    /// # Arguments
-    /// * `state` - The current service state.
-    /// * `prior_role_id` - The ID of the prior role.
-    /// * `implied_role_id` - The ID of the implied role.
     async fn get_role_imply_rule<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -238,10 +242,6 @@ impl RoleApi for RoleService {
             .await
     }
 
-    /// List role imply rules.
-    ///
-    /// # Arguments
-    /// * `state` - The current service state.
     async fn list_role_imply_rules<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -249,11 +249,6 @@ impl RoleApi for RoleService {
         self.backend_driver.list_role_imply_rules(ctx.state()).await
     }
 
-    /// List role imply rules for a specific prior role.
-    ///
-    /// # Arguments
-    /// * `state` - The current service state.
-    /// * `prior_role_id` - The ID of the prior role.
     async fn list_role_imply_rules_by_prior<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -264,11 +259,6 @@ impl RoleApi for RoleService {
             .await
     }
 
-    /// List roles.
-    ///
-    /// # Arguments
-    /// * `state` - The current service state.
-    /// * `params` - The parameters for listing roles.
     async fn list_roles<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
