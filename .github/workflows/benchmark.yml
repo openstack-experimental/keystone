@@ -12,7 +12,7 @@ on:
       - 'Cargo.lock'
       - 'benches/**'
       - 'crates/**'
-  merge_gate:
+  merge_group:
 
 env:
   CARGO_TERM_COLOR: always

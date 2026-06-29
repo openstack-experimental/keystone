@@ -13,7 +13,7 @@ on:
       - 'loadtest/**'
       - 'crates/**'
       - 'policy/**'
-  merge_gate:
+  merge_group:
 env:
   DATABASE_URL: postgresql://keystone:1234@127.0.0.1:5432/keystone
   KEYSTONE_URL: http://localhost:8080

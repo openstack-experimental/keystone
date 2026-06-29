@@ -14,7 +14,7 @@ on:
       - 'Dockerfile'
       - '.dockerignore'
       - 'policy/**'
-  merge_gate:
+  merge_group:
 
 permissions:
   contents: read

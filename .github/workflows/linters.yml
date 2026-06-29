@@ -7,7 +7,7 @@ permissions:
 on:
   pull_request:
     branches: ["main" ]
-  merge_gate:
+  merge_group:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}

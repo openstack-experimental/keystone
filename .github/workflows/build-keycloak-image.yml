@@ -18,7 +18,7 @@ on:
       - 'tools/Dockerfile.keycloak' # Trigger build only when Dockerfile changes
       - '.github/workflows/build-keycloak-image.yml'
   workflow_dispatch: # Allows manual trigger
-  merge_gate:
+  merge_group:
 
 jobs:
   build_and_push:

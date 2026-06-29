@@ -11,7 +11,7 @@ on:
       - 'Cargo.toml'
       - 'benches/**'
       - 'crates/**'
-  merge_gate:
+  merge_group:
 
 env:
   CARGO_TERM_COLOR: always
