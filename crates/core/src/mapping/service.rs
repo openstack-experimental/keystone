@@ -24,14 +24,16 @@ use uuid::Uuid;
 
 use openstack_keystone_config::Config;
 use openstack_keystone_core_types::auth::{
-    AuthenticationContext, AuthenticationResult, AuthenticationResultBuilder, IdentityInfo,
-    OidcContextBuilder, PrincipalIdentityInfoBuilder, PrincipalInfo, UserIdentityInfoBuilder,
+    AuthenticationContext, AuthenticationResult, AuthenticationResultBuilder, AuthzInfo,
+    AuthzInfoBuilder, IdentityInfo, OidcContextBuilder, PrincipalIdentityInfoBuilder,
+    PrincipalInfo, ScopeInfo, UserIdentityInfoBuilder,
 };
 use openstack_keystone_core_types::identity::{
     FederationBuilder, FederationProtocol, GroupCreate, GroupListParameters, UserCreateBuilder,
     UserResponse,
 };
 use openstack_keystone_core_types::mapping::*;
+use openstack_keystone_core_types::resource::{Domain, Project};
 
 use crate::auth::ExecutionContext;
 use crate::keystone::ServiceState;
@@ -39,6 +41,65 @@ use crate::mapping::{
     MappingApi, MappingProviderError, backend::MappingBackend, engine, hmac, validation, version,
 };
 use crate::plugin_manager::PluginManagerApi;
+
+/// Derive [`AuthzInfo`] from authorization list produced by a matched ruleset rule.
+///
+/// Uses the first authorization to determine scope. If the list is empty,
+/// returns `None` so the authentication result remains unscoped.
+fn derive_authz_info(authorizations: &[Authorization]) -> Option<AuthzInfo> {
+    let (scope, roles) = match authorizations.first() {
+        Some(Authorization::Project {
+            project_id,
+            project_domain_id,
+            roles,
+        }) => {
+            let project = Project {
+                id: project_id.clone(),
+                name: String::new(),
+                description: None,
+                enabled: true,
+                is_domain: false,
+                parent_id: None,
+                domain_id: project_domain_id.clone(),
+                extra: Default::default(),
+            };
+            let domain = Domain {
+                id: project_domain_id.clone(),
+                name: String::new(),
+                description: None,
+                enabled: true,
+                extra: Default::default(),
+            };
+            (
+                ScopeInfo::Project {
+                    project,
+                    project_domain: domain,
+                },
+                roles.clone(),
+            )
+        }
+        Some(Authorization::Domain { domain_id, roles }) => {
+            let domain = Domain {
+                id: domain_id.clone(),
+                name: String::new(),
+                description: None,
+                enabled: true,
+                extra: Default::default(),
+            };
+            (ScopeInfo::Domain(domain), roles.clone())
+        }
+        Some(Authorization::System { system_id, roles }) => {
+            (ScopeInfo::System(system_id.clone()), roles.clone())
+        }
+        None => return None,
+    };
+
+    AuthzInfoBuilder::default()
+        .scope(scope)
+        .roles(roles)
+        .build()
+        .ok()
+}
 
 /// Mapping Provider service.
 pub struct MappingService {
@@ -126,13 +187,10 @@ impl MappingService {
         .ok_or(MappingProviderError::NoMatchingRule)?;
 
         // 4. Resolve identity mode: explicit rule value > source-based default
-        let identity_mode = match_result.identity_mode.clone().unwrap_or({
-            if matches!(req.source, IdentitySource::Federation { .. }) {
-                IdentityMode::Ephemeral
-            } else {
-                IdentityMode::Ephemeral
-            }
-        });
+        let identity_mode = match_result
+            .identity_mode
+            .clone()
+            .unwrap_or(IdentityMode::Ephemeral);
 
         // 5. Branch on identity mode
         match identity_mode {
@@ -197,15 +255,25 @@ impl MappingService {
             identity: IdentityInfo::Principal(pinfo),
         };
 
-        Ok(AuthenticationResultBuilder::default()
-            .principal(principal)
-            .context(AuthenticationContext::Mapping(MappingContext {
-                mapping_id: ruleset.mapping_id.clone(),
-                matched_rule_name: match_result.rule_name.clone(),
-                virtual_user_id: virtual_user_id.clone(),
-            }))
-            .build()
-            .map_err(Box::new)?)
+        let ctx = AuthenticationContext::Mapping(MappingContext {
+            mapping_id: ruleset.mapping_id.clone(),
+            matched_rule_name: match_result.rule_name.clone(),
+            virtual_user_id: virtual_user_id.clone(),
+        });
+
+        let result = match derive_authz_info(&match_result.authorizations) {
+            Some(authz) => AuthenticationResultBuilder::default()
+                .principal(principal)
+                .context(ctx)
+                .authorization(authz)
+                .build(),
+            None => AuthenticationResultBuilder::default()
+                .principal(principal)
+                .context(ctx)
+                .build(),
+        };
+
+        Ok(result.map_err(Box::new)?)
     }
 
     /// Authenticate with a real federated user row (local path).
@@ -889,6 +957,7 @@ mod tests {
     use openstack_keystone_core_types::mapping::rule::{
         ClaimCondition, IdentityBinding, MappingRule, MatchCondition, MatchCriteria,
     };
+    use openstack_keystone_core_types::role::RoleRef;
     use secrecy::SecretString;
     use serde_json::Value;
 
@@ -1926,5 +1995,169 @@ mod tests {
         } else {
             panic!("Expected Mapping context");
         }
+    }
+
+    #[test]
+    fn test_derive_authz_info_empty() {
+        assert!(derive_authz_info(&[]).is_none());
+    }
+
+    #[test]
+    fn test_derive_authz_info_project() {
+        let authz = Authorization::Project {
+            project_id: "proj-1".to_string(),
+            project_domain_id: "dom-1".to_string(),
+            roles: vec![RoleRef {
+                id: "member".to_string(),
+                name: Some("member".to_string()),
+                domain_id: None,
+            }],
+        };
+        let result = derive_authz_info(&[authz]).unwrap();
+        match result.scope {
+            ScopeInfo::Project {
+                ref project,
+                ref project_domain,
+            } => {
+                assert_eq!(project.id, "proj-1");
+                assert_eq!(project_domain.id, "dom-1");
+            }
+            _ => panic!("Expected Project scope"),
+        }
+        assert_eq!(result.effective_roles().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn test_derive_authz_info_domain() {
+        let authz = Authorization::Domain {
+            domain_id: "dom-1".to_string(),
+            roles: vec![RoleRef {
+                id: "admin".to_string(),
+                name: Some("admin".to_string()),
+                domain_id: None,
+            }],
+        };
+        let result = derive_authz_info(&[authz]).unwrap();
+        match result.scope {
+            ScopeInfo::Domain(ref domain) => {
+                assert_eq!(domain.id, "dom-1");
+            }
+            _ => panic!("Expected Domain scope"),
+        }
+        assert_eq!(result.effective_roles().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn test_derive_authz_info_system() {
+        let authz = Authorization::System {
+            system_id: "all".to_string(),
+            roles: vec![RoleRef {
+                id: "admin".to_string(),
+                name: Some("admin".to_string()),
+                domain_id: None,
+            }],
+        };
+        let result = derive_authz_info(&[authz]).unwrap();
+        match result.scope {
+            ScopeInfo::System(ref sys) => {
+                assert_eq!(sys, "all");
+            }
+            _ => panic!("Expected System scope"),
+        }
+        assert_eq!(result.effective_roles().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_authenticate_by_mapping_authz_is_set() {
+        let mut mock_backend = MockMappingBackend::new();
+        let state = get_mocked_state_with_salt().await;
+
+        let mut claims = HashMap::new();
+        claims.insert("sub".to_string(), vec!["workload-123".to_string()]);
+
+        let source = IdentitySource::Federation {
+            idp_id: "okta".to_string(),
+        };
+
+        let rules = vec![MappingRule {
+            name: "matching-rule".to_string(),
+            description: None,
+            r#match: MatchCriteria::AllOf(vec![MatchCondition::Condition(
+                ClaimCondition::Equals {
+                    claim: "sub".to_string(),
+                    value: Value::String("workload-123".to_string()),
+                },
+            )]),
+            identity: IdentityBinding {
+                identity_mode: Some(IdentityMode::Ephemeral),
+                user_name: "${claims.sub}-mapped".to_string(),
+                user_id: None,
+                user_domain_id: None,
+                is_system: false,
+            },
+            authorizations: vec![Authorization::Project {
+                project_id: "proj-123".to_string(),
+                project_domain_id: "dom-default".to_string(),
+                roles: vec![RoleRef {
+                    id: "member".to_string(),
+                    name: Some("member".to_string()),
+                    domain_id: None,
+                }],
+            }],
+            groups: vec![],
+        }];
+
+        let matching_ruleset = MappingRuleSet {
+            mapping_id: "test-mapping".to_string(),
+            domain_id: Some("default-domain".to_string()),
+            source: source.clone(),
+            domain_resolution_mode: DomainResolutionMode::Fixed,
+            enabled: true,
+            rules,
+            ruleset_version: 1,
+        };
+
+        let matching_ruleset_clone = matching_ruleset.clone();
+
+        mock_backend
+            .expect_get_ruleset_by_source()
+            .returning(move |_, _, _| Ok(Some(matching_ruleset_clone.clone())));
+
+        mock_backend
+            .expect_get_virtual_user()
+            .returning(|_, _| Ok(None));
+
+        mock_backend
+            .expect_create_virtual_user()
+            .returning(move |_, vu| Ok(vu));
+
+        let service = MappingService::from_driver(mock_backend);
+
+        let result = service
+            .authenticate_by_mapping(
+                &ExecutionContext::internal(&state),
+                &MappingAuthRequest {
+                    domain_id: Some("default-domain".to_string()),
+                    source: source.clone(),
+                    unique_workload_id: "workload-123".to_string(),
+                    claims: claims.clone(),
+                    rule_name: None,
+                },
+            )
+            .await
+            .unwrap();
+
+        let authz = result.authorization.expect("authorization should be set");
+        match authz.scope {
+            ScopeInfo::Project {
+                ref project,
+                ref project_domain,
+            } => {
+                assert_eq!(project.id, "proj-123");
+                assert_eq!(project_domain.id, "dom-default");
+            }
+            _ => panic!("Expected Project scope"),
+        }
+        assert_eq!(authz.effective_roles().unwrap().len(), 1);
     }
 }
