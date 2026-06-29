@@ -4237,7 +4237,7 @@ version = "0.1.0"
 dependencies = [
  "aes-gcm",
  "hkdf",
- "hmac 0.12.1",
+ "hmac 0.13.0",
  "nix 0.31.3",
  "rand 0.10.1",
  "sha2 0.10.9",
