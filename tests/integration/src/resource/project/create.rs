@@ -16,6 +16,9 @@
 use eyre::Result;
 use tracing_test::traced_test;
 
+use openstack_keystone_core::auth::ExecutionContext;
+use openstack_keystone_core_types::resource::ProjectCreateBuilder;
+
 use crate::common::get_state;
 use crate::create_domain;
 use crate::create_project;
@@ -30,5 +33,53 @@ async fn test_create() -> Result<()> {
     assert!(!project.name.is_empty());
     assert_eq!(project.domain_id, domain.id);
     assert!(project.enabled);
+    Ok(())
+}
+
+#[traced_test]
+#[tokio::test]
+async fn test_create_invalid_name_too_long() -> Result<()> {
+    let (state, _tmp) = get_state().await?;
+    let domain = create_domain!(state)?;
+
+    let result = state
+        .provider
+        .get_resource_provider()
+        .create_project(
+            &ExecutionContext::internal(&state),
+            ProjectCreateBuilder::default()
+                .name("x".repeat(256))
+                .domain_id(domain.id.clone())
+                .build()?,
+        )
+        .await;
+    assert!(
+        result.is_err(),
+        "creating a project with an over-length name is rejected"
+    );
+    Ok(())
+}
+
+#[traced_test]
+#[tokio::test]
+async fn test_create_invalid_empty_name() -> Result<()> {
+    let (state, _tmp) = get_state().await?;
+    let domain = create_domain!(state)?;
+
+    let result = state
+        .provider
+        .get_resource_provider()
+        .create_project(
+            &ExecutionContext::internal(&state),
+            ProjectCreateBuilder::default()
+                .name("")
+                .domain_id(domain.id.clone())
+                .build()?,
+        )
+        .await;
+    assert!(
+        result.is_err(),
+        "creating a project with an empty name is rejected"
+    );
     Ok(())
 }
