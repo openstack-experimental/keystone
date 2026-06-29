@@ -37,7 +37,7 @@ tokio-rustls.workspace = true
 tonic = { workspace = true, features = ["tls-aws-lc"] }
 tracing-test.workspace = true
 webauthn-authenticator-rs = { workspace = true, features = ["softtoken"] }
-x509-parser = "0.16"
+x509-parser.workspace = true
 url = { workspace = true }
 uuid = { workspace = true, features = ["v4"] }
 

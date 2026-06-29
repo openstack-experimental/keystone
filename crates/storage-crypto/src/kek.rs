@@ -29,8 +29,31 @@
 
 use std::env;
 
-use aes_gcm::aead::generic_array::GenericArray;
-use aes_gcm::{AeadInPlace, Aes256Gcm, KeyInit};
+#[allow(deprecated)]
+use aes_gcm::aead::AeadInPlace;
+use aes_gcm::{Aes256Gcm, KeyInit};
+use hybrid_array::Array;
+use typenum::{U12, U16, U32};
+
+// GCM type aliases
+type GcmKey = Array<u8, U32>;
+type GcmNonce = Array<u8, U12>;
+type GcmTag = Array<u8, U16>;
+
+/// Convert a 12-byte slice reference to a typed GCM nonce array reference.
+fn nonce_ref(s: &[u8]) -> &GcmNonce {
+    Array::slice_as_array(s).expect("12-byte nonce")
+}
+
+/// Convert a 16-byte slice reference to a typed GCM tag array reference.
+fn tag_ref(s: &[u8]) -> &GcmTag {
+    Array::slice_as_array(s).expect("16-byte tag")
+}
+
+/// Convert a 32-byte slice reference to a typed GCM key array reference.
+fn key_ref(s: &[u8]) -> &GcmKey {
+    Array::slice_as_array(s).expect("32-byte key")
+}
 use rand::RngExt;
 use zeroize::{Zeroize, Zeroizing};
 
@@ -130,18 +153,18 @@ impl EnvKek {
 impl KekProvider for EnvKek {
     fn wrap_dek(&self, dek: &[u8; 32]) -> Result<Vec<u8>, CryptoError> {
         let nonce_bytes: [u8; 12] = rand::rng().random();
-        let nonce = GenericArray::from_slice(&nonce_bytes);
-        let cipher = Aes256Gcm::new(GenericArray::from_slice(self.key.as_ref()));
+        let cipher = Aes256Gcm::new(key_ref(&*self.key));
+        let gcm_nonce = nonce_ref(&nonce_bytes);
 
         let mut buf = dek.to_vec();
         let tag = cipher
-            .encrypt_in_place_detached(nonce, DEK_WRAP_AD, &mut buf)
+            .encrypt_in_place_detached(gcm_nonce, DEK_WRAP_AD, &mut buf)
             .map_err(|_| CryptoError::AesEncrypt)?;
 
         let mut out = Vec::with_capacity(12 + 32 + 16);
         out.extend_from_slice(&nonce_bytes);
         out.extend_from_slice(&buf);
-        out.extend_from_slice(tag.as_slice());
+        out.extend_from_slice(&tag);
         Ok(out)
     }
 
@@ -150,13 +173,18 @@ impl KekProvider for EnvKek {
         if wrapped.len() != 12 + 32 + 16 {
             return Err(CryptoError::WrappedDekSize);
         }
-        let nonce = GenericArray::from_slice(&wrapped[..12]);
-        let tag = GenericArray::from_slice(&wrapped[44..]);
-        let cipher = Aes256Gcm::new(GenericArray::from_slice(self.key.as_ref()));
+        let nonce_arr: [u8; 12] = wrapped[..12].try_into().unwrap();
+        let tag_arr: [u8; 16] = wrapped[44..].try_into().unwrap();
+        let cipher = Aes256Gcm::new(key_ref(&*self.key));
 
         let mut buf = wrapped[12..44].to_vec();
         cipher
-            .decrypt_in_place_detached(nonce, DEK_WRAP_AD, &mut buf, tag)
+            .decrypt_in_place_detached(
+                nonce_ref(&nonce_arr),
+                DEK_WRAP_AD,
+                &mut buf,
+                tag_ref(&tag_arr),
+            )
             .map_err(|_| CryptoError::AesDecrypt)?;
 
         if buf.len() != 32 {
