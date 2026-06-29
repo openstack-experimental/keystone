@@ -10,10 +10,12 @@ repository.workspace = true
 dist = false
 
 [dependencies]
+async-trait.workspace = true
 chrono.workspace = true
 eyre.workspace = true
 inventory.workspace = true
 itertools.workspace = true
+openstack-keystone-audit = { workspace = true, features = ["testing"] }
 openstack-keystone-config.workspace = true
 openstack-keystone-api-types = { workspace = true, features = ["builder", "conv"] }
 openstack-keystone-core = { workspace = true, features = ["mock"] }

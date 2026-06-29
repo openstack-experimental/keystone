@@ -75,6 +75,7 @@
 pub mod api;
 pub mod application_credential;
 pub mod assignment;
+pub mod audit;
 pub mod auth;
 pub mod catalog;
 pub mod common;

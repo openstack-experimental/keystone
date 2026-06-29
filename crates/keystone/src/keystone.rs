@@ -12,4 +12,5 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //! # Keystone state
+pub use openstack_keystone_audit::AuditDispatcher;
 pub use openstack_keystone_core::keystone::{Service, ServiceState};

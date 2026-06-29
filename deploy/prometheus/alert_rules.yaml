@@ -1,0 +1,45 @@
+# Prometheus alert rules for the Keystone audit subsystem (ADR 0023 Phase 4).
+#
+# Metrics are scraped from the /metrics endpoint on each Keystone node.
+# See crates/audit/src/metrics.rs for the exposition format.
+---
+groups:
+  - name: keystone_audit
+    rules:
+      # Fires when the perimeter best-effort channel drops events faster than
+      # 100/s AND those drops represent more than 5 % of all audit events.
+      # A sustained burst at this level may indicate a volumetric attack; check
+      # rate-limiting health (ADR 0022) before investigating audit consumers.
+      - alert: KeystoneAuditDropsVolumetric
+        expr: |
+          rate(keystone_audit_dropped_total[5m]) > 100 and
+          rate(keystone_audit_dropped_total[5m]) /
+          rate(keystone_audit_events_total[5m]) > 0.05
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Audit drops >100/s (>5% of perimeter events)"
+          description: >
+            Possible volumetric attack or audit consumer backlog.
+            Check rate limiting (ADR 0022) and the audit spool writer.
+
+      # Fires when any post-audit outcome record (Success/Failure) is lost
+      # after a DB commit. The pre-audit Attempt event exists but the final
+      # outcome is unknown. Compensating local log entries (structured JSONL)
+      # should be independently shipped to the SIEM for dual-delivery.
+      - alert: KeystoneAuditPostauditDrops
+        expr: |
+          increase(keystone_audit_postaudit_dropped_total[5m]) > 0 and
+          rate(keystone_audit_events_total[5m]) > 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Post-audit outcome record lost after DB commit"
+          description: >
+            The outcome record (Success/Failure) for a high-criticality
+            operation (e.g. disable_user, delete_credential) was dropped.
+            The pre-audit Attempt exists but the final outcome is lost.
+            Compensating local JSONL log entries should be shipped to the
+            SIEM as a dual-delivery fallback (see ADR 0023 §Observability).

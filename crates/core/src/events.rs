@@ -38,6 +38,8 @@ use openstack_keystone_core_types::events::Event;
 use tokio::sync::Mutex;
 use tokio::sync::broadcast;
 
+use crate::auth::ValidatedSecurityContext;
+
 /// Trait for providers and extensions that want to receive notifications
 /// about events.
 ///
@@ -50,6 +52,76 @@ pub trait ProviderHooks: Send + Sync {
     /// # Parameters
     /// - `event`: The event that occurred.
     async fn on_event(&self, _event: &Event) {}
+}
+
+// ---- Phase 3: Provider Auditing via Context-Aware Hooks (ADR 0023) ----
+
+/// Outcome of a provider operation passed to [`AuditHook`].
+#[derive(Debug, Clone)]
+pub enum AuditOutcome {
+    /// The operation was attempted (pre-audit call, before DB mutation).
+    Attempt,
+    /// The operation completed successfully.
+    Success,
+    /// The operation failed.
+    Failure {
+        /// PII-free sanitized error variant name (see `error_variant_name`).
+        reason: String,
+    },
+}
+
+/// Error from an [`AuditHook`] or from the `emit_critical` path.
+#[derive(Debug)]
+pub enum AuditDispatchError {
+    /// The underlying audit channel is dead (receiver dropped).
+    DispatcherDead,
+    /// A hook returned an error.
+    HookFailed {
+        /// Stable `&'static str` description — never formatted from error data
+        /// so it can safely appear in logs and audit records.
+        description: &'static str,
+    },
+    /// `emit_critical` was called recursively (from inside a hook).
+    Reentered,
+}
+
+impl std::fmt::Display for AuditDispatchError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AuditDispatchError::DispatcherDead => write!(f, "audit dispatcher channel is dead"),
+            AuditDispatchError::HookFailed { description } => {
+                write!(f, "audit hook failed: {description}")
+            }
+            AuditDispatchError::Reentered => write!(f, "emit_critical called recursively"),
+        }
+    }
+}
+
+impl std::error::Error for AuditDispatchError {}
+
+/// Fail-closed audit hook for high-criticality provider operations.
+///
+/// Unlike [`ProviderHooks`] (fire-and-forget), `AuditHook` is invoked inline
+/// via [`EventDispatcher::emit_critical`] and a hook error aborts the provider
+/// call that triggered it (fail-closed semantics).
+#[async_trait]
+pub trait AuditHook: Send + Sync {
+    async fn on_auditable_event(
+        &self,
+        ctx: &ValidatedSecurityContext,
+        event: &Event,
+        outcome: &AuditOutcome,
+    ) -> Result<(), AuditDispatchError>;
+}
+
+tokio::task_local! {
+    /// Reentrancy guard for `emit_critical`.
+    ///
+    /// Set to `true` for the duration of each `emit_critical` call so that
+    /// hooks which inadvertently call `emit_critical` again return
+    /// [`AuditDispatchError::Reentered`] immediately rather than deadlocking
+    /// on the `audit_hooks` mutex.
+    static EMIT_CRITICAL_RECURSION: bool;
 }
 
 /// Unique identifier for a hook subscription.
@@ -66,11 +138,18 @@ pub struct EventDispatcher {
     /// Broadcast channel sender for direct subscriber access.
     pub tx: broadcast::Sender<Event>,
 
-    /// Registered hook subscribers.
+    /// Registered fire-and-forget hook subscribers.
     hooks: Mutex<HashMap<HookId, Arc<dyn ProviderHooks>>>,
+
+    /// Registered fail-closed audit hooks (ADR 0023 Phase 3).
+    audit_hooks: Mutex<HashMap<HookId, Arc<dyn AuditHook>>>,
 
     /// Counter for generating unique hook IDs.
     counter: AtomicU64,
+
+    /// Counts post-audit drops: outcomes lost after a DB commit because the
+    /// critical channel was full. Exported as a Prometheus gauge (ADR 0023).
+    pub postaudit_dropped_count: Arc<AtomicU64>,
 }
 
 impl EventDispatcher {
@@ -95,7 +174,9 @@ impl EventDispatcher {
         Arc::new(Self {
             tx,
             hooks: Mutex::new(HashMap::new()),
+            audit_hooks: Mutex::new(HashMap::new()),
             counter: AtomicU64::new(0),
+            postaudit_dropped_count: Arc::new(AtomicU64::new(0)),
         })
     }
 
@@ -199,6 +280,146 @@ impl EventDispatcher {
     pub fn production() -> Arc<Self> {
         Self::new(256)
     }
+
+    /// Subscribe a fail-closed audit hook (ADR 0023 Phase 3).
+    ///
+    /// Unlike [`subscribe`], audit hooks are called synchronously inline with
+    /// the provider operation and any hook error aborts the operation.
+    pub async fn subscribe_audit(&self, hook: Arc<dyn AuditHook>) -> HookId {
+        let id = HookId(self.counter.fetch_add(1, Ordering::SeqCst));
+        self.audit_hooks.lock().await.insert(id, hook);
+        id
+    }
+
+    /// Fail-closed audit dispatch (ADR 0023 Phase 3).
+    ///
+    /// Calls every registered [`AuditHook`] inline. A [`AuditDispatchError::DispatcherDead`]
+    /// from any hook short-circuits and returns immediately. Any other hook
+    /// error is collected; if any hooks fail, returns
+    /// [`AuditDispatchError::HookFailed`].
+    ///
+    /// Reentrancy is prevented via a `tokio::task_local!` flag: a recursive
+    /// call returns [`AuditDispatchError::Reentered`].
+    pub async fn emit_critical(
+        &self,
+        ctx: &ValidatedSecurityContext,
+        event: &Event,
+        outcome: &AuditOutcome,
+    ) -> Result<(), AuditDispatchError> {
+        let is_reentered = EMIT_CRITICAL_RECURSION.try_with(|v| *v).unwrap_or(false);
+        if is_reentered {
+            return Err(AuditDispatchError::Reentered);
+        }
+
+        let hooks: Vec<Arc<dyn AuditHook>> =
+            self.audit_hooks.lock().await.values().cloned().collect();
+
+        EMIT_CRITICAL_RECURSION
+            .scope(true, async move {
+                let mut error_count: u64 = 0;
+                for hook in &hooks {
+                    match hook.on_auditable_event(ctx, event, outcome).await {
+                        Err(AuditDispatchError::DispatcherDead) => {
+                            return Err(AuditDispatchError::DispatcherDead);
+                        }
+                        Err(_) => error_count += 1,
+                        Ok(()) => {}
+                    }
+                }
+                if error_count > 0 {
+                    return Err(AuditDispatchError::HookFailed {
+                        description: "one or more audit hooks failed",
+                    });
+                }
+                Ok(())
+            })
+            .await
+    }
+
+    /// Current count of post-audit outcome drops.
+    pub fn postaudit_dropped_count(&self) -> u64 {
+        self.postaudit_dropped_count.load(Ordering::Relaxed)
+    }
+}
+
+/// Audit-before-commit wrapper for high-criticality provider operations
+/// (ADR 0023 Phase 3, §"Audit-Before-Commit").
+///
+/// Emits a pre-audit `Attempt` event (fail-closed), runs the operation, then
+/// emits a `Success` or `Failure` post-audit event. If the post-audit channel
+/// is full, writes a compensating structured log entry.
+///
+/// # Arguments
+/// - `dispatcher` — `&EventDispatcher`
+/// - `ctx` — `&ValidatedSecurityContext`
+/// - `event` — `Event` describing the resource being acted on
+/// - `operation` — an expression evaluating to a `Future<Output=Result<_, _>>`
+/// - `on_audit_error` — closure `|AuditDispatchError| -> E` mapping
+///   pre-audit failures to the outer error type
+///
+/// # Cancellation safety
+/// If the future returned by `$op` is dropped before completing, the
+/// post-audit event is never emitted.  Callers that require at-least-once
+/// delivery must ensure the outer task is not cancelled.
+#[macro_export]
+macro_rules! audited_op {
+    (
+        dispatcher: $dispatcher:expr,
+        ctx:        $ctx:expr,
+        event:      $event:expr,
+        operation:  $op:expr,
+        on_audit_error: $on_audit_error:expr $(,)?
+    ) => {{
+        use ::std::sync::atomic::Ordering as __Ordering;
+        use $crate::events::{AuditOutcome as __AuditOutcome};
+
+        let __event = $event;
+        let __ctx = $ctx;
+        let __dispatcher = $dispatcher;
+
+        // Pre-audit: fail-closed.  Any dispatch error aborts the operation.
+        __dispatcher
+            .emit_critical(__ctx, &__event, &__AuditOutcome::Attempt)
+            .await
+            .map_err($on_audit_error)?;
+
+        let __result = $op.await;
+
+        let __outcome = match &__result {
+            Ok(_) => __AuditOutcome::Success,
+            Err(e) => __AuditOutcome::Failure {
+                // Extract only the type/variant name — strip args and field
+                // values that may contain PII or internal detail.
+                reason: {
+                    let s = format!("{:?}", e);
+                    s.chars()
+                        .take_while(|c| !matches!(c, '(' | '{' | ' '))
+                        .take(64)
+                        .collect()
+                },
+            },
+        };
+
+        // Post-audit: best-effort with compensating local log on failure.
+        if __dispatcher
+            .emit_critical(__ctx, &__event, &__outcome)
+            .await
+            .is_err()
+        {
+            __dispatcher
+                .postaudit_dropped_count
+                .fetch_add(1, __Ordering::Relaxed);
+            ::tracing::error!(
+                correlation_id = %__ctx.correlation_id(),
+                outcome         = ?__outcome,
+                event_operation = ?__event.operation,
+                event_resource  = ?__event.payload,
+                "post-audit channel full — compensating local log written"
+            );
+        }
+
+        __result
+    }};
 }
 
 #[cfg(test)]
@@ -206,6 +427,306 @@ mod tests {
     use super::*;
     use openstack_keystone_core_types::events::{EventPayload, Operation};
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    // ---- helpers ----
+
+    fn make_vsc() -> ValidatedSecurityContext {
+        use openstack_keystone_core_types::auth::{
+            AuthenticationContext, IdentityInfo, PrincipalInfo, SecurityContext,
+            UserIdentityInfoBuilder,
+        };
+        let user = UserIdentityInfoBuilder::default()
+            .user_id("test-user-id".to_string())
+            .build()
+            .unwrap();
+        let sc = SecurityContext::test_build()
+            .authentication_context(AuthenticationContext::Password)
+            .principal(PrincipalInfo {
+                identity: IdentityInfo::User(user),
+            })
+            .build();
+        ValidatedSecurityContext::test_new(sc)
+    }
+
+    fn make_event() -> Event {
+        Event::new(
+            Operation::Delete,
+            EventPayload::User {
+                id: "test-user-id".to_string(),
+            },
+        )
+    }
+
+    // ---- emit_critical tests ----
+
+    #[tokio::test]
+    async fn emit_critical_no_hooks_succeeds() {
+        let dispatcher = EventDispatcher::new(4);
+        let vsc = make_vsc();
+        let event = make_event();
+        let result = dispatcher
+            .emit_critical(&vsc, &event, &AuditOutcome::Attempt)
+            .await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn emit_critical_hook_success_returns_ok() {
+        struct OkHook;
+        #[async_trait]
+        impl AuditHook for OkHook {
+            async fn on_auditable_event(
+                &self,
+                _ctx: &ValidatedSecurityContext,
+                _event: &Event,
+                _outcome: &AuditOutcome,
+            ) -> Result<(), AuditDispatchError> {
+                Ok(())
+            }
+        }
+        let dispatcher = EventDispatcher::new(4);
+        dispatcher.subscribe_audit(Arc::new(OkHook)).await;
+        let vsc = make_vsc();
+        let event = make_event();
+        let result = dispatcher
+            .emit_critical(&vsc, &event, &AuditOutcome::Success)
+            .await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn emit_critical_hook_failure_propagates() {
+        struct FailHook;
+        #[async_trait]
+        impl AuditHook for FailHook {
+            async fn on_auditable_event(
+                &self,
+                _ctx: &ValidatedSecurityContext,
+                _event: &Event,
+                _outcome: &AuditOutcome,
+            ) -> Result<(), AuditDispatchError> {
+                Err(AuditDispatchError::HookFailed {
+                    description: "injected test failure",
+                })
+            }
+        }
+        let dispatcher = EventDispatcher::new(4);
+        dispatcher.subscribe_audit(Arc::new(FailHook)).await;
+        let vsc = make_vsc();
+        let event = make_event();
+        let result = dispatcher
+            .emit_critical(&vsc, &event, &AuditOutcome::Attempt)
+            .await;
+        assert!(matches!(result, Err(AuditDispatchError::HookFailed { .. })));
+    }
+
+    #[tokio::test]
+    async fn emit_critical_dispatcher_dead_short_circuits() {
+        struct DeadHook;
+        #[async_trait]
+        impl AuditHook for DeadHook {
+            async fn on_auditable_event(
+                &self,
+                _ctx: &ValidatedSecurityContext,
+                _event: &Event,
+                _outcome: &AuditOutcome,
+            ) -> Result<(), AuditDispatchError> {
+                Err(AuditDispatchError::DispatcherDead)
+            }
+        }
+        let dispatcher = EventDispatcher::new(4);
+        dispatcher.subscribe_audit(Arc::new(DeadHook)).await;
+        let vsc = make_vsc();
+        let event = make_event();
+        let result = dispatcher
+            .emit_critical(&vsc, &event, &AuditOutcome::Attempt)
+            .await;
+        assert!(
+            matches!(result, Err(AuditDispatchError::DispatcherDead)),
+            "DispatcherDead must propagate immediately"
+        );
+    }
+
+    #[tokio::test]
+    async fn emit_critical_reentrancy_blocked() {
+        // A hook that tries to re-enter emit_critical.
+        struct ReentrantHook(Arc<EventDispatcher>);
+        #[async_trait]
+        impl AuditHook for ReentrantHook {
+            async fn on_auditable_event(
+                &self,
+                ctx: &ValidatedSecurityContext,
+                event: &Event,
+                outcome: &AuditOutcome,
+            ) -> Result<(), AuditDispatchError> {
+                // This second call must return Reentered.
+                self.0.emit_critical(ctx, event, outcome).await
+            }
+        }
+        let dispatcher = EventDispatcher::new(4);
+        let hook = Arc::new(ReentrantHook(Arc::clone(&dispatcher)));
+        dispatcher.subscribe_audit(hook).await;
+        let vsc = make_vsc();
+        let event = make_event();
+        // The outer call returns HookFailed (because the inner call returned Reentered,
+        // which is collected as a generic hook error).
+        let result = dispatcher
+            .emit_critical(&vsc, &event, &AuditOutcome::Attempt)
+            .await;
+        assert!(
+            matches!(result, Err(AuditDispatchError::HookFailed { .. })),
+            "reentrancy must cause outer call to return HookFailed, got: {:?}",
+            result
+        );
+    }
+
+    // ---- audited_op! tests ----
+
+    #[tokio::test]
+    async fn audited_op_emits_attempt_then_success() {
+        use std::sync::atomic::AtomicBool;
+
+        struct RecordHook {
+            saw_attempt: Arc<AtomicBool>,
+            saw_success: Arc<AtomicBool>,
+        }
+        #[async_trait]
+        impl AuditHook for RecordHook {
+            async fn on_auditable_event(
+                &self,
+                _ctx: &ValidatedSecurityContext,
+                _event: &Event,
+                outcome: &AuditOutcome,
+            ) -> Result<(), AuditDispatchError> {
+                match outcome {
+                    AuditOutcome::Attempt => self.saw_attempt.store(true, Ordering::SeqCst),
+                    AuditOutcome::Success => self.saw_success.store(true, Ordering::SeqCst),
+                    _ => {}
+                }
+                Ok(())
+            }
+        }
+        let saw_attempt = Arc::new(AtomicBool::new(false));
+        let saw_success = Arc::new(AtomicBool::new(false));
+        let dispatcher = EventDispatcher::new(4);
+        dispatcher
+            .subscribe_audit(Arc::new(RecordHook {
+                saw_attempt: Arc::clone(&saw_attempt),
+                saw_success: Arc::clone(&saw_success),
+            }))
+            .await;
+
+        let vsc = make_vsc();
+        let event = make_event();
+        // Wrap in async block so `?` inside the macro propagates from the block.
+        let result: Result<u32, &str> = async {
+            crate::audited_op! {
+                dispatcher: &dispatcher,
+                ctx: &vsc,
+                event: event,
+                operation: async { Ok::<u32, &str>(42) },
+                on_audit_error: |_| "audit error",
+            }
+        }
+        .await;
+        assert!(result.is_ok());
+        assert!(
+            saw_attempt.load(Ordering::SeqCst),
+            "Attempt must be emitted"
+        );
+        assert!(
+            saw_success.load(Ordering::SeqCst),
+            "Success must be emitted"
+        );
+    }
+
+    #[tokio::test]
+    async fn audited_op_blocked_on_pre_audit_failure() {
+        struct BlockHook;
+        #[async_trait]
+        impl AuditHook for BlockHook {
+            async fn on_auditable_event(
+                &self,
+                _ctx: &ValidatedSecurityContext,
+                _event: &Event,
+                _outcome: &AuditOutcome,
+            ) -> Result<(), AuditDispatchError> {
+                Err(AuditDispatchError::HookFailed {
+                    description: "blocking hook",
+                })
+            }
+        }
+        let dispatcher = EventDispatcher::new(4);
+        dispatcher.subscribe_audit(Arc::new(BlockHook)).await;
+        let vsc = make_vsc();
+        let event = make_event();
+
+        let op_ran = Arc::new(AtomicUsize::new(0));
+        let op_ran_clone = Arc::clone(&op_ran);
+        // Wrap in async block so `?` propagates from the block rather than the test fn.
+        let result: Result<(), &str> = async {
+            crate::audited_op! {
+                dispatcher: &dispatcher,
+                ctx: &vsc,
+                event: event,
+                operation: async {
+                    op_ran_clone.fetch_add(1, Ordering::SeqCst);
+                    Ok::<(), &str>(())
+                },
+                on_audit_error: |_| "audit error",
+            }
+        }
+        .await;
+        assert!(result.is_err(), "operation must be blocked");
+        assert_eq!(
+            op_ran.load(Ordering::SeqCst),
+            0,
+            "inner operation must not run when pre-audit fails"
+        );
+    }
+
+    #[tokio::test]
+    async fn audited_op_increments_postaudit_dropped_on_failure() {
+        // Hook that succeeds on Attempt but fails on Success/Failure.
+        struct DropPostAudit;
+        #[async_trait]
+        impl AuditHook for DropPostAudit {
+            async fn on_auditable_event(
+                &self,
+                _ctx: &ValidatedSecurityContext,
+                _event: &Event,
+                outcome: &AuditOutcome,
+            ) -> Result<(), AuditDispatchError> {
+                match outcome {
+                    AuditOutcome::Attempt => Ok(()),
+                    _ => Err(AuditDispatchError::HookFailed {
+                        description: "post-audit failure",
+                    }),
+                }
+            }
+        }
+        let dispatcher = EventDispatcher::new(4);
+        dispatcher.subscribe_audit(Arc::new(DropPostAudit)).await;
+        let vsc = make_vsc();
+        let event = make_event();
+
+        let _: Result<(), &str> = async {
+            crate::audited_op! {
+                dispatcher: &dispatcher,
+                ctx: &vsc,
+                event: event,
+                operation: async { Ok::<(), &str>(()) },
+                on_audit_error: |_| "pre-audit error",
+            }
+        }
+        .await;
+
+        assert_eq!(
+            dispatcher.postaudit_dropped_count(),
+            1,
+            "post-audit drop counter must increment when post-audit fails"
+        );
+    }
 
     struct TestHook {
         count: Arc<AtomicUsize>,

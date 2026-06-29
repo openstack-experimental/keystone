@@ -226,6 +226,9 @@ mod tests {
             policy_enforcer,
             provider,
             event_dispatcher: crate::events::EventDispatcher::production(),
+
+            audit_dispatcher: openstack_keystone_audit::AuditDispatcher::noop(),
+
             storage: None,
             shutdown: false,
         };
@@ -329,6 +332,9 @@ mod tests {
                 .build()
                 .unwrap(),
             event_dispatcher: crate::events::EventDispatcher::production(),
+
+            audit_dispatcher: openstack_keystone_audit::AuditDispatcher::noop(),
+
             storage: None,
             shutdown: false,
         });
@@ -426,6 +432,9 @@ mod tests {
             policy_enforcer: Arc::new(MockPolicy::default()),
             provider,
             event_dispatcher: crate::events::EventDispatcher::production(),
+
+            audit_dispatcher: openstack_keystone_audit::AuditDispatcher::noop(),
+
             storage: None,
             shutdown: false,
         });
@@ -487,6 +496,9 @@ mod tests {
                 .build()
                 .unwrap(),
             event_dispatcher: crate::events::EventDispatcher::production(),
+
+            audit_dispatcher: openstack_keystone_audit::AuditDispatcher::noop(),
+
             storage: None,
             shutdown: false,
         });
@@ -547,6 +559,9 @@ mod tests {
             policy_enforcer,
             provider,
             event_dispatcher: crate::events::EventDispatcher::production(),
+
+            audit_dispatcher: openstack_keystone_audit::AuditDispatcher::noop(),
+
             storage: None,
             shutdown: false,
         });

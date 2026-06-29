@@ -92,6 +92,9 @@ enabled = true
 relying_party_id = localhost
 relying_party_origin = http://localhost:8080
 
+[audit]
+spool_dir = ${STATE_DIR}/audit
+
 EOF
 
 echo "2Rlc-npWYOGqqG1zM-bmfBj2apLacLXhIbBsdyqQ0zg=" > "${STATE_DIR}"/etc/fernet-keys/0

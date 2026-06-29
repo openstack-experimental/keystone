@@ -17,6 +17,7 @@
 
 mod application_credential;
 mod assignment;
+mod audit;
 mod catalog;
 mod common;
 mod identity;

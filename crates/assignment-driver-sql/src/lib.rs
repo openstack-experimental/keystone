@@ -325,6 +325,7 @@ mod tests {
     use sea_orm::{DatabaseBackend, DatabaseConnection, MockDatabase};
     use std::sync::Arc;
 
+    use openstack_keystone_audit::AuditDispatcher;
     use openstack_keystone_config::{Config, ConfigManager};
     use openstack_keystone_core::keystone::Service;
     use openstack_keystone_core::policy::MockPolicy;
@@ -342,6 +343,7 @@ mod tests {
                 db,
                 provider,
                 Arc::new(MockPolicy::default()),
+                AuditDispatcher::noop(),
                 None,
             )
             .await

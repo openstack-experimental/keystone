@@ -17,11 +17,12 @@ use axum::{
     Json,
     extract::{Query, State},
     http::StatusCode,
-    response::IntoResponse,
+    response::{IntoResponse, Response},
 };
 use validator::Validate;
 
 use openstack_keystone_api_types::v3::auth::token::TokenBuilder;
+use openstack_keystone_core::auth::ValidatedSecurityContext;
 use openstack_keystone_core_types::auth::*;
 
 use openstack_keystone_core::api::common::get_authz_info;
@@ -31,6 +32,10 @@ use openstack_keystone_core_types::scope::Scope as ProviderScope;
 use crate::api::v3::auth::token::common::authenticate_request;
 use crate::api::v3::auth::token::types::{AuthRequest, CreateTokenParameters, TokenResponse};
 use crate::api::{Catalog, CatalogService, error::KeystoneApiError};
+use crate::audit::{
+    CorrelationId, build_initiator_from_vsc, build_initiator_unknown,
+    emit_perimeter_authenticate_event, error_variant_name,
+};
 use crate::common::TracedJson;
 use crate::keystone::ServiceState;
 
@@ -47,15 +52,37 @@ use crate::keystone::ServiceState;
 )]
 #[tracing::instrument(name = "api::v3::token::post", level = "debug", skip(state, req))]
 pub(super) async fn create(
+    CorrelationId(cid): CorrelationId,
     Query(query): Query<CreateTokenParameters>,
     State(state): State<ServiceState>,
     TracedJson(req): TracedJson<AuthRequest>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
+    let result = create_inner(&state, query, req).await;
+    let initiator = result
+        .as_ref()
+        .ok()
+        .map(|(vsc, _)| build_initiator_from_vsc(vsc))
+        .unwrap_or_else(build_initiator_unknown);
+    let (outcome, reason) = match &result {
+        Ok(_) => ("success", None),
+        Err(e) => ("failure", Some(error_variant_name(e))),
+    };
+    emit_perimeter_authenticate_event(&state.audit_dispatcher, &cid, initiator, outcome, reason);
+    result.map(|(_, response)| response)
+}
+
+/// Inner auth flow that returns the `ValidatedSecurityContext` alongside the
+/// HTTP response so the outer handler can build the audit `Initiator`.
+async fn create_inner(
+    state: &ServiceState,
+    query: CreateTokenParameters,
+    req: AuthRequest,
+) -> Result<(ValidatedSecurityContext, Response), KeystoneApiError> {
     req.validate()?;
-    let auth_res = authenticate_request(&state, &req).await?;
+    let auth_res = authenticate_request(state, &req).await?;
     let ctx = SecurityContext::try_from(auth_res)?;
     let provider_scope: Option<ProviderScope> = req.auth.scope.clone().map(Into::into);
-    let authz_info = get_authz_info(&state, provider_scope.as_ref()).await?;
+    let authz_info = get_authz_info(state, provider_scope.as_ref()).await?;
 
     // This is a new authentication/reauthentication. Check if that is allowed at
     // all
@@ -69,7 +96,7 @@ pub(super) async fn create(
     let vsc = state
         .provider
         .get_token_provider()
-        .issue_token_context(&state, &ctx, &authz_info)
+        .issue_token_context(state, &ctx, &authz_info)
         .await?;
 
     let mut api_token = TokenResponse {
@@ -94,7 +121,7 @@ pub(super) async fn create(
         );
         api_token.token.catalog = Some(catalog);
     }
-    Ok((
+    let response = (
         StatusCode::OK,
         [(
             "X-Subject-Token",
@@ -105,7 +132,8 @@ pub(super) async fn create(
         )],
         Json(api_token),
     )
-        .into_response())
+        .into_response();
+    Ok((vsc, response))
 }
 
 #[cfg(test)]
@@ -122,6 +150,7 @@ mod tests {
     use tower_http::trace::TraceLayer;
     use tracing_test::traced_test;
 
+    use openstack_keystone_audit::AuditDispatcher;
     use openstack_keystone_config::{Config, ConfigManager};
     use openstack_keystone_core_types::auth::*;
     use openstack_keystone_core_types::identity::UserPasswordAuthRequest;
@@ -310,6 +339,7 @@ mod tests {
                 DatabaseConnection::Disconnected,
                 provider,
                 Arc::new(MockPolicy::default()),
+                AuditDispatcher::noop(),
                 None,
             )
             .await
@@ -468,6 +498,7 @@ mod tests {
                 DatabaseConnection::Disconnected,
                 provider,
                 Arc::new(MockPolicy::default()),
+                AuditDispatcher::noop(),
                 None,
             )
             .await
@@ -582,6 +613,7 @@ mod tests {
                 DatabaseConnection::Disconnected,
                 provider,
                 Arc::new(MockPolicy::default()),
+                AuditDispatcher::noop(),
                 None,
             )
             .await

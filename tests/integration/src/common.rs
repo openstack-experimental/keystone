@@ -34,6 +34,7 @@ use tempfile::TempDir;
 use uuid::Uuid;
 
 use openstack_keystone::plugin_manager::PluginManager;
+use openstack_keystone_audit::AuditDispatcher;
 use openstack_keystone_config::{
     Config, ConfigManager, DistributedStorageConfiguration, TlsConfiguration,
     TlsConfigurationBuilder,
@@ -193,6 +194,7 @@ pub async fn get_state() -> Result<(Arc<Service>, TempDir)> {
             db,
             provider,
             Arc::new(MockPolicy::default()),
+            AuditDispatcher::noop(),
             storage_for_service,
         )
         .await?,

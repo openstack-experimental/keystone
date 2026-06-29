@@ -452,11 +452,20 @@ startup: `state.event_dispatcher.subscribe_audit(CadfAuditHook).await`.
   `project_name`, `domain_name` excluded. Future fields require opaque wrappers.
 - **Outcome Isolation:** `outcome_reason` limited to sanitized variant name.
 - **HMAC Signing:** `CadfEvent` wraps `(CadfEventPayload, signature)` via
-  `serde(flatten)`. Private fields prevent unsigned construction. Key derived
-  via `HKDF-SHA256(KEK, info="keystone-audit-hmac-v1")`. Key+version as
-  `ArcSwap<(Arc<[u8]>, u64)>` for atomic rotation (ADR 0016-v2 §6.2).
-  HMAC input is the JCS-canonical (RFC 8785) serialization of the payload
-  (all fields, lexicographically sorted keys, compact, null fields included).
+  `serde(flatten)`. Private fields prevent unsigned construction. Per-node
+  signing key derived via:
+  ```
+  HKDF-Expand(KEK, info="keystone-audit-hmac-v1:{node_id_utf8}", L=32)
+  ```
+  The `node_id` suffix ensures each node holds a **distinct** signing key; a
+  compromised node cannot forge audit records attributed to other nodes.  This
+  aligns with ADR 0016-v2 §3.1 (which uses `node_id_u64_be` for Raft nodes;
+  here we use the UTF-8 encoding of the string node ID).  HKDF-Expand-only is
+  used because the KEK is already uniformly random (Extract is a no-op
+  security-wise).  Key+version as `ArcSwap<(Arc<[u8]>, u64)>` for atomic
+  rotation (ADR 0016-v2 §6.2).  HMAC input is the JCS-canonical (RFC 8785)
+  serialization of the payload (all fields, lexicographically sorted keys,
+  compact, null fields included).
 - **HMAC Key Retention:** The KEK store MUST retain all HMAC key versions for
   at least `max(spool_drain_timeout + SIEM_lag_budget, 24h)`. Key versions
   are monotonically increasing and permanent — never reused. The version
@@ -466,11 +475,10 @@ startup: `state.event_dispatcher.subscribe_audit(CadfAuditHook).await`.
   delete them without operator confirmation.
 - **Spool Integrity:** Corrupted/tampered lines skipped (recovery-first).
   Per-node spool path (`audit-spool-{node_id}.jsonl`) eliminates shared-file
-  races; advisory lock as secondary guard. Because the HMAC key is shared
-  across nodes (same KEK), a signed event from node A is cryptographically
-  valid on node B. The SIEM MUST verify that `observer.node_id` in each event
-  matches the expected source node for the spool being ingested; mismatches
-  MUST be quarantined as tamper indicators, not silently accepted.
+  races; advisory lock as secondary guard. Because the HMAC key is **per-node**
+  (node_id is bound into the key derivation), the SIEM can reject events whose
+  `observer.node_id` does not match the key used to verify their signature;
+  mismatches MUST be quarantined as tamper indicators, not silently accepted.
 - **Delivery Guarantee:** At-least-once delivery. SIEMs must deduplicate on
   `CadfEvent.id` (unique `node_id:uuid`).
 - **Attempt Reconciliation:** SIEM treats an `Attempt` with no corresponding
