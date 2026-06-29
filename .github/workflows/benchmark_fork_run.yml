@@ -8,6 +8,7 @@ on:
       - 'Cargo.toml'
       - 'benches/**'
       - 'crates/**'
+  merge_gate:
 
 jobs:
   benchmark_fork_pr_branch:

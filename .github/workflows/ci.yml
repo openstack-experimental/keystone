@@ -16,6 +16,7 @@ on:
       - 'crates/**'
       - 'tools/setup-db.sh'
       - 'tools/docker-compose.test.yaml'
+  merge_gate:
 
 env:
   CARGO_TERM_COLOR: always
