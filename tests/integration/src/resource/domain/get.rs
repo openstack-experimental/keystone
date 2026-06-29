@@ -56,3 +56,48 @@ async fn test_get_domain_missing() -> Result<()> {
     );
     Ok(())
 }
+
+#[traced_test]
+#[tokio::test]
+async fn test_find_domain_by_name() -> Result<()> {
+    let (state, _tmp) = get_state().await?;
+    let domain = create_domain!(state)?;
+
+    let res = state
+        .provider
+        .get_resource_provider()
+        .find_domain_by_name(&ExecutionContext::internal(&state), &domain.name)
+        .await?
+        .expect("domain found by name");
+    assert_eq!(res.id, domain.id);
+    Ok(())
+}
+
+#[traced_test]
+#[tokio::test]
+async fn test_find_domain_by_name_missing() -> Result<()> {
+    let (state, _tmp) = get_state().await?;
+
+    let res = state
+        .provider
+        .get_resource_provider()
+        .find_domain_by_name(&ExecutionContext::internal(&state), "no-such-domain")
+        .await?;
+    assert!(res.is_none(), "an unknown domain name returns None");
+    Ok(())
+}
+
+#[traced_test]
+#[tokio::test]
+async fn test_get_domain_enabled() -> Result<()> {
+    let (state, _tmp) = get_state().await?;
+    let domain = create_domain!(state)?;
+
+    let enabled = state
+        .provider
+        .get_resource_provider()
+        .get_domain_enabled(&ExecutionContext::internal(&state), &domain.id)
+        .await?;
+    assert!(enabled, "a newly created domain is enabled");
+    Ok(())
+}
