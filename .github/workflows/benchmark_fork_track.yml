@@ -4,6 +4,7 @@ on:
   workflow_run:
     workflows: ["Run Benchmarks"]
     types: ["completed"]
+  merge_gate:
 
 jobs:
   track_fork_pr_branch:

@@ -16,6 +16,7 @@ on:
       - '.github/workflows/audit.yml'
       - '**/Cargo.toml'
       - '**/Cargo.lock'
+  merge_gate:
 
 env:
   RUST_BACKTRACE: 1

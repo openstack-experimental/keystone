@@ -8,6 +8,7 @@ on:
   push:
     branches: [ "main"]
   workflow_dispatch: # Allow manual triggering
+  merge_gate:
 
 env:
   OPA_VERSION: 1.6.0
