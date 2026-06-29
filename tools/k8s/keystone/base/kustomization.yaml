@@ -9,8 +9,6 @@ images:
   - name: py-keystone
     newName: ghcr.io/openstack-experimental/keystone/py-keystone
     newTag: main
-  - name: opa
-    newName: keystone-opa
   - name: busybox
     newTag: 1.36.1
 secretGenerator:

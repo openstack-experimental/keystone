@@ -26,7 +26,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=planner /app/recipe.json recipe.json
 
 # Build dependencies - this is the caching Docker layer!
-RUN cargo chef cook --release --recipe-path recipe.json
+RUN cargo chef cook --release -p openstack-keystone -p openstack-keystone-cli-manage --recipe-path recipe.json
 
 # Copy the actual sources
 #COPY . .

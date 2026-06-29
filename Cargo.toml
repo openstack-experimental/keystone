@@ -164,7 +164,12 @@ strip = true
 debug = false
 lto = "thin"
 
-# The profile that 'dist' will build with
+[profile.release-dev]
+inherits = "release"
+lto = false
+incremental = true
+codegen-units = 16
+
 [profile.dist]
 inherits = "release"
 lto = "thin"
