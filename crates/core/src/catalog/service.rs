@@ -409,7 +409,7 @@ impl CatalogApi for CatalogService {
         exec.state()
             .event_dispatcher
             .emit(Event::new(
-                Operation::Delete,
+                Operation::Update,
                 EventPayload::Region { id: id.to_string() },
             ))
             .await;
@@ -440,7 +440,7 @@ impl CatalogApi for CatalogService {
         exec.state()
             .event_dispatcher
             .emit(Event::new(
-                Operation::Delete,
+                Operation::Update,
                 EventPayload::Service { id: id.to_string() },
             ))
             .await;
