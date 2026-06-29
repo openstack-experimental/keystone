@@ -202,6 +202,16 @@ pub async fn replay_spool(
 
     if skipped > 0 {
         quarantine_spool(path)?;
+    } else if replayed > 0 || path.exists() {
+        // Clean replay (no tampered/corrupted lines): remove the file so the
+        // spool writer starts fresh.  Without this, every restart re-replays
+        // all previously delivered events and the file grows without bound.
+        if let Err(e) = std::fs::remove_file(path) {
+            // Non-fatal: warn and continue.  The spool writer will append to
+            // the existing file; duplicate events on the next restart are
+            // preferable to blocking startup.
+            warn!(path = %path.display(), error = %e, "failed to remove spool file after clean replay");
+        }
     }
 
     info!(replayed, skipped, "spool replay complete");

@@ -4,13 +4,20 @@ Date: 2026-06-16
 
 ## Status
 
-Proposed
+Accepted
 
 > **Security review 2026-06-24:** Seven findings applied — HMAC canonicalization
 > (RFC 8785/JCS), `boot_session_id` CSPRNG requirement, `initiator.host`
 > sanitization rules, `refresh_hmac_key` version-collision fix, HMAC key
 > retention policy, cross-node spool tamper detection, and
 > `map_event_to_action` dangling-reference correction.
+>
+> **Implementation review 2026-06-29 (Phase 7):** Three correctness bugs fixed:
+> (1) `record_postaudit_drop()` incorrectly fired on pre-audit Attempt failures,
+> mislabeling the `KeystoneAuditPostauditDrops` Prometheus metric; (2) spool
+> file not removed after clean replay, causing unbounded growth and re-delivery
+> on every restart; (3) stale KEK `.tmp` file from a crash prevented node
+> startup (`create_new(true)` returned `AlreadyExists`).
 
 ## Context
 

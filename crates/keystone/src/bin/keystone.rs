@@ -306,6 +306,14 @@ async fn main() -> Result<(), Report> {
             // and a TOCTOU window where two processes each generate independent
             // keys.
             let tmp_path = kek_file.with_extension("tmp");
+            // A stale `.tmp` left by a previous crash (after write but before
+            // rename) would cause `create_new` to fail with AlreadyExists.
+            // Remove it so we can regenerate cleanly.
+            if tmp_path.exists() {
+                std::fs::remove_file(&tmp_path)
+                    .wrap_err("failed to remove stale audit KEK temp file")?;
+                warn!(path = %tmp_path.display(), "removed stale audit KEK temp file from previous crash");
+            }
             let mut file = OpenOptions::new()
                 .write(true)
                 .create_new(true)

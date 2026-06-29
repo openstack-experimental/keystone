@@ -203,7 +203,14 @@ impl AuditHook for CadfAuditHook {
         match self.dispatcher.dispatch_critical(signed).await {
             Ok(()) => Ok(()),
             Err(_) => {
-                self.dispatcher.record_postaudit_drop();
+                // Only count as a post-audit drop when the pre-audit Attempt
+                // already succeeded — losing an Attempt event means the whole
+                // operation is aborted (fail-closed), so no DB state was
+                // changed and there is nothing to account for as a "lost
+                // outcome record".
+                if !matches!(outcome, AuditOutcome::Attempt) {
+                    self.dispatcher.record_postaudit_drop();
+                }
                 Err(AuditDispatchError::DispatcherDead)
             }
         }
