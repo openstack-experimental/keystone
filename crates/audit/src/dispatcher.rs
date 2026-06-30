@@ -217,13 +217,18 @@ impl AuditDispatcher {
 /// Compute HMAC-SHA256 over the JCS-canonical (RFC 8785) serialization of
 /// `payload`.
 ///
-/// JCS requires:
-/// - Object keys sorted lexicographically (Unicode code point order)
-/// - Compact form (no extra whitespace)
-/// - `null` for absent optional fields (we use `skip_serializing_if` on the
-///   struct level, so `None` fields are omitted — this matches the SIEM
-///   verification path which removes the `signature` key and re-serializes the
-///   remainder)
+/// JCS requires object keys sorted lexicographically (Unicode code point
+/// order) and compact form (no extra whitespace).
+///
+/// # Field inclusion
+///
+/// Fields follow their individual `serde` annotations.  Most `Option`-typed
+/// fields (`outcome_reason`, `Initiator.project_id`, `Initiator.domain_id`)
+/// serialize as `null` when `None`.  `Initiator.host` uses
+/// `skip_serializing_if = "Option::is_none"` and is **omitted entirely**
+/// when absent — not set to `null`.  SIEMs MUST reproduce this exact
+/// behavior: re-serialize the received JSON (after removing `signature`)
+/// without inserting absent fields.
 ///
 /// We achieve key ordering by round-tripping through `serde_json::Value`
 /// and sorting object keys recursively before re-serializing. This is
@@ -238,6 +243,8 @@ pub(crate) fn compute_hmac_sha256(payload: &CadfEventPayload, key: &[u8]) -> Str
 
 /// Serialize `payload` to JCS-canonical JSON (RFC 8785 §3.2.3):
 /// object keys sorted lexicographically at every nesting level.
+/// See `compute_hmac_sha256` for the field-inclusion rules (notably
+/// `Initiator.host` is omitted, not null'd, when absent).
 fn jcs_canonical(payload: &CadfEventPayload) -> String {
     let value = serde_json::to_value(payload).expect("CadfEventPayload is always serializable");
     sort_json_keys(value).to_string()
