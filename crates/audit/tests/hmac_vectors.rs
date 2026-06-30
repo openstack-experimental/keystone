@@ -175,4 +175,5 @@ fn hmac_roundtrip_deterministic_payload() {
 }
 
 // Tamper-detection test lives in `crates/audit/src/types.rs` as a unit test,
-// where it has pub(crate) access to `CadfEvent::signature` to simulate tampering.
+// where it has pub(crate) access to `CadfEvent::signature` to simulate
+// tampering.

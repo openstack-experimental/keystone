@@ -220,10 +220,10 @@ impl AuditDispatcher {
 /// JCS requires:
 /// - Object keys sorted lexicographically (Unicode code point order)
 /// - Compact form (no extra whitespace)
-/// - `null` for absent optional fields (we use `skip_serializing_if` on
-///   the struct level, so `None` fields are omitted — this matches the
-///   SIEM verification path which removes the `signature` key and
-///   re-serializes the remainder)
+/// - `null` for absent optional fields (we use `skip_serializing_if` on the
+///   struct level, so `None` fields are omitted — this matches the SIEM
+///   verification path which removes the `signature` key and re-serializes the
+///   remainder)
 ///
 /// We achieve key ordering by round-tripping through `serde_json::Value`
 /// and sorting object keys recursively before re-serializing. This is

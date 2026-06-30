@@ -150,9 +150,10 @@ pub fn extract_provider_name(
     }
 }
 
-// Initiator-builder functions are provided by `openstack_keystone_core::cadf_hook`
-// and imported above. Re-export them under the original names so existing
-// callers in this crate don't need to change their import paths.
+// Initiator-builder functions are provided by
+// `openstack_keystone_core::cadf_hook` and imported above. Re-export them under
+// the original names so existing callers in this crate don't need to change
+// their import paths.
 pub use openstack_keystone_core::cadf_hook::{
     build_initiator_from_verified_token, build_initiator_from_vsc, build_initiator_unknown,
 };

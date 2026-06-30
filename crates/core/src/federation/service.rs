@@ -20,9 +20,11 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use openstack_keystone_config::Config;
+use openstack_keystone_core_types::events::{Event, EventPayload, Operation};
 use openstack_keystone_core_types::federation::*;
 
 use crate::auth::ExecutionContext;
+use crate::events::AuditDispatchError;
 use crate::federation::{FederationApi, FederationProviderError, backend::FederationBackend};
 use crate::plugin_manager::PluginManagerApi;
 
@@ -80,9 +82,38 @@ impl FederationApi for FederationService {
         ctx: &ExecutionContext<'a>,
         auth_state: AuthState,
     ) -> Result<AuthState, FederationProviderError> {
-        self.backend_driver
-            .create_auth_state(ctx.state(), auth_state)
-            .await
+        let auth_state_result = if let Some(vsc) = ctx.ctx() {
+            let backend_driver = &self.backend_driver;
+            let auth_state_clone = auth_state.clone();
+            crate::audited_op! {
+                dispatcher: &ctx.state().event_dispatcher,
+                ctx: vsc,
+                event: Event::new(
+                    Operation::Create,
+                    EventPayload::AuthState { id: auth_state.state.clone() },
+                ),
+                operation: async {
+                    backend_driver.create_auth_state(ctx.state(), auth_state_clone).await
+                },
+                on_audit_error: |_: AuditDispatchError| FederationProviderError::Driver("audit dispatch failed".into()),
+            }?
+        } else {
+            let auth_state_result = self
+                .backend_driver
+                .create_auth_state(ctx.state(), auth_state)
+                .await?;
+            ctx.state()
+                .event_dispatcher
+                .emit(Event::new(
+                    Operation::Create,
+                    EventPayload::AuthState {
+                        id: auth_state_result.state.clone(),
+                    },
+                ))
+                .await;
+            auth_state_result
+        };
+        Ok(auth_state_result)
     }
 
     /// Create Identity provider.
@@ -103,10 +134,39 @@ impl FederationApi for FederationService {
         if mod_idp.id.is_none() {
             mod_idp.id = Some(Uuid::new_v4().simple().to_string());
         }
-
-        self.backend_driver
-            .create_identity_provider(ctx.state(), mod_idp)
-            .await
+        let provider_id = mod_idp.id.clone().unwrap_or_default();
+        let provider = if let Some(vsc) = ctx.ctx() {
+            let backend_driver = &self.backend_driver;
+            let mod_idp_clone = mod_idp.clone();
+            crate::audited_op! {
+                dispatcher: &ctx.state().event_dispatcher,
+                ctx: vsc,
+                event: Event::new(
+                    Operation::Create,
+                    EventPayload::IdentityProvider { id: provider_id.clone() },
+                ),
+                operation: async {
+                    backend_driver.create_identity_provider(ctx.state(), mod_idp_clone).await
+                },
+                on_audit_error: |_: AuditDispatchError| FederationProviderError::Driver("audit dispatch failed".into()),
+            }?
+        } else {
+            let provider = self
+                .backend_driver
+                .create_identity_provider(ctx.state(), mod_idp)
+                .await?;
+            ctx.state()
+                .event_dispatcher
+                .emit(Event::new(
+                    Operation::Create,
+                    EventPayload::IdentityProvider {
+                        id: provider.id.clone(),
+                    },
+                ))
+                .await;
+            provider
+        };
+        Ok(provider)
     }
 
     /// Delete auth state.
@@ -122,7 +182,33 @@ impl FederationApi for FederationService {
         ctx: &ExecutionContext<'a>,
         id: &'a str,
     ) -> Result<(), FederationProviderError> {
-        self.backend_driver.delete_auth_state(ctx.state(), id).await
+        if let Some(vsc) = ctx.ctx() {
+            crate::audited_op! {
+                dispatcher: &ctx.state().event_dispatcher,
+                ctx: vsc,
+                event: Event::new(
+                    Operation::Delete,
+                    EventPayload::AuthState { id: id.to_string() },
+                ),
+                operation: async {
+                    self.backend_driver.delete_auth_state(ctx.state(), id).await?;
+                    Ok::<(), FederationProviderError>(())
+                },
+                on_audit_error: |_: AuditDispatchError| FederationProviderError::Driver("audit dispatch failed".into()),
+            }?;
+        } else {
+            self.backend_driver
+                .delete_auth_state(ctx.state(), id)
+                .await?;
+            ctx.state()
+                .event_dispatcher
+                .emit(Event::new(
+                    Operation::Delete,
+                    EventPayload::AuthState { id: id.to_string() },
+                ))
+                .await;
+        }
+        Ok(())
     }
 
     /// Delete identity provider.
@@ -138,9 +224,33 @@ impl FederationApi for FederationService {
         ctx: &ExecutionContext<'a>,
         id: &'a str,
     ) -> Result<(), FederationProviderError> {
-        self.backend_driver
-            .delete_identity_provider(ctx.state(), id)
-            .await
+        if let Some(vsc) = ctx.ctx() {
+            crate::audited_op! {
+                dispatcher: &ctx.state().event_dispatcher,
+                ctx: vsc,
+                event: Event::new(
+                    Operation::Delete,
+                    EventPayload::IdentityProvider { id: id.to_string() },
+                ),
+                operation: async {
+                    self.backend_driver.delete_identity_provider(ctx.state(), id).await?;
+                    Ok::<(), FederationProviderError>(())
+                },
+                on_audit_error: |_: AuditDispatchError| FederationProviderError::Driver("audit dispatch failed".into()),
+            }?;
+        } else {
+            self.backend_driver
+                .delete_identity_provider(ctx.state(), id)
+                .await?;
+            ctx.state()
+                .event_dispatcher
+                .emit(Event::new(
+                    Operation::Delete,
+                    EventPayload::IdentityProvider { id: id.to_string() },
+                ))
+                .await;
+        }
+        Ok(())
     }
 
     /// Get auth state by ID.
@@ -215,8 +325,35 @@ impl FederationApi for FederationService {
         id: &'a str,
         idp: IdentityProviderUpdate,
     ) -> Result<IdentityProvider, FederationProviderError> {
-        self.backend_driver
-            .update_identity_provider(ctx.state(), id, idp)
-            .await
+        let provider = if let Some(vsc) = ctx.ctx() {
+            let backend_driver = &self.backend_driver;
+            let idp_clone = idp.clone();
+            crate::audited_op! {
+                dispatcher: &ctx.state().event_dispatcher,
+                ctx: vsc,
+                event: Event::new(
+                    Operation::Update,
+                    EventPayload::IdentityProvider { id: id.to_string() },
+                ),
+                operation: async {
+                    backend_driver.update_identity_provider(ctx.state(), id, idp_clone).await
+                },
+                on_audit_error: |_: AuditDispatchError| FederationProviderError::Driver("audit dispatch failed".into()),
+            }?
+        } else {
+            let provider = self
+                .backend_driver
+                .update_identity_provider(ctx.state(), id, idp)
+                .await?;
+            ctx.state()
+                .event_dispatcher
+                .emit(Event::new(
+                    Operation::Update,
+                    EventPayload::IdentityProvider { id: id.to_string() },
+                ))
+                .await;
+            provider
+        };
+        Ok(provider)
     }
 }

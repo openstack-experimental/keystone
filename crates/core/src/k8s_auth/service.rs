@@ -18,9 +18,11 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 use openstack_keystone_config::Config;
+use openstack_keystone_core_types::events::{Event, EventPayload, Operation};
 use openstack_keystone_core_types::k8s_auth::*;
 
 use crate::auth::{AuthenticationResult, ExecutionContext};
+use crate::events::AuditDispatchError;
 use crate::k8s_auth::{K8sAuthApi, K8sAuthProviderError, K8sHttpClient, backend::K8sAuthBackend};
 use crate::plugin_manager::PluginManagerApi;
 
@@ -95,9 +97,37 @@ impl K8sAuthApi for K8sAuthService {
         if new.id.is_none() {
             new.id = Some(uuid::Uuid::new_v4().simple().to_string());
         }
-        self.backend_driver
-            .create_auth_instance(ctx.state(), new)
-            .await
+        let instance_id = new.id.clone().unwrap_or_default();
+        let result = if let Some(vsc) = ctx.ctx() {
+            let backend_driver = &self.backend_driver;
+            let new_clone = new.clone();
+            crate::audited_op! {
+                dispatcher: &ctx.state().event_dispatcher,
+                ctx: vsc,
+                event: Event::new(
+                    Operation::Create,
+                    EventPayload::K8sAuthInstance { id: instance_id },
+                ),
+                operation: async {
+                    backend_driver.create_auth_instance(ctx.state(), new_clone).await
+                },
+                on_audit_error: |_: AuditDispatchError| K8sAuthProviderError::Driver { source: "audit dispatch failed".into() },
+            }?
+        } else {
+            let result = self
+                .backend_driver
+                .create_auth_instance(ctx.state(), new)
+                .await?;
+            ctx.state()
+                .event_dispatcher
+                .emit(Event::new(
+                    Operation::Create,
+                    EventPayload::K8sAuthInstance { id: instance_id },
+                ))
+                .await;
+            result
+        };
+        Ok(result)
     }
 
     /// Delete K8s auth provider.
@@ -114,9 +144,33 @@ impl K8sAuthApi for K8sAuthService {
         ctx: &ExecutionContext<'a>,
         id: &'a str,
     ) -> Result<(), K8sAuthProviderError> {
-        self.backend_driver
-            .delete_auth_instance(ctx.state(), id)
-            .await
+        if let Some(vsc) = ctx.ctx() {
+            crate::audited_op! {
+                dispatcher: &ctx.state().event_dispatcher,
+                ctx: vsc,
+                event: Event::new(
+                    Operation::Delete,
+                    EventPayload::K8sAuthInstance { id: id.to_string() },
+                ),
+                operation: async {
+                    self.backend_driver.delete_auth_instance(ctx.state(), id).await?;
+                    Ok::<(), K8sAuthProviderError>(())
+                },
+                on_audit_error: |_: AuditDispatchError| K8sAuthProviderError::Driver { source: "audit dispatch failed".into() },
+            }?;
+        } else {
+            self.backend_driver
+                .delete_auth_instance(ctx.state(), id)
+                .await?;
+            ctx.state()
+                .event_dispatcher
+                .emit(Event::new(
+                    Operation::Delete,
+                    EventPayload::K8sAuthInstance { id: id.to_string() },
+                ))
+                .await;
+        }
+        Ok(())
     }
 
     /// Fetch auth instance.
@@ -171,9 +225,36 @@ impl K8sAuthApi for K8sAuthService {
         id: &'a str,
         data: K8sAuthInstanceUpdate,
     ) -> Result<K8sAuthInstance, K8sAuthProviderError> {
-        self.backend_driver
-            .update_auth_instance(ctx.state(), id, data)
-            .await
+        let result = if let Some(vsc) = ctx.ctx() {
+            let backend_driver = &self.backend_driver;
+            let data_clone = data.clone();
+            crate::audited_op! {
+                dispatcher: &ctx.state().event_dispatcher,
+                ctx: vsc,
+                event: Event::new(
+                    Operation::Update,
+                    EventPayload::K8sAuthInstance { id: id.to_string() },
+                ),
+                operation: async {
+                    backend_driver.update_auth_instance(ctx.state(), id, data_clone).await
+                },
+                on_audit_error: |_: AuditDispatchError| K8sAuthProviderError::Driver { source: "audit dispatch failed".into() },
+            }?
+        } else {
+            let result = self
+                .backend_driver
+                .update_auth_instance(ctx.state(), id, data)
+                .await?;
+            ctx.state()
+                .event_dispatcher
+                .emit(Event::new(
+                    Operation::Update,
+                    EventPayload::K8sAuthInstance { id: id.to_string() },
+                ))
+                .await;
+            result
+        };
+        Ok(result)
     }
 }
 

@@ -22,6 +22,7 @@ use openstack_keystone_core_types::events::{Event, EventPayload, Operation};
 
 use crate::auth::ExecutionContext;
 use crate::catalog::{CatalogApi, CatalogProviderError, backend::CatalogBackend};
+use crate::events::AuditDispatchError;
 use crate::plugin_manager::PluginManagerApi;
 
 pub struct CatalogService {
@@ -66,20 +67,39 @@ impl CatalogApi for CatalogService {
         endpoint: EndpointCreate,
     ) -> Result<Endpoint, CatalogProviderError> {
         endpoint.validate()?;
-        let endpoint = self
-            .backend_driver
-            .create_endpoint(exec.state(), endpoint)
-            .await?;
-
-        exec.state()
-            .event_dispatcher
-            .emit(Event::new(
-                Operation::Create,
-                EventPayload::Endpoint {
-                    id: endpoint.id.clone(),
+        let endpoint = if let Some(vsc) = exec.ctx() {
+            let backend_driver = &self.backend_driver;
+            let endpoint_clone = endpoint.clone();
+            crate::audited_op! {
+                dispatcher: &exec.state().event_dispatcher,
+                ctx: vsc,
+                event: Event::new(
+                    Operation::Create,
+                    EventPayload::Endpoint { id: endpoint_clone.id.clone().unwrap_or_default() },
+                ),
+                operation: async {
+                    backend_driver.create_endpoint(exec.state(), endpoint_clone).await
                 },
-            ))
-            .await;
+                on_audit_error: |_: AuditDispatchError| CatalogProviderError::Driver("audit dispatch failed".into()),
+            }?
+        } else {
+            let endpoint = self
+                .backend_driver
+                .create_endpoint(exec.state(), endpoint)
+                .await?;
+
+            exec.state()
+                .event_dispatcher
+                .emit(Event::new(
+                    Operation::Create,
+                    EventPayload::Endpoint {
+                        id: endpoint.id.clone(),
+                    },
+                ))
+                .await;
+
+            endpoint
+        };
 
         Ok(endpoint)
     }
@@ -98,20 +118,39 @@ impl CatalogApi for CatalogService {
         region: RegionCreate,
     ) -> Result<Region, CatalogProviderError> {
         region.validate()?;
-        let region = self
-            .backend_driver
-            .create_region(exec.state(), region)
-            .await?;
-
-        exec.state()
-            .event_dispatcher
-            .emit(Event::new(
-                Operation::Create,
-                EventPayload::Region {
-                    id: region.id.clone(),
+        let region = if let Some(vsc) = exec.ctx() {
+            let backend_driver = &self.backend_driver;
+            let region_clone = region.clone();
+            crate::audited_op! {
+                dispatcher: &exec.state().event_dispatcher,
+                ctx: vsc,
+                event: Event::new(
+                    Operation::Create,
+                    EventPayload::Region { id: region_clone.id.clone().unwrap_or_default() },
+                ),
+                operation: async {
+                    backend_driver.create_region(exec.state(), region_clone).await
                 },
-            ))
-            .await;
+                on_audit_error: |_: AuditDispatchError| CatalogProviderError::Driver("audit dispatch failed".into()),
+            }?
+        } else {
+            let region = self
+                .backend_driver
+                .create_region(exec.state(), region)
+                .await?;
+
+            exec.state()
+                .event_dispatcher
+                .emit(Event::new(
+                    Operation::Create,
+                    EventPayload::Region {
+                        id: region.id.clone(),
+                    },
+                ))
+                .await;
+
+            region
+        };
 
         Ok(region)
     }
@@ -131,20 +170,40 @@ impl CatalogApi for CatalogService {
         service: ServiceCreate,
     ) -> Result<Service, CatalogProviderError> {
         service.validate()?;
-        let service = self
-            .backend_driver
-            .create_service(exec.state(), service)
-            .await?;
-
-        exec.state()
-            .event_dispatcher
-            .emit(Event::new(
-                Operation::Create,
-                EventPayload::Service {
-                    id: service.id.clone(),
+        let service = if let Some(vsc) = exec.ctx() {
+            let backend_driver = &self.backend_driver;
+            let service_clone = service.clone();
+            let service_id = service_clone.id.clone().unwrap_or_default();
+            crate::audited_op! {
+                dispatcher: &exec.state().event_dispatcher,
+                ctx: vsc,
+                event: Event::new(
+                    Operation::Create,
+                    EventPayload::Service { id: service_id },
+                ),
+                operation: async {
+                    backend_driver.create_service(exec.state(), service_clone).await
                 },
-            ))
-            .await;
+                on_audit_error: |_: AuditDispatchError| CatalogProviderError::Driver("audit dispatch failed".into()),
+            }?
+        } else {
+            let service = self
+                .backend_driver
+                .create_service(exec.state(), service)
+                .await?;
+
+            exec.state()
+                .event_dispatcher
+                .emit(Event::new(
+                    Operation::Create,
+                    EventPayload::Service {
+                        id: service.id.clone(),
+                    },
+                ))
+                .await;
+
+            service
+        };
 
         Ok(service)
     }
@@ -162,17 +221,33 @@ impl CatalogApi for CatalogService {
         exec: &ExecutionContext<'a>,
         id: &'a str,
     ) -> Result<(), CatalogProviderError> {
-        self.backend_driver
-            .delete_endpoint(exec.state(), id)
-            .await?;
+        if let Some(vsc) = exec.ctx() {
+            crate::audited_op! {
+                dispatcher: &exec.state().event_dispatcher,
+                ctx: vsc,
+                event: Event::new(
+                    Operation::Delete,
+                    EventPayload::Endpoint { id: id.to_string() },
+                ),
+                operation: async {
+                    self.backend_driver.delete_endpoint(exec.state(), id).await?;
+                    Ok::<(), CatalogProviderError>(())
+                },
+                on_audit_error: |_: AuditDispatchError| CatalogProviderError::Driver("audit dispatch failed".into()),
+            }?;
+        } else {
+            self.backend_driver
+                .delete_endpoint(exec.state(), id)
+                .await?;
 
-        exec.state()
-            .event_dispatcher
-            .emit(Event::new(
-                Operation::Delete,
-                EventPayload::Endpoint { id: id.to_string() },
-            ))
-            .await;
+            exec.state()
+                .event_dispatcher
+                .emit(Event::new(
+                    Operation::Delete,
+                    EventPayload::Endpoint { id: id.to_string() },
+                ))
+                .await;
+        }
 
         Ok(())
     }
@@ -190,15 +265,31 @@ impl CatalogApi for CatalogService {
         exec: &ExecutionContext<'a>,
         id: &'a str,
     ) -> Result<(), CatalogProviderError> {
-        self.backend_driver.delete_region(exec.state(), id).await?;
+        if let Some(vsc) = exec.ctx() {
+            crate::audited_op! {
+                dispatcher: &exec.state().event_dispatcher,
+                ctx: vsc,
+                event: Event::new(
+                    Operation::Delete,
+                    EventPayload::Region { id: id.to_string() },
+                ),
+                operation: async {
+                    self.backend_driver.delete_region(exec.state(), id).await?;
+                    Ok::<(), CatalogProviderError>(())
+                },
+                on_audit_error: |_: AuditDispatchError| CatalogProviderError::Driver("audit dispatch failed".into()),
+            }?;
+        } else {
+            self.backend_driver.delete_region(exec.state(), id).await?;
 
-        exec.state()
-            .event_dispatcher
-            .emit(Event::new(
-                Operation::Delete,
-                EventPayload::Region { id: id.to_string() },
-            ))
-            .await;
+            exec.state()
+                .event_dispatcher
+                .emit(Event::new(
+                    Operation::Delete,
+                    EventPayload::Region { id: id.to_string() },
+                ))
+                .await;
+        }
 
         Ok(())
     }
@@ -216,15 +307,31 @@ impl CatalogApi for CatalogService {
         exec: &ExecutionContext<'a>,
         id: &'a str,
     ) -> Result<(), CatalogProviderError> {
-        self.backend_driver.delete_service(exec.state(), id).await?;
+        if let Some(vsc) = exec.ctx() {
+            crate::audited_op! {
+                dispatcher: &exec.state().event_dispatcher,
+                ctx: vsc,
+                event: Event::new(
+                    Operation::Delete,
+                    EventPayload::Service { id: id.to_string() },
+                ),
+                operation: async {
+                    self.backend_driver.delete_service(exec.state(), id).await?;
+                    Ok::<(), CatalogProviderError>(())
+                },
+                on_audit_error: |_: AuditDispatchError| CatalogProviderError::Driver("audit dispatch failed".into()),
+            }?;
+        } else {
+            self.backend_driver.delete_service(exec.state(), id).await?;
 
-        exec.state()
-            .event_dispatcher
-            .emit(Event::new(
-                Operation::Delete,
-                EventPayload::Service { id: id.to_string() },
-            ))
-            .await;
+            exec.state()
+                .event_dispatcher
+                .emit(Event::new(
+                    Operation::Delete,
+                    EventPayload::Service { id: id.to_string() },
+                ))
+                .await;
+        }
 
         Ok(())
     }
@@ -372,17 +479,35 @@ impl CatalogApi for CatalogService {
         endpoint: EndpointUpdate,
     ) -> Result<Endpoint, CatalogProviderError> {
         endpoint.validate()?;
-        let updated = self
-            .backend_driver
-            .update_endpoint(exec.state(), id, endpoint)
-            .await?;
-        exec.state()
-            .event_dispatcher
-            .emit(Event::new(
-                Operation::Update,
-                EventPayload::Endpoint { id: id.to_string() },
-            ))
-            .await;
+        let updated = if let Some(vsc) = exec.ctx() {
+            let backend_driver = &self.backend_driver;
+            let endpoint_clone = endpoint.clone();
+            crate::audited_op! {
+                dispatcher: &exec.state().event_dispatcher,
+                ctx: vsc,
+                event: Event::new(
+                    Operation::Update,
+                    EventPayload::Endpoint { id: id.to_string() },
+                ),
+                operation: async {
+                    backend_driver.update_endpoint(exec.state(), id, endpoint_clone).await
+                },
+                on_audit_error: |_: AuditDispatchError| CatalogProviderError::Driver("audit dispatch failed".into()),
+            }?
+        } else {
+            let updated = self
+                .backend_driver
+                .update_endpoint(exec.state(), id, endpoint)
+                .await?;
+            exec.state()
+                .event_dispatcher
+                .emit(Event::new(
+                    Operation::Update,
+                    EventPayload::Endpoint { id: id.to_string() },
+                ))
+                .await;
+            updated
+        };
         Ok(updated)
     }
 
@@ -402,17 +527,35 @@ impl CatalogApi for CatalogService {
         region: RegionUpdate,
     ) -> Result<Region, CatalogProviderError> {
         region.validate()?;
-        let updated = self
-            .backend_driver
-            .update_region(exec.state(), id, region)
-            .await?;
-        exec.state()
-            .event_dispatcher
-            .emit(Event::new(
-                Operation::Delete,
-                EventPayload::Region { id: id.to_string() },
-            ))
-            .await;
+        let updated = if let Some(vsc) = exec.ctx() {
+            let backend_driver = &self.backend_driver;
+            let region_clone = region.clone();
+            crate::audited_op! {
+                dispatcher: &exec.state().event_dispatcher,
+                ctx: vsc,
+                event: Event::new(
+                    Operation::Update,
+                    EventPayload::Region { id: id.to_string() },
+                ),
+                operation: async {
+                    backend_driver.update_region(exec.state(), id, region_clone).await
+                },
+                on_audit_error: |_: AuditDispatchError| CatalogProviderError::Driver("audit dispatch failed".into()),
+            }?
+        } else {
+            let updated = self
+                .backend_driver
+                .update_region(exec.state(), id, region)
+                .await?;
+            exec.state()
+                .event_dispatcher
+                .emit(Event::new(
+                    Operation::Update,
+                    EventPayload::Region { id: id.to_string() },
+                ))
+                .await;
+            updated
+        };
         Ok(updated)
     }
 
@@ -433,17 +576,35 @@ impl CatalogApi for CatalogService {
         service: ServiceUpdate,
     ) -> Result<Service, CatalogProviderError> {
         service.validate()?;
-        let updated = self
-            .backend_driver
-            .update_service(exec.state(), id, service)
-            .await?;
-        exec.state()
-            .event_dispatcher
-            .emit(Event::new(
-                Operation::Delete,
-                EventPayload::Service { id: id.to_string() },
-            ))
-            .await;
+        let updated = if let Some(vsc) = exec.ctx() {
+            let backend_driver = &self.backend_driver;
+            let service_clone = service.clone();
+            crate::audited_op! {
+                dispatcher: &exec.state().event_dispatcher,
+                ctx: vsc,
+                event: Event::new(
+                    Operation::Update,
+                    EventPayload::Service { id: id.to_string() },
+                ),
+                operation: async {
+                    backend_driver.update_service(exec.state(), id, service_clone).await
+                },
+                on_audit_error: |_: AuditDispatchError| CatalogProviderError::Driver("audit dispatch failed".into()),
+            }?
+        } else {
+            let updated = self
+                .backend_driver
+                .update_service(exec.state(), id, service)
+                .await?;
+            exec.state()
+                .event_dispatcher
+                .emit(Event::new(
+                    Operation::Update,
+                    EventPayload::Service { id: id.to_string() },
+                ))
+                .await;
+            updated
+        };
         Ok(updated)
     }
 }

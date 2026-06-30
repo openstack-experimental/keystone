@@ -44,8 +44,8 @@ pub struct CadfEventPayload {
 
 impl CadfEventPayload {
     /// Construct a new unsigned payload. The `seq`, `boot_session_id`, and
-    /// `hmac_key_version` fields are placeholders; `AuditDispatcher::finalize_event`
-    /// fills them in when signing.
+    /// `hmac_key_version` fields are placeholders;
+    /// `AuditDispatcher::finalize_event` fills them in when signing.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         id: String,

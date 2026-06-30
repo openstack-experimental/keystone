@@ -202,6 +202,10 @@ pub async fn replay_spool(
 
     if skipped > 0 {
         quarantine_spool(path)?;
+    } else {
+        // Truncate spool file after clean replay so previously-shipped events
+        // are not re-dispatched on next startup.
+        truncate_spool(path)?;
     }
 
     info!(replayed, skipped, "spool replay complete");
@@ -218,6 +222,15 @@ fn quarantine_spool(path: &Path) -> Result<(), SpoolError> {
         quarantine = %quarantine.display(),
         "spool file quarantined due to corrupted/tampered lines"
     );
+    Ok(())
+}
+
+/// Truncate the spool file after a clean replay.
+///
+/// Previously-shipped events are re-dispatched during replay. Truncating
+/// ensures they are not re-dispatched again on next startup.
+fn truncate_spool(path: &Path) -> Result<(), SpoolError> {
+    std::fs::File::create(path)?;
     Ok(())
 }
 
@@ -297,6 +310,16 @@ mod tests {
         // Both events should have been dispatched to the critical channel.
         assert!(rx2.critical.try_recv().is_ok());
         assert!(rx2.critical.try_recv().is_ok());
+        // Spool file should be truncated after clean replay.
+        assert!(
+            path.exists(),
+            "spool file must still exist after clean replay"
+        );
+        let contents = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            contents.is_empty(),
+            "spool file must be empty after clean replay"
+        );
     }
 
     #[tokio::test]

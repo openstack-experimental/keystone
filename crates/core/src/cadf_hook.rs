@@ -13,9 +13,9 @@
 // SPDX-License-Identifier: Apache-2.0
 //! CADF audit hook and shared initiator-builder helpers (ADR 0023 Phase 3.4).
 //!
-//! [`CadfAuditHook`] translates `(ValidatedSecurityContext, Event, AuditOutcome)`
-//! triples into signed [`CadfEvent`]s and dispatches them via the critical
-//! channel of an [`AuditDispatcher`].
+//! [`CadfAuditHook`] translates `(ValidatedSecurityContext, Event,
+//! AuditOutcome)` triples into signed [`CadfEvent`]s and dispatches them via
+//! the critical channel of an [`AuditDispatcher`].
 //!
 //! The initiator-builder helpers are also used by the perimeter audit path in
 //! `crates/keystone/src/audit.rs`.
@@ -68,6 +68,9 @@ fn build_target_from_event(event: &Event) -> Target {
     let (raw_id, type_uri): (&str, &str) = match &event.payload {
         EventPayload::User { id } => (id, "data/security/identity/user"),
         EventPayload::Group { id } => (id, "data/security/identity/group"),
+        EventPayload::GroupMembership { user_id: id, .. } => {
+            (id, "data/security/identity/group-membership")
+        }
         EventPayload::Project { id } => (id, "data/security/account/project"),
         EventPayload::Domain { id } => (id, "data/security/account/domain"),
         EventPayload::Role { id } => (id, "data/security/authz/role"),
@@ -85,6 +88,15 @@ fn build_target_from_event(event: &Event) -> Target {
         EventPayload::Region { id } => (id, "data/compute/catalog/region"),
         EventPayload::Service { id } => (id, "data/compute/catalog/service"),
         EventPayload::Trust { id } => (id, "data/security/identity/trust"),
+        EventPayload::ServiceAccount { id } => (id, "data/security/identity/service-account"),
+        EventPayload::TokenRestriction { id } => (id, "data/security/identity/token-restriction"),
+        EventPayload::IdentityProvider { id } => (id, "data/security/identity/identity-provider"),
+        EventPayload::AuthState { id } => (id, "data/security/identity/auth-state"),
+        EventPayload::MappingRuleSet { mapping_id: id } => {
+            (id, "data/security/identity/mapping-ruleset")
+        }
+        EventPayload::VirtualUser { user_id: id } => (id, "data/security/identity/virtual-user"),
+        EventPayload::K8sAuthInstance { id } => (id, "data/security/identity/k8s-auth-instance"),
     };
     Target {
         id: sanitize_audit_id(raw_id),
@@ -162,7 +174,8 @@ fn outcome_reason(outcome: &AuditOutcome) -> Option<String> {
 /// CADF implementation of [`AuditHook`] (ADR 0023 Phase 3.4).
 ///
 /// Translates `(ValidatedSecurityContext, Event, AuditOutcome)` triples into
-/// signed [`CadfEvent`]s and dispatches them via [`AuditDispatcher::dispatch_critical`].
+/// signed [`CadfEvent`]s and dispatches them via
+/// [`AuditDispatcher::dispatch_critical`].
 pub struct CadfAuditHook {
     dispatcher: Arc<AuditDispatcher>,
 }
@@ -203,7 +216,11 @@ impl AuditHook for CadfAuditHook {
         match self.dispatcher.dispatch_critical(signed).await {
             Ok(()) => Ok(()),
             Err(_) => {
-                self.dispatcher.record_postaudit_drop();
+                // Only count as post-audit drop for terminal outcomes (Success/Failure).
+                // Pre-audit Attempt failures represent blockage before any commit.
+                if !matches!(outcome, AuditOutcome::Attempt) {
+                    self.dispatcher.record_postaudit_drop();
+                }
                 Err(AuditDispatchError::DispatcherDead)
             }
         }

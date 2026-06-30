@@ -23,6 +23,7 @@ use openstack_keystone_core_types::role::{Role, RoleListParameters};
 
 use crate::assignment::{AssignmentApi, AssignmentProviderError, backend::AssignmentBackend};
 use crate::auth::ExecutionContext;
+use crate::events::AuditDispatchError;
 use crate::plugin_manager::PluginManagerApi;
 
 pub struct AssignmentService {
@@ -67,47 +68,100 @@ impl AssignmentApi for AssignmentService {
         ctx: &ExecutionContext<'a>,
         grant: AssignmentCreate,
     ) -> Result<Assignment, AssignmentProviderError> {
-        let assignment = self.backend_driver.create_grant(ctx.state(), grant).await?;
-
-        ctx.state()
-            .event_dispatcher
-            .emit(Event::new(
-                Operation::Create,
-                EventPayload::RoleAssignment {
-                    role_id: assignment.role_id.clone(),
-                    user_id: match &assignment.r#type {
-                        AssignmentType::UserDomain
-                        | AssignmentType::UserProject
-                        | AssignmentType::UserSystem => Some(assignment.actor_id.clone()),
-                        _ => None,
+        let assignment = if let Some(vsc) = ctx.ctx() {
+            let backend_driver = &self.backend_driver;
+            let grant_clone = grant.clone();
+            let grant_type = grant.r#type;
+            let grant_role_id = grant.role_id.clone();
+            let grant_actor_id = grant.actor_id.clone();
+            let grant_target_id = grant.target_id.clone();
+            crate::audited_op! {
+                dispatcher: &ctx.state().event_dispatcher,
+                ctx: vsc,
+                event: Event::new(
+                    Operation::Create,
+                    EventPayload::RoleAssignment {
+                        role_id: grant_role_id.clone(),
+                        user_id: match grant_type {
+                            AssignmentType::UserDomain
+                            | AssignmentType::UserProject
+                            | AssignmentType::UserSystem => Some(grant_actor_id.clone()),
+                            _ => None,
+                        },
+                        group_id: match grant_type {
+                            AssignmentType::GroupDomain
+                            | AssignmentType::GroupProject
+                            | AssignmentType::GroupSystem => Some(grant_actor_id.clone()),
+                            _ => None,
+                        },
+                        domain_id: match grant_type {
+                            AssignmentType::UserDomain | AssignmentType::GroupDomain => {
+                                Some(grant_target_id.clone())
+                            }
+                            _ => None,
+                        },
+                        project_id: match grant_type {
+                            AssignmentType::UserProject | AssignmentType::GroupProject => {
+                                Some(grant_target_id.clone())
+                            }
+                            _ => None,
+                        },
+                        system_id: match grant_type {
+                            AssignmentType::UserSystem | AssignmentType::GroupSystem => {
+                                Some(grant_target_id.clone())
+                            }
+                            _ => None,
+                        },
                     },
-                    group_id: match &assignment.r#type {
-                        AssignmentType::GroupDomain
-                        | AssignmentType::GroupProject
-                        | AssignmentType::GroupSystem => Some(assignment.actor_id.clone()),
-                        _ => None,
-                    },
-                    domain_id: match &assignment.r#type {
-                        AssignmentType::UserDomain | AssignmentType::GroupDomain => {
-                            Some(assignment.target_id.clone())
-                        }
-                        _ => None,
-                    },
-                    project_id: match &assignment.r#type {
-                        AssignmentType::UserProject | AssignmentType::GroupProject => {
-                            Some(assignment.target_id.clone())
-                        }
-                        _ => None,
-                    },
-                    system_id: match &assignment.r#type {
-                        AssignmentType::UserSystem | AssignmentType::GroupSystem => {
-                            Some(assignment.target_id.clone())
-                        }
-                        _ => None,
-                    },
+                ),
+                operation: async {
+                    backend_driver.create_grant(ctx.state(), grant_clone).await
                 },
-            ))
-            .await;
+                on_audit_error: |_: AuditDispatchError| AssignmentProviderError::Driver("audit dispatch failed".into()),
+            }?
+        } else {
+            let assignment = self.backend_driver.create_grant(ctx.state(), grant).await?;
+            ctx.state()
+                .event_dispatcher
+                .emit(Event::new(
+                    Operation::Create,
+                    EventPayload::RoleAssignment {
+                        role_id: assignment.role_id.clone(),
+                        user_id: match &assignment.r#type {
+                            AssignmentType::UserDomain
+                            | AssignmentType::UserProject
+                            | AssignmentType::UserSystem => Some(assignment.actor_id.clone()),
+                            _ => None,
+                        },
+                        group_id: match &assignment.r#type {
+                            AssignmentType::GroupDomain
+                            | AssignmentType::GroupProject
+                            | AssignmentType::GroupSystem => Some(assignment.actor_id.clone()),
+                            _ => None,
+                        },
+                        domain_id: match &assignment.r#type {
+                            AssignmentType::UserDomain | AssignmentType::GroupDomain => {
+                                Some(assignment.target_id.clone())
+                            }
+                            _ => None,
+                        },
+                        project_id: match &assignment.r#type {
+                            AssignmentType::UserProject | AssignmentType::GroupProject => {
+                                Some(assignment.target_id.clone())
+                            }
+                            _ => None,
+                        },
+                        system_id: match &assignment.r#type {
+                            AssignmentType::UserSystem | AssignmentType::GroupSystem => {
+                                Some(assignment.target_id.clone())
+                            }
+                            _ => None,
+                        },
+                    },
+                ))
+                .await;
+            assignment
+        };
 
         Ok(assignment)
     }
@@ -161,23 +215,15 @@ impl AssignmentApi for AssignmentService {
         ctx: &ExecutionContext<'a>,
         grant: Assignment,
     ) -> Result<(), AssignmentProviderError> {
-        // Call backend with reference (no move)
-        self.backend_driver
-            .revoke_grant(ctx.state(), &grant)
-            .await?;
-
-        // Determine user_id or group_id
         let user_id = match &grant.r#type {
             AssignmentType::UserDomain
             | AssignmentType::UserProject
             | AssignmentType::UserSystem => Some(grant.actor_id.clone()),
-
             AssignmentType::GroupDomain
             | AssignmentType::GroupProject
             | AssignmentType::GroupSystem => None,
         };
 
-        // Determine project_id or domain_id
         let (project_id, domain_id) = match &grant.r#type {
             AssignmentType::UserProject | AssignmentType::GroupProject => {
                 (Some(grant.target_id.clone()), None)
@@ -188,11 +234,65 @@ impl AssignmentApi for AssignmentService {
             AssignmentType::UserSystem | AssignmentType::GroupSystem => (None, None),
         };
 
+        let role_id = grant.role_id.clone();
+
+        if let Some(vsc) = ctx.ctx() {
+            let backend_driver = &self.backend_driver;
+            crate::audited_op! {
+                dispatcher: &ctx.state().event_dispatcher,
+                ctx: vsc,
+                event: Event::new(
+                    Operation::Delete,
+                    EventPayload::RoleAssignment {
+                        role_id: role_id.clone(),
+                        user_id: match &grant.r#type {
+                            AssignmentType::UserDomain
+                            | AssignmentType::UserProject
+                            | AssignmentType::UserSystem => Some(grant.actor_id.clone()),
+                            _ => None,
+                        },
+                        group_id: match &grant.r#type {
+                            AssignmentType::GroupDomain
+                            | AssignmentType::GroupProject
+                            | AssignmentType::GroupSystem => Some(grant.actor_id.clone()),
+                            _ => None,
+                        },
+                        domain_id: match &grant.r#type {
+                            AssignmentType::UserDomain | AssignmentType::GroupDomain => {
+                                Some(grant.target_id.clone())
+                            }
+                            _ => None,
+                        },
+                        project_id: match &grant.r#type {
+                            AssignmentType::UserProject | AssignmentType::GroupProject => {
+                                Some(grant.target_id.clone())
+                            }
+                            _ => None,
+                        },
+                        system_id: match &grant.r#type {
+                            AssignmentType::UserSystem | AssignmentType::GroupSystem => {
+                                Some(grant.target_id.clone())
+                            }
+                            _ => None,
+                        },
+                    },
+                ),
+                operation: async {
+                    backend_driver.revoke_grant(ctx.state(), &grant).await
+                },
+                on_audit_error: |_: AuditDispatchError| AssignmentProviderError::Driver("audit dispatch failed".into()),
+            }?;
+        } else {
+            self.backend_driver
+                .revoke_grant(ctx.state(), &grant)
+                .await?;
+        }
+
         let revocation_event = RevocationEventCreate {
             domain_id,
             project_id,
             user_id,
-            role_id: Some(grant.role_id.clone()),
+            role_id: Some(role_id),
             trust_id: None,
             consumer_id: None,
             access_token_id: None,
@@ -208,46 +308,6 @@ impl AssignmentApi for AssignmentService {
             .get_revoke_provider()
             .create_revocation_event(ctx, revocation_event)
             .await?;
-
-        ctx.state()
-            .event_dispatcher
-            .emit(Event::new(
-                Operation::Delete,
-                EventPayload::RoleAssignment {
-                    role_id: grant.role_id.clone(),
-                    user_id: match &grant.r#type {
-                        AssignmentType::UserDomain
-                        | AssignmentType::UserProject
-                        | AssignmentType::UserSystem => Some(grant.actor_id.clone()),
-                        _ => None,
-                    },
-                    group_id: match &grant.r#type {
-                        AssignmentType::GroupDomain
-                        | AssignmentType::GroupProject
-                        | AssignmentType::GroupSystem => Some(grant.actor_id.clone()),
-                        _ => None,
-                    },
-                    domain_id: match &grant.r#type {
-                        AssignmentType::UserDomain | AssignmentType::GroupDomain => {
-                            Some(grant.target_id.clone())
-                        }
-                        _ => None,
-                    },
-                    project_id: match &grant.r#type {
-                        AssignmentType::UserProject | AssignmentType::GroupProject => {
-                            Some(grant.target_id.clone())
-                        }
-                        _ => None,
-                    },
-                    system_id: match &grant.r#type {
-                        AssignmentType::UserSystem | AssignmentType::GroupSystem => {
-                            Some(grant.target_id.clone())
-                        }
-                        _ => None,
-                    },
-                },
-            ))
-            .await;
 
         Ok(())
     }

@@ -32,6 +32,7 @@ use crate::application_credential::{
     backend::ApplicationCredentialBackend,
 };
 use crate::auth::ExecutionContext;
+use crate::events::AuditDispatchError;
 use crate::plugin_manager::PluginManagerApi;
 
 /// Application Credential Provider.
@@ -79,26 +80,47 @@ impl ApplicationCredentialApi for ApplicationCredentialService {
     ) -> Result<AccessRule, ApplicationCredentialProviderError> {
         let mut rule = rule;
         rule.validate()?;
-        // The provider prepares the final data; the driver only persists it.
         if rule.id.is_none() {
             rule.id = Some(Uuid::new_v4().simple().to_string());
         }
         let user_id = rule.user_id.clone();
-        let access_rule = self
-            .backend_driver
-            .create_access_rule(ctx.state(), rule)
-            .await?;
-
-        ctx.state()
-            .event_dispatcher
-            .emit(Event::new(
-                Operation::Create,
-                EventPayload::AccessRule {
-                    id: access_rule.id.clone(),
-                    user_id,
+        let access_rule = if let Some(vsc) = ctx.ctx() {
+            let backend_driver = &self.backend_driver;
+            let rule_clone = rule.clone();
+            crate::audited_op! {
+                dispatcher: &ctx.state().event_dispatcher,
+                ctx: vsc,
+                event: Event::new(
+                    Operation::Create,
+                    EventPayload::AccessRule {
+                        id: rule_clone.id.clone().unwrap_or_default(),
+                        user_id: user_id.clone(),
+                    },
+                ),
+                operation: async {
+                    backend_driver.create_access_rule(ctx.state(), rule_clone).await
                 },
-            ))
-            .await;
+                on_audit_error: |_: AuditDispatchError| ApplicationCredentialProviderError::Driver("audit dispatch failed".into()),
+            }?
+        } else {
+            let access_rule = self
+                .backend_driver
+                .create_access_rule(ctx.state(), rule)
+                .await?;
+
+            ctx.state()
+                .event_dispatcher
+                .emit(Event::new(
+                    Operation::Create,
+                    EventPayload::AccessRule {
+                        id: access_rule.id.clone(),
+                        user_id,
+                    },
+                ))
+                .await;
+
+            access_rule
+        };
 
         Ok(access_rule)
     }
@@ -119,7 +141,6 @@ impl ApplicationCredentialApi for ApplicationCredentialService {
         rec: ApplicationCredentialCreate,
     ) -> Result<ApplicationCredentialCreateResponse, ApplicationCredentialProviderError> {
         rec.validate()?;
-        // TODO: implement some filters.
         let roles: HashSet<String> = ctx
             .state()
             .provider
@@ -136,7 +157,6 @@ impl ApplicationCredentialApi for ApplicationCredentialService {
                 ));
             }
         }
-        // TODO: Check app creds count
         let mut new_rec = rec;
         if new_rec.id.is_none() {
             new_rec.id = Some(Uuid::new_v4().simple().to_string());
@@ -152,21 +172,45 @@ impl ApplicationCredentialApi for ApplicationCredentialService {
         if new_rec.secret.is_none() {
             new_rec.secret = Some(generate_secret());
         }
-        let response = self
-            .backend_driver
-            .create_application_credential(ctx.state(), new_rec.clone())
-            .await?;
-
-        ctx.state()
-            .event_dispatcher
-            .emit(Event::new(
-                Operation::Create,
-                EventPayload::ApplicationCredential {
-                    id: new_rec.id.unwrap_or_default(),
-                    project_id: new_rec.project_id.clone(),
+        let cred_id = new_rec.id.clone().unwrap_or_default();
+        let project_id = new_rec.project_id.clone();
+        let response = if let Some(vsc) = ctx.ctx() {
+            let backend_driver = &self.backend_driver;
+            let new_rec_clone = new_rec.clone();
+            crate::audited_op! {
+                dispatcher: &ctx.state().event_dispatcher,
+                ctx: vsc,
+                event: Event::new(
+                    Operation::Create,
+                    EventPayload::ApplicationCredential {
+                        id: cred_id.clone(),
+                        project_id: project_id.clone(),
+                    },
+                ),
+                operation: async {
+                    backend_driver.create_application_credential(ctx.state(), new_rec_clone).await
                 },
-            ))
-            .await;
+                on_audit_error: |_: AuditDispatchError| ApplicationCredentialProviderError::Driver("audit dispatch failed".into()),
+            }?
+        } else {
+            let response = self
+                .backend_driver
+                .create_application_credential(ctx.state(), new_rec)
+                .await?;
+
+            ctx.state()
+                .event_dispatcher
+                .emit(Event::new(
+                    Operation::Create,
+                    EventPayload::ApplicationCredential {
+                        id: cred_id,
+                        project_id,
+                    },
+                ))
+                .await;
+
+            response
+        };
 
         Ok(response)
     }
@@ -187,20 +231,39 @@ impl ApplicationCredentialApi for ApplicationCredentialService {
         user_id: &'a str,
         id: &'a str,
     ) -> Result<(), ApplicationCredentialProviderError> {
-        self.backend_driver
-            .delete_access_rule(ctx.state(), user_id, id)
-            .await?;
-
-        ctx.state()
-            .event_dispatcher
-            .emit(Event::new(
-                Operation::Delete,
-                EventPayload::AccessRule {
-                    id: id.to_string(),
-                    user_id: user_id.to_string(),
+        if let Some(vsc) = ctx.ctx() {
+            crate::audited_op! {
+                dispatcher: &ctx.state().event_dispatcher,
+                ctx: vsc,
+                event: Event::new(
+                    Operation::Delete,
+                    EventPayload::AccessRule {
+                        id: id.to_string(),
+                        user_id: user_id.to_string(),
+                    },
+                ),
+                operation: async {
+                    self.backend_driver.delete_access_rule(ctx.state(), user_id, id).await?;
+                    Ok::<(), ApplicationCredentialProviderError>(())
                 },
-            ))
-            .await;
+                on_audit_error: |_: AuditDispatchError| ApplicationCredentialProviderError::Driver("audit dispatch failed".into()),
+            }?;
+        } else {
+            self.backend_driver
+                .delete_access_rule(ctx.state(), user_id, id)
+                .await?;
+
+            ctx.state()
+                .event_dispatcher
+                .emit(Event::new(
+                    Operation::Delete,
+                    EventPayload::AccessRule {
+                        id: id.to_string(),
+                        user_id: user_id.to_string(),
+                    },
+                ))
+                .await;
+        }
 
         Ok(())
     }

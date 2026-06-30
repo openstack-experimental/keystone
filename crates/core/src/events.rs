@@ -293,10 +293,10 @@ impl EventDispatcher {
 
     /// Fail-closed audit dispatch (ADR 0023 Phase 3).
     ///
-    /// Calls every registered [`AuditHook`] inline. A [`AuditDispatchError::DispatcherDead`]
-    /// from any hook short-circuits and returns immediately. Any other hook
-    /// error is collected; if any hooks fail, returns
-    /// [`AuditDispatchError::HookFailed`].
+    /// Calls every registered [`AuditHook`] inline. A
+    /// [`AuditDispatchError::DispatcherDead`] from any hook short-circuits
+    /// and returns immediately. Any other hook error is collected; if any
+    /// hooks fail, returns [`AuditDispatchError::HookFailed`].
     ///
     /// Reentrancy is prevented via a `tokio::task_local!` flag: a recursive
     /// call returns [`AuditDispatchError::Reentered`].
@@ -354,8 +354,8 @@ impl EventDispatcher {
 /// - `ctx` — `&ValidatedSecurityContext`
 /// - `event` — `Event` describing the resource being acted on
 /// - `operation` — an expression evaluating to a `Future<Output=Result<_, _>>`
-/// - `on_audit_error` — closure `|AuditDispatchError| -> E` mapping
-///   pre-audit failures to the outer error type
+/// - `on_audit_error` — closure `|AuditDispatchError| -> E` mapping pre-audit
+///   failures to the outer error type
 ///
 /// # Cancellation safety
 /// If the future returned by `$op` is dropped before completing, the

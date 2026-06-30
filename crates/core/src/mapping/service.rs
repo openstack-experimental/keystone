@@ -28,6 +28,7 @@ use openstack_keystone_core_types::auth::{
     AuthzInfoBuilder, IdentityInfo, OidcContextBuilder, PrincipalIdentityInfoBuilder,
     PrincipalInfo, ScopeInfo, UserIdentityInfoBuilder,
 };
+use openstack_keystone_core_types::events::{Event, EventPayload, Operation};
 use openstack_keystone_core_types::identity::{
     FederationBuilder, FederationProtocol, GroupCreate, GroupListParameters, UserCreateBuilder,
     UserResponse,
@@ -36,13 +37,15 @@ use openstack_keystone_core_types::mapping::*;
 use openstack_keystone_core_types::resource::{Domain, Project};
 
 use crate::auth::ExecutionContext;
+use crate::events::AuditDispatchError;
 use crate::keystone::ServiceState;
 use crate::mapping::{
     MappingApi, MappingProviderError, backend::MappingBackend, engine, hmac, validation, version,
 };
 use crate::plugin_manager::PluginManagerApi;
 
-/// Derive [`AuthzInfo`] from authorization list produced by a matched ruleset rule.
+/// Derive [`AuthzInfo`] from authorization list produced by a matched ruleset
+/// rule.
 ///
 /// Uses the first authorization to determine scope. If the list is empty,
 /// returns `None` so the authentication result remains unscoped.
@@ -577,19 +580,12 @@ impl MappingApi for MappingService {
         ctx: &ExecutionContext<'a>,
         mut ruleset: MappingRuleSetCreate,
     ) -> Result<MappingRuleSet, MappingProviderError> {
-        // 1. Write-time validation
         validation::validate_ruleset_create(&ruleset)?;
-
-        // 2. Generate UUID if not provided
         let mapping_id = ruleset
             .mapping_id
             .take()
             .unwrap_or(Uuid::new_v4().simple().to_string());
-
-        // 3. Compute content-aware ruleset version
         let ruleset_version = version::compute_ruleset_version(&ruleset);
-
-        // 4. Build the ruleset object for backend storage
         let ruleset_obj = MappingRuleSet {
             mapping_id: mapping_id.clone(),
             domain_id: ruleset.domain_id,
@@ -599,14 +595,37 @@ impl MappingApi for MappingService {
             rules: ruleset.rules,
             ruleset_version,
         };
-
-        // 5. Delegate to backend
-        let created = self
-            .backend_driver
-            .create_ruleset(ctx.state(), ruleset_obj)
-            .await?;
-
-        // 6. Return the created ruleset
+        let created = if let Some(vsc) = ctx.ctx() {
+            let backend_driver = &self.backend_driver;
+            let ruleset_obj_clone = ruleset_obj.clone();
+            crate::audited_op! {
+                dispatcher: &ctx.state().event_dispatcher,
+                ctx: vsc,
+                event: Event::new(
+                    Operation::Create,
+                    EventPayload::MappingRuleSet { mapping_id: mapping_id.clone() },
+                ),
+                operation: async {
+                    backend_driver.create_ruleset(ctx.state(), ruleset_obj_clone).await
+                },
+                on_audit_error: |_: AuditDispatchError| MappingProviderError::Driver { source: "audit dispatch failed".into() },
+            }?
+        } else {
+            let created = self
+                .backend_driver
+                .create_ruleset(ctx.state(), ruleset_obj)
+                .await?;
+            ctx.state()
+                .event_dispatcher
+                .emit(Event::new(
+                    Operation::Create,
+                    EventPayload::MappingRuleSet {
+                        mapping_id: mapping_id.clone(),
+                    },
+                ))
+                .await;
+            created
+        };
         Ok(MappingRuleSet {
             mapping_id: mapping_id.clone(),
             domain_id: created.domain_id,
@@ -624,40 +643,88 @@ impl MappingApi for MappingService {
         ctx: &ExecutionContext<'a>,
         mapping_id: &'a str,
     ) -> Result<(), MappingProviderError> {
-        let max_retries = 5u64;
-        for attempt in 0..max_retries {
-            // Check immutability: if ruleset contains `is_system` rules, reject
-            if let Some(existing) = self
-                .backend_driver
-                .get_ruleset(ctx.state(), mapping_id)
-                .await?
-                && existing.rules.iter().any(|r| r.identity.is_system)
-            {
-                return Err(MappingProviderError::RulesetImmutable(
-                    mapping_id.to_string(),
-                ));
-            }
-
-            match self
-                .backend_driver
-                .delete_ruleset(ctx.state(), mapping_id)
-                .await
-            {
-                Ok(()) => return Ok(()),
-                Err(MappingProviderError::CasConflict { .. }) if attempt + 1 < max_retries => {
-                    let backoff_ms = 50 * (1u64 << attempt);
-                    tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
-                    continue;
+        if let Some(vsc) = ctx.ctx() {
+            let backend_driver = &self.backend_driver;
+            let mapping_id_str = mapping_id.to_string();
+            crate::audited_op! {
+                dispatcher: &ctx.state().event_dispatcher,
+                ctx: vsc,
+                event: Event::new(
+                    Operation::Delete,
+                    EventPayload::MappingRuleSet { mapping_id: mapping_id_str.clone() },
+                ),
+                operation: async {
+                    let max_retries = 5u64;
+                    for attempt in 0..max_retries {
+                        if let Some(existing) = backend_driver.get_ruleset(ctx.state(), mapping_id).await?
+                            && existing.rules.iter().any(|r| r.identity.is_system)
+                        {
+                            return Err(MappingProviderError::RulesetImmutable(mapping_id.to_string()));
+                        }
+                        match backend_driver.delete_ruleset(ctx.state(), mapping_id).await {
+                            Ok(()) => return Ok::<(), MappingProviderError>(()),
+                            Err(MappingProviderError::CasConflict { .. }) if attempt + 1 < max_retries => {
+                                let backoff_ms = 50 * (1u64 << attempt);
+                                tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
+                                continue;
+                            }
+                            Err(e) => return Err(e),
+                        }
+                    }
+                    Err(MappingProviderError::CasConflict {
+                        subject: mapping_id.to_string(),
+                        description: format!("CAS delete exceeded {max_retries} retries with exponential backoff"),
+                    })
+                },
+                on_audit_error: |_: AuditDispatchError| MappingProviderError::Driver { source: "audit dispatch failed".into() },
+            }?;
+        } else {
+            let max_retries = 5u64;
+            for attempt in 0..max_retries {
+                if let Some(existing) = self
+                    .backend_driver
+                    .get_ruleset(ctx.state(), mapping_id)
+                    .await?
+                    && existing.rules.iter().any(|r| r.identity.is_system)
+                {
+                    return Err(MappingProviderError::RulesetImmutable(
+                        mapping_id.to_string(),
+                    ));
                 }
-                Err(e) => return Err(e),
+
+                match self
+                    .backend_driver
+                    .delete_ruleset(ctx.state(), mapping_id)
+                    .await
+                {
+                    Ok(()) => {
+                        ctx.state()
+                            .event_dispatcher
+                            .emit(Event::new(
+                                Operation::Delete,
+                                EventPayload::MappingRuleSet {
+                                    mapping_id: mapping_id.to_string(),
+                                },
+                            ))
+                            .await;
+                        return Ok(());
+                    }
+                    Err(MappingProviderError::CasConflict { .. }) if attempt + 1 < max_retries => {
+                        let backoff_ms = 50 * (1u64 << attempt);
+                        tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
+                        continue;
+                    }
+                    Err(e) => return Err(e),
+                }
             }
+            return Err(MappingProviderError::CasConflict {
+                subject: mapping_id.to_string(),
+                description: format!(
+                    "CAS delete exceeded {max_retries} retries with exponential backoff"
+                ),
+            });
         }
-        Err(MappingProviderError::CasConflict {
-            subject: mapping_id.to_string(),
-            description: format!(
-                "CAS delete exceeded {max_retries} retries with exponential backoff"
-            ),
-        })
+        Ok(())
     }
 
     /// Delete a virtual user shadow record.
@@ -666,28 +733,72 @@ impl MappingApi for MappingService {
         ctx: &ExecutionContext<'a>,
         user_id: &'a str,
     ) -> Result<(), MappingProviderError> {
-        let max_retries = 5u64;
-        for attempt in 0..max_retries {
-            match self
-                .backend_driver
-                .delete_virtual_user(ctx.state(), user_id)
-                .await
-            {
-                Ok(()) => return Ok(()),
-                Err(MappingProviderError::CasConflict { .. }) if attempt + 1 < max_retries => {
-                    let backoff_ms = 50 * (1u64 << attempt);
-                    tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
-                    continue;
+        if let Some(vsc) = ctx.ctx() {
+            let backend_driver = &self.backend_driver;
+            let user_id_str = user_id.to_string();
+            crate::audited_op! {
+                dispatcher: &ctx.state().event_dispatcher,
+                ctx: vsc,
+                event: Event::new(
+                    Operation::Delete,
+                    EventPayload::VirtualUser { user_id: user_id_str.clone() },
+                ),
+                operation: async {
+                    let max_retries = 5u64;
+                    for attempt in 0..max_retries {
+                        match backend_driver.delete_virtual_user(ctx.state(), user_id).await {
+                            Ok(()) => return Ok::<(), MappingProviderError>(()),
+                            Err(MappingProviderError::CasConflict { .. }) if attempt + 1 < max_retries => {
+                                let backoff_ms = 50 * (1u64 << attempt);
+                                tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
+                                continue;
+                            }
+                            Err(e) => return Err(e),
+                        }
+                    }
+                    Err(MappingProviderError::CasConflict {
+                        subject: user_id.to_string(),
+                        description: format!("CAS delete exceeded {max_retries} retries with exponential backoff"),
+                    })
+                },
+                on_audit_error: |_: AuditDispatchError| MappingProviderError::Driver { source: "audit dispatch failed".into() },
+            }?;
+        } else {
+            let max_retries = 5u64;
+            for attempt in 0..max_retries {
+                match self
+                    .backend_driver
+                    .delete_virtual_user(ctx.state(), user_id)
+                    .await
+                {
+                    Ok(()) => {
+                        ctx.state()
+                            .event_dispatcher
+                            .emit(Event::new(
+                                Operation::Delete,
+                                EventPayload::VirtualUser {
+                                    user_id: user_id.to_string(),
+                                },
+                            ))
+                            .await;
+                        return Ok(());
+                    }
+                    Err(MappingProviderError::CasConflict { .. }) if attempt + 1 < max_retries => {
+                        let backoff_ms = 50 * (1u64 << attempt);
+                        tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
+                        continue;
+                    }
+                    Err(e) => return Err(e),
                 }
-                Err(e) => return Err(e),
             }
+            return Err(MappingProviderError::CasConflict {
+                subject: user_id.to_string(),
+                description: format!(
+                    "CAS delete exceeded {max_retries} retries with exponential backoff"
+                ),
+            });
         }
-        Err(MappingProviderError::CasConflict {
-            subject: user_id.to_string(),
-            description: format!(
-                "CAS delete exceeded {max_retries} retries with exponential backoff"
-            ),
-        })
+        Ok(())
     }
 
     /// Fetch a mapping ruleset by ID.
@@ -841,12 +952,38 @@ impl MappingApi for MappingService {
             rules: Some(new_rules),
         };
 
-        let updated = self
-            .backend_driver
-            .update_ruleset(ctx.state(), mapping_id, update_payload)
-            .await?;
+        let updated = if let Some(vsc) = ctx.ctx() {
+            let backend_driver = &self.backend_driver;
+            let update_payload_clone = update_payload.clone();
+            crate::audited_op! {
+                dispatcher: &ctx.state().event_dispatcher,
+                ctx: vsc,
+                event: Event::new(
+                    Operation::Update,
+                    EventPayload::MappingRuleSet { mapping_id: mapping_id.to_string() },
+                ),
+                operation: async {
+                    backend_driver.update_ruleset(ctx.state(), mapping_id, update_payload_clone).await
+                },
+                on_audit_error: |_: AuditDispatchError| MappingProviderError::Driver { source: "audit dispatch failed".into() },
+            }?
+        } else {
+            let updated = self
+                .backend_driver
+                .update_ruleset(ctx.state(), mapping_id, update_payload)
+                .await?;
+            ctx.state()
+                .event_dispatcher
+                .emit(Event::new(
+                    Operation::Update,
+                    EventPayload::MappingRuleSet {
+                        mapping_id: mapping_id.to_string(),
+                    },
+                ))
+                .await;
+            updated
+        };
 
-        // 7. Return with new version
         Ok(MappingRuleSet {
             mapping_id: existing.mapping_id.clone(),
             domain_id: updated.domain_id,
@@ -868,24 +1005,20 @@ impl MappingApi for MappingService {
         mapping_id: &'a str,
         data: MappingRuleSetUpdate,
     ) -> Result<MappingRuleSet, MappingProviderError> {
-        // 1. Fetch existing ruleset
         let existing = self
             .backend_driver
             .get_ruleset(ctx.state(), mapping_id)
             .await?
             .ok_or_else(|| MappingProviderError::NotFound(mapping_id.to_string()))?;
 
-        // 2. Check immutability: reject update if ruleset contains `is_system` rules
         if existing.rules.iter().any(|r| r.identity.is_system) {
             return Err(MappingProviderError::RulesetImmutable(
                 mapping_id.to_string(),
             ));
         }
 
-        // 3. Validate update
         validation::validate_ruleset_update(&existing, &data)?;
 
-        // 4. Compute merged ruleset for version calculation
         let merged_rules = data.rules.clone().unwrap_or(existing.rules.clone());
         let new_version = version::compute_ruleset_version_from_parts(
             &existing.mapping_id,
@@ -896,13 +1029,38 @@ impl MappingApi for MappingService {
             &merged_rules,
         );
 
-        // 5. Delegate to backend
-        let updated = self
-            .backend_driver
-            .update_ruleset(ctx.state(), mapping_id, data)
-            .await?;
+        let updated = if let Some(vsc) = ctx.ctx() {
+            let backend_driver = &self.backend_driver;
+            let data_clone = data.clone();
+            crate::audited_op! {
+                dispatcher: &ctx.state().event_dispatcher,
+                ctx: vsc,
+                event: Event::new(
+                    Operation::Update,
+                    EventPayload::MappingRuleSet { mapping_id: mapping_id.to_string() },
+                ),
+                operation: async {
+                    backend_driver.update_ruleset(ctx.state(), mapping_id, data_clone).await
+                },
+                on_audit_error: |_: AuditDispatchError| MappingProviderError::Driver { source: "audit dispatch failed".into() },
+            }?
+        } else {
+            let updated = self
+                .backend_driver
+                .update_ruleset(ctx.state(), mapping_id, data)
+                .await?;
+            ctx.state()
+                .event_dispatcher
+                .emit(Event::new(
+                    Operation::Update,
+                    EventPayload::MappingRuleSet {
+                        mapping_id: mapping_id.to_string(),
+                    },
+                ))
+                .await;
+            updated
+        };
 
-        // 6. Return with updated version
         Ok(MappingRuleSet {
             mapping_id: existing.mapping_id.clone(),
             domain_id: updated.domain_id,
@@ -920,9 +1078,37 @@ impl MappingApi for MappingService {
         ctx: &ExecutionContext<'a>,
         user_id: &'a str,
     ) -> Result<VirtualUser, MappingProviderError> {
-        self.backend_driver
-            .disable_virtual_user(ctx.state(), user_id)
-            .await
+        let vu = if let Some(vsc) = ctx.ctx() {
+            let backend_driver = &self.backend_driver;
+            crate::audited_op! {
+                dispatcher: &ctx.state().event_dispatcher,
+                ctx: vsc,
+                event: Event::new(
+                    Operation::Disable,
+                    EventPayload::VirtualUser { user_id: user_id.to_string() },
+                ),
+                operation: async {
+                    backend_driver.disable_virtual_user(ctx.state(), user_id).await
+                },
+                on_audit_error: |_: AuditDispatchError| MappingProviderError::Driver { source: "audit dispatch failed".into() },
+            }?
+        } else {
+            let vu = self
+                .backend_driver
+                .disable_virtual_user(ctx.state(), user_id)
+                .await?;
+            ctx.state()
+                .event_dispatcher
+                .emit(Event::new(
+                    Operation::Disable,
+                    EventPayload::VirtualUser {
+                        user_id: user_id.to_string(),
+                    },
+                ))
+                .await;
+            vu
+        };
+        Ok(vu)
     }
 
     /// Enable (reactivate) a virtual user shadow record.
@@ -931,9 +1117,37 @@ impl MappingApi for MappingService {
         ctx: &ExecutionContext<'a>,
         user_id: &'a str,
     ) -> Result<VirtualUser, MappingProviderError> {
-        self.backend_driver
-            .enable_virtual_user(ctx.state(), user_id)
-            .await
+        let vu = if let Some(vsc) = ctx.ctx() {
+            let backend_driver = &self.backend_driver;
+            crate::audited_op! {
+                dispatcher: &ctx.state().event_dispatcher,
+                ctx: vsc,
+                event: Event::new(
+                    Operation::Enable,
+                    EventPayload::VirtualUser { user_id: user_id.to_string() },
+                ),
+                operation: async {
+                    backend_driver.enable_virtual_user(ctx.state(), user_id).await
+                },
+                on_audit_error: |_: AuditDispatchError| MappingProviderError::Driver { source: "audit dispatch failed".into() },
+            }?
+        } else {
+            let vu = self
+                .backend_driver
+                .enable_virtual_user(ctx.state(), user_id)
+                .await?;
+            ctx.state()
+                .event_dispatcher
+                .emit(Event::new(
+                    Operation::Enable,
+                    EventPayload::VirtualUser {
+                        user_id: user_id.to_string(),
+                    },
+                ))
+                .await;
+            vu
+        };
+        Ok(vu)
     }
 
     /// Authenticate a principal through the unified mapping engine.

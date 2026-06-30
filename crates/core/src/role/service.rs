@@ -23,6 +23,7 @@ use openstack_keystone_core_types::events::{Event, EventPayload, Operation};
 use openstack_keystone_core_types::role::*;
 
 use crate::auth::ExecutionContext;
+use crate::events::AuditDispatchError;
 use crate::plugin_manager::PluginManagerApi;
 use crate::role::{RoleApi, RoleProviderError, backend::RoleBackend};
 
@@ -59,27 +60,48 @@ impl RoleApi for RoleService {
         ctx: &ExecutionContext<'a>,
         params: RoleCreate,
     ) -> Result<Role, RoleProviderError> {
-        params.validate()?;
-
         let mut new_params = params;
-
-        if new_params.id.is_none() {
-            new_params.id = Some(Uuid::new_v4().simple().to_string());
-        }
-        let role = self
-            .backend_driver
-            .create_role(ctx.state(), new_params)
-            .await?;
-
-        ctx.state()
-            .event_dispatcher
-            .emit(Event::new(
-                Operation::Create,
-                EventPayload::Role {
-                    id: role.id.clone(),
+        let role_id = if let Some(ref rid) = new_params.id {
+            rid.clone()
+        } else {
+            let rid = Uuid::new_v4().simple().to_string();
+            new_params.id = Some(rid.clone());
+            rid
+        };
+        new_params.validate()?;
+        let role = if let Some(vsc) = ctx.ctx() {
+            let backend_driver = &self.backend_driver;
+            let state = ctx.state();
+            crate::audited_op! {
+                dispatcher: &ctx.state().event_dispatcher,
+                ctx: vsc,
+                event: Event::new(
+                    Operation::Create,
+                    EventPayload::Role { id: role_id.clone() },
+                ),
+                operation: async {
+                    backend_driver.create_role(state, new_params).await
                 },
-            ))
-            .await;
+                on_audit_error: |_: AuditDispatchError| RoleProviderError::Driver("audit dispatch failed".into()),
+            }?
+        } else {
+            let role = self
+                .backend_driver
+                .create_role(ctx.state(), new_params)
+                .await?;
+
+            ctx.state()
+                .event_dispatcher
+                .emit(Event::new(
+                    Operation::Create,
+                    EventPayload::Role {
+                        id: role.id.clone(),
+                    },
+                ))
+                .await;
+
+            role
+        };
 
         Ok(role)
     }
@@ -96,21 +118,45 @@ impl RoleApi for RoleService {
         prior_role_id: &'a str,
         implied_role_id: &'a str,
     ) -> Result<RoleImply, RoleProviderError> {
-        let rule = self
-            .backend_driver
-            .create_role_imply_rule(ctx.state(), prior_role_id, implied_role_id)
-            .await?;
-
-        ctx.state()
-            .event_dispatcher
-            .emit(Event::new(
-                Operation::Create,
-                EventPayload::RoleImply {
-                    prior_role_id: prior_role_id.to_string(),
-                    implied_role_id: implied_role_id.to_string(),
+        let rule = if let Some(vsc) = ctx.ctx() {
+            let prior = prior_role_id.to_string();
+            let implied = implied_role_id.to_string();
+            let backend_driver = &self.backend_driver;
+            let state = ctx.state();
+            crate::audited_op! {
+                dispatcher: &ctx.state().event_dispatcher,
+                ctx: vsc,
+                event: Event::new(
+                    Operation::Create,
+                    EventPayload::RoleImply {
+                        prior_role_id: prior,
+                        implied_role_id: implied,
+                    },
+                ),
+                operation: async {
+                    backend_driver.create_role_imply_rule(state, prior_role_id, implied_role_id).await
                 },
-            ))
-            .await;
+                on_audit_error: |_: AuditDispatchError| RoleProviderError::Driver("audit dispatch failed".into()),
+            }?
+        } else {
+            let rule = self
+                .backend_driver
+                .create_role_imply_rule(ctx.state(), prior_role_id, implied_role_id)
+                .await?;
+
+            ctx.state()
+                .event_dispatcher
+                .emit(Event::new(
+                    Operation::Create,
+                    EventPayload::RoleImply {
+                        prior_role_id: prior_role_id.to_string(),
+                        implied_role_id: implied_role_id.to_string(),
+                    },
+                ))
+                .await;
+
+            rule
+        };
 
         Ok(rule)
     }
@@ -142,15 +188,31 @@ impl RoleApi for RoleService {
         ctx: &ExecutionContext<'a>,
         id: &'a str,
     ) -> Result<(), RoleProviderError> {
-        self.backend_driver.delete_role(ctx.state(), id).await?;
+        if let Some(vsc) = ctx.ctx() {
+            crate::audited_op! {
+                dispatcher: &ctx.state().event_dispatcher,
+                ctx: vsc,
+                event: Event::new(
+                    Operation::Delete,
+                    EventPayload::Role { id: id.to_string() },
+                ),
+                operation: async {
+                    self.backend_driver.delete_role(ctx.state(), id).await?;
+                    Ok::<(), RoleProviderError>(())
+                },
+                on_audit_error: |_: AuditDispatchError| RoleProviderError::Driver("audit dispatch failed".into()),
+            }?;
+        } else {
+            self.backend_driver.delete_role(ctx.state(), id).await?;
 
-        ctx.state()
-            .event_dispatcher
-            .emit(Event::new(
-                Operation::Delete,
-                EventPayload::Role { id: id.to_string() },
-            ))
-            .await;
+            ctx.state()
+                .event_dispatcher
+                .emit(Event::new(
+                    Operation::Delete,
+                    EventPayload::Role { id: id.to_string() },
+                ))
+                .await;
+        }
 
         Ok(())
     }
@@ -167,20 +229,41 @@ impl RoleApi for RoleService {
         prior_role_id: &'a str,
         implied_role_id: &'a str,
     ) -> Result<(), RoleProviderError> {
-        self.backend_driver
-            .delete_role_imply_rule(ctx.state(), prior_role_id, implied_role_id)
-            .await?;
-
-        ctx.state()
-            .event_dispatcher
-            .emit(Event::new(
-                Operation::Delete,
-                EventPayload::RoleImply {
-                    prior_role_id: prior_role_id.to_string(),
-                    implied_role_id: implied_role_id.to_string(),
+        if let Some(vsc) = ctx.ctx() {
+            let prior = prior_role_id.to_string();
+            let implied = implied_role_id.to_string();
+            crate::audited_op! {
+                dispatcher: &ctx.state().event_dispatcher,
+                ctx: vsc,
+                event: Event::new(
+                    Operation::Delete,
+                    EventPayload::RoleImply {
+                        prior_role_id: prior,
+                        implied_role_id: implied,
+                    },
+                ),
+                operation: async {
+                    self.backend_driver.delete_role_imply_rule(ctx.state(), prior_role_id, implied_role_id).await?;
+                    Ok::<(), RoleProviderError>(())
                 },
-            ))
-            .await;
+                on_audit_error: |_: AuditDispatchError| RoleProviderError::Driver("audit dispatch failed".into()),
+            }?;
+        } else {
+            self.backend_driver
+                .delete_role_imply_rule(ctx.state(), prior_role_id, implied_role_id)
+                .await?;
+
+            ctx.state()
+                .event_dispatcher
+                .emit(Event::new(
+                    Operation::Delete,
+                    EventPayload::RoleImply {
+                        prior_role_id: prior_role_id.to_string(),
+                        implied_role_id: implied_role_id.to_string(),
+                    },
+                ))
+                .await;
+        }
 
         Ok(())
     }

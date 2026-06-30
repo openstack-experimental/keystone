@@ -71,7 +71,8 @@ mod tests {
     fn known_vector() {
         // Pre-computed reference value for SIEM implementors and cross-language
         // verification. Regenerate with:
-        //   cargo test -p openstack-keystone-audit kdf::tests::known_vector -- --nocapture
+        //   cargo test -p openstack-keystone-audit kdf::tests::known_vector --
+        // --nocapture
         let key = derive_audit_hmac_key(KEK, "keystone-node-1");
         let hex: String = key.iter().map(|b| format!("{b:02x}")).collect();
         assert_eq!(

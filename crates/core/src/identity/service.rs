@@ -92,9 +92,40 @@ impl IdentityApi for IdentityService {
         user_id: &'a str,
         group_id: &'a str,
     ) -> Result<(), IdentityProviderError> {
-        self.backend_driver
-            .add_user_to_group(ctx.state(), user_id, group_id)
-            .await
+        if let Some(vsc) = ctx.ctx() {
+            crate::audited_op! {
+                dispatcher: &ctx.state().event_dispatcher,
+                ctx: vsc,
+                event: Event::new(
+                    Operation::Create,
+                    EventPayload::GroupMembership {
+                        user_id: user_id.to_string(),
+                        group_ids: vec![group_id.to_string()],
+                    },
+                ),
+                operation: async {
+                    self.backend_driver
+                        .add_user_to_group(ctx.state(), user_id, group_id)
+                        .await
+                },
+                on_audit_error: |_: AuditDispatchError| IdentityProviderError::Driver("audit dispatch failed".into()),
+            }?;
+        } else {
+            self.backend_driver
+                .add_user_to_group(ctx.state(), user_id, group_id)
+                .await?;
+            ctx.state()
+                .event_dispatcher
+                .emit(Event::new(
+                    Operation::Create,
+                    EventPayload::GroupMembership {
+                        user_id: user_id.to_string(),
+                        group_ids: vec![group_id.to_string()],
+                    },
+                ))
+                .await;
+        }
+        Ok(())
     }
 
     /// Add the user to the group with expiration.
@@ -111,9 +142,40 @@ impl IdentityApi for IdentityService {
         group_id: &'a str,
         idp_id: &'a str,
     ) -> Result<(), IdentityProviderError> {
-        self.backend_driver
-            .add_user_to_group_expiring(ctx.state(), user_id, group_id, idp_id)
-            .await
+        if let Some(vsc) = ctx.ctx() {
+            crate::audited_op! {
+                dispatcher: &ctx.state().event_dispatcher,
+                ctx: vsc,
+                event: Event::new(
+                    Operation::Create,
+                    EventPayload::GroupMembership {
+                        user_id: user_id.to_string(),
+                        group_ids: vec![group_id.to_string()],
+                    },
+                ),
+                operation: async {
+                    self.backend_driver
+                        .add_user_to_group_expiring(ctx.state(), user_id, group_id, idp_id)
+                        .await
+                },
+                on_audit_error: |_: AuditDispatchError| IdentityProviderError::Driver("audit dispatch failed".into()),
+            }?;
+        } else {
+            self.backend_driver
+                .add_user_to_group_expiring(ctx.state(), user_id, group_id, idp_id)
+                .await?;
+            ctx.state()
+                .event_dispatcher
+                .emit(Event::new(
+                    Operation::Create,
+                    EventPayload::GroupMembership {
+                        user_id: user_id.to_string(),
+                        group_ids: vec![group_id.to_string()],
+                    },
+                ))
+                .await;
+        }
+        Ok(())
     }
 
     /// Add user group membership relations.
@@ -126,9 +188,58 @@ impl IdentityApi for IdentityService {
         ctx: &ExecutionContext<'a>,
         memberships: Vec<(&'a str, &'a str)>,
     ) -> Result<(), IdentityProviderError> {
-        self.backend_driver
-            .add_users_to_groups(ctx.state(), memberships)
-            .await
+        let (first_user_id, group_ids): (String, Vec<String>) = if memberships.is_empty() {
+            (String::new(), Vec::new())
+        } else {
+            (
+                memberships[0].0.to_string(),
+                memberships.iter().map(|(_, g)| g.to_string()).collect(),
+            )
+        };
+        if let Some(vsc) = ctx.ctx() {
+            let memberships_clone = memberships
+                .iter()
+                .map(|(u, g)| (u.to_string(), g.to_string()))
+                .collect::<Vec<_>>();
+            crate::audited_op! {
+                dispatcher: &ctx.state().event_dispatcher,
+                ctx: vsc,
+                event: Event::new(
+                    Operation::Create,
+                    EventPayload::GroupMembership {
+                        user_id: first_user_id.clone(),
+                        group_ids: group_ids.clone(),
+                    },
+                ),
+                operation: async {
+                    self.backend_driver
+                        .add_users_to_groups(
+                            ctx.state(),
+                            memberships_clone
+                                .iter()
+                                .map(|(u, g)| (u.as_str(), g.as_str()))
+                                .collect(),
+                        )
+                        .await
+                },
+                on_audit_error: |_: AuditDispatchError| IdentityProviderError::Driver("audit dispatch failed".into()),
+            }?;
+        } else {
+            self.backend_driver
+                .add_users_to_groups(ctx.state(), memberships)
+                .await?;
+            ctx.state()
+                .event_dispatcher
+                .emit(Event::new(
+                    Operation::Create,
+                    EventPayload::GroupMembership {
+                        user_id: first_user_id,
+                        group_ids,
+                    },
+                ))
+                .await;
+        }
+        Ok(())
     }
 
     /// Add expiring user group membership relations.
@@ -143,9 +254,60 @@ impl IdentityApi for IdentityService {
         memberships: Vec<(&'a str, &'a str)>,
         idp_id: &'a str,
     ) -> Result<(), IdentityProviderError> {
-        self.backend_driver
-            .add_users_to_groups_expiring(ctx.state(), memberships, idp_id)
-            .await
+        let (first_user_id, group_ids): (String, Vec<String>) = if memberships.is_empty() {
+            (String::new(), Vec::new())
+        } else {
+            (
+                memberships[0].0.to_string(),
+                memberships.iter().map(|(_, g)| g.to_string()).collect(),
+            )
+        };
+        if let Some(vsc) = ctx.ctx() {
+            let memberships_clone = memberships
+                .iter()
+                .map(|(u, g)| (u.to_string(), g.to_string()))
+                .collect::<Vec<_>>();
+            let idp_id = idp_id.to_string();
+            crate::audited_op! {
+                dispatcher: &ctx.state().event_dispatcher,
+                ctx: vsc,
+                event: Event::new(
+                    Operation::Create,
+                    EventPayload::GroupMembership {
+                        user_id: first_user_id.clone(),
+                        group_ids: group_ids.clone(),
+                    },
+                ),
+                operation: async {
+                    self.backend_driver
+                        .add_users_to_groups_expiring(
+                            ctx.state(),
+                            memberships_clone
+                                .iter()
+                                .map(|(u, g)| (u.as_str(), g.as_str()))
+                                .collect(),
+                            &idp_id,
+                        )
+                        .await
+                },
+                on_audit_error: |_: AuditDispatchError| IdentityProviderError::Driver("audit dispatch failed".into()),
+            }?;
+        } else {
+            self.backend_driver
+                .add_users_to_groups_expiring(ctx.state(), memberships, idp_id)
+                .await?;
+            ctx.state()
+                .event_dispatcher
+                .emit(Event::new(
+                    Operation::Create,
+                    EventPayload::GroupMembership {
+                        user_id: first_user_id,
+                        group_ids,
+                    },
+                ))
+                .await;
+        }
+        Ok(())
     }
 
     /// Authenticate user with the password auth method.
@@ -257,9 +419,40 @@ impl IdentityApi for IdentityService {
             mod_sa.enabled = Some(true);
         }
         mod_sa.validate()?;
-        self.backend_driver
-            .create_service_account(ctx.state(), mod_sa)
-            .await
+        let service_account = if let Some(vsc) = ctx.ctx() {
+            let backend_driver = &self.backend_driver;
+            let state = ctx.state();
+            let sa_clone = mod_sa.clone();
+            let sa_id = sa_clone.id.clone();
+            let dispatch = crate::audited_op! {
+                dispatcher: &ctx.state().event_dispatcher,
+                ctx: vsc,
+                event: Event::new(
+                    Operation::Create,
+                    EventPayload::ServiceAccount { id: sa_id.unwrap_or_default() },
+                ),
+                operation: async {
+                    backend_driver.create_service_account(state, sa_clone).await
+                },
+                on_audit_error: |_: AuditDispatchError| IdentityProviderError::Driver("audit dispatch failed".into()),
+            };
+            dispatch?
+        } else {
+            let sa = self
+                .backend_driver
+                .create_service_account(ctx.state(), mod_sa)
+                .await?;
+            ctx.state()
+                .event_dispatcher
+                .emit(Event::new(
+                    Operation::Create,
+                    EventPayload::ServiceAccount { id: sa.id.clone() },
+                ))
+                .await;
+            sa
+        };
+
+        Ok(service_account)
     }
 
     /// Create user.
@@ -595,9 +788,40 @@ impl IdentityApi for IdentityService {
         user_id: &'a str,
         group_id: &'a str,
     ) -> Result<(), IdentityProviderError> {
-        self.backend_driver
-            .remove_user_from_group(ctx.state(), user_id, group_id)
-            .await
+        if let Some(vsc) = ctx.ctx() {
+            crate::audited_op! {
+                dispatcher: &ctx.state().event_dispatcher,
+                ctx: vsc,
+                event: Event::new(
+                    Operation::Delete,
+                    EventPayload::GroupMembership {
+                        user_id: user_id.to_string(),
+                        group_ids: vec![group_id.to_string()],
+                    },
+                ),
+                operation: async {
+                    self.backend_driver
+                        .remove_user_from_group(ctx.state(), user_id, group_id)
+                        .await
+                },
+                on_audit_error: |_: AuditDispatchError| IdentityProviderError::Driver("audit dispatch failed".into()),
+            }?;
+        } else {
+            self.backend_driver
+                .remove_user_from_group(ctx.state(), user_id, group_id)
+                .await?;
+            ctx.state()
+                .event_dispatcher
+                .emit(Event::new(
+                    Operation::Delete,
+                    EventPayload::GroupMembership {
+                        user_id: user_id.to_string(),
+                        group_ids: vec![group_id.to_string()],
+                    },
+                ))
+                .await;
+        }
+        Ok(())
     }
 
     /// Remove the user from the group with expiration.
@@ -614,9 +838,40 @@ impl IdentityApi for IdentityService {
         group_id: &'a str,
         idp_id: &'a str,
     ) -> Result<(), IdentityProviderError> {
-        self.backend_driver
-            .remove_user_from_group_expiring(ctx.state(), user_id, group_id, idp_id)
-            .await
+        if let Some(vsc) = ctx.ctx() {
+            crate::audited_op! {
+                dispatcher: &ctx.state().event_dispatcher,
+                ctx: vsc,
+                event: Event::new(
+                    Operation::Delete,
+                    EventPayload::GroupMembership {
+                        user_id: user_id.to_string(),
+                        group_ids: vec![group_id.to_string()],
+                    },
+                ),
+                operation: async {
+                    self.backend_driver
+                        .remove_user_from_group_expiring(ctx.state(), user_id, group_id, idp_id)
+                        .await
+                },
+                on_audit_error: |_: AuditDispatchError| IdentityProviderError::Driver("audit dispatch failed".into()),
+            }?;
+        } else {
+            self.backend_driver
+                .remove_user_from_group_expiring(ctx.state(), user_id, group_id, idp_id)
+                .await?;
+            ctx.state()
+                .event_dispatcher
+                .emit(Event::new(
+                    Operation::Delete,
+                    EventPayload::GroupMembership {
+                        user_id: user_id.to_string(),
+                        group_ids: vec![group_id.to_string()],
+                    },
+                ))
+                .await;
+        }
+        Ok(())
     }
 
     /// Remove the user from multiple groups.
@@ -631,9 +886,43 @@ impl IdentityApi for IdentityService {
         user_id: &'a str,
         group_ids: HashSet<&'a str>,
     ) -> Result<(), IdentityProviderError> {
-        self.backend_driver
-            .remove_user_from_groups(ctx.state(), user_id, group_ids)
-            .await
+        let group_ids_vec: Vec<String> = group_ids.iter().copied().map(|s| s.to_string()).collect();
+        if let Some(vsc) = ctx.ctx() {
+            let group_ids_clone = group_ids_vec.clone();
+            let user_id_str = user_id.to_string();
+            crate::audited_op! {
+                dispatcher: &ctx.state().event_dispatcher,
+                ctx: vsc,
+                event: Event::new(
+                    Operation::Delete,
+                    EventPayload::GroupMembership {
+                        user_id: user_id_str.clone(),
+                        group_ids: group_ids_clone,
+                    },
+                ),
+                operation: async {
+                    self.backend_driver
+                        .remove_user_from_groups(ctx.state(), &user_id_str, group_ids.iter().copied().collect())
+                        .await
+                },
+                on_audit_error: |_: AuditDispatchError| IdentityProviderError::Driver("audit dispatch failed".into()),
+            }?;
+        } else {
+            self.backend_driver
+                .remove_user_from_groups(ctx.state(), user_id, group_ids)
+                .await?;
+            ctx.state()
+                .event_dispatcher
+                .emit(Event::new(
+                    Operation::Delete,
+                    EventPayload::GroupMembership {
+                        user_id: user_id.to_string(),
+                        group_ids: group_ids_vec,
+                    },
+                ))
+                .await;
+        }
+        Ok(())
     }
 
     /// Remove the user from multiple expiring groups.
@@ -650,9 +939,44 @@ impl IdentityApi for IdentityService {
         group_ids: HashSet<&'a str>,
         idp_id: &'a str,
     ) -> Result<(), IdentityProviderError> {
-        self.backend_driver
-            .remove_user_from_groups_expiring(ctx.state(), user_id, group_ids, idp_id)
-            .await
+        let group_ids_vec: Vec<String> = group_ids.iter().copied().map(|s| s.to_string()).collect();
+        if let Some(vsc) = ctx.ctx() {
+            let group_ids_clone = group_ids_vec.clone();
+            let user_id_str = user_id.to_string();
+            let idp_id_str = idp_id.to_string();
+            crate::audited_op! {
+                dispatcher: &ctx.state().event_dispatcher,
+                ctx: vsc,
+                event: Event::new(
+                    Operation::Delete,
+                    EventPayload::GroupMembership {
+                        user_id: user_id_str.clone(),
+                        group_ids: group_ids_clone,
+                    },
+                ),
+                operation: async {
+                    self.backend_driver
+                        .remove_user_from_groups_expiring(ctx.state(), &user_id_str, group_ids.iter().copied().collect(), &idp_id_str)
+                        .await
+                },
+                on_audit_error: |_: AuditDispatchError| IdentityProviderError::Driver("audit dispatch failed".into()),
+            }?;
+        } else {
+            self.backend_driver
+                .remove_user_from_groups_expiring(ctx.state(), user_id, group_ids, idp_id)
+                .await?;
+            ctx.state()
+                .event_dispatcher
+                .emit(Event::new(
+                    Operation::Delete,
+                    EventPayload::GroupMembership {
+                        user_id: user_id.to_string(),
+                        group_ids: group_ids_vec,
+                    },
+                ))
+                .await;
+        }
+        Ok(())
     }
 
     /// Set group memberships for the user.
@@ -667,9 +991,43 @@ impl IdentityApi for IdentityService {
         user_id: &'a str,
         group_ids: HashSet<&'a str>,
     ) -> Result<(), IdentityProviderError> {
-        self.backend_driver
-            .set_user_groups(ctx.state(), user_id, group_ids)
-            .await
+        let group_ids_vec: Vec<String> = group_ids.iter().copied().map(|s| s.to_string()).collect();
+        if let Some(vsc) = ctx.ctx() {
+            let group_ids_clone = group_ids_vec.clone();
+            let user_id_str = user_id.to_string();
+            crate::audited_op! {
+                dispatcher: &ctx.state().event_dispatcher,
+                ctx: vsc,
+                event: Event::new(
+                    Operation::Update,
+                    EventPayload::GroupMembership {
+                        user_id: user_id_str.clone(),
+                        group_ids: group_ids_clone,
+                    },
+                ),
+                operation: async {
+                    self.backend_driver
+                        .set_user_groups(ctx.state(), &user_id_str, group_ids.iter().copied().collect())
+                        .await
+                },
+                on_audit_error: |_: AuditDispatchError| IdentityProviderError::Driver("audit dispatch failed".into()),
+            }?;
+        } else {
+            self.backend_driver
+                .set_user_groups(ctx.state(), user_id, group_ids)
+                .await?;
+            ctx.state()
+                .event_dispatcher
+                .emit(Event::new(
+                    Operation::Update,
+                    EventPayload::GroupMembership {
+                        user_id: user_id.to_string(),
+                        group_ids: group_ids_vec,
+                    },
+                ))
+                .await;
+        }
+        Ok(())
     }
 
     /// Update user.
@@ -742,9 +1100,39 @@ impl IdentityApi for IdentityService {
     ) -> Result<(), IdentityProviderError> {
         let cfg = ctx.state().config_manager.config.read().await;
         cfg.security_compliance.validate_password(&new_password)?;
-        self.backend_driver
-            .update_user_password(ctx.state(), user_id, original_password, new_password)
-            .await
+        if let Some(vsc) = ctx.ctx() {
+            let backend_driver = &self.backend_driver;
+            let state = ctx.state();
+            let user_id = user_id.to_string();
+            let orig_pwd = original_password.clone();
+            let new_pwd = new_password.clone();
+            crate::audited_op! {
+                dispatcher: &ctx.state().event_dispatcher,
+                ctx: vsc,
+                event: Event::new(
+                    Operation::Update,
+                    EventPayload::User { id: user_id.clone() },
+                ),
+                operation: async {
+                    backend_driver.update_user_password(state, &user_id, orig_pwd, new_pwd).await
+                },
+                on_audit_error: |_: AuditDispatchError| IdentityProviderError::Driver("audit dispatch failed".into()),
+            }?;
+        } else {
+            self.backend_driver
+                .update_user_password(ctx.state(), user_id, original_password, new_password)
+                .await?;
+            ctx.state()
+                .event_dispatcher
+                .emit(Event::new(
+                    Operation::Update,
+                    EventPayload::User {
+                        id: user_id.to_string(),
+                    },
+                ))
+                .await;
+        }
+        Ok(())
     }
 
     /// Set expiring group memberships for the user.
@@ -763,9 +1151,44 @@ impl IdentityApi for IdentityService {
         idp_id: &'a str,
         last_verified: Option<&'a DateTime<Utc>>,
     ) -> Result<(), IdentityProviderError> {
-        self.backend_driver
-            .set_user_groups_expiring(ctx.state(), user_id, group_ids, idp_id, last_verified)
-            .await
+        let group_ids_vec: Vec<String> = group_ids.iter().copied().map(|s| s.to_string()).collect();
+        if let Some(vsc) = ctx.ctx() {
+            let group_ids_clone = group_ids_vec.clone();
+            let user_id_str = user_id.to_string();
+            let idp_id_str = idp_id.to_string();
+            crate::audited_op! {
+                dispatcher: &ctx.state().event_dispatcher,
+                ctx: vsc,
+                event: Event::new(
+                    Operation::Update,
+                    EventPayload::GroupMembership {
+                        user_id: user_id_str.clone(),
+                        group_ids: group_ids_clone,
+                    },
+                ),
+                operation: async {
+                    self.backend_driver
+                        .set_user_groups_expiring(ctx.state(), &user_id_str, group_ids.iter().copied().collect(), &idp_id_str, last_verified)
+                        .await
+                },
+                on_audit_error: |_: AuditDispatchError| IdentityProviderError::Driver("audit dispatch failed".into()),
+            }?;
+        } else {
+            self.backend_driver
+                .set_user_groups_expiring(ctx.state(), user_id, group_ids, idp_id, last_verified)
+                .await?;
+            ctx.state()
+                .event_dispatcher
+                .emit(Event::new(
+                    Operation::Update,
+                    EventPayload::GroupMembership {
+                        user_id: user_id.to_string(),
+                        group_ids: group_ids_vec,
+                    },
+                ))
+                .await;
+        }
+        Ok(())
     }
 }
 

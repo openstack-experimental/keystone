@@ -70,6 +70,10 @@ pub enum EventPayload {
     Group {
         id: String,
     },
+    GroupMembership {
+        user_id: String,
+        group_ids: Vec<String>,
+    },
 
     // Resources
     Project {
@@ -114,6 +118,37 @@ pub enum EventPayload {
         id: String,
     },
     Service {
+        id: String,
+    },
+
+    // Identity service accounts
+    ServiceAccount {
+        id: String,
+    },
+
+    // Token
+    TokenRestriction {
+        id: String,
+    },
+
+    // Federation
+    IdentityProvider {
+        id: String,
+    },
+    AuthState {
+        id: String,
+    },
+
+    // Mapping
+    MappingRuleSet {
+        mapping_id: String,
+    },
+    VirtualUser {
+        user_id: String,
+    },
+
+    // Kubernetes auth
+    K8sAuthInstance {
         id: String,
     },
 

@@ -32,6 +32,7 @@ use openstack_keystone_core_types::application_credential::ApplicationCredential
 use openstack_keystone_core_types::auth::{
     AuthzInfo, AuthzInfoBuilder, ScopeInfo, SecurityContext, TrustProjectInfo,
 };
+use openstack_keystone_core_types::events::{Event, EventPayload, Operation};
 use openstack_keystone_core_types::resource::ResourceProviderError;
 use openstack_keystone_core_types::role::{Role, RoleListParameters, RoleRef};
 use openstack_keystone_core_types::token::{
@@ -42,6 +43,7 @@ use openstack_keystone_core_types::trust::TrustProviderError;
 
 use crate::auth::ExecutionContext;
 use crate::auth::*;
+use crate::events::AuditDispatchError;
 use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManagerApi;
 use crate::token::{
@@ -556,9 +558,37 @@ impl TokenApi for TokenService {
         if restriction.id.is_empty() {
             restriction.id = Uuid::new_v4().simple().to_string();
         }
-        self.tr_backend_driver
-            .create_token_restriction(ctx.state(), restriction)
-            .await
+        let restriction_id = restriction.id.clone();
+        let result = if let Some(vsc) = ctx.ctx() {
+            let tr_backend_driver = &self.tr_backend_driver;
+            let restriction_clone = restriction.clone();
+            crate::audited_op! {
+                dispatcher: &ctx.state().event_dispatcher,
+                ctx: vsc,
+                event: Event::new(
+                    Operation::Create,
+                    EventPayload::TokenRestriction { id: restriction_id },
+                ),
+                operation: async {
+                    tr_backend_driver.create_token_restriction(ctx.state(), restriction_clone).await
+                },
+                on_audit_error: |_: AuditDispatchError| TokenProviderError::Driver { source: "audit dispatch failed".into() },
+            }?
+        } else {
+            let result = self
+                .tr_backend_driver
+                .create_token_restriction(ctx.state(), restriction)
+                .await?;
+            ctx.state()
+                .event_dispatcher
+                .emit(Event::new(
+                    Operation::Create,
+                    EventPayload::TokenRestriction { id: restriction_id },
+                ))
+                .await;
+            result
+        };
+        Ok(result)
     }
 
     /// List token restrictions.
@@ -596,9 +626,36 @@ impl TokenApi for TokenService {
         id: &'a str,
         restriction: TokenRestrictionUpdate,
     ) -> Result<TokenRestriction, TokenProviderError> {
-        self.tr_backend_driver
-            .update_token_restriction(ctx.state(), id, restriction)
-            .await
+        let updated = if let Some(vsc) = ctx.ctx() {
+            let tr_backend_driver = &self.tr_backend_driver;
+            let restriction_clone = restriction.clone();
+            crate::audited_op! {
+                dispatcher: &ctx.state().event_dispatcher,
+                ctx: vsc,
+                event: Event::new(
+                    Operation::Update,
+                    EventPayload::TokenRestriction { id: id.to_string() },
+                ),
+                operation: async {
+                    tr_backend_driver.update_token_restriction(ctx.state(), id, restriction_clone).await
+                },
+                on_audit_error: |_: AuditDispatchError| TokenProviderError::Driver { source: "audit dispatch failed".into() },
+            }?
+        } else {
+            let updated = self
+                .tr_backend_driver
+                .update_token_restriction(ctx.state(), id, restriction)
+                .await?;
+            ctx.state()
+                .event_dispatcher
+                .emit(Event::new(
+                    Operation::Update,
+                    EventPayload::TokenRestriction { id: id.to_string() },
+                ))
+                .await;
+            updated
+        };
+        Ok(updated)
     }
 
     /// Delete token restriction by the ID.
@@ -614,9 +671,34 @@ impl TokenApi for TokenService {
         ctx: &ExecutionContext<'a>,
         id: &'a str,
     ) -> Result<(), TokenProviderError> {
-        self.tr_backend_driver
-            .delete_token_restriction(ctx.state(), id)
-            .await
+        if let Some(vsc) = ctx.ctx() {
+            crate::audited_op! {
+                dispatcher: &ctx.state().event_dispatcher,
+                ctx: vsc,
+                event: Event::new(
+                    Operation::Delete,
+                    EventPayload::TokenRestriction { id: id.to_string() },
+                ),
+                operation: async {
+                    self.tr_backend_driver.delete_token_restriction(ctx.state(), id).await?;
+                    Ok::<(), TokenProviderError>(())
+                },
+                on_audit_error: |_: AuditDispatchError| TokenProviderError::Driver { source: "audit dispatch failed".into() },
+            }?;
+        } else {
+            self.tr_backend_driver
+                .delete_token_restriction(ctx.state(), id)
+                .await?;
+            ctx.state()
+                .event_dispatcher
+                .emit(Event::new(
+                    Operation::Delete,
+                    EventPayload::TokenRestriction { id: id.to_string() },
+                ))
+                .await;
+        }
+
+        Ok(())
     }
 }
 
