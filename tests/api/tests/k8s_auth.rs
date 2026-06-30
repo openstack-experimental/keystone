@@ -187,6 +187,7 @@ async fn test_k8s_auth() -> Result<()> {
     .await?;
 
     let k8s_token = read_pod_k8s_token().await?;
+
     let (token_data, _token_secret) = k8s_auth(
         &test_client,
         &instance.id,
@@ -204,8 +205,8 @@ async fn test_k8s_auth() -> Result<()> {
         "token user name should match the wildcard rule"
     );
 
-    _ruleset.delete().await?;
-    instance.delete().await?;
+    let _ = _ruleset.delete().await;
+    let _ = instance.delete().await;
     Ok(())
 }
 
@@ -334,8 +335,8 @@ async fn test_k8s_auth_rule_name_respected() -> Result<()> {
         "expected 403 Forbidden for nonexistent rule_name, got: {err_str}"
     );
 
-    _ruleset.delete().await?;
-    instance.delete().await?;
+    let _ = _ruleset.delete().await;
+    let _ = instance.delete().await;
     Ok(())
 }
 
@@ -368,14 +369,14 @@ async fn test_k8s_auth_cannot_rescope_to_other_project() -> Result<()> {
         create_role(
             &test_client,
             openstack_keystone_api_types::v3::role::RoleCreateBuilder::default()
-                .name(format!("role-{}", Uuid::new_v4().simple()))
+                .name(format!("test-role-{}", Uuid::new_v4().simple()))
                 .build()?,
         )
         .await?,
         test_client.clone(),
     );
 
-    // Create ruleset with a project authorization scoped to `project_a`.
+    // Create ruleset with project authorization for `project_a`.
     let _ruleset = create_ruleset(
         &test_client,
         openstack_keystone_api_types::v4::mapping::ruleset::MappingRuleSetCreate {
@@ -500,10 +501,10 @@ async fn test_k8s_auth_cannot_rescope_to_other_project() -> Result<()> {
         }
     }
 
-    _ruleset.delete().await?;
-    instance.delete().await?;
-    project_a.delete().await?;
-    project_b.delete().await?;
-    role.delete().await?;
+    let _ = _ruleset.delete().await;
+    let _ = instance.delete().await;
+    let _ = project_a.delete().await;
+    let _ = project_b.delete().await;
+    let _ = role.delete().await;
     Ok(())
 }

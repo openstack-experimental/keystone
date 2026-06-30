@@ -113,6 +113,8 @@ verify:
       name: "api-test-v3"
       command: ["/tests/test-api-v3"]
       env:
+        - name: "RUST_LOG"
+          value: "info,reqwest=off,h2=off,hyper=off"
         - name: "KEYSTONE_URL"
           value: "http://keystone-rs.default.svc.cluster.local:8080"
         - name: "OS_AUTH_URL"
@@ -137,6 +139,8 @@ verify:
       name: "api-test-v4"
       command: ["/tests/test-api-v4"]
       env:
+        - name: "RUST_LOG"
+          value: "info,reqwest=off,h2=off,hyper=off"
         - name: "KEYSTONE_URL"
           value: "http://keystone-rs.default.svc.cluster.local:8080"
         - name: "OS_AUTH_URL"
@@ -161,6 +165,8 @@ verify:
       name: "k8s-auth-test"
       command: ["/tests/test-k8s-auth", "--nocapture"]
       env:
+        - name: "RUST_LOG"
+          value: "info,reqwest=off,h2=off,hyper=off"
         - name: "KEYSTONE_URL"
           value: "http://keystone-rs.default.svc.cluster.local:8080"
         - name: "OS_AUTH_URL"
@@ -202,6 +208,8 @@ verify:
       name: "keycloak"
       command: ["/tests/test-keycloak", "--nocapture"]
       env:
+        - name: "RUST_LOG"
+          value: "info,reqwest=off,h2=off,hyper=off"
         - name: "BROWSERDRIVER_URL"
           value: "http://selenium-service:4444"
         - name: "KEYSTONE_URL"
@@ -220,6 +228,8 @@ verify:
       name: "dex"
       command: ["/tests/test-dex", "--nocapture"]
       env:
+        - name: "RUST_LOG"
+          value: "info,reqwest=off,h2=off,hyper=off"
         - name: "KEYSTONE_URL"
           value: "http://keystone-rs:8080"
         - name: "DEX_URL"
@@ -241,6 +251,8 @@ profiles:
           name: "github"
           command: ["/tests/test-github", "--nocapture"]
           env:
+            - name: "RUST_LOG"
+              value: "info,reqwest=off,h2=off,hyper=off"
             - name: "KEYSTONE_URL"
               value: "http://keystone-rs:8080"
             - name: "ACTIONS_ID_TOKEN_AUDIENCE"

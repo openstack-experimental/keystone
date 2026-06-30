@@ -277,6 +277,18 @@ pub async fn ensure_raft_initialized(
         return Ok(());
     }
 
+    // Already-initialized node (e.g. pod restart): storage has persisted Raft
+    // state including membership. The node is already a member, so no need to
+    // call add_learner which would fail with "node_id already registered".
+    if storage.is_initialized().await? {
+        let node_id = storage.node_id();
+        tracing::info!(
+            node_id,
+            "Raft storage already initialized — skipping cluster join (node restart)"
+        );
+        return Ok(());
+    }
+
     let join_addrs: Vec<&str> = ds
         .retry_join_nodes
         .iter()

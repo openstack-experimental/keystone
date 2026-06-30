@@ -127,6 +127,8 @@ jobs:
           curl http://localhost:8080/v3/auth/tokens -H "X-Auth-Token: ${TOKEN2}" -H "X-Subject-Token: ${TOKEN2}" | jq
 
       - name: Run api tests
+        env:
+          RUST_LOG: "info,reqwest=off,h2=off,hyper=off"
         run: cargo test --test api
 
       # - name: Run interop tests

@@ -27,6 +27,8 @@ spec:
           name: keystone-db-py
           command: [keystone-manage, db_sync]
           volumeMounts:
+            - mountPath: /var/log/keystone
+              name: keystone-logs
             - mountPath: /etc/keystone/keystone.conf
               name: config
               subPath: keystone.conf
@@ -41,6 +43,8 @@ spec:
           name: keystone-db-rs
           command: [keystone-manage, db, up]
           volumeMounts:
+            - mountPath: /var/log/keystone
+              name: keystone-logs
             - mountPath: /etc/keystone/keystone.conf
               name: config
               subPath: keystone.conf
@@ -57,6 +61,8 @@ spec:
           name: keystone-bootstrap
           command: [keystone-manage, "bootstrap", "--bootstrap-username", "admin", "--bootstrap-password", "password", "--bootstrap-public-url", "http://keystone.local:80", "--bootstrap-internal-url", "http://keystone-rs.local:80"]
           volumeMounts:
+            - mountPath: /var/log/keystone
+              name: keystone-logs
             - mountPath: /etc/keystone/keystone.conf
               name: config
               subPath: keystone.conf
@@ -64,7 +70,8 @@ spec:
               name: fernet
 
       volumes:
-
+        - name: keystone-logs
+          emptyDir: {}
         - name: "config"
           configMap:
             name: "keystone"

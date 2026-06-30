@@ -767,10 +767,9 @@ impl SecurityContext {
     #[must_use = "discarding the result ignores scope assignment errors"]
     pub fn set_authorization_scope(&mut self, scope: ScopeInfo) -> Result<(), AuthenticationError> {
         self.validate_scope_boundaries(&scope)?;
-        let authorization = AuthzInfo {
-            roles: None,
-            scope: scope.clone(),
-        };
+        // Preserve existing roles if available, otherwise fall back to None.
+        let roles = self.authorization.as_ref().and_then(|a| a.roles.clone());
+        let authorization = AuthzInfo { roles, scope };
         self.authorization = Some(authorization);
         Ok(())
     }
@@ -2641,6 +2640,37 @@ mod tests {
             })
         ));
         assert!(ctx.authorization().unwrap().roles.is_none());
+    }
+
+    #[test]
+    fn test_set_authorization_scope_preserves_roles() {
+        let mut ctx = make_password_context(make_principal("uid"));
+        let roles = vec![RoleRef {
+            domain_id: None,
+            id: "role-a".to_string(),
+            name: None,
+        }];
+        // Pre-set authorization with roles on one scope
+        ctx.set_authorization(AuthzInfo {
+            roles: Some(roles.clone()),
+            scope: ScopeInfo::Unscoped,
+        });
+        assert!(ctx.authorization().unwrap().roles.is_some());
+
+        // Re-scope to Project — roles should be preserved
+        let new_scope = ScopeInfo::Project {
+            project: make_project(),
+            project_domain: make_domain(),
+        };
+        assert!(ctx.set_authorization_scope(new_scope).is_ok());
+        assert!(matches!(
+            ctx.authorization().unwrap().scope,
+            ScopeInfo::Project { .. }
+        ));
+        assert_eq!(
+            ctx.authorization().as_ref().and_then(|a| a.roles.as_ref()),
+            Some(&roles)
+        );
     }
 
     #[test]

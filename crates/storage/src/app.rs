@@ -23,7 +23,7 @@ use openstack_keystone_storage_crypto::{DekEpoch, EnvKek, KekProvider};
 
 use crate::protobuf as pb;
 use openraft::ReadPolicy;
-use openraft::errors::{ForwardToLeader, RaftError};
+use openraft::errors::{ForwardToLeader, LinearizableReadError, RaftError};
 use tonic::Code;
 use tonic::service::Routes;
 use tonic::transport::Channel;
@@ -32,7 +32,6 @@ use tracing::debug;
 use openstack_keystone_config::ConfigManager;
 
 use crate::ApiStoreError;
-use crate::DataTier;
 use crate::StorageApi;
 use crate::StoreError;
 use crate::StoreResponse;
@@ -62,6 +61,20 @@ use openstack_keystone_storage_api::Node;
 pub const LEADER_ENDPOINT_HEADER: &str = "x-openraft-leader-endpoint";
 pub const LEADER_ID_HEADER: &str = "x-openraft-leader-id";
 
+/// Strip scheme (e.g. "https://") and trailing slash from an rpc_addr so that
+/// "https://host:8300/" compares equal to "host:8300".  Both formats encode the
+/// same gRPC endpoint and should not trigger uniqueness violations on restart.
+pub fn normalize_rpc_addr(addr: &str) -> &str {
+    let addr = addr.trim_end_matches('/');
+    if let Some(pos) = addr.find("://") {
+        // Skip scheme (e.g. "https" in "https://host:8300")
+        let rest = &addr[pos + 3..];
+        rest.trim_start_matches('/')
+    } else {
+        addr
+    }
+}
+
 /// Check that `node_id` is not already registered in the committed cluster
 /// membership with a different `rpc_addr`.
 ///
@@ -74,7 +87,7 @@ async fn check_node_id_uniqueness(
     node_id: u64,
     rpc_addr: &str,
 ) -> Result<(), StoreError> {
-    let check_addr = rpc_addr.to_owned();
+    let check_addr = normalize_rpc_addr(rpc_addr).to_owned();
     let check_id = node_id;
     let conflict = raft
         .with_raft_state(move |s| {
@@ -82,7 +95,7 @@ async fn check_node_id_uniqueness(
                 .committed()
                 .nodes()
                 .find_map(|(nid, node)| {
-                    if *nid == check_id && node.rpc_addr != check_addr {
+                    if *nid == check_id && normalize_rpc_addr(&node.rpc_addr) != check_addr {
                         Some(node.rpc_addr.clone())
                     } else {
                         None
@@ -253,7 +266,8 @@ pub async fn get_app_server(storage: &Storage) -> Result<Routes, StoreError> {
         storage.operator_role.clone(),
         storage.allowed_peer_svids.clone(),
     );
-    let storage_svc_impl = StorageServiceImpl::new(storage.raft.clone());
+    let storage_svc_impl =
+        StorageServiceImpl::new(storage.raft.clone(), storage.state_machine_store.clone());
 
     let mut router = Routes::builder();
     router
@@ -318,14 +332,7 @@ impl StorageApi for Storage {
         key: &[u8],
         keyspace: Option<&str>,
     ) -> Result<bool, ApiStoreError> {
-        let res: Result<bool, StoreError> = || -> Result<_, StoreError> {
-            let ks = match keyspace {
-                None => self.state_machine_store.data(),
-                Some(name) => &self.state_machine_store.keyspace(name)?,
-            };
-            Ok(ks.contains_key(key)?)
-        }();
-        Ok(res?)
+        self.get_by_key(key, keyspace).await.map(|v| v.is_some())
     }
 
     /// Gets a value for a given key from the distributed store.
@@ -344,7 +351,46 @@ impl StorageApi for Storage {
     ) -> Result<Option<StoreDataEnvelope<Vec<u8>>>, ApiStoreError> {
         let keyspace_bytes = keyspace.unwrap_or("data").as_bytes().to_vec();
 
-        // Read metadata first to determine the sensitivity tier.
+        // Check ReadIndex first. On the leader we can safely proceed to
+        // local reads. On a follower ReadIndex returns ForwardToLeader and
+        // we forward the entire read to the leader – which already has the
+        // committed data.
+        match self.raft.ensure_linearizable(ReadPolicy::ReadIndex).await {
+            Ok(_) => {}
+            Err(RaftError::APIError(LinearizableReadError::ForwardToLeader(ForwardToLeader {
+                leader_id,
+                leader_node,
+            }))) => {
+                if let (Some(lead_id), Some(lead_node)) = (leader_id, leader_node) {
+                    debug!(
+                        leader_id = lead_id,
+                        leader_addr = lead_node.rpc_addr,
+                        "ensure_linearizable (ReadIndex) returned ForwardToLeader; \
+                         forwarding get_by_key to leader"
+                    );
+
+                    if let Ok(forwarded) = self
+                        .forwarded_get_by_key(lead_id, lead_node.rpc_addr, key, keyspace)
+                        .await
+                    {
+                        return Ok(forwarded);
+                    }
+                    debug!("forwarded get_by_key failed; falling back to local read");
+                } else {
+                    debug!(
+                        "ensure_linearizable (ReadIndex) returned ForwardToLeader \
+                         without leader info; falling back to local read"
+                    );
+                }
+            }
+            Err(e) => {
+                return Err(ApiStoreError::Other(Box::new(StoreError::Other(
+                    eyre::eyre!("ReadIndex failed: {e:?}"),
+                ))));
+            }
+        }
+
+        // Leader path: local metadata + data read.
         let key_str =
             String::from_utf8(key.to_vec()).map_err(|e| StoreError::Other(eyre::eyre!("{e}")))?;
         let metadata: Option<Metadata> = (|| -> Result<_, StoreError> {
@@ -357,23 +403,9 @@ impl StorageApi for Storage {
         })()
         .map_err(ApiStoreError::from)?;
 
-        // If the key has no metadata it does not exist yet.
         let Some(metadata) = metadata else {
             return Ok(None);
         };
-
-        // Tier 2 (Sensitive) and 3 (Secret) require a linearizable ReadIndex
-        // before reading from local state.
-        if metadata.tier as u8 >= DataTier::Sensitive as u8 {
-            self.raft
-                .ensure_linearizable(ReadPolicy::ReadIndex)
-                .await
-                .map_err(|e| {
-                    ApiStoreError::Other(Box::new(StoreError::Other(eyre::eyre!(
-                        "ReadIndex failed: {e:?}"
-                    ))))
-                })?;
-        }
 
         let res: Result<Option<StoreDataEnvelope<Vec<u8>>>, StoreError> =
             (|| -> Result<_, StoreError> {
@@ -414,8 +446,47 @@ impl StorageApi for Storage {
         let keyspace_name = keyspace.map(String::from);
         let keyspace_bytes = keyspace.unwrap_or("data").as_bytes().to_vec();
 
-        // Phase 1: collect raw encrypted bytes + metadata synchronously.
-        // Decryption happens after a potential async ReadIndex round-trip.
+        // On the leader, ReadIndex guarantees linearizable read. On a follower,
+        // ReadIndex returns ForwardToLeader, so we forward the prefix scan to
+        // the leader via gRPC.
+        match self.raft.ensure_linearizable(ReadPolicy::ReadIndex).await {
+            Ok(_) => {}
+            Err(RaftError::APIError(LinearizableReadError::ForwardToLeader(ForwardToLeader {
+                leader_id,
+                leader_node,
+            }))) => {
+                if let (Some(lead_id), Some(lead_node)) = (leader_id, leader_node) {
+                    debug!(
+                        leader_id = lead_id,
+                        leader_addr = lead_node.rpc_addr,
+                        "ensure_linearizable (ReadIndex) returned ForwardToLeader; \
+                         forwarding prefix to leader"
+                    );
+
+                    if let Ok(forwarded) = self
+                        .forwarded_prefix_read(lead_id, lead_node.rpc_addr, prefix, keyspace)
+                        .await
+                    {
+                        return Ok(forwarded);
+                    }
+                    debug!("forwarded prefix failed; falling back to local read");
+                } else {
+                    // No leader info — fall back to local read (e.g., removed node).
+                    debug!(
+                        "ensure_linearizable (ReadIndex) returned ForwardToLeader \
+                         without leader info; falling back to local read"
+                    );
+                }
+            }
+            Err(e) => {
+                return Err(ApiStoreError::Other(Box::new(StoreError::Other(
+                    eyre::eyre!("ReadIndex failed: {e:?}"),
+                ))));
+            }
+        }
+
+        // Leader path: collect raw encrypted bytes + metadata locally,
+        // then decrypt.
         let raw_items: Result<Vec<(String, Vec<u8>, Metadata)>, StoreError> = (|| {
             let ks_owned = keyspace_name
                 .map(|n| self.state_machine_store.keyspace(n))
@@ -443,22 +514,6 @@ impl StorageApi for Storage {
         })();
         let raw_items = raw_items.map_err(ApiStoreError::from)?;
 
-        // Phase 2: if any entry is SENSITIVE or SECRET, enforce linearizable read.
-        let needs_read_index = raw_items
-            .iter()
-            .any(|(_, _, meta)| meta.tier as u8 >= DataTier::Sensitive as u8);
-        if needs_read_index {
-            self.raft
-                .ensure_linearizable(ReadPolicy::ReadIndex)
-                .await
-                .map_err(|e| {
-                    ApiStoreError::Other(Box::new(StoreError::Other(eyre::eyre!(
-                        "ReadIndex failed: {e:?}"
-                    ))))
-                })?;
-        }
-
-        // Phase 3: decrypt all entries using the per-entry tier.
         raw_items
             .into_iter()
             .map(|(k, val_bytes, meta)| {
@@ -479,6 +534,45 @@ impl StorageApi for Storage {
 
     /// A `Result` containing a vector of keys, or an `ApiStoreError`.
     async fn prefix_index(&self, prefix: &[u8]) -> Result<Vec<String>, ApiStoreError> {
+        // On the leader, ReadIndex guarantees linearizable read. On a follower,
+        // ReadIndex returns ForwardToLeader, so we forward the prefix-index
+        // scan to the leader via gRPC.
+        match self.raft.ensure_linearizable(ReadPolicy::ReadIndex).await {
+            Ok(_) => {}
+            Err(RaftError::APIError(LinearizableReadError::ForwardToLeader(ForwardToLeader {
+                leader_id,
+                leader_node,
+            }))) => {
+                if let (Some(lead_id), Some(lead_node)) = (leader_id, leader_node) {
+                    debug!(
+                        leader_id = lead_id,
+                        leader_addr = lead_node.rpc_addr,
+                        "ensure_linearizable (ReadIndex) returned ForwardToLeader \
+                         for prefix_index; forwarding to leader"
+                    );
+
+                    if let Ok(forwarded) = self
+                        .forwarded_prefix_index(lead_id, lead_node.rpc_addr, prefix)
+                        .await
+                    {
+                        return Ok(forwarded);
+                    }
+                    debug!("forwarded prefix_index failed; falling back to local read");
+                } else {
+                    debug!(
+                        "ensure_linearizable (ReadIndex) returned ForwardToLeader \
+                         without leader info; falling back to local read"
+                    );
+                }
+            }
+            Err(e) => {
+                return Err(ApiStoreError::Other(Box::new(StoreError::Other(
+                    eyre::eyre!("ReadIndex failed: {e:?}"),
+                ))));
+            }
+        }
+
+        // Leader path: local index scan.
         let res: Result<Vec<String>, StoreError> = self
             .state_machine_store
             .index()
@@ -714,6 +808,110 @@ impl Storage {
         Ok(channel)
     }
 
+    /// Forward a `get_by_key` read to the leader via gRPC.
+    /// Leader decrypts and returns plaintext; follower wraps it in StoreDataEnvelope.
+    async fn forwarded_get_by_key(
+        &self,
+        leader_id: u64,
+        leader_addr: String,
+        key: &[u8],
+        keyspace: Option<&str>,
+    ) -> Result<Option<StoreDataEnvelope<Vec<u8>>>, ApiStoreError> {
+        let channel = self.get_or_create_channel(leader_id, leader_addr).await?;
+        let mut client = StorageServiceClient::new(channel);
+
+        let msg = pb::api::ForwardedGetRequest {
+            key: key.to_vec(),
+            keyspace: keyspace.map(String::from),
+        };
+        let resp = client.forwarded_get(msg).await.map_err(|status| {
+            ApiStoreError::Other(Box::new(StoreError::Other(eyre::eyre!(
+                "forwarded get failed: {status}"
+            ))))
+        })?;
+        let inner = resp.into_inner();
+
+        if inner.not_found {
+            return Ok(None);
+        }
+
+        let metadata = if inner.metadata.is_empty() {
+            Metadata::new()
+        } else {
+            Metadata::unpack(&inner.metadata).unwrap_or_else(|_| Metadata::new())
+        };
+
+        match inner.value {
+            Some(data) => Ok(Some(StoreDataEnvelope { data, metadata })),
+            None => Ok(None),
+        }
+    }
+
+    /// Forward a `prefix` scan to the leader via gRPC.
+    /// Leader decrypts and returns plaintext values with metadata.
+    async fn forwarded_prefix_read(
+        &self,
+        leader_id: u64,
+        leader_addr: String,
+        prefix: &[u8],
+        keyspace: Option<&str>,
+    ) -> Result<Vec<(String, StoreDataEnvelope<Vec<u8>>)>, ApiStoreError> {
+        let channel = self.get_or_create_channel(leader_id, leader_addr).await?;
+        let mut client = StorageServiceClient::new(channel);
+
+        let msg = pb::api::ForwardedPrefixRequest {
+            prefix: prefix.to_vec(),
+            keyspace: keyspace.map(String::from),
+        };
+        let resp = client.forwarded_prefix(msg).await.map_err(|status| {
+            ApiStoreError::Other(Box::new(StoreError::Other(eyre::eyre!(
+                "forwarded prefix failed: {status}"
+            ))))
+        })?;
+        let inner = resp.into_inner();
+
+        let mut result = Vec::new();
+        for entry in inner.entries {
+            let metadata = if entry.metadata.is_empty() {
+                Metadata::new()
+            } else {
+                Metadata::unpack(&entry.metadata).unwrap_or_else(|_| Metadata::new())
+            };
+
+            result.push((
+                entry.key,
+                StoreDataEnvelope {
+                    data: entry.value,
+                    metadata,
+                },
+            ));
+        }
+
+        Ok(result)
+    }
+
+    /// Forward a `prefix_index` scan to the leader via gRPC.
+    async fn forwarded_prefix_index(
+        &self,
+        leader_id: u64,
+        leader_addr: String,
+        prefix: &[u8],
+    ) -> Result<Vec<String>, ApiStoreError> {
+        let channel = self.get_or_create_channel(leader_id, leader_addr).await?;
+        let mut client = StorageServiceClient::new(channel);
+
+        let msg = pb::api::ForwardedPrefixIndexRequest {
+            prefix: prefix.to_vec(),
+        };
+        let resp = client.forwarded_prefix_index(msg).await.map_err(|status| {
+            ApiStoreError::Other(Box::new(StoreError::Other(eyre::eyre!(
+                "forwarded prefix_index failed: {status}"
+            ))))
+        })?;
+
+        Ok(resp.into_inner().keys)
+    }
+
     /// Try to commit the command to the raft cluster.
     ///
     /// Attempt to commit command to the current node forwarding the request
@@ -847,5 +1045,52 @@ fn rb_resp_to_store_response(resp: Response) -> StoreResponse {
                 description: v.description,
             })
             .collect(),
+    }
+}
+
+#[cfg(test)]
+mod normalize_tests {
+    use super::normalize_rpc_addr;
+
+    #[test]
+    fn test_bare_address_unchanged() {
+        assert_eq!(normalize_rpc_addr("host:8300"), "host:8300");
+        assert_eq!(
+            normalize_rpc_addr("keystone-rs-1.keystone-rs-internal.default.svc.cluster.local:8300"),
+            "keystone-rs-1.keystone-rs-internal.default.svc.cluster.local:8300"
+        );
+    }
+
+    #[test]
+    fn test_strips_scheme_and_trailing_slash() {
+        assert_eq!(
+            normalize_rpc_addr(
+                "https://keystone-rs-1.keystone-rs-internal.default.svc.cluster.local:8300/"
+            ),
+            "keystone-rs-1.keystone-rs-internal.default.svc.cluster.local:8300"
+        );
+        assert_eq!(normalize_rpc_addr("http://host:8300/"), "host:8300");
+    }
+
+    #[test]
+    fn test_scheme_only_no_trailing_slash() {
+        assert_eq!(normalize_rpc_addr("https://host:8300"), "host:8300");
+    }
+
+    #[test]
+    fn test_normalization_is_equivalence_check() {
+        // Same host:port, different formats → identical
+        assert_eq!(
+            normalize_rpc_addr("host:8300"),
+            normalize_rpc_addr("https://host:8300/")
+        );
+    }
+
+    #[test]
+    fn test_different_hosts_not_equivalent() {
+        assert_ne!(
+            normalize_rpc_addr("host-a:8300"),
+            normalize_rpc_addr("https://host-b:8300/")
+        );
     }
 }

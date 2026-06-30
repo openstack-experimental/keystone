@@ -35,7 +35,7 @@ tracing-subscriber = { workspace = true, features = ["env-filter"] }
 tokio = { workspace = true, features = ["fs", "rt-multi-thread", "macros"] }
 tokio-rustls.workspace = true
 tonic = { workspace = true, features = ["tls-aws-lc"] }
-tracing-test = { workspace = true, features = ["no-env-filter"] }
+tracing-test.workspace = true
 webauthn-authenticator-rs = { workspace = true, features = ["softtoken"] }
 x509-parser = "0.16"
 url = { workspace = true }

@@ -26,7 +26,7 @@ thirtyfour = "0.37"
 tracing.workspace = true
 tokio = { workspace = true, features = ["signal"] }
 tokio-util.workspace = true
-tracing-test = { workspace = true, features = ["no-env-filter"] }
+tracing-test.workspace = true
 uuid = { workspace = true, features = ["v4" ]}
 
 [[test]]

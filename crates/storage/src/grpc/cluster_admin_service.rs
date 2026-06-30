@@ -26,6 +26,7 @@ use tonic::Streaming;
 use tracing::trace;
 
 use crate::StoreError;
+use crate::app::normalize_rpc_addr;
 use crate::audit::{AuditForwarder, AuditRecord};
 use crate::pb;
 use crate::protobuf::raft::cluster_admin_service_server::ClusterAdminService;
@@ -415,7 +416,7 @@ impl ClusterAdminService for ClusterAdminServiceImpl {
         // Use borrow_watched (synchronous) to avoid introducing a yield point
         // that could expose race conditions between Raft init and add_learner.
         let check_id = node.node_id;
-        let check_addr = node.rpc_addr.clone();
+        let check_addr = normalize_rpc_addr(&node.rpc_addr).to_owned();
         let metrics = self.raft_node.metrics().borrow_watched().clone();
         let conflict =
             metrics
@@ -423,7 +424,7 @@ impl ClusterAdminService for ClusterAdminServiceImpl {
                 .membership()
                 .nodes()
                 .find_map(|(nid, existing)| {
-                    if *nid == check_id && existing.rpc_addr != check_addr {
+                    if *nid == check_id && normalize_rpc_addr(&existing.rpc_addr) != check_addr {
                         Some(existing.rpc_addr.clone())
                     } else {
                         None
@@ -1174,9 +1175,49 @@ mod tests {
     fn spiffe_trust_domain_not_spiffe_uri() {
         assert!(parse_spiffe_trust_domain("foo", &domains(),).is_err());
     }
-
     #[test]
     fn spiffe_trust_domain_no_path() {
         assert!(parse_spiffe_trust_domain("spiffe://example.com", &domains(),).is_err());
+    }
+
+    #[test]
+    fn normalize_add_learner_bare_vs_schema() {
+        // Simulate address uniqueness check: same node, different address format.
+        // Stored: "127.0.0.1:21001", new: "https://127.0.0.1:21001/"
+        // After normalization both should match → no conflict.
+        let stored = "127.0.0.1:21001";
+        let new_with_schema = "https://127.0.0.1:21001/";
+        assert_eq!(
+            normalize_rpc_addr(stored),
+            normalize_rpc_addr(new_with_schema),
+            "same host:port with different formats must normalize to identical string"
+        );
+    }
+
+    #[test]
+    fn normalize_add_learner_different_hosts() {
+        // Different host:port should NOT match even after normalization.
+        let a = "127.0.0.1:21001";
+        let b = "https://127.0.0.1:21002/";
+        assert_ne!(
+            normalize_rpc_addr(a),
+            normalize_rpc_addr(b),
+            "different ports must not match"
+        );
+    }
+
+    #[test]
+    fn normalize_add_learner_fqdn_from_config() {
+        // Replicates the real pod-restart scenario:
+        // Committed membership has bare "host:port" from init,
+        // config has https:// scheme + trailing slash from Uri::Display.
+        let stored = "keystone-rs-1.keystone-rs-internal.default.svc.cluster.local:8300";
+        let from_config =
+            "https://keystone-rs-1.keystone-rs-internal.default.svc.cluster.local:8300/";
+        assert_eq!(
+            normalize_rpc_addr(stored),
+            normalize_rpc_addr(from_config),
+            "stored bare address must match config Uri::Display format"
+        );
     }
 }

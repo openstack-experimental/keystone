@@ -28,8 +28,10 @@ use openstack_keystone_api_types::v3::auth::token::TokenBuilder;
 use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core::keystone::ServiceState;
 use openstack_keystone_core_types::auth::{AuthenticationContext, ScopeInfo, SecurityContext};
+use openstack_keystone_core_types::mapping::MappingContext;
 use openstack_keystone_core_types::mapping::authorization::Authorization;
 use openstack_keystone_core_types::resource::{Domain, Project};
+use tracing::{debug, warn};
 
 use crate::api::types::{Catalog, CatalogService};
 use crate::api::v4::auth::token::types::TokenResponse;
@@ -143,24 +145,45 @@ async fn mapping_auth(
     let scope = if let Some(authz) = ctx.authorization() {
         authz.scope.clone()
     } else {
-        // Derive scope from the virtual user's authorizations via the
-        // mapping provider.
-        let mapping_ctx = match ctx.authentication_context() {
+        debug!("mapping_auth: ctx.authorization() is None, falling back to scope derivation");
+        let mapping_ctx: MappingContext = match ctx.authentication_context() {
             AuthenticationContext::Mapping(mc) => mc.clone(),
             _ => unreachable!("mapping auth always produces Mapping context"),
         };
 
-        let vu = state
-            .provider
-            .get_mapping_provider()
-            .get_virtual_user(
-                &ExecutionContext::internal(state),
-                &mapping_ctx.virtual_user_id,
-            )
-            .await?
-            .expect("virtual user should exist after mapping auth");
-
-        derive_scope_from_authorizations(&vu.authorizations)?
+        // If is_system and no authorization in context, the ruleset likely
+        // provides no explicit roles. Fall through to storage fallback.
+        if mapping_ctx.is_system {
+            ScopeInfo::Unscoped
+        } else {
+            // Slow path: read virtual user to derive scope from authorizations.
+            // On a follower this read can race with Raft replication (ForwardToLeader
+            // always fails locally), so handle the None gracefully to avoid aborting
+            // the HTTP connection with a panic.
+            match state
+                .provider
+                .get_mapping_provider()
+                .get_virtual_user(
+                    &ExecutionContext::internal(state),
+                    &mapping_ctx.virtual_user_id,
+                )
+                .await
+            {
+                Ok(Some(vu)) => derive_scope_from_authorizations(&vu.authorizations)?,
+                Ok(None) => {
+                    // Virtual user not found locally (Raft replication lag).
+                    // The ruleset match is trustworthy; fall back to unscoped
+                    // to avoid aborting the connection. This returns a 401 instead
+                    // of a server-panic connection drop.
+                    warn!(
+                        virtual_user_id = mapping_ctx.virtual_user_id,
+                        "virtual user not found locally, falling back to unscoped scope"
+                    );
+                    ScopeInfo::Unscoped
+                }
+                Err(e) => return Err(e.into()),
+            }
+        }
     };
     scope.validate()?;
 

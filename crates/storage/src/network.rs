@@ -390,10 +390,13 @@ impl NetTransferLeader<TypeConfig> for NetworkConnection {
         &mut self,
         _req: TransferLeaderRequest<TypeConfig>,
         _option: RPCOption,
-    ) -> Result<(), RPCError> {
-        Err(RPCError::Unreachable(Unreachable::new(&AnyError::error(
-            "transfer_leader not implemented",
-        ))))
+    ) -> Result<
+        openraft::raft::TransferLeaderResponse<TypeConfig>,
+        openraft::error::RPCError<TypeConfig>,
+    > {
+        Err(openraft::error::RPCError::Unreachable(Unreachable::new(
+            &AnyError::error("transfer_leader not implemented"),
+        )))
     }
 }
 

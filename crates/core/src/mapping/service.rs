@@ -20,6 +20,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use chrono::Utc;
 use secrecy::ExposeSecret;
+use tracing::debug;
 use uuid::Uuid;
 
 use openstack_keystone_config::Config;
@@ -97,11 +98,9 @@ fn derive_authz_info(authorizations: &[Authorization]) -> Option<AuthzInfo> {
         None => return None,
     };
 
-    AuthzInfoBuilder::default()
-        .scope(scope)
-        .roles(roles)
-        .build()
-        .ok()
+    let mut authz = AuthzInfoBuilder::default().scope(scope).build().ok()?;
+    authz.set_roles(roles);
+    Some(authz)
 }
 
 /// Mapping Provider service.
@@ -262,20 +261,39 @@ impl MappingService {
             mapping_id: ruleset.mapping_id.clone(),
             matched_rule_name: match_result.rule_name.clone(),
             virtual_user_id: virtual_user_id.clone(),
+            is_system: match_result.is_system,
         });
 
         let result = match derive_authz_info(&match_result.authorizations) {
-            Some(authz) => AuthenticationResultBuilder::default()
-                .principal(principal)
-                .context(ctx)
-                .authorization(authz)
-                .build(),
-            None => AuthenticationResultBuilder::default()
-                .principal(principal)
-                .context(ctx)
-                .build(),
+            Some(authz) => {
+                debug!(
+                    virtual_user_id = &virtual_user_id,
+                    auth_count = match_result.authorizations.len(),
+                    "derived authorization from match_result authorizations"
+                );
+                AuthenticationResultBuilder::default()
+                    .principal(principal)
+                    .context(ctx)
+                    .authorization(authz)
+                    .build()
+            }
+            None => {
+                debug!(
+                    virtual_user_id = &virtual_user_id,
+                    auth_count = match_result.authorizations.len(),
+                    "no authorization derived from match_result (wildcard rule or empty), setting unscoped"
+                );
+                let authz = AuthzInfoBuilder::default()
+                    .scope(ScopeInfo::Unscoped)
+                    .build()
+                    .expect("unscoped authz build should never fail");
+                AuthenticationResultBuilder::default()
+                    .principal(principal)
+                    .context(ctx)
+                    .authorization(authz)
+                    .build()
+            }
         };
-
         Ok(result.map_err(Box::new)?)
     }
 

@@ -65,4 +65,7 @@ pub struct MappingContext {
 
     /// Virtual user shadow record ID.
     pub virtual_user_id: String,
+
+    /// System-service flag, preserved from initial match evaluation.
+    pub is_system: bool,
 }

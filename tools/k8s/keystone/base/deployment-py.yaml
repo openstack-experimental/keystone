@@ -76,6 +76,8 @@ spec:
             successThreshold: 1
             timeoutSeconds: 1
           volumeMounts:
+            - mountPath: /var/log/keystone
+              name: keystone-logs
             - mountPath: /etc/keystone/fernet-keys
               name: fernet
             - mountPath: /etc/keystone/keystone.conf
@@ -85,6 +87,8 @@ spec:
               name: certs
 
       volumes:
+        - name: keystone-logs
+          emptyDir: {}
         - name: config
           configMap:
             name: keystone

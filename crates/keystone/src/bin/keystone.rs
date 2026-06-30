@@ -140,8 +140,9 @@ async fn main() -> Result<(), Report> {
     let args = Args::parse();
 
     let external_deps_log_level = match args.verbose {
-        0 | 1 => LevelFilter::WARN,
-        _ => LevelFilter::INFO,
+        0 => LevelFilter::WARN,
+        1 => LevelFilter::INFO,
+        _ => LevelFilter::DEBUG,
     };
     let stderr_log_filter = Targets::new()
         .with_default(match args.verbose {

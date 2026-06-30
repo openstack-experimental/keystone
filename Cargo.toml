@@ -88,7 +88,7 @@ itertools = { version = "0.15" }
 mockall = { version = "0.14" }
 mockall_double = { version = "0.3" }
 nix = { version = "0.31", default-features = false }
-openraft = { version = "=0.10.0-alpha.21" }
+openraft = { version = "=0.10.0-alpha.27" }
 openstack-keystone-api-types = { version = "0.1", features = ["openapi", "validate", "conv"], path = "crates/api-types" }
 openstack-keystone-audit = { version = "0.1.0", path = "crates/audit" }
 openstack-keystone-appcred-driver-sql = { version = "0.1", path = "crates/appcred-driver-sql/" }
@@ -125,6 +125,7 @@ rmp-serde = "1.3"
 rustls = { version = "0.23" }
 schemars = { version = "1.2" }
 scopeguard = "1.2.0"
+serial_test = { version = "3.2" }
 sea-orm = { version = "1.1", default-features = false }
 sea-orm-migration = { version = "1.1", default-features = false }
 secrecy = { version = "0.10" }

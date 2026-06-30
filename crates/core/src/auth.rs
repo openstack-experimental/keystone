@@ -15,7 +15,7 @@ use std::collections::HashSet;
 use std::ops::Deref;
 
 use chrono::Utc;
-use tracing::debug;
+use tracing::{debug, warn};
 
 use openstack_keystone_core_types::assignment::{
     AssignmentProviderError, RoleAssignmentListParametersBuilder,
@@ -192,82 +192,203 @@ impl ValidatedSecurityContext {
             AuthenticationContext::Token(..) => {}
             AuthenticationContext::WebauthN => {}
             AuthenticationContext::Mapping(mc) => {
-                // Read virtual user shadow record to get allowed authorizations
-                let vu = state
-                    .provider
-                    .get_mapping_provider()
-                    .get_virtual_user(&ExecutionContext::internal(state), &mc.virtual_user_id)
-                    .await
-                    .auth_context("fetching virtual user for scope resolution")?
-                    .ok_or(AuthenticationError::ActorHasNoRolesOnTarget)
-                    .auth_context("virtual user not found")?;
+                // Extract data from mc before modifying ctx (mc borrows ctx).
+                let virtual_user_id = mc.virtual_user_id.clone();
+                let is_system = mc.is_system;
 
-                let resolved_scope = if vu.is_system && matches!(scope_clone, ScopeInfo::Unscoped) {
-                    // Override Unscoped -> System("all") for system principals.
-                    // The auth handler passes Unscoped for mapping engine principals;
-                    // this determines the correct scope from the shadow record.
-                    ctx.set_authorization_scope(ScopeInfo::System("all".into()))?;
-                    ScopeInfo::System("all".into())
-                } else {
-                    scope_clone.clone()
-                };
+                // Fast path: if authorization was already derived during
+                // authenticate_ephemeral (from match_result.authorizations),
+                // use it directly to avoid a second storage read that could
+                // race with Raft replication on follower nodes.
+                let roles_prepopulated = ctx
+                    .authorization()
+                    .and_then(|a| a.effective_roles())
+                    .map(|r| r.to_vec());
 
-                if vu.authorizations.is_empty() {
-                    // No authorizations - fall through with no scope
-                } else {
-                    // Find authorization matching the resolved scope (by type + specific ID)
-                    let roles = match &resolved_scope {
-                        ScopeInfo::Domain(domain) => vu.authorizations.iter().find_map(|a| {
-                            if let Authorization::Domain { domain_id, roles } = a
-                                && *domain_id == domain.id
-                            {
-                                Some(roles.clone())
-                            } else {
-                                None
-                            }
-                        }),
-                        ScopeInfo::Project {
-                            project,
-                            project_domain,
-                        } => vu.authorizations.iter().find_map(|a| {
-                            if let Authorization::Project {
-                                project_id,
-                                project_domain_id,
-                                roles,
-                            } = a
-                                && *project_id == project.id
-                                && *project_domain_id == project_domain.id
-                            {
-                                Some(roles.clone())
-                            } else {
-                                None
-                            }
-                        }),
-                        ScopeInfo::System(system_id) => vu.authorizations.iter().find_map(|a| {
-                            if let Authorization::System {
-                                system_id: s,
-                                roles,
-                            } = a
-                                && s.as_str() == system_id.as_str()
-                            {
-                                Some(roles.clone())
-                            } else {
-                                None
-                            }
-                        }),
-                        ScopeInfo::Unscoped | ScopeInfo::TrustProject(_) => None,
+                debug!(
+                    virtual_user_id = &virtual_user_id,
+                    is_system,
+                    scope = ?scope_clone,
+                    roles_prepopulated = roles_prepopulated.as_ref().map(|r| r.len()),
+                    "Mapping: validate_security_context — checking prepopulated roles"
+                );
+
+                if let Some(roles) = roles_prepopulated {
+                    let resolved_scope = if is_system && matches!(scope_clone, ScopeInfo::Unscoped)
+                    {
+                        ctx.set_authorization_scope(ScopeInfo::System("all".into()))?;
+                        ScopeInfo::System("all".into())
+                    } else {
+                        scope_clone.clone()
                     };
 
-                    if let Some(roles) = roles {
-                        let authz =
-                            openstack_keystone_core_types::auth::AuthzInfoBuilder::default()
-                                .scope(resolved_scope)
-                                .roles(roles)
-                                .build()
-                                .map_err(
-                                    openstack_keystone_core_types::auth::AuthenticationError::from,
-                                )?;
-                        ctx.set_authorization(authz);
+                    debug!(
+                        virtual_user_id = &virtual_user_id,
+                        scope = ?resolved_scope,
+                        role_count = roles.len(),
+                        "Mapping: fast path — prepopulated roles, skipping storage read"
+                    );
+
+                    let authz_for_scope =
+                        openstack_keystone_core_types::auth::AuthzInfoBuilder::default()
+                            .scope(resolved_scope.clone())
+                            .roles(roles)
+                            .build()
+                            .map_err(
+                                openstack_keystone_core_types::auth::AuthenticationError::from,
+                            )?;
+                    ctx.set_authorization(authz_for_scope);
+                } else if is_system && matches!(scope_clone, ScopeInfo::Unscoped) {
+                    // Even with no pre-set roles, a system principal requesting
+                    // unscoped should be upgraded to system scope.
+                    debug!(
+                        virtual_user_id = &virtual_user_id,
+                        "Mapping: is_system=true with Unscoped, upgrading to System, slow path"
+                    );
+                    ctx.set_authorization_scope(ScopeInfo::System("all".into()))?;
+
+                    // Slow path: read virtual user to obtain authorizations.
+                    let vu = get_virtual_user_or_error(state, &virtual_user_id).await?;
+
+                    if vu.authorizations.is_empty() {
+                        // No authorizations - fall through with no roles
+                    } else {
+                        // Scope was already overridden to System("all") above.
+                        let resolved_scope = ScopeInfo::System("all".into());
+                        let roles = match &resolved_scope {
+                            ScopeInfo::Domain(domain) => vu.authorizations.iter().find_map(|a| {
+                                if let Authorization::Domain { domain_id, roles } = a
+                                    && *domain_id == domain.id
+                                {
+                                    Some(roles.clone())
+                                } else {
+                                    None
+                                }
+                            }),
+                            ScopeInfo::Project {
+                                project,
+                                project_domain,
+                            } => vu.authorizations.iter().find_map(|a| {
+                                if let Authorization::Project {
+                                    project_id,
+                                    project_domain_id,
+                                    roles,
+                                } = a
+                                    && *project_id == project.id
+                                    && *project_domain_id == project_domain.id
+                                {
+                                    Some(roles.clone())
+                                } else {
+                                    None
+                                }
+                            }),
+                            ScopeInfo::System(system_id) => {
+                                vu.authorizations.iter().find_map(|a| {
+                                    if let Authorization::System {
+                                        system_id: s,
+                                        roles,
+                                    } = a
+                                        && s.as_str() == system_id.as_str()
+                                    {
+                                        Some(roles.clone())
+                                    } else {
+                                        None
+                                    }
+                                })
+                            }
+                            ScopeInfo::Unscoped | ScopeInfo::TrustProject(_) => None,
+                        };
+
+                        if let Some(roles) = roles {
+                            let authz =
+                                openstack_keystone_core_types::auth::AuthzInfoBuilder::default()
+                                    .scope(resolved_scope)
+                                    .roles(roles)
+                                    .build()
+                                    .map_err(
+                                        openstack_keystone_core_types::auth::AuthenticationError::from,
+                                    )?;
+                            ctx.set_authorization(authz);
+                        }
+                    }
+                } else if matches!(scope_clone, ScopeInfo::Unscoped) {
+                    // Unscoped with no pre-populated roles: skip storage read.
+                    // There's nothing to derive from the virtual user, and a read
+                    // would race with Raft replication during auth.
+                    debug!(
+                        virtual_user_id = &virtual_user_id,
+                        "Mapping: Unscoped with no prepopulated roles, skipping storage read"
+                    );
+                    let _ = ctx.set_authorization_scope(scope_clone);
+                } else {
+                    // Slow path: read virtual user to obtain authorizations.
+                    debug!(
+                        virtual_user_id = &virtual_user_id,
+                        scope = ?scope_clone,
+                        "Mapping: slow path — reading virtual user for role resolution"
+                    );
+                    let vu = get_virtual_user_or_error(state, &virtual_user_id).await?;
+
+                    let resolved_scope = scope_clone.clone();
+
+                    if vu.authorizations.is_empty() {
+                        // No authorizations - fall through with no scope
+                    } else {
+                        let roles = match &resolved_scope {
+                            ScopeInfo::Domain(domain) => vu.authorizations.iter().find_map(|a| {
+                                if let Authorization::Domain { domain_id, roles } = a
+                                    && *domain_id == domain.id
+                                {
+                                    Some(roles.clone())
+                                } else {
+                                    None
+                                }
+                            }),
+                            ScopeInfo::Project {
+                                project,
+                                project_domain,
+                            } => vu.authorizations.iter().find_map(|a| {
+                                if let Authorization::Project {
+                                    project_id,
+                                    project_domain_id,
+                                    roles,
+                                } = a
+                                    && *project_id == project.id
+                                    && *project_domain_id == project_domain.id
+                                {
+                                    Some(roles.clone())
+                                } else {
+                                    None
+                                }
+                            }),
+                            ScopeInfo::System(system_id) => {
+                                vu.authorizations.iter().find_map(|a| {
+                                    if let Authorization::System {
+                                        system_id: s,
+                                        roles,
+                                    } = a
+                                        && s.as_str() == system_id.as_str()
+                                    {
+                                        Some(roles.clone())
+                                    } else {
+                                        None
+                                    }
+                                })
+                            }
+                            ScopeInfo::Unscoped | ScopeInfo::TrustProject(_) => None,
+                        };
+
+                        if let Some(roles) = roles {
+                            let authz =
+                                openstack_keystone_core_types::auth::AuthzInfoBuilder::default()
+                                    .scope(resolved_scope)
+                                    .roles(roles)
+                                    .build()
+                                    .map_err(
+                                        openstack_keystone_core_types::auth::AuthenticationError::from,
+                                    )?;
+                            ctx.set_authorization(authz);
+                        }
                     }
                 }
             }
@@ -277,6 +398,11 @@ impl ValidatedSecurityContext {
         // Populate roles before locking
         if let Some(authz) = ctx.authorization() {
             let role_vec = calculate_effective_roles(state, &ctx, &authz.scope).await?;
+            debug!(
+                scope = ?authz.scope,
+                role_count = role_vec.len(),
+                "calculated effective_roles"
+            );
             ctx.set_effective_roles(role_vec);
         }
 
@@ -285,6 +411,15 @@ impl ValidatedSecurityContext {
             && authz.effective_roles().is_none_or(|r| r.is_empty())
             && !ctx.is_admin()
         {
+            let virtual_user_id = match ctx.authentication_context() {
+                AuthenticationContext::Mapping(mc) => Some(mc.virtual_user_id.as_str()),
+                _ => None,
+            };
+            warn!(
+                virtual_user_id,
+                scope = ?authz.scope,
+                "ActorHasNoRolesOnTarget — returning 401"
+            );
             return Err(AuthenticationError::ActorHasNoRolesOnTarget);
         }
         Ok(ValidatedSecurityContext(ctx))
@@ -389,6 +524,23 @@ impl<'a> Deref for ExecutionContext<'a> {
     fn deref(&self) -> &Self::Target {
         self.state
     }
+}
+
+// Expand scope role information.
+// Fetch the virtual user shadow record from storage.
+async fn get_virtual_user_or_error(
+    state: &ServiceState,
+    virtual_user_id: &str,
+) -> Result<openstack_keystone_core_types::mapping::VirtualUser, AuthenticationError> {
+    let exec = ExecutionContext::internal(state);
+    state
+        .provider
+        .get_mapping_provider()
+        .get_virtual_user(&exec, virtual_user_id)
+        .await
+        .auth_context("fetching virtual user for scope resolution")?
+        .ok_or(AuthenticationError::ActorHasNoRolesOnTarget)
+        .auth_context("virtual user not found")
 }
 
 // Expand scope role information.
@@ -2288,6 +2440,7 @@ mod tests {
             mapping_id: "map-1".to_string(),
             matched_rule_name: "rule-1".to_string(),
             virtual_user_id: vir_id.to_string(),
+            is_system: false,
         };
 
         let ctx = SecurityContextTestingBuilder::default()
@@ -2358,6 +2511,7 @@ mod tests {
             mapping_id: "map-1".to_string(),
             matched_rule_name: "rule-1".to_string(),
             virtual_user_id: vir_id.to_string(),
+            is_system: false,
         };
 
         let ctx = SecurityContextTestingBuilder::default()
@@ -2427,6 +2581,7 @@ mod tests {
             mapping_id: "map-1".to_string(),
             matched_rule_name: "rule-1".to_string(),
             virtual_user_id: vir_id.to_string(),
+            is_system: false,
         };
 
         let ctx = SecurityContextTestingBuilder::default()
@@ -2509,6 +2664,7 @@ mod tests {
             mapping_id: "map-1".to_string(),
             matched_rule_name: "rule-1".to_string(),
             virtual_user_id: vir_id.to_string(),
+            is_system: false,
         };
 
         let ctx = SecurityContextTestingBuilder::default()
@@ -2549,6 +2705,7 @@ mod tests {
             mapping_id: "map-1".to_string(),
             matched_rule_name: "rule-1".to_string(),
             virtual_user_id: vir_id.to_string(),
+            is_system: false,
         };
 
         let ctx = SecurityContextTestingBuilder::default()
@@ -2614,6 +2771,7 @@ mod tests {
             mapping_id: "map-1".to_string(),
             matched_rule_name: "rule-1".to_string(),
             virtual_user_id: vir_id.to_string(),
+            is_system: false,
         };
 
         let ctx = SecurityContextTestingBuilder::default()
@@ -2677,6 +2835,7 @@ mod tests {
             mapping_id: "map-1".to_string(),
             matched_rule_name: "system-rule".to_string(),
             virtual_user_id: vir_id.to_string(),
+            is_system: true,
         };
 
         let ctx = SecurityContextTestingBuilder::default()
@@ -2761,6 +2920,7 @@ mod tests {
             mapping_id: "map-1".to_string(),
             matched_rule_name: "system-rule".to_string(),
             virtual_user_id: vir_id.to_string(),
+            is_system: true,
         };
 
         let ctx = SecurityContextTestingBuilder::default()
@@ -2776,5 +2936,218 @@ mod tests {
             result,
             Err(AuthenticationError::ActorHasNoRolesOnTarget)
         ));
+    }
+
+    // --- Mapping fast path: pre-set project authorization skips storage read ---
+    #[tokio::test]
+    async fn test_new_for_scope_mapping_fast_path_project() {
+        let pid = "project-1";
+        let vir_id = "vu-fast-path-project-0000000000000000";
+        let rid = "admin";
+        let roles = vec![role_ref(rid, "admin")];
+
+        let authz = AuthzInfoBuilder::default()
+            .scope(make_project_scope(pid))
+            .roles(roles.clone())
+            .build()
+            .unwrap();
+
+        let mc = MappingContext {
+            mapping_id: "map-1".to_string(),
+            matched_rule_name: "rule-1".to_string(),
+            virtual_user_id: vir_id.to_string(),
+            is_system: false,
+        };
+
+        let ctx = SecurityContextTestingBuilder::default()
+            .authentication_context(AuthenticationContext::Mapping(mc))
+            .principal(make_user_identity(vir_id))
+            .authorization(authz)
+            .build();
+
+        // No mock mapping provider — get_virtual_user must NOT be called
+        let state = get_mocked_state(None, None).await;
+
+        let result =
+            ValidatedSecurityContext::new_for_scope(ctx, make_project_scope(pid), &state).await;
+
+        let validated = result.unwrap();
+        let eff = validated
+            .0
+            .authorization()
+            .unwrap()
+            .effective_roles()
+            .unwrap();
+        assert_eq!(eff.len(), 1);
+        assert_eq!(eff[0].id, rid);
+    }
+
+    // --- Mapping fast path: is_system upgrade with pre-set system roles skips
+    // storage read ---
+    #[tokio::test]
+    async fn test_new_for_scope_mapping_fast_path_system_unscoped_upgrade() {
+        let vir_id = "vu-fast-path-system-0000000000000000";
+        let rid = "admin";
+        let roles = vec![role_ref(rid, "admin")];
+
+        let authz = AuthzInfoBuilder::default()
+            .scope(ScopeInfo::System("all".into()))
+            .roles(roles.clone())
+            .build()
+            .unwrap();
+
+        let mc = MappingContext {
+            mapping_id: "map-1".to_string(),
+            matched_rule_name: "system-rule".to_string(),
+            virtual_user_id: vir_id.to_string(),
+            is_system: true,
+        };
+
+        let ctx = SecurityContextTestingBuilder::default()
+            .authentication_context(AuthenticationContext::Mapping(mc))
+            .principal(make_user_identity(vir_id))
+            .authorization(authz)
+            .build();
+
+        // No mock mapping provider — get_virtual_user must NOT be called
+        let state = get_mocked_state(None, None).await;
+
+        // Pass Unscoped — is_system with pre-set roles should upgrade to
+        // System("all") without storage read
+        let result =
+            ValidatedSecurityContext::new_for_scope(ctx, ScopeInfo::Unscoped, &state).await;
+
+        let validated = result.unwrap();
+        assert!(matches!(
+            validated.0.authorization().unwrap().scope,
+            ScopeInfo::System(ref s) if s == "all"
+        ));
+        let eff = validated
+            .0
+            .authorization()
+            .unwrap()
+            .effective_roles()
+            .unwrap();
+        assert_eq!(eff.len(), 1);
+        assert_eq!(eff[0].id, rid);
+    }
+
+    // --- Mapping fast path: pre-set domain roles skip storage read ---
+    #[tokio::test]
+    async fn test_new_for_scope_mapping_fast_path_domain() {
+        let did = "domain-1";
+        let vir_id = "vu-fast-path-domain-0000000000000000";
+        let rid = "reader";
+        let roles = vec![role_ref(rid, "reader")];
+
+        let authz = AuthzInfoBuilder::default()
+            .scope(make_domain_scope(did))
+            .roles(roles.clone())
+            .build()
+            .unwrap();
+
+        let mc = MappingContext {
+            mapping_id: "map-1".to_string(),
+            matched_rule_name: "rule-1".to_string(),
+            virtual_user_id: vir_id.to_string(),
+            is_system: false,
+        };
+
+        let ctx = SecurityContextTestingBuilder::default()
+            .authentication_context(AuthenticationContext::Mapping(mc))
+            .principal(make_user_identity(vir_id))
+            .authorization(authz)
+            .build();
+
+        // No mock mapping provider — get_virtual_user must NOT be called
+        let state = get_mocked_state(None, None).await;
+
+        let result =
+            ValidatedSecurityContext::new_for_scope(ctx, make_domain_scope(did), &state).await;
+
+        let validated = result.unwrap();
+        let eff = validated
+            .0
+            .authorization()
+            .unwrap()
+            .effective_roles()
+            .unwrap();
+        assert_eq!(eff.len(), 1);
+        assert_eq!(eff[0].id, rid);
+    }
+
+    // --- Mapping slow path: is_system true, unscoped scope, no pre-set auth,
+    // reads virtual user from storage ---
+    #[tokio::test]
+    async fn test_new_for_scope_mapping_slow_path_system_unscoped() {
+        let vir_id = "vu-slow-path-system-0000000000000000";
+        let rid = "admin";
+        let roles = vec![role_ref(rid, "admin")];
+
+        let vu = VirtualUser {
+            user_id: vir_id.to_string(),
+            unique_workload_id: "workload-sys-slow".to_string(),
+            mapping_id: "map-1".to_string(),
+            matched_rule_name: "system-rule".to_string(),
+            domain_id: None,
+            resolved_user_name: "system-user".to_string(),
+            is_system: true,
+            resolved_group_bindings: vec![],
+            authorizations: vec![Authorization::System {
+                system_id: "all".to_string(),
+                roles: roles.clone(),
+            }],
+            ruleset_version: 1,
+            enabled: true,
+            created_at: 0,
+            last_authenticated_at: 0,
+        };
+
+        let mut mapping_mock = MockMappingProvider::new();
+        mapping_mock
+            .expect_get_virtual_user()
+            .returning(move |_e, id: &str| {
+                if id == vir_id {
+                    Ok(Some(vu.clone()))
+                } else {
+                    Ok(None)
+                }
+            });
+
+        let state = get_mocked_state(
+            None,
+            Some(Provider::mocked_builder().mock_mapping(mapping_mock)),
+        )
+        .await;
+
+        let mc = MappingContext {
+            mapping_id: "map-1".to_string(),
+            matched_rule_name: "system-rule".to_string(),
+            virtual_user_id: vir_id.to_string(),
+            is_system: true,
+        };
+
+        let ctx = SecurityContextTestingBuilder::default()
+            .authentication_context(AuthenticationContext::Mapping(mc))
+            .principal(make_user_identity(vir_id))
+            .build();
+
+        // No pre-set authorization — slow path with storage read
+        let result =
+            ValidatedSecurityContext::new_for_scope(ctx, ScopeInfo::Unscoped, &state).await;
+
+        let validated = result.unwrap();
+        assert!(matches!(
+            validated.0.authorization().unwrap().scope,
+            ScopeInfo::System(ref s) if s == "all"
+        ));
+        let eff = validated
+            .0
+            .authorization()
+            .unwrap()
+            .effective_roles()
+            .unwrap();
+        assert_eq!(eff.len(), 1);
+        assert_eq!(eff[0].id, rid);
     }
 }

@@ -8,6 +8,12 @@ import "storage_types.proto";
 
 // StorageService provides the key-value store API operations.
 service StorageService {
-  // Write the command
+  // Write the command.
   rpc Command(keystone.api.CommandRequest) returns (keystone.api.Response) {}
+  // Forwarded read from follower to leader.
+  rpc ForwardedGet(keystone.api.ForwardedGetRequest) returns (keystone.api.ForwardedGetResponse) {}
+  // Forwarded prefix scan from follower to leader.
+  rpc ForwardedPrefix(keystone.api.ForwardedPrefixRequest) returns (keystone.api.ForwardedPrefixResponse) {}
+  // Forwarded prefix-index scan from follower to leader.
+  rpc ForwardedPrefixIndex(keystone.api.ForwardedPrefixIndexRequest) returns (keystone.api.ForwardedPrefixIndexResponse) {}
 }

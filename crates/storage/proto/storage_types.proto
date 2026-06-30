@@ -7,15 +7,61 @@ message CommandRequest {
   bytes payload = 1;
 }
 
+// Internal read request forwarded from follower to leader.
+message ForwardedGetRequest {
+  bytes key = 1;
+  optional string keyspace = 2;
+}
+
+// Response from a forwarded read request.
+message ForwardedGetResponse {
+  // Retrieved value, already decrypted by the leader.
+  optional bytes value = 1;
+  // Set to true if the key does not exist.
+  bool not_found = 2;
+  // Metadata packed as bytes, including data tier and revision.
+  bytes metadata = 3;
+}
+
+// Internal prefix scan request forwarded from follower to leader.
+message ForwardedPrefixRequest {
+  bytes prefix = 1;
+  optional string keyspace = 2;
+}
+
+// Single entry in a prefix scan response.
+message PrefixEntry {
+  string key = 1;
+  // Value, already decrypted by the leader.
+  bytes value = 2;
+  // Metadata packed as bytes (caller unpacks for data tier info).
+  bytes metadata = 3;
+}
+
+// Response from a forwarded prefix scan request.
+message ForwardedPrefixResponse {
+  repeated PrefixEntry entries = 1;
+}
+
+// Internal prefix-index scan request forwarded from follower to leader.
+message ForwardedPrefixIndexRequest {
+  bytes prefix = 1;
+}
+
+// Response from a forwarded prefix-index scan.
+message ForwardedPrefixIndexResponse {
+  repeated string keys = 1;
+}
+
 // GetResponse contains the value associated with the requested key.
 message Response {
   // Retrieved value.
   optional bytes value = 1;
 
   message Violation {
-    string type = 1;        // Use "REVISION_MISMATCH"
-    string subject = 2;     // The Resource ID
-    string description = 3; // e.g., "Current revision is 5, provided was 4"
+    string type = 1;        // Use "REVISION_MISMATCH".
+    string subject = 2;     // The Resource ID.
+    string description = 3; // e.g., "Current revision is 5, provided was 4".
   }
   repeated Violation violations = 2;
 }
