@@ -54,7 +54,7 @@ exclude = [
 ]
 
 [workspace.dependencies]
-aes-gcm = { version = "0.10" }
+aes-gcm = { version = "0.11" }
 arc-swap = { version = "1.7" }
 async-trait = { version = "0.1" }
 axum = { version = "0.8", default-features = false }
