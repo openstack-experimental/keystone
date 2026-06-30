@@ -371,7 +371,7 @@ jobs:
           export BUILDX_NO_DEFAULT_ATTESTATIONS=1
           # first build artifacts preparing metadata file
           skaffold deploy -m infra
-          skaffold build --profile local --default-repo localhost:5000 --file-output build.artifacts
+          skaffold build --profile github-ci --default-repo localhost:5000 --file-output build.artifacts
           # deploy built artifacts
           skaffold deploy -a build.artifacts --status-check
 

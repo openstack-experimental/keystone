@@ -244,6 +244,13 @@ profiles:
         useBuildkit: true
         concurrency: 0
         tryImportMissing: true
+
+      artifacts:
+        - image: keystone-rs
+          context: .
+          docker:
+            dockerfile: tools/Dockerfile.skaffold
+            buildArgs: {}
     verify:
       - name: "github"
         container:
