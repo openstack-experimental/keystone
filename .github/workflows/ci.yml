@@ -107,6 +107,13 @@ jobs:
         if: failure()
         run: docker ps -a
 
+      - name: Upload state dir as artifact
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        if: failure()
+        with:
+          name: nextest
+          path: /tmp/nextest/keystone
+
   openapi:
     runs-on: ubuntu-latest
 

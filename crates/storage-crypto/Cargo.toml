@@ -29,7 +29,9 @@ doc_paragraphs_missing_punctuation = "warn"
 aes-gcm.workspace = true
 hkdf.workspace = true
 hmac.workspace = true
+hybrid-array = "0.4"
 sha2.workspace = true
+typenum = "1.17"
 nix = { workspace = true, features = ["mman", "feature"] }
 rand.workspace = true
 thiserror.workspace = true
