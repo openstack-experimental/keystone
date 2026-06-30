@@ -24,8 +24,13 @@ use utoipa_axum::{router::OpenApiRouter, routes};
 
 use crate::api::error::KeystoneApiError;
 use crate::api::v4::auth::token::types::TokenResponse as KeystoneTokenResponse;
+use crate::audit::{
+    CorrelationId, build_initiator_unknown, emit_perimeter_authenticate_event, error_variant_name,
+};
 use crate::federation::api::error::OidcError;
 use crate::keystone::ServiceState;
+use openstack_keystone_audit::sanitize::{HostKind, sanitize_initiator_host};
+use openstack_keystone_audit::types::Initiator;
 use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core_types::auth::AuthenticationResult;
 use openstack_keystone_core_types::mapping::auth::MappingAuthRequest;
@@ -66,10 +71,33 @@ pub(super) fn openapi_router() -> OpenApiRouter<ServiceState> {
 )]
 #[debug_handler]
 pub async fn login(
+    CorrelationId(cid): CorrelationId,
     State(state): State<ServiceState>,
     headers: HeaderMap,
     Path(idp_id): Path<String>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
+    let result = login_inner(&state, headers, &idp_id).await;
+    let initiator = match &result {
+        Ok(_) => {
+            let host = sanitize_initiator_host(&idp_id, HostKind::FederationIdpUuid)
+                .or_else(|| sanitize_initiator_host(&idp_id, HostKind::FederationIdpNonUuid));
+            Initiator::new("unknown".to_string(), None, None, host)
+        }
+        Err(_) => build_initiator_unknown(),
+    };
+    let (outcome, reason) = match &result {
+        Ok(_) => ("success", None),
+        Err(e) => ("failure", Some(error_variant_name(e))),
+    };
+    emit_perimeter_authenticate_event(&state.audit_dispatcher, &cid, initiator, outcome, reason);
+    result
+}
+
+async fn login_inner(
+    state: &ServiceState,
+    headers: HeaderMap,
+    idp_id: &str,
+) -> Result<axum::response::Response, KeystoneApiError> {
     state
         .config_manager
         .config
@@ -109,12 +137,12 @@ pub async fn login(
     let idp = state
         .provider
         .get_federation_provider()
-        .get_identity_provider(&ExecutionContext::internal(&state), &idp_id)
+        .get_identity_provider(&ExecutionContext::internal(state), idp_id)
         .await
         .map(|x| {
             x.ok_or_else(|| KeystoneApiError::NotFound {
                 resource: "identity provider".into(),
-                identifier: idp_id,
+                identifier: idp_id.to_string(),
             })
         })??;
 
@@ -198,11 +226,11 @@ pub async fn login(
     let auth_result: AuthenticationResult = state
         .provider
         .get_mapping_provider()
-        .authenticate_by_mapping(&ExecutionContext::internal(&state), &mapping_req)
+        .authenticate_by_mapping(&ExecutionContext::internal(state), &mapping_req)
         .await?;
 
     // No scope is requested in JWT flow, so we resolve unscoped token.
-    let (token_str, api_token) = common::build_token_response(&state, &auth_result, None).await?;
+    let (token_str, api_token) = common::build_token_response(state, &auth_result, None).await?;
 
     tracing::trace!("Token response is {:?}", api_token);
     Ok((

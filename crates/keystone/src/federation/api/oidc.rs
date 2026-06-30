@@ -20,9 +20,14 @@ use utoipa_axum::{router::OpenApiRouter, routes};
 
 use crate::api::error::KeystoneApiError;
 use crate::api::v4::auth::token::types::TokenResponse as KeystoneTokenResponse;
+use crate::audit::{
+    CorrelationId, build_initiator_unknown, emit_perimeter_authenticate_event, error_variant_name,
+};
 use crate::federation::api::error::OidcError;
 use crate::federation::api::types::*;
 use crate::keystone::ServiceState;
+use openstack_keystone_audit::sanitize::{HostKind, sanitize_initiator_host};
+use openstack_keystone_audit::types::Initiator;
 use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core_types::auth::AuthenticationResult;
 use openstack_keystone_core_types::mapping::auth::MappingAuthRequest;
@@ -61,10 +66,33 @@ pub(super) fn openapi_router() -> OpenApiRouter<ServiceState> {
 )]
 #[debug_handler]
 pub async fn callback(
+    CorrelationId(cid): CorrelationId,
     State(state): State<ServiceState>,
     Json(query): Json<AuthCallbackParameters>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
-    let exec = ExecutionContext::internal(&state);
+    let result = callback_inner(&state, query).await;
+    let initiator = result
+        .as_ref()
+        .ok()
+        .map(|(idp_id, _)| {
+            let host = sanitize_initiator_host(idp_id, HostKind::FederationIdpUuid)
+                .or_else(|| sanitize_initiator_host(idp_id, HostKind::FederationIdpNonUuid));
+            Initiator::new("unknown".to_string(), None, None, host)
+        })
+        .unwrap_or_else(build_initiator_unknown);
+    let (outcome, reason) = match &result {
+        Ok(_) => ("success", None),
+        Err(e) => ("failure", Some(error_variant_name(e))),
+    };
+    emit_perimeter_authenticate_event(&state.audit_dispatcher, &cid, initiator, outcome, reason);
+    result.map(|(_, response)| response)
+}
+
+async fn callback_inner(
+    state: &ServiceState,
+    query: AuthCallbackParameters,
+) -> Result<(String, axum::response::Response), KeystoneApiError> {
+    let exec = ExecutionContext::internal(state);
     // Validate auth state
     let auth_state = state
         .provider
@@ -204,13 +232,16 @@ pub async fn callback(
     // (unscoped) or a specific project/domain scope that was requested during
     // OIDC auth init.
     let (token_str, api_token) =
-        common::build_token_response(&state, &auth_result, auth_state.scope.as_ref()).await?;
+        common::build_token_response(state, &auth_result, auth_state.scope.as_ref()).await?;
 
     tracing::trace!("Token response is {:?}", api_token);
     Ok((
-        StatusCode::OK,
-        [("x-subject-token", token_str)],
-        axum::Json(api_token),
-    )
-        .into_response())
+        idp.id.clone(),
+        (
+            StatusCode::OK,
+            [("x-subject-token", token_str)],
+            axum::Json(api_token),
+        )
+            .into_response(),
+    ))
 }
