@@ -55,8 +55,8 @@ pub(super) async fn delete(
         .enforce(
             "identity/role/delete",
             &user_auth,
-            json!({"role": current}),
-            None,
+            serde_json::Value::Null,
+            Some(json!({"role": current})),
         )
         .await?;
 

@@ -6,13 +6,13 @@ import data.identity
 
 # Show identity group.
 #
-# The `input.target.group` is the stored group object (Group):
+# The `input.existing.group` is the stored group object (Group):
 #   domain_id:    string        Group domain ID.
 #   description:  string (optional) Group description.
 #   id:           string        Group ID.
 #   name:         string        Group name.
 #
-# The `input.existing` is null
+# The `input.target` is null
 #
 default allow := false
 

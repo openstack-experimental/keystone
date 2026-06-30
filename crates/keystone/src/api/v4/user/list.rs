@@ -11,80 +11,67 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+//! User: list.
 
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::{Query, State},
     http::StatusCode,
     response::IntoResponse,
 };
 use serde_json::json;
+use validator::Validate;
 
+use super::types::{User, UserList, UserListParameters};
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
-use crate::api::v3::group::types::{Group, GroupList};
+
 use crate::keystone::ServiceState;
 use openstack_keystone_core::auth::ExecutionContext;
 
-/// List groups a user is member of
-///
-/// # Parameters
-/// - `user_auth`: The authentication context of the requester.
-/// - `user_id`: The ID of the user whose groups are being listed.
-/// - `state`: The shared service state.
-///
-/// # Returns
-/// - `Ok` with a JSON list of groups if successful.
-/// - `Err` with a `KeystoneApiError` if the user is not found or an error
-///   occurs.
+/// List users
 #[utoipa::path(
     get,
-    path = "/{user_id}/groups",
-    description = "List groups a user is member of",
+    path = "/",
+    params(UserListParameters),
+    description = "List users",
     responses(
-        (status = OK, description = "List of user groups", body = GroupList),
+        (status = OK, description = "List of users", body = UserList),
         (status = 500, description = "Internal error", example = json!(KeystoneApiError::InternalError(String::from("id = 1"))))
     ),
     tag="users"
 )]
 #[tracing::instrument(name = "api::user_list", level = "debug", skip(state))]
-pub(super) async fn groups(
+pub(super) async fn list(
     Auth(user_auth): Auth,
-    Path(user_id): Path<String>,
+    Query(query): Query<UserListParameters>,
     State(state): State<ServiceState>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
-    let current = state
-        .provider
-        .get_identity_provider()
-        .get_user(&ExecutionContext::from_auth(&state, &user_auth), &user_id)
-        .await?;
+    query.validate()?;
 
     state
         .policy_enforcer
         .enforce(
-            "identity/user/show",
+            "identity/user/list",
             &user_auth,
-            serde_json::Value::Null,
-            Some(json!({"user": current})),
+            json!({"user": query}),
+            None,
         )
         .await?;
-    match current {
-        Some(_) => {
-            let groups: Vec<Group> = state
-                .provider
-                .get_identity_provider()
-                .list_groups_of_user(&ExecutionContext::from_auth(&state, &user_auth), &user_id)
-                .await?
-                .into_iter()
-                .map(Into::into)
-                .collect();
-            Ok((StatusCode::OK, Json(GroupList { groups })).into_response())
-        }
-        _ => Err(KeystoneApiError::NotFound {
-            resource: "user".to_string(),
-            identifier: user_id.clone(),
-        }),
-    }
+
+    let users: Vec<User> = state
+        .provider
+        .get_identity_provider()
+        .list_users(
+            &ExecutionContext::from_auth(&state, &user_auth),
+            &query.into(),
+        )
+        .await?
+        .into_iter()
+        .map(Into::into)
+        .collect();
+
+    Ok((StatusCode::OK, Json(UserList { users })).into_response())
 }
 
 #[cfg(test)]
@@ -93,50 +80,37 @@ mod tests {
         body::Body,
         http::{Request, StatusCode},
     };
-    use http_body_util::BodyExt; // for `collect`
-    use tower::ServiceExt; // for `call`, `oneshot`, and `ready`
+    use http_body_util::BodyExt;
+    use tower::ServiceExt;
     use tower_http::trace::TraceLayer;
+
+    use openstack_keystone_core_types::identity::*;
 
     use super::super::openapi_router;
     use crate::api::tests::{get_mocked_state, test_fixture_scoped};
+    use crate::api::v3::user::types::{UserBuilder as ApiUser, UserList};
     use crate::identity::MockIdentityProvider;
-    use crate::{
-        api::v3::group::types::{GroupBuilder as ApiGroupBuilder, GroupList},
-        provider::Provider,
-    };
-    use openstack_keystone_core_types::identity::Group;
-    use openstack_keystone_core_types::identity::UserResponseBuilder;
+    use crate::provider::Provider;
 
     #[tokio::test]
-    async fn test_groups() {
+    async fn test_list() {
+        let vsc = test_fixture_scoped();
         let mut identity_mock = MockIdentityProvider::default();
         identity_mock
-            .expect_get_user()
-            .withf(|_, id: &'_ str| id == "foo")
+            .expect_list_users()
+            .withf(|_, _: &UserListParameters| true)
             .returning(|_, _| {
-                Ok(Some(
+                Ok(vec![
                     UserResponseBuilder::default()
-                        .id("bar")
-                        .domain_id("user_domain_id")
+                        .id("1")
+                        .domain_id("did")
                         .enabled(true)
-                        .name("name")
+                        .name("2")
                         .build()
                         .unwrap(),
-                ))
-            });
-        identity_mock
-            .expect_list_groups_of_user()
-            .withf(|_, uid: &str| uid == "foo")
-            .returning(|_, _| {
-                Ok(vec![Group {
-                    id: "1".into(),
-                    name: "2".into(),
-                    domain_id: "did".into(),
-                    ..Default::default()
-                }])
+                ])
             });
 
-        let vsc = test_fixture_scoped();
         let state = get_mocked_state(
             Provider::mocked_builder().mock_identity(identity_mock),
             true,
@@ -152,7 +126,7 @@ mod tests {
             .as_service()
             .oneshot(
                 Request::builder()
-                    .uri("/foo/groups")
+                    .uri("/")
                     .extension(vsc)
                     .body(Body::empty())
                     .unwrap(),
@@ -163,42 +137,39 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
 
         let body = response.into_body().collect().await.unwrap().to_bytes();
-        let res: GroupList = serde_json::from_slice(&body).unwrap();
+        let res: UserList = serde_json::from_slice(&body).unwrap();
         assert_eq!(
             vec![
-                ApiGroupBuilder::default()
+                ApiUser::default()
                     .id("1")
-                    .name("2")
                     .domain_id("did")
+                    .name("2")
+                    .enabled(true)
                     .build()
-                    .unwrap()
+                    .unwrap(),
             ],
-            res.groups
+            res.users
         );
     }
 
     #[tokio::test]
-    async fn test_groups_policy_denied() {
+    async fn test_list_qp() {
         let vsc = test_fixture_scoped();
         let mut identity_mock = MockIdentityProvider::default();
         identity_mock
-            .expect_get_user()
-            .withf(|_, id: &'_ str| id == "foo")
-            .returning(|_, _| {
-                Ok(Some(
-                    UserResponseBuilder::default()
-                        .id("bar")
-                        .domain_id("user_domain_id")
-                        .enabled(true)
-                        .name("name")
-                        .build()
-                        .unwrap(),
-                ))
-            });
+            .expect_list_users()
+            .withf(|_, qp: &UserListParameters| {
+                UserListParameters {
+                    domain_id: Some("domain".into()),
+                    name: Some("name".into()),
+                    ..Default::default()
+                } == *qp
+            })
+            .returning(|_, _| Ok(Vec::new()));
 
         let state = get_mocked_state(
             Provider::mocked_builder().mock_identity(identity_mock),
-            false,
+            true,
             None,
         )
         .await;
@@ -211,7 +182,7 @@ mod tests {
             .as_service()
             .oneshot(
                 Request::builder()
-                    .uri("/foo/groups")
+                    .uri("/?domain_id=domain&name=name")
                     .extension(vsc)
                     .body(Body::empty())
                     .unwrap(),
@@ -219,11 +190,33 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let _res: UserList = serde_json::from_slice(&body).unwrap();
     }
 
     #[tokio::test]
-    async fn test_groups_unauth() {
+    async fn test_list_unauth() {
+        let state = get_mocked_state(Provider::mocked_builder(), false, None).await;
+
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        let response = api
+            .as_service()
+            .oneshot(Request::builder().uri("/").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_list_policy_denied() {
+        let vsc = test_fixture_scoped();
+
         let state = get_mocked_state(Provider::mocked_builder(), false, None).await;
 
         let mut api = openapi_router()
@@ -234,13 +227,14 @@ mod tests {
             .as_service()
             .oneshot(
                 Request::builder()
-                    .uri("/foo/groups")
+                    .uri("/")
+                    .extension(vsc)
                     .body(Body::empty())
                     .unwrap(),
             )
             .await
             .unwrap();
 
-        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
     }
 }

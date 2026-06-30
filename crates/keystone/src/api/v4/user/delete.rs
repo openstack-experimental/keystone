@@ -11,63 +11,66 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+//! User: delete (remove).
+
 use axum::{
-    Json,
     extract::{Path, State},
     http::StatusCode,
     response::IntoResponse,
 };
 use serde_json::json;
 
-use super::types::{Group, GroupResponse};
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
 use openstack_keystone_core::auth::ExecutionContext;
 
-/// Get a single user group by ID.
+/// Delete user
 #[utoipa::path(
-    get,
-    path = "/{group_id}",
+    delete,
+    path = "/{user_id}",
+    description = "Delete user by ID",
     params(),
     responses(
-        (status = OK, description = "Group object", body = GroupResponse),
-        (status = 404, description = "Group not found", example = json!(KeystoneApiError::NotFound(String::from("id = 1"))))
+        (status = 204, description = "Deleted"),
+        (status = 404, description = "User not found", example = json!(KeystoneApiError::NotFound(String::from("id = 1"))))
     ),
-    tag="groups"
+    tag="users"
 )]
-#[tracing::instrument(name = "api::group_get", level = "debug", skip(state))]
-pub async fn show(
+#[tracing::instrument(name = "api::user_delete", level = "debug", skip(state))]
+pub(super) async fn remove(
     Auth(user_auth): Auth,
-    Path(group_id): Path<String>,
+    Path(user_id): Path<String>,
     State(state): State<ServiceState>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
     let current = state
         .provider
         .get_identity_provider()
-        .get_group(&ExecutionContext::from_auth(&state, &user_auth), &group_id)
+        .get_user(&ExecutionContext::from_auth(&state, &user_auth), &user_id)
         .await?;
+
     state
         .policy_enforcer
         .enforce(
-            "identity/group/show",
+            "identity/user/delete",
             &user_auth,
             serde_json::Value::Null,
-            Some(json!({"group": current})),
+            Some(json!({"user": current})),
         )
         .await?;
 
     match current {
-        Some(current) => Ok((
-            StatusCode::OK,
-            Json(GroupResponse {
-                group: Group::from(current),
-            }),
-        )
-            .into_response()),
+        Some(_) => {
+            state
+                .provider
+                .get_identity_provider()
+                .delete_user(&ExecutionContext::from_auth(&state, &user_auth), &user_id)
+                .await?;
+            Ok((StatusCode::NO_CONTENT).into_response())
+        }
         _ => Err(KeystoneApiError::NotFound {
-            resource: "group".into(),
-            identifier: group_id,
+            resource: "user".to_string(),
+            identifier: user_id.clone(),
         }),
     }
 }
@@ -78,40 +81,48 @@ mod tests {
         body::Body,
         http::{Request, StatusCode},
     };
-    use http_body_util::BodyExt; // for `collect`
-    use tower::ServiceExt; // for `call`, `oneshot`, and `ready`
+
+    use tower::ServiceExt;
     use tower_http::trace::TraceLayer;
+
+    use openstack_keystone_core::auth::ExecutionContext;
+    use openstack_keystone_core_types::identity::*;
 
     use super::super::openapi_router;
     use crate::api::tests::{get_mocked_state, test_fixture_scoped};
+
     use crate::identity::MockIdentityProvider;
-    use crate::{
-        api::v3::group::types::{GroupBuilder as ApiGroupBuilder, GroupResponse},
-        provider::Provider,
-    };
-    use openstack_keystone_core_types::identity::*;
+    use crate::provider::Provider;
 
     #[tokio::test]
-    async fn test_get() {
+    async fn test_delete() {
+        let vsc = test_fixture_scoped();
         let mut identity_mock = MockIdentityProvider::default();
         identity_mock
-            .expect_get_group()
+            .expect_get_user()
             .withf(|_, id: &'_ str| id == "foo")
             .returning(|_, _| Ok(None));
 
         identity_mock
-            .expect_get_group()
+            .expect_get_user()
             .withf(|_, id: &'_ str| id == "bar")
             .returning(|_, _| {
-                Ok(Some(Group {
-                    id: "bar".into(),
-                    name: "name".into(),
-                    domain_id: "did".into(),
-                    ..Default::default()
-                }))
+                Ok(Some(
+                    UserResponseBuilder::default()
+                        .id("bar")
+                        .domain_id("did")
+                        .enabled(true)
+                        .name("name")
+                        .build()
+                        .unwrap(),
+                ))
             });
 
-        let vsc = test_fixture_scoped();
+        identity_mock
+            .expect_delete_user()
+            .withf(|_ctx: &ExecutionContext<'_>, id: &'_ str| id == "bar")
+            .returning(|_, _| Ok(()));
+
         let state = get_mocked_state(
             Provider::mocked_builder().mock_identity(identity_mock),
             true,
@@ -127,6 +138,7 @@ mod tests {
             .as_service()
             .oneshot(
                 Request::builder()
+                    .method("DELETE")
                     .uri("/foo")
                     .extension(vsc.clone())
                     .body(Body::empty())
@@ -141,6 +153,7 @@ mod tests {
             .as_service()
             .oneshot(
                 Request::builder()
+                    .method("DELETE")
                     .uri("/bar")
                     .extension(vsc)
                     .body(Body::empty())
@@ -149,95 +162,28 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(response.status(), StatusCode::OK);
-
-        let body = response.into_body().collect().await.unwrap().to_bytes();
-        let res: GroupResponse = serde_json::from_slice(&body).unwrap();
-        assert_eq!(
-            ApiGroupBuilder::default()
-                .id("bar")
-                .name("name")
-                .domain_id("did")
-                .build()
-                .unwrap(),
-            res.group,
-        );
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
     }
 
     #[tokio::test]
-    async fn test_get_unauth() {
-        let state = crate::api::tests::get_mocked_state(
-            crate::provider::Provider::mocked_builder(),
-            false,
-            None,
-        )
-        .await;
-
-        let mut api = openapi_router()
-            .layer(TraceLayer::new_for_http())
-            .with_state(state);
-
-        let response = api
-            .as_service()
-            .oneshot(Request::builder().uri("/foo").body(Body::empty()).unwrap())
-            .await
-            .unwrap();
-
-        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
-    }
-
-    #[tokio::test]
-    async fn test_get_not_allowed() {
+    async fn test_delete_policy_denied() {
+        let vsc = test_fixture_scoped();
         let mut identity_mock = MockIdentityProvider::default();
-
         identity_mock
-            .expect_get_group()
-            .withf(|_, id: &'_ str| id == "foo")
+            .expect_get_user()
+            .withf(|_, id: &'_ str| id == "bar")
             .returning(|_, _| {
-                Ok(Some(Group {
-                    id: "foo".into(),
-                    name: "name".into(),
-                    domain_id: "did".into(),
-                    ..Default::default()
-                }))
+                Ok(Some(
+                    UserResponseBuilder::default()
+                        .id("bar")
+                        .domain_id("did")
+                        .enabled(true)
+                        .name("name")
+                        .build()
+                        .unwrap(),
+                ))
             });
 
-        let vsc = test_fixture_scoped();
-        let state = get_mocked_state(
-            Provider::mocked_builder().mock_identity(identity_mock),
-            false,
-            None,
-        )
-        .await;
-
-        let mut api = openapi_router()
-            .layer(TraceLayer::new_for_http())
-            .with_state(state);
-
-        let response = api
-            .as_service()
-            .oneshot(
-                Request::builder()
-                    .uri("/foo")
-                    .extension(vsc)
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(response.status(), StatusCode::FORBIDDEN);
-    }
-
-    #[tokio::test]
-    async fn test_get_not_found_not_allowed() {
-        let mut identity_mock = MockIdentityProvider::default();
-        identity_mock
-            .expect_get_group()
-            .withf(|_, id: &'_ str| id == "foo")
-            .returning(|_, _| Ok(None));
-
-        let vsc = test_fixture_scoped();
         let state = get_mocked_state(
             Provider::mocked_builder().mock_identity(identity_mock),
             false,
@@ -253,7 +199,8 @@ mod tests {
             .as_service()
             .oneshot(
                 Request::builder()
-                    .uri("/foo")
+                    .method("DELETE")
+                    .uri("/bar")
                     .extension(vsc)
                     .body(Body::empty())
                     .unwrap(),
@@ -262,5 +209,28 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn test_delete_unauth() {
+        let state = get_mocked_state(Provider::mocked_builder(), false, None).await;
+
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        let response = api
+            .as_service()
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri("/bar")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
 }

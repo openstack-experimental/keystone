@@ -56,8 +56,8 @@ pub(super) async fn show(
         .enforce(
             "identity/role/show",
             &user_auth,
-            json!({"role": current}),
-            None,
+            serde_json::Value::Null,
+            Some(json!({"role": current})),
         )
         .await?;
 

@@ -207,4 +207,29 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
+
+    #[tokio::test]
+    async fn test_list_policy_denied() {
+        let vsc = test_fixture_scoped();
+
+        let state = get_mocked_state(Provider::mocked_builder(), false, None).await;
+
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        let response = api
+            .as_service()
+            .oneshot(
+                Request::builder()
+                    .uri("/")
+                    .extension(vsc)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
 }

@@ -54,8 +54,8 @@ pub(super) async fn show(
         .enforce(
             "identity/user/show",
             &user_auth,
-            json!({"user": current}),
-            None,
+            serde_json::Value::Null,
+            Some(json!({"user": current})),
         )
         .await?;
     match current {
@@ -165,5 +165,67 @@ mod tests {
                 .unwrap(),
             res.user,
         );
+    }
+
+    #[tokio::test]
+    async fn test_get_policy_denied() {
+        let vsc = test_fixture_scoped();
+        let mut identity_mock = MockIdentityProvider::default();
+        identity_mock
+            .expect_get_user()
+            .withf(|_, id: &'_ str| id == "bar")
+            .returning(|_, _| {
+                Ok(Some(
+                    UserResponseBuilder::default()
+                        .id("bar")
+                        .domain_id("user_domain_id")
+                        .enabled(true)
+                        .name("name")
+                        .build()
+                        .unwrap(),
+                ))
+            });
+
+        let state = get_mocked_state(
+            Provider::mocked_builder().mock_identity(identity_mock),
+            false,
+            None,
+        )
+        .await;
+
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state.clone());
+
+        let response = api
+            .as_service()
+            .oneshot(
+                Request::builder()
+                    .uri("/bar")
+                    .extension(vsc)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn test_get_unauth() {
+        let state = get_mocked_state(Provider::mocked_builder(), false, None).await;
+
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        let response = api
+            .as_service()
+            .oneshot(Request::builder().uri("/bar").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
 }

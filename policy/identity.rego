@@ -6,13 +6,40 @@ token_subject if {
 	input.credentials.user_id == input.target.token.user_id
 }
 
-global_role if {
+token_subject if {
+	input.credentials.user_id == input.existing.token.user_id
+}
+
+token_subject if {
+	input.credentials.user_id == input.existing.token.user_id
+}
+
+# A role without a domain_id (orphaned).
+# For create/update: in input.target.role.
+# For show/delete: in input.existing.role.
+orphaned_role if {
 	input.target.role.domain_id == null
 }
 
+orphaned_role if {
+	input.existing.role.domain_id == null
+}
+
+global_role if {
+	orphaned_role
+}
+
+# A role with a domain matching the caller's domain scope.
+# For create/update: in input.target.role.
+# For show/delete: in input.existing.role.
 own_role if {
 	input.target.role.domain_id != null
 	input.credentials.domain_id == input.target.role.domain_id
+}
+
+own_role if {
+	input.existing.role.domain_id != null
+	input.credentials.domain_id == input.existing.role.domain_id
 }
 
 # Domain role or the global role.
@@ -105,6 +132,11 @@ any_domain_id := input.existing.domain.id if {
 project_domain_matches_domain_scope if {
 	input.target.project.domain_id != null
 	input.target.project.domain_id = input.credentials.domain_id
+}
+
+project_domain_matches_domain_scope if {
+	input.existing.project.domain_id != null
+	input.existing.project.domain_id = input.credentials.domain_id
 }
 
 domain_matches_domain_scope if {

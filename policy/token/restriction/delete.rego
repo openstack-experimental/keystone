@@ -6,12 +6,12 @@ import data.identity.token
 
 # Delete token restriction.
 #
-# The `input.target.restriction` is the stored restriction object:
+# The `input.existing.restriction` is the stored restriction object:
 #   domain_id:    string        domain ID
 #   user_id:      string|null   user ID
 #   role_ids:     [string]      list of role IDs
 #
-# The `input.existing` is null
+# The `input.target` is null
 #
 default allow := false
 
@@ -26,8 +26,8 @@ allow if {
 
 allow if {
 	"member" in input.credentials.roles
-	input.target.restriction.user_id != null
-	input.credentials.user_id == input.target.restriction.user_id
+	input.existing.restriction.user_id != null
+	input.credentials.user_id == input.existing.restriction.user_id
 }
 
 violation contains {"field": "domain_id", "msg": "deleting token restrictions in other domain requires `admin` role."} if {

@@ -51,8 +51,8 @@ pub async fn delete(
         .enforce(
             "identity/group/delete",
             &user_auth,
-            json!({"group": current}),
-            None,
+            serde_json::Value::Null,
+            Some(json!({"group": current})),
         )
         .await?;
 

@@ -7,13 +7,13 @@ import data.identity
 
 # Show role.
 #
-# The `input.target.role` is the stored role object (Role):
+# The `input.existing.role` is the stored role object (Role):
 #   description:  string (optional)  Role description.
 #   domain_id:    string (optional)  Role domain ID.
 #   id:           string            Role ID.
 #   name:         string            Role name.
 #
-# The `input.existing` is null
+# The `input.target` is null
 #
 default allow := false
 

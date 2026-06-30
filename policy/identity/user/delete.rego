@@ -6,7 +6,7 @@ import data.identity
 
 # Delete user.
 #
-# The `input.target.user` is the stored user object:
+# The `input.existing.user` is the stored user object:
 #   default_project_id:  string (optional)  The ID of the default project for the user.
 #   domain_id:           string            User domain ID.
 #   enabled:             bool              If the user is enabled.
@@ -15,7 +15,7 @@ import data.identity
 #   options:             object (optional)  The resource options for the user.
 #   password_expires_at: string (optional)  The date and time when the password expires.
 #
-# The `input.existing` is null
+# The `input.target` is null
 #
 default allow := false
 

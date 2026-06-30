@@ -67,13 +67,14 @@ pub(super) async fn show(
             })
         })??;
 
+    let existing = TokenRestriction::from(current.clone());
     state
         .policy_enforcer
         .enforce(
             "identity/token/token_restriction/show",
             &user_auth,
-            json!({"restriction": current}),
-            None,
+            serde_json::Value::Null,
+            Some(json!({"restriction": existing})),
         )
         .await?;
     Ok((

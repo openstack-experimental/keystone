@@ -28,7 +28,7 @@ use axum::{
     http::{HeaderMap, StatusCode},
     response::IntoResponse,
 };
-use serde_json::{json, to_value};
+use serde_json::{Value, json, to_value};
 use tracing::error;
 
 use openstack_keystone_api_types::v3::auth::token::TokenBuilder;
@@ -98,8 +98,8 @@ pub(super) async fn show(
         .enforce(
             "identity/auth/token/show",
             &user_auth,
-            to_value(json!({"token": &vsc.token()?}))?,
-            None,
+            Value::Null,
+            Some(to_value(json!({"token": &vsc.token()?}))?),
         )
         .await?;
 

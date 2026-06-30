@@ -6,6 +6,8 @@ import data.identity
 
 # description: current domain scope matches the domain_id of the project, or the user and of
 # the role (or it is a global role)
+# For grant: in input.target.
+# For revoke: in input.existing.
 project_user_role_domain_matches if {
 	input.target.project.domain_id != null
 	input.target.user.domain_id != null
@@ -14,11 +16,27 @@ project_user_role_domain_matches if {
 	identity.own_role_or_global_role
 }
 
+project_user_role_domain_matches if {
+	input.existing.project.domain_id != null
+	input.existing.user.domain_id != null
+	input.credentials.domain_id == input.existing.user.domain_id
+	input.credentials.domain_id == input.existing.project.domain_id
+	identity.own_role_or_global_role
+}
+
 # description: Ensure that the domain_id of the target project is matching the current
 # domain scope and the role belongs to the same domain or is global.
+# For grant: in input.target.
+# For revoke: in input.existing.
 project_role_domain_matches if {
 	input.target.project.domain_id != null
 	input.credentials.domain_id == input.target.project.domain_id
+	identity.own_role_or_global_role
+}
+
+project_role_domain_matches if {
+	input.existing.project.domain_id != null
+	input.credentials.domain_id == input.existing.project.domain_id
 	identity.own_role_or_global_role
 }
 

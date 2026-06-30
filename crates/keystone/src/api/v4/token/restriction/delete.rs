@@ -65,8 +65,8 @@ pub(super) async fn remove(
         .enforce(
             "identity/token/token_restriction/delete",
             &user_auth,
-            json!({"restriction": current}),
-            None,
+            serde_json::Value::Null,
+            Some(json!({"restriction": current})),
         )
         .await?;
 

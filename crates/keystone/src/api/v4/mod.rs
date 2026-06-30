@@ -46,6 +46,7 @@ use crate::api::types::*;
       (path = "k8s_auth", api = k8s_auth::ApiDoc),
       (path = "mappings", api = mapping::ApiDoc),
       (path = "tokens", api = token::ApiDoc),
+      (path = "users", api = user::ApiDoc),
     ),
 )]
 pub struct ApiDoc;

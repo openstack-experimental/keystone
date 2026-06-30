@@ -18,7 +18,7 @@ use axum::{
     http::{HeaderMap, StatusCode},
     response::IntoResponse,
 };
-use serde_json::{json, to_value};
+use serde_json::{Value, json, to_value};
 use tracing::error;
 
 use openstack_keystone_core::auth::ExecutionContext;
@@ -81,8 +81,8 @@ pub(super) async fn delete(
         .enforce(
             "identity/auth/token/revoke",
             &user_auth,
-            to_value(json!({"token": &vsc.token()?}))?,
-            None,
+            Value::Null,
+            Some(to_value(json!({"token": &vsc.token()?}))?),
         )
         .await?;
 

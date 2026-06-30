@@ -103,7 +103,7 @@ async fn create_inner(
         token: TokenBuilder::try_from(&vsc)?.build()?,
     };
     if !query.nocatalog.is_some_and(|x| x) {
-        let exec = ExecutionContext::internal(&state);
+        let exec = ExecutionContext::internal(state);
         let catalog: Catalog = Catalog(
             state
                 .provider

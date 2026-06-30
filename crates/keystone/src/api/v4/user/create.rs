@@ -11,6 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+//! User: create.
 
 use axum::{Json, extract::State, http::StatusCode, response::IntoResponse};
 use serde_json::json;
@@ -38,8 +39,8 @@ pub(super) async fn create(
     State(state): State<ServiceState>,
     Json(req): Json<UserCreateRequest>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
-    // Validate the request
     req.validate()?;
+
     state
         .policy_enforcer
         .enforce(
@@ -49,11 +50,13 @@ pub(super) async fn create(
             None,
         )
         .await?;
+
     let user = state
         .provider
         .get_identity_provider()
         .create_user(&ExecutionContext::from_auth(&state, &user_auth), req.into())
         .await?;
+
     Ok((
         StatusCode::CREATED,
         Json(UserResponse {
@@ -69,11 +72,11 @@ mod tests {
         body::Body,
         http::{self, Request, StatusCode},
     };
-    use http_body_util::BodyExt; // for `collect`
-    use tower::ServiceExt; // for `call`, `oneshot`, and `ready`
+    use http_body_util::BodyExt;
+    use tower::ServiceExt;
     use tower_http::trace::TraceLayer;
 
-    use openstack_keystone_core_types::identity::{UserCreate, UserResponseBuilder};
+    use openstack_keystone_core_types::identity::*;
 
     use super::super::openapi_router;
     use crate::api::tests::{get_mocked_state, test_fixture_scoped};
@@ -85,6 +88,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_create() {
+        let vsc = test_fixture_scoped();
         let mut identity_mock = MockIdentityProvider::default();
         identity_mock
             .expect_create_user()
@@ -99,7 +103,6 @@ mod tests {
                     .unwrap())
             });
 
-        let vsc = test_fixture_scoped();
         let state = get_mocked_state(
             Provider::mocked_builder().mock_identity(identity_mock),
             true,

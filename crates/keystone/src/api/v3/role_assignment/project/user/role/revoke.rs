@@ -19,7 +19,7 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
-use serde_json::json;
+use serde_json::{Value, json};
 use tracing::info;
 
 use crate::api::auth::Auth;
@@ -105,8 +105,8 @@ pub(super) async fn revoke(
         .enforce(
             "identity/project/user/role/revoke",
             &user_auth,
-            json!({"user": user, "role": role, "project": project}),
-            None,
+            Value::Null,
+            Some(json!({"user": user, "role": role, "project": project})),
         )
         .await?;
 

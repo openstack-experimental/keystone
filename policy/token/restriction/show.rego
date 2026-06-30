@@ -6,7 +6,7 @@ import data.identity.token
 
 # Show single token restriction.
 #
-# The `input.target.restriction` is the stored restriction object (TokenRestriction):
+# The `input.existing.restriction` is the stored restriction object (TokenRestriction):
 #   allow_renew:    bool            Allow token renew.
 #   allow_rescope:  bool            Allow token rescope.
 #   domain_id:      string          Domain ID the token restriction belongs to.
@@ -15,7 +15,7 @@ import data.identity.token
 #   user_id:        string (optional) User ID that the token must be bound to.
 #   roles:          array            Bound token roles.
 #
-# The `input.existing` is null
+# The `input.target` is null
 #
 default allow := false
 

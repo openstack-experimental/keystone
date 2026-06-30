@@ -61,13 +61,13 @@ pub(super) async fn delete(
         .enforce(
             "identity/role/imply_rule/delete",
             &user_auth,
-            json!({
+            serde_json::Value::Null,
+            Some(json!({
                 "role_imply_rule": {
                     "prior_role_id": prior_role_id,
                     "implied_role_id": implied_role_id
                 }
-            }),
-            None,
+            })),
         )
         .await?;
 

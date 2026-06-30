@@ -7,8 +7,6 @@ import data.identity
 
 # Delete role imply rule.
 #
-# The `input.target` is null
-#
 # The `input.existing.role_imply_rule` is the stored rule object (RoleImply):
 #   prior_role:       RoleRef    The prior role reference (id, name, domain_id).
 #   implied_role:     RoleRef    The implied role reference (id, name, domain_id).

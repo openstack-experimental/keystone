@@ -6,7 +6,7 @@ import data.identity
 
 # View authentication token details.
 #
-# The `input.target.token` is the stored token object (Token):
+# The `input.existing.token` is the stored token object (Token):
 #   audit_ids:    array              A list of one or two audit IDs.
 #   methods:      array              The authentication methods.
 #   expires_at:   datetime           The date and time when the token expires.
@@ -19,7 +19,7 @@ import data.identity
 #   system:       object (optional)  A system object.
 #   catalog:      object (optional)  A catalog object.
 #
-# The `input.existing` is null
+# The `input.target` is null
 #
 default allow := false
 

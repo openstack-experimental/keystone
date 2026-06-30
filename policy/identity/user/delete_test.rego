@@ -4,12 +4,12 @@ import data.identity.user.delete
 
 test_allowed if {
 	delete.allow with input as {"credentials": {"roles": ["admin"]}}
-	delete.allow with input as {"credentials": {"roles": ["manager"], "domain_id": "foo"}, "target": {"user": {"domain_id": "foo"}}}
+	delete.allow with input as {"credentials": {"roles": ["manager"], "domain_id": "foo"}, "existing": {"user": {"domain_id": "foo"}}}
 }
 
 test_forbidden if {
 	not delete.allow with input as {"credentials": {"roles": []}}
-	not delete.allow with input as {"credentials": {"roles": ["manager"], "domain_id": "foo"}, "target": {"user": {"domain_id": "foo1"}}}
-	not delete.allow with input as {"credentials": {"roles": ["manager"]}, "target": {"user": {"domain_id": "foo"}}}
-	not delete.allow with input as {"credentials": {"roles": ["reader"], "domain_id": "foo"}, "target": {"user": {"domain_id": "foo"}}}
+	not delete.allow with input as {"credentials": {"roles": ["manager"], "domain_id": "foo"}, "existing": {"user": {"domain_id": "foo1"}}}
+	not delete.allow with input as {"credentials": {"roles": ["manager"]}, "existing": {"user": {"domain_id": "foo"}}}
+	not delete.allow with input as {"credentials": {"roles": ["reader"], "domain_id": "foo"}, "existing": {"user": {"domain_id": "foo"}}}
 }

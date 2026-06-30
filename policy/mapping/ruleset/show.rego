@@ -6,8 +6,8 @@ import data.identity.mapping as mapping_common
 
 # Show MappingRuleSet.
 #
-# input.target.mapping is the stored MappingRuleSet object.
-# input.existing is null.
+# input.existing.mapping is the stored MappingRuleSet object.
+# input.target is null.
 
 default allow := false
 
