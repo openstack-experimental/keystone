@@ -4,7 +4,7 @@ Date: 2026-06-16
 
 ## Status
 
-Proposed
+Accepted
 
 > **Security review 2026-06-24:** Seven findings applied — HMAC canonicalization
 > (RFC 8785/JCS), `boot_session_id` CSPRNG requirement, `initiator.host`
@@ -176,8 +176,11 @@ pub struct AuditDispatcher {
 impl AuditDispatcher {
     // Signs over unsigned payload. HMAC input is the JCS-canonical (RFC 8785)
     // UTF-8 JSON of all payload fields with keys in lexicographic order, no
-    // extra whitespace, null-valued fields always included. This is the sole
-    // canonical form; SIEMs must reproduce it exactly for verification.
+    // extra whitespace. Most Option-typed fields serialize as `null` when
+    // absent. Exception: `Initiator.host` uses skip_serializing_if and is
+    // **omitted entirely** (not set to `null`) when absent. SIEMs MUST
+    // re-serialize the received JSON (minus `signature`) without inserting
+    // absent keys. This is the sole canonical form for HMAC verification.
     fn finalize_event(&self, partial: CadfEventPayload) -> CadfEvent {
         let (key, version) = self.hmac_key_and_version.load_full().as_ref();
         let completed = CadfEventPayload {
