@@ -132,4 +132,7 @@ jobs:
         fetch-depth: 0
 
     - name: Lint Commits
+      env:
+        # Forces committed to look only at the final proposed commit at the tip of the queue
+        COMMITTED_REV: ${{ github.event_name == 'merge_group' && 'HEAD~1..HEAD' || '' }}
       uses: crate-ci/committed@15229711f8f597474c0b636f327cde5969f9a529 # v1.1.7
