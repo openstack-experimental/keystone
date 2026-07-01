@@ -78,6 +78,7 @@ use sea_orm::{DatabaseConnection, Schema};
 
 #[cfg(any(feature = "api", test))]
 pub mod api;
+pub mod api_key;
 pub mod application_credential;
 pub mod assignment;
 pub mod auth;

@@ -86,6 +86,9 @@ pub enum KeystoneApiError {
     #[error("missing x-subject-token header")]
     SubjectTokenMissing,
 
+    #[error("rate limit exceeded, retry later")]
+    TooManyRequests,
+
     #[error("The request you have made requires authentication.")]
     UnauthorizedNoContext,
 

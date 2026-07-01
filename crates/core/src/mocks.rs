@@ -26,6 +26,80 @@ use crate::auth::AuthenticationResult;
 use crate::auth::{ExecutionContext, ScopeInfo, SecurityContext, ValidatedSecurityContext};
 use crate::keystone::ServiceState;
 
+mod api_key {
+    use super::*;
+
+    use openstack_keystone_core_types::api_key::*;
+
+    use crate::api_key::{ApiKeyApi, ApiKeyProviderError};
+
+    mock! {
+        pub ApiKeyProvider {}
+
+        #[async_trait]
+        impl ApiKeyApi for ApiKeyProvider {
+            async fn create(
+                &self,
+                state: &ServiceState,
+                data: ApiClientResourceCreate,
+            ) -> Result<ApiClientResource, ApiKeyProviderError>;
+
+            async fn get_by_client_id<'a>(
+                &self,
+                state: &ServiceState,
+                domain_id: &'a str,
+                client_id: &'a str,
+            ) -> Result<Option<ApiClientResource>, ApiKeyProviderError>;
+
+            async fn get_by_lookup_hash<'a>(
+                &self,
+                state: &ServiceState,
+                domain_id: &'a str,
+                lookup_hash: &'a str,
+            ) -> Result<Option<ApiClientResource>, ApiKeyProviderError>;
+
+            async fn list(
+                &self,
+                state: &ServiceState,
+                params: &ApiClientResourceListParameters,
+            ) -> Result<Vec<ApiClientResource>, ApiKeyProviderError>;
+
+            async fn update<'a>(
+                &self,
+                state: &ServiceState,
+                domain_id: &'a str,
+                client_id: &'a str,
+                data: ApiClientResourceUpdate,
+            ) -> Result<ApiClientResource, ApiKeyProviderError>;
+
+            async fn revoke<'a>(
+                &self,
+                state: &ServiceState,
+                domain_id: &'a str,
+                client_id: &'a str,
+                revoked_by: &'a str,
+            ) -> Result<ApiClientResource, ApiKeyProviderError>;
+
+            async fn update_last_used<'a>(
+                &self,
+                state: &ServiceState,
+                domain_id: &'a str,
+                lookup_hash: &'a str,
+                last_used_at: i64,
+            ) -> Result<(), ApiKeyProviderError>;
+
+            async fn update_secret_hash<'a>(
+                &self,
+                state: &ServiceState,
+                domain_id: &'a str,
+                lookup_hash: &'a str,
+                secret_hash: String,
+            ) -> Result<(), ApiKeyProviderError>;
+        }
+    }
+}
+pub use api_key::MockApiKeyProvider;
+
 mod application_credential {
     use super::*;
 

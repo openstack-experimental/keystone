@@ -22,6 +22,9 @@ use std::sync::Arc;
 
 use openstack_keystone_config::Config;
 
+use crate::api_key::ApiKeyApi;
+#[cfg(any(test, feature = "mock"))]
+use crate::api_key::MockApiKeyProvider;
 use crate::application_credential::ApplicationCredentialApi;
 #[cfg(any(test, feature = "mock"))]
 use crate::application_credential::MockApplicationCredentialProvider;
@@ -69,6 +72,8 @@ use crate::trust::TrustApi;
 #[derive(Builder)]
 #[builder(pattern = "owned")]
 pub struct Provider {
+    /// API Key provider.
+    api_key: Box<dyn ApiKeyApi>,
     /// Application credential provider.
     application_credential: Box<dyn ApplicationCredentialApi>,
     /// Assignment provider.
@@ -99,6 +104,12 @@ pub struct Provider {
 
 #[cfg(any(test, feature = "mock"))]
 impl ProviderBuilder {
+    pub fn mock_api_key(self, value: impl ApiKeyApi + 'static) -> Self {
+        let mut new = self;
+        new.api_key = Some(Box::new(value));
+        new
+    }
+
     pub fn mock_application_credential(
         self,
         value: impl ApplicationCredentialApi + 'static,
@@ -188,6 +199,7 @@ impl Provider {
         plugin_manager: &P,
         k8s_http_client: Arc<dyn K8sHttpClient>,
     ) -> Result<Self, KeystoneError> {
+        let api_key = Box::new(crate::api_key::ApiKeyService::new(cfg, plugin_manager)?);
         let application_credential = Box::new(
             crate::application_credential::ApplicationCredentialService::new(cfg, plugin_manager)?,
         );
@@ -217,6 +229,7 @@ impl Provider {
         let trust = Box::new(crate::trust::TrustService::new(cfg, plugin_manager)?);
 
         Ok(Self {
+            api_key,
             application_credential,
             assignment,
             catalog,
@@ -237,6 +250,7 @@ impl Provider {
     #[cfg(any(test, feature = "mock"))]
     pub fn mocked_builder() -> ProviderBuilder {
         ProviderBuilder::default()
+            .mock_api_key(MockApiKeyProvider::default())
             .mock_application_credential(MockApplicationCredentialProvider::default())
             .mock_assignment(MockAssignmentProvider::default())
             .mock_catalog(MockCatalogProvider::default())
@@ -250,6 +264,11 @@ impl Provider {
             .mock_role(MockRoleProvider::default())
             .mock_token(MockTokenProvider::default())
             .mock_trust(MockTrustProvider::default())
+    }
+
+    /// Get the API Key provider.
+    pub fn get_api_key_provider(&self) -> &dyn ApiKeyApi {
+        &*self.api_key
     }
 
     /// Get the application credential provider.

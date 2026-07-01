@@ -11,23 +11,17 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-//! # Integration tests
-//!
-//! Test the functionality on the provider level (not through the API).
+//! # API Key (SCIM ingress) machine identity management (ADR 0021)
 
-mod api_key;
-mod application_credential;
-mod assignment;
-mod audit;
-mod catalog;
-mod common;
-mod identity;
-mod k8s_auth;
-mod mapping;
-mod resource;
-mod revoke;
-mod role;
-mod token;
+pub mod backend;
+pub mod crypto;
+pub mod error;
+mod provider_api;
+pub mod service;
+pub mod token;
 
-#[macro_use]
-mod macros;
+#[cfg(any(test, feature = "mock"))]
+pub use crate::mocks::MockApiKeyProvider;
+pub use error::ApiKeyProviderError;
+pub use provider_api::ApiKeyApi;
+pub use service::ApiKeyService;

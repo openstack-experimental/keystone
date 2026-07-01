@@ -32,6 +32,7 @@ hyper.workspace = true
 inventory.workspace = true
 jsonwebtoken = { version = "10.4", features = ["rust_crypto"] }
 nix = { workspace = true, features = ["socket", "user"] }
+openstack-keystone-api-key-driver-raft.workspace = true
 openstack-keystone-api-types = { workspace = true, features = ["openapi", "validate", "conv"]}
 openstack-keystone-audit.workspace = true
 openstack-keystone-appcred-driver-sql.workspace = true

@@ -140,6 +140,15 @@ pub enum MappingProviderError {
     /// Local identity mode requires Federation as the identity source.
     #[error("Local identity mode requires Federation source (got: {0})")]
     LocalIdentityRequiresFederation(String),
+
+    /// A ruleset sourced from an API Key (SCIM ingress) provider granted
+    /// `is_system` or `Authorization::System`, which is prohibited at
+    /// write-time as defense-in-depth for the runtime ingress guard (ADR
+    /// 0021 §6.C, Invariant 3).
+    #[error(
+        "rule '{0}' grants system scope, which is forbidden for API Key (ApiClient) mapping rulesets"
+    )]
+    ApiClientSystemScopeForbidden(String),
 }
 
 impl MappingProviderError {

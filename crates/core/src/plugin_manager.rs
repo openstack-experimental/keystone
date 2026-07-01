@@ -22,6 +22,8 @@
 //! for the provider.
 use std::sync::Arc;
 
+use crate::api_key::ApiKeyProviderError;
+use crate::api_key::backend::ApiKeyBackend;
 use crate::application_credential::{
     ApplicationCredentialProviderError, backend::ApplicationCredentialBackend,
 };
@@ -53,6 +55,19 @@ use crate::trust::backend::TrustBackend;
 
 /// Plugin manager trait.
 pub trait PluginManagerApi {
+    /// Get registered API Key backend.
+    ///
+    /// # Parameters
+    /// - `name`: The name of the backend to retrieve.
+    ///
+    /// # Returns
+    /// - `Ok(&Arc<dyn ApiKeyBackend>)` if found, otherwise
+    ///   `Err(ApiKeyProviderError)`.
+    fn get_api_key_backend<S: AsRef<str>>(
+        &self,
+        name: S,
+    ) -> Result<&Arc<dyn ApiKeyBackend>, ApiKeyProviderError>;
+
     /// Get registered application credential backend.
     ///
     /// # Parameters
@@ -234,6 +249,13 @@ pub trait PluginManagerApi {
         &self,
         name: S,
     ) -> Result<&Arc<dyn TrustBackend>, TrustProviderError>;
+
+    /// Register API Key backend.
+    ///
+    /// # Parameters
+    /// - `name`: The name to register the backend under.
+    /// - `plugin`: The backend implementation.
+    fn register_api_key_backend<S: AsRef<str>>(&mut self, name: S, plugin: Arc<dyn ApiKeyBackend>);
 
     /// Register application credential backend.
     ///

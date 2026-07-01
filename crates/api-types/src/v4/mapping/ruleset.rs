@@ -65,6 +65,11 @@ pub enum IdentitySource {
         /// SPIFFE trust domain identifier.
         trust_domain: String,
     },
+    /// API Key (SCIM ingress) machine identity source (ADR 0021).
+    ApiClient {
+        /// The API Key `provider_id` this ruleset is bound to.
+        provider_id: String,
+    },
 }
 
 // ---------------------------------------------------------------------------

@@ -11,23 +11,10 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-//! # Integration tests
-//!
-//! Test the functionality on the provider level (not through the API).
+//! # API Key (SCIM ingress) machine identities (ADR 0021)
 
-mod api_key;
-mod application_credential;
-mod assignment;
-mod audit;
-mod catalog;
-mod common;
-mod identity;
-mod k8s_auth;
-mod mapping;
+mod error;
 mod resource;
-mod revoke;
-mod role;
-mod token;
 
-#[macro_use]
-mod macros;
+pub use error::*;
+pub use resource::*;

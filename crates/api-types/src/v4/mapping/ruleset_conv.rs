@@ -53,6 +53,7 @@ impl From<api::IdentitySource> for core::IdentitySource {
             api::IdentitySource::Federation { idp_id } => Self::Federation { idp_id },
             api::IdentitySource::K8s { cluster_id } => Self::K8s { cluster_id },
             api::IdentitySource::Spiffe { trust_domain } => Self::Spiffe { trust_domain },
+            api::IdentitySource::ApiClient { provider_id } => Self::ApiClient { provider_id },
         }
     }
 }
@@ -63,6 +64,7 @@ impl From<core::IdentitySource> for api::IdentitySource {
             core::IdentitySource::Federation { idp_id } => Self::Federation { idp_id },
             core::IdentitySource::K8s { cluster_id } => Self::K8s { cluster_id },
             core::IdentitySource::Spiffe { trust_domain } => Self::Spiffe { trust_domain },
+            core::IdentitySource::ApiClient { provider_id } => Self::ApiClient { provider_id },
         }
     }
 }

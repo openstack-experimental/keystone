@@ -230,6 +230,9 @@ mod tests {
             audit_dispatcher: openstack_keystone_audit::AuditDispatcher::noop(),
 
             storage: None,
+            api_key_rate_limiter: std::sync::Arc::new(governor::RateLimiter::keyed(
+                governor::Quota::per_minute(std::num::NonZeroU32::new(60).unwrap()),
+            )),
             shutdown: false,
         };
         Arc::new(service)
@@ -336,6 +339,9 @@ mod tests {
             audit_dispatcher: openstack_keystone_audit::AuditDispatcher::noop(),
 
             storage: None,
+            api_key_rate_limiter: std::sync::Arc::new(governor::RateLimiter::keyed(
+                governor::Quota::per_minute(std::num::NonZeroU32::new(60).unwrap()),
+            )),
             shutdown: false,
         });
 
@@ -436,6 +442,9 @@ mod tests {
             audit_dispatcher: openstack_keystone_audit::AuditDispatcher::noop(),
 
             storage: None,
+            api_key_rate_limiter: std::sync::Arc::new(governor::RateLimiter::keyed(
+                governor::Quota::per_minute(std::num::NonZeroU32::new(60).unwrap()),
+            )),
             shutdown: false,
         });
 
@@ -500,6 +509,9 @@ mod tests {
             audit_dispatcher: openstack_keystone_audit::AuditDispatcher::noop(),
 
             storage: None,
+            api_key_rate_limiter: std::sync::Arc::new(governor::RateLimiter::keyed(
+                governor::Quota::per_minute(std::num::NonZeroU32::new(60).unwrap()),
+            )),
             shutdown: false,
         });
 
@@ -563,6 +575,9 @@ mod tests {
             audit_dispatcher: openstack_keystone_audit::AuditDispatcher::noop(),
 
             storage: None,
+            api_key_rate_limiter: std::sync::Arc::new(governor::RateLimiter::keyed(
+                governor::Quota::per_minute(std::num::NonZeroU32::new(60).unwrap()),
+            )),
             shutdown: false,
         });
 
