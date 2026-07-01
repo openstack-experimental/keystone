@@ -768,6 +768,20 @@ impl StorageApi for Storage {
         self.raft.metrics().borrow_watched().current_leader
     }
 
+    async fn keyspace_exists(&self, keyspace: &str) -> Result<bool, ApiStoreError> {
+        Ok(self.state_machine_store.keyspace_exists(keyspace))
+    }
+
+    async fn drop_keyspace(&self, keyspace: &str) -> Result<(), ApiStoreError> {
+        self.state_machine_store
+            .drop_keyspace(keyspace)
+            .map_err(ApiStoreError::from)
+    }
+
+    async fn node_id(&self) -> u64 {
+        self.node_id
+    }
+
     async fn initialize(&self, nodes: HashMap<u64, Node>) -> Result<(), ApiStoreError> {
         let pb_nodes: HashMap<u64, pb::raft::Node> = nodes
             .into_iter()

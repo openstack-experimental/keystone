@@ -41,6 +41,11 @@ pub struct MockStorage {
     metadata: Mutex<HashMap<String, Vec<u8>>>,
     /// index_key -> ()  (flat, no keyspace).
     indexes: Mutex<HashMap<Vec<u8>, ()>>,
+    /// This node's simulated Raft node id. Defaults to `0`.
+    node_id: Mutex<u64>,
+    /// The simulated current Raft leader id. Defaults to `None` (no
+    /// leader), matching `current_leader()`'s prior hardcoded behavior.
+    leader_id: Mutex<Option<u64>>,
 }
 
 fn lock<'a, T>(m: &'a Mutex<T>) -> Result<std::sync::MutexGuard<'a, T>, StoreError> {
@@ -50,6 +55,18 @@ fn lock<'a, T>(m: &'a Mutex<T>) -> Result<std::sync::MutexGuard<'a, T>, StoreErr
 }
 
 impl MockStorage {
+    /// Sets this node's simulated Raft node id, for tests exercising
+    /// leader-only logic (`current_leader() == Some(node_id())`).
+    pub fn set_node_id(&self, id: u64) {
+        *self.node_id.lock().unwrap_or_else(|p| p.into_inner()) = id;
+    }
+
+    /// Sets the simulated current Raft leader id, for tests exercising
+    /// leader-only logic.
+    pub fn set_current_leader(&self, leader: Option<u64>) {
+        *self.leader_id.lock().unwrap_or_else(|p| p.into_inner()) = leader;
+    }
+
     /// Store a value under `key` in `keyspace`, recording `metadata`.
     /// Returns a `Violation` when `expected_revision` mismatches.
     /// When a violation occurs, the write is skipped (true CAS behavior).
@@ -387,7 +404,31 @@ impl StorageApi for MockStorage {
     }
 
     async fn current_leader(&self) -> Option<u64> {
-        None
+        *self.leader_id.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    async fn keyspace_exists(&self, keyspace: &str) -> Result<bool, ApiStoreError> {
+        Ok(lock(&self.data)?.contains_key(keyspace))
+    }
+
+    async fn drop_keyspace(&self, keyspace: &str) -> Result<(), ApiStoreError> {
+        if matches!(keyspace, "data" | "meta" | "index") {
+            return Err(ApiStoreError::other(format!(
+                "refusing to drop core keyspace '{keyspace}'"
+            )));
+        }
+        let mut data = lock(&self.data)?;
+        if data.get(keyspace).is_some_and(|m| !m.is_empty()) {
+            return Err(ApiStoreError::other(format!(
+                "refusing to drop non-empty keyspace '{keyspace}'"
+            )));
+        }
+        data.remove(keyspace);
+        Ok(())
+    }
+
+    async fn node_id(&self) -> u64 {
+        *self.node_id.lock().unwrap_or_else(|p| p.into_inner())
     }
 
     async fn initialize(
