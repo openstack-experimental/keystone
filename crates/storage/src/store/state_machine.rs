@@ -346,6 +346,20 @@ pub struct FjallStateMachine {
     /// Shared with `ClusterAdminServiceImpl` so the gRPC handler can inspect
     /// the map without going through Raft.
     pub pending_rotations: Arc<Mutex<HashMap<String, PendingRotation>>>,
+    /// Serializes non-core keyspace lifecycle changes (`drop_keyspace`)
+    /// against `apply()`'s writes.
+    ///
+    /// `apply()` holds the read side for its whole call (writes are
+    /// inherently sequential per node, so this never contends against
+    /// itself); `drop_keyspace` takes the write side for its
+    /// exists/is-empty/delete sequence. Without this, a keyspace's
+    /// emptiness check and physical deletion race a concurrent, still
+    /// in-flight `apply()` write to that same keyspace: Fjall's batch
+    /// commit path writes directly to the tree and does not consult the
+    /// `is_deleted` flag the single-item API checks, so the write would
+    /// silently land in an already-deregistered, soon-to-be-discarded
+    /// partition — applied per Raft, invisible to every future read.
+    keyspace_lifecycle: Arc<RwLock<()>>,
 }
 
 impl FjallStateMachine {
@@ -400,6 +414,7 @@ impl FjallStateMachine {
             quarantine_tx,
             quarantine,
             pending_rotations,
+            keyspace_lifecycle: Arc::new(RwLock::new(())),
         })
     }
 
@@ -462,6 +477,54 @@ impl FjallStateMachine {
                 .db
                 .keyspace(other.as_ref(), KeyspaceCreateOptions::default)?,
         })
+    }
+
+    /// Returns `true` if `name` names a keyspace that currently exists.
+    ///
+    /// Unlike [`Self::keyspace`], this never auto-vivifies an empty
+    /// partition — safe to call speculatively when probing for
+    /// garbage-collection candidates.
+    pub fn keyspace_exists<S: AsRef<str>>(&self, name: S) -> bool {
+        matches!(name.as_ref(), "data" | "meta" | "index") || self.db.keyspace_exists(name.as_ref())
+    }
+
+    /// Permanently deletes an empty, non-core keyspace/partition.
+    ///
+    /// Returns an error, without deleting anything, if the keyspace still
+    /// has entries or if it names one of the core `"data"` / `"meta"` /
+    /// `"index"` keyspaces. A no-op if the keyspace does not exist.
+    ///
+    /// Not part of the replicated Raft log: dropping an already-empty
+    /// partition has no effect observable through `StorageApi`, so every
+    /// node may reclaim it independently once it locally observes the
+    /// keyspace is drained (analogous to local LSM compaction).
+    pub fn drop_keyspace<S: AsRef<str>>(&self, name: S) -> Result<(), StoreError> {
+        let name = name.as_ref();
+        if matches!(name, "data" | "meta" | "index") {
+            return Err(StoreError::Other(eyre::eyre!(
+                "refusing to drop core keyspace '{name}'"
+            )));
+        }
+        // Excludes any concurrent `apply()` call for the whole
+        // exists/is-empty/delete sequence, so a write that `apply()` is
+        // mid-way through queuing into this keyspace's batch can't be
+        // silently discarded by a delete that lands between the emptiness
+        // check and the physical drop.
+        let _lifecycle_guard = self
+            .keyspace_lifecycle
+            .write()
+            .unwrap_or_else(|p| p.into_inner());
+        if !self.db.keyspace_exists(name) {
+            return Ok(());
+        }
+        let ks = self.db.keyspace(name, KeyspaceCreateOptions::default)?;
+        if !ks.is_empty()? {
+            return Err(StoreError::Other(eyre::eyre!(
+                "refusing to drop non-empty keyspace '{name}'"
+            )));
+        }
+        self.db.delete_keyspace(ks)?;
+        Ok(())
     }
 
     /// Decrypt state bytes previously written by [`state_encrypt`].
@@ -1055,6 +1118,14 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
         let mut entries = entries;
 
         while let Some((entry, responder)) = entries.try_next().await? {
+            // Held for this entry's whole processing+commit (there is no
+            // further `.await` in this loop body until the next iteration),
+            // so a concurrent `drop_keyspace` can't observe a keyspace as
+            // empty mid-write and delete it out from under this commit.
+            let _lifecycle_guard = self
+                .keyspace_lifecycle
+                .read()
+                .unwrap_or_else(|p| p.into_inner());
             let last_applied_log = entry.log_id();
             let mut batch = self.db.batch();
             let mut has_violations = false;
@@ -1880,5 +1951,134 @@ mod dek_version_tests {
             .decrypt_state(&ciphertext, DataTier::Internal as u8, b"data", b"k4", None)
             .expect("legacy probe path should still find the retired epoch");
         assert_eq!(plaintext, b"hello");
+    }
+}
+
+#[cfg(test)]
+mod keyspace_gc_tests {
+    use openstack_keystone_storage_crypto::EnvKek;
+
+    use super::*;
+
+    /// Builds a `FjallStateMachine` for exercising `keyspace_exists` /
+    /// `drop_keyspace` against the real Fjall backend (as opposed to
+    /// `mock::MockStorage`, which models the same contract in-memory for
+    /// driver-level tests).
+    fn make_sm() -> (FjallStateMachine, tempfile::TempDir) {
+        let td = tempfile::TempDir::new().expect("tempdir");
+        let db = Arc::new(Database::builder(td.path()).open().expect("open db"));
+        let kek: Arc<dyn KekProvider> = Arc::new(EnvKek::from_bytes([0x42u8; 32]));
+        let epoch =
+            Arc::new(DekEpoch::from_raw(LockedKey::from_raw([0x09; 32]), 1).expect("epoch"));
+        let (reencrypt_tx, reencrypt_rx) = tokio::sync::mpsc::channel(1);
+        drop(reencrypt_rx);
+        let (quarantine_tx, quarantine_rx) = tokio::sync::mpsc::channel(1);
+        drop(quarantine_rx);
+
+        let sm = FjallStateMachine::new(
+            db,
+            td.path().join("snapshots"),
+            1,
+            Arc::new(RwLock::new(epoch)),
+            Arc::new(Mutex::new(BTreeMap::new())),
+            Arc::new(Mutex::new(HashSet::new())),
+            kek,
+            reencrypt_tx,
+            quarantine_tx,
+            Arc::new(Mutex::new(HashMap::new())),
+        )
+        .expect("construct state machine");
+        (sm, td)
+    }
+
+    #[test]
+    fn keyspace_exists_is_false_until_first_access_and_never_auto_vivifies() {
+        let (sm, _td) = make_sm();
+        assert!(!sm.keyspace_exists("rotating_bucket_1"));
+        // Checking existence must not have created it as a side effect.
+        assert!(!sm.keyspace_exists("rotating_bucket_1"));
+
+        let _ks = sm.keyspace("rotating_bucket_1").expect("create keyspace");
+        assert!(sm.keyspace_exists("rotating_bucket_1"));
+    }
+
+    #[test]
+    fn keyspace_exists_is_always_true_for_core_keyspaces() {
+        let (sm, _td) = make_sm();
+        assert!(sm.keyspace_exists("data"));
+        assert!(sm.keyspace_exists("meta"));
+        assert!(sm.keyspace_exists("index"));
+    }
+
+    #[test]
+    fn drop_keyspace_is_noop_when_never_created() {
+        let (sm, _td) = make_sm();
+        sm.drop_keyspace("never_created").expect("no-op drop");
+        assert!(!sm.keyspace_exists("never_created"));
+    }
+
+    #[test]
+    fn drop_keyspace_reclaims_an_empty_partition() {
+        let (sm, _td) = make_sm();
+        sm.keyspace("rotating_bucket_2").expect("create keyspace");
+        assert!(sm.keyspace_exists("rotating_bucket_2"));
+
+        sm.drop_keyspace("rotating_bucket_2")
+            .expect("drop empty keyspace");
+        assert!(!sm.keyspace_exists("rotating_bucket_2"));
+    }
+
+    #[test]
+    fn drop_keyspace_refuses_non_empty_partition() {
+        let (sm, _td) = make_sm();
+        let ks = sm.keyspace("rotating_bucket_3").expect("create keyspace");
+        ks.insert(b"leftover-key", b"leftover-value")
+            .expect("insert");
+
+        let err = sm
+            .drop_keyspace("rotating_bucket_3")
+            .expect_err("must refuse to drop a non-empty keyspace");
+        assert!(matches!(err, StoreError::Other(_)));
+        assert!(sm.keyspace_exists("rotating_bucket_3"));
+    }
+
+    #[test]
+    fn drop_keyspace_refuses_core_keyspaces() {
+        let (sm, _td) = make_sm();
+        for core in ["data", "meta", "index"] {
+            let err = sm
+                .drop_keyspace(core)
+                .expect_err("must refuse to drop a core keyspace");
+            assert!(matches!(err, StoreError::Other(_)));
+            assert!(sm.keyspace_exists(core));
+        }
+    }
+
+    /// Regression test for the TOCTOU race between `drop_keyspace` and a
+    /// concurrent `apply()` write: `apply()` holds `keyspace_lifecycle`'s
+    /// read side for an entry's whole processing+commit, so `drop_keyspace`
+    /// (which takes the write side) must not be able to proceed while any
+    /// such read guard is outstanding — otherwise a keyspace could be
+    /// deleted mid-write, and Fjall's batch-commit path would silently
+    /// write into the now-deregistered, soon-to-be-discarded partition
+    /// (it does not consult the `is_deleted` flag the single-item API
+    /// checks).
+    #[test]
+    fn keyspace_lifecycle_lock_excludes_concurrent_readers_and_writer() {
+        let (sm, _td) = make_sm();
+        sm.keyspace("rotating_bucket_race")
+            .expect("create keyspace");
+
+        // Simulate an in-flight apply() holding the read guard for the
+        // duration of a batch commit.
+        let _apply_guard = sm.keyspace_lifecycle.read().expect("acquire read guard");
+
+        // A concurrent drop_keyspace call must be excluded, not race the
+        // in-flight write — try_write proves it would block rather than
+        // proceed and silently discard that write.
+        assert!(
+            sm.keyspace_lifecycle.try_write().is_err(),
+            "drop_keyspace's write lock must not be obtainable while apply() holds the read side"
+        );
     }
 }

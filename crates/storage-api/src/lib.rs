@@ -472,4 +472,45 @@ pub trait StorageApi: Send + Sync {
     /// `Some(id)`, because without a leader writes will return
     /// `ForwardToLeader(None, None)` (ADR 0016-v2 §4.2).
     async fn current_leader(&self) -> Option<u64>;
+
+    /// Returns `true` if `keyspace` has been created, without creating it as
+    /// a side effect.
+    ///
+    /// Callers that maintain a rotating/time-bucketed set of keyspaces (e.g.
+    /// TTL'd session or ceremony state, to avoid unbounded growth and
+    /// tombstone buildup in a single ever-growing keyspace) use this to skip
+    /// garbage-collecting buckets that were never written to — every other
+    /// read/write method on this trait auto-creates the named keyspace on
+    /// first access, which would otherwise turn a GC sweep into a generator
+    /// of empty partitions.
+    async fn keyspace_exists(&self, keyspace: &str) -> Result<bool, StoreError>;
+
+    /// Permanently deletes an empty keyspace/partition.
+    ///
+    /// This is local storage housekeeping, not a Raft-replicated mutation: an
+    /// empty keyspace has no content observable through this trait, so
+    /// reclaiming the (now unused) partition does not itself change
+    /// state-machine output. That said, callers driving deletion off
+    /// wall-clock buckets (rather than a value already agreed on via Raft)
+    /// should not fire this from every node independently: clock skew means
+    /// a fast node can consider a bucket expired while a correctly-clocked
+    /// peer still needs to read it, and this call has no way to detect that.
+    /// Restrict such sweeps to the current leader (see
+    /// [`Self::current_leader`]) to bound the blast radius to one node at a
+    /// time.
+    ///
+    /// Implementations must reject the call — returning an error without
+    /// deleting anything — if the keyspace still contains entries, and must
+    /// never allow deletion of the core `"data"`, `"meta"`, or `"index"`
+    /// keyspaces.
+    async fn drop_keyspace(&self, keyspace: &str) -> Result<(), StoreError>;
+
+    /// Returns this node's own Raft node id.
+    ///
+    /// Combine with [`Self::current_leader`] (`current_leader().await ==
+    /// Some(node_id().await)`) to check leadership before running
+    /// node-local housekeeping — such as [`Self::drop_keyspace`] sweeps
+    /// driven by wall-clock time — that should only run on one cluster
+    /// member at a time.
+    async fn node_id(&self) -> u64;
 }
