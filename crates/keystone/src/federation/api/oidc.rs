@@ -20,9 +20,14 @@ use utoipa_axum::{router::OpenApiRouter, routes};
 
 use crate::api::error::KeystoneApiError;
 use crate::api::v4::auth::token::types::TokenResponse as KeystoneTokenResponse;
+use crate::audit::{
+    CorrelationId, build_initiator_unknown, emit_perimeter_authenticate_event, error_variant_name,
+};
 use crate::federation::api::error::OidcError;
 use crate::federation::api::types::*;
 use crate::keystone::ServiceState;
+use openstack_keystone_audit::sanitize::{HostKind, sanitize_initiator_host};
+use openstack_keystone_audit::types::Initiator;
 use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core_types::auth::AuthenticationResult;
 use openstack_keystone_core_types::mapping::auth::MappingAuthRequest;
@@ -61,10 +66,39 @@ pub(super) fn openapi_router() -> OpenApiRouter<ServiceState> {
 )]
 #[debug_handler]
 pub async fn callback(
+    CorrelationId(cid): CorrelationId,
     State(state): State<ServiceState>,
     Json(query): Json<AuthCallbackParameters>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
-    let exec = ExecutionContext::internal(&state);
+    // `idp_id` is a pre-auth signal (known as soon as the auth state / idp
+    // lookup resolves, before any token verification happens) so it is
+    // recorded as `Initiator.host` regardless of outcome (ADR 0023 §"Perimeter
+    // Auditing"). `callback_inner` reports it via `idp_id_out` as soon as it
+    // is known, even if a later step in the flow fails.
+    let mut idp_id_out: Option<String> = None;
+    let result = callback_inner(&state, query, &mut idp_id_out).await;
+    let initiator = match &idp_id_out {
+        Some(idp_id) => {
+            let host = sanitize_initiator_host(idp_id, HostKind::FederationIdpUuid)
+                .or_else(|| sanitize_initiator_host(idp_id, HostKind::FederationIdpNonUuid));
+            Initiator::new("unknown".to_string(), None, None, host)
+        }
+        None => build_initiator_unknown(),
+    };
+    let (outcome, reason) = match &result {
+        Ok(_) => ("success", None),
+        Err(e) => ("failure", Some(error_variant_name(e))),
+    };
+    emit_perimeter_authenticate_event(&state.audit_dispatcher, &cid, initiator, outcome, reason);
+    result
+}
+
+async fn callback_inner(
+    state: &ServiceState,
+    query: AuthCallbackParameters,
+    idp_id_out: &mut Option<String>,
+) -> Result<axum::response::Response, KeystoneApiError> {
+    let exec = ExecutionContext::internal(state);
     // Validate auth state
     let auth_state = state
         .provider
@@ -91,6 +125,8 @@ pub async fn callback(
                 identifier: auth_state.idp_id.clone(),
             })
         })??;
+
+    *idp_id_out = Some(idp.id.clone());
 
     if !idp.enabled {
         return Err(OidcError::IdentityProviderDisabled.into());
@@ -204,7 +240,7 @@ pub async fn callback(
     // (unscoped) or a specific project/domain scope that was requested during
     // OIDC auth init.
     let (token_str, api_token) =
-        common::build_token_response(&state, &auth_result, auth_state.scope.as_ref()).await?;
+        common::build_token_response(state, &auth_result, auth_state.scope.as_ref()).await?;
 
     tracing::trace!("Token response is {:?}", api_token);
     Ok((

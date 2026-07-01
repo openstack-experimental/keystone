@@ -357,6 +357,20 @@ impl EventDispatcher {
 /// - `on_audit_error` — closure `|AuditDispatchError| -> E` mapping pre-audit
 ///   failures to the outer error type
 ///
+/// # Failure reason extraction (Debug-format contract)
+///
+/// The `Failure` post-audit reason is extracted by formatting the error value
+/// with `{:?}` (the `Debug` trait) and taking characters up to the first `(`,
+/// `{`, or space, capped at 64 characters.  This yields the enum variant name
+/// for typical Rust error enums (e.g. `NotFound`, `Conflict`).  Error types
+/// used with this macro MUST implement `Debug` such that the variant or type
+/// name appears before any delimiter.  In particular:
+/// - Struct-like variants (e.g. `NotFound { .. }`) produce the name before `{`.
+/// - Tuple variants (e.g. `Io(std::io::Error)`) produce the name before `(`.
+/// - Unit variants (e.g. `Unauthorized`) produce the full name unchanged.
+/// - Types that produce multi-word Debug output or leading punctuation will
+///   yield a truncated or empty string — avoid using those as operation errors.
+///
 /// # Cancellation safety
 /// If the future returned by `$op` is dropped before completing, the
 /// post-audit event is never emitted.  Callers that require at-least-once

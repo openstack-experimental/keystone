@@ -159,12 +159,24 @@ impl CadfEvent {
 /// Human-readable fields (usernames, emails, project names) are excluded by
 /// design. The `host` field carries pre-auth signals; sanitization rules are
 /// enforced at construction time (see `sanitize::sanitize_initiator_host`).
+///
+/// # Serialization note
+///
+/// `project_id` and `domain_id` serialize as JSON `null` when absent.
+/// `host` is **omitted entirely** (not set to `null`) when absent, indicated
+/// by `#[serde(skip_serializing_if = "Option::is_none")]`.  SIEMs that
+/// re-serialize the received JSON to verify the HMAC signature MUST NOT
+/// insert a `"host": null` key for events that do not carry a `host` field;
+/// they must re-serialize the JSON object as received (minus the `signature`
+/// key) without adding absent keys.  See ADR-0023 §"HMAC Signing" for the
+/// full SIEM verification procedure.
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Initiator {
     id: String,
     project_id: Option<String>,
     domain_id: Option<String>,
     /// Pre-auth signal (EC2 access key, federation idp_id). No PII.
+    /// Omitted from serialization (not null'd) when absent.
     #[serde(skip_serializing_if = "Option::is_none")]
     host: Option<String>,
 }

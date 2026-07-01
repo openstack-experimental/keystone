@@ -341,22 +341,30 @@ async fn main() -> Result<(), Report> {
     );
 
     // Replay the spool file left by the previous run (at-least-once delivery).
-    struct SingleKeyStore(u64, Arc<[u8]>);
-    impl HmacKeyStore for SingleKeyStore {
+    //
+    // `MultiKeyStore` holds all key versions seen during this process lifetime.
+    // Currently only one version exists; the HashMap is pre-populated with the
+    // current key so that `replay_spool` can verify events signed by it.
+    // When key rotation is implemented, callers MUST insert the new version
+    // before calling `refresh_hmac_key` on the dispatcher — spool events
+    // written before the rotation will still carry the old version number and
+    // must remain verifiable during the drain window (ADR 0023 §"Key Rotation").
+    struct MultiKeyStore(std::collections::HashMap<u64, Arc<[u8]>>);
+    impl HmacKeyStore for MultiKeyStore {
         fn get_key(&self, version: u64) -> Option<Arc<[u8]>> {
-            if version == self.0 {
-                Some(Arc::clone(&self.1))
-            } else {
-                None
-            }
+            self.0.get(&version).map(Arc::clone)
         }
     }
+    let mut key_store = MultiKeyStore(std::collections::HashMap::new());
+    key_store
+        .0
+        .insert(AUDIT_HMAC_KEY_VERSION, Arc::clone(&audit_hmac_key));
     let spool_file = spool_path(&spool_dir, audit_cfg.node_id.as_str());
     replay_spool(
         &spool_file,
         audit_cfg.node_id.as_str(),
         &audit_dispatcher,
-        &SingleKeyStore(AUDIT_HMAC_KEY_VERSION, Arc::clone(&audit_hmac_key)),
+        &key_store,
     )
     .await
     .wrap_err("audit spool replay failed")?;
