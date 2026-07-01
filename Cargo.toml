@@ -175,10 +175,10 @@ strip = true
 debug = false
 lto = "thin"
 
-[profile.release-dev]
+[profile.skaffold]
 inherits = "release"
 lto = false
-incremental = true
+incremental = false
 codegen-units = 16
 
 [profile.dist]

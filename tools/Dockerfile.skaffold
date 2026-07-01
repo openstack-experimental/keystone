@@ -21,7 +21,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/app/target \
     cargo chef cook \
     -p openstack-keystone -p openstack-keystone-cli-manage -p test_api -p test_federation \
-    --recipe-path recipe.json --profile release-dev
+    --recipe-path recipe.json --profile skaffold
 
 COPY crates crates
 COPY tests tests
@@ -31,16 +31,16 @@ COPY Cargo.lock Cargo.lock
 # Compile keystone + keystone-manage binaries
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/app/target \
-    cargo build --profile release-dev \
+    cargo build --profile skaffold \
     -p openstack-keystone \
     -p openstack-keystone-cli-manage && \
-    cp target/release-dev/keystone /app/keystone && \
-    cp target/release-dev/keystone-manage /app/keystone-manage
+    cp target/skaffold/keystone /app/keystone && \
+    cp target/skaffold/keystone-manage /app/keystone-manage
 
 # Compile all test_api functional test binaries (single RUN for shared incremental cache)
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/app/target \
-    cargo test --profile release-dev \
+    cargo test --profile skaffold \
     -p test_api \
     -p test_federation \
     --test integration_api_v3 \
@@ -51,13 +51,13 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --test dex \
     --test github \
     --no-run && \
-    cp $(find target/release-dev/deps -name "integration_api_v3-*" -type f -executable) /app/test-api-v3 && \
-    cp $(find target/release-dev/deps -name "integration_api_v4-*" -type f -executable) /app/test-api-v4 && \
-    cp $(find target/release-dev/deps -name "k8s_auth-*" -type f -executable) /app/test-k8s-auth && \
-    cp $(find target/release-dev/deps -name "raft_spiffe-*" -type f -executable) /app/test-raft-spiffe && \
-    cp $(find target/release-dev/deps -name "keycloak-*" -type f -executable) /app/test-keycloak && \
-    cp $(find target/release-dev/deps -name "dex-*" -type f -executable) /app/test-dex && \
-    cp $(find target/release-dev/deps -name "github-*" -type f -executable) /app/test-github
+    cp $(find target/skaffold/deps -name "integration_api_v3-*" -type f -executable) /app/test-api-v3 && \
+    cp $(find target/skaffold/deps -name "integration_api_v4-*" -type f -executable) /app/test-api-v4 && \
+    cp $(find target/skaffold/deps -name "k8s_auth-*" -type f -executable) /app/test-k8s-auth && \
+    cp $(find target/skaffold/deps -name "raft_spiffe-*" -type f -executable) /app/test-raft-spiffe && \
+    cp $(find target/skaffold/deps -name "keycloak-*" -type f -executable) /app/test-keycloak && \
+    cp $(find target/skaffold/deps -name "dex-*" -type f -executable) /app/test-dex && \
+    cp $(find target/skaffold/deps -name "github-*" -type f -executable) /app/test-github
 
 # Single runtime: keystone + keystone-manage + OPA + policies + all test binaries
 FROM debian:trixie-slim
