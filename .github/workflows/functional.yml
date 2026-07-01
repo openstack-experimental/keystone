@@ -13,6 +13,7 @@ on:
       - 'loadtest/**'
       - 'crates/**'
       - 'policy/**'
+      - 'tools/Dockerfile.skaffold'
   merge_group:
 env:
   DATABASE_URL: postgresql://keystone:1234@127.0.0.1:5432/keystone
