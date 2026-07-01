@@ -46,7 +46,6 @@ use serde::Serialize;
 use crate::DataTier;
 use crate::StoreError;
 use crate::TypeConfig;
-use crate::protobuf as pb;
 use crate::protobuf::api::response::Violation;
 use crate::store_command::*;
 use crate::types::Metadata;
@@ -1600,6 +1599,40 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                                         }
                                     }
                                 }
+                                MutationInner::AbortPendingRotation { rotation_id } => {
+                                    let now = std::time::SystemTime::now()
+                                        .duration_since(std::time::UNIX_EPOCH)
+                                        .unwrap_or_default()
+                                        .as_secs();
+                                    let mut pending = self
+                                        .pending_rotations
+                                        .lock()
+                                        .unwrap_or_else(|p| p.into_inner());
+                                    // Defensive re-check: only remove if still present and
+                                    // actually expired. A ConfirmRotateDek may have raced
+                                    // ahead of the sweeper and already resolved this entry,
+                                    // or the sweeper's read may have been stale — either
+                                    // way this is a silent no-op, not a violation.
+                                    if let Some(entry) = pending.get(&rotation_id)
+                                        && entry.expires_at <= now
+                                    {
+                                        let removed = pending.remove(&rotation_id);
+                                        drop(pending);
+                                        if let Some(entry) = removed {
+                                            let meta_key =
+                                                format!("{PENDING_ROTATION_PREFIX}{rotation_id}");
+                                            batch.remove(&self.meta, meta_key.as_bytes());
+                                            tracing::warn!(
+                                                rotation_id,
+                                                initiator = entry.initiator,
+                                                expires_at = entry.expires_at,
+                                                "SECURITY: emergency DEK rotation confirmation \
+                                                 window expired with no confirmation — \
+                                                 automatically aborted (ADR 0016-v2 §6.2 step 1)"
+                                            );
+                                        }
+                                    }
+                                }
                             }
                         }
                         has_violations = !violations.is_empty();
@@ -1678,8 +1711,8 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                 .map_err(|e| io::Error::other(e.to_string()))?;
 
             if let Some(responder) = responder {
-                responder.send(pb::api::Response {
-                    value: response.0,
+                responder.send(crate::ZeroizingResponse {
+                    value: response.0.map(zeroize::Zeroizing::new),
                     violations: response.1,
                 });
             }

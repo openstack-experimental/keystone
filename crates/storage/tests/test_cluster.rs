@@ -259,6 +259,265 @@ async fn test_quarantine_committed_via_raft_inner() -> Result<()> {
     Ok(())
 }
 
+/// An `AbortPendingRotation` mutation committed via Raft removes an expired
+/// pending emergency rotation so it can no longer be confirmed — exercising
+/// the real apply() path for the confirmation-timeout sweeper (ADR 0016-v2
+/// §6.2 step 1).
+#[serial_test::serial]
+#[tracing_test::traced_test]
+#[test]
+fn test_abort_pending_rotation_via_raft() {
+    TypeConfig::run(test_abort_pending_rotation_via_raft_inner()).unwrap();
+}
+
+#[allow(unsafe_code)]
+async fn test_abort_pending_rotation_via_raft_inner() -> Result<()> {
+    let provider = rustls::crypto::aws_lc_rs::default_provider();
+    let _ = rustls::crypto::CryptoProvider::install_default(provider);
+
+    let storage_dir = tempfile::TempDir::new().unwrap();
+    let tls_configuration = make_certificates()?;
+    let ds_config = get_ds_config(104, storage_dir.path().to_path_buf(), tls_configuration);
+
+    let mut config = Config::default();
+    config.distributed_storage = Some(ds_config);
+
+    // SAFETY: no concurrent env readers; test is `#[serial_test::serial]`.
+    unsafe {
+        std::env::set_var("KEYSTONE_DEV_KEK", TEST_KEK_HEX);
+        std::env::set_var("KEYSTONE_ALLOW_ENV_KEK", "1");
+    }
+
+    let storage = init_storage(&ConfigManager::not_watched(config)).await?;
+
+    storage
+        .initialize(
+            [(
+                104u64,
+                openstack_keystone_storage_api::Node {
+                    node_id: 104,
+                    rpc_addr: "127.0.0.1:0".to_string(),
+                },
+            )]
+            .into_iter()
+            .collect(),
+        )
+        .await?;
+    for _ in 0..50 {
+        if storage.current_leader() == Some(104) {
+            break;
+        }
+        TypeConfig::sleep(Duration::from_millis(50)).await;
+    }
+    assert_eq!(storage.current_leader(), Some(104));
+
+    // Stage an emergency rotation whose confirmation window has already
+    // elapsed, exactly as the sweeper would find on its next tick.
+    let rotation_id = "test-rotation-abort".to_string();
+    let expires_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        .saturating_sub(10);
+    let create_cmd = StoreCommand::Transaction(vec![MutationInner::CreatePendingRotation {
+        rotation_id: rotation_id.clone(),
+        wrapped_dek: vec![0u8; 60],
+        dek_version: 99,
+        expires_at,
+        initiator: "spiffe://example.org/keystone/storage/operator-a".to_string(),
+    }]);
+    let create_payload = pb::api::CommandRequest::try_from(create_cmd)?;
+    storage.raft.client_write(create_payload).await?;
+
+    // The sweeper proposes exactly this mutation once the window elapses.
+    let abort_cmd = StoreCommand::Transaction(vec![MutationInner::AbortPendingRotation {
+        rotation_id: rotation_id.clone(),
+    }]);
+    let abort_payload = pb::api::CommandRequest::try_from(abort_cmd)?;
+    storage.raft.client_write(abort_payload).await?;
+
+    // The aborted rotation can no longer be confirmed.
+    let confirm_cmd = StoreCommand::Transaction(vec![MutationInner::ConfirmPendingRotation {
+        rotation_id: rotation_id.clone(),
+        confirmer: "spiffe://example.org/keystone/storage/operator-b".to_string(),
+    }]);
+    let confirm_payload = pb::api::CommandRequest::try_from(confirm_cmd)?;
+    let resp = storage.raft.client_write(confirm_payload).await?;
+    assert_eq!(
+        resp.data.violations.first().map(|v| v.r#type.as_str()),
+        Some("NOT_FOUND"),
+        "confirming an aborted rotation must fail with NOT_FOUND, got: {:?}",
+        resp.data.violations
+    );
+
+    Ok(())
+}
+
+/// A node whose `node_id` is already live on a reachable peer under a
+/// different address must refuse to start, even though its own local
+/// (empty) Raft state has no record of the conflict — exercising
+/// `verify_node_id_uniqueness_live` (ADR 0016-v2 §4.3 / F7).
+#[serial_test::serial]
+#[tracing_test::traced_test]
+#[test]
+fn test_live_uniqueness_check_detects_conflict() {
+    TypeConfig::run(test_live_uniqueness_check_detects_conflict_inner()).unwrap();
+}
+
+#[allow(unsafe_code)]
+async fn test_live_uniqueness_check_detects_conflict_inner() -> Result<()> {
+    let provider = rustls::crypto::aws_lc_rs::default_provider();
+    let _ = rustls::crypto::CryptoProvider::install_default(provider);
+
+    let tls_configuration = make_certificates()?;
+
+    // SAFETY: no concurrent env reads; test is `#[serial_test::serial]`.
+    unsafe {
+        std::env::set_var("KEYSTONE_DEV_KEK", TEST_KEK_HEX);
+        std::env::set_var("KEYSTONE_ALLOW_ENV_KEK", "1");
+    }
+
+    // Node A: bootstraps as a single-node cluster and stays live.
+    let storage_dir_a = tempfile::TempDir::new().unwrap();
+    let ds_config_a = get_ds_config(
+        200,
+        storage_dir_a.path().to_path_buf(),
+        tls_configuration.clone(),
+    );
+    let mut config_a = Config::default();
+    config_a.distributed_storage = Some(ds_config_a);
+
+    let storage_a = init_storage(&ConfigManager::not_watched(config_a.clone())).await?;
+
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
+    let stg_a = storage_a.clone();
+    let cfg_a = config_a.clone();
+    let _srv = std::thread::spawn(move || {
+        let mut rt = AsyncRuntimeOf::<TypeConfig>::new(1);
+        rt.block_on(async {
+            let ds = cfg_a.distributed_storage.as_ref().expect("ds config");
+            let tls = get_server_tls_config(&cfg_a).unwrap();
+            let mut s = tonic::transport::Server::builder().tls_config(tls).unwrap();
+            let serve = s
+                .add_routes(get_app_server(&stg_a).await.unwrap())
+                .serve(ds.node_listener_addr);
+            tokio::select! {
+                _ = serve => {},
+                _ = shutdown_rx => {},
+            }
+        });
+    });
+    TypeConfig::sleep(Duration::from_millis(200)).await;
+
+    let tls_client_config = get_client_tls_config(&config_a)?;
+    let mut admin_client = new_admin_client(
+        config_a
+            .distributed_storage
+            .as_ref()
+            .unwrap()
+            .node_cluster_addr
+            .clone(),
+        &tls_client_config,
+    )
+    .await?;
+    admin_client
+        .init(pb::raft::InitRequest {
+            nodes: vec![new_node(200)],
+        })
+        .await?;
+    wait_for_leader(&mut admin_client, 200).await;
+
+    // Node B: same node_id (200), different address, fresh (empty) local
+    // storage — its own local check has nothing to compare against, but
+    // retry_join_nodes points at node A's live, reachable address.
+    let storage_dir_b = tempfile::TempDir::new().unwrap();
+    let mut ds_config_b = get_ds_config_with_port(
+        200,
+        50,
+        storage_dir_b.path().to_path_buf(),
+        tls_configuration,
+    );
+    ds_config_b.retry_join_nodes = vec![(200, get_addr(200).to_string())];
+    let mut config_b = Config::default();
+    config_b.distributed_storage = Some(ds_config_b);
+
+    // from_env() removes KEYSTONE_DEV_KEK after reading it, so it must be
+    // re-set before every init_storage call in this process.
+    unsafe {
+        std::env::set_var("KEYSTONE_DEV_KEK", TEST_KEK_HEX);
+        std::env::set_var("KEYSTONE_ALLOW_ENV_KEK", "1");
+    }
+    let result = init_storage(&ConfigManager::not_watched(config_b)).await;
+
+    // Clean up node A's server before asserting, so a failure doesn't leak
+    // the thread/port into subsequent tests.
+    drop(admin_client);
+    drop(tls_client_config);
+    drop(storage_a);
+    let _ = shutdown_tx.send(());
+    _srv.join().ok();
+
+    let Err(err) = result else {
+        panic!(
+            "init_storage must refuse to start when a live peer reports the same \
+             node_id at a different address"
+        );
+    };
+    assert!(
+        format!("{err:?}").contains("already registered")
+            || format!("{err:?}").contains("is registered at"),
+        "unexpected error: {err:?}"
+    );
+
+    Ok(())
+}
+
+/// When `retry_join_nodes` is configured but every listed peer is
+/// unreachable, `init_storage` must still start rather than refuse — a
+/// strict fail-closed policy here would make it impossible to recover from
+/// a full-cluster outage where every node restarts simultaneously with no
+/// live peer to ask (ADR 0016-v2 §4.3 / F7, deliberate deviation
+/// documented on `verify_node_id_uniqueness_live`).
+#[serial_test::serial]
+#[tracing_test::traced_test]
+#[test]
+fn test_live_uniqueness_check_proceeds_when_no_peer_reachable() {
+    TypeConfig::run(test_live_uniqueness_check_proceeds_when_no_peer_reachable_inner()).unwrap();
+}
+
+#[allow(unsafe_code)]
+async fn test_live_uniqueness_check_proceeds_when_no_peer_reachable_inner() -> Result<()> {
+    let provider = rustls::crypto::aws_lc_rs::default_provider();
+    let _ = rustls::crypto::CryptoProvider::install_default(provider);
+
+    let storage_dir = tempfile::TempDir::new().unwrap();
+    let tls_configuration = make_certificates()?;
+    let mut ds_config = get_ds_config(210, storage_dir.path().to_path_buf(), tls_configuration);
+    // Points at an address with nothing listening — every contact attempt
+    // must fail, exercising the "no peer reachable" branch.
+    ds_config.retry_join_nodes = vec![(210, "127.0.0.1:21999".to_string())];
+
+    let mut config = Config::default();
+    config.distributed_storage = Some(ds_config);
+
+    // SAFETY: no concurrent env readers; test is `#[serial_test::serial]`.
+    unsafe {
+        std::env::set_var("KEYSTONE_DEV_KEK", TEST_KEK_HEX);
+        std::env::set_var("KEYSTONE_ALLOW_ENV_KEK", "1");
+    }
+
+    init_storage(&ConfigManager::not_watched(config))
+        .await
+        .map_err(|e| {
+            eyre::eyre!(
+                "init_storage must proceed (with a warning) when no configured peer is \
+                 reachable, not refuse to start: {e}"
+            )
+        })?;
+
+    Ok(())
+}
+
 #[allow(unsafe_code)]
 async fn test_node_restart_inner() -> Result<()> {
     let provider = rustls::crypto::aws_lc_rs::default_provider();

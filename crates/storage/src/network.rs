@@ -138,9 +138,15 @@ impl tower::Service<http::Uri> for SpiffeConnector {
             let connector = tokio_rustls::TlsConnector::from(tls);
             // `SpiffeServerCertVerifier` validates the peer's SPIFFE URI SAN and
             // ignores the DNS server name, so any valid constant name is fine here.
-            let server_name =
-                rustls::pki_types::ServerName::try_from("keystone-raft-peer.internal")
-                    .expect("constant DNS name is valid");
+            let server_name = rustls::pki_types::ServerName::try_from(
+                "keystone-raft-peer.internal",
+            )
+            .map_err(|e| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    format!("constant DNS name invalid: {e}"),
+                )
+            })?;
             let tls_stream = connector.connect(server_name, tcp).await?;
             Ok(hyper_util::rt::TokioIo::new(tls_stream))
         })

@@ -206,6 +206,22 @@ pub enum MutationInner {
         /// Peer TLS identity of the confirming operator.
         confirmer: String,
     },
+
+    /// Automatic confirmation-timeout abort for an emergency DEK rotation
+    /// (ADR §6.2 step 1).
+    ///
+    /// Proposed by the leader's background sweeper when a pending rotation's
+    /// 5-minute confirmation window elapses with no `ConfirmRotateDek` call.
+    /// On apply: removes the entry from `_meta:rotation:pending:<id>` and the
+    /// in-memory map only if it is still present and actually expired —
+    /// defensive re-check since the proposal may have been built from a
+    /// stale sweep read. No-op (not a violation) if the entry is missing or
+    /// not yet expired, since a `ConfirmRotateDek` may have raced ahead of
+    /// the sweep and already resolved it.
+    AbortPendingRotation {
+        /// UUID v4 identifier from `CreatePendingRotation`.
+        rotation_id: String,
+    },
 }
 
 impl MutationInner {

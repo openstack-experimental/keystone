@@ -67,6 +67,7 @@ spiffe-rustls.workspace = true
 thiserror.workspace = true
 tokio-rustls.workspace = true
 tonic = { workspace = true, features = ["router", "_tls-any"] }
+zeroize = "1"
 tonic-prost.workspace = true
 tower.workspace = true
 tracing.workspace = true

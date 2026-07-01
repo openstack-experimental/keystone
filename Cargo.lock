@@ -4118,6 +4118,7 @@ dependencies = [
  "tracing-test",
  "uuid",
  "x509-parser 0.18.1",
+ "zeroize",
 ]
 
 [[package]]

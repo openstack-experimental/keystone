@@ -22,7 +22,7 @@ impl TryFrom<pb::raft::AdminResponse> for ClientWriteResponse {
                 .log_id
                 .ok_or_else(|| StoreError::RaftMissingParameter("AdminResponse.LogId".into()))?
                 .into(),
-            data: r.data.unwrap_or_default(),
+            data: r.data.map(Into::into).unwrap_or_default(),
             membership: r.membership.map(|mem| mem.try_into()).transpose()?,
         })
     }
@@ -32,7 +32,7 @@ impl From<ClientWriteResponse> for pb::raft::AdminResponse {
     fn from(r: ClientWriteResponse) -> Self {
         pb::raft::AdminResponse {
             log_id: Some(r.log_id.into()),
-            data: Some(r.data),
+            data: Some(r.data.into()),
             membership: r.membership.map(|mem| mem.into()),
             pending_rotation_id: String::new(),
         }

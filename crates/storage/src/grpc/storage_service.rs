@@ -82,7 +82,9 @@ impl StorageService for StorageServiceImpl {
                 Status::internal(format!("Failed to write command to store: {}", e))
             })?;
 
-        Ok(Response::new(res.data))
+        // Convert right before the wire boundary, so the zeroizing wrapper
+        // is held as long as possible (ADR 0016-v2 §8).
+        Ok(Response::new(res.data.into()))
     }
 
     /// Handles a forwarded get request from a follower.

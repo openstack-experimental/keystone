@@ -36,12 +36,11 @@ use crate::StorageApi;
 use crate::StoreError;
 use crate::StoreResponse;
 use crate::Violation;
-use crate::audit::AuditForwarder;
+use crate::audit::{AuditForwarder, AuditRecord};
 use crate::grpc::cluster_admin_service::ClusterAdminServiceImpl;
 use crate::grpc::raft_service::RaftServiceImpl;
 use crate::grpc::storage_service::StorageServiceImpl;
 use crate::network::{CertExpiryWatchdog, NetworkManager, RaftTlsClient, init_tls_watcher};
-use crate::pb::api::Response;
 use crate::pb::raft::cluster_admin_service_server::ClusterAdminServiceServer;
 use crate::pb::raft::raft_service_server::RaftServiceServer;
 use crate::protobuf::api::storage_service_client::StorageServiceClient;
@@ -120,6 +119,98 @@ async fn check_node_id_uniqueness(
 
     tracing::debug!(node_id, rpc_addr, "node_id uniqueness check passed");
     Ok(())
+}
+
+/// Best-effort live verification of node_id uniqueness against a reachable
+/// cluster peer's *current* membership (ADR 0016-v2 §4.3 / F7).
+///
+/// `check_node_id_uniqueness` only reads this node's own persisted Raft
+/// state, which cannot detect a conflict that appeared on the live cluster
+/// while this node was offline (e.g. its old `(node_id, rpc_addr)` was
+/// reused by a misconfigured or impersonating node during an outage).
+///
+/// Returns:
+/// - `Ok(true)` if at least one configured peer was reached and its live
+///   membership confirms no conflict.
+/// - `Ok(false)` if no configured peer could be reached at all —
+///   verification is inconclusive. The caller should log a prominent
+///   warning but proceed rather than refuse to start: treating "no peer
+///   reachable" as fail-closed would make it impossible to recover from a
+///   full-cluster outage where every node restarts simultaneously with no
+///   live peer to ask (the ADR's literal fail-closed wording does not
+///   distinguish that case from an active network partition, so this is a
+///   deliberate, documented deviation in favor of cluster recoverability).
+/// - `Err` if a reachable peer's live membership shows an actual
+///   `(node_id, rpc_addr)` conflict — a real, actionable signal, so this
+///   remains fail-closed.
+async fn verify_node_id_uniqueness_live(
+    tls_client: &RaftTlsClient,
+    node_id: u64,
+    rpc_addr: &str,
+    peers: &[(u64, String)],
+) -> Result<bool, StoreError> {
+    const PEER_CONTACT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+    let check_addr = normalize_rpc_addr(rpc_addr);
+
+    for (_peer_id, peer_addr) in peers {
+        // Skip only entries that are literally our own address — NOT
+        // entries that share our node_id, since a peer advertising our
+        // node_id at a *different* address is exactly the conflict this
+        // check must detect (skipping on node_id would defeat the purpose
+        // whenever a misconfigured node's own retry_join_nodes list still
+        // contains the entry for the id it is impersonating).
+        if normalize_rpc_addr(peer_addr) == check_addr {
+            continue;
+        }
+
+        let attempt = async {
+            let channel = tls_client.connect(peer_addr).await?;
+            let mut client = ClusterAdminServiceClient::new(channel);
+            client
+                .metrics(())
+                .await
+                .map(|resp| resp.into_inner())
+                .map_err(|s| StoreError::Other(eyre!("metrics RPC failed: {s}")))
+        };
+
+        let metrics = match tokio::time::timeout(PEER_CONTACT_TIMEOUT, attempt).await {
+            Ok(Ok(metrics)) => metrics,
+            Ok(Err(e)) => {
+                tracing::debug!(peer_addr, error = %e, "peer unreachable during live uniqueness check");
+                continue;
+            }
+            Err(_) => {
+                tracing::debug!(peer_addr, "peer live uniqueness check timed out");
+                continue;
+            }
+        };
+
+        if let Some(membership) = metrics.membership {
+            for (nid, node) in &membership.nodes {
+                if *nid == node_id && normalize_rpc_addr(&node.rpc_addr) != check_addr {
+                    tracing::error!(
+                        node_id,
+                        rpc_addr,
+                        existing_addr = node.rpc_addr,
+                        peer_addr,
+                        "FATAL: live peer reports node_id already registered at a \
+                         different address"
+                    );
+                    return Err(StoreError::Other(eyre!(
+                        "FATAL: node_id {node_id} is registered at {} per live peer {peer_addr}; \
+                         refusing to start with address {rpc_addr}",
+                        node.rpc_addr
+                    )));
+                }
+            }
+        }
+
+        // Reached a peer and found no conflict — verification complete;
+        // no need to contact additional peers.
+        return Ok(true);
+    }
+
+    Ok(false)
 }
 
 /// Initialize storage services backed by the raft.
@@ -224,6 +315,34 @@ pub async fn init_storage(config_manager: &Arc<ConfigManager>) -> Result<Arc<Sto
     let rpc_addr = ds_config.node_cluster_addr.to_string();
     check_node_id_uniqueness(&raft, ds_config.node_id, &rpc_addr).await?;
 
+    // Additionally verify against a live peer's current membership, since
+    // the local check above cannot detect a conflict that appeared while
+    // this node was offline (ADR 0016-v2 §4.3 / F7).
+    if !ds_config.retry_join_nodes.is_empty() {
+        match verify_node_id_uniqueness_live(
+            &tls_client,
+            ds_config.node_id,
+            &rpc_addr,
+            &ds_config.retry_join_nodes,
+        )
+        .await
+        {
+            Ok(true) => {
+                tracing::debug!("node_id uniqueness verified against a live cluster peer");
+            }
+            Ok(false) => {
+                tracing::warn!(
+                    node_id = ds_config.node_id,
+                    "SECURITY: could not verify node_id uniqueness against any live peer \
+                     (ADR 0016-v2 §4.3); proceeding on local state only. If this is a \
+                     network partition rather than a full-cluster restart, a duplicate \
+                     node_id may go undetected until Raft consensus surfaces it."
+                );
+            }
+            Err(e) => return Err(e),
+        }
+    }
+
     // Derive the per-node audit HMAC key from the current DEK epoch (ADR §3.1).
     let audit_key = {
         let guard = current_dek.read().unwrap_or_else(|p| p.into_inner());
@@ -290,6 +409,84 @@ pub async fn init_storage(config_manager: &Arc<ConfigManager>) -> Result<Arc<Sto
                         "failed to propose quarantine via Raft; local quarantine \
                          remains in effect, cluster-wide visibility delayed"
                     );
+                }
+            }
+        });
+    }
+
+    // Emergency-rotation confirmation-timeout sweeper (ADR 0016-v2 §6.2
+    // step 1): only the current leader proactively aborts pending
+    // emergency rotations whose 5-minute confirmation window has elapsed
+    // with no ConfirmRotateDek, so the abort and its audit trail don't
+    // depend on some future RPC happening to touch the same rotation_id.
+    // Runs on every node but is a no-op unless that node is leader, so
+    // exactly one abort (and one audit record) is produced per timeout.
+    {
+        let storage_weak = Arc::downgrade(&storage);
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
+            loop {
+                interval.tick().await;
+                let Some(storage) = storage_weak.upgrade() else {
+                    break;
+                };
+                if storage.current_leader() != Some(storage.node_id()) {
+                    continue;
+                }
+
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
+                let expired: Vec<crate::store_command::PendingRotation> = {
+                    let pending = storage
+                        .pending_rotations
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner());
+                    pending
+                        .values()
+                        .filter(|e| e.expires_at <= now)
+                        .cloned()
+                        .collect()
+                };
+
+                for entry in expired {
+                    let cmd =
+                        StoreCommand::Transaction(vec![MutationInner::AbortPendingRotation {
+                            rotation_id: entry.rotation_id.clone(),
+                        }]);
+                    let Ok(payload) = crate::pb::api::CommandRequest::try_from(cmd) else {
+                        continue;
+                    };
+                    match storage.write_command_to_storage(payload).await {
+                        Ok(_) => {
+                            storage.audit_forwarder.emit(AuditRecord::now(
+                                "DEK_ROTATION_EMERGENCY_ABORTED",
+                                &entry.initiator,
+                                storage.node_id(),
+                                entry.dek_version,
+                                serde_json::json!({
+                                    "rotation_id": entry.rotation_id,
+                                    "expires_at": entry.expires_at,
+                                    "reason": "confirmation window expired with no \
+                                               ConfirmRotateDek",
+                                }),
+                            ));
+                            tracing::warn!(
+                                rotation_id = entry.rotation_id,
+                                initiator = entry.initiator,
+                                "SECURITY: emergency DEK rotation confirmation window \
+                                 expired; automatically aborted"
+                            );
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                rotation_id = entry.rotation_id,
+                                error = %e,
+                                "failed to propose AbortPendingRotation via Raft"
+                            );
+                        }
+                    }
                 }
             }
         });
@@ -659,7 +856,7 @@ impl StorageApi for Storage {
         key: String,
         keyspace: Option<String>,
     ) -> Result<StoreResponse, ApiStoreError> {
-        let response: Response = {
+        let response: crate::ZeroizingResponse = {
             let inner =
                 MutationInner::convert(Mutation::remove(key.into_bytes(), keyspace.clone(), None))?;
             let request = StoreCommand::Transaction(vec![inner]);
@@ -677,7 +874,7 @@ impl StorageApi for Storage {
     /// # Returns
     /// A `Result` containing the `StoreResponse`, or an `ApiStoreError`.
     async fn remove_index(&self, key: String) -> Result<StoreResponse, ApiStoreError> {
-        let response: Response = {
+        let response: crate::ZeroizingResponse = {
             let request = StoreCommand::Transaction(vec![MutationInner::RemoveIndex {
                 key: key.into_bytes(),
             }]);
@@ -997,11 +1194,11 @@ impl Storage {
     /// - `command`: A command to apply to the cluster.
     ///
     /// # Returns
-    /// A `Result` containing the `Response`, or a `StoreError`.
+    /// A `Result` containing the `ZeroizingResponse`, or a `StoreError`.
     async fn write_command_to_storage(
         &self,
         command: crate::pb::api::CommandRequest,
-    ) -> Result<Response, StoreError> {
+    ) -> Result<crate::ZeroizingResponse, StoreError> {
         match self.raft.client_write(command.clone()).await {
             Ok(rsp) => {
                 let rsp = rsp.data;
@@ -1054,13 +1251,13 @@ impl Storage {
     /// - `node_addr`: The cluster node address.
     ///
     /// # Returns
-    /// A `Result` containing the `Response`, or a `StoreError`.
+    /// A `Result` containing the `ZeroizingResponse`, or a `StoreError`.
     async fn command_with_forwarding(
         &self,
         command: crate::pb::api::CommandRequest,
         node_id: u64,
         node_addr: String,
-    ) -> Result<Response, StoreError> {
+    ) -> Result<crate::ZeroizingResponse, StoreError> {
         let max_retries = 3;
 
         let mut node_addr = node_addr;
@@ -1084,7 +1281,13 @@ impl Storage {
                             description: v.description.clone(),
                         });
                     }
-                    return Ok(resp);
+                    // Wrap the deserialized wire response in the zeroizing
+                    // type so it's scrubbed on drop for the rest of its
+                    // lifetime in this process (ADR 0016-v2 §8).
+                    return Ok(crate::ZeroizingResponse {
+                        value: resp.value.map(zeroize::Zeroizing::new),
+                        violations: resp.violations,
+                    });
                 }
                 Err(status) if status.code() == Code::Unavailable => {
                     // Extract leader endpoint from gRPC metadata
@@ -1124,10 +1327,14 @@ impl Storage {
     }
 }
 
-/// Convert protobuf `Response` to lightweight `StoreResponse`.
-fn rb_resp_to_store_response(resp: Response) -> StoreResponse {
+/// Convert the internal `ZeroizingResponse` to the public `StoreResponse`.
+///
+/// This is the legitimate hand-off point to the caller: the plaintext
+/// leaves the zeroizing wrapper here because the caller needs an owned,
+/// ordinary `Vec<u8>` to use (e.g. deserialize into a typed struct).
+fn rb_resp_to_store_response(resp: crate::ZeroizingResponse) -> StoreResponse {
     StoreResponse {
-        value: resp.value,
+        value: resp.value.map(|v| v.to_vec()),
         violations: resp
             .violations
             .into_iter()
