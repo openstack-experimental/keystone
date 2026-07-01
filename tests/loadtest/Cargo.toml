@@ -10,6 +10,9 @@ dist = false
 goose = { version = "^0.18" }
 tokio = { version = "1.49" }
 openstack_sdk = { version = "^0.22", default-features = false, features = ["async", "identity"] }
+reqwest = { version = "0.12", features = ["json"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4"] }
 
 [[bin]]
 name="load_test"

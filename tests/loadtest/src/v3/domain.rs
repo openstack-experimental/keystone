@@ -12,7 +12,23 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-pub(crate) mod auth;
-pub(crate) mod domain;
-pub(crate) mod project;
-pub(crate) mod user;
+use goose::prelude::*;
+
+use crate::Session;
+
+/// List all domains (read-heavy scenario transaction).
+pub async fn list(user: &mut GooseUser) -> TransactionResult {
+    let session = user.get_session_data_unchecked::<Session>();
+    let token = session.token.clone();
+
+    let req = user
+        .get_request_builder(&GooseMethod::Get, "/v3/domains")?
+        .header("x-auth-token", &token);
+
+    let goose_request = GooseRequest::builder()
+        .set_request_builder(req)
+        .build();
+
+    user.request(goose_request).await?;
+    Ok(())
+}

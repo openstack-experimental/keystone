@@ -20,13 +20,13 @@ use crate::Session;
 
 const DEFAULT_DOMAIN_ID: &str = "default";
 
-/// List all users (read-heavy scenario transaction).
+/// List all projects (read-heavy scenario transaction).
 pub async fn list(user: &mut GooseUser) -> TransactionResult {
     let session = user.get_session_data_unchecked::<Session>();
     let token = session.token.clone();
 
     let req = user
-        .get_request_builder(&GooseMethod::Get, "/v3/users")?
+        .get_request_builder(&GooseMethod::Get, "/v3/projects")?
         .header("x-auth-token", &token);
 
     let goose_request = GooseRequest::builder()
@@ -37,28 +37,28 @@ pub async fn list(user: &mut GooseUser) -> TransactionResult {
     Ok(())
 }
 
-/// Create a user owned by this virtual user (on_start for UserCRUD scenario).
+/// Create a project owned by this virtual user (on_start for ProjectCRUD scenario).
 pub async fn create(user: &mut GooseUser) -> TransactionResult {
     let session = user.get_session_data_unchecked::<Session>();
     let token = session.token.clone();
 
-    let name = format!("loadtest-user-{}", Uuid::new_v4().as_simple());
+    let name = format!("loadtest-project-{}", Uuid::new_v4().as_simple());
     let body = json!({
-        "user": {
+        "project": {
             "name": name,
             "domain_id": DEFAULT_DOMAIN_ID,
             "enabled": true,
-            "password": Uuid::new_v4().to_string()
+            "is_domain": false
         }
     });
 
     let req = user
-        .get_request_builder(&GooseMethod::Post, "/v3/users")?
+        .get_request_builder(&GooseMethod::Post, "/v3/projects")?
         .header("x-auth-token", &token)
         .json(&body);
 
     let goose_request = GooseRequest::builder()
-        .name("POST /v3/users (setup)")
+        .name("POST /v3/projects (setup)")
         .set_request_builder(req)
         .build();
 
@@ -67,7 +67,7 @@ pub async fn create(user: &mut GooseUser) -> TransactionResult {
         Ok(r) => r,
         Err(e) => {
             return user.set_failure(
-                &format!("user create failed: {e}"),
+                &format!("project create failed: {e}"),
                 &mut goose.request,
                 None,
                 None,
@@ -77,7 +77,7 @@ pub async fn create(user: &mut GooseUser) -> TransactionResult {
 
     if !response.status().is_success() {
         return user.set_failure(
-            &format!("user create returned {}", response.status()),
+            &format!("project create returned {}", response.status()),
             &mut goose.request,
             None,
             None,
@@ -85,30 +85,30 @@ pub async fn create(user: &mut GooseUser) -> TransactionResult {
     }
 
     let val: serde_json::Value = response.json().await.unwrap_or_default();
-    let user_id = val["user"]["id"].as_str().map(str::to_owned);
+    let project_id = val["project"]["id"].as_str().map(str::to_owned);
 
     let session = user.get_session_data_unchecked_mut::<Session>();
-    session.user_id = user_id;
+    session.project_id = project_id;
 
     Ok(())
 }
 
-/// Show the user owned by this virtual user.
+/// Show the project owned by this virtual user.
 pub async fn show(user: &mut GooseUser) -> TransactionResult {
     let session = user.get_session_data_unchecked::<Session>();
     let token = session.token.clone();
-    let user_id = match &session.user_id {
+    let project_id = match &session.project_id {
         Some(id) => id.clone(),
         None => return Ok(()),
     };
 
-    let path = format!("/v3/users/{user_id}");
+    let path = format!("/v3/projects/{project_id}");
     let req = user
         .get_request_builder(&GooseMethod::Get, &path)?
         .header("x-auth-token", &token);
 
     let goose_request = GooseRequest::builder()
-        .name("GET /v3/users/:id")
+        .name("GET /v3/projects/:id")
         .set_request_builder(req)
         .build();
 
@@ -116,29 +116,29 @@ pub async fn show(user: &mut GooseUser) -> TransactionResult {
     Ok(())
 }
 
-/// Delete the user owned by this virtual user (on_stop for UserCRUD scenario).
+/// Delete the project owned by this virtual user (on_stop for ProjectCRUD scenario).
 pub async fn delete(user: &mut GooseUser) -> TransactionResult {
     let session = user.get_session_data_unchecked::<Session>();
     let token = session.token.clone();
-    let user_id = match &session.user_id {
+    let project_id = match &session.project_id {
         Some(id) => id.clone(),
         None => return Ok(()),
     };
 
-    let path = format!("/v3/users/{user_id}");
+    let path = format!("/v3/projects/{project_id}");
     let req = user
         .get_request_builder(&GooseMethod::Delete, &path)?
         .header("x-auth-token", &token);
 
     let goose_request = GooseRequest::builder()
-        .name("DELETE /v3/users/:id (teardown)")
+        .name("DELETE /v3/projects/:id (teardown)")
         .set_request_builder(req)
         .build();
 
     user.request(goose_request).await?;
 
     let session = user.get_session_data_unchecked_mut::<Session>();
-    session.user_id = None;
+    session.project_id = None;
 
     Ok(())
 }
