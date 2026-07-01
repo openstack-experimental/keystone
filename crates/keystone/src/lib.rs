@@ -101,6 +101,7 @@ pub mod provider;
 pub mod resource;
 pub mod revoke;
 pub mod role;
+pub mod scim;
 pub mod server;
 pub mod token;
 pub mod trust;

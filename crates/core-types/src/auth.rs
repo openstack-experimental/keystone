@@ -139,6 +139,26 @@ pub enum AuthenticationError {
     #[error("The password is expired for user: {0}")]
     UserPasswordExpired(String),
 
+    /// An API Key's Unified Mapping Engine (ADR 0020) evaluation resolved
+    /// zero authorizations. Per ADR 0021 Invariant 1, this MUST fail
+    /// authentication rather than produce an unscoped, role-less context
+    /// that would push the access decision onto downstream OPA coverage.
+    #[error("API key resolved no authorizations")]
+    NoAuthorizationsFound,
+
+    /// An API Key's mapping resolved to more than one authorization entry.
+    /// Per ADR 0021 Invariant 2, an Ephemeral Security Context must operate
+    /// under exactly one scope.
+    #[error("API key resolved multiple authorizations; only a single scope is permitted")]
+    MultipleScopesForbidden,
+
+    /// An API Key's mapping resolved to `Authorization::System`. Per ADR
+    /// 0021 Invariant 3, system scope is prohibited at API-Key ingress; the
+    /// write-time prohibition (ADR 0021 §6.C) is defense-in-depth, not a
+    /// substitute for this runtime check.
+    #[error("system scope is forbidden for API-Key ingress")]
+    SystemScopeForbiddenForApiKey,
+
     /// A role assignment failed to convert to a valid RoleRef.
     #[error("role assignment cannot be converted to a role reference")]
     RoleConversionFailed,

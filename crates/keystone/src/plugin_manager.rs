@@ -24,6 +24,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use openstack_keystone_config::Config;
+use openstack_keystone_core::api_key::ApiKeyProviderError;
+use openstack_keystone_core::api_key::backend::ApiKeyBackend;
 use openstack_keystone_core::application_credential::{
     ApplicationCredentialProviderError, backend::ApplicationCredentialBackend,
 };
@@ -58,6 +60,8 @@ pub use openstack_keystone_core::plugin_manager::*;
 /// trait during the service start.
 #[derive(Clone)]
 pub struct PluginManager {
+    /// API Key backend plugins.
+    api_key_backends: HashMap<String, Arc<dyn ApiKeyBackend>>,
     /// Application credentials backend plugin.
     application_credential_backends: HashMap<String, Arc<dyn ApplicationCredentialBackend>>,
     /// Assignments backend plugin.
@@ -89,6 +93,26 @@ pub struct PluginManager {
 }
 
 impl PluginManagerApi for PluginManager {
+    /// Get registered API Key backend.
+    ///
+    /// # Parameters
+    /// * `name` - The name of the backend to retrieve.
+    ///
+    /// # Returns
+    /// A `Result` containing a reference to the `ApiKeyBackend` if found, or
+    /// an `ApiKeyProviderError`.
+    #[allow(clippy::borrowed_box)]
+    fn get_api_key_backend<S: AsRef<str>>(
+        &self,
+        name: S,
+    ) -> Result<&Arc<dyn ApiKeyBackend>, ApiKeyProviderError> {
+        self.api_key_backends
+            .get(name.as_ref())
+            .ok_or(ApiKeyProviderError::UnsupportedDriver(
+                name.as_ref().to_string(),
+            ))
+    }
+
     /// Get registered application credential backend.
     ///
     /// # Parameters
@@ -363,6 +387,16 @@ impl PluginManagerApi for PluginManager {
             ))
     }
 
+    /// Register API Key backend.
+    ///
+    /// # Parameters
+    /// * `name` - The name of the backend to register.
+    /// * `plugin` - The backend implementation to register.
+    fn register_api_key_backend<S: AsRef<str>>(&mut self, name: S, plugin: Arc<dyn ApiKeyBackend>) {
+        self.api_key_backends
+            .insert(name.as_ref().to_string(), plugin);
+    }
+
     /// Register application credential backend.
     ///
     /// # Parameters
@@ -605,6 +639,7 @@ impl PluginManager {
     /// A new instance of `PluginManager`.
     pub fn with_config(config: &Config) -> Self {
         let mut slf = Self {
+            api_key_backends: HashMap::new(),
             application_credential_backends: HashMap::new(),
             assignment_backends: HashMap::new(),
             catalog_backends: HashMap::new(),
@@ -634,6 +669,10 @@ impl PluginManager {
         slf.register_mapping_backend(
             "raft",
             Arc::new(openstack_keystone_mapping_driver_raft::RaftBackend::default()),
+        );
+        slf.register_api_key_backend(
+            "raft",
+            Arc::new(openstack_keystone_api_key_driver_raft::RaftBackend::default()),
         );
         slf
     }

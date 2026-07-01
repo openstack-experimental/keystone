@@ -72,6 +72,7 @@ use openstack_keystone::provider::Provider;
 use openstack_keystone::resource::ResourceHook;
 use openstack_keystone::revoke::RevokeHook;
 use openstack_keystone::role::RoleHook;
+use openstack_keystone::scim;
 use openstack_keystone::server::listener::{raft_grpc, spiffe_tls, spiffe_tls_uds};
 use openstack_keystone::token::TokenHook;
 use openstack_keystone::trust::TrustHook;
@@ -547,6 +548,10 @@ async fn main() -> Result<(), Report> {
     } else {
         info!("Not enabling the WebAuthN extension due to the `config.webauthn.enabled` flag.");
     }
+
+    // SCIM ingress sub-router (ADR 0021 §4): mounted independently of
+    // `/v3`/`/v4` so that only these routes accept API-Key bearer tokens.
+    app = app.nest("/SCIM/v2", scim::router().with_state(shared_state.clone()));
 
     app = app
         .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", openapi))

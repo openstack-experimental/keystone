@@ -14,6 +14,7 @@
 //! # Keystone state
 use std::sync::Arc;
 
+use governor::{DefaultKeyedRateLimiter, Quota, RateLimiter};
 use sea_orm::DatabaseConnection;
 use tracing::info;
 
@@ -51,6 +52,11 @@ pub struct Service {
     /// Distributed storage instance (when configured).
     pub storage: Option<Arc<dyn StorageApi>>,
 
+    /// Sliding-window rate limiter for the API Key (SCIM ingress)
+    /// authentication path, keyed on `lookup_hash` (or source IP when the
+    /// presented token fails the format check) (ADR 0021 §6.A).
+    pub api_key_rate_limiter: Arc<DefaultKeyedRateLimiter<String>>,
+
     /// Shutdown flag.
     pub shutdown: bool,
 }
@@ -80,6 +86,21 @@ impl Service {
         audit_dispatcher: Arc<AuditDispatcher>,
         storage: Option<Arc<dyn StorageApi>>,
     ) -> Result<Self, KeystoneError> {
+        let api_key_cfg = cfg.config.read().await.api_key.clone();
+        let quota = Quota::per_minute(
+            api_key_cfg
+                .rate_limit_replenish_per_minute
+                .try_into()
+                .unwrap_or(std::num::NonZeroU32::MAX),
+        )
+        .allow_burst(
+            api_key_cfg
+                .rate_limit_burst_size
+                .try_into()
+                .unwrap_or(std::num::NonZeroU32::MAX),
+        );
+        let api_key_rate_limiter = Arc::new(RateLimiter::keyed(quota));
+
         Ok(Self {
             config_manager: cfg,
             provider,
@@ -88,6 +109,7 @@ impl Service {
             db,
             policy_enforcer,
             storage,
+            api_key_rate_limiter,
             shutdown: false,
         })
     }

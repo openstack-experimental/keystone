@@ -1,5 +1,6 @@
 [workspace]
 members = [
+  "crates/api-key-driver-raft",
   "crates/api-types",
   "crates/audit",
   "crates/appcred-driver-sql",
@@ -56,9 +57,11 @@ exclude = [
 [workspace.dependencies]
 aes-gcm = { version = "0.11" }
 arc-swap = { version = "1.7" }
+argon2 = { version = "0.5" }
 async-trait = { version = "0.1" }
 axum = { version = "0.8", default-features = false }
 axum-server = { version = "0.8", default-features = false }
+crc32fast = { version = "1.4" }
 base64 = { version = "0.22" }
 base64urlsafedata = "0.5"
 bcrypt = { version = "0.19" }
@@ -84,11 +87,14 @@ hyper-util = { version = "0.1" }
 hkdf = { version = "0.13" }
 hmac = { version = "0.13" }
 inventory = { version = "0.3" }
+ipnet = { version = "2" }
 itertools = { version = "0.15" }
 mockall = { version = "0.15" }
 mockall_double = { version = "0.3" }
 nix = { version = "0.31", default-features = false }
+openidconnect = { version = "4.0" }
 openraft = { version = "=0.10.0-alpha.27" }
+openstack-keystone-api-key-driver-raft = { version = "0.1", path = "crates/api-key-driver-raft/" }
 openstack-keystone-api-types = { version = "0.1", features = ["openapi", "validate", "conv"], path = "crates/api-types" }
 openstack-keystone-audit = { version = "0.1.0", path = "crates/audit" }
 openstack-keystone-appcred-driver-sql = { version = "0.1", path = "crates/appcred-driver-sql/" }

@@ -16,6 +16,7 @@
 //! Diverse errors that can occur during the Keystone processing (not the API).
 use thiserror::Error;
 
+use crate::api_key::ApiKeyProviderError;
 use crate::application_credential::ApplicationCredentialProviderError;
 use crate::assignment::AssignmentProviderError;
 use crate::auth::AuthenticationError;
@@ -61,6 +62,14 @@ impl From<derive_builder::UninitializedFieldError> for BuilderError {
 /// Keystone error.
 #[derive(Debug, Error)]
 pub enum KeystoneError {
+    /// API Key provider.
+    #[error(transparent)]
+    ApiKeyProvider {
+        /// The source of the error.
+        #[from]
+        source: ApiKeyProviderError,
+    },
+
     /// Application credential provider.
     #[error(transparent)]
     ApplicationCredential {

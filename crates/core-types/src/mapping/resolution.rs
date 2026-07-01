@@ -60,6 +60,11 @@ pub enum IdentitySource {
         /// The SPIFFE trust domain.
         trust_domain: String,
     },
+    /// API Key (SCIM ingress) machine identity authentication (ADR 0021).
+    ApiClient {
+        /// The API Key `provider_id` this ruleset is bound to.
+        provider_id: String,
+    },
 }
 
 impl IdentitySource {
@@ -72,6 +77,7 @@ impl IdentitySource {
             Self::Federation { idp_id } => format!("federation:{idp_id}"),
             Self::K8s { cluster_id } => format!("k8s:{cluster_id}"),
             Self::Spiffe { trust_domain } => format!("spiffe:{trust_domain}"),
+            Self::ApiClient { provider_id } => format!("api_client:{provider_id}"),
         }
     }
 }

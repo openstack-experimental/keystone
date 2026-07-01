@@ -22,6 +22,7 @@ use {
     serde_json::json,
 };
 
+use openstack_keystone_core_types::api_key::ApiKeyProviderError;
 use openstack_keystone_core_types::assignment::AssignmentProviderError;
 use openstack_keystone_core_types::auth::AuthenticationError;
 use openstack_keystone_core_types::catalog::CatalogProviderError;
@@ -51,6 +52,7 @@ impl IntoResponse for KeystoneApiError {
             KeystoneApiError::InternalError(_) | KeystoneApiError::Other(..) => {
                 StatusCode::INTERNAL_SERVER_ERROR
             }
+            KeystoneApiError::TooManyRequests => StatusCode::TOO_MANY_REQUESTS,
             _ => StatusCode::BAD_REQUEST,
         };
 
@@ -233,6 +235,24 @@ impl From<RevokeProviderError> for KeystoneApiError {
     }
 }
 
+impl From<ApiKeyProviderError> for KeystoneApiError {
+    fn from(value: ApiKeyProviderError) -> Self {
+        match value {
+            ApiKeyProviderError::NotFound(x) => Self::NotFound {
+                resource: "api_key".into(),
+                identifier: x,
+            },
+            ApiKeyProviderError::Conflict(x) => Self::Conflict(x),
+            ApiKeyProviderError::Authentication { source } => source.into(),
+            // Crypto/storage-layer failures on the authentication hot path must
+            // never leak detail to the client (ADR 0021 §6.D OPSEC leakage);
+            // callers on that path should prefer mapping these to a generic
+            // `AuthenticationError::Unauthorized` before this conversion runs.
+            other => Self::InternalError(other.to_string()),
+        }
+    }
+}
+
 impl From<MappingProviderError> for KeystoneApiError {
     fn from(value: MappingProviderError) -> Self {
         match value {
@@ -260,6 +280,9 @@ impl From<MappingProviderError> for KeystoneApiError {
                 "interpolated value exceeds 256 character limit".to_string(),
             ),
             MappingProviderError::RulesetImmutable(x) => Self::BadRequest(x),
+            MappingProviderError::ApiClientSystemScopeForbidden(x) => Self::BadRequest(format!(
+                "rule '{x}' grants system scope, which is forbidden for API Key (ApiClient) mapping rulesets"
+            )),
             MappingProviderError::RaftNotAvailable => Self::InternalError(
                 "raft storage is not available in the mapping provider".to_string(),
             ),

@@ -17,6 +17,7 @@
 #![allow(clippy::module_inception)]
 #![deny(clippy::unwrap_used)]
 
+pub mod api_key;
 pub mod application_credential;
 pub mod assignment;
 pub mod auth;

@@ -92,6 +92,7 @@ pub fn error_variant_name(error: &KeystoneApiError) -> String {
         KeystoneApiError::Base64Decode(_) => "BadRequest".to_string(),
         KeystoneApiError::Serde { .. } => "BadRequest".to_string(),
         KeystoneApiError::Other(_) => "InternalServerError".to_string(),
+        KeystoneApiError::TooManyRequests => "TooManyRequests".to_string(),
     }
 }
 
@@ -125,6 +126,9 @@ pub fn sanitize_authentication_error(e: &AuthenticationError) -> &'static str {
         AuthenticationError::TrustorDomainDisabled => "TrustorDomainDisabled",
         AuthenticationError::UserDomainDisabled => "UserDomainDisabled",
         AuthenticationError::RoleConversionFailed => "RoleConversionFailed",
+        AuthenticationError::NoAuthorizationsFound => "NoAuthorizationsFound",
+        AuthenticationError::MultipleScopesForbidden => "MultipleScopesForbidden",
+        AuthenticationError::SystemScopeForbiddenForApiKey => "SystemScopeForbiddenForApiKey",
     }
 }
 

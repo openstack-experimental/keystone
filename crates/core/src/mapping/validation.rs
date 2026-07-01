@@ -25,7 +25,8 @@ use std::collections::HashSet;
 use regex_syntax::hir::{Hir, HirKind, Repetition as HirRepetition};
 
 use openstack_keystone_core_types::mapping::MappingProviderError;
-use openstack_keystone_core_types::mapping::resolution::DomainResolutionMode;
+use openstack_keystone_core_types::mapping::authorization::Authorization;
+use openstack_keystone_core_types::mapping::resolution::{DomainResolutionMode, IdentitySource};
 use openstack_keystone_core_types::mapping::rule::{ClaimCondition, MappingRule};
 use openstack_keystone_core_types::mapping::ruleset::{
     MappingRuleSet, MappingRuleSetCreate, MappingRuleSetUpdate,
@@ -60,6 +61,10 @@ const MAX_ALLOWED_DOMAINS: usize = 256;
 pub fn validate_ruleset_create(ruleset: &MappingRuleSetCreate) -> Result<(), MappingProviderError> {
     // 1. Rule name uniqueness and format
     validate_rules(&ruleset.rules)?;
+
+    // API Key (ApiClient) rulesets must never grant system scope (ADR 0021
+    // §6.C, Invariant 3 defense-in-depth).
+    validate_api_client_no_system_scope(&ruleset.source, &ruleset.rules)?;
 
     // 2. Regex safety for all `MatchesRegex` conditions
     let all_conditions = collect_all_claim_conditions(&ruleset.rules);
@@ -100,6 +105,11 @@ pub fn validate_ruleset_update(
     // If new rules are supplied, validate them
     if let Some(ref rules) = update.rules {
         validate_rules(rules)?;
+
+        // API Key (ApiClient) rulesets must never grant system scope (ADR
+        // 0021 §6.C, Invariant 3 defense-in-depth). `source` is immutable, so
+        // always validated against `existing.source`.
+        validate_api_client_no_system_scope(&existing.source, rules)?;
 
         // Regex safety
         let all_conditions = collect_all_claim_conditions(rules);
@@ -207,6 +217,35 @@ fn validate_rules(rules: &[MappingRule]) -> Result<(), MappingProviderError> {
         }
     }
 
+    Ok(())
+}
+
+/// Reject `is_system` or `Authorization::System` grants in any rule of a
+/// ruleset sourced from an API Key (`IdentitySource::ApiClient`) provider.
+///
+/// Per ADR 0021 §6.C, allowing an API Key to hold system scope is dangerous
+/// enough that the prohibition is enforced at both write-time (here) and at
+/// authentication time (`hydrate_ephemeral_context`); this check is
+/// defense-in-depth, not a substitute for the runtime guard.
+fn validate_api_client_no_system_scope(
+    source: &IdentitySource,
+    rules: &[MappingRule],
+) -> Result<(), MappingProviderError> {
+    if !matches!(source, IdentitySource::ApiClient { .. }) {
+        return Ok(());
+    }
+    for rule in rules {
+        if rule.identity.is_system
+            || rule
+                .authorizations
+                .iter()
+                .any(|auth| matches!(auth, Authorization::System { .. }))
+        {
+            return Err(MappingProviderError::ApiClientSystemScopeForbidden(
+                rule.name.clone(),
+            ));
+        }
+    }
     Ok(())
 }
 
@@ -1404,6 +1443,93 @@ mod tests {
         assert!(matches!(
             result,
             Err(MappingProviderError::DuplicateRuleName(_))
+        ));
+    }
+
+    // -----------------------------------------------------------------------
+    // validate_api_client_no_system_scope tests (ADR 0021 §6.C)
+    // -----------------------------------------------------------------------
+
+    fn api_client_source() -> IdentitySource {
+        IdentitySource::ApiClient {
+            provider_id: "provider-1".to_string(),
+        }
+    }
+
+    fn rule_with_is_system(name: &str) -> MappingRule {
+        let mut rule = simple_rule(name, "user-name");
+        rule.identity.is_system = true;
+        rule
+    }
+
+    fn rule_with_system_authorization(name: &str) -> MappingRule {
+        let mut rule = simple_rule(name, "user-name");
+        rule.authorizations = vec![Authorization::System {
+            system_id: "all".to_string(),
+            roles: Vec::new(),
+        }];
+        rule
+    }
+
+    #[test]
+    fn api_client_ruleset_rejects_is_system() {
+        let ruleset = MappingRuleSetCreate {
+            source: api_client_source(),
+            rules: vec![rule_with_is_system("system-rule")],
+            ..sample_ruleset_create()
+        };
+        let result = validate_ruleset_create(&ruleset);
+        assert!(matches!(
+            result,
+            Err(MappingProviderError::ApiClientSystemScopeForbidden(ref name)) if name == "system-rule"
+        ));
+    }
+
+    #[test]
+    fn api_client_ruleset_rejects_system_authorization() {
+        let ruleset = MappingRuleSetCreate {
+            source: api_client_source(),
+            rules: vec![rule_with_system_authorization("system-auth-rule")],
+            ..sample_ruleset_create()
+        };
+        let result = validate_ruleset_create(&ruleset);
+        assert!(matches!(
+            result,
+            Err(MappingProviderError::ApiClientSystemScopeForbidden(ref name)) if name == "system-auth-rule"
+        ));
+    }
+
+    #[test]
+    fn non_api_client_ruleset_allows_system_scope() {
+        // Defense-in-depth is scoped to ApiClient sources only; other
+        // sources (e.g. Federation) are unaffected by this guard.
+        let ruleset = MappingRuleSetCreate {
+            rules: vec![rule_with_is_system("system-rule")],
+            ..sample_ruleset_create()
+        };
+        assert!(validate_ruleset_create(&ruleset).is_ok());
+    }
+
+    #[test]
+    fn api_client_ruleset_update_rejects_is_system() {
+        let existing = MappingRuleSet {
+            mapping_id: "test-123".to_string(),
+            domain_id: Some("test-domain".to_string()),
+            source: api_client_source(),
+            domain_resolution_mode: DomainResolutionMode::Fixed,
+            enabled: true,
+            rules: vec![simple_rule("existing-rule", "user-exists")],
+            ruleset_version: 0,
+        };
+        let update = MappingRuleSetUpdate {
+            rules: Some(vec![rule_with_is_system("new-system-rule")]),
+            enabled: None,
+            allowed_domains: None,
+        };
+        let result = validate_ruleset_update(&existing, &update);
+        assert!(matches!(
+            result,
+            Err(MappingProviderError::ApiClientSystemScopeForbidden(ref name)) if name == "new-system-rule"
         ));
     }
 }

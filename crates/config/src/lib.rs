@@ -56,6 +56,7 @@ use tokio::sync::RwLock;
 use tracing::error;
 use validator::Validate;
 
+mod api_key;
 mod application_credentials;
 mod assignment;
 mod audit;
@@ -83,6 +84,7 @@ mod token_restriction;
 mod trust;
 mod webauthn;
 
+pub use api_key::*;
 pub use application_credentials::*;
 pub use assignment::*;
 pub use audit::*;
@@ -113,6 +115,11 @@ pub use webauthn::*;
 /// Keystone configuration.
 #[derive(Debug, Default, Deserialize, Clone, Validate)]
 pub struct Config {
+    /// API Key (SCIM ingress) provider configuration.
+    #[serde(default)]
+    #[validate(nested)]
+    pub api_key: ApiKeyProvider,
+
     /// Application credentials provider configuration.
     #[serde(default)]
     pub application_credential: ApplicationCredentialProvider,
@@ -673,10 +680,10 @@ mod tests {
             r#"
     [auth]
     methods = []
-    
+
     [database]
     connection = "foo"
-    
+
     [distributed_storage]
     node_cluster_addr = "https://localhost:8310"
     node_id = 1
@@ -729,6 +736,108 @@ mod tests {
         assert!(
             err_msg.contains("security_compliance.invalid_password_hash_max_chars"),
             "Error message should explicitly blame invalid_password_hash_max_chars, but got: {}",
+            err_msg
+        );
+    }
+
+    #[test]
+    fn test_api_key_defaults() {
+        let cfg = ApiKeyProvider::default();
+        assert_eq!(cfg.argon2_memory_kib, 65536);
+        assert_eq!(cfg.argon2_time_cost, 3);
+        assert_eq!(cfg.argon2_parallelism, 4);
+        assert_eq!(cfg.janitor_inactive_days, 90);
+        assert_eq!(cfg.janitor_grace_days, 7);
+        assert_eq!(cfg.janitor_tombstone_retention_days, 365);
+        assert!(cfg.trusted_proxies.is_empty());
+    }
+
+    #[test]
+    fn test_api_key_trusted_proxies_and_validation() {
+        use std::io::Write;
+        use tempfile::NamedTempFile;
+
+        let config_file = NamedTempFile::with_suffix(".conf").unwrap();
+        let mut f = std::fs::File::create(config_file.path()).unwrap();
+        f.write_all(
+            r#"
+    [auth]
+    methods = []
+
+    [database]
+    connection = "foo"
+
+    [distributed_storage]
+    node_cluster_addr = "https://localhost:8310"
+    node_id = 1
+    path = "/keystone/storage"
+
+    [api_key]
+    trusted_proxies = 10.0.0.0/8,192.168.1.0/24
+            "#
+            .as_bytes(),
+        )
+        .unwrap();
+        f.sync_all().unwrap();
+
+        let cfg = Config::load_all(config_file.path().to_path_buf()).unwrap();
+        assert_eq!(
+            cfg.api_key.trusted_proxies,
+            vec!["10.0.0.0/8".to_string(), "192.168.1.0/24".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_invalid_api_key_validation() {
+        use std::io::Write;
+        use tempfile::NamedTempFile;
+
+        let config_file = NamedTempFile::with_suffix(".conf").unwrap();
+        let mut f = std::fs::File::create(config_file.path()).unwrap();
+        f.write_all(
+            r#"
+    [auth]
+    methods = []
+
+    [database]
+    connection = "foo"
+
+    [distributed_storage]
+    node_cluster_addr = "https://localhost:8310"
+    node_id = 1
+    path = "/keystone/storage"
+
+    [api_key]
+    argon2_memory_kib = 0
+    argon2_time_cost = 0
+    argon2_parallelism = 0
+    janitor_inactive_days = 0
+    janitor_tombstone_retention_days = 0
+            "#
+            .as_bytes(),
+        )
+        .unwrap();
+        f.sync_all().unwrap();
+
+        let result = Config::load_all(config_file.path().to_path_buf());
+        assert!(result.is_err());
+
+        let err_msg = format!("{:?}", result.unwrap_err());
+        assert!(err_msg.contains("api_key.argon2_memory_kib"), "{}", err_msg);
+        assert!(err_msg.contains("api_key.argon2_time_cost"), "{}", err_msg);
+        assert!(
+            err_msg.contains("api_key.argon2_parallelism"),
+            "{}",
+            err_msg
+        );
+        assert!(
+            err_msg.contains("api_key.janitor_inactive_days"),
+            "{}",
+            err_msg
+        );
+        assert!(
+            err_msg.contains("api_key.janitor_tombstone_retention_days"),
+            "{}",
             err_msg
         );
     }
