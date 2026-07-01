@@ -16,6 +16,9 @@
 use eyre::Result;
 use tracing_test::traced_test;
 
+use openstack_keystone_core::auth::ExecutionContext;
+use openstack_keystone_core_types::resource::DomainCreateBuilder;
+
 use crate::common::get_state;
 
 #[traced_test]
@@ -33,5 +36,27 @@ async fn test_create() -> Result<()> {
 
     assert_eq!(name, domain.name);
     assert!(domain.enabled);
+    Ok(())
+}
+
+#[traced_test]
+#[tokio::test]
+async fn test_create_invalid_name_too_long() -> Result<()> {
+    let (state, _tmp) = get_state().await?;
+
+    let result = state
+        .provider
+        .get_resource_provider()
+        .create_domain(
+            &ExecutionContext::internal(&state),
+            DomainCreateBuilder::default()
+                .name("x".repeat(256))
+                .build()?,
+        )
+        .await;
+    assert!(
+        result.is_err(),
+        "creating a domain with an over-length name is rejected"
+    );
     Ok(())
 }
