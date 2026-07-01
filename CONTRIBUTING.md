@@ -3,149 +3,273 @@
 We are really glad you're reading this, because we need volunteer developers to
 help this project come to fruition.
 
-Here are some important resources:
+## Communications
 
 - [OpenStack contribution guide](https://docs.openstack.org/contributors/index.html)
-- Bugs?
-  [GitHub issues](https://github.com/openstack-experimental/keystone/issues)
-- IRC: chat.oftc.net channel
-  [#openstack-keystone](https://docs.openstack.org/contributors/common/irc.html).
-  We're spread across the globe, hopefully close to your TZ.
+- [GitHub issues](https://github.com/openstack-experimental/keystone/issues)
+- IRC: `chat.oftc.net` channel
+  [#openstack-keystone](https://docs.openstack.org/contributors/common/irc.html)
+  (we're spread across the globe, hopefully close to your TZ)
+
+## Prerequisites
+
+- Rust toolchain (stable)
+- [pre-commit](https://pre-commit.com/) for linting hooks
+- [cargo-nextest](https://nexte.st/) for integration tests
+- [SPIRE](https://github.com/spiffe/spiffe.io) (`spire-server` and `spire-agent`
+  on `$PATH`) for API integration tests
+- (Optional) [skaffold](https://skaffold.dev/) and a local Kubernetes cluster
+  for full-stack testing
+- (Optional)
+  [OpenStackClient](https://docs.openstack.org/python-openstackclient/) (`osc`)
+  for manual auth flow verification
+
+## Setup
+
+### Pre-commit hooks
+
+Install the pre-commit hooks after cloning:
+
+```console
+pre-commit install
+```
+
+The hooks run on every commit and enforce the following checks (see
+`.pre-commit-config.yaml`):
+
+| Hook               | Purpose                                                                                                                                                       |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pre-commit-hooks` | End-of-file fixes, trailing whitespace, line endings (LF only), BOM removal, shebang checks, merge conflict detection, debug statements, YAML/JSON validation |
+| `typos`            | Spell checking                                                                                                                                                |
+| `committed`        | Enforces conventional commit message format                                                                                                                   |
+| `cargo fmt`        | Rust code formatting                                                                                                                                          |
+| `gitleaks`         | Secret/credential detection                                                                                                                                   |
+
+Run hooks manually on all files:
+
+```console
+pre-commit run --all-files
+```
 
 ## Development Commands
 
-- **Build the workspace**: `cargo build`
-- **Run all tests**: `cargo test`
-- **Run command for single crate**: `cargo XXX -p <crate_name>` (e.g.,
-  `cargo test -p openstack-keystone`).
-- **Run a specific test**: `cargo test -p <crate_name> <test_path>` (e.g.,
-  `cargo test -p openstack-keystone test_module::some_function`)
-- **Teardown**: `./tools/teardown-api.sh` (stops the server but preserves logs)
-- Run integration tests:
-  - **API integration tests** (requires live server +
-    [SPIRE](https://github.com/spiffe/spiffe.io) installed):
-    `cargo nextest run --profile api`
-    - The `api` profile starts a live keystone server via `tools/start-api.sh`,
-      bootstraps it, and runs the `integration_api_v3` and `integration_api_v4`
-      test binaries.
-    - **Prerequisites**: `spire-server` and `spire-agent` must be on `$PATH`.
-    - **Server logs** are written to `/tmp/nextest/keystone/` (the `log_dir`
-      from `[DEFAULT]` in the auto-generated keystone.conf).
-    - **SPIRE logs** are located at `/tmp/spire-ci-test-harness/server.log` and
-      `/tmp/spire-ci-test-harness/agent.log`.
-    - **Server endpoints**:
-      - Public API: `http://localhost:8080`
-      - Admin socket: `/tmp/nextest/keystone/keystone.sock`
-      - Admin auth: `admin` / `password` (domain: `default`, project: `admin`)
-    - Note: Logs are preserved after test completion for debugging. Use
-      `./tools/teardown-api.sh` to stop the server and
-      `rm -rf /tmp/nextest/keystone /tmp/spire-ci-test-harness` to clean up
-      manually.
-  - **General integration tests**: `cargo nextest run` (you can pass additional
-    cargo nextest arguments, e.g., `--profile raft`).
+| Action            | Command                                                                                                       |
+| ----------------- | ------------------------------------------------------------------------------------------------------------- |
+| Build workspace   | `cargo build`                                                                                                 |
+| Run all tests     | `cargo test`                                                                                                  |
+| Single crate      | `cargo <cmd> -p <crate_name>` (e.g. `cargo test -p openstack-keystone`)                                       |
+| Specific test     | `cargo test -p <crate_name> <test_path>` (e.g. `cargo test -p openstack-keystone test_module::some_function`) |
+| Format            | `cargo fmt`                                                                                                   |
+| Lint              | `cargo clippy -p <crate_name> --fix --allow-dirty`                                                            |
+| Integration tests | `cargo nextest run -p test_integration` (add e.g. `--profile raft`)                                           |
 
-- **Linting**: `cargo clippy -p <crate_name> --fix --allow-dirty`
-- **Formatting**: `cargo fmt`
+### API integration tests
+
+Requires a live server and SPIRE installed.
+
+```console
+cargo nextest run --profile api -p test_api
+```
+
+- The `api` profile starts a live keystone server via `tools/start-api.sh`,
+  bootstraps it, and runs the `integration_api_v3` and `integration_api_v4` test
+  binaries.
+- **Prerequisites**: `spire-server` and `spire-agent` must be on `$PATH`.
+- **Server logs**: `/tmp/nextest/keystone/` (the `log_dir` from `[DEFAULT]` in
+  the auto-generated keystone.conf)
+- **SPIRE logs**: `/tmp/spire-ci-test-harness/server.log` and
+  `/tmp/spire-ci-test-harness/agent.log`
+- **Server endpoints**:
+  - Public API: `http://localhost:8080`
+  - Admin socket: `/tmp/nextest/keystone/keystone.sock`
+  - Admin auth: `admin` / `password` (domain: `default`, project: `admin`)
+- Logs are preserved after test completion. Stop with `./tools/teardown-api.sh`.
+  Full cleanup: `rm -rf /tmp/nextest/keystone /tmp/spire-ci-test-harness`.
+
+## Advanced Development Environments
+
+### Skaffold + Kubernetes
+
+For full-stack local testing (Keystone, OPA, database, and Python Keystone), use
+[skaffold](https://skaffold.dev/) to deploy to a local Kubernetes cluster. This
+is the recommended way to test compatibility with the Python Keystone and run
+API tests against a live system.
+
+An image registry accessible by Kubernetes is required. If your K8s doesn't
+include one,
+[deploy a local registry](https://www.docker.com/blog/how-to-use-your-own-registry-2/).
+
+```console
+skaffold dev --default-repo localhost:5000 -p local
+```
+
+Add `--cleanup=false` to preserve resources when stopping.
+
+**Exposed endpoints** (add to `/etc/hosts` if needed):
+
+| URL                        | Description                  |
+| -------------------------- | ---------------------------- |
+| `http://keystone.local`    | Mixed routes (Python + Rust) |
+| `http://keystone-rs.local` | Rust version only            |
+| `http://keystone-py.local` | Python version only          |
+
+Run API tests against K8s-deployed Keystone:
+
+```console
+KEYSTONE_URL=http://keystone-rs.local cargo nextest run --test api
+```
+
+**Full build/deploy/verify cycle** (useful for K8s auth and federation tests):
+
+```console
+skaffold build --profile local --default-repo localhost:5000 --output-file build.artifacts
+skaffold deploy -a build.artifacts
+skaffold verify -a build.artifacts
+```
+
+**Module-level redeploy** (skip infra like keycloak/dex/selenium):
+
+```console
+skaffold deploy -a build.artifacts -m keystone
+```
+
+The skaffold config splits into `keystone` and `infra` modules to avoid
+redeploying all tracking labels on every change.
+
+### OpenStackClient (OSC)
+
+Verify authentication flows with `osc` against a deployed instance. Add
+`keystone-rs.local` to `/etc/hosts`, then configure:
+
+```yaml
+clouds:
+  keystone-skaff:
+    auth:
+      auth_url: http://keystone-rs.local
+      username: admin
+      password: password
+      user_domain_name: Default
+      project_domain_name: Default
+      project_name: admin
+      domain_id: default
+```
+
+## Submitting Changes
+
+This project enforces
+[Conventional Commits](https://www.conventionalcommits.org/) via the `committed`
+pre-commit hook (`committed.toml`):
+
+- **Style**: `conventional` (type: subject body)
+- **Merge commits**: not allowed
+- **Exceptions**: `dependabot`, `renovate`, `release-plz` authors are exempt
+
+Always include a Signed-off-by line (`-s` flag):
+
+```console
+git commit -s -m "type: brief summary of the change
+
+Detailed description of what changed and its impact."
+```
+
+When submitting a PR:
+
+1. Send a
+   [GitHub Pull Request](https://github.com/openstack-experimental/keystone/pull/new/main)
+2. Include a clear description of changes
+3. Ensure all commits are atomic (one feature per commit)
+4. Ensure pre-commit hooks pass (`pre-commit run --all-files`)
+5. Ensure tests pass (`cargo test` and `cargo nextest run`)
+6. Ensure clippy passes (`cargo clippy -p <crate_name> --fix --allow-dirty`)
+7. Ensure committed pass (`committed`) rewriting message when necessary
+
+## Workspace Structure
+
+| Path                | Description                                                                                                                                                                                         |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `crates/keystone`   | Main service binary and API implementation. API handlers: `src/api/vX`                                                                                                                              |
+| `crates/core`       | The "Brain" — provider definitions grouped by domain (Identity, Catalog, Role, Assignment, etc.). Contains `provider_api.rs` (inter-provider interface) and `backend.rs` (backend driver interface) |
+| `crates/core-types` | Shared data structures across the workspace                                                                                                                                                         |
+| `crates/api-types`  | API request/response models and conversions from `core-types`                                                                                                                                       |
+| `crates/storage`    | Distributed storage implementation (OpenRaft)                                                                                                                                                       |
+| `crates/*-sql`      | SQL-backed persistence drivers (e.g. `identity-sql`, `catalog-sql`) using Sea-ORM                                                                                                                   |
+| `crates/*-raft`     | Raft-backed persistence drivers for distributed storage                                                                                                                                             |
+| `crates/config`     | Configuration parsing                                                                                                                                                                               |
+| `crates/webauthn`   | WebAuthn/Passkey support extension                                                                                                                                                                  |
+| `policy/`           | OPA Rego policy files                                                                                                                                                                               |
+| `doc/src/adr/`      | Architecture Decision Records                                                                                                                                                                       |
 
 ## Key Design Patterns
 
-- **License**: Every source file has an apache-2.0 license header.
-- **Domain-Driven Design**: The codebase is organized around identity domains
-  (Identity, Catalog, Role, Assignment, etc.).
-- **Sea-ORM**: Used for database access and migrations.
-- **OpenRaft**: Distributed storage
-- **Error Handling**: Use `thiserror` for all error types and `Result<T, E>` for
-  the error propagation.
-- **Async/Await**: The project is heavily asynchronous, built on top of `tokio`.
-- **Policy Enforcement**: Uses Open Policy Agent (OPA) logic, with `.rego` files
-  located in the `policy/` directory. The policy name passed to
-  `state.policy_enforcer.enforce()` corresponds to the policy's `package`
-  identifier with dots replaced by slashes. Policy documentation must include
-  the original Rust structure name (e.g., `UserCreate`) to facilitate future
-  updates.
-- Pass by reference when receiver is not supposed to take ownership.
-- Code should be reasonably commented.
+- **License**: Every source file must have an Apache-2.0 license header.
+- **Domain-Driven Design**: Code is organized by identity domains (Identity,
+  Catalog, Role, Assignment, etc.).
+- **Sea-ORM**: Database access and migrations.
+- **OpenRaft**: Distributed storage backend.
+- **Error Handling**: `thiserror` for error types, `Result<T, E>` propagation.
+- **Async/Await**: Heavily async, built on `tokio`.
+- **Pass by reference** when the receiver doesn't need ownership.
+- **Comments**: Code should be reasonably commented.
 
-## Workspace Structure and principles
+### Backend trait convention (`backend.rs`)
 
-- `crates/keystone`: The main service binary and the API implementation.
-  - `crates/keystone/src/api/vX` - API handlers for the API version.
-- `crates/core`: The "Brain" - defines set of "providers" grouping functionality
-  by the corresponding module (feature/domain) just like the python Keystone
-  does.
-  - The `provider_api.rs` defines the provider interface which is used by
-    providers to communicate with each other and are invoked by the API.
-  - the `backend.rs` defines the interface that backend drivers (usually
-    covering persistence operations for the resource) must implement.
-  - `backend.rs` traits implement resource management operations following a
-    pattern similar to CRUD:
-    - Creation: `create_<resource>`.
-    - Retrieval: `get_<resource>`, `list_<resources>`.
-    - Modification: `update_<resource>` or specific actions like
-      `add_user_to_group`.
-    - Deletion: `delete_<resource>`.
-- `crates/core-types`: Shared data structures used across the workspace.
-- `crates/api-types`: API data models and conversions from `core-types`.
-- `crates/storage`: Distributed storage implementation (using Raft).
-- `crates-*`: SQL-backed crates (e.g., `identity-sql`, `catalog-sql`) that
-  handle persistence for specific domains using Sea-ORM.
-- `crates/config`: Configuration parsing.
-- `crates/webauthn`: WebAuthn/Passkey support extension.
-- `crates/*-sql`: SQL backend drivers for providers.
-- `crates/*-raft`: Raft backend drivers for providers.
+Backend traits follow a CRUD-like naming pattern:
 
-## API Development rules
+| Operation     | Method prefix                                                      |
+| ------------- | ------------------------------------------------------------------ |
+| Create        | `create_<resource>`                                                |
+| Read single   | `get_<resource>`                                                   |
+| Read multiple | `list_<resources>`                                                 |
+| Update        | `update_<resource>` (or specific actions like `add_user_to_group`) |
+| Delete        | `delete_<resource>`                                                |
 
-- 1 http handler per module.
-- Unit tests must be in the same module (tests submodule).
-  - for regular API calls (CRUD):
-    - at least one unittest with valid authentication and positive policy
-      decision.
-    - at least one unittest with valid authentication and negative policy
-      decision.
-    - one unittest with invalid authentication.
-  - for authentication handlers:
-    - at least one successful unittest.
-- Policy Enforcement rules (`state.policy_enforcement.enforce`):
-  - The policy name corresponds to the Rego `package` identifier (e.g.,
-    `identity.user.show` is found in `policy/identity/user/show.rego`) and
-    invoked from the API handler as `identity/user/show`.
-  - Input structures follow ADR-0002:
-    - Create: `input.target` = payload, `input.existing` = `null`.
-    - Update: `input.target` = patch, `input.existing` = stored resource.
-    - Show/Delete: `input.target` = `null`, `input.existing` = stored resource.
-    - List: `input.target` = query parameters, `input.existing` = `null`.
-- For create operation the new object is passed to enforcer as `target` before
-  the creation.
-  - For remove operation first the current state is fetched, it is then passed
-    to the policy enforcer as `existing` followed by the real deletion.
-  - For list operation query parameters are passed to the enforcer as `target`
-    before listing.
-  - For show operation current state is fetched and passed to the enforcer as
-    `existing` before returning the result.
-  - For update operation current resource state and new state are passed to the
-    enforcer as `existing` and `target` respectively.
+## API Development Rules
 
-## Spec documents
+### Structure
 
-- Every architectural change must have the ADR specs located in the
-  `doc/src/adr` directory.
+- One HTTP handler per module.
+- Unit tests live in the same module's `tests` submodule.
 
-## Submitting changes
+### Unit test requirements
 
-Please send a
-[GitHub Pull Request](https://github.com/openstack-experimental/keystone/pull/new/main)
-with a clear list of what you've done (read more about
-[pull requests](http://help.github.com/pull-requests/)). Please follow our
-coding conventions (below) and make sure all of your commits are atomic (one
-feature per commit).
+**CRUD handlers** (at least 3 tests per handler):
 
-Since our target for the project is to become official OpenStack project we
-would require Signed-off in the commit message sometime soon.
+1. Valid auth + positive policy decision
+2. Valid auth + negative policy decision
+3. Invalid auth
 
-Always write a clear log message for your commits. One-line messages are fine
-for small changes, but bigger changes should look like this:
+**Authentication handlers** (at least 1 test):
 
-    $ git commit -s -m "A brief summary of the commit
-    >
-    > A paragraph describing what changed and its impact."
+1. Successful authentication flow
+
+### Policy Enforcement
+
+Policy rules are OPA Rego files in `policy/`. The policy name passed to
+`state.policy_enforcer.enforce()` maps to the Rego `package` identifier with
+dots replaced by slashes (e.g. `identity.user.show` →
+`policy/identity/user/show.rego` → invoked as `identity/user/show`).
+
+Policy documentation must include the original Rust structure name (e.g.
+`UserCreate`) for future updates.
+
+**Input structures** (per ADR-0002):
+
+| Operation | `input.target`       | `input.existing` | Timing          |
+| --------- | -------------------- | ---------------- | --------------- |
+| Create    | payload (new object) | `null`           | before creation |
+| Update    | patch (changes)      | stored resource  | before update   |
+| Show      | `null`               | stored resource  | after fetch     |
+| Delete    | `null`               | stored resource  | before deletion |
+| List      | query parameters     | `null`           | before listing  |
+
+## Spec Documents
+
+Every architectural change requires an ADR in `doc/src/adr/`.
+
+## References
+
+- [CONTRIBUTING.md](CONTRIBUTING.md) — this file
+- [developer.md](doc/src/developer.md) — environment setup details (skaffold,
+  OSC)
+- [.pre-commit-config.yaml](.pre-commit-config.yaml) — linting hooks
+- [committed.toml](committed.toml) — commit message rules

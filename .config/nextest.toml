@@ -51,11 +51,7 @@ setup = "setup-mysql"
 default-filter = "all()"
 
 [[profile.raft.scripts]]
-filter = "binary(integration)"
-setup = "raft-env"
-
-[[profile.raft.scripts]]
-filter = "binary(test_cluster)"
+filter = "binary(integration) + binary(test_cluster)"
 setup = "raft-env"
 
 # --- API tests ---
