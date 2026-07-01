@@ -11,23 +11,24 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-//! Test add user group membership functionality.
+//! Test bulk user group membership operations.
 
-use eyre::Result;
+use std::collections::HashSet;
+
+use eyre::Report;
 use tracing_test::traced_test;
 
-use super::*;
-use openstack_keystone_core::auth::ExecutionContext;
+use openstack_keystone::identity::IdentityApi;
 
+use super::*;
 use crate::common::get_state;
 use crate::{create_domain, create_group, create_user};
 
 #[tokio::test]
 #[traced_test]
-async fn test_expiring_groups() -> Result<()> {
+async fn test_add_users_to_groups() -> Result<(), Report> {
     let (state, _tmp) = get_state().await?;
     let domain = create_domain!(state)?;
-
     let user = create_user!(state, domain.id.clone())?;
     let group_a = create_group!(state, domain.id.clone())?;
     let group_b = create_group!(state, domain.id.clone())?;
@@ -35,61 +36,48 @@ async fn test_expiring_groups() -> Result<()> {
     state
         .provider
         .get_identity_provider()
-        .add_user_to_group(&ExecutionContext::internal(&state), &user.id, &group_a.id)
-        .await?;
-
-    state
-        .provider
-        .get_identity_provider()
-        .add_user_to_group_expiring(
-            &ExecutionContext::internal(&state),
-            &user.id,
-            &group_b.id,
-            "idp_id",
+        .add_users_to_groups(
+            &state,
+            vec![
+                (user.id.as_str(), group_a.id.as_str()),
+                (user.id.as_str(), group_b.id.as_str()),
+            ],
         )
         .await?;
 
     let groups = list_user_groups(&state, &user.id).await?;
-    assert_eq!(2, groups.len());
-    assert!(groups.iter().find(|x| x.id == group_a.id).is_some());
-    assert!(groups.iter().find(|x| x.id == group_b.id).is_some());
+    assert_eq!(groups.len(), 2, "both memberships were added");
     Ok(())
 }
 
 #[tokio::test]
 #[traced_test]
-async fn test_add_user_to_nonexistent_group() -> Result<()> {
+async fn test_remove_user_from_groups() -> Result<(), Report> {
     let (state, _tmp) = get_state().await?;
     let domain = create_domain!(state)?;
     let user = create_user!(state, domain.id.clone())?;
+    let group_a = create_group!(state, domain.id.clone())?;
+    let group_b = create_group!(state, domain.id.clone())?;
 
-    let result = state
+    state
         .provider
         .get_identity_provider()
-        .add_user_to_group(&state, &user.id, "does-not-exist")
-        .await;
-    assert!(
-        result.is_err(),
-        "adding a user to a non-existent group errors"
-    );
-    Ok(())
-}
-
-#[tokio::test]
-#[traced_test]
-async fn test_add_nonexistent_user_to_group() -> Result<()> {
-    let (state, _tmp) = get_state().await?;
-    let domain = create_domain!(state)?;
-    let group = create_group!(state, domain.id.clone())?;
-
-    let result = state
+        .add_user_to_group(&state, &user.id, &group_a.id)
+        .await?;
+    state
         .provider
         .get_identity_provider()
-        .add_user_to_group(&state, "does-not-exist", &group.id)
-        .await;
-    assert!(
-        result.is_err(),
-        "adding a non-existent user to a group errors"
-    );
+        .add_user_to_group(&state, &user.id, &group_b.id)
+        .await?;
+
+    let to_remove: HashSet<&str> = HashSet::from([group_a.id.as_str(), group_b.id.as_str()]);
+    state
+        .provider
+        .get_identity_provider()
+        .remove_user_from_groups(&state, &user.id, to_remove)
+        .await?;
+
+    let groups = list_user_groups(&state, &user.id).await?;
+    assert!(groups.is_empty(), "all memberships were removed");
     Ok(())
 }

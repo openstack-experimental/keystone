@@ -12,28 +12,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use eyre::Report;
-
-use openstack_keystone_core::auth::ExecutionContext;
-use openstack_keystone_core::keystone::ServiceState;
-use openstack_keystone_core_types::identity::*;
-
-mod add;
-mod bulk;
-mod expiring;
+mod create;
+mod delete;
+mod get;
 mod list;
-mod remove;
-mod set;
-
-async fn list_user_groups<U>(state: &ServiceState, user_id: U) -> Result<Vec<Group>, Report>
-where
-    U: AsRef<str>,
-{
-    Ok(state
-        .provider
-        .get_identity_provider()
-        .list_groups_of_user(&ExecutionContext::internal(&state), user_id.as_ref())
-        .await?
-        .into_iter()
-        .collect())
-}

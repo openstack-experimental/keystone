@@ -23,7 +23,7 @@ use openstack_keystone_core_types::auth::AuthenticationError;
 use openstack_keystone_core_types::identity::*;
 
 use crate::common::get_state;
-use crate::create_domain;
+use crate::{create_domain, create_user};
 
 use super::helpers::{assert_expires_at_approx, setup_test_config};
 
@@ -99,6 +99,38 @@ async fn test_update_password_basic() -> Result<()> {
         .await;
     assert!(auth.is_ok(), "new password should work");
 
+    Ok(())
+}
+
+#[tokio::test]
+#[traced_test]
+async fn test_update_name() -> Result<()> {
+    let (state, _tmp) = get_state().await?;
+    let domain = create_domain!(state)?;
+    let user = create_user!(state, domain.id.clone())?;
+
+    let new_name = Uuid::new_v4().simple().to_string();
+    let updated = state
+        .provider
+        .get_identity_provider()
+        .update_user(
+            &state,
+            &user.id,
+            UserUpdateBuilder::default()
+                .name(new_name.clone())
+                .build()?,
+        )
+        .await?;
+    assert_eq!(updated.name, new_name, "name was updated");
+
+    // Confirm the change was persisted.
+    let fetched = state
+        .provider
+        .get_identity_provider()
+        .get_user(&state, &user.id)
+        .await?
+        .expect("user found");
+    assert_eq!(fetched.name, new_name, "updated name persisted");
     Ok(())
 }
 

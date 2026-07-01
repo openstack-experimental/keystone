@@ -11,29 +11,24 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+//! Test create group functionality.
 
-use eyre::Report;
+use eyre::Result;
+use tracing_test::traced_test;
 
-use openstack_keystone_core::auth::ExecutionContext;
-use openstack_keystone_core::keystone::ServiceState;
-use openstack_keystone_core_types::identity::*;
+use crate::common::get_state;
+use crate::{create_domain, create_group};
 
-mod add;
-mod bulk;
-mod expiring;
-mod list;
-mod remove;
-mod set;
+#[tokio::test]
+#[traced_test]
+async fn test_create() -> Result<()> {
+    let (state, _tmp) = get_state().await?;
+    let domain = create_domain!(state)?;
 
-async fn list_user_groups<U>(state: &ServiceState, user_id: U) -> Result<Vec<Group>, Report>
-where
-    U: AsRef<str>,
-{
-    Ok(state
-        .provider
-        .get_identity_provider()
-        .list_groups_of_user(&ExecutionContext::internal(&state), user_id.as_ref())
-        .await?
-        .into_iter()
-        .collect())
+    let group = create_group!(state, domain.id.clone())?;
+
+    assert!(!group.id.is_empty(), "an id was generated");
+    assert!(!group.name.is_empty());
+    assert_eq!(group.domain_id, domain.id);
+    Ok(())
 }

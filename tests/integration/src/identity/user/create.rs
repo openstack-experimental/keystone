@@ -404,3 +404,28 @@ async fn test_create_with_expiry_and_unique_count() -> Result<()> {
 
     Ok(())
 }
+
+#[tokio::test]
+#[traced_test]
+async fn test_create_invalid_name_too_long() -> Result<()> {
+    let (state, _tmp) = get_state().await?;
+    let domain = create_domain!(state)?;
+
+    let result = state
+        .provider
+        .get_identity_provider()
+        .create_user(
+            &state,
+            UserCreateBuilder::default()
+                .name("x".repeat(256))
+                .domain_id(domain.id.clone())
+                .enabled(true)
+                .build()?,
+        )
+        .await;
+    assert!(
+        result.is_err(),
+        "creating a user with an over-length name is rejected"
+    );
+    Ok(())
+}
