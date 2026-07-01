@@ -37,7 +37,7 @@ struct InstanceHolder {
     pub node_id: u64,
     pub config: Config,
     storage_dir: TempDir,
-    pub storage: Storage,
+    pub storage: Arc<Storage>,
     pub addr: SocketAddr,
 }
 
@@ -128,6 +128,12 @@ fn make_certificates() -> Result<TlsConfiguration> {
 
     // 2. Generate peer certificate (signed by CA)
     let mut peer_cert_params = CertificateParams::default();
+
+    // Leaf cert validity must not exceed 30 days (ADR 0016-v2 §4.2, enforced
+    // by check_cert_max_validity via get_client_tls_config/get_server_tls_config).
+    let now = time::OffsetDateTime::now_utc();
+    peer_cert_params.not_before = now - time::Duration::days(1);
+    peer_cert_params.not_after = now + time::Duration::days(28);
 
     let client_ip: IpAddr = "127.0.0.1".parse()?;
     peer_cert_params.subject_alt_names = vec![SanType::IpAddress(client_ip)];

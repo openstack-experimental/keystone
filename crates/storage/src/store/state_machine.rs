@@ -61,6 +61,10 @@ const WRITE_RATE_THRESHOLD: u32 = 1u32 << 30;
 const WRITE_RATE_WARN_THRESHOLD: u32 = WRITE_RATE_THRESHOLD / 10 * 9;
 
 /// Fjall meta key prefix for persisted quarantine markers.
+///
+/// Full key layout is `_meta:quarantine:<partition>:<node_id>`: partition
+/// comes first so that `ClearQuarantine` can prefix-scan and remove every
+/// reporting node's entry for a partition in one pass.
 const QUARANTINE_META_PREFIX: &str = "_meta:quarantine:";
 
 /// Sliding window for GCM failure counting.
@@ -69,15 +73,21 @@ const QUARANTINE_WINDOW: Duration = Duration::from_secs(60);
 /// Number of GCM failures within `QUARANTINE_WINDOW` that triggers quarantine.
 const QUARANTINE_THRESHOLD: usize = 3;
 
+/// Builds the Fjall meta key for a quarantine marker.
+fn quarantine_meta_key(partition: &str, node_id: u64) -> String {
+    format!("{QUARANTINE_META_PREFIX}{partition}:{node_id}")
+}
+
 /// Per-partition GCM decryption failure tracker with automatic quarantine.
 ///
 /// A partition accumulates failure `Instant`s in a 60-second sliding window.
-/// At three failures the partition is marked quarantined and the marker is
-/// persisted to Fjall `meta` so it survives restarts.
-///
-/// Quarantine can be cleared by an operator via
-/// `FjallStateMachine::clear_quarantine`.
-#[derive(Default)]
+/// At three failures the partition is marked quarantined locally and — best
+/// effort — the fact is proposed via Raft so it is committed cluster-wide
+/// (ADR 0016-v2 §10 invariant 5). The in-memory `quarantined` set (which
+/// gates local reads) only ever reflects *this* node's own quarantine state;
+/// records reported by other nodes are persisted for audit visibility but
+/// never block local reads, since GCM failures reflect node-local storage
+/// corruption, not a cluster-wide data problem.
 struct QuarantineTracker {
     failures: Mutex<HashMap<String, VecDeque<Instant>>>,
     quarantined: Mutex<HashSet<String>>,
@@ -85,17 +95,67 @@ struct QuarantineTracker {
 
 impl QuarantineTracker {
     /// Initialise from Fjall meta, loading any persisted quarantine markers.
-    fn from_meta(meta: &Keyspace) -> Result<Self, crate::StoreError> {
+    ///
+    /// Only markers reported by `node_id` (this node) are loaded into the
+    /// blocking `quarantined` set; markers from other nodes are logged for
+    /// visibility but otherwise ignored.
+    fn from_meta(meta: &Keyspace, node_id: u64) -> Result<Self, crate::StoreError> {
         let mut quarantined = HashSet::new();
-        for item in meta.prefix(QUARANTINE_META_PREFIX.as_bytes()) {
-            let (key_bytes, _) = item.into_inner()?;
-            if let Ok(key_str) = String::from_utf8(key_bytes.to_vec())
-                && let Some(partition) = key_str.strip_prefix(QUARANTINE_META_PREFIX)
-            {
-                quarantined.insert(partition.to_string());
+
+        // Collect first, then mutate: `insert`/`remove` below (legacy-key
+        // migration) must not run against a live prefix iterator.
+        let entries: Vec<Vec<u8>> = meta
+            .prefix(QUARANTINE_META_PREFIX.as_bytes())
+            .filter_map(|item| item.into_inner().ok())
+            .map(|(k, _)| k.to_vec())
+            .collect();
+
+        for key_bytes in entries {
+            let Ok(key_str) = String::from_utf8(key_bytes.clone()) else {
+                continue;
+            };
+            let Some(rest) = key_str.strip_prefix(QUARANTINE_META_PREFIX) else {
+                continue;
+            };
+
+            let (partition, reporting_node) = match rest.rsplit_once(':') {
+                Some((partition, node_id_str)) => {
+                    let Ok(reporting_node) = node_id_str.parse::<u64>() else {
+                        continue;
+                    };
+                    (partition.to_string(), reporting_node)
+                }
+                None => {
+                    // Pre-migration marker (`_meta:quarantine:<partition>`,
+                    // no node-id suffix). These predate cluster-wide
+                    // quarantine propagation and were always node-local
+                    // (each node owns its own Fjall DB), so treat this as
+                    // this node's own marker and rewrite it to the
+                    // node-scoped key format. Left as-is it would silently
+                    // fail to load on every future restart (no colon to
+                    // split on), quietly ending a quarantine that's still
+                    // supposed to be in effect.
+                    tracing::warn!(
+                        partition = rest,
+                        "migrating pre-upgrade quarantine marker to node-scoped key format"
+                    );
+                    let _ = meta.insert(quarantine_meta_key(rest, node_id), b"1");
+                    let _ = meta.remove(&key_bytes);
+                    (rest.to_string(), node_id)
+                }
+            };
+
+            if reporting_node == node_id {
+                quarantined.insert(partition.clone());
                 tracing::error!(
                     partition,
                     "SECURITY: partition is quarantined (loaded from persistent state)"
+                );
+            } else {
+                tracing::info!(
+                    partition,
+                    reporting_node,
+                    "quarantine record from another cluster node (informational only)"
                 );
             }
         }
@@ -160,6 +220,18 @@ impl QuarantineTracker {
         false
     }
 
+    /// Directly marks a partition quarantined without threshold bookkeeping.
+    ///
+    /// Used when applying a Raft-committed `Quarantine` mutation reported by
+    /// this node itself — idempotent with respect to `record_failure`, which
+    /// already set the same in-memory state synchronously.
+    fn force_quarantine(&self, partition: &str) {
+        self.quarantined
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .insert(partition.to_string());
+    }
+
     /// Clears quarantine state for a partition (operator-initiated recovery).
     fn clear(&self, partition: &str) {
         self.quarantined
@@ -182,6 +254,11 @@ struct SnapshotFile {
 
 /// Fjall meta key prefix for retired DEK epochs.
 const DEK_RETIRED_PREFIX: &str = "_meta:dek:retired:";
+/// Fjall meta key prefix for revoked DEK epochs (emergency rotation).  Only
+/// the version and revocation timestamp are stored here — never the wrapped
+/// key bytes — so the compromised DEK material remains genuinely discarded
+/// (ADR 0016-v2 §6.2 step 5).
+pub(crate) const DEK_REVOKED_PREFIX: &str = "_meta:dek:revoked:";
 /// Fjall meta key for the current wrapped DEK.
 const META_DEK_CURRENT: &[u8] = b"_meta:dek:current";
 /// Fjall meta key prefix for pending emergency rotations.
@@ -246,6 +323,9 @@ pub struct FjallStateMachine {
     data: Keyspace,
     index: Keyspace,
     snapshot_dir: PathBuf,
+    /// This node's Raft ID — tags Quarantine mutations proposed by this node
+    /// and scopes which persisted quarantine markers block local reads.
+    node_id: u64,
     /// Current active DEK epoch (shared with FjallLogStore via Arc).
     dek: Arc<RwLock<Arc<DekEpoch>>>,
     /// Retired DEK epochs held during re-encryption transition (shared with
@@ -258,6 +338,9 @@ pub struct FjallStateMachine {
     kek: Arc<dyn KekProvider>,
     /// Channel to trigger background re-encryption after DEK rotation.
     reencrypt_tx: tokio::sync::mpsc::Sender<Arc<DekEpoch>>,
+    /// Channel signalling `(node_id, partition)` quarantine events for
+    /// best-effort Raft propagation (ADR 0016-v2 §10 invariant 5).
+    quarantine_tx: tokio::sync::mpsc::Sender<(u64, String)>,
     quarantine: Arc<QuarantineTracker>,
     /// Pending emergency DEK rotations awaiting dual-control confirmation.
     /// Shared with `ClusterAdminServiceImpl` so the gRPC handler can inspect
@@ -266,27 +349,32 @@ pub struct FjallStateMachine {
 }
 
 impl FjallStateMachine {
-    #[allow(clippy::result_large_err)]
+    #[allow(clippy::result_large_err, clippy::too_many_arguments)]
     /// Create a new `FjallStateMachine`.
     ///
     /// # Parameters
     /// - `db`: Database instance.
     /// - `snapshot_dir`: Directory to store snapshots.
+    /// - `node_id`: This node's Raft ID.
     /// - `dek`: Shared current DEK epoch (also held by `FjallLogStore`).
     /// - `kek`: Key Encryption Key used to unwrap new DEKs on `InstallDek`.
     /// - `reencrypt_tx`: Channel for signalling the background re-encryption
     ///   task with the old DEK epoch that needs re-encryption.
+    /// - `quarantine_tx`: Channel for signalling the background quarantine
+    ///   forwarding task with `(node_id, partition)` to propose via Raft.
     ///
     /// # Returns
     /// A `Result` containing the `FjallStateMachine`, or a `StoreError`.
     pub fn new(
         db: Arc<Database>,
         snapshot_dir: PathBuf,
+        node_id: u64,
         dek: Arc<RwLock<Arc<DekEpoch>>>,
         old_deks: Arc<Mutex<BTreeMap<u32, Arc<DekEpoch>>>>,
         revoked_deks: Arc<Mutex<HashSet<u32>>>,
         kek: Arc<dyn KekProvider>,
         reencrypt_tx: tokio::sync::mpsc::Sender<Arc<DekEpoch>>,
+        quarantine_tx: tokio::sync::mpsc::Sender<(u64, String)>,
         pending_rotations: Arc<Mutex<HashMap<String, PendingRotation>>>,
     ) -> Result<Self, StoreError> {
         let meta = db.keyspace("meta", KeyspaceCreateOptions::default)?;
@@ -295,11 +383,12 @@ impl FjallStateMachine {
 
         fs::create_dir_all(&snapshot_dir)?;
 
-        let quarantine = Arc::new(QuarantineTracker::from_meta(&meta)?);
+        let quarantine = Arc::new(QuarantineTracker::from_meta(&meta, node_id)?);
 
         Ok(Self {
             db,
             snapshot_dir,
+            node_id,
             meta,
             data,
             index,
@@ -308,6 +397,7 @@ impl FjallStateMachine {
             revoked_deks,
             kek,
             reencrypt_tx,
+            quarantine_tx,
             quarantine,
             pending_rotations,
         })
@@ -384,15 +474,21 @@ impl FjallStateMachine {
     /// s quarantine the partition and persist the marker to Fjall meta for
     /// restart durability.
     ///
-    /// During DEK rotation, if decryption with the current DEK fails the method
-    /// transparently retries with the previous epoch (`old_dek`) to serve reads
-    /// of keys not yet re-encrypted.
+    /// `dek_version_hint` should be `Metadata::dek_version` for the record.
+    /// When present, the read selects that exact DEK epoch deterministically
+    /// and never falls back to another key on a tag-verification failure
+    /// (ADR 0016-v2 §6 step 6). `None` indicates a legacy record written
+    /// before per-record DEK version tracking existed; such records fall
+    /// back to the previous try-current-then-probe-retired behavior for
+    /// backward-compatible reads only — every write now populates
+    /// `dek_version`, so this path serves only pre-migration data.
     pub fn decrypt_state(
         &self,
         stored: &[u8],
         tier: u8,
         keyspace: &[u8],
         pk: &[u8],
+        dek_version_hint: Option<u32>,
     ) -> Result<Vec<u8>, StoreError> {
         let partition = String::from_utf8_lossy(keyspace).into_owned();
 
@@ -400,6 +496,79 @@ impl FjallStateMachine {
             return Err(StoreError::Quarantined(partition));
         }
 
+        match dek_version_hint {
+            Some(hint) => {
+                self.decrypt_state_by_version(stored, tier, keyspace, pk, &partition, hint)
+            }
+            None => self.decrypt_state_legacy_probe(stored, tier, keyspace, pk, &partition),
+        }
+    }
+
+    /// Deterministic-epoch decryption: selects the exact DEK epoch named by
+    /// `hint` and never probes another key on failure (ADR 0016-v2 §6 step
+    /// 6). An unknown epoch (already discarded/revoked, or corrupt
+    /// metadata) is treated as ambiguous and quarantined rather than
+    /// silently trying other keys.
+    fn decrypt_state_by_version(
+        &self,
+        stored: &[u8],
+        tier: u8,
+        keyspace: &[u8],
+        pk: &[u8],
+        partition: &str,
+        hint: u32,
+    ) -> Result<Vec<u8>, StoreError> {
+        // Single read of `self.dek`, reused for both the version comparison
+        // and the decrypt call. Reading `.version` and then re-acquiring the
+        // lock in a second `self.dek.read()` would be a TOCTOU race: a DEK
+        // rotation landing between the two reads could swap in a different
+        // epoch than the one `hint` was compared against, causing a
+        // legitimate record to fail GCM verification and spuriously
+        // quarantine the partition.
+        let guard = self.dek.read().unwrap_or_else(|p| p.into_inner());
+        let result = if hint == guard.version {
+            state_decrypt(guard.state_dek(), stored, tier, keyspace, pk)
+        } else {
+            drop(guard);
+            let old_map = self.old_deks.lock().unwrap_or_else(|p| p.into_inner());
+            let Some(epoch) = old_map.get(&hint).cloned() else {
+                drop(old_map);
+                self.record_quarantine_failure(partition);
+                return Err(crate::StoreError::Other(eyre::eyre!(
+                    "record references unknown DEK epoch {hint}; treated as corrupt \
+                     per ADR 0016-v2 §6 step 6 (no key-probing fallback) — partition \
+                     '{partition}' quarantined"
+                )));
+            };
+            drop(old_map);
+            state_decrypt(epoch.state_dek(), stored, tier, keyspace, pk)
+        };
+
+        match result {
+            Ok((plaintext, _next_version)) => Ok(plaintext.to_vec()),
+            Err(openstack_keystone_storage_crypto::CryptoError::AesDecrypt) => {
+                self.record_quarantine_failure(partition);
+                Err(StoreError::Crypto {
+                    source: openstack_keystone_storage_crypto::CryptoError::AesDecrypt,
+                })
+            }
+            Err(e) => Err(StoreError::Crypto { source: e }),
+        }
+    }
+
+    /// Legacy fallback for records written before per-record DEK version
+    /// tracking (`Metadata::dek_version == None`). Retained only for
+    /// backward-compatible reads of pre-migration data; every write now
+    /// populates `dek_version`, so new records always use
+    /// `decrypt_state_by_version` instead.
+    fn decrypt_state_legacy_probe(
+        &self,
+        stored: &[u8],
+        tier: u8,
+        keyspace: &[u8],
+        pk: &[u8],
+        partition: &str,
+    ) -> Result<Vec<u8>, StoreError> {
         let result = {
             let guard = self.dek.read().unwrap_or_else(|p| p.into_inner());
             state_decrypt(guard.state_dek(), stored, tier, keyspace, pk)
@@ -412,9 +581,10 @@ impl FjallStateMachine {
                 // The retired DEK fallback is only for reading pre-rotation data,
                 // but the GCM failure with the current DEK still counts toward
                 // quarantine threshold.
-                let failed = self.quarantine.record_failure(&partition);
+                let failed = self.quarantine.record_failure(partition);
 
-                // Try retired DEK epochs if in a rotation transition.
+                // Try retired DEK epochs — legacy records have no recorded
+                // dek_version, so this is the only way to locate the right key.
                 let old_map = self.old_deks.lock().unwrap_or_else(|p| p.into_inner());
                 for (_, old) in old_map.iter() {
                     if let Ok((pt, _)) = state_decrypt(old.state_dek(), stored, tier, keyspace, pk)
@@ -422,17 +592,16 @@ impl FjallStateMachine {
                         tracing::warn!(
                             partition,
                             epoch_version = old.version,
-                            "record decrypted with retired DEK epoch — re-encryption required"
+                            "legacy record decrypted with retired DEK epoch — \
+                             re-encryption required"
                         );
                         return Ok(pt.to_vec());
                     }
                 }
                 drop(old_map);
 
-                // Persist quarantine marker if threshold was reached.
                 if failed {
-                    let key = format!("{QUARANTINE_META_PREFIX}{partition}");
-                    let _ = self.meta.insert(key, b"1");
+                    self.persist_and_signal_quarantine(partition);
                 }
                 Err(StoreError::Crypto {
                     source: openstack_keystone_storage_crypto::CryptoError::AesDecrypt,
@@ -442,26 +611,40 @@ impl FjallStateMachine {
         }
     }
 
+    /// Records a GCM tag-verification failure and, if the failure count just
+    /// crossed the quarantine threshold, persists and signals it.
+    fn record_quarantine_failure(&self, partition: &str) {
+        if self.quarantine.record_failure(partition) {
+            self.persist_and_signal_quarantine(partition);
+        }
+    }
+
+    /// Persists the quarantine marker to local Fjall meta (synchronous,
+    /// restart-durable on this node) and signals the background forwarding
+    /// task to propose the same fact via Raft for cluster-wide visibility
+    /// (ADR 0016-v2 §10 invariant 5).
+    fn persist_and_signal_quarantine(&self, partition: &str) {
+        let key = quarantine_meta_key(partition, self.node_id);
+        let _ = self.meta.insert(key, b"1");
+        let _ = self
+            .quarantine_tx
+            .try_send((self.node_id, partition.to_string()));
+    }
+
     /// Returns `true` if the given keyspace partition is currently quarantined.
     pub fn is_quarantined(&self, partition: &str) -> bool {
         self.quarantine.is_quarantined(partition)
-    }
-
-    /// Clears quarantine for a partition (operator-initiated recovery).
-    ///
-    /// Removes the quarantine marker from Fjall meta so the partition becomes
-    /// accessible again after a restart as well.
-    pub fn clear_quarantine(&self, partition: &str) -> Result<(), StoreError> {
-        self.quarantine.clear(partition);
-        let key = format!("{QUARANTINE_META_PREFIX}{partition}");
-        self.meta.remove(key)?;
-        Ok(())
     }
 
     /// Encrypt and write state bytes for a given key.
     ///
     /// Reads the current encrypted record (if present) to extract the stored
     /// version, increments it, then calls `state_encrypt` with the new version.
+    ///
+    /// Returns the ciphertext bytes and the DEK epoch version used, so the
+    /// caller can record it in `Metadata::dek_version` (ADR 0016-v2 §6 step
+    /// 6) — reads select the correct key deterministically instead of
+    /// probing multiple epochs.
     ///
     /// Returns `StoreError::Quarantined` if the keyspace partition is
     /// quarantined.
@@ -472,7 +655,7 @@ impl FjallStateMachine {
         keyspace: &[u8],
         tier: u8,
         plaintext: &[u8],
-    ) -> Result<Vec<u8>, StoreError> {
+    ) -> Result<(Vec<u8>, u32), StoreError> {
         let partition = String::from_utf8_lossy(keyspace).into_owned();
         if self.quarantine.is_quarantined(&partition) {
             return Err(StoreError::Quarantined(partition));
@@ -507,18 +690,19 @@ impl FjallStateMachine {
             );
         }
 
-        let encrypted = {
+        let (encrypted, dek_version) = {
             let guard = self.dek.read().unwrap_or_else(|p| p.into_inner());
-            state_encrypt(
+            let encrypted = state_encrypt(
                 guard.state_dek(),
                 plaintext,
                 tier,
                 keyspace,
                 key,
                 next_version,
-            )?
+            )?;
+            (encrypted, guard.version)
         };
-        Ok(encrypted)
+        Ok((encrypted, dek_version))
     }
 
     #[allow(clippy::result_large_err)]
@@ -976,10 +1160,11 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                                         tier,
                                         &cipher,
                                     ) {
-                                        Ok(encrypted) => {
+                                        Ok((encrypted, dek_version)) => {
                                             batch.insert(&ks, key.clone(), encrypted);
                                             let mut meta_with_tier = metadata.clone();
                                             meta_with_tier.tier = DataTier::from(tier);
+                                            meta_with_tier.dek_version = Some(dek_version);
                                             batch.insert(
                                                 &self.meta,
                                                 key.clone(),
@@ -1043,10 +1228,11 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                                         tier,
                                         &cipher,
                                     ) {
-                                        Ok(encrypted) => {
+                                        Ok((encrypted, dek_version)) => {
                                             batch.insert(&ks, key.clone(), encrypted);
                                             let mut meta_with_tier = metadata.clone();
                                             meta_with_tier.tier = DataTier::from(tier);
+                                            meta_with_tier.dek_version = Some(dek_version);
                                             batch.insert(
                                                 &self.meta,
                                                 key.clone(),
@@ -1085,10 +1271,50 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                                 MutationInner::ClearQuarantine { partition } => {
                                     // Clear in-memory tracker first so reads are
                                     // unblocked as soon as the batch commits.
+                                    // Harmless no-op on nodes that were never
+                                    // quarantined for this partition.
                                     self.quarantine.clear(&partition);
-                                    let key = format!("{QUARANTINE_META_PREFIX}{partition}");
-                                    batch.remove(&self.meta, key.as_bytes());
+                                    // Remove every reporting node's marker for
+                                    // this partition — the operator clears the
+                                    // partition cluster-wide, not just the node
+                                    // they happened to connect to.
+                                    let scan_prefix =
+                                        format!("{QUARANTINE_META_PREFIX}{partition}:");
+                                    let keys_to_remove: Vec<Vec<u8>> = self
+                                        .meta
+                                        .prefix(scan_prefix.as_bytes())
+                                        .filter_map(|item| item.into_inner().ok())
+                                        .map(|(k, _)| k.to_vec())
+                                        .collect();
+                                    for key in &keys_to_remove {
+                                        batch.remove(&self.meta, key.as_slice());
+                                    }
                                     tracing::info!(partition, "quarantine cleared by operator");
+                                }
+                                MutationInner::Quarantine {
+                                    node_id: reporting_node,
+                                    partition,
+                                } => {
+                                    // Applied uniformly on every node. Only
+                                    // the reporting node updates its own
+                                    // blocking in-memory state; other nodes
+                                    // persist the record for audit
+                                    // visibility only (ADR 0016-v2 §10
+                                    // invariant 5).
+                                    let key = quarantine_meta_key(&partition, reporting_node);
+                                    let now = std::time::SystemTime::now()
+                                        .duration_since(std::time::UNIX_EPOCH)
+                                        .unwrap_or_default()
+                                        .as_secs();
+                                    batch.insert(&self.meta, key.as_bytes(), now.to_be_bytes());
+                                    if reporting_node == self.node_id {
+                                        self.quarantine.force_quarantine(&partition);
+                                    }
+                                    tracing::info!(
+                                        partition,
+                                        reporting_node,
+                                        "quarantine committed via Raft"
+                                    );
                                 }
                                 MutationInner::InstallDek {
                                     wrapped_dek,
@@ -1134,6 +1360,24 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                                                 );
                                             }
                                         }
+                                    } else {
+                                        // Emergency rotation: durably record the revoked
+                                        // marker in the same atomic batch as the DEK swap,
+                                        // so revocation survives a restart (ADR 0016-v2
+                                        // §6.2 step 5). Only the revocation timestamp is
+                                        // stored — never the wrapped key bytes — so the
+                                        // compromised DEK material remains discarded.
+                                        let revoked_key =
+                                            format!("{DEK_REVOKED_PREFIX}{old_version}");
+                                        let now = std::time::SystemTime::now()
+                                            .duration_since(std::time::UNIX_EPOCH)
+                                            .unwrap_or_default()
+                                            .as_secs();
+                                        batch.insert(
+                                            &self.meta,
+                                            revoked_key.as_bytes(),
+                                            now.to_be_bytes(),
+                                        );
                                     }
                                     pending_dek_swap = Some((new_epoch, is_emergency));
                                     tracing::info!(
@@ -1313,7 +1557,15 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                         std::mem::replace(&mut *guard, new_epoch)
                     };
                     if is_emergency_rotation {
-                        // Emergency: old DEK is revoked, not retired
+                        // Emergency: old DEK is revoked, not retired, and —
+                        // unlike a normal rotation — is never forwarded to
+                        // the re-encryption channel below. The point of
+                        // revocation is that this key material must not be
+                        // used again for anything, including internal
+                        // re-encryption of other records (ADR 0016-v2 §6.2
+                        // step 5); `old_epoch` is simply dropped (and
+                        // zeroized by `LockedKey`'s `Drop`) at the end of
+                        // this block.
                         let mut revoked =
                             self.revoked_deks.lock().unwrap_or_else(|p| p.into_inner());
                         if revoked.len() >= MAX_REVOKED_DEKS {
@@ -1335,9 +1587,9 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                             .lock()
                             .unwrap_or_else(|p| p.into_inner())
                             .insert(old_epoch.version, old_epoch.clone());
+                        // Signal background re-encryption task (non-fatal on channel full).
+                        let _ = self.reencrypt_tx.try_send(old_epoch);
                     }
-                    // Signal background re-encryption task (non-fatal on channel full).
-                    let _ = self.reencrypt_tx.try_send(old_epoch);
                     tracing::info!("DEK epoch swapped");
                 }
             }
@@ -1378,5 +1630,255 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
             .persist(PersistMode::SyncAll)
             .map_err(|e| io::Error::other(e.to_string()))?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod quarantine_tests {
+    use super::*;
+
+    fn open_meta() -> (fjall::Keyspace, Arc<Database>, tempfile::TempDir) {
+        let td = tempfile::TempDir::new().expect("tempdir");
+        let db = Arc::new(Database::builder(td.path()).open().expect("open db"));
+        let meta = db
+            .keyspace("meta", KeyspaceCreateOptions::default)
+            .expect("meta keyspace");
+        (meta, db, td)
+    }
+
+    #[test]
+    fn quarantine_meta_key_puts_partition_before_node_id() {
+        assert_eq!(quarantine_meta_key("data", 7), "_meta:quarantine:data:7");
+    }
+
+    #[test]
+    fn from_meta_only_blocks_matching_node_id() {
+        let (meta, db, _td) = open_meta();
+        // Node 1's own record blocks; node 2's record is informational only.
+        meta.insert(quarantine_meta_key("data", 1), 0u64.to_be_bytes())
+            .expect("insert node 1 marker");
+        meta.insert(quarantine_meta_key("data", 2), 0u64.to_be_bytes())
+            .expect("insert node 2 marker");
+        db.persist(PersistMode::SyncAll).expect("persist");
+
+        let tracker = QuarantineTracker::from_meta(&meta, 1).expect("load tracker");
+        assert!(tracker.is_quarantined("data"));
+
+        let tracker_other = QuarantineTracker::from_meta(&meta, 2).expect("load tracker");
+        assert!(tracker_other.is_quarantined("data"));
+
+        let tracker_uninvolved = QuarantineTracker::from_meta(&meta, 3).expect("load tracker");
+        assert!(!tracker_uninvolved.is_quarantined("data"));
+    }
+
+    /// Pre-upgrade quarantine markers (`_meta:quarantine:<partition>`, no
+    /// node-id suffix) must still block reads after loading, and must be
+    /// migrated to the node-scoped key format so they survive a *second*
+    /// restart too — not just silently dropped on `rsplit_once` failure.
+    #[test]
+    fn from_meta_migrates_legacy_marker_without_node_id() {
+        let (meta, db, _td) = open_meta();
+        let legacy_key = format!("{QUARANTINE_META_PREFIX}data");
+        meta.insert(legacy_key.as_bytes(), b"1")
+            .expect("insert legacy marker");
+        db.persist(PersistMode::SyncAll).expect("persist");
+
+        let tracker = QuarantineTracker::from_meta(&meta, 1).expect("load tracker");
+        assert!(
+            tracker.is_quarantined("data"),
+            "legacy marker must still block reads on the node that owns it"
+        );
+
+        // The legacy key must have been rewritten to the node-scoped format
+        // so a *second* restart doesn't depend on this migration running
+        // again.
+        assert!(
+            meta.get(legacy_key.as_bytes())
+                .expect("read legacy key")
+                .is_none(),
+            "legacy key should have been removed after migration"
+        );
+        assert!(
+            meta.get(quarantine_meta_key("data", 1))
+                .expect("read migrated key")
+                .is_some(),
+            "migrated node-scoped key should now be present"
+        );
+
+        let tracker_again = QuarantineTracker::from_meta(&meta, 1).expect("reload tracker");
+        assert!(
+            tracker_again.is_quarantined("data"),
+            "quarantine must still be in effect on a second restart, via the migrated key"
+        );
+    }
+
+    #[test]
+    fn force_quarantine_is_idempotent_with_record_failure() {
+        let tracker = QuarantineTracker {
+            failures: Mutex::new(HashMap::new()),
+            quarantined: Mutex::new(HashSet::new()),
+        };
+        assert!(!tracker.is_quarantined("data"));
+        tracker.force_quarantine("data");
+        assert!(tracker.is_quarantined("data"));
+        // Calling again is a harmless no-op.
+        tracker.force_quarantine("data");
+        assert!(tracker.is_quarantined("data"));
+    }
+
+    #[test]
+    fn clear_removes_quarantine_state() {
+        let tracker = QuarantineTracker {
+            failures: Mutex::new(HashMap::new()),
+            quarantined: Mutex::new(HashSet::new()),
+        };
+        tracker.force_quarantine("data");
+        assert!(tracker.is_quarantined("data"));
+        tracker.clear("data");
+        assert!(!tracker.is_quarantined("data"));
+    }
+}
+
+#[cfg(test)]
+mod dek_version_tests {
+    use openstack_keystone_storage_crypto::EnvKek;
+
+    use super::*;
+
+    fn test_epoch(seed: u8, version: u32) -> Arc<DekEpoch> {
+        Arc::new(DekEpoch::from_raw(LockedKey::from_raw([seed; 32]), version).expect("epoch"))
+    }
+
+    /// Builds a `FjallStateMachine` with directly controllable `dek` /
+    /// `old_deks` state, so tests can simulate a rotation transition without
+    /// going through the full Raft apply path.
+    fn make_sm(current: Arc<DekEpoch>) -> (FjallStateMachine, tempfile::TempDir) {
+        let td = tempfile::TempDir::new().expect("tempdir");
+        let db = Arc::new(Database::builder(td.path()).open().expect("open db"));
+        let kek: Arc<dyn KekProvider> = Arc::new(EnvKek::from_bytes([0x42u8; 32]));
+        let (reencrypt_tx, reencrypt_rx) = tokio::sync::mpsc::channel(1);
+        drop(reencrypt_rx);
+        let (quarantine_tx, quarantine_rx) = tokio::sync::mpsc::channel(1);
+        drop(quarantine_rx);
+
+        let sm = FjallStateMachine::new(
+            db,
+            td.path().join("snapshots"),
+            1, // node_id
+            Arc::new(RwLock::new(current)),
+            Arc::new(Mutex::new(BTreeMap::new())),
+            Arc::new(Mutex::new(HashSet::new())),
+            kek,
+            reencrypt_tx,
+            quarantine_tx,
+            Arc::new(Mutex::new(HashMap::new())),
+        )
+        .expect("construct state machine");
+        (sm, td)
+    }
+
+    #[test]
+    fn decrypt_with_matching_current_version_succeeds() {
+        let epoch = test_epoch(0x01, 1);
+        let (sm, _td) = make_sm(epoch);
+
+        let ks = sm.data().clone();
+        let (ciphertext, version) = sm
+            .encrypt_and_store(&ks, b"k1", b"data", DataTier::Internal as u8, b"hello")
+            .expect("encrypt");
+        assert_eq!(version, 1);
+
+        let plaintext = sm
+            .decrypt_state(
+                &ciphertext,
+                DataTier::Internal as u8,
+                b"data",
+                b"k1",
+                Some(version),
+            )
+            .expect("decrypt with correct hint");
+        assert_eq!(plaintext, b"hello");
+    }
+
+    #[test]
+    fn decrypt_with_retired_epoch_hint_succeeds_without_probing() {
+        let old_epoch = test_epoch(0x02, 1);
+        let (sm, _td) = make_sm(old_epoch.clone());
+
+        let ks = sm.data().clone();
+        let (ciphertext, old_version) = sm
+            .encrypt_and_store(&ks, b"k2", b"data", DataTier::Internal as u8, b"hello")
+            .expect("encrypt under epoch 1");
+        assert_eq!(old_version, 1);
+
+        // Simulate a rotation: swap in a new current epoch, retire the old one.
+        let new_epoch = test_epoch(0x03, 2);
+        *sm.dek.write().unwrap() = new_epoch;
+        sm.old_deks.lock().unwrap().insert(1, old_epoch);
+
+        // Old records still decrypt via the exact retired epoch named by hint.
+        let plaintext = sm
+            .decrypt_state(
+                &ciphertext,
+                DataTier::Internal as u8,
+                b"data",
+                b"k2",
+                Some(old_version),
+            )
+            .expect("decrypt via retired epoch hint");
+        assert_eq!(plaintext, b"hello");
+    }
+
+    #[test]
+    fn decrypt_with_wrong_version_hint_fails_without_probing() {
+        let epoch1 = test_epoch(0x04, 1);
+        let (sm, _td) = make_sm(epoch1.clone());
+
+        let ks = sm.data().clone();
+        let (ciphertext, _version) = sm
+            .encrypt_and_store(&ks, b"k3", b"data", DataTier::Internal as u8, b"hello")
+            .expect("encrypt under epoch 1");
+
+        // Rotate so epoch 1 becomes retired (and decryptable, if probed).
+        let epoch2 = test_epoch(0x05, 2);
+        *sm.dek.write().unwrap() = epoch2;
+        sm.old_deks.lock().unwrap().insert(1, epoch1);
+
+        // A hint naming a version that exists in neither current nor
+        // old_deks must fail outright — never silently fall back to
+        // probing epoch 1, even though epoch 1 would actually decrypt it
+        // (ADR 0016-v2 §6 step 6).
+        let err = sm
+            .decrypt_state(
+                &ciphertext,
+                DataTier::Internal as u8,
+                b"data",
+                b"k3",
+                Some(99),
+            )
+            .expect_err("unknown dek_version hint must not silently probe other keys");
+        assert!(!matches!(err, StoreError::Quarantined(_)));
+    }
+
+    #[test]
+    fn decrypt_legacy_none_hint_still_probes_retired_epochs() {
+        let epoch1 = test_epoch(0x06, 1);
+        let (sm, _td) = make_sm(epoch1.clone());
+
+        let ks = sm.data().clone();
+        let (ciphertext, _version) = sm
+            .encrypt_and_store(&ks, b"k4", b"data", DataTier::Internal as u8, b"hello")
+            .expect("encrypt under epoch 1");
+
+        let epoch2 = test_epoch(0x07, 2);
+        *sm.dek.write().unwrap() = epoch2;
+        sm.old_deks.lock().unwrap().insert(1, epoch1);
+
+        // Legacy records (no dek_version recorded) still fall back to
+        // try-current-then-probe-retired for backward compatibility.
+        let plaintext = sm
+            .decrypt_state(&ciphertext, DataTier::Internal as u8, b"data", b"k4", None)
+            .expect("legacy probe path should still find the retired epoch");
+        assert_eq!(plaintext, b"hello");
     }
 }

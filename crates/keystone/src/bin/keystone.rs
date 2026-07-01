@@ -262,7 +262,7 @@ async fn main() -> Result<(), Report> {
             .map_err(|e| KeystoneError::Provider {
                 source: Box::new(e),
             })?;
-        Some(Arc::new(storage))
+        Some(storage)
     } else {
         None
     };

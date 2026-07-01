@@ -74,7 +74,8 @@ mod tests {
         let conf = mock_config(PasswordHashingAlgo::None, 72);
         let invalid_utf8_password = b"bad\xFFpassword";
 
-        // Ensure our strict UTF-8 validation safely rejects invalid sequence vulnerabilities
+        // Ensure our strict UTF-8 validation safely rejects invalid sequence
+        // vulnerabilities
         let hash_result = hash_password(&conf, invalid_utf8_password).await;
         assert!(
             hash_result.is_err(),

@@ -19,7 +19,7 @@ use dashmap::DashMap;
 use eyre::eyre;
 use openraft::Config;
 use openraft::async_runtime::WatchReceiver;
-use openstack_keystone_storage_crypto::{DekEpoch, EnvKek, KekProvider};
+use openstack_keystone_storage_crypto::{DekEpoch, EnvKek, KekProvider, Pkcs11KekStub};
 
 use crate::protobuf as pb;
 use openraft::ReadPolicy;
@@ -129,7 +129,7 @@ async fn check_node_id_uniqueness(
 ///
 /// # Returns
 /// A `Result` containing the `Storage` instance, or a `StoreError`.
-pub async fn init_storage(config_manager: &Arc<ConfigManager>) -> Result<Storage, StoreError> {
+pub async fn init_storage(config_manager: &Arc<ConfigManager>) -> Result<Arc<Storage>, StoreError> {
     // Create a configuration for the raft instance.
     let raft_config = Arc::new(
         Config {
@@ -150,13 +150,31 @@ pub async fn init_storage(config_manager: &Arc<ConfigManager>) -> Result<Storage
         .ok_or(StoreError::ConfigMissing)?
         .clone();
 
-    // Read and erase the Key Encryption Key from the environment before any
-    // further initialisation (ADR 0016-v2 §2.1).  Erasing it first means core
+    // Select and load the Key Encryption Key before any further
+    // initialisation (ADR 0016-v2 §2.1).  Loading/erasing it first means core
     // dumps triggered during preflight cannot leak the key.
-    let kek: Arc<dyn KekProvider> = Arc::new(
-        EnvKek::from_env()
-            .map_err(|e| StoreError::Other(eyre!("failed to load KEYSTONE_DEV_KEK: {e}")))?,
-    );
+    //
+    // The environment-provided KEK is a dev-mode-only fallback: ADR 0016-v2
+    // §2.1 and invariant 6 require both `--dev-mode` and
+    // `KEYSTONE_ALLOW_ENV_KEK=1` before it may be used. Outside dev-mode there
+    // is currently no production KekProvider implementation (HSM/PKCS#11/KMS
+    // is not yet wired up — see Pkcs11KekStub), so the node refuses to start
+    // rather than silently falling back to an environment-provided key.
+    let kek: Arc<dyn KekProvider> = if ds_config.dev_mode {
+        if std::env::var("KEYSTONE_ALLOW_ENV_KEK").as_deref() != Ok("1") {
+            return Err(StoreError::Other(eyre!(
+                "dev_mode is enabled but KEYSTONE_ALLOW_ENV_KEK=1 is not set; \
+                 refusing to start with an environment-provided KEK \
+                 (ADR 0016-v2 §2.1, invariant 6)"
+            )));
+        }
+        Arc::new(
+            EnvKek::from_env()
+                .map_err(|e| StoreError::Other(eyre!("failed to load KEYSTONE_DEV_KEK: {e}")))?,
+        )
+    } else {
+        Arc::new(Pkcs11KekStub)
+    };
 
     // Run OS-level security pre-flight checks after key material is cleared.
     // In production mode (dev_mode = false) any failure is fatal per ADR
@@ -172,13 +190,17 @@ pub async fn init_storage(config_manager: &Arc<ConfigManager>) -> Result<Storage
     }
 
     // Create stores and network
-    let (log_store, sm, current_dek, _revoked_deks, pending_rotations) =
+    let (log_store, sm, current_dek, _revoked_deks, pending_rotations, quarantine_rx) =
         crate::new::<crate::TypeConfig, _>(ds_config.path, ds_config.node_id, kek.clone()).await?;
     let state_machine_store = Arc::new(sm);
     let tls_client = init_tls_watcher(config_manager).await?;
     let network = Arc::new(NetworkManager::new(tls_client.clone())?);
 
-    // Spawn TLS cert expiry watchdog for manual-TLS fallback (ADR §4.2).
+    // Spawn expiry watchdog for manual-TLS fallback (ADR §4.2). The 30-day
+    // max-validity cap itself is enforced inside `get_client_tls_config` /
+    // `get_server_tls_config` (network.rs) on every load — including the
+    // `init_tls_watcher` call above — so it's checked here on startup and on
+    // every subsequent hot-reload, not just once.
     if let openstack_keystone_config::RaftTlsConfiguration::Tls(tls) = &ds_config.tls_configuration
         && let Some(cert_content) = tls.tls_cert_content.as_ref()
     {
@@ -204,10 +226,10 @@ pub async fn init_storage(config_manager: &Arc<ConfigManager>) -> Result<Storage
 
     // Derive the per-node audit HMAC key from the current DEK epoch (ADR §3.1).
     let audit_key = {
-        let guard = current_dek.read().unwrap();
+        let guard = current_dek.read().unwrap_or_else(|p| p.into_inner());
         guard
             .derive_audit_key(ds_config.node_id)
-            .expect("derive audit key from DEK")
+            .map_err(|e| StoreError::Other(eyre!("failed to derive audit HMAC key: {e}")))?
     };
     let (audit_forwarder, _audit_task) = AuditForwarder::spawn(audit_key);
 
@@ -227,7 +249,7 @@ pub async fn init_storage(config_manager: &Arc<ConfigManager>) -> Result<Storage
             (None, String::new(), String::new(), Vec::new())
         };
 
-    Ok(Storage {
+    let storage = Arc::new(Storage {
         connection_pool: DashMap::new(),
         raft,
         node_id: ds_config.node_id,
@@ -241,7 +263,39 @@ pub async fn init_storage(config_manager: &Arc<ConfigManager>) -> Result<Storage
         spiffe_path_prefix,
         operator_role,
         allowed_peer_svids,
-    })
+    });
+
+    // Best-effort background forwarding of Raft-committed quarantine events
+    // (ADR 0016-v2 §10 invariant 5). The local, synchronous quarantine
+    // already took effect in FjallStateMachine::decrypt_state before this
+    // channel is signalled; this task only propagates the fact cluster-wide.
+    //
+    // Holds a Weak reference so this task never keeps `Storage` (and the
+    // underlying Fjall database handle) alive on its own — once the last
+    // strong reference is dropped, the next upgrade() fails and the task
+    // exits instead of leaking the node's resources indefinitely.
+    {
+        let storage_weak = Arc::downgrade(&storage);
+        let mut quarantine_rx = quarantine_rx;
+        tokio::spawn(async move {
+            while let Some((node_id, partition)) = quarantine_rx.recv().await {
+                let Some(storage) = storage_weak.upgrade() else {
+                    break;
+                };
+                if let Err(e) = storage.propose_quarantine(node_id, partition.clone()).await {
+                    tracing::warn!(
+                        node_id,
+                        partition,
+                        error = %e,
+                        "failed to propose quarantine via Raft; local quarantine \
+                         remains in effect, cluster-wide visibility delayed"
+                    );
+                }
+            }
+        });
+    }
+
+    Ok(storage)
 }
 
 /// Build a tonic `Server` instance for the raft instance.
@@ -421,6 +475,7 @@ impl StorageApi for Storage {
                     metadata.tier as u8,
                     &keyspace_bytes,
                     key,
+                    metadata.dek_version,
                 )?;
                 Ok(Some(StoreDataEnvelope { data, metadata }))
             })();
@@ -519,7 +574,13 @@ impl StorageApi for Storage {
             .map(|(k, val_bytes, meta)| {
                 let data = self
                     .state_machine_store
-                    .decrypt_state(&val_bytes, meta.tier as u8, &keyspace_bytes, k.as_bytes())
+                    .decrypt_state(
+                        &val_bytes,
+                        meta.tier as u8,
+                        &keyspace_bytes,
+                        k.as_bytes(),
+                        meta.dek_version,
+                    )
                     .map_err(ApiStoreError::from)?;
                 Ok((
                     k,
@@ -809,7 +870,8 @@ impl Storage {
     }
 
     /// Forward a `get_by_key` read to the leader via gRPC.
-    /// Leader decrypts and returns plaintext; follower wraps it in StoreDataEnvelope.
+    /// Leader decrypts and returns plaintext; follower wraps it in
+    /// StoreDataEnvelope.
     async fn forwarded_get_by_key(
         &self,
         leader_id: u64,
@@ -947,6 +1009,22 @@ impl Storage {
             }
             Err(other) => Err(other)?,
         }
+    }
+
+    /// Propose a `Quarantine` mutation via Raft, forwarding to the leader if
+    /// this node is not currently leader (ADR 0016-v2 §10 invariant 5).
+    ///
+    /// Called from the background quarantine-forwarding task in
+    /// [`init_storage`] whenever a local GCM failure threshold is reached.
+    /// Best effort: the local, synchronous quarantine (in-memory block plus
+    /// local Fjall marker) already took effect before this is invoked, so a
+    /// failure here only delays cluster-wide visibility, not local safety.
+    async fn propose_quarantine(&self, node_id: u64, partition: String) -> Result<(), StoreError> {
+        let cmd = StoreCommand::Transaction(vec![MutationInner::Quarantine { node_id, partition }]);
+        let payload = crate::pb::api::CommandRequest::try_from(cmd)
+            .map_err(|e| StoreError::Other(eyre::eyre!("{e}")))?;
+        self.write_command_to_storage(payload).await?;
+        Ok(())
     }
 
     /// Generic retry loop: on `Unavailable` with leader metadata, switch

@@ -68,6 +68,13 @@ pub enum CryptoError {
     #[error("stored ciphertext is too short to be a valid encrypted record")]
     CiphertextTooShort,
 
+    /// A byte slice that should have a fixed AEAD parameter length
+    /// (nonce/tag/key) did not. Should be unreachable in practice — every
+    /// call site passes a statically-sized array — but propagated as an
+    /// error instead of panicking in case that invariant is ever violated.
+    #[error("internal error: fixed-length cryptographic parameter had the wrong size")]
+    InvalidArrayLength,
+
     /// Ciphertext was encrypted under a revoked DEK epoch (ADR 0016-v2 §6.2).
     /// Emergency rotation revokes the compromised DEK; any attempt to decrypt
     /// data with the revoked key is a fatal error.

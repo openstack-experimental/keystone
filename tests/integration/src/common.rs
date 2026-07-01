@@ -19,7 +19,7 @@ use std::net::IpAddr;
 use std::ops::Deref;
 use std::pin::Pin;
 use std::sync::Arc;
-use std::time;
+use std::time as std_time;
 
 use eyre::{Result, WrapErr};
 use rcgen::{
@@ -31,6 +31,7 @@ use sea_orm::{
 };
 use secrecy::SecretString;
 use tempfile::TempDir;
+use time::OffsetDateTime;
 use uuid::Uuid;
 
 use openstack_keystone::plugin_manager::PluginManager;
@@ -129,6 +130,7 @@ pub async fn get_isolated_database() -> Result<DatabaseConnection> {
     Ok(db)
 }
 
+#[allow(unsafe_code)]
 pub async fn get_state() -> Result<(Arc<Service>, TempDir)> {
     let db = get_isolated_database().await?;
 
@@ -175,11 +177,31 @@ pub async fn get_state() -> Result<(Arc<Service>, TempDir)> {
 
     let concrete_storage: Option<Arc<openstack_keystone_distributed_storage::app::Storage>> =
         if cfg.distributed_storage.is_some() {
+            // init_storage requires KEYSTONE_ALLOW_ENV_KEK=1 alongside dev_mode
+            // before it will use an environment-provided KEK. CI sets both
+            // ambiently (tools/raft-env.sh / workflow env), but a bare `cargo
+            // test -p integration` or an IDE test runner skips that setup, so
+            // fall back to setting the same well-known test values here —
+            // only if unset, so CI's own values always win. Multiple test
+            // tasks may race to set these concurrently, but every writer uses
+            // the identical constant value, so the race is benign.
+            // SAFETY: values written are constant across all callers.
+            unsafe {
+                if std::env::var("KEYSTONE_DEV_KEK").is_err() {
+                    std::env::set_var(
+                        "KEYSTONE_DEV_KEK",
+                        "4242424242424242424242424242424242424242424242424242424242424242",
+                    );
+                }
+                if std::env::var("KEYSTONE_ALLOW_ENV_KEK").is_err() {
+                    std::env::set_var("KEYSTONE_ALLOW_ENV_KEK", "1");
+                }
+            }
             let cfg_mgr = ConfigManager::not_watched(cfg.clone());
             let storage = openstack_keystone_distributed_storage::app::init_storage(&cfg_mgr)
                 .await
                 .wrap_err("Failed to init storage")?;
-            Some(Arc::new(storage))
+            Some(storage)
         } else {
             None
         };
@@ -211,7 +233,7 @@ pub async fn get_state() -> Result<(Arc<Service>, TempDir)> {
             )]))
             .await?;
     }
-    std::thread::sleep(time::Duration::from_millis(200));
+    std::thread::sleep(std_time::Duration::from_millis(200));
     Ok((state, tmp_dir))
 }
 
@@ -277,8 +299,13 @@ where
 }
 
 fn make_certificates() -> Result<TlsConfiguration> {
+    let now = OffsetDateTime::now_utc();
+    let thirty_days = time::Duration::days(30);
+
     // 1. Generate CA private key and certificate
     let mut ca_params = CertificateParams::default();
+    ca_params.not_before = now;
+    ca_params.not_after = now + thirty_days;
     ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
     ca_params.key_usages = vec![
         KeyUsagePurpose::KeyCertSign,
@@ -296,6 +323,8 @@ fn make_certificates() -> Result<TlsConfiguration> {
 
     // 2. Generate peer certificate (signed by CA)
     let mut peer_cert_params = CertificateParams::default();
+    peer_cert_params.not_before = now;
+    peer_cert_params.not_after = now + thirty_days;
 
     let client_ip: IpAddr = "127.0.0.1".parse()?;
     peer_cert_params.subject_alt_names = vec![SanType::IpAddress(client_ip)];

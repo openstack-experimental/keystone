@@ -32,6 +32,7 @@ fn bench_state_machine(c: &mut Criterion) {
     let revoked_deks: Arc<Mutex<HashSet<u32>>> = Arc::new(Mutex::new(HashSet::new()));
     let kek: Arc<dyn KekProvider> = Arc::new(EnvKek::from_bytes([0x42u8; 32]));
     let (_reencrypt_tx, _reencrypt_rx) = tokio::sync::mpsc::channel::<Arc<DekEpoch>>(16);
+    let (_quarantine_tx, _quarantine_rx) = tokio::sync::mpsc::channel::<(u64, String)>(16);
     let pending_rotations: Arc<
         Mutex<
             HashMap<String, openstack_keystone_distributed_storage::store_command::PendingRotation>,
@@ -42,11 +43,13 @@ fn bench_state_machine(c: &mut Criterion) {
         FjallStateMachine::new(
             db,
             snapshot_dir,
+            1, // node_id
             current_dek,
             old_deks,
             revoked_deks,
             kek,
             _reencrypt_tx,
+            _quarantine_tx,
             pending_rotations,
         )
         .unwrap(),

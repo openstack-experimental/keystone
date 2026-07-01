@@ -176,6 +176,14 @@ pub struct Metadata {
     /// this field (e.g. from a previous schema) deserialize to the default.
     #[serde(default)]
     pub tier: DataTier,
+    /// The DEK epoch (`dek_version_u32`) under which the record's value was
+    /// encrypted (ADR 0016-v2 §6 step 6). Set on every write so reads can
+    /// select the correct key deterministically instead of probing multiple
+    /// epochs on a tag-verification failure. `None` only for records written
+    /// before this field existed; such legacy records fall back to a
+    /// try-current-then-probe-retired read path for backward compatibility.
+    #[serde(default)]
+    pub dek_version: Option<u32>,
 }
 
 impl Metadata {
@@ -185,6 +193,7 @@ impl Metadata {
             revision: 0,
             created_at: Utc::now().timestamp(),
             tier: DataTier::Internal,
+            dek_version: None,
         }
     }
 
@@ -194,6 +203,7 @@ impl Metadata {
             revision: 0,
             created_at: Utc::now().timestamp(),
             tier,
+            dek_version: None,
         }
     }
 
@@ -204,6 +214,7 @@ impl Metadata {
             revision: self.revision + 1,
             created_at: self.created_at,
             tier: self.tier,
+            dek_version: self.dek_version,
         }
     }
 

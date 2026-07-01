@@ -28,6 +28,7 @@ use tracing::trace;
 use crate::StoreError;
 use crate::app::normalize_rpc_addr;
 use crate::audit::{AuditForwarder, AuditRecord};
+use crate::network::{check_svid_ttl_der, now_unix_secs};
 use crate::pb;
 use crate::protobuf::raft::cluster_admin_service_server::ClusterAdminService;
 use crate::store_command::{MutationInner, PendingRotation, StoreCommand};
@@ -153,6 +154,7 @@ fn require_operator<T>(
                     "SPIFFE mode is active; peer must present a SPIFFE URI SAN",
                 ));
             }
+            check_svid_ttl(request)?;
             let role = parse_spiffe_storage_id(&identity, domains, spiffe_path_prefix)?;
             if role != operator_role {
                 return Err(Status::permission_denied(format!(
@@ -191,6 +193,11 @@ fn check_peer_trust_domain<T>(
         return Err(Status::permission_denied(
             "SPIFFE mode is active; peer must present a SPIFFE URI SAN",
         ));
+    }
+
+    // In SPIFFE mode, enforce the 5-minute force-renewal window (ADR 0016-v2 §4.1).
+    if trust_domains.is_some() {
+        check_svid_ttl(request)?;
     }
 
     if allowed_peer_svids.is_empty() {
@@ -233,6 +240,25 @@ fn parse_spiffe_trust_domain(id: &str, trust_domains: &[String]) -> Result<(), S
     }
 
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// SVID TTL enforcement (ADR 0016-v2 §4.1 — force-renewal window)
+// ---------------------------------------------------------------------------
+
+/// Extracts the peer certificate from `request` and enforces the SVID
+/// force-renewal window (ADR 0016-v2 §4.1). Only called in SPIFFE mode.
+///
+/// Redundant with the `SpiffeIdInterceptor` that already runs this check for
+/// every request reaching this service (`raft_grpc::validate_spiffe_id`) —
+/// kept as defense-in-depth on the RBAC-sensitive admin surface rather than
+/// relying solely on the interceptor layer.
+fn check_svid_ttl<T>(request: &tonic::Request<T>) -> Result<(), Status> {
+    let der = request
+        .peer_certs()
+        .and_then(|certs| certs.first().map(|c| c.as_ref().to_vec()))
+        .ok_or_else(|| Status::permission_denied("no peer certificate presented"))?;
+    check_svid_ttl_der(&der, now_unix_secs())
 }
 
 /// Raft cluster administrative operations.
@@ -868,8 +894,16 @@ impl ClusterAdminService for ClusterAdminServiceImpl {
             tokio::io::AsyncReadExt::read_exact(&mut file, &mut header)
                 .await
                 .map_err(|e| Status::internal(format!("cannot read snapshot header: {e}")))?;
-            let dv = u32::from_be_bytes(header[..4].try_into().unwrap());
-            let ue = u64::from_be_bytes(header[4..12].try_into().unwrap());
+            let dv = u32::from_be_bytes(
+                header[..4]
+                    .try_into()
+                    .map_err(|_| Status::internal("corrupt snapshot header (dek_version)"))?,
+            );
+            let ue = u64::from_be_bytes(
+                header[4..12]
+                    .try_into()
+                    .map_err(|_| Status::internal("corrupt snapshot header (utc_epoch)"))?,
+            );
             (file, header, dv, ue)
         };
 
@@ -1219,5 +1253,50 @@ mod tests {
             normalize_rpc_addr(from_config),
             "stored bare address must match config Uri::Display format"
         );
+    }
+
+    // SVID TTL enforcement (ADR 0016-v2 §4.1 — force-renewal window)
+
+    // Unix timestamp of 2100-01-01 00:00:00 UTC (used as a stable not_after
+    // anchor).
+    const NOT_AFTER_2100_UNIX: i64 = 4_102_444_800;
+
+    fn make_svid_der_not_after_2100() -> Vec<u8> {
+        use rcgen::{CertificateParams, KeyPair, date_time_ymd};
+        let mut params = CertificateParams::default();
+        params.not_before = date_time_ymd(2000, 1, 1);
+        params.not_after = date_time_ymd(2100, 1, 1);
+        let key = KeyPair::generate().expect("keygen");
+        params
+            .self_signed(&key)
+            .expect("self-sign")
+            .der()
+            .as_ref()
+            .to_vec()
+    }
+
+    #[test]
+    fn svid_ttl_ok() {
+        let der = make_svid_der_not_after_2100();
+        // 10 minutes before expiry — well outside the 5-minute window.
+        assert!(check_svid_ttl_der(&der, NOT_AFTER_2100_UNIX - 600).is_ok());
+    }
+
+    #[test]
+    fn svid_ttl_force_renewal_window() {
+        let der = make_svid_der_not_after_2100();
+        // 4 minutes before expiry — inside the 5-minute force-renewal window.
+        let err = check_svid_ttl_der(&der, NOT_AFTER_2100_UNIX - 240)
+            .expect_err("should fail inside force-renewal window");
+        assert_eq!(err.code(), tonic::Code::PermissionDenied);
+    }
+
+    #[test]
+    fn svid_ttl_expired() {
+        let der = make_svid_der_not_after_2100();
+        // 1 second past expiry.
+        let err = check_svid_ttl_der(&der, NOT_AFTER_2100_UNIX + 1)
+            .expect_err("should fail when expired");
+        assert_eq!(err.code(), tonic::Code::PermissionDenied);
     }
 }

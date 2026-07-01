@@ -738,10 +738,15 @@ Any code change violating the following is rejected at review:
    key; 3 distinct key failures within 60 seconds in the same Fjall partition
    trigger read-only quarantine (in-flight Raft proposals are drained, not
    interrupted). **Quarantine state is durable:** it is committed via a Raft
-   proposal to `_meta:quarantine:<node_id>:<partition>` so it persists across
-   node restarts and is visible to all cluster members. A restarted node reads
-   this key at startup and re-enters quarantine if the flag is set, preventing
-   escape via process restart. Recovery requires the operator to run
+   proposal to `_meta:quarantine:<partition>:<node_id>` (partition first, so an
+   operator's `ClearQuarantine` can prefix-scan and remove every reporting
+   node's entry for a partition in one pass) so it persists across node
+   restarts and is visible to all cluster members. GCM failures reflect
+   node-local storage corruption, not a cluster-wide data problem, so
+   blocking is node-scoped: only the reporting node re-enters quarantine (and
+   refuses local reads) for that partition on restart; other nodes persist
+   the record for audit visibility only and continue serving reads. Recovery
+   requires the operator to run
    `keystone-manage storage clear-quarantine` on the affected node, which
    requires `storage-operator` RBAC authorization, is committed via Raft (so
    the flag is cleared cluster-wide), and is audit-logged with caller identity

@@ -36,4 +36,4 @@ nix = { workspace = true, features = ["mman", "feature"] }
 rand.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
-zeroize = { version = "1", features = ["derive", "zeroize_derive"] }
+zeroize = "1"

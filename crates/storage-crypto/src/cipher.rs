@@ -34,17 +34,16 @@
 //! All GCM tags are 16 bytes (full-length).  Truncated tags are prohibited
 //! (ADR §2.2).
 
-#[allow(deprecated)]
-use aes_gcm::aead::AeadInPlace;
+use aes_gcm::aead::AeadInOut;
 use aes_gcm::{Aes256Gcm, KeyInit};
 use hkdf::Hkdf;
 use hybrid_array::Array;
 use sha2::Sha256;
-use typenum::{U12, U16, U32};
 use zeroize::Zeroizing;
 
 use crate::dek::{BackupDek, LogDek, StateDek};
 use crate::error::CryptoError;
+use crate::gcm::{GcmKey, GcmNonce, GcmTag};
 
 // Label for snapshot backup AD (ADR §7).
 const BACKUP_AD_LABEL: &[u8] = b"keystone-backup-v1";
@@ -54,24 +53,19 @@ const STATE_MIN_LEN: usize = 32;
 // Minimum bytes in a stored log value: nonce(12) + tag(16) = 28
 const LOG_MIN_LEN: usize = 28;
 
-// Type aliases for array helpers
-type GcmKey = Array<u8, U32>;
-type GcmNonce = Array<u8, U12>;
-type GcmTag = Array<u8, U16>;
-
 /// Convert a slice reference to a typed GCM nonce array reference.
-fn nonce_ref(s: &[u8]) -> &GcmNonce {
-    Array::slice_as_array(s).expect("12-byte nonce")
+fn nonce_ref(s: &[u8]) -> Result<&GcmNonce, CryptoError> {
+    Array::slice_as_array(s).ok_or(CryptoError::InvalidArrayLength)
 }
 
 /// Convert a slice reference to a typed GCM tag array reference.
-fn tag_ref(s: &[u8]) -> &GcmTag {
-    Array::slice_as_array(s).expect("16-byte tag")
+fn tag_ref(s: &[u8]) -> Result<&GcmTag, CryptoError> {
+    Array::slice_as_array(s).ok_or(CryptoError::InvalidArrayLength)
 }
 
 /// Convert a 32-byte slice to a typed GCM key array reference.
-fn key_ref(s: &[u8]) -> &GcmKey {
-    Array::slice_as_array(s).expect("32-byte key")
+fn key_ref(s: &[u8]) -> Result<&GcmKey, CryptoError> {
+    Array::slice_as_array(s).ok_or(CryptoError::InvalidArrayLength)
 }
 
 // ---------------------------------------------------------------------------
@@ -89,7 +83,6 @@ fn key_ref(s: &[u8]) -> &GcmKey {
 ///
 /// # Returns
 /// `[nonce 12B] ++ [ciphertext] ++ [tag 16B]`.
-#[allow(deprecated)]
 pub fn log_encrypt(
     dek: &LogDek,
     plaintext: &[u8],
@@ -97,13 +90,13 @@ pub fn log_encrypt(
     index: u64,
     nonce: &[u8; 12],
 ) -> Result<Vec<u8>, CryptoError> {
-    let cipher = Aes256Gcm::new(key_ref(&*dek.0));
+    let cipher = Aes256Gcm::new(key_ref(dek.0.as_bytes())?);
     let aad = log_aad(term, index);
-    let gcm_nonce = nonce_ref(nonce);
+    let gcm_nonce = nonce_ref(nonce)?;
 
     let mut buf = plaintext.to_vec();
     let tag = cipher
-        .encrypt_in_place_detached(gcm_nonce, &aad, &mut buf)
+        .encrypt_inout_detached(gcm_nonce, &aad, buf.as_mut_slice().into())
         .map_err(|_| CryptoError::AesEncrypt)?;
 
     let mut out = Vec::with_capacity(12 + plaintext.len() + 16);
@@ -118,7 +111,6 @@ pub fn log_encrypt(
 ///
 /// Returns the plaintext in a zeroing wrapper.  Returns
 /// [`CryptoError::AesDecrypt`] if the GCM tag does not verify.
-#[allow(deprecated)]
 pub fn log_decrypt(
     dek: &LogDek,
     stored: &[u8],
@@ -130,23 +122,19 @@ pub fn log_decrypt(
     }
     let (nonce_bytes, rest) = stored.split_at(12);
     let (ciphertext, tag_bytes) = rest.split_at(rest.len() - 16);
-    let gcm_nonce = nonce_ref(nonce_bytes);
-    let tag = tag_ref(tag_bytes);
+    let gcm_nonce = nonce_ref(nonce_bytes)?;
+    let tag = tag_ref(tag_bytes)?;
     let aad = log_aad(term, index);
-    let cipher = Aes256Gcm::new(key_ref(&*dek.0));
+    let cipher = Aes256Gcm::new(key_ref(dek.0.as_bytes())?);
 
     let mut buf = Zeroizing::new(ciphertext.to_vec());
     cipher
-        .decrypt_in_place_detached(gcm_nonce, &aad, buf.as_mut(), tag)
+        .decrypt_inout_detached(gcm_nonce, &aad, buf.as_mut_slice().into(), tag)
         .map_err(|_| CryptoError::AesDecrypt)?;
     Ok(buf)
 }
 
-// ---------------------------------------------------------------------------
-// State encryption
-// ---------------------------------------------------------------------------
-
-/// Encrypt a Fjall state entry for a given record version.
+/// Encrypt a Fjall state machine record.
 ///
 /// # Parameters
 /// - `dek`        — the state sub-key for this DEK epoch.
@@ -158,7 +146,6 @@ pub fn log_decrypt(
 ///
 /// # Returns
 /// `[nonce 12B] ++ [ciphertext] ++ [tag 16B] ++ [version u32 BE]`.
-#[allow(deprecated)]
 pub fn state_encrypt(
     dek: &StateDek,
     plaintext: &[u8],
@@ -169,12 +156,12 @@ pub fn state_encrypt(
 ) -> Result<Vec<u8>, CryptoError> {
     let nonce_array = state_nonce(dek, pk, version)?;
     let aad = state_aad(tier, domain_id, pk);
-    let cipher = Aes256Gcm::new(key_ref(&*dek.0));
-    let gcm_nonce = nonce_ref(&nonce_array);
+    let cipher = Aes256Gcm::new(key_ref(dek.0.as_bytes())?);
+    let gcm_nonce = nonce_ref(&nonce_array)?;
 
     let mut buf = plaintext.to_vec();
     let tag = cipher
-        .encrypt_in_place_detached(gcm_nonce, &aad, &mut buf)
+        .encrypt_inout_detached(gcm_nonce, &aad, buf.as_mut_slice().into())
         .map_err(|_| CryptoError::AesEncrypt)?;
 
     let mut out = Vec::with_capacity(12 + plaintext.len() + 16 + 4);
@@ -191,7 +178,6 @@ pub fn state_encrypt(
 /// `(plaintext, next_version)` where `next_version = stored_version + 1`.
 /// Returns [`CryptoError::AesDecrypt`] if the GCM tag does not verify —
 /// callers MUST treat this as a quarantine-triggering event.
-#[allow(deprecated)]
 pub fn state_decrypt(
     dek: &StateDek,
     stored: &[u8],
@@ -221,14 +207,14 @@ pub fn state_decrypt(
         return Err(CryptoError::AesDecrypt);
     }
 
-    let gcm_nonce = nonce_ref(nonce_bytes);
-    let tag = tag_ref(tag_bytes);
+    let gcm_nonce = nonce_ref(nonce_bytes)?;
+    let tag = tag_ref(tag_bytes)?;
     let aad = state_aad(tier, domain_id, pk);
-    let cipher = Aes256Gcm::new(key_ref(&*dek.0));
+    let cipher = Aes256Gcm::new(key_ref(dek.0.as_bytes())?);
 
     let mut buf = Zeroizing::new(ciphertext.to_vec());
     cipher
-        .decrypt_in_place_detached(gcm_nonce, &aad, buf.as_mut(), tag)
+        .decrypt_inout_detached(gcm_nonce, &aad, buf.as_mut_slice().into(), tag)
         .map_err(|_| CryptoError::AesDecrypt)?;
 
     let next_version = stored_version.saturating_add(1);
@@ -251,7 +237,6 @@ pub fn state_decrypt(
 ///
 /// # Returns
 /// `[nonce 12B] ++ [ciphertext] ++ [tag 16B]`.
-#[allow(deprecated)]
 #[allow(clippy::disallowed_methods)]
 pub fn backup_encrypt(
     dek: &BackupDek,
@@ -262,12 +247,12 @@ pub fn backup_encrypt(
 ) -> Result<Vec<u8>, CryptoError> {
     let nonce_bytes = backup_nonce(dek, utc_epoch, counter)?;
     let aad = backup_aad(dek_version, utc_epoch, counter);
-    let cipher = Aes256Gcm::new(key_ref(dek.as_bytes()));
-    let gcm_nonce = nonce_ref(&nonce_bytes);
+    let cipher = Aes256Gcm::new(key_ref(dek.as_bytes())?);
+    let gcm_nonce = nonce_ref(&nonce_bytes)?;
 
     let mut buf = plaintext.to_vec();
     let tag = cipher
-        .encrypt_in_place_detached(gcm_nonce, &aad, &mut buf)
+        .encrypt_inout_detached(gcm_nonce, &aad, buf.as_mut_slice().into())
         .map_err(|_| CryptoError::AesEncrypt)?;
 
     let mut out = Vec::with_capacity(12 + plaintext.len() + 16);
@@ -284,7 +269,6 @@ pub fn backup_encrypt(
 /// The stored nonce is re-derived from (`dek`, `utc_epoch`, `counter`) and
 /// verified against the stored bytes to detect accidental epoch/timestamp
 /// confusion.
-#[allow(deprecated)]
 pub fn backup_decrypt(
     dek: &BackupDek,
     stored: &[u8],
@@ -306,13 +290,13 @@ pub fn backup_decrypt(
 
     let (ciphertext, tag_bytes) = rest.split_at(rest.len() - 16);
     let aad = backup_aad(dek_version, utc_epoch, counter);
-    let cipher = Aes256Gcm::new(key_ref(dek.as_bytes()));
-    let gcm_nonce = nonce_ref(nonce_bytes);
-    let tag = tag_ref(tag_bytes);
+    let cipher = Aes256Gcm::new(key_ref(dek.as_bytes())?);
+    let gcm_nonce = nonce_ref(nonce_bytes)?;
+    let tag = tag_ref(tag_bytes)?;
 
     let mut buf = Zeroizing::new(ciphertext.to_vec());
     cipher
-        .decrypt_in_place_detached(gcm_nonce, &aad, buf.as_mut(), tag)
+        .decrypt_inout_detached(gcm_nonce, &aad, buf.as_mut_slice().into(), tag)
         .map_err(|_| CryptoError::AesDecrypt)?;
     Ok(buf)
 }
@@ -333,7 +317,7 @@ fn log_aad(term: u64, index: u64) -> [u8; 16] {
 /// `info = pk ++ version_u32_be` as per ADR §2.2.
 fn state_nonce(dek: &StateDek, pk: &[u8], version: u32) -> Result<[u8; 12], CryptoError> {
     let hkdf =
-        Hkdf::<Sha256>::from_prk(dek.0.as_ref()).map_err(|_| CryptoError::InvalidKeyLength)?;
+        Hkdf::<Sha256>::from_prk(dek.0.as_bytes()).map_err(|_| CryptoError::InvalidKeyLength)?;
 
     let mut info = Vec::with_capacity(pk.len() + 4);
     info.extend_from_slice(pk);
@@ -385,14 +369,14 @@ fn backup_nonce(dek: &BackupDek, utc_epoch: u64, counter: u64) -> Result<[u8; 12
 mod tests {
     use super::*;
     use crate::dek::{LogDek, StateDek};
-    use zeroize::Zeroizing;
+    use crate::mlock::LockedKey;
 
     fn test_log_dek() -> LogDek {
-        LogDek(Zeroizing::new([0x11u8; 32]))
+        LogDek(LockedKey::from_raw([0x11u8; 32]))
     }
 
     fn test_state_dek() -> StateDek {
-        StateDek(Zeroizing::new([0x22u8; 32]))
+        StateDek(LockedKey::from_raw([0x22u8; 32]))
     }
 
     fn test_nonce() -> [u8; 12] {

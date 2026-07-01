@@ -81,12 +81,182 @@ fn test_cluster() {
 /// Scenario:
 /// 1. Node initializes with bare address "127.0.0.1:21001"
 /// 2. Node reinitializes (simulating pod restart) with "https://127.0.0.1:21001/"
-/// 3. check_node_id_uniqueness should NOT reject the restart — same logical address.
+/// 3. check_node_id_uniqueness should NOT reject the restart — same logical
+///    address.
 #[serial_test::serial]
 #[tracing_test::traced_test]
 #[test]
 fn test_node_restart_with_address_format_change() {
     TypeConfig::run(test_node_restart_inner()).unwrap();
+}
+
+/// `init_storage` must refuse to start in production mode (`dev_mode =
+/// false`): there is currently no production `KekProvider` (HSM/PKCS#11/KMS)
+/// wired up, so falling back to an environment-provided KEK would silently
+/// violate ADR 0016-v2 §2.1 / invariant 6.
+#[serial_test::serial]
+#[tracing_test::traced_test]
+#[test]
+fn test_kek_gating_production_mode_rejected() {
+    TypeConfig::run(test_kek_gating_production_mode_rejected_inner()).unwrap();
+}
+
+#[allow(unsafe_code)]
+async fn test_kek_gating_production_mode_rejected_inner() -> Result<()> {
+    let provider = rustls::crypto::aws_lc_rs::default_provider();
+    let _ = rustls::crypto::CryptoProvider::install_default(provider);
+
+    let storage_dir = tempfile::TempDir::new().unwrap();
+    let tls_configuration = make_certificates()?;
+    let mut ds_config = get_ds_config(101, storage_dir.path().to_path_buf(), tls_configuration);
+    ds_config.dev_mode = false;
+
+    let mut config = Config::default();
+    config.distributed_storage = Some(ds_config);
+
+    // SAFETY: no concurrent env readers; test is `#[serial_test::serial]`.
+    unsafe {
+        std::env::remove_var("KEYSTONE_DEV_KEK");
+        std::env::remove_var("KEYSTONE_ALLOW_ENV_KEK");
+    }
+
+    let result = init_storage(&ConfigManager::not_watched(config)).await;
+    assert!(
+        result.is_err(),
+        "init_storage must refuse to start with dev_mode=false (no production KekProvider exists)"
+    );
+    Ok(())
+}
+
+/// `init_storage` must refuse to start with `dev_mode = true` unless
+/// `KEYSTONE_ALLOW_ENV_KEK=1` is explicitly set (ADR 0016-v2 §2.1, invariant
+/// 6), even when `KEYSTONE_DEV_KEK` is present.
+#[serial_test::serial]
+#[tracing_test::traced_test]
+#[test]
+fn test_kek_gating_dev_mode_requires_allow_env_kek() {
+    TypeConfig::run(test_kek_gating_dev_mode_requires_allow_env_kek_inner()).unwrap();
+}
+
+#[allow(unsafe_code)]
+async fn test_kek_gating_dev_mode_requires_allow_env_kek_inner() -> Result<()> {
+    let provider = rustls::crypto::aws_lc_rs::default_provider();
+    let _ = rustls::crypto::CryptoProvider::install_default(provider);
+
+    let storage_dir = tempfile::TempDir::new().unwrap();
+    let tls_configuration = make_certificates()?;
+    let ds_config = get_ds_config(102, storage_dir.path().to_path_buf(), tls_configuration);
+    // dev_mode is true via get_ds_config, but KEYSTONE_ALLOW_ENV_KEK is unset.
+
+    let mut config = Config::default();
+    config.distributed_storage = Some(ds_config);
+
+    // SAFETY: no concurrent env readers; test is `#[serial_test::serial]`.
+    unsafe {
+        std::env::set_var("KEYSTONE_DEV_KEK", TEST_KEK_HEX);
+        std::env::remove_var("KEYSTONE_ALLOW_ENV_KEK");
+    }
+
+    let result = init_storage(&ConfigManager::not_watched(config)).await;
+    assert!(
+        result.is_err(),
+        "init_storage must refuse to start with dev_mode=true but KEYSTONE_ALLOW_ENV_KEK unset"
+    );
+    Ok(())
+}
+
+/// A `Quarantine` mutation committed via Raft blocks reads on the affected
+/// partition, and `ClearQuarantine` restores them — exercising the real
+/// apply() path end-to-end (ADR 0016-v2 §10 invariant 5).
+#[serial_test::serial]
+#[tracing_test::traced_test]
+#[test]
+fn test_quarantine_committed_via_raft() {
+    TypeConfig::run(test_quarantine_committed_via_raft_inner()).unwrap();
+}
+
+#[allow(unsafe_code)]
+async fn test_quarantine_committed_via_raft_inner() -> Result<()> {
+    let provider = rustls::crypto::aws_lc_rs::default_provider();
+    let _ = rustls::crypto::CryptoProvider::install_default(provider);
+
+    let storage_dir = tempfile::TempDir::new().unwrap();
+    let tls_configuration = make_certificates()?;
+    let ds_config = get_ds_config(103, storage_dir.path().to_path_buf(), tls_configuration);
+
+    let mut config = Config::default();
+    config.distributed_storage = Some(ds_config);
+
+    // SAFETY: no concurrent env readers; test is `#[serial_test::serial]`.
+    unsafe {
+        std::env::set_var("KEYSTONE_DEV_KEK", TEST_KEK_HEX);
+        std::env::set_var("KEYSTONE_ALLOW_ENV_KEK", "1");
+    }
+
+    let storage = init_storage(&ConfigManager::not_watched(config)).await?;
+
+    // Bootstrap as a single-node cluster (no gRPC server needed — the Raft
+    // handle is local).
+    storage
+        .initialize(
+            [(
+                103u64,
+                openstack_keystone_storage_api::Node {
+                    node_id: 103,
+                    rpc_addr: "127.0.0.1:0".to_string(),
+                },
+            )]
+            .into_iter()
+            .collect(),
+        )
+        .await?;
+    for _ in 0..50 {
+        if storage.current_leader() == Some(103) {
+            break;
+        }
+        TypeConfig::sleep(Duration::from_millis(50)).await;
+    }
+    assert_eq!(storage.current_leader(), Some(103));
+
+    // Write a key so there is something to be blocked from reading.
+    let key = "quarantine-test-key".to_string();
+    storage
+        .set_value(key.clone(), make_env(&"hello")?, None, None)
+        .await?;
+    assert!(storage.get_by_key(key.as_bytes(), None).await?.is_some());
+
+    // Issue a raw Quarantine command for this node's own partition, exactly
+    // as FjallStateMachine::decrypt_state does on GCM failure.
+    let cmd = StoreCommand::Transaction(vec![MutationInner::Quarantine {
+        node_id: 103,
+        partition: "data".to_string(),
+    }]);
+    let payload = pb::api::CommandRequest::try_from(cmd)?;
+    storage.raft.client_write(payload).await?;
+
+    // Reads against the quarantined partition must now fail.
+    let err = storage
+        .get_by_key(key.as_bytes(), None)
+        .await
+        .expect_err("quarantined partition must refuse reads");
+    assert!(
+        format!("{err:?}").to_lowercase().contains("quarantin"),
+        "unexpected error: {err:?}"
+    );
+
+    // ClearQuarantine restores reads.
+    let clear_cmd = StoreCommand::Transaction(vec![MutationInner::ClearQuarantine {
+        partition: "data".to_string(),
+    }]);
+    let clear_payload = pb::api::CommandRequest::try_from(clear_cmd)?;
+    storage.raft.client_write(clear_payload).await?;
+
+    assert!(
+        storage.get_by_key(key.as_bytes(), None).await?.is_some(),
+        "read should succeed again after ClearQuarantine"
+    );
+
+    Ok(())
 }
 
 #[allow(unsafe_code)]
@@ -118,7 +288,7 @@ async fn test_node_restart_inner() -> Result<()> {
         std::env::set_var("KEYSTONE_DEV_KEK", TEST_KEK_HEX);
         std::env::set_var("KEYSTONE_ALLOW_ENV_KEK", "1");
     }
-    let storage = Arc::new(init_storage(&ConfigManager::not_watched(config.clone())).await?);
+    let storage = init_storage(&ConfigManager::not_watched(config.clone())).await?;
     assert!(!storage.is_initialized().await?);
 
     // Initialize as single-node cluster
@@ -178,8 +348,8 @@ async fn test_node_restart_inner() -> Result<()> {
     _srv.join().ok();
     TypeConfig::sleep(Duration::from_millis(500)).await;
 
-    // Step 2: Reinitialize the SAME storage dir but with schema prefix + trailing slash
-    // This simulates pod restart where Uri::Display produces "https://host:port/"
+    // Step 2: Reinitialize the SAME storage dir but with schema prefix + trailing
+    // slash This simulates pod restart where Uri::Display produces "https://host:port/"
     let ds_config_restart = DistributedStorageConfiguration {
         node_cluster_addr: "https://127.0.0.1:21005/".parse().expect("valid address"),
         node_listener_addr: "127.0.0.1:21005".parse().expect("valid address"),
@@ -204,8 +374,7 @@ async fn test_node_restart_inner() -> Result<()> {
     // If normalization is broken, this fails with:
     // "FATAL: node_id 1 already registered in cluster at 127.0.0.1:21005;
     //  refusing to start with address https://127.0.0.1:21005/"
-    let storage_restart =
-        Arc::new(init_storage(&ConfigManager::not_watched(config_restart.clone())).await?);
+    let storage_restart = init_storage(&ConfigManager::not_watched(config_restart.clone())).await?;
 
     // Verify the storage thinks it's initialized (persisted state is intact)
     assert!(
@@ -235,7 +404,7 @@ struct InstanceHolder {
     pub node_id: u64,
     pub config: Config,
     storage_dir: TempDir,
-    pub storage: Storage,
+    pub storage: Arc<Storage>,
 }
 
 impl InstanceHolder {
@@ -707,14 +876,16 @@ async fn test_cluster_inner() -> Result<()> {
 
 /// Regression test: write key-val to leader, read immediately from follower.
 ///
-/// Reproduces the Raft replication race condition observed in k8s integration tests
-/// (see `api_v4::mapping::ruleset::create` / `update` / `delete` failures).
+/// Reproduces the Raft replication race condition observed in k8s integration
+/// tests (see `api_v4::mapping::ruleset::create` / `update` / `delete`
+/// failures).
 ///
 /// Pattern:
 /// 1. `set_value` on leader (node 1) — Raft proposal commits asynchronously
-/// 2. `get_by_key` on follower (node 2) — local FjallDB may not have replicated yet
-/// 3. Current mitigation: `ensure_linearizable(ReadIndex)` retry loop in `app.rs`
-///    (3 retries, 14ms total) then fall back to local read
+/// 2. `get_by_key` on follower (node 2) — local FjallDB may not have replicated
+///    yet
+/// 3. Current mitigation: `ensure_linearizable(ReadIndex)` retry loop in
+///    `app.rs` (3 retries, 14ms total) then fall back to local read
 ///
 /// The test runs multiple iterations to increase the probability of catching
 /// the race window. A passing run means the mitigation is working; a failing
@@ -895,9 +1066,10 @@ async fn test_replication_race_get_by_key_inner() -> Result<()> {
 /// Reproduces the pattern where a key is deleted on the leader but still
 /// appears in a follower's local FjallDB (stale read returns deleted data).
 ///
-/// This mirrors the `api_v4::mapping::ruleset::delete::test_delete_mapping_ruleset`
-/// failure: DELETE returns 204 on leader, but subsequent GET on follower returns
-/// 200 with the deleted data instead of 404.
+/// This mirrors the
+/// `api_v4::mapping::ruleset::delete::test_delete_mapping_ruleset`
+/// failure: DELETE returns 204 on leader, but subsequent GET on follower
+/// returns 200 with the deleted data instead of 404.
 #[serial_test::serial]
 #[tracing_test::traced_test]
 #[test]
@@ -1148,6 +1320,14 @@ fn make_certificates() -> Result<TlsConfiguration> {
 
     // 2. Generate peer certificate (signed by CA)
     let mut peer_cert_params = CertificateParams::default();
+
+    // Leaf cert validity must not exceed 30 days (ADR 0016-v2 §4.2,
+    // enforced by check_cert_max_validity at storage startup). Bracket the
+    // current time with a 1-day buffer on each side so the cert is valid for
+    // the lifetime of the test run.
+    let now = time::OffsetDateTime::now_utc();
+    peer_cert_params.not_before = now - time::Duration::days(1);
+    peer_cert_params.not_after = now + time::Duration::days(28);
 
     let client_ip: IpAddr = "127.0.0.1".parse()?;
     peer_cert_params.subject_alt_names = vec![SanType::IpAddress(client_ip)];

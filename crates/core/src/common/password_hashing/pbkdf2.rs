@@ -39,7 +39,8 @@ impl PasswordHasher for Pbkdf2Sha512Hasher {
     async fn hash(&self, conf: &Config, password: &[u8]) -> Result<String, PasswordHashError> {
         // mirrors keystone/common/password_hashers/pbkdf2.py::Sha512.hash()
         // Wire format: $pbkdf2-sha512$<rounds>$<salt_b64>$<digest_b64>
-        // salt and digest are standard base64 no-pad (binascii.b2a_base64().rstrip("=\n")).
+        // salt and digest are standard base64 no-pad
+        // (binascii.b2a_base64().rstrip("=\n")).
         let password_bytes = password.to_vec();
         let rounds = conf.identity.password_hash_rounds.unwrap_or(25000);
         let hash = task::spawn_blocking(move || {
@@ -64,7 +65,8 @@ impl PasswordHasher for Pbkdf2Sha512Hasher {
     ) -> Result<bool, PasswordHashError> {
         // mirrors keystone/common/password_hashers/pbkdf2.py::Sha512.verify()
         // Parses the embedded rounds from the hash string.
-        // replace('.', "+") handles old Passlib-era hashes that used '.' instead of '+'.
+        // replace('.', "+") handles old Passlib-era hashes that used '.' instead of
+        // '+'.
         let password_bytes = password.to_vec();
         let hash_str = hash.to_string();
         let res = task::spawn_blocking(move || {

@@ -12,7 +12,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! Scrypt hasher - mirrors `keystone/common/password_hashers/scrypt.py::Scrypt`.
+//! Scrypt hasher - mirrors
+//! `keystone/common/password_hashers/scrypt.py::Scrypt`.
 
 use base64::{Engine as _, engine::general_purpose::STANDARD_NO_PAD};
 use openstack_keystone_config::Config;
@@ -28,7 +29,8 @@ impl PasswordHasher for ScryptHasher {
         // mirrors keystone/common/password_hashers/scrypt.py::Scrypt.hash()
         // Python hardcodes: n=2**16 (ln=16), r=8, p=1, salt_size=16, output=32 bytes.
         // scrypt_block_size / scrypt_parallelism / salt_bytesize config fields are
-        // not yet in IdentityProvider - use Keystone's own defaults until they are added.
+        // not yet in IdentityProvider - use Keystone's own defaults until they are
+        // added.
         let password_bytes = password.to_vec();
         let hash = task::spawn_blocking(move || {
             let salt = generate_salt();
@@ -62,7 +64,8 @@ impl PasswordHasher for ScryptHasher {
         let password_bytes = password.to_vec();
         let hash_str = hash.to_string();
         let res = task::spawn_blocking(move || -> Result<bool, PasswordHashError> {
-            // Strip leading '$', split on '$': ["scrypt", "ln=N,r=R,p=P", salt_b64, digest_b64]
+            // Strip leading '$', split on '$': ["scrypt", "ln=N,r=R,p=P", salt_b64,
+            // digest_b64]
             let parts: Vec<&str> = hash_str[1..].split('$').collect();
             if parts.len() != 4 {
                 return Ok(false);
@@ -87,7 +90,8 @@ impl PasswordHasher for ScryptHasher {
                 }
             }
 
-            // replace('.', "+") handles old Passlib-era hashes that used '.' in place of '+'.
+            // replace('.', "+") handles old Passlib-era hashes that used '.' in place of
+            // '+'.
             let salt = STANDARD_NO_PAD
                 .decode(salt_b64.replace('.', "+").as_bytes())
                 .map_err(|_| PasswordHashError::CryptoHash("Invalid scrypt salt".into()))?;

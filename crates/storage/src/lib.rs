@@ -125,7 +125,10 @@ openraft::declare_raft_types!(
 ///
 /// # Returns
 /// `(FjallLogStore, FjallStateMachine, Arc<RwLock<Arc<DekEpoch>>>,
-/// Arc<Mutex<HashSet<u32>>>, Arc<Mutex<HashMap<String, PendingRotation>>>)`.
+/// Arc<Mutex<HashSet<u32>>>, Arc<Mutex<HashMap<String, PendingRotation>>>,
+/// Receiver<(u64, String)>)`. The receiver yields `(node_id, partition)`
+/// quarantine events that the caller should propose via Raft once it has a
+/// handle to the `Raft` instance (see `app::init_storage`).
 pub async fn new<C, P: AsRef<Path>>(
     db_path: P,
     node_id: u64,
@@ -137,6 +140,7 @@ pub async fn new<C, P: AsRef<Path>>(
         Arc<RwLock<Arc<DekEpoch>>>,
         Arc<Mutex<HashSet<u32>>>,
         Arc<Mutex<HashMap<String, store_command::PendingRotation>>>,
+        tokio::sync::mpsc::Receiver<(u64, String)>,
     ),
     io::Error,
 >
@@ -160,7 +164,10 @@ where
     let retired_map =
         load_retired_deks(&db, kek.as_ref()).map_err(|e| io::Error::other(e.to_string()))?;
     let old_deks: Arc<Mutex<BTreeMap<u32, Arc<DekEpoch>>>> = Arc::new(Mutex::new(retired_map));
-    let revoked_deks: Arc<Mutex<HashSet<u32>>> = Arc::new(Mutex::new(HashSet::new()));
+    // Load revoked DEK versions from Fjall so an emergency rotation's
+    // containment guarantee survives a restart (ADR 0016-v2 §6.2 step 5).
+    let revoked_set = load_revoked_deks(&db).map_err(|e| io::Error::other(e.to_string()))?;
+    let revoked_deks: Arc<Mutex<HashSet<u32>>> = Arc::new(Mutex::new(revoked_set));
 
     // Load any pending emergency rotations that were staged before a restart.
     let meta_ks = db
@@ -183,6 +190,8 @@ where
         }
     });
 
+    let (quarantine_tx, quarantine_rx) = tokio::sync::mpsc::channel::<(u64, String)>(16);
+
     let log_store = FjallLogStore::new(
         db.clone(),
         node_id,
@@ -195,16 +204,25 @@ where
     let sm = FjallStateMachine::new(
         db,
         snapshot_dir,
+        node_id,
         current_dek.clone(),
         old_deks,
         revoked_deks.clone(),
         kek,
         reencrypt_tx,
+        quarantine_tx,
         pending_rotations.clone(),
     )
     .map_err(|e| io::Error::other(e.to_string()))?;
 
-    Ok((log_store, sm, current_dek, revoked_deks, pending_rotations))
+    Ok((
+        log_store,
+        sm,
+        current_dek,
+        revoked_deks,
+        pending_rotations,
+        quarantine_rx,
+    ))
 }
 
 /// Fjall meta key prefix for retired DEK epochs (mirrors the constant in
@@ -262,6 +280,45 @@ fn load_retired_deks(
         }
     }
     Ok(map)
+}
+
+/// Fjall meta key prefix for revoked DEK epochs (mirrors the constant in
+/// state_machine).
+const DEK_REVOKED_PREFIX: &str = crate::store::state_machine::DEK_REVOKED_PREFIX;
+
+/// Load revoked DEK versions from Fjall meta so an emergency rotation's
+/// containment guarantee survives a restart (ADR 0016-v2 §6.2 step 5).
+///
+/// Only the version is recovered — the stored value is a revocation
+/// timestamp, never key material, since revoked DEKs are discarded
+/// immediately and must never be reconstructable.
+fn load_revoked_deks(db: &Database) -> Result<HashSet<u32>, StoreError> {
+    let meta = db.keyspace("meta", fjall::KeyspaceCreateOptions::default)?;
+    let mut set = HashSet::new();
+    for item in meta.prefix(DEK_REVOKED_PREFIX.as_bytes()) {
+        let (key_bytes, _) = item.into_inner()?;
+        let key_str = match std::str::from_utf8(&key_bytes) {
+            Ok(s) => s.to_owned(),
+            Err(_) => continue,
+        };
+        let version_str = match key_str.strip_prefix(DEK_REVOKED_PREFIX) {
+            Some(s) => s,
+            None => continue,
+        };
+        match version_str.parse::<u32>() {
+            Ok(version) => {
+                tracing::info!(version, "loaded revoked DEK marker");
+                set.insert(version);
+            }
+            Err(_) => {
+                tracing::warn!(
+                    key = key_str,
+                    "revoked DEK key has non-numeric version suffix"
+                );
+            }
+        }
+    }
+    Ok(set)
 }
 
 /// Load the current DEK epoch from Fjall, or generate and persist a new one.
@@ -351,7 +408,7 @@ mod tests {
                 TempDir::new().map_err(|e| StorageError::read(TypeConfig::err_from_error(&e)))?;
             let kek: Arc<dyn openstack_keystone_storage_crypto::KekProvider> =
                 Arc::new(EnvKek::from_bytes([0x42u8; 32]));
-            let (log_store, sm, _current_dek, _revoked, _pending_rotations) =
+            let (log_store, sm, _current_dek, _revoked, _pending_rotations, _quarantine_rx) =
                 crate::new(td.path(), 1, kek)
                     .await
                     .map_err(|e| StorageError::read(TypeConfig::err_from_error(&e)))?;
@@ -364,6 +421,31 @@ mod tests {
     pub fn test_fjall_store() {
         TypeConfig::run(async {
             Suite::test_all(FjallBuilder {}).await.unwrap();
+        });
+    }
+
+    /// Revoked DEK markers persisted to Fjall meta must be picked back up by
+    /// `load_revoked_deks` after a restart (ADR 0016-v2 §6.2 step 5).
+    #[test]
+    #[traced_test]
+    fn revoked_dek_marker_survives_restart() {
+        TypeConfig::run(async {
+            let td = TempDir::new().expect("tempdir");
+            let db = Arc::new(fjall::Database::builder(td.path()).open().expect("open db"));
+            let meta = db
+                .keyspace("meta", fjall::KeyspaceCreateOptions::default)
+                .expect("meta keyspace");
+
+            // Simulate what the InstallDek apply path writes for an emergency
+            // rotation: version + revocation timestamp, never key material.
+            let revoked_key = format!("{}{}", super::DEK_REVOKED_PREFIX, 3u32);
+            meta.insert(revoked_key.as_bytes(), 1_700_000_000u64.to_be_bytes())
+                .expect("insert revoked marker");
+            db.persist(fjall::PersistMode::SyncAll).expect("persist");
+
+            let loaded = super::load_revoked_deks(&db).expect("load revoked deks");
+            assert!(loaded.contains(&3u32));
+            assert_eq!(loaded.len(), 1);
         });
     }
 }

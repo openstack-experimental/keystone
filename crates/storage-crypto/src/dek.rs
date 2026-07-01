@@ -31,14 +31,12 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use hkdf::Hkdf;
-use rand::RngExt;
-use sha2::Sha256;
-use zeroize::{Zeroize, Zeroizing};
-
 use crate::audit::AuditHmacKey;
 use crate::error::CryptoError;
 use crate::mlock::LockedKey;
+use hkdf::Hkdf;
+use rand::RngExt;
+use sha2::Sha256;
 
 const LOG_DEK_INFO: &[u8] = b"keystone-raft-log-v1";
 const STATE_DEK_INFO: &[u8] = b"keystone-fjall-state-v1";
@@ -50,10 +48,16 @@ const AUDIT_DEK_INFO_PREFIX: &[u8] = b"keystone-audit-dek-v1";
 // ---------------------------------------------------------------------------
 
 /// Sub-key for encrypting Raft log entries.
-pub struct LogDek(pub(crate) Zeroizing<[u8; 32]>);
+///
+/// Backed by `LockedKey` (mlock'd, guard-paged memory) per ADR §9 ("all keys
+/// — `Dek`, `LogDek`, `StateDek` — ... must be allocated in memory-locked
+/// pages").
+pub struct LogDek(pub(crate) LockedKey);
 
 /// Sub-key for encrypting Fjall state machine entries.
-pub struct StateDek(pub(crate) Zeroizing<[u8; 32]>);
+///
+/// Backed by `LockedKey` (mlock'd, guard-paged memory) per ADR §9.
+pub struct StateDek(pub(crate) LockedKey);
 
 /// Sub-key for encrypting Raft snapshot (backup) data.
 ///
@@ -118,12 +122,14 @@ impl DekEpoch {
         let hkdf = Hkdf::<Sha256>::from_prk(dek.as_bytes().as_ref())
             .map_err(|_| CryptoError::InvalidKeyLength)?;
 
-        let mut log_key = Zeroizing::new([0u8; 32]);
-        hkdf.expand(LOG_DEK_INFO, log_key.as_mut())
+        // Derive sub-keys directly into mlock'd allocations (ADR §9): never
+        // materialise the key in an unlocked buffer first.
+        let mut log_locked = LockedKey::alloc().map_err(|_| CryptoError::InvalidKeyLength)?;
+        hkdf.expand(LOG_DEK_INFO, log_locked.as_mut())
             .map_err(|_| CryptoError::InvalidKeyLength)?;
 
-        let mut state_key = Zeroizing::new([0u8; 32]);
-        hkdf.expand(STATE_DEK_INFO, state_key.as_mut())
+        let mut state_locked = LockedKey::alloc().map_err(|_| CryptoError::InvalidKeyLength)?;
+        hkdf.expand(STATE_DEK_INFO, state_locked.as_mut())
             .map_err(|_| CryptoError::InvalidKeyLength)?;
 
         // BackupDek info is version-bound: prefix ++ version_u32_BE.
@@ -135,8 +141,8 @@ impl DekEpoch {
         Ok(Self {
             version,
             root_dek: dek,
-            log_dek: LogDek(log_key),
-            state_dek: StateDek(state_key),
+            log_dek: LogDek(log_locked),
+            state_dek: StateDek(state_locked),
             backup_dek: BackupDek(backup_locked),
             backup_counter: AtomicU64::new(0),
         })
@@ -196,16 +202,6 @@ pub fn generate_dek() -> LockedKey {
     dek
 }
 
-/// Zeroize sub-keys when `DekEpoch` is dropped (root DEK is handled by
-/// LockedKey).
-impl Drop for DekEpoch {
-    fn drop(&mut self) {
-        self.log_dek.0.zeroize();
-        self.state_dek.0.zeroize();
-        // backup_dek.0 is a LockedKey — it zeroes on drop automatically.
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -220,9 +216,9 @@ mod tests {
         raw.as_mut().copy_from_slice(&[0x55u8; 32]);
         let epoch = DekEpoch::from_raw(raw, 0).expect("derive");
         // Sub-keys must differ from each other and from raw input.
-        assert_ne!(epoch.log_dek.0.as_ref(), &[0x55u8; 32]);
-        assert_ne!(epoch.state_dek.0.as_ref(), &[0x55u8; 32]);
-        assert_ne!(epoch.log_dek.0.as_ref(), epoch.state_dek.0.as_ref());
+        assert_ne!(epoch.log_dek.0.as_bytes(), &[0x55u8; 32]);
+        assert_ne!(epoch.state_dek.0.as_bytes(), &[0x55u8; 32]);
+        assert_ne!(epoch.log_dek.0.as_bytes(), epoch.state_dek.0.as_bytes());
     }
 
     #[test]
@@ -233,8 +229,8 @@ mod tests {
         let mut raw2 = test_locked_dek();
         raw2.as_mut().copy_from_slice(&[0xAAu8; 32]);
         let e2 = DekEpoch::from_raw(raw2, 1).expect("second");
-        assert_eq!(e1.log_dek.0.as_ref(), e2.log_dek.0.as_ref());
-        assert_eq!(e1.state_dek.0.as_ref(), e2.state_dek.0.as_ref());
+        assert_eq!(e1.log_dek.0.as_bytes(), e2.log_dek.0.as_bytes());
+        assert_eq!(e1.state_dek.0.as_bytes(), e2.state_dek.0.as_bytes());
     }
 
     #[test]

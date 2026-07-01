@@ -109,14 +109,15 @@ trait PasswordHasher {
 // Shared helpers
 // ---------------------------------------------------------------------------
 
-/// Verify the password length against algorithm constraints and truncate if necessary.
+/// Verify the password length against algorithm constraints and truncate if
+/// necessary.
 ///
-/// Mirrors Keystone's own `password_hashing.py::verify_length_and_trunc_password`:
-/// only `Bcrypt` is capped at 72 bytes (bcrypt's native input limit); every
-/// other algorithm is left at the full `config_max_length`, since
-/// `BcryptSha256`, `Scrypt` and `Pbkdf2Sha512` all first reduce the
-/// password to a fixed-size digest/key and never hit bcrypt's 72-byte
-/// limit directly.
+/// Mirrors Keystone's own
+/// `password_hashing.py::verify_length_and_trunc_password`: only `Bcrypt` is
+/// capped at 72 bytes (bcrypt's native input limit); every other algorithm is
+/// left at the full `config_max_length`, since `BcryptSha256`, `Scrypt` and
+/// `Pbkdf2Sha512` all first reduce the password to a fixed-size digest/key and
+/// never hit bcrypt's 72-byte limit directly.
 fn verify_length_and_trunc_password<'a>(
     password: &'a [u8],
     algo: &PasswordHashingAlgo,
@@ -179,7 +180,8 @@ fn get_dummy_cache() -> &'static DynamicDummyCache {
 }
 
 // ---------------------------------------------------------------------------
-// Public API - signatures unchanged; callers outside this module are unaffected.
+// Public API - signatures unchanged; callers outside this module are
+// unaffected.
 // ---------------------------------------------------------------------------
 
 /// Gets a cached dummy hash matching the precise parameters of the current
@@ -217,8 +219,8 @@ pub async fn get_or_init_dummy_hash(conf: &Config) -> Result<String, PasswordHas
 ///
 /// Call this whenever the Keystone configuration reloads (e.g. via
 /// `ConfigManager::notify_tx`) so that stale `(algorithm, rounds)` entries
-/// are not served after a config change. See `crates/keystone/src/bin/keystone.rs`
-/// for the wiring.
+/// are not served after a config change. See
+/// `crates/keystone/src/bin/keystone.rs` for the wiring.
 pub async fn reset_dummy_hash_cache() {
     get_dummy_cache().map.write().await.clear();
 }
@@ -527,10 +529,10 @@ mod tests {
     //   pip install keystone
     //   cargo test -p openstack-keystone-core -- cross_verify
 
-    /// Run a Rust-produced hash through tools/cross_verify.py against the Python
-    /// hashers. Returns the script's exit code (0 = verified, 1 = rejected,
-    /// 2 = error). Returns `None` when the `keystone` Python package is not
-    /// installed, so the caller can skip.
+    /// Run a Rust-produced hash through tools/cross_verify.py against the
+    /// Python hashers. Returns the script's exit code (0 = verified, 1 =
+    /// rejected, 2 = error). Returns `None` when the `keystone` Python
+    /// package is not installed, so the caller can skip.
     async fn python_cross_verify(algo_name: &str, password: &str, hash: &str) -> Option<i32> {
         // Skip if `import keystone` fails — no Python Keystone installed.
         let importable = tokio::process::Command::new("python")

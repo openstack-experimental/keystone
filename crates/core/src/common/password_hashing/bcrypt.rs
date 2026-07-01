@@ -12,7 +12,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! Bcrypt hasher - mirrors `keystone/common/password_hashers/bcrypt.py::Bcrypt`.
+//! Bcrypt hasher - mirrors
+//! `keystone/common/password_hashers/bcrypt.py::Bcrypt`.
 
 use openstack_keystone_config::Config;
 use tokio::task;

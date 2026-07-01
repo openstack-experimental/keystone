@@ -18,7 +18,7 @@ openssl req -x509 -newkey rsa:4096 -nodes \
     -keyout "${SSL_DIR}/ca.key" \
     -out "${SSL_DIR}/ca.crt" \
     -subj "/CN=Keystone-CA" \
-    -days 365 2>/dev/null
+    -days 30 2>/dev/null
 openssl req -newkey rsa:4096 -nodes \
     -keyout "${SSL_DIR}/ks.key" \
     -out "${SSL_DIR}/ks.csr" \
@@ -27,7 +27,7 @@ openssl req -newkey rsa:4096 -nodes \
 openssl x509 -req -in "${SSL_DIR}/ks.csr" \
     -CA "${SSL_DIR}/ca.crt" -CAkey "${SSL_DIR}/ca.key" \
     -CAcreateserial -out "${SSL_DIR}/ks.pem" \
-    -days 365 -copy_extensions copyall 2>/dev/null
+    -days 30 -copy_extensions copyall 2>/dev/null
 rm -f "${SSL_DIR}/ks.csr"
 
 cleanup() {

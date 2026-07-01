@@ -127,13 +127,28 @@ impl StorageService for StorageServiceImpl {
 
         let not_found = encrypted.is_none() || metadata.is_none();
         let tier = (metadata.as_ref().map(|m| m.tier as u8)).unwrap_or(DataTier::Internal as u8);
+        let dek_version = metadata.as_ref().and_then(|m| m.dek_version);
 
         let value = encrypted.and_then(|enc| {
             let keyspace_name = req.keyspace.as_deref().unwrap_or("data");
             let keyspace_bytes = keyspace_name.as_bytes();
-            self.state_machine_store
-                .decrypt_state(&enc, tier, keyspace_bytes, key.as_bytes())
-                .ok()
+            match self.state_machine_store.decrypt_state(
+                &enc,
+                tier,
+                keyspace_bytes,
+                key.as_bytes(),
+                dek_version,
+            ) {
+                Ok(plaintext) => Some(plaintext),
+                Err(e) => {
+                    // Collapsed to the same wire response as "not found" below
+                    // (the forwarded-get protocol has no distinct error slot),
+                    // but logged so an operator can tell a quarantined/corrupt
+                    // record apart from a genuinely missing key.
+                    tracing::warn!(key, error = %e, "forwarded_get: decrypt_state failed");
+                    None
+                }
+            }
         });
 
         let metadata_bytes = metadata
@@ -186,22 +201,40 @@ impl StorageService for StorageServiceImpl {
                     Err(_) => return None,
                 };
 
-                // Read metadata to determine tier
-                let (tier, meta_bytes) = match meta.get(k.as_bytes()) {
-                    Ok(Some(raw)) => (
-                        Metadata::unpack(raw.as_ref())
-                            .map(|m| m.tier as u8)
-                            .unwrap_or(DataTier::Internal as u8),
-                        raw.to_vec(),
-                    ),
-                    _ => (DataTier::Internal as u8, Vec::new()),
+                // Read metadata to determine tier and DEK epoch
+                let (tier, dek_version, meta_bytes) = match meta.get(k.as_bytes()) {
+                    Ok(Some(raw)) => {
+                        let parsed = Metadata::unpack(raw.as_ref()).ok();
+                        (
+                            parsed
+                                .as_ref()
+                                .map(|m| m.tier as u8)
+                                .unwrap_or(DataTier::Internal as u8),
+                            parsed.and_then(|m| m.dek_version),
+                            raw.to_vec(),
+                        )
+                    }
+                    _ => (DataTier::Internal as u8, None, Vec::new()),
                 };
 
                 // Decrypt using leader's DEK
-                let data = self
-                    .state_machine_store
-                    .decrypt_state(&val, tier, keyspace_bytes, k.as_bytes())
-                    .ok()?;
+                let data = match self.state_machine_store.decrypt_state(
+                    &val,
+                    tier,
+                    keyspace_bytes,
+                    k.as_bytes(),
+                    dek_version,
+                ) {
+                    Ok(plaintext) => plaintext,
+                    Err(e) => {
+                        // Omitted from results (same as any other filtered-out
+                        // entry) but logged so a quarantined/corrupt record is
+                        // distinguishable from one that simply doesn't match
+                        // the prefix.
+                        tracing::warn!(key = k, error = %e, "forwarded_prefix: decrypt_state failed");
+                        return None;
+                    }
+                };
 
                 Some(pb::api::PrefixEntry {
                     key: k,

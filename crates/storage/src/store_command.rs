@@ -129,11 +129,27 @@ pub enum MutationInner {
 
     /// Clear the quarantine state for a keyspace partition.
     ///
-    /// Removes the `_meta:quarantine:<partition>` persistence marker from Fjall
-    /// and clears the in-memory `QuarantineTracker` entry so the partition
-    /// becomes accessible again.  Propagated via Raft so all nodes are cleared.
+    /// Removes every reporting node's `_meta:quarantine:<partition>:<node_id>`
+    /// persistence marker from Fjall and clears the in-memory
+    /// `QuarantineTracker` entry so the partition becomes accessible again.
+    /// Propagated via Raft so all nodes are cleared.
     ClearQuarantine {
         /// The keyspace partition to un-quarantine (e.g. `"data"`).
+        partition: String,
+    },
+
+    /// Record a GCM-failure quarantine for a partition on a specific node.
+    ///
+    /// Proposed automatically (best effort) when a node's local GCM failure
+    /// threshold is reached, so the fact is committed via Raft and visible
+    /// cluster-wide (ADR 0016-v2 §10 invariant 5). Applied uniformly on every
+    /// node: only the node whose `node_id` matches the local node updates its
+    /// own blocking in-memory state; other nodes persist the record for audit
+    /// visibility only.
+    Quarantine {
+        /// The Raft node ID that detected the GCM failures.
+        node_id: u64,
+        /// The keyspace partition that triggered quarantine.
         partition: String,
     },
 

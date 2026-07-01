@@ -23,7 +23,7 @@ use tonic::service::InterceptorLayer;
 
 use openstack_keystone_distributed_storage::{
     app::{Storage, get_app_server},
-    network::get_server_tls_config,
+    network::{check_svid_ttl_der, get_server_tls_config, now_unix_secs},
 };
 use openstack_keystone_storage_api::StorageApi;
 
@@ -81,6 +81,14 @@ fn validate_spiffe_id(
             )));
         }
     }
+
+    // Enforce the 5-minute force-renewal window (ADR 0016-v2 §4.1).
+    // This guards ALL Raft gRPC routes including StorageService forwarded
+    // reads. ClusterAdminService handlers additionally re-check this
+    // themselves (`cluster_admin_service::check_svid_ttl`) — that's
+    // intentional defense-in-depth for the RBAC-sensitive admin surface, not
+    // duplicated oversight.
+    check_svid_ttl_der(leaf.as_ref(), now_unix_secs())?;
 
     Ok(())
 }
@@ -432,6 +440,33 @@ mod tests {
         let err = validate_spiffe_id(certs, &trust_domains, &[]).unwrap_err();
         assert_eq!(err.code(), tonic::Code::PermissionDenied);
         assert!(err.message().contains("Invalid SPIFFE ID"));
+    }
+
+    #[test]
+    fn test_spiffe_id_svid_in_force_renewal_window() {
+        use rcgen::{CertificateParams, DistinguishedName, KeyPair, SanType, date_time_ymd};
+
+        // Build a cert whose not_after is in the past (expired / force-renewal window).
+        let spiffe_uri = "spiffe://example.org/keystone/storage/node-0"
+            .try_into()
+            .unwrap();
+        let mut params = CertificateParams::default();
+        params.distinguished_name = DistinguishedName::new();
+        params.subject_alt_names = vec![SanType::URI(spiffe_uri)];
+        // not_before < not_after but both in the past → expired.
+        params.not_before = date_time_ymd(2000, 1, 1);
+        params.not_after = date_time_ymd(2001, 1, 1);
+        let key = KeyPair::generate().unwrap();
+        let cert = params.self_signed(&key).unwrap().der().clone();
+        let certs = Some(Arc::new(vec![cert]));
+        let trust_domains = vec!["example.org".to_string()];
+        let err = validate_spiffe_id(certs, &trust_domains, &[]).unwrap_err();
+        assert_eq!(err.code(), tonic::Code::PermissionDenied);
+        assert!(
+            err.message().contains("expired") || err.message().contains("force-renewal"),
+            "unexpected error: {}",
+            err.message()
+        );
     }
 
     #[test]

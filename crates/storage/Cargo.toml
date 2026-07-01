@@ -83,6 +83,7 @@ rustls.workspace = true
 serial_test.workspace = true
 temp-env.workspace = true
 tempfile.workspace = true
+time = "0.3"
 tracing-subscriber.workspace = true
 tonic = { workspace = true, features = ["tls-aws-lc"] }
 tracing-test.workspace = true

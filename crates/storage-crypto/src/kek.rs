@@ -19,9 +19,10 @@
 //! * [`EnvKek`] — reads a hex-encoded 256-bit key from the `KEYSTONE_DEV_KEK`
 //!   environment variable.  Requires `--dev-mode` and
 //!   `KEYSTONE_ALLOW_ENV_KEK=1`.  After reading, the variable is removed from
-//!   the Rust environment map (via `unsafe env::remove_var`) and the underlying
-//!   bytes in `/proc/<pid>/environ` are zeroed on Linux to prevent exposure via
-//!   process inspection tools.
+//!   the Rust environment map (via `unsafe env::remove_var`).  Zeroing the
+//!   underlying bytes in `/proc/<pid>/environ` was attempted but is currently a
+//!   no-op (see [`zero_environ_entry`]) — the raw `environ` bytes are not
+//!   scrubbed, so this is a best-effort dev-mode control, not a guarantee.
 //!
 //! * [`Pkcs11KekStub`] — placeholder that always returns
 //!   [`CryptoError::Pkcs11NotImplemented`].  Reserves the production interface
@@ -29,30 +30,32 @@
 
 use std::env;
 
-#[allow(deprecated)]
-use aes_gcm::aead::AeadInPlace;
+use aes_gcm::aead::AeadInOut;
 use aes_gcm::{Aes256Gcm, KeyInit};
 use hybrid_array::Array;
-use typenum::{U12, U16, U32};
 
-// GCM type aliases
-type GcmKey = Array<u8, U32>;
-type GcmNonce = Array<u8, U12>;
-type GcmTag = Array<u8, U16>;
+use crate::gcm::{GcmKey, GcmNonce, GcmTag};
 
 /// Convert a 12-byte slice reference to a typed GCM nonce array reference.
-fn nonce_ref(s: &[u8]) -> &GcmNonce {
-    Array::slice_as_array(s).expect("12-byte nonce")
+///
+/// `Err(CryptoError::WrappedDekSize)` if `s` is not exactly 12 bytes — never
+/// hit by the call sites in this file (the nonce is always a freshly
+/// generated or length-checked `[u8; 12]`), but propagated rather than
+/// panicked on so a future caller passing an unchecked slice fails cleanly.
+fn nonce_ref(s: &[u8]) -> Result<&GcmNonce, CryptoError> {
+    Array::slice_as_array(s).ok_or(CryptoError::WrappedDekSize)
 }
 
 /// Convert a 16-byte slice reference to a typed GCM tag array reference.
-fn tag_ref(s: &[u8]) -> &GcmTag {
-    Array::slice_as_array(s).expect("16-byte tag")
+/// See [`nonce_ref`] for the error-propagation rationale.
+fn tag_ref(s: &[u8]) -> Result<&GcmTag, CryptoError> {
+    Array::slice_as_array(s).ok_or(CryptoError::WrappedDekSize)
 }
 
 /// Convert a 32-byte slice reference to a typed GCM key array reference.
-fn key_ref(s: &[u8]) -> &GcmKey {
-    Array::slice_as_array(s).expect("32-byte key")
+/// See [`nonce_ref`] for the error-propagation rationale.
+fn key_ref(s: &[u8]) -> Result<&GcmKey, CryptoError> {
+    Array::slice_as_array(s).ok_or(CryptoError::InvalidKeyLength)
 }
 use rand::RngExt;
 use zeroize::{Zeroize, Zeroizing};
@@ -84,9 +87,10 @@ pub trait KekProvider: Send + Sync {
 /// those flags before constructing this type.
 ///
 /// `KEYSTONE_DEV_KEK` is removed from the Rust environment immediately after
-/// reading. On Linux the underlying bytes in `/proc/<pid>/environ` are also
-/// zeroed so that the key cannot be recovered via process memory inspection
-/// tools for the remainder of the process lifetime (ADR 0016-v2 §2.1).
+/// reading (ADR 0016-v2 §2.1).  The raw bytes backing that entry in
+/// `/proc/<pid>/environ` are NOT currently scrubbed — see
+/// [`zero_environ_entry`] — so a process with `/proc` read access could still
+/// recover the key from the original environment block until process exit.
 pub struct EnvKek {
     key: Zeroizing<[u8; 32]>,
 }
@@ -113,14 +117,9 @@ impl EnvKek {
     //    any async tasks that might inspect the environment are spawned.
     // 2. No other thread is spawned before `init_storage` reaches this point, so
     //    there is no concurrent reader of `KEYSTONE_DEV_KEK`.
-    // 3. Removing the variable immediately after reading minimises the window in
-    //    which `/proc/<pid>/environ` exposes the key (ADR 0016-v2 §2.1).
-    //
-    // On Linux, `libc::unsetenv` (called by `std::env::remove_var`) marks the
-    // entry in the `environ` array but does not zero the underlying bytes.
-    // After `remove_var` we iterate the raw environment block and write zeros
-    // over the value portion of the `KEYSTONE_DEV_KEK` entry.  This is safe
-    // because no other thread is reading the environment at this point.
+    // 3. Removing the variable immediately after reading minimises (but, per
+    //    `zero_environ_entry`, does not eliminate) the window in which
+    //    `/proc/<pid>/environ` exposes the key (ADR 0016-v2 §2.1).
     //
     // The workspace sets `unsafe_code = "forbid"` but `storage-crypto` relaxes
     // this to `unsafe_code = "deny"` specifically to permit the mlock
@@ -153,12 +152,12 @@ impl EnvKek {
 impl KekProvider for EnvKek {
     fn wrap_dek(&self, dek: &[u8; 32]) -> Result<Vec<u8>, CryptoError> {
         let nonce_bytes: [u8; 12] = rand::rng().random();
-        let cipher = Aes256Gcm::new(key_ref(&*self.key));
-        let gcm_nonce = nonce_ref(&nonce_bytes);
+        let cipher = Aes256Gcm::new(key_ref(&*self.key)?);
+        let gcm_nonce = nonce_ref(&nonce_bytes)?;
 
         let mut buf = dek.to_vec();
         let tag = cipher
-            .encrypt_in_place_detached(gcm_nonce, DEK_WRAP_AD, &mut buf)
+            .encrypt_inout_detached(gcm_nonce, DEK_WRAP_AD, buf.as_mut_slice().into())
             .map_err(|_| CryptoError::AesEncrypt)?;
 
         let mut out = Vec::with_capacity(12 + 32 + 16);
@@ -173,17 +172,25 @@ impl KekProvider for EnvKek {
         if wrapped.len() != 12 + 32 + 16 {
             return Err(CryptoError::WrappedDekSize);
         }
-        let nonce_arr: [u8; 12] = wrapped[..12].try_into().unwrap();
-        let tag_arr: [u8; 16] = wrapped[44..].try_into().unwrap();
-        let cipher = Aes256Gcm::new(key_ref(&*self.key));
+        // Both slices below are exactly 12/16 bytes given the length check
+        // above (60 = 12 + 32 + 16), so the conversions cannot fail, but
+        // errors are propagated rather than unwrapped in case that
+        // invariant is ever violated by a future edit.
+        let nonce_arr: [u8; 12] = wrapped[..12]
+            .try_into()
+            .map_err(|_| CryptoError::WrappedDekSize)?;
+        let tag_arr: [u8; 16] = wrapped[44..]
+            .try_into()
+            .map_err(|_| CryptoError::WrappedDekSize)?;
+        let cipher = Aes256Gcm::new(key_ref(&*self.key)?);
 
         let mut buf = wrapped[12..44].to_vec();
         cipher
-            .decrypt_in_place_detached(
-                nonce_ref(&nonce_arr),
+            .decrypt_inout_detached(
+                nonce_ref(&nonce_arr)?,
                 DEK_WRAP_AD,
-                &mut buf,
-                tag_ref(&tag_arr),
+                buf.as_mut_slice().into(),
+                tag_ref(&tag_arr)?,
             )
             .map_err(|_| CryptoError::AesDecrypt)?;
 
@@ -231,37 +238,28 @@ fn decode_hex(s: &str) -> Result<Vec<u8>, CryptoError> {
         .collect()
 }
 
-/// Zero the value portion of an environment entry in the raw `environ` block.
+/// No-op placeholder for zeroing the value portion of the `KEYSTONE_DEV_KEK`
+/// entry in the raw `environ` block on Linux.
 ///
 /// On Linux the initial environment is a contiguous array of null-terminated
 /// strings placed on the stack by the kernel.  `libc::unsetenv` (called by
 /// [`std::env::remove_var`]) removes the entry from the internal lookup but
-/// does not zero the bytes of the original string in this block.
-/// `/proc/<pid>/environ` exposes these raw bytes to any process with read
-/// access to `/proc`.
+/// does not zero the bytes of the original string in this block, so
+/// `/proc/<pid>/environ` still exposes the raw key bytes to any process with
+/// `/proc` read access for the remainder of this process's lifetime.
 ///
-/// This function iterates the raw `environ` array, finds the entry matching
-/// `KEYSTONE_DEV_KEK=`, and writes zeros over the value portion (everything
-/// after the `=` until the terminating null).
-///
-/// # Safety
-///
-/// Must only be called when no other thread is reading the environment.  This
-/// invariant holds because `from_env` is the first and only call site and runs
-/// before any async tasks are spawned.
-/// No-op: the original implementation iterated libc `environ` via `unsafe` raw
-/// pointers and attempted to zero the `KEYSTONE_DEV_KEK=` value in-place.  This
-/// turned out to be unreliable (misaligned pointers, corrupted environ arrays
-/// after `std::env::remove_var`, and segfaults in test harnesses).  The primary
-/// protections -- `env::remove_var` and the `Zeroizing<Vec<u8>>` local copy --
-/// already prevent the key from leaking through normal Rust paths.
+/// This function does **not** currently mitigate that: an earlier
+/// implementation iterated the libc `environ` array via raw pointers and
+/// wrote zeros over the value in place, but that approach was unreliable
+/// (misaligned pointers, corrupted `environ` arrays after
+/// `std::env::remove_var`, and segfaults in test harnesses) and was reverted.
+/// The primary protections — `env::remove_var` and copying the key into a
+/// `Zeroizing` buffer rather than holding onto the hex string — still prevent
+/// the key from leaking through normal Rust-level paths; only the raw
+/// `/proc/<pid>/environ` exposure is unaddressed. Reinstating a safe
+/// zeroing implementation is tracked as follow-up work.
 #[cfg(target_os = "linux")]
-#[allow(unsafe_code)]
-fn zero_environ_entry() {
-    // The raw environ bytes in /proc/pid/environ are a best-effort hardening
-    // measure for rootkit-level attacks.  We skip it here due to the inability
-    // to safely traverse the C environ pointer array from Rust.
-}
+fn zero_environ_entry() {}
 
 #[cfg(test)]
 mod tests {
@@ -315,5 +313,74 @@ mod tests {
     #[test]
     fn test_decode_hex_odd_length() {
         assert!(decode_hex("abc").is_err());
+    }
+
+    #[test]
+    fn test_pkcs11_stub_wrap_not_implemented() {
+        let stub = Pkcs11KekStub;
+        assert!(matches!(
+            stub.wrap_dek(&[0u8; 32]),
+            Err(CryptoError::Pkcs11NotImplemented)
+        ));
+    }
+
+    #[test]
+    fn test_pkcs11_stub_unwrap_not_implemented() {
+        let stub = Pkcs11KekStub;
+        assert!(matches!(
+            stub.unwrap_dek(&[0u8; 60]),
+            Err(CryptoError::Pkcs11NotImplemented)
+        ));
+    }
+
+    // `EnvKek::from_env` reads and removes a process-global environment
+    // variable, so tests that touch it must be serialized against each other
+    // to avoid racing on shared state.
+    static ENV_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[allow(unsafe_code)]
+    fn with_env_kek<T>(value: Option<&str>, f: impl FnOnce() -> T) -> T {
+        let _guard = ENV_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        match value {
+            Some(v) => unsafe { env::set_var("KEYSTONE_DEV_KEK", v) },
+            None => unsafe { env::remove_var("KEYSTONE_DEV_KEK") },
+        }
+        let result = f();
+        unsafe { env::remove_var("KEYSTONE_DEV_KEK") };
+        result
+    }
+
+    #[test]
+    fn test_from_env_success() {
+        with_env_kek(Some(&"ab".repeat(32)), || {
+            let kek = EnvKek::from_env().expect("from_env");
+            assert_eq!(kek.key.as_ref(), &[0xabu8; 32]);
+            // The variable must be removed after reading.
+            assert!(env::var("KEYSTONE_DEV_KEK").is_err());
+        });
+    }
+
+    #[test]
+    fn test_from_env_missing_var() {
+        with_env_kek(None, || {
+            assert!(matches!(EnvKek::from_env(), Err(CryptoError::KekMissing)));
+        });
+    }
+
+    #[test]
+    fn test_from_env_invalid_hex() {
+        with_env_kek(Some("not-hex!!"), || {
+            assert!(matches!(EnvKek::from_env(), Err(CryptoError::InvalidHex)));
+        });
+    }
+
+    #[test]
+    fn test_from_env_wrong_length() {
+        with_env_kek(Some(&"ab".repeat(16)), || {
+            assert!(matches!(
+                EnvKek::from_env(),
+                Err(CryptoError::InvalidKeyLength)
+            ));
+        });
     }
 }

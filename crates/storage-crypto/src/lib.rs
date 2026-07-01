@@ -44,6 +44,7 @@ pub mod audit;
 pub mod cipher;
 pub mod dek;
 pub mod error;
+mod gcm;
 pub mod kek;
 pub mod mlock;
 pub mod nonce;

@@ -31,6 +31,7 @@ use secrecy::ExposeSecret;
 use spiffe::X509Source;
 use spiffe_rustls::{authorizer, mtls_client};
 use tokio::sync::watch;
+use tonic::Status;
 use tonic::transport::{Certificate, Channel, ClientTlsConfig, Identity, ServerTlsConfig};
 use tracing::error;
 
@@ -489,6 +490,87 @@ fn check_cert_expiry(cert_pem: &[u8], shutdown_on_expiry: bool) {
     }
 }
 
+/// Enforces the 30-day maximum leaf certificate validity window (ADR 0016-v2
+/// §4.2).
+///
+/// Returns `Err` if the certificate's total validity window (`not_after −
+/// not_before`) exceeds 30 days. Called at startup before the gRPC listener
+/// accepts connections; the node refuses to start if the cert violates this
+/// invariant.
+pub fn check_cert_max_validity(cert_pem: &[u8]) -> Result<(), StoreError> {
+    use x509_parser::certificate::X509Certificate;
+    use x509_parser::pem::parse_x509_pem;
+    use x509_parser::prelude::FromDer;
+
+    let (_, pem) = parse_x509_pem(cert_pem)
+        .map_err(|e| StoreError::Other(eyre::eyre!("TLS cert PEM parse failed: {e}")))?;
+    let (_, cert) = X509Certificate::from_der(&pem.contents)
+        .map_err(|e| StoreError::Other(eyre::eyre!("TLS cert DER parse failed: {e}")))?;
+
+    let validity = cert.validity();
+    let window_secs = validity
+        .not_after
+        .timestamp()
+        .saturating_sub(validity.not_before.timestamp());
+
+    const MAX_VALIDITY_SECS: i64 = 30 * 24 * 3600;
+
+    if window_secs > MAX_VALIDITY_SECS {
+        return Err(StoreError::Other(eyre::eyre!(
+            "TLS leaf certificate validity ({} days) exceeds the 30-day maximum \
+             enforced by ADR 0016-v2 §4.2; reissue with a shorter validity period",
+            window_secs / 86400
+        )));
+    }
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// SVID TTL enforcement (ADR 0016-v2 §4.1 — force-renewal window)
+// ---------------------------------------------------------------------------
+
+/// Minimum remaining SVID validity before refusing an inbound SPIFFE SVID
+/// (ADR 0016-v2 §4.1 — force-renewal window).
+pub const FORCE_RENEWAL_SECS: i64 = 5 * 60;
+
+/// Current Unix timestamp in seconds, saturating to 0 on a pre-epoch clock.
+///
+/// Shared by every `check_svid_ttl_der` call site so the
+/// `SystemTime::now().duration_since(UNIX_EPOCH)...` boilerplate exists in
+/// exactly one place.
+pub fn now_unix_secs() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64
+}
+
+/// Enforces the SVID force-renewal window on a raw DER certificate.
+///
+/// Returns `Err(PERMISSION_DENIED)` if the SVID has fewer than 5 minutes of
+/// remaining validity. `now_secs` is the current Unix timestamp, injected for
+/// testability — pass [`now_unix_secs`] at call sites.
+pub fn check_svid_ttl_der(der: &[u8], now_secs: i64) -> Result<(), Status> {
+    let (_, cert) = x509_parser::parse_x509_certificate(der)
+        .map_err(|_| Status::permission_denied("peer certificate is malformed"))?;
+
+    let not_after = cert.validity().not_after.timestamp();
+    let remaining = not_after.saturating_sub(now_secs);
+
+    if remaining <= 0 {
+        return Err(Status::permission_denied(
+            "peer SVID has expired; refused per ADR 0016-v2 §4.1",
+        ));
+    }
+    if remaining < FORCE_RENEWAL_SECS {
+        return Err(Status::permission_denied(
+            "peer SVID is in the force-renewal window; refused per ADR 0016-v2 §4.1",
+        ));
+    }
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // Static mTLS config helpers (Tls variant of RaftTlsConfiguration)
 // ---------------------------------------------------------------------------
@@ -498,11 +580,18 @@ pub fn get_client_tls_config(config: &Config) -> Result<ClientTlsConfig, StoreEr
     if let Some(ds) = &config.distributed_storage
         && let RaftTlsConfiguration::Tls(tls) = &ds.tls_configuration
     {
+        let cert_pem = tls
+            .tls_cert_content
+            .as_ref()
+            .ok_or(StoreError::TlsConfigMissing)?
+            .expose_secret();
+        // Enforced here (not just once at process startup) so every load of
+        // this shared config — including config-watcher hot-reloads in
+        // `init_tls_watcher` and standalone callers such as `cli-manage` —
+        // rejects an over-long-lived leaf cert (ADR 0016-v2 §4.2).
+        check_cert_max_validity(cert_pem)?;
         let identity = Identity::from_pem(
-            tls.tls_cert_content
-                .as_ref()
-                .ok_or(StoreError::TlsConfigMissing)?
-                .expose_secret(),
+            cert_pem,
             tls.tls_key_content
                 .as_ref()
                 .ok_or(StoreError::TlsConfigMissing)?
@@ -524,11 +613,16 @@ pub fn get_server_tls_config(config: &Config) -> Result<ServerTlsConfig, StoreEr
     if let Some(ds) = &config.distributed_storage
         && let RaftTlsConfiguration::Tls(tls) = &ds.tls_configuration
     {
+        let cert_pem = tls
+            .tls_cert_content
+            .as_ref()
+            .ok_or(StoreError::TlsConfigMissing)?
+            .expose_secret();
+        // See `get_client_tls_config` — same 30-day cap (ADR 0016-v2 §4.2),
+        // enforced on every load of this shared config.
+        check_cert_max_validity(cert_pem)?;
         let identity = Identity::from_pem(
-            tls.tls_cert_content
-                .as_ref()
-                .ok_or(StoreError::TlsConfigMissing)?
-                .expose_secret(),
+            cert_pem,
             tls.tls_key_content
                 .as_ref()
                 .ok_or(StoreError::TlsConfigMissing)?
@@ -674,6 +768,49 @@ pub async fn init_tls_watcher(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ---------------------------------------------------------------------------
+    // check_cert_max_validity — P3-A (ADR 0016-v2 §4.2)
+    // ---------------------------------------------------------------------------
+
+    fn make_cert_pem(not_before: (i32, u8, u8), not_after: (i32, u8, u8)) -> Vec<u8> {
+        use rcgen::{CertificateParams, KeyPair, date_time_ymd};
+        let mut params = CertificateParams::default();
+        params.not_before = date_time_ymd(not_before.0, not_before.1, not_before.2);
+        params.not_after = date_time_ymd(not_after.0, not_after.1, not_after.2);
+        let key = KeyPair::generate().expect("keygen");
+        params
+            .self_signed(&key)
+            .expect("self-sign")
+            .pem()
+            .as_bytes()
+            .to_vec()
+    }
+
+    #[test]
+    fn cert_max_validity_ok_29_days() {
+        // June 1 → June 30 = 29 days
+        let pem = make_cert_pem((2026, 6, 1), (2026, 6, 30));
+        assert!(check_cert_max_validity(&pem).is_ok());
+    }
+
+    #[test]
+    fn cert_max_validity_ok_exactly_30_days() {
+        // June 1 → July 1 = exactly 30 days
+        let pem = make_cert_pem((2026, 6, 1), (2026, 7, 1));
+        assert!(check_cert_max_validity(&pem).is_ok());
+    }
+
+    #[test]
+    fn cert_max_validity_rejected_31_days() {
+        // June 1 → July 2 = 31 days
+        let pem = make_cert_pem((2026, 6, 1), (2026, 7, 2));
+        assert!(check_cert_max_validity(&pem).is_err());
+    }
+
+    // ---------------------------------------------------------------------------
+    // strip_scheme
+    // ---------------------------------------------------------------------------
 
     #[test]
     fn test_strip_scheme_https() {

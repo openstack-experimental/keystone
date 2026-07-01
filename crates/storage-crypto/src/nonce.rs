@@ -256,6 +256,16 @@ mod tests {
     }
 
     #[test]
+    fn test_nonce_exhausted_at_rotation_threshold() {
+        let mut mgr = make_mgr(7);
+        // Drive the counter directly to the rotation threshold rather than
+        // issuing 2^31 nonces.
+        mgr.counter = ROTATION_THRESHOLD;
+        mgr.block_end = ROTATION_THRESHOLD;
+        assert!(matches!(mgr.next_nonce(), Err(CryptoError::NonceExhausted)));
+    }
+
+    #[test]
     fn test_rollback_detection() {
         let store = MemNonce::default();
         // Simulate a previous session that reached counter 2048 (hwm = 2048).
