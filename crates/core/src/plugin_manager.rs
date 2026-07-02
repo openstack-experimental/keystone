@@ -31,6 +31,8 @@ use crate::assignment::backend::AssignmentBackend;
 use crate::assignment::error::AssignmentProviderError;
 use crate::catalog::backend::CatalogBackend;
 use crate::catalog::error::CatalogProviderError;
+use crate::credential::CredentialProviderError;
+use crate::credential::backend::CredentialBackend;
 use crate::federation::backend::FederationBackend;
 use crate::federation::error::FederationProviderError;
 use crate::identity::backend::IdentityBackend;
@@ -106,6 +108,19 @@ pub trait PluginManagerApi {
         &self,
         name: S,
     ) -> Result<&Arc<dyn CatalogBackend>, CatalogProviderError>;
+
+    /// Get registered credential backend.
+    ///
+    /// # Parameters
+    /// - `name`: The name of the backend to retrieve.
+    ///
+    /// # Returns
+    /// - `Ok(&Arc<dyn CredentialBackend>)` if found, otherwise
+    ///   `Err(CredentialProviderError)`.
+    fn get_credential_backend<S: AsRef<str>>(
+        &self,
+        name: S,
+    ) -> Result<&Arc<dyn CredentialBackend>, CredentialProviderError>;
 
     /// Get registered federation backend.
     ///
@@ -266,6 +281,17 @@ pub trait PluginManagerApi {
         &mut self,
         name: S,
         plugin: Arc<dyn ApplicationCredentialBackend>,
+    );
+
+    /// Register credential backend.
+    ///
+    /// # Parameters
+    /// - `name`: The name to register the backend under.
+    /// - `plugin`: The backend implementation.
+    fn register_credential_backend<S: AsRef<str>>(
+        &mut self,
+        name: S,
+        plugin: Arc<dyn CredentialBackend>,
     );
 
     /// Register assignment backend.

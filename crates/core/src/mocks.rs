@@ -174,6 +174,78 @@ mod application_credential {
 }
 pub use application_credential::MockApplicationCredentialProvider;
 
+mod credential {
+    use super::*;
+
+    use openstack_keystone_core_types::credential::*;
+
+    use crate::credential::{CredentialApi, CredentialProviderError};
+
+    mock! {
+        pub CredentialProvider {}
+
+        #[async_trait]
+        impl CredentialApi for CredentialProvider {
+            async fn create_credential<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                rec: CredentialCreate,
+            ) -> Result<Credential, CredentialProviderError>;
+
+            async fn get_credential<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                id: &'a str,
+            ) -> Result<Option<Credential>, CredentialProviderError>;
+
+            async fn get_credential_by_ec2_access<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                access: &'a str,
+            ) -> Result<Option<Credential>, CredentialProviderError>;
+
+            async fn list_credentials<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                params: &CredentialListParameters,
+            ) -> Result<Vec<Credential>, CredentialProviderError>;
+
+            async fn list_credentials_for_user<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                user_id: &'a str,
+                r#type: Option<&'a str>,
+            ) -> Result<Vec<Credential>, CredentialProviderError>;
+
+            async fn update_credential<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                id: &'a str,
+                rec: CredentialUpdate,
+            ) -> Result<Credential, CredentialProviderError>;
+
+            async fn delete_credential<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                id: &'a str,
+            ) -> Result<(), CredentialProviderError>;
+
+            async fn delete_credentials_for_user<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                user_id: &'a str,
+            ) -> Result<(), CredentialProviderError>;
+
+            async fn delete_credentials_for_project<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                project_id: &'a str,
+            ) -> Result<(), CredentialProviderError>;
+        }
+    }
+}
+pub use credential::MockCredentialProvider;
+
 mod assignment {
     use super::*;
 

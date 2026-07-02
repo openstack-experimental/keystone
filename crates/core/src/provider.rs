@@ -34,6 +34,9 @@ use crate::assignment::MockAssignmentProvider;
 use crate::catalog::CatalogApi;
 #[cfg(any(test, feature = "mock"))]
 use crate::catalog::MockCatalogProvider;
+use crate::credential::CredentialApi;
+#[cfg(any(test, feature = "mock"))]
+use crate::credential::MockCredentialProvider;
 use crate::error::KeystoneError;
 use crate::federation::FederationApi;
 #[cfg(any(test, feature = "mock"))]
@@ -80,6 +83,8 @@ pub struct Provider {
     assignment: Box<dyn AssignmentApi>,
     /// Catalog provider.
     catalog: Box<dyn CatalogApi>,
+    /// Credential provider.
+    credential: Box<dyn CredentialApi>,
     /// Federation provider.
     federation: Box<dyn FederationApi>,
     /// Identity provider.
@@ -128,6 +133,12 @@ impl ProviderBuilder {
     pub fn mock_catalog(self, value: impl CatalogApi + 'static) -> Self {
         let mut new = self;
         new.catalog = Some(Box::new(value));
+        new
+    }
+
+    pub fn mock_credential(self, value: impl CredentialApi + 'static) -> Self {
+        let mut new = self;
+        new.credential = Some(Box::new(value));
         new
     }
 
@@ -208,6 +219,10 @@ impl Provider {
             plugin_manager,
         )?);
         let catalog = Box::new(crate::catalog::CatalogService::new(cfg, plugin_manager)?);
+        let credential = Box::new(crate::credential::CredentialService::new(
+            cfg,
+            plugin_manager,
+        )?);
         let federation = Box::new(crate::federation::FederationService::new(
             cfg,
             plugin_manager,
@@ -233,6 +248,7 @@ impl Provider {
             application_credential,
             assignment,
             catalog,
+            credential,
             federation,
             identity,
             idmapping,
@@ -254,6 +270,7 @@ impl Provider {
             .mock_application_credential(MockApplicationCredentialProvider::default())
             .mock_assignment(MockAssignmentProvider::default())
             .mock_catalog(MockCatalogProvider::default())
+            .mock_credential(MockCredentialProvider::default())
             .mock_identity(MockIdentityProvider::default())
             .mock_idmapping(MockIdMappingProvider::default())
             .mock_mapping(MockMappingProvider::default())
@@ -284,6 +301,11 @@ impl Provider {
     /// Get the catalog provider.
     pub fn get_catalog_provider(&self) -> &dyn CatalogApi {
         &*self.catalog
+    }
+
+    /// Get the credential provider.
+    pub fn get_credential_provider(&self) -> &dyn CredentialApi {
+        &*self.credential
     }
 
     /// Get the federation provider.

@@ -20,6 +20,7 @@ openstack-keystone-config.workspace = true
 openstack-keystone-api-types = { workspace = true, features = ["builder", "conv"] }
 openstack-keystone-core = { workspace = true, features = ["mock"] }
 openstack-keystone-core-types = { workspace = true, features = ["mock"] }
+openstack-keystone-credential-driver-sql = { version = "0.1", path = "../../crates/credential-driver-sql/", features = ["test-support"] }
 openstack-keystone-identity-driver-sql = { version = "0.1", path = "../../crates/identity-driver-sql/" }
 openstack-keystone-token-driver-fernet.workspace = true
 openstack-keystone-trust-driver-sql = { version = "0.1", path = "../../crates/trust-driver-sql/" }
@@ -30,6 +31,7 @@ rcgen.workspace = true
 sea-orm = { workspace = true, features = ["sqlx-mysql", "sqlx-postgres", "sqlx-sqlite", "runtime-tokio", "runtime-tokio-native-tls"] }
 secrecy = { workspace = true, features = ["serde"] }
 serde.workspace = true
+sha2.workspace = true
 serde_json.workspace = true
 serde_urlencoded.workspace = true
 time = { version = "0.3", default-features = true }

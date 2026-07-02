@@ -1,7 +1,6 @@
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
-//
 //     http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
@@ -12,32 +11,16 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! # OpenStack Keystone core provider types
+//! # Credentials provider (ADR 0019)
+//!
+//! Blind storage for sensitive authentication secrets (EC2 access/secret
+//! keys, TOTP seeds, and arbitrary third-party blobs). The `credential` table
+//! is owned and schema-managed exclusively by the Python Keystone service via
+//! `alembic`; Keystone-NG treats it as read/write but never issues DDL
+//! against it.
 
-#![allow(clippy::module_inception)]
-#![deny(clippy::unwrap_used)]
+mod credential;
+mod error;
 
-pub mod api_key;
-pub mod application_credential;
-pub mod assignment;
-pub mod auth;
-pub mod catalog;
-pub mod credential;
-pub mod error;
-pub mod events;
-pub mod federation;
-pub mod identity;
-pub mod idmapping;
-pub mod k8s_auth;
-pub mod mapping;
-pub mod resource;
-pub mod revoke;
-pub mod role;
-pub mod scope;
-pub mod token;
-pub mod trust;
-
-/// Return `true` to be used as a positive default for the serde macros.
-pub fn default_true() -> bool {
-    true
-}
+pub use credential::*;
+pub use error::*;

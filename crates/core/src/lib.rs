@@ -85,6 +85,7 @@ pub mod auth;
 pub mod cadf_hook;
 pub mod catalog;
 pub mod common;
+pub mod credential;
 pub mod db;
 pub mod error;
 pub mod events;

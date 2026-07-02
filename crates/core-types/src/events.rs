@@ -110,6 +110,12 @@ pub enum EventPayload {
         user_id: String,
     },
 
+    // Credentials provider (ADR 0019: EC2/TOTP/custom credential blobs)
+    Credential {
+        id: String,
+        user_id: String,
+    },
+
     // Catalog
     Endpoint {
         id: String,

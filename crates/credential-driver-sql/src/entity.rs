@@ -11,33 +11,9 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+#![allow(clippy::doc_paragraphs_missing_punctuation)]
+//! `SeaORM` entities for the (Python-owned) `credential` table.
 
-//! # OpenStack Keystone core provider types
+pub mod prelude;
 
-#![allow(clippy::module_inception)]
-#![deny(clippy::unwrap_used)]
-
-pub mod api_key;
-pub mod application_credential;
-pub mod assignment;
-pub mod auth;
-pub mod catalog;
 pub mod credential;
-pub mod error;
-pub mod events;
-pub mod federation;
-pub mod identity;
-pub mod idmapping;
-pub mod k8s_auth;
-pub mod mapping;
-pub mod resource;
-pub mod revoke;
-pub mod role;
-pub mod scope;
-pub mod token;
-pub mod trust;
-
-/// Return `true` to be used as a positive default for the serde macros.
-pub fn default_true() -> bool {
-    true
-}

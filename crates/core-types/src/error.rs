@@ -21,6 +21,7 @@ use crate::application_credential::ApplicationCredentialProviderError;
 use crate::assignment::AssignmentProviderError;
 use crate::auth::AuthenticationError;
 use crate::catalog::CatalogProviderError;
+use crate::credential::CredentialProviderError;
 use crate::federation::FederationProviderError;
 use crate::identity::IdentityProviderError;
 use crate::idmapping::IdMappingProviderError;
@@ -100,6 +101,14 @@ pub enum KeystoneError {
         /// The source of the error.
         #[from]
         source: CatalogProviderError,
+    },
+
+    /// Credential provider.
+    #[error(transparent)]
+    CredentialProvider {
+        /// The source of the error.
+        #[from]
+        source: CredentialProviderError,
     },
 
     /// Federation provider.

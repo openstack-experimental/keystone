@@ -1,0 +1,70 @@
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+// SPDX-License-Identifier: Apache-2.0
+//! # Credential Fernet key repository error.
+use std::path::PathBuf;
+
+use openstack_keystone_core::credential::CredentialProviderError;
+use thiserror::Error;
+
+/// Errors from the Fernet key repository (ADR 0019 §4).
+#[derive(Error, Debug)]
+pub enum CredentialFernetError {
+    /// I/O error reading/writing a key file.
+    #[error("I/O error on key repository path {path:?}: {source}")]
+    Io {
+        #[source]
+        source: std::io::Error,
+        path: PathBuf,
+    },
+
+    /// A key file's contents could not be parsed as a Fernet key.
+    #[error("key file `{0}` is not a valid Fernet key")]
+    InvalidKey(i8),
+
+    /// No usable key files were found in the repository.
+    #[error("no Fernet keys found in the credential key repository")]
+    KeysMissing,
+
+    /// A key file decodes to the well-known Null Key and
+    /// `insecure_allow_null_key` is not set (ADR 0019 §4, Security).
+    #[error(
+        "credential key repository contains the well-known Null Key; refusing to start (set \
+         [credential] insecure_allow_null_key to override — production tolerance is zero)"
+    )]
+    NullKeyDetected,
+
+    /// Fernet index arithmetic would overflow the `i8` file-naming scheme.
+    #[error("key rotation index overflow")]
+    IndexOverflow,
+
+    /// Encryption/decryption failed (e.g. no active key could decrypt the
+    /// blob).
+    #[error("fernet decryption failed: all active keys were tried")]
+    DecryptionFailed,
+
+    /// Persisting a rotated/staged key file failed.
+    #[error("failed to persist key file: {0}")]
+    Persist(String),
+}
+
+impl From<CredentialFernetError> for CredentialProviderError {
+    fn from(source: CredentialFernetError) -> Self {
+        match source {
+            CredentialFernetError::NullKeyDetected => {
+                CredentialProviderError::Encryption(source.to_string())
+            }
+            other => CredentialProviderError::Encryption(other.to_string()),
+        }
+    }
+}

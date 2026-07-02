@@ -58,9 +58,21 @@ expected structure:
 ```json
 {
   "access": "AKIAIOSFODNN7EXAMPLE",
-  "secret": "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+  "secret": "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+  "trust_id": "optional, present if created via a trust-scoped token",
+  "app_cred_id": "optional, present if created via an application credential",
+  "access_token_id": "optional, present if created via an OAuth1 access token"
 }
 ```
+
+`trust_id`, `app_cred_id`, and `access_token_id` are mutually exclusive,
+optional delegation-context fields. They are populated from the scope of the
+token used to create the credential and must be passed through to the token
+provider on `POST /v3/ec2tokens` (see §3, "Credential metadata in the token").
+They are part of the same encrypted JSON blob as `access`/`secret` — the field
+names above (not `access_id`) are the cross-service contract; a Rust and a
+Python node must serialize identical keys or the two services will silently fail
+to exchange delegation metadata.
 
 **TOTP Blob:**
 
@@ -94,15 +106,15 @@ Keystone-NG treats this table as read/write but never issues DDL against it.
 
 **Schema Definition:**
 
-| Column           | Type                | Nullable | Description                                                                                                                                                                                         |
-| :--------------- | :------------------ | :------- | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `id`             | `String(64)`        | No       | Primary Key. (For EC2: SHA-256 hex of the `access_id`).                                                                                                                                             |
-| `user_id`        | `String(64)`        | No       | Foreign key to the user who owns the credential.                                                                                                                                                    |
-| `project_id`     | `String(64)`        | Yes      | Project association (Mandatory for EC2 credentials).                                                                                                                                                |
-| `encrypted_blob` | `Text`              | No       | The Fernet-encrypted secret string.                                                                                                                                                                 |
-| `type`           | `String(255)`       | No       | Credential type (e.g., `'ec2'`, `'totp'`).                                                                                                                                                          |
-| `key_hash`       | `String(64)`        | No       | SHA-1 hex digest of the primary key used for encryption (see §4).                                                                                                                                   |
-| `extra`          | `Text` / `JsonBlob` | Yes      | Extensible JSON field. The Python backend stores this as a JSON-encoded string in a `Text` column; the Rust implementation must handle both native JSON columns and stringified JSON transparently. |
+| Column           | Type          | Nullable | Description                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| :--------------- | :------------ | :------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `id`             | `String(64)`  | No       | Primary Key. (For EC2: SHA-256 hex of the `access` key, per §1 ID Generation).                                                                                                                                                                                                                                                                                                                                                                    |
+| `user_id`        | `String(64)`  | No       | Foreign key to the user who owns the credential.                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `project_id`     | `String(64)`  | Yes      | Project association (Mandatory for EC2 credentials).                                                                                                                                                                                                                                                                                                                                                                                              |
+| `encrypted_blob` | `Text`        | No       | The Fernet-encrypted secret string.                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `type`           | `String(255)` | No       | Credential type (e.g., `'ec2'`, `'totp'`).                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `key_hash`       | `String(64)`  | No       | SHA-1 hex digest of the primary key used for encryption (see §4).                                                                                                                                                                                                                                                                                                                                                                                 |
+| `extra`          | `Text`        | Yes      | Extensible JSON field. Python stores this via its `JsonBlob` `TypeDecorator`, which is backed by a plain `Text` column on every DB dialect Keystone supports — there is no native-JSON variant to detect. The Rust entity must model `extra` as `Option<String>` containing JSON text, parsed with `serde_json` (matching the existing `extra` handling in `identity-driver-sql`'s `user`/`group` entities), not a native JSON/JSONB column type. |
 
 ---
 
@@ -118,7 +130,12 @@ Keystone-NG treats this table as read/write but never issues DDL against it.
   - `project_id`: Required if `type` is `'ec2'`.
   - `user_id`: Defaults to the authenticated user. This default applies only
     when the request is user-scoped; it must not be applied when the caller
-    holds a system-scoped token (to match Python Keystone behaviour).
+    holds a system-scoped token (to match Python Keystone behaviour). Under
+    system scope there is no implicit "acting user" to fall back to, so if
+    `user_id` is also omitted from the request body the server must reject the
+    request with `400 Bad Request` rather than defaulting it to anything (e.g.
+    the system-scoped caller's own user, which would silently create a
+    credential owned by an operator account).
 - **ID Generation**:
   - **EC2**: `SHA-256(blob['access'])` hex-encoded.
   - **Others**: Random UUID.
@@ -128,6 +145,13 @@ Keystone-NG treats this table as read/write but never issues DDL against it.
 - Returns the credential reference.
 - **Security**: The `encrypted_blob` and `key_hash` are stripped from the
   response; the `blob` is decrypted to plaintext before serialisation.
+- **Wire format of `blob`**: Python Keystone returns `blob` as a JSON-encoded
+  **string** (the same string form that was originally submitted on create), not
+  as a nested JSON object — clients are expected to `json.loads()` it
+  themselves. Keystone-NG must serialise the `blob` field in its API response
+  the same way (a string value), not as a parsed/nested object, or existing SDKs
+  and clients that call `json.loads(cred["blob"])` will break against
+  Keystone-NG.
 - **List filtering — two-phase policy check** (required to address
   CVE-2019-19687): The `GET /v3/credentials` endpoint first enforces the
   `identity:list_credentials` policy and applies driver-level hints (e.g.
@@ -137,14 +161,21 @@ Keystone-NG treats this table as read/write but never issues DDL against it.
   project role cannot view credentials belonging to other users when
   `enforce_scope` is false. The performance implication is accepted and matches
   Python Keystone behaviour.
+  - **Policy target correctness**: The per-item re-enforcement must build its
+    policy target from _that record's own_ `user_id`/`project_id`, not from the
+    requester's identity or scope. Evaluating `identity:get_credential` against
+    the wrong target (e.g. the caller's own attributes, or a cached target from
+    the first item) would make the re-check a no-op and reintroduce a variant of
+    CVE-2019-19687 rather than closing it.
 
 #### Update (`PATCH /v3/credentials/{id}`)
 
 - **Updatable**: `type`, `blob`, `project_id`.
 - **Immutable**: `user_id` and `project_id` may not be changed to point at a
   user or project the acting user has no access to (CVE-2020-12691). Within the
-  `blob`, the following fields are additionally immutable: `access_id`,
-  `trust_id`, `app_cred_id`, and `access_token_id`.
+  `blob`, the following fields are additionally immutable: `access` (the EC2
+  access key — changing it would desynchronize the record from its
+  SHA-256-derived `id`), `trust_id`, `app_cred_id`, and `access_token_id`.
 - **Process**: Updating the `blob` triggers automatic re-encryption with the
   current Primary Key and updates `key_hash`.
 
@@ -234,16 +265,42 @@ The provider uses **Fernet (symmetric encryption)**, which is built upon:
 - **Storage**: Keys are stored as individual files in a filesystem directory.
 - **Naming**: Files use integer names. The highest number is the **Primary
   Key**.
+- **Cross-node synchronization (required precondition)**: Because the key
+  repository is a local filesystem directory, not a table in the shared
+  database, the whole byte-compatibility story in this section only holds if
+  every Python node and every Rust node reads the _same_ set of key files (e.g.
+  a shared network filesystem, or a config-management job that distributes the
+  directory to all nodes). `credential_setup` and `credential_rotate` are
+  cluster-wide operations: a run is not complete until the resulting key files
+  have been propagated to every node of both services. Keystone-NG must document
+  this as a deployment requirement, not assume it happens implicitly from
+  "sharing the same database".
 - **Maximum active keys**: The credential key repository is **hard-capped at 3
   active keys** (`MAX_ACTIVE_KEYS = 3`). This matches the Python Keystone
   constant and is intentionally not configurable. Unlike Fernet token key
   rotation, credential key rotation is driven by `key_hash` tracking, not by a
   configurable window. The Rust implementation must enforce this same limit when
   loading the key repository.
-- **Rotation Logic**:
-  - New keys are created as `0.tmp` $\rightarrow$ `0` (staged).
-  - On rotation, the primary is incremented (e.g., `1` $\rightarrow$ `2`) and
-    the staged key `0` becomes the new primary.
+- **Rotation Logic** (staged-key promotion, not primary renumbering):
+  1. Setup (`credential_setup`) creates the first key as `0.tmp` $\rightarrow$
+     `0` (staged; not yet used for encryption).
+  2. On rotation (`credential_rotate`), the **staged key `0` is renamed** to
+     `(current_primary_index + 1)` — e.g. if `1` is the current primary, `0` is
+     renamed to `2`. This renamed file is the new Primary. The old primary (`1`)
+     is left in place, unchanged, and is still used for decryption.
+  3. A fresh key is generated and written as the new staged `0.tmp`
+     $\rightarrow$ `0`, ready for the next rotation cycle.
+  4. If the number of key files now exceeds `MAX_ACTIVE_KEYS` (3), the oldest
+     non-staged key file(s) are deleted to bring the count back down to 3.
+
+  Note the staged key is never renumbered "in place" to become primary while
+  simultaneously incrementing some other file — those are the same rename
+  operation applied to the _staged_ file, not the outgoing primary. An
+  implementation that instead renames the outgoing primary upward while
+  separately trying to promote `0` (as an earlier ambiguous phrasing of this
+  section could be read) produces two files claiming to be primary and must be
+  avoided.
+
 - **Security**:
   - Directory must not be world-readable.
   - Files are created with `umask 0o177` and a temporary-file-then-rename
@@ -255,9 +312,13 @@ The provider uses **Fernet (symmetric encryption)**, which is built upon:
     transient migration aid and carries zero production tolerance.
   - **Startup enforcement**: Keystone-NG must check the key repository on
     startup. If any key file decodes to 32 null bytes (the Null Key), it must
-    emit a hard warning log. In production mode, it should refuse to start. The
-    Python service emits a warning on every encryption operation that uses the
-    Null Key; Keystone-NG matches this behaviour and adds the startup gate.
+    emit a hard warning log. Whether this is a hard-refuse-to-start condition
+    must be controlled by an explicit, named configuration value (e.g.
+    `[credential] insecure_allow_null_key`, defaulting to `false`) rather than
+    an undefined "production mode" — refuse to start unless the operator has
+    explicitly opted in. The Python service emits a warning on every encryption
+    operation that uses the Null Key; Keystone-NG matches this behaviour and
+    adds the startup gate.
 
 #### `key_hash` Specification
 
@@ -547,13 +608,11 @@ port-stripping retry. The Python HMAC object is stateful (accumulated via
 
 The server must check both locations and reject any request where the timestamp
 is outside the configured TTL window. The TTL is read from `[ec2] auth_ttl` in
-the shared `keystone.conf` (default: **300 seconds / 5 minutes**).
-
-> **Note on the ADR's stated default of 4 hours**: The Python Keystone default
-> is **300 seconds** (5 minutes), not 4 hours. The 4-hour figure was the AWS
-> SigV2 recommendation. The Keystone implementation uses a tighter window.
-> Keystone-NG must read the `[ec2] auth_ttl` config value from `keystone.conf`
-> and apply it identically.
+the shared `keystone.conf`, **defaulting to 300 seconds (5 minutes)** — this is
+the Python Keystone default and must not be confused with the 4-hour window that
+is only an AWS SigV2 recommendation, not what Keystone implements. Keystone-NG
+must read the `[ec2] auth_ttl` config value from `keystone.conf` and apply it
+identically.
 
 Prior to the CVE-2020-12692 fix, SigV4 requests had no timestamp check because
 the timestamp appears in the `Authorization` header rather than a query

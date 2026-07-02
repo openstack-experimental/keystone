@@ -3809,6 +3809,7 @@ dependencies = [
  "openstack-keystone-config",
  "openstack-keystone-core",
  "openstack-keystone-core-types",
+ "openstack-keystone-credential-driver-sql",
  "openstack-keystone-distributed-storage",
  "openstack-keystone-federation-driver-sql",
  "openstack-keystone-identity-driver-sql",
@@ -4090,6 +4091,31 @@ dependencies = [
  "url",
  "uuid",
  "validator",
+]
+
+[[package]]
+name = "openstack-keystone-credential-driver-sql"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "base64 0.22.1",
+ "fernet",
+ "inventory",
+ "nix 0.31.3",
+ "openstack-keystone-config",
+ "openstack-keystone-core",
+ "openstack-keystone-core-types",
+ "scopeguard",
+ "sea-orm",
+ "secrecy",
+ "serde_json",
+ "sha1",
+ "sha2 0.11.0",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -7345,6 +7371,7 @@ dependencies = [
  "openstack-keystone-config",
  "openstack-keystone-core",
  "openstack-keystone-core-types",
+ "openstack-keystone-credential-driver-sql",
  "openstack-keystone-distributed-storage",
  "openstack-keystone-identity-driver-sql",
  "openstack-keystone-storage-api",
@@ -7356,6 +7383,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_urlencoded",
+ "sha2 0.11.0",
  "tempfile",
  "time",
  "tokio",

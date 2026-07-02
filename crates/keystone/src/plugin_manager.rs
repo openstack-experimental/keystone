@@ -33,6 +33,8 @@ use openstack_keystone_core::assignment::backend::AssignmentBackend;
 use openstack_keystone_core::assignment::error::AssignmentProviderError;
 use openstack_keystone_core::catalog::backend::CatalogBackend;
 use openstack_keystone_core::catalog::error::CatalogProviderError;
+use openstack_keystone_core::credential::CredentialProviderError;
+use openstack_keystone_core::credential::backend::CredentialBackend;
 use openstack_keystone_core::federation::backend::FederationBackend;
 use openstack_keystone_core::federation::error::FederationProviderError;
 use openstack_keystone_core::identity::backend::IdentityBackend;
@@ -68,6 +70,8 @@ pub struct PluginManager {
     assignment_backends: HashMap<String, Arc<dyn AssignmentBackend>>,
     /// Catalog backend plugins.
     catalog_backends: HashMap<String, Arc<dyn CatalogBackend>>,
+    /// Credential backend plugins.
+    credential_backends: HashMap<String, Arc<dyn CredentialBackend>>,
     /// Federation backend plugins.
     federation_backends: HashMap<String, Arc<dyn FederationBackend>>,
     /// Identity backend plugins.
@@ -169,6 +173,24 @@ impl PluginManagerApi for PluginManager {
             .ok_or(CatalogProviderError::UnsupportedDriver(
                 name.as_ref().to_string(),
             ))
+    }
+
+    /// Get registered credential backend.
+    ///
+    /// # Parameters
+    /// * `name` - The name of the backend to retrieve.
+    ///
+    /// # Returns
+    /// A `Result` containing a reference to the `CredentialBackend` if found,
+    /// or a `CredentialProviderError`.
+    #[allow(clippy::borrowed_box)]
+    fn get_credential_backend<S: AsRef<str>>(
+        &self,
+        name: S,
+    ) -> Result<&Arc<dyn CredentialBackend>, CredentialProviderError> {
+        self.credential_backends.get(name.as_ref()).ok_or(
+            CredentialProviderError::UnsupportedDriver(name.as_ref().to_string()),
+        )
     }
 
     /// Get registered federation backend.
@@ -439,6 +461,20 @@ impl PluginManagerApi for PluginManager {
             .insert(name.as_ref().to_string(), plugin);
     }
 
+    /// Register credential backend.
+    ///
+    /// # Parameters
+    /// * `name` - The name of the backend to register.
+    /// * `plugin` - The backend implementation.
+    fn register_credential_backend<S: AsRef<str>>(
+        &mut self,
+        name: S,
+        plugin: Arc<dyn CredentialBackend>,
+    ) {
+        self.credential_backends
+            .insert(name.as_ref().to_string(), plugin);
+    }
+
     /// Register federation backend.
     ///
     /// # Parameters
@@ -592,6 +628,10 @@ impl PluginManager {
             "sql",
             Arc::new(openstack_keystone_catalog_driver_sql::SqlBackend::default()),
         );
+        self.register_credential_backend(
+            "sql",
+            Arc::new(openstack_keystone_credential_driver_sql::SqlBackend::default()),
+        );
         self.register_federation_backend(
             "sql",
             Arc::new(openstack_keystone_federation_driver_sql::SqlBackend::default()),
@@ -643,6 +683,7 @@ impl PluginManager {
             application_credential_backends: HashMap::new(),
             assignment_backends: HashMap::new(),
             catalog_backends: HashMap::new(),
+            credential_backends: HashMap::new(),
             federation_backends: HashMap::new(),
             identity_backends: HashMap::new(),
             idmapping_backends: HashMap::new(),

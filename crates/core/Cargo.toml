@@ -52,7 +52,7 @@ scrypt = "0.11"
 subtle = "2.6.1"
 
 [dev-dependencies]
-axum = { workspace = true, default-features = false, features = ["json"] }
+axum = { workspace = true, default-features = false, features = ["json", "tokio"] }
 config = { workspace = true }
 httpmock = { version = "0.8", features = ["http2"] }
 mockall.workspace = true

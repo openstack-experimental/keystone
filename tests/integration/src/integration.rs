@@ -21,6 +21,7 @@ mod assignment;
 mod audit;
 mod catalog;
 mod common;
+mod credential;
 mod identity;
 mod k8s_auth;
 mod mapping;

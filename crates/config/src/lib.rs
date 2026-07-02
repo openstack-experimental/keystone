@@ -63,6 +63,7 @@ mod audit;
 mod auth;
 mod catalog;
 mod common;
+mod credential;
 mod database;
 mod default;
 mod distributed_storage;
@@ -91,6 +92,7 @@ pub use audit::*;
 pub use auth::*;
 pub use catalog::*;
 pub use common::*;
+pub use credential::*;
 pub use database::*;
 pub use default::*;
 pub use distributed_storage::*;
@@ -142,6 +144,10 @@ pub struct Config {
     /// Catalog provider configuration.
     #[serde(default)]
     pub catalog: CatalogProvider,
+
+    /// Credential provider configuration.
+    #[serde(default)]
+    pub credential: CredentialProvider,
 
     /// Database configuration.
     //#[serde(default)]
