@@ -61,4 +61,4 @@ extend-ignore-re = []
 [type.js]
 
 [type.md]
-extend-ignore-identifiers-re = ["HashiCorp", "SIEM"]
+extend-ignore-identifiers-re = ["HashiCorp", "SIEM", "mis"]
