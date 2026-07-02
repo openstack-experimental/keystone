@@ -29,7 +29,7 @@ use rmp::{
     decode::{ValueReadError, read_marker, read_u8},
     encode::{write_array_len, write_pfix},
 };
-use tracing::trace;
+use tracing::{trace, warn};
 use validator::Validate;
 
 use openstack_keystone_config::Config;
@@ -181,13 +181,27 @@ impl FernetTokenProvider {
 
     /// Reload the provider configuration.
     pub fn reload_config(&mut self) {
+        let methods = &self.config.auth.methods;
+        // The auth methods used by a token are encoded as a single `u8`
+        // bitmask (one bit per configured method), so at most 8 methods can
+        // be represented. `1u8 << k` would overflow (panic in debug, wrap
+        // and collide bits in release) for any method beyond the 8th.
+        if methods.len() > 8 {
+            warn!(
+                configured = methods.len(),
+                usable = ?&methods[..8],
+                dropped = ?&methods[8..],
+                "more than 8 authentication methods are configured; only the \
+                 first 8 can be encoded into a Fernet token, the rest will be \
+                 rejected when used for authentication"
+            );
+        }
         self.auth_map = BTreeMap::from_iter(
-            self.config
-                .auth
-                .methods
+            methods
                 .iter()
+                .take(8)
                 .enumerate()
-                .map(|(k, v)| (1 << k, v.clone())),
+                .map(|(k, v)| (1u8 << k, v.clone())),
         );
         self.set_auth_methods_cache_combinations();
     }
@@ -248,7 +262,14 @@ impl FernetTokenProvider {
             trace!("Auth methods cache miss.");
             let mut results: Vec<String> = Vec::new();
             let mut auth: u8 = value;
-            for (idx, name) in self.auth_map.iter() {
+            // Bits must be tested from the largest to the smallest: after
+            // subtracting a matched bit, the remaining `auth` value is only
+            // guaranteed to be smaller than the next (smaller) bit being
+            // tested. Iterating in ascending order instead would test
+            // `auth / idx == 1` while a larger, not-yet-subtracted bit is
+            // still contributing to `auth`, causing that division to skip
+            // right past 1 and silently drop the smaller method.
+            for (idx, name) in self.auth_map.iter().rev() {
                 // (lbragstad): By dividing the method_int by each key in the
                 // method_map, we know if the division results in an integer of 1, that
                 // key was used in the construction of the total sum of the method_int.
@@ -938,6 +959,68 @@ pub mod tests {
 
         let mut provider = FernetTokenProvider::new(setup_config());
         provider.load_keys().unwrap();
+
+        let encrypted = provider.encrypt(&token).unwrap();
+        let dec_token = discard_issued_at(provider.decrypt(&encrypted).unwrap());
+        assert_eq!(token, dec_token);
+    }
+
+    #[test]
+    fn test_decode_auth_methods_cache_miss_preserves_all_bits() {
+        // setup_config() configures "password,token,openid,application_credential",
+        // so bits are password=1, token=2, openid=4, application_credential=8.
+        let mut provider = FernetTokenProvider::new(setup_config());
+        // Force the fallback bit-decomposition path (normally only hit when a
+        // token's bitmask isn't one of the pre-cached combinations).
+        provider.auth_methods_code_cache.clear();
+
+        let mut methods = provider.decode_auth_methods(0b0101).unwrap(); // password + openid
+        methods.sort();
+        assert_eq!(methods, vec!["openid", "password"]);
+    }
+
+    #[test]
+    fn test_reload_config_caps_more_than_8_auth_methods() {
+        let builder = config::Config::builder()
+            .set_override("auth.methods", "m1,m2,m3,m4,m5,m6,m7,m8,m9")
+            .unwrap()
+            .set_override("database.connection", "dummy")
+            .unwrap();
+        let config: Config = Config::try_from(builder).expect("can build a valid config");
+
+        // Must not panic (shift overflow) despite 9 configured methods.
+        let provider = FernetTokenProvider::new(config);
+        assert_eq!(provider.auth_map.len(), 8);
+        assert!(!provider.auth_map.values().any(|v| v == "m9"));
+    }
+
+    #[tokio::test]
+    async fn test_eighth_auth_method_roundtrip() {
+        // The 8th configured method encodes to bit 128, which the MessagePack
+        // positive-fixint format used for the methods byte cannot represent.
+        let keys_dir = tempdir().unwrap();
+        let file_path = keys_dir.path().join("0");
+        let mut tmp_file = File::create(file_path).unwrap();
+        write!(tmp_file, "BFTs1CIVIBLTP4GOrQ26VETrJ7Zwz1O4wbEcCQ966eM=").unwrap();
+
+        let builder = config::Config::builder()
+            .set_override("auth.methods", "m1,m2,m3,m4,m5,m6,m7,m8")
+            .unwrap()
+            .set_override("database.connection", "dummy")
+            .unwrap();
+        let mut config: Config = Config::try_from(builder).expect("can build a valid config");
+        config.fernet_tokens.key_repository = keys_dir.keep();
+
+        let mut provider = FernetTokenProvider::new(config);
+        provider.load_keys().unwrap();
+
+        let token = FernetToken::Unscoped(UnscopedPayload {
+            user_id: Uuid::new_v4().simple().to_string(),
+            methods: vec!["m8".into()],
+            audit_ids: vec!["Zm9vCg".into()],
+            expires_at: Local::now().trunc_subsecs(0).into(),
+            ..Default::default()
+        });
 
         let encrypted = provider.encrypt(&token).unwrap();
         let dec_token = discard_issued_at(provider.decrypt(&encrypted).unwrap());

@@ -12,7 +12,6 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use rmp::{decode::read_pfix, encode::write_pfix};
 use std::io::Write;
 
 use openstack_keystone_core_types::token::FederationUnscopedPayload;
@@ -36,11 +35,10 @@ impl MsgPackToken for FederationUnscopedPayload {
         fernet_provider: &FernetTokenProvider,
     ) -> Result<(), FernetDriverError> {
         utils::write_uuid(wd, &self.user_id)?;
-        write_pfix(
+        utils::write_auth_methods_code(
             wd,
             fernet_provider.encode_auth_methods(self.methods.clone())?,
-        )
-        .map_err(|x| FernetDriverError::RmpEncode(x.to_string()))?;
+        )?;
         utils::write_list_of_uuids(wd, self.group_ids.iter())?;
         utils::write_uuid(wd, &self.idp_id)?;
         utils::write_str(wd, &self.protocol_id)?;
@@ -66,7 +64,7 @@ impl MsgPackToken for FederationUnscopedPayload {
         // Order of reading is important
         let user_id = utils::read_uuid(rd)?;
         let methods: Vec<String> = fernet_provider
-            .decode_auth_methods(read_pfix(rd)?)?
+            .decode_auth_methods(utils::read_auth_methods_code(rd)?)?
             .into_iter()
             .collect();
         let group_ids = utils::read_list_of_uuids(rd)?;

@@ -13,7 +13,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Restricted token Fernet implementation.
 
-use rmp::{decode::read_pfix, encode::write_pfix};
 use std::io::Write;
 
 use openstack_keystone_core_types::token::RestrictedPayload;
@@ -37,11 +36,10 @@ impl MsgPackToken for RestrictedPayload {
         fernet_provider: &FernetTokenProvider,
     ) -> Result<(), FernetDriverError> {
         utils::write_uuid(wd, &self.user_id)?;
-        write_pfix(
+        utils::write_auth_methods_code(
             wd,
             fernet_provider.encode_auth_methods(self.methods.clone())?,
-        )
-        .map_err(|x| FernetDriverError::RmpEncode(x.to_string()))?;
+        )?;
         utils::write_uuid(wd, &self.token_restriction_id)?;
         utils::write_time(wd, self.expires_at)?;
         utils::write_uuid(wd, &self.project_id)?;
@@ -68,7 +66,7 @@ impl MsgPackToken for RestrictedPayload {
         // Order of reading is important
         let user_id = utils::read_uuid(rd)?;
         let methods: Vec<String> = fernet_provider
-            .decode_auth_methods(read_pfix(rd)?)?
+            .decode_auth_methods(utils::read_auth_methods_code(rd)?)?
             .into_iter()
             .collect();
         let token_restriction_id = utils::read_uuid(rd)?;
