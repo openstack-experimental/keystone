@@ -281,9 +281,14 @@ pub async fn init_storage(config_manager: &Arc<ConfigManager>) -> Result<Arc<Sto
     }
 
     // Create stores and network
-    let (log_store, sm, current_dek, _revoked_deks, pending_rotations, quarantine_rx) =
-        crate::new::<crate::TypeConfig, _>(ds_config.path, ds_config.node_id, kek.clone()).await?;
-    let state_machine_store = Arc::new(sm);
+    let (
+        log_store,
+        state_machine_store,
+        current_dek,
+        _revoked_deks,
+        pending_rotations,
+        quarantine_rx,
+    ) = crate::new::<crate::TypeConfig, _>(ds_config.path, ds_config.node_id, kek.clone()).await?;
     let tls_client = init_tls_watcher(config_manager).await?;
     let network = Arc::new(NetworkManager::new(tls_client.clone())?);
 

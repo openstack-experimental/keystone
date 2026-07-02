@@ -599,6 +599,13 @@ async fn test_node_restart_inner() -> Result<()> {
     wait_for_leader(&mut admin_client, 1).await;
 
     // Drop first storage (simulates pod going away)
+    //
+    // Dropping the `Storage` handle alone does NOT stop the RaftCore
+    // background task: `Raft`'s Drop impl doesn't shut it down, so it keeps
+    // running and holding its `Arc<Database>` clone, which keeps the Fjall
+    // file lock held. `shutdown()` must be awaited explicitly (it joins the
+    // RaftCore task) before the Fjall lock is actually released.
+    storage.raft.shutdown().await.ok();
     drop(storage);
     drop(admin_client);
     drop(tls_client_config);

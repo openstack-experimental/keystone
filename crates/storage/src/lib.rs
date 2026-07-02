@@ -222,7 +222,7 @@ pub async fn new<C, P: AsRef<Path>>(
 ) -> Result<
     (
         FjallLogStore<C>,
-        FjallStateMachine,
+        Arc<FjallStateMachine>,
         Arc<RwLock<Arc<DekEpoch>>>,
         Arc<Mutex<HashSet<u32>>>,
         Arc<Mutex<HashMap<String, store_command::PendingRotation>>>,
@@ -265,17 +265,6 @@ where
         Arc::new(Mutex::new(pending_map));
 
     let (reencrypt_tx, mut reencrypt_rx) = tokio::sync::mpsc::channel::<Arc<DekEpoch>>(16);
-    // Stub re-encryption task: drains the channel and logs.
-    // Full background re-encryption of state entries is deferred to Phase 5.2.
-    tokio::spawn(async move {
-        while let Some(old_epoch) = reencrypt_rx.recv().await {
-            tracing::info!(
-                version = old_epoch.version,
-                "DEK rotation: old epoch registered (re-encryption deferred to Phase 5.2)"
-            );
-        }
-    });
-
     let (quarantine_tx, quarantine_rx) = tokio::sync::mpsc::channel::<(u64, String)>(16);
 
     let log_store = FjallLogStore::new(
@@ -300,6 +289,34 @@ where
         pending_rotations.clone(),
     )
     .map_err(|e| io::Error::other(e.to_string()))?;
+    let sm = Arc::new(sm);
+
+    // Background re-encryption task (ADR 0016-v2 §6 step 5 / §6.2 step 4):
+    // each DEK rotation signals this channel with the epoch that was just
+    // retired; the task sweeps every not-yet-fully-migrated retired epoch
+    // (see `FjallStateMachine::reencrypt_pending`) so a record that lost the
+    // CAS race on one rotation gets another chance on the next.
+    //
+    // Holds a Weak reference (matching the quarantine/rotation-sweeper tasks
+    // in app.rs): a strong `sm.clone()` here would also clone `sm`'s own
+    // `reencrypt_tx` sender, which would keep this channel's sender count
+    // above zero for as long as this task runs — meaning it runs forever,
+    // `recv()` never observes a closed channel, and the Fjall database
+    // handle it holds is never released, permanently leaking the DB's file
+    // lock even after every other clone of the state machine is dropped.
+    let sm_weak = Arc::downgrade(&sm);
+    tokio::spawn(async move {
+        while let Some(old_epoch) = reencrypt_rx.recv().await {
+            tracing::info!(
+                version = old_epoch.version,
+                "DEK rotation: background re-encryption triggered"
+            );
+            let Some(sm) = sm_weak.upgrade() else {
+                break;
+            };
+            sm.reencrypt_pending().await;
+        }
+    });
 
     Ok((
         log_store,
@@ -498,7 +515,7 @@ mod tests {
                 crate::new(td.path(), 1, kek)
                     .await
                     .map_err(|e| StorageError::read(TypeConfig::err_from_error(&e)))?;
-            Ok((td, log_store, Arc::new(sm)))
+            Ok((td, log_store, sm))
         }
     }
 

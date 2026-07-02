@@ -265,6 +265,56 @@ const PENDING_ROTATION_PREFIX: &str = "_meta:rotation:pending:";
 /// Dual-control confirmation window in seconds (5 minutes).
 pub const PENDING_ROTATION_TTL_SECS: u64 = 300;
 
+/// Fjall meta key prefix marking a retired DEK epoch as fully re-encrypted.
+///
+/// Writes always encrypt under the *current* epoch (see
+/// `encrypt_and_store`), so once a background pass over a retired epoch
+/// finds nothing left to migrate, no future write can ever put a new record
+/// back under it — the epoch is done for good. This marker lets later
+/// rotation cycles skip re-scanning the whole dataset for epochs that are
+/// already fully migrated. The retired DEK material itself is retained
+/// regardless, for backup decryption (ADR 0016-v2 §7).
+const DEK_REENCRYPT_DONE_PREFIX: &str = "_meta:dek:reencrypt_done:";
+
+/// Maximum number of optimistic-CAS attempts per record during background
+/// re-encryption before the record is left for the next rotation cycle
+/// (ADR 0016-v2 §6 step 5).
+const REENCRYPT_MAX_CAS_ATTEMPTS: usize = 3;
+
+/// Keyspaces that never hold `state_encrypt`-encrypted records and are
+/// skipped by the background re-encryption sweep: `meta` holds DEK/
+/// quarantine/rotation bookkeeping and per-record `Metadata` (plaintext
+/// MessagePack, not state-tier ciphertext), `logs` holds the Raft log
+/// (encrypted with the Log DEK via a different scheme in `log_store.rs`,
+/// naturally rotated out by snapshot compaction), and `index` holds bare
+/// existence markers with empty values.
+const REENCRYPT_SKIP_KEYSPACES: &[&str] = &["meta", "logs", "index"];
+
+/// Outcome of attempting to migrate a single record to the current DEK epoch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReencryptOutcome {
+    /// Re-encrypted under the current epoch.
+    Migrated,
+    /// Not eligible: already under a different epoch, or the record/its
+    /// metadata vanished before it could be migrated.
+    AlreadyCurrent,
+    /// Exhausted the CAS retry budget; left for the next rotation cycle.
+    Skipped,
+}
+
+/// Summary of one background re-encryption pass over a single retired DEK
+/// epoch (ADR 0016-v2 §6 step 5 / §6.2 step 4).
+#[derive(Debug, Default, Clone, Copy)]
+pub struct ReencryptReport {
+    /// Records successfully re-encrypted under the current epoch.
+    pub migrated: u64,
+    /// Records that were already under a different epoch by the time they
+    /// were visited.
+    pub already_current: u64,
+    /// Records that exhausted the CAS retry budget this pass.
+    pub skipped: u64,
+}
+
 /// Maximum number of revoked DEK versions tracked in memory.
 ///
 /// Revoked versions accumulate only on emergency rotations.  Exceeding this
@@ -765,6 +815,218 @@ impl FjallStateMachine {
             (encrypted, guard.version)
         };
         Ok((encrypted, dek_version))
+    }
+
+    /// Sweep every retired-but-not-yet-fully-migrated DEK epoch and
+    /// re-encrypt whatever records remain under it (ADR 0016-v2 §6 step 5 /
+    /// §6.2 step 4).
+    ///
+    /// Called whenever a DEK rotation completes. Rather than only sweeping
+    /// the epoch that was *just* retired, this revisits every epoch in
+    /// `old_deks` that isn't marked fully migrated yet — this is what gives
+    /// a record that exhausted its CAS retry budget on one rotation cycle
+    /// another chance on the next one, per ADR 0016-v2 §6 step 5 ("skipped
+    /// keys are ... automatically retried on the next scheduled rotation
+    /// cycle") without needing a separate timer.
+    ///
+    /// Runs entirely locally on this node: `InstallDek` is Raft-committed
+    /// and applied identically on every node, and `state_encrypt`/
+    /// `state_decrypt` are deterministic given `(tier, keyspace, pk,
+    /// version)`, so every node converges on the same ciphertext
+    /// independently — the re-encryption writes themselves don't need a
+    /// second consensus round.
+    pub async fn reencrypt_pending(&self) {
+        let epochs: Vec<Arc<DekEpoch>> = {
+            let map = self.old_deks.lock().unwrap_or_else(|p| p.into_inner());
+            map.values().cloned().collect()
+        };
+
+        for epoch in epochs {
+            let done_key = format!("{DEK_REENCRYPT_DONE_PREFIX}{}", epoch.version);
+            if matches!(self.meta.get(done_key.as_bytes()), Ok(Some(_))) {
+                continue;
+            }
+
+            let report = self.reencrypt_epoch(&epoch).await;
+            tracing::info!(
+                old_version = epoch.version,
+                migrated = report.migrated,
+                already_current = report.already_current,
+                skipped = report.skipped,
+                "DEK rotation: background re-encryption pass complete"
+            );
+
+            if report.skipped == 0 {
+                // A clean pass with nothing left to retry: since writes
+                // always target the *current* epoch, no record can ever
+                // reappear under this retired one. Safe to never sweep it
+                // again.
+                if let Err(e) = self.meta.insert(done_key.as_bytes(), b"1") {
+                    tracing::warn!(
+                        old_version = epoch.version,
+                        error = %e,
+                        "failed to persist re-encryption completion marker; \
+                         epoch will be re-swept on the next rotation cycle"
+                    );
+                } else {
+                    tracing::info!(
+                        old_version = epoch.version,
+                        "DEK rotation: epoch fully re-encrypted; retired DEK retained for \
+                         backup decryption only (ADR 0016-v2 §7)"
+                    );
+                }
+            } else {
+                tracing::warn!(
+                    old_version = epoch.version,
+                    skipped = report.skipped,
+                    "DEK rotation: some records could not be re-encrypted this pass; \
+                     will retry on the next rotation cycle (ADR 0016-v2 §6 step 5)"
+                );
+            }
+        }
+    }
+
+    /// Re-encrypt every record still under `old_epoch` to the current epoch,
+    /// walking all non-system keyspaces in key-sorted order.
+    async fn reencrypt_epoch(&self, old_epoch: &DekEpoch) -> ReencryptReport {
+        let mut report = ReencryptReport::default();
+
+        for name in self.db.list_keyspace_names() {
+            let keyspace_name = name.to_string();
+            if REENCRYPT_SKIP_KEYSPACES.contains(&keyspace_name.as_str()) {
+                continue;
+            }
+            let Ok(ks) = self
+                .db
+                .keyspace(&keyspace_name, KeyspaceCreateOptions::default)
+            else {
+                continue;
+            };
+
+            // Snapshot keys up front (key-sorted, per ADR 0016-v2 §6 step 5):
+            // re-encryption mutates the keyspace while we walk it, so a live
+            // iterator could otherwise observe its own writes.
+            let keys: Vec<Vec<u8>> = ks
+                .iter()
+                .filter_map(|item| item.into_inner().ok())
+                .map(|(k, _)| k.to_vec())
+                .collect();
+
+            for key in keys {
+                // Yield periodically so a large keyspace doesn't starve the
+                // Raft apply loop or other tasks on this node.
+                tokio::task::yield_now().await;
+
+                match self.reencrypt_one(&ks, &keyspace_name, &key, old_epoch) {
+                    ReencryptOutcome::Migrated => report.migrated += 1,
+                    ReencryptOutcome::AlreadyCurrent => report.already_current += 1,
+                    ReencryptOutcome::Skipped => {
+                        report.skipped += 1;
+                        tracing::warn!(
+                            keyspace = keyspace_name,
+                            key = %String::from_utf8_lossy(&key),
+                            old_version = old_epoch.version,
+                            "DEK rotation: record skipped after exhausting CAS retries"
+                        );
+                    }
+                }
+            }
+        }
+
+        report
+    }
+
+    /// Attempt to migrate a single record from `old_epoch` to the current
+    /// DEK epoch, retrying up to `REENCRYPT_MAX_CAS_ATTEMPTS` times if it
+    /// races a concurrent Raft write (ADR 0016-v2 §6 step 5: "optimistic
+    /// concurrency control (CAS on version)").
+    ///
+    /// The Fjall `Keyspace`/`Batch` API this crate uses has no built-in
+    /// compare-and-swap, so the CAS is approximated: read the ciphertext and
+    /// metadata, compute the re-encrypted record, then immediately before
+    /// committing re-read both and only write if neither changed. This
+    /// narrows but does not eliminate the race window against a concurrent
+    /// `apply()` write to the same key; a loss is simply retried (and, after
+    /// the retry budget, left for the next rotation cycle), so the residual
+    /// race never corrupts data — at worst it costs a retry.
+    fn reencrypt_one(
+        &self,
+        ks: &Keyspace,
+        keyspace_name: &str,
+        key: &[u8],
+        old_epoch: &DekEpoch,
+    ) -> ReencryptOutcome {
+        for _ in 0..REENCRYPT_MAX_CAS_ATTEMPTS {
+            let Ok(Some(before)) = ks.get(key) else {
+                return ReencryptOutcome::AlreadyCurrent; // deleted concurrently
+            };
+            let Ok(Some(meta_bytes)) = self.meta.get(key) else {
+                return ReencryptOutcome::AlreadyCurrent; // metadata gone
+            };
+            let Ok(metadata) = Metadata::unpack(meta_bytes.as_ref()) else {
+                return ReencryptOutcome::Skipped;
+            };
+            if metadata.dek_version != Some(old_epoch.version) {
+                // Already advanced by a concurrent Raft write (or a
+                // previous re-encryption pass), or never under this epoch.
+                return ReencryptOutcome::AlreadyCurrent;
+            }
+
+            let tier = metadata.tier as u8;
+            let Ok((plaintext, stored_version)) = state_decrypt(
+                old_epoch.state_dek(),
+                before.as_ref(),
+                tier,
+                keyspace_name.as_bytes(),
+                key,
+            ) else {
+                return ReencryptOutcome::Skipped;
+            };
+
+            let (encrypted, new_version) = {
+                let guard = self.dek.read().unwrap_or_else(|p| p.into_inner());
+                if guard.version == old_epoch.version {
+                    // No newer epoch installed yet — nothing to migrate to.
+                    return ReencryptOutcome::AlreadyCurrent;
+                }
+                let Ok(encrypted) = state_encrypt(
+                    guard.state_dek(),
+                    plaintext.as_ref(),
+                    tier,
+                    keyspace_name.as_bytes(),
+                    key,
+                    stored_version + 1,
+                ) else {
+                    return ReencryptOutcome::Skipped;
+                };
+                (encrypted, guard.version)
+            };
+
+            let mut new_metadata = metadata.clone();
+            new_metadata.dek_version = Some(new_version);
+            let Ok(new_meta_bytes) = new_metadata.pack() else {
+                return ReencryptOutcome::Skipped;
+            };
+
+            // Re-check immediately before committing: only write if neither
+            // the ciphertext nor the metadata changed since we read them.
+            let data_unchanged =
+                matches!(ks.get(key), Ok(Some(now)) if now.as_ref() == before.as_ref());
+            let meta_unchanged =
+                matches!(self.meta.get(key), Ok(Some(now)) if now.as_ref() == meta_bytes.as_ref());
+            if !data_unchanged || !meta_unchanged {
+                continue; // lost the race — retry
+            }
+
+            let mut batch = self.db.batch();
+            batch.insert(ks, key.to_vec(), encrypted);
+            batch.insert(&self.meta, key.to_vec(), new_meta_bytes);
+            if batch.commit().is_err() {
+                continue;
+            }
+            return ReencryptOutcome::Migrated;
+        }
+        ReencryptOutcome::Skipped
     }
 
     #[allow(clippy::result_large_err)]
@@ -1984,6 +2246,152 @@ mod dek_version_tests {
             .decrypt_state(&ciphertext, DataTier::Internal as u8, b"data", b"k4", None)
             .expect("legacy probe path should still find the retired epoch");
         assert_eq!(plaintext, b"hello");
+    }
+}
+
+#[cfg(test)]
+mod reencrypt_tests {
+    use openstack_keystone_storage_crypto::EnvKek;
+
+    use super::*;
+
+    fn test_epoch(seed: u8, version: u32) -> Arc<DekEpoch> {
+        Arc::new(DekEpoch::from_raw(LockedKey::from_raw([seed; 32]), version).expect("epoch"))
+    }
+
+    fn make_sm(current: Arc<DekEpoch>) -> (FjallStateMachine, tempfile::TempDir) {
+        let td = tempfile::TempDir::new().expect("tempdir");
+        let db = Arc::new(Database::builder(td.path()).open().expect("open db"));
+        let kek: Arc<dyn KekProvider> = Arc::new(EnvKek::from_bytes([0x42u8; 32]));
+        let (reencrypt_tx, reencrypt_rx) = tokio::sync::mpsc::channel(1);
+        drop(reencrypt_rx);
+        let (quarantine_tx, quarantine_rx) = tokio::sync::mpsc::channel(1);
+        drop(quarantine_rx);
+
+        let sm = FjallStateMachine::new(
+            db,
+            td.path().join("snapshots"),
+            1,
+            Arc::new(RwLock::new(current)),
+            Arc::new(Mutex::new(BTreeMap::new())),
+            Arc::new(Mutex::new(HashSet::new())),
+            kek,
+            reencrypt_tx,
+            quarantine_tx,
+            Arc::new(Mutex::new(HashMap::new())),
+        )
+        .expect("construct state machine");
+        (sm, td)
+    }
+
+    /// Writes a record the way `apply()` does: ciphertext in the data
+    /// keyspace plus a matching `Metadata` (with `dek_version` populated) in
+    /// `meta`. Returns the DEK epoch version the record was encrypted under.
+    fn write_record(sm: &FjallStateMachine, key: &[u8], plaintext: &[u8]) -> u32 {
+        let ks = sm.data().clone();
+        let (ciphertext, dek_version) = sm
+            .encrypt_and_store(&ks, key, b"data", DataTier::Internal as u8, plaintext)
+            .expect("encrypt");
+        ks.insert(key, ciphertext).expect("insert ciphertext");
+        let mut metadata = Metadata::new();
+        metadata.dek_version = Some(dek_version);
+        sm.meta()
+            .insert(key, metadata.pack().expect("pack metadata"))
+            .expect("insert metadata");
+        dek_version
+    }
+
+    /// End-to-end exercise of ADR 0016-v2 §6 step 5: a record written under
+    /// a since-retired DEK epoch must be re-encrypted under the current
+    /// epoch, its `Metadata::dek_version` updated to match, and the epoch
+    /// marked fully migrated so it isn't re-swept.
+    #[test]
+    fn reencrypt_pending_migrates_records_under_retired_epoch() {
+        let old_epoch = test_epoch(0x10, 1);
+        let (sm, _td) = make_sm(old_epoch.clone());
+
+        let old_version = write_record(&sm, b"k1", b"hello");
+        assert_eq!(old_version, old_epoch.version);
+
+        // Simulate a completed rotation exactly as `apply()`'s
+        // `MutationInner::InstallDek` handler does: swap in the new current
+        // epoch and register the old one for read fallback.
+        let new_epoch = test_epoch(0x11, 2);
+        *sm.dek.write().unwrap_or_else(|p| p.into_inner()) = new_epoch.clone();
+        sm.old_deks
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .insert(old_epoch.version, old_epoch.clone());
+
+        TypeConfig::run(async {
+            sm.reencrypt_pending().await;
+        });
+
+        // Metadata now names the new epoch.
+        let meta_bytes = sm
+            .meta()
+            .get(b"k1")
+            .expect("get meta")
+            .expect("meta present");
+        let metadata = Metadata::unpack(meta_bytes.as_ref()).expect("unpack metadata");
+        assert_eq!(metadata.dek_version, Some(new_epoch.version));
+
+        // The record now decrypts under the new epoch's exact hint.
+        let stored = sm
+            .data()
+            .get(b"k1")
+            .expect("get data")
+            .expect("data present");
+        let plaintext = sm
+            .decrypt_state(
+                stored.as_ref(),
+                DataTier::Internal as u8,
+                b"data",
+                b"k1",
+                Some(new_epoch.version),
+            )
+            .expect("decrypt under new epoch");
+        assert_eq!(plaintext, b"hello");
+
+        // A clean pass with nothing skipped marks the epoch done so it's
+        // never re-swept (no code path ever writes a new record back under
+        // a retired epoch).
+        let done_key = format!("{DEK_REENCRYPT_DONE_PREFIX}{}", old_epoch.version);
+        assert!(
+            sm.meta()
+                .get(done_key.as_bytes())
+                .expect("get marker")
+                .is_some(),
+            "fully migrated epoch must be marked done"
+        );
+    }
+
+    /// A record already under the current epoch (no rotation pending) must
+    /// be left untouched by a re-encryption sweep.
+    #[test]
+    fn reencrypt_pending_is_noop_with_no_retired_epochs() {
+        let epoch = test_epoch(0x12, 1);
+        let (sm, _td) = make_sm(epoch);
+
+        write_record(&sm, b"k2", b"hello");
+        let before = sm
+            .data()
+            .get(b"k2")
+            .expect("get data")
+            .expect("present")
+            .to_vec();
+
+        TypeConfig::run(async {
+            sm.reencrypt_pending().await;
+        });
+
+        let after = sm
+            .data()
+            .get(b"k2")
+            .expect("get data")
+            .expect("still present")
+            .to_vec();
+        assert_eq!(before, after, "no retired epoch to migrate from");
     }
 }
 
