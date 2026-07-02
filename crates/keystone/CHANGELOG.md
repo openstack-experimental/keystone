@@ -1,0 +1,101 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+## [0.1.2](https://github.com/openstack-experimental/keystone/compare/openstack-keystone-v0.1.1...openstack-keystone-v0.1.2) - 2026-07-02
+
+### Added
+
+- *(credential)* Implement ADR 0019 phases 1-2 ([#897](https://github.com/openstack-experimental/keystone/pull/897))
+- ADR 0021 admin surface, simulate-access, and janitor ([#896](https://github.com/openstack-experimental/keystone/pull/896))
+- Implement stateless SCIM ingress auth (ADR 0021) ([#891](https://github.com/openstack-experimental/keystone/pull/891))
+- *(audit)* Complete ADR-0023 audit implementation ([#887](https://github.com/openstack-experimental/keystone/pull/887))
+- *(storage)* Cert validity and SVID TTL enforcement ([#886](https://github.com/openstack-experimental/keystone/pull/886))
+- Audit framework (ADR-0023) phase 3 ([#880](https://github.com/openstack-experimental/keystone/pull/880))
+- *(auth)* Password hashing parity with Python Keystone ([#859](https://github.com/openstack-experimental/keystone/pull/859))
+- *(audit)* Implement CADF audit framework Phase 2 ([#872](https://github.com/openstack-experimental/keystone/pull/872))
+- *(storage)* SPIFFE checks, RBAC, rate limiting, auto-join ([#861](https://github.com/openstack-experimental/keystone/pull/861))
+- *(storage)* Add SPIFFE mTLS support to Raft gRPC ([#852](https://github.com/openstack-experimental/keystone/pull/852))
+- Migrate federation to new mapping engine ([#839](https://github.com/openstack-experimental/keystone/pull/839))
+- *(api)* Capture client IP via ConnectInfo ([#842](https://github.com/openstack-experimental/keystone/pull/842))
+- *(api)* Normalize trailing slashes in paths ([#841](https://github.com/openstack-experimental/keystone/pull/841))
+- ADR-0020 mapping phase 4 ([#818](https://github.com/openstack-experimental/keystone/pull/818))
+- Add bootstrap cli command ([#809](https://github.com/openstack-experimental/keystone/pull/809))
+- *(mapping)* ADR-0020 phase 2 ([#807](https://github.com/openstack-experimental/keystone/pull/807))
+- *(mapping)* ADR-0020 (mapping engine) phase 1 ([#794](https://github.com/openstack-experimental/keystone/pull/794))
+- Add inter-provider event notification system ([#784](https://github.com/openstack-experimental/keystone/pull/784))
+- Add service CRUD to the catalog provider ([#773](https://github.com/openstack-experimental/keystone/pull/773))
+- Add SO_PEERCRED peer credential validation ([#775](https://github.com/openstack-experimental/keystone/pull/775))
+- Return 401 on roleless scoped contexts ([#742](https://github.com/openstack-experimental/keystone/pull/742))
+- Add system-user-role assignments API ([#762](https://github.com/openstack-experimental/keystone/pull/762))
+- Add role-imply rest api ([#750](https://github.com/openstack-experimental/keystone/pull/750))
+- Add user update functionality ([#747](https://github.com/openstack-experimental/keystone/pull/747))
+- Add api to list user roles on project ([#639](https://github.com/openstack-experimental/keystone/pull/639))
+- Add domain CRUD operations ([#743](https://github.com/openstack-experimental/keystone/pull/743))
+- Add spiffe binding API ([#740](https://github.com/openstack-experimental/keystone/pull/740))
+- Normalize the policy enforcer structure ([#741](https://github.com/openstack-experimental/keystone/pull/741))
+- Make drivers more dynamic ([#737](https://github.com/openstack-experimental/keystone/pull/737))
+- Add keystone container with opa and policies ([#738](https://github.com/openstack-experimental/keystone/pull/738))
+- Add Admin interface over the UDS ([#735](https://github.com/openstack-experimental/keystone/pull/735))
+- Add spiffe provider ([#733](https://github.com/openstack-experimental/keystone/pull/733))
+- Introduce SecurityContext ([#710](https://github.com/openstack-experimental/keystone/pull/710))
+- Talk to OPA over unix socket ([#701](https://github.com/openstack-experimental/keystone/pull/701))
+- Add skeleton for the spiffe mTLS integration ([#695](https://github.com/openstack-experimental/keystone/pull/695))
+- Implement ConfigManager for config watching ([#691](https://github.com/openstack-experimental/keystone/pull/691))
+- Improve the code ([#686](https://github.com/openstack-experimental/keystone/pull/686))
+- Add k8s-auth raft driver ([#676](https://github.com/openstack-experimental/keystone/pull/676))
+- Add basic healthcheck endpoint ([#671](https://github.com/openstack-experimental/keystone/pull/671))
+- Add raft support under skaffold ([#667](https://github.com/openstack-experimental/keystone/pull/667))
+- Introduce raft backend for webauthn ([#658](https://github.com/openstack-experimental/keystone/pull/658))
+- Make raft storage available through state ([#657](https://github.com/openstack-experimental/keystone/pull/657))
+- Introduce the keystone-manage cli managing raft ([#656](https://github.com/openstack-experimental/keystone/pull/656))
+
+### Fixed
+
+- *(ci)* Prepare workflows for merge queue ([#902](https://github.com/openstack-experimental/keystone/pull/902))
+- Stop swagger-ui redirect loop, split main() ([#899](https://github.com/openstack-experimental/keystone/pull/899))
+- Resolve raft replication state races ([#884](https://github.com/openstack-experimental/keystone/pull/884))
+- ADR-0002 compliance for policy enforcement ([#882](https://github.com/openstack-experimental/keystone/pull/882))
+- *(k8s_auth)* Flatten k8s.aud claim from JWT TokenReview ([#834](https://github.com/openstack-experimental/keystone/pull/834))
+- *(auth)* Fix token-from-token auth bounds ([#810](https://github.com/openstack-experimental/keystone/pull/810))
+
+### Other
+
+- *(ci)* Rework skaffold setup ([#871](https://github.com/openstack-experimental/keystone/pull/871))
+- Reorganize dockerfile and deps ([#857](https://github.com/openstack-experimental/keystone/pull/857))
+- *(core)* Remove spiffe crate dependency ([#858](https://github.com/openstack-experimental/keystone/pull/858))
+- Add SpiFFE Raft integration test by skaffold ([#854](https://github.com/openstack-experimental/keystone/pull/854))
+- Wrap ServiceState under ExecutionContext ([#856](https://github.com/openstack-experimental/keystone/pull/856))
+- *(federation)* Drop openidconnect dependency ([#849](https://github.com/openstack-experimental/keystone/pull/849))
+- *(storage)* Decouple core from storage ([#832](https://github.com/openstack-experimental/keystone/pull/832))
+- Move jsonwebtoken to keystone crate ([#820](https://github.com/openstack-experimental/keystone/pull/820))
+- *(tests)* Reorganize integration_api tests ([#815](https://github.com/openstack-experimental/keystone/pull/815))
+- mapping engine phase 3 - migrate SPIFFE ([#811](https://github.com/openstack-experimental/keystone/pull/811))
+- Upgrade spiffe dependencies ([#805](https://github.com/openstack-experimental/keystone/pull/805))
+- Rename identity_mapping to idmapping ([#788](https://github.com/openstack-experimental/keystone/pull/788))
+- Unify sea-orm features ([#769](https://github.com/openstack-experimental/keystone/pull/769))
+- Make resolve_implied_roles optional ([#764](https://github.com/openstack-experimental/keystone/pull/764))
+- Make core crates a workspace dependency ([#736](https://github.com/openstack-experimental/keystone/pull/736))
+- Redesign SecurityContext with two-phase validation ([#717](https://github.com/openstack-experimental/keystone/pull/717))
+- *(deps)* bump spiffe ([#709](https://github.com/openstack-experimental/keystone/pull/709))
+- *(deps)* bump spiffe-rustls-tokio from 0.2.0 to 0.3.0 ([#706](https://github.com/openstack-experimental/keystone/pull/706))
+- Add policy enforcement into group.v3 handler ([#685](https://github.com/openstack-experimental/keystone/pull/685))
+- Split api.v3.group handlers ([#679](https://github.com/openstack-experimental/keystone/pull/679))
+- Small optimization of the derives ([#638](https://github.com/openstack-experimental/keystone/pull/638))
+- Split the core-types crate ([#640](https://github.com/openstack-experimental/keystone/pull/640))
+- Split out remaining sql drivers ([#633](https://github.com/openstack-experimental/keystone/pull/633))
+- Split more drivers to separate crates ([#632](https://github.com/openstack-experimental/keystone/pull/632))
+- Split config into standalone crate ([#628](https://github.com/openstack-experimental/keystone/pull/628))
+- Make assignment sql driver a standalone crate ([#626](https://github.com/openstack-experimental/keystone/pull/626))
+- Move assignment parameters resolution to driver ([#625](https://github.com/openstack-experimental/keystone/pull/625))
+- Introduce features in api-types crate ([#624](https://github.com/openstack-experimental/keystone/pull/624))
+- Slim down api-types crate ([#622](https://github.com/openstack-experimental/keystone/pull/622))
+- Split out webauthn into crate ([#621](https://github.com/openstack-experimental/keystone/pull/621))
+- Split out token-fernet driver ([#620](https://github.com/openstack-experimental/keystone/pull/620))
+- Prepare slit out of the FernetTokenProvider ([#619](https://github.com/openstack-experimental/keystone/pull/619))
+- Move benchmark into the proper crate ([#614](https://github.com/openstack-experimental/keystone/pull/614))
