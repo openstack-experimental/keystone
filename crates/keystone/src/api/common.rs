@@ -32,6 +32,9 @@ use crate::keystone::ServiceState;
 ///
 /// # Returns
 /// * `Result<Domain, KeystoneApiError>` - The domain object
+// Not yet wired into an endpoint (no id-or-name domain lookup route exists
+// yet); kept for the domain-scoped auth work it was written for.
+#[allow(dead_code)]
 pub async fn get_domain<I: AsRef<str>, N: AsRef<str>>(
     state: &ServiceState,
     id: Option<I>,

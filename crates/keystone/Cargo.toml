@@ -100,6 +100,7 @@ openstack-keystone-core-types = { workspace = true, features = ["mock"] }
 openstack-keystone-distributed-storage = { workspace = true, features = ["mock"] }
 rstest.workspace = true
 secrecy = { workspace = true, features = ["serde"] }
+tempfile.workspace = true
 tokio = { workspace = true, features = ["process", "macros"] }
 tracing-test = { workspace = true, features = ["no-env-filter"] }
 url.workspace = true

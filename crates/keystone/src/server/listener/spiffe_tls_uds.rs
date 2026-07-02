@@ -27,7 +27,6 @@ use tokio::net::UnixListener;
 use tokio_rustls::TlsAcceptor;
 use tokio_util::sync::CancellationToken;
 use tower::Service;
-use tower_http::normalize_path::NormalizePath;
 use tracing::info;
 
 use crate::config::Interface;
@@ -75,7 +74,7 @@ fn verify_peer_credentials(
 /// before the TLS handshake when `peer_uid` or `peer_gid` are configured.
 pub async fn start_axum_app(
     socket_path: &Path,
-    app: NormalizePath<Router>,
+    app: Router,
     token: CancellationToken,
     trust_domains: Vec<String>,
     interface: Interface,

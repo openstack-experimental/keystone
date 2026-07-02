@@ -106,7 +106,7 @@ pub fn sanitize_authentication_error(e: &AuthenticationError) -> &'static str {
         AuthenticationError::UserLocked(_) => "UserLocked",
         AuthenticationError::UserPasswordExpired(_) => "UserPasswordExpired",
         AuthenticationError::Provider { source, .. } => {
-            extract_provider_name(source).unwrap_or("ProviderError")
+            extract_provider_name(source.as_ref()).unwrap_or("ProviderError")
         }
         AuthenticationError::Validation(_) => "ValidationError",
         AuthenticationError::StructBuilder { .. } => "StructBuilderError",
@@ -137,7 +137,7 @@ pub fn sanitize_authentication_error(e: &AuthenticationError) -> &'static str {
 /// Guarantees PII in third-party provider errors (emails, tokens) never
 /// reaches audit records.
 pub fn extract_provider_name(
-    source: &Box<dyn std::error::Error + Send + Sync>,
+    source: &(dyn std::error::Error + Send + Sync + 'static),
 ) -> Option<&'static str> {
     if source.is::<IdentityProviderError>() {
         Some("Identity")
@@ -288,7 +288,7 @@ mod tests {
     fn extract_provider_name_identity() {
         let e: Box<dyn std::error::Error + Send + Sync> =
             Box::new(IdentityProviderError::UserNotFound("x".into()));
-        assert_eq!(extract_provider_name(&e), Some("Identity"));
+        assert_eq!(extract_provider_name(e.as_ref()), Some("Identity"));
     }
 
     #[test]
@@ -297,7 +297,7 @@ mod tests {
         #[error("unknown")]
         struct Unknown;
         let e: Box<dyn std::error::Error + Send + Sync> = Box::new(Unknown);
-        assert_eq!(extract_provider_name(&e), None);
+        assert_eq!(extract_provider_name(e.as_ref()), None);
     }
 
     #[test]
