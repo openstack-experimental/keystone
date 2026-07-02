@@ -14,6 +14,9 @@ env:
   OS_KEYSTONE_CONFIG_DIR: ${{ github.workspace }}/etc
   REGISTRY: ghcr.io
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'merge_group' && github.run_id || github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
 
 defaults:
   run:
@@ -24,6 +27,8 @@ jobs:
     runs-on: ubuntu-latest
     # Required checks must always report a status, so the workflow triggers
     # unconditionally; this job decides whether the real work is needed.
+    permissions:
+      contents: read
     outputs:
       code: ${{ github.event_name != 'pull_request' || steps.filter.outputs.code == 'true' }}
     steps:
