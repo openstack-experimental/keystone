@@ -1,7 +1,6 @@
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
-//
 //     http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
@@ -11,29 +10,8 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-//! # V3 API types
-pub mod auth;
-pub mod credential;
-pub mod domain;
-pub mod group;
-pub mod project;
-pub mod role;
-pub mod role_assignment;
-pub mod user;
+//! # Credential provider
+//!
+//! Encrypted vault for EC2/TOTP/custom secret blobs (ADR 0019).
 
-#[cfg(feature = "conv")]
-mod auth_conv;
-#[cfg(feature = "conv")]
-mod credential_conv;
-#[cfg(feature = "conv")]
-mod domain_conv;
-#[cfg(feature = "conv")]
-mod group_conv;
-#[cfg(feature = "conv")]
-mod project_conv;
-#[cfg(feature = "conv")]
-mod role_assignment_conv;
-#[cfg(feature = "conv")]
-mod role_conv;
-#[cfg(feature = "conv")]
-mod user_conv;
+pub use openstack_keystone_core::credential::*;

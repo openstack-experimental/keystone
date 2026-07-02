@@ -27,6 +27,7 @@ use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
 
 pub mod auth;
+pub mod credential;
 pub mod domain;
 pub mod group;
 pub mod project;
@@ -49,6 +50,7 @@ pub struct ApiDoc;
 pub(super) fn openapi_router() -> OpenApiRouter<ServiceState> {
     OpenApiRouter::new()
         .nest("/auth", auth::openapi_router())
+        .nest("/credentials", credential::openapi_router())
         .nest("/domains", domain::openapi_router())
         .nest("/groups", group::openapi_router())
         .nest("/projects", project::openapi_router())

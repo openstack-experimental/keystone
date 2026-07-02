@@ -11,29 +11,25 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-//! # V3 API types
-pub mod auth;
-pub mod credential;
-pub mod domain;
-pub mod group;
-pub mod project;
-pub mod role;
-pub mod role_assignment;
-pub mod user;
+//! `/v3/credentials` API (ADR 0019).
 
-#[cfg(feature = "conv")]
-mod auth_conv;
-#[cfg(feature = "conv")]
-mod credential_conv;
-#[cfg(feature = "conv")]
-mod domain_conv;
-#[cfg(feature = "conv")]
-mod group_conv;
-#[cfg(feature = "conv")]
-mod project_conv;
-#[cfg(feature = "conv")]
-mod role_assignment_conv;
-#[cfg(feature = "conv")]
-mod role_conv;
-#[cfg(feature = "conv")]
-mod user_conv;
+use utoipa_axum::{router::OpenApiRouter, routes};
+
+use crate::keystone::ServiceState;
+
+mod create;
+mod delete;
+mod list;
+mod show;
+pub mod types;
+mod update;
+
+pub(super) fn openapi_router() -> OpenApiRouter<ServiceState> {
+    OpenApiRouter::new()
+        .routes(routes!(list::list, create::create))
+        .routes(routes!(show::show, delete::delete))
+        .routes(routes!(update::update))
+}
+
+#[cfg(test)]
+mod tests {}
