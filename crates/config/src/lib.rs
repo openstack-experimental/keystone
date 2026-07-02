@@ -67,6 +67,7 @@ mod credential;
 mod database;
 mod default;
 mod distributed_storage;
+mod ec2;
 mod federation;
 mod fernet_token;
 mod identity;
@@ -96,6 +97,7 @@ pub use credential::*;
 pub use database::*;
 pub use default::*;
 pub use distributed_storage::*;
+pub use ec2::*;
 pub use federation::*;
 pub use fernet_token::*;
 pub use identity::*;
@@ -160,6 +162,10 @@ pub struct Config {
     /// Distributed storage configuration.
     #[serde(default)]
     pub distributed_storage: Option<DistributedStorageConfiguration>,
+
+    /// `POST /v3/ec2tokens` configuration.
+    #[serde(default)]
+    pub ec2: Ec2Provider,
 
     /// Federation provider configuration.
     #[serde(default)]

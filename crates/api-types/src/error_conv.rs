@@ -23,6 +23,7 @@ use {
 };
 
 use openstack_keystone_core_types::api_key::ApiKeyProviderError;
+use openstack_keystone_core_types::application_credential::ApplicationCredentialProviderError;
 use openstack_keystone_core_types::assignment::AssignmentProviderError;
 use openstack_keystone_core_types::auth::AuthenticationError;
 use openstack_keystone_core_types::catalog::CatalogProviderError;
@@ -209,6 +210,26 @@ impl From<CatalogProviderError> for KeystoneApiError {
     fn from(value: CatalogProviderError) -> Self {
         match value {
             ref err @ CatalogProviderError::Conflict(..) => Self::Conflict(err.to_string()),
+            other => Self::InternalError(other.to_string()),
+        }
+    }
+}
+
+impl From<ApplicationCredentialProviderError> for KeystoneApiError {
+    fn from(source: ApplicationCredentialProviderError) -> Self {
+        match source {
+            ApplicationCredentialProviderError::ApplicationCredentialNotFound(x) => {
+                Self::NotFound {
+                    resource: "application_credential".into(),
+                    identifier: x,
+                }
+            }
+            ref err @ ApplicationCredentialProviderError::Conflict(..) => {
+                Self::Conflict(err.to_string())
+            }
+            err @ ApplicationCredentialProviderError::ApplicationCredentialExpired => {
+                Self::unauthorized(err, None::<String>)
+            }
             other => Self::InternalError(other.to_string()),
         }
     }

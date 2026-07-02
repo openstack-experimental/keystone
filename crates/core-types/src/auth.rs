@@ -163,6 +163,48 @@ pub enum AuthenticationError {
     #[error("role assignment cannot be converted to a role reference")]
     RoleConversionFailed,
 
+    /// `POST /v3/ec2tokens`: no EC2 credential matches the supplied access
+    /// key (ADR 0019 §5).
+    #[error("EC2 access key not found")]
+    Ec2AccessKeyNotFound,
+
+    /// `POST /v3/ec2tokens`: the `credentials` object did not carry a
+    /// `signature` to compare against.
+    #[error("EC2 signature not supplied")]
+    Ec2SignatureMissing,
+
+    /// `POST /v3/ec2tokens`: the supplied signature did not match the
+    /// server-generated one (including the boto port-stripping retry).
+    #[error("invalid EC2 signature")]
+    Ec2SignatureInvalid,
+
+    /// `POST /v3/ec2tokens`: `SignatureVersion` was not one of `0`/`1`/`2`,
+    /// and the request could not be recognised as a v4 (SigV4) request via
+    /// the `Authorization` header or `X-Amz-Algorithm` param.
+    #[error("unknown EC2 signature version")]
+    Ec2UnknownSignatureVersion,
+
+    /// `POST /v3/ec2tokens`: the replay-prevention timestamp was absent from
+    /// the location mandated for the detected signature version.
+    #[error("EC2 request timestamp not supplied")]
+    Ec2TimestampMissing,
+
+    /// `POST /v3/ec2tokens`: the replay-prevention timestamp could not be
+    /// parsed in the expected format for the detected signature version.
+    #[error("EC2 request timestamp is not a valid timestamp: {0}")]
+    Ec2TimestampInvalid(String),
+
+    /// `POST /v3/ec2tokens`: the replay-prevention timestamp fell outside the
+    /// `[ec2] auth_ttl` window (CVE-2020-12692).
+    #[error("EC2 request timestamp is outside the permitted window")]
+    Ec2TimestampExpired,
+
+    /// `POST /v3/ec2tokens` (SigV4 only): the date embedded in the
+    /// `X-Amz-Date` header/param does not match the date embedded in the
+    /// `Credential` scope.
+    #[error("EC2 SigV4 credential scope date does not match the request date")]
+    Ec2CredentialScopeDateMismatch,
+
     /// A provider error that occurred during authentication validation.
     ///
     /// The `context` field provides a descriptive label for debugging,
@@ -661,6 +703,7 @@ impl SecurityContext {
                     AuthenticationContext::Oidc { .. } => Ok(()),
                     AuthenticationContext::K8s(_) => Err(AuthenticationError::ScopeNotAllowed),
                     AuthenticationContext::Password => Ok(()),
+                    AuthenticationContext::Ec2Credential => Ok(()),
                     AuthenticationContext::Admin => Ok(()),
                     AuthenticationContext::Token(_) => Ok(()),
                     AuthenticationContext::Trust { .. } => {
@@ -691,6 +734,7 @@ impl SecurityContext {
                     AuthenticationContext::Oidc { .. } => Ok(()),
                     AuthenticationContext::K8s(_) => Ok(()),
                     AuthenticationContext::Password => Ok(()),
+                    AuthenticationContext::Ec2Credential => Ok(()),
                     AuthenticationContext::Admin => Ok(()),
                     AuthenticationContext::Token(_) => Ok(()),
                     AuthenticationContext::Trust { .. } => {
@@ -713,6 +757,7 @@ impl SecurityContext {
                     AuthenticationContext::Oidc { .. } => Err(AuthenticationError::ScopeNotAllowed),
                     AuthenticationContext::K8s(_) => Err(AuthenticationError::ScopeNotAllowed),
                     AuthenticationContext::Password => Ok(()),
+                    AuthenticationContext::Ec2Credential => Ok(()),
                     AuthenticationContext::Admin => Ok(()),
                     AuthenticationContext::Token(_) => Ok(()),
                     AuthenticationContext::Trust { .. } => Err(AuthenticationError::Forbidden),
@@ -731,6 +776,7 @@ impl SecurityContext {
                     AuthenticationContext::Oidc { .. } => Err(AuthenticationError::ScopeNotAllowed),
                     AuthenticationContext::K8s(_) => Err(AuthenticationError::ScopeNotAllowed),
                     AuthenticationContext::Password => Ok(()),
+                    AuthenticationContext::Ec2Credential => Ok(()),
                     AuthenticationContext::Admin => Ok(()),
                     AuthenticationContext::Token(_) => Ok(()),
                     AuthenticationContext::Trust { .. } => {
@@ -751,6 +797,7 @@ impl SecurityContext {
                     AuthenticationContext::Oidc { .. } => Ok(()),
                     AuthenticationContext::K8s(_) => Err(AuthenticationError::ScopeNotAllowed),
                     AuthenticationContext::Password => Ok(()),
+                    AuthenticationContext::Ec2Credential => Ok(()),
                     AuthenticationContext::Admin => Ok(()),
                     AuthenticationContext::Token(_) => Ok(()),
                     AuthenticationContext::Trust { .. } => {
@@ -1198,6 +1245,15 @@ pub enum AuthenticationContext {
     WebauthN,
     /// Login via the unified mapping engine (virtual user).
     Mapping(crate::mapping::MappingContext),
+    /// Login using a signed EC2 request (`POST /v3/ec2tokens`, ADR 0019 §5),
+    /// where the EC2 credential carries no delegation metadata. When the
+    /// credential *was* created via a trust or application credential
+    /// (`trust_id`/`app_cred_id` in its blob), the delegation metadata is
+    /// passed through by using [`AuthenticationContext::Trust`] or
+    /// [`AuthenticationContext::ApplicationCredential`] instead of this
+    /// variant, so the existing bounded-object validation in
+    /// `ValidatedSecurityContext::new_for_scope` applies unchanged.
+    Ec2Credential,
 }
 
 /// K8s auth context.
@@ -1240,6 +1296,7 @@ impl AuthenticationContext {
             Self::Trust { .. } => once("trust".to_string()).collect(),
             Self::WebauthN => once("x509".to_string()).collect(),
             Self::Mapping(_) => once("mapped".to_string()).collect(),
+            Self::Ec2Credential => once("ec2credential".to_string()).collect(),
         }
     }
 }

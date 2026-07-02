@@ -11,31 +11,17 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-//! # V3 API types
-pub mod auth;
-pub mod credential;
-pub mod domain;
-pub mod ec2tokens;
-pub mod group;
-pub mod os_ec2_credential;
-pub mod project;
-pub mod role;
-pub mod role_assignment;
-pub mod user;
+//! `/v3/ec2tokens` API (ADR 0019 §5): validate a signed EC2 request and
+//! issue a standard Keystone token scoped to the referenced credential's
+//! `project_id`/`user_id`.
 
-#[cfg(feature = "conv")]
-mod auth_conv;
-#[cfg(feature = "conv")]
-mod credential_conv;
-#[cfg(feature = "conv")]
-mod domain_conv;
-#[cfg(feature = "conv")]
-mod group_conv;
-#[cfg(feature = "conv")]
-mod project_conv;
-#[cfg(feature = "conv")]
-mod role_assignment_conv;
-#[cfg(feature = "conv")]
-mod role_conv;
-#[cfg(feature = "conv")]
-mod user_conv;
+use utoipa_axum::{router::OpenApiRouter, routes};
+
+use crate::keystone::ServiceState;
+
+mod create;
+pub mod types;
+
+pub(super) fn openapi_router() -> OpenApiRouter<ServiceState> {
+    OpenApiRouter::new().routes(routes!(create::create))
+}

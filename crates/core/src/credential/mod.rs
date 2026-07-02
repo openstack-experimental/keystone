@@ -23,6 +23,7 @@
 //! service can be decrypted by the other.
 
 pub mod backend;
+pub mod ec2_signature;
 pub mod error;
 pub mod hook;
 mod provider_api;

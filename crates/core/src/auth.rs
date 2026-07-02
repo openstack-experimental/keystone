@@ -135,6 +135,7 @@ impl ValidatedSecurityContext {
             AuthenticationContext::K8s(..) => {}
             AuthenticationContext::Password => {}
             AuthenticationContext::Admin => {}
+            AuthenticationContext::Ec2Credential => {}
             AuthenticationContext::Trust { trust, .. } => {
                 // Validate the trust chain
                 state

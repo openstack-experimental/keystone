@@ -107,6 +107,11 @@ impl FernetToken {
                 AuthenticationContext::Mapping(_) => Ok(Self::DomainScope(
                     DomainScopePayload::from_security_context(ctx, domain, expires_at)?,
                 )),
+                // EC2 credentials always resolve to a project scope (ADR 0019
+                // §5); a domain-scoped EC2 token has no legitimate use case.
+                AuthenticationContext::Ec2Credential => {
+                    Err(AuthenticationError::ScopeNotAllowed.into())
+                }
             },
             ScopeInfo::Project { project, .. } => match ctx.authentication_context() {
                 AuthenticationContext::ApplicationCredential {

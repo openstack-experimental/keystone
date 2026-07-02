@@ -11,31 +11,6 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-//! # V3 API types
-pub mod auth;
-pub mod credential;
-pub mod domain;
-pub mod ec2tokens;
-pub mod group;
-pub mod os_ec2_credential;
-pub mod project;
-pub mod role;
-pub mod role_assignment;
-pub mod user;
 
-#[cfg(feature = "conv")]
-mod auth_conv;
-#[cfg(feature = "conv")]
-mod credential_conv;
-#[cfg(feature = "conv")]
-mod domain_conv;
-#[cfg(feature = "conv")]
-mod group_conv;
-#[cfg(feature = "conv")]
-mod project_conv;
-#[cfg(feature = "conv")]
-mod role_assignment_conv;
-#[cfg(feature = "conv")]
-mod role_conv;
-#[cfg(feature = "conv")]
-mod user_conv;
+pub use openstack_keystone_api_types::v3::auth::token::TokenResponse;
+pub use openstack_keystone_api_types::v3::ec2tokens::*;

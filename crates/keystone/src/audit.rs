@@ -129,6 +129,14 @@ pub fn sanitize_authentication_error(e: &AuthenticationError) -> &'static str {
         AuthenticationError::NoAuthorizationsFound => "NoAuthorizationsFound",
         AuthenticationError::MultipleScopesForbidden => "MultipleScopesForbidden",
         AuthenticationError::SystemScopeForbiddenForApiKey => "SystemScopeForbiddenForApiKey",
+        AuthenticationError::Ec2AccessKeyNotFound => "Ec2AccessKeyNotFound",
+        AuthenticationError::Ec2SignatureMissing => "Ec2SignatureMissing",
+        AuthenticationError::Ec2SignatureInvalid => "Ec2SignatureInvalid",
+        AuthenticationError::Ec2UnknownSignatureVersion => "Ec2UnknownSignatureVersion",
+        AuthenticationError::Ec2TimestampMissing => "Ec2TimestampMissing",
+        AuthenticationError::Ec2TimestampInvalid(_) => "Ec2TimestampInvalid",
+        AuthenticationError::Ec2TimestampExpired => "Ec2TimestampExpired",
+        AuthenticationError::Ec2CredentialScopeDateMismatch => "Ec2CredentialScopeDateMismatch",
     }
 }
 

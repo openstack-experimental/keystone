@@ -35,6 +35,7 @@ regex-syntax.workspace = true
 sea-orm.workspace = true
 sea-orm-migration.workspace = true
 secrecy = { workspace = true, features = ["serde"] }
+sha1.workspace = true
 sha2.workspace = true
 serde.workspace = true
 serde_json.workspace = true
