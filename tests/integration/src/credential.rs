@@ -16,12 +16,12 @@
 //! Unlike every other entity exercised in this test suite, the `credential`
 //! table is owned exclusively by Python Keystone's `alembic` migrations
 //! (ADR 0019 §1): `SqlDriver::setup()` for the credential backend is a
-//! deliberate no-op, so it is never created by
-//! `common::setup_schema()`/`common::get_state()`. [`get_state`] below
-//! layers on top of `common::get_state()` to create the table via the
-//! crate's `test_support` helper (test-only, never used in production) and
-//! to initialize a throwaway Fernet key repository, so the two extra setup
-//! steps are contained to credential tests only.
+//! deliberate no-op. `common::setup_schema()` creates the table separately
+//! via the crate's `test_support` helper (test-only, never used in
+//! production) so it is present for every integration test, matching real
+//! deployments where the table always pre-exists. [`get_state`] below layers
+//! on top of `common::get_state()` only to initialize a throwaway Fernet key
+//! repository, which is specific to credential encrypt/decrypt tests.
 
 use std::fs::create_dir;
 use std::pin::Pin;
@@ -52,15 +52,11 @@ impl_deleter!(
     delete_credential
 );
 
-/// Build a [`ServiceState`] with the `credential` table present and a
-/// working Fernet key repository — the two preconditions this provider
-/// needs that `common::get_state()` does not set up generically (see
-/// module docs).
+/// Build a [`ServiceState`] with a working Fernet key repository — the
+/// `credential` table itself is created generically by
+/// `common::setup_schema()` for every integration test (see module docs).
 pub async fn get_state() -> Result<(ServiceState, TempDir)> {
     let (state, tmp_dir) = crate::common::get_state().await?;
-
-    openstack_keystone_credential_driver_sql::test_support::create_credential_table(&state.db)
-        .await?;
 
     let key_repository = tmp_dir.path().join("credential-keys");
     create_dir(&key_repository)?;

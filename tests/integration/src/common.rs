@@ -62,6 +62,16 @@ pub async fn setup_schema(db: &DbConn) -> Result<()> {
         driver.setup(db, &schema).await?;
     }
 
+    // The `credential` table is owned exclusively by Python Keystone's
+    // `alembic` migrations (ADR 0019 §1), so the credential backend's
+    // `SqlDriver::setup()` above is a deliberate no-op and never creates it.
+    // In any real deployment the table already exists by the time
+    // Keystone-NG starts. Every other provider's delete flow may now cascade
+    // into `delete_credentials_for_{user,project}` (ADR 0019 §3), so the
+    // table must be present for the general test database too, not only for
+    // credential-specific tests.
+    openstack_keystone_credential_driver_sql::test_support::create_credential_table(db).await?;
+
     Ok(())
 }
 

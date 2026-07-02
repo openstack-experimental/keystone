@@ -587,6 +587,11 @@ impl IdentityApi for IdentityService {
                             .await
                             .remove(user_id);
                     }
+                    ctx.state()
+                        .provider
+                        .get_credential_provider()
+                        .delete_credentials_for_user(ctx, user_id)
+                        .await?;
                     Ok::<(), IdentityProviderError>(())
                 },
                 on_audit_error: |_: AuditDispatchError| IdentityProviderError::Driver("audit dispatch failed".into()),
@@ -599,6 +604,11 @@ impl IdentityApi for IdentityService {
             if self.caching {
                 self.user_id_domain_id_cache.write().await.remove(user_id);
             }
+            ctx.state()
+                .provider
+                .get_credential_provider()
+                .delete_credentials_for_user(ctx, user_id)
+                .await?;
             ctx.state()
                 .event_dispatcher
                 .emit(Event::new(
@@ -1200,7 +1210,9 @@ mod tests {
     };
 
     use super::*;
+    use crate::credential::MockCredentialProvider;
     use crate::identity::backend::MockIdentityBackend;
+    use crate::provider::Provider;
     use crate::tests::get_mocked_state;
 
     fn get_config_with_password_regex(regex_str: &str) -> Config {
@@ -1334,7 +1346,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_delete_user() {
-        let state = get_mocked_state(None, None).await;
+        let mut credential_mock = MockCredentialProvider::default();
+        credential_mock
+            .expect_delete_credentials_for_user()
+            .withf(|_, uid: &'_ str| uid == "uid")
+            .returning(|_, _| Ok(()));
+        let state = get_mocked_state(
+            None,
+            Some(Provider::mocked_builder().mock_credential(credential_mock)),
+        )
+        .await;
         let mut backend = MockIdentityBackend::default();
         backend
             .expect_delete_user()

@@ -262,12 +262,23 @@ impl ResourceApi for ResourceService {
                 ),
                 operation: async {
                     self.backend_driver.delete_project(ctx.state(), id).await?;
+                    ctx.state()
+                        .provider
+                        .get_credential_provider()
+                        .delete_credentials_for_project(ctx, id)
+                        .await?;
                     Ok::<(), ResourceProviderError>(())
                 },
                 on_audit_error: |_: AuditDispatchError| ResourceProviderError::Driver("audit dispatch failed".into()),
             }?;
         } else {
             self.backend_driver.delete_project(ctx.state(), id).await?;
+
+            ctx.state()
+                .provider
+                .get_credential_provider()
+                .delete_credentials_for_project(ctx, id)
+                .await?;
 
             ctx.state()
                 .event_dispatcher
@@ -408,5 +419,43 @@ impl ResourceApi for ResourceService {
         params: &ProjectListParameters,
     ) -> Result<Vec<Project>, ResourceProviderError> {
         self.backend_driver.list_projects(ctx.state(), params).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::credential::MockCredentialProvider;
+    use crate::provider::Provider;
+    use crate::resource::backend::MockResourceBackend;
+    use crate::tests::get_mocked_state;
+
+    #[tokio::test]
+    async fn test_delete_project_cascades_credentials() {
+        let mut credential_mock = MockCredentialProvider::default();
+        credential_mock
+            .expect_delete_credentials_for_project()
+            .withf(|_, pid: &'_ str| pid == "pid")
+            .returning(|_, _| Ok(()));
+        let state = get_mocked_state(
+            None,
+            Some(Provider::mocked_builder().mock_credential(credential_mock)),
+        )
+        .await;
+        let mut backend = MockResourceBackend::default();
+        backend
+            .expect_delete_project()
+            .withf(|_, id: &'_ str| id == "pid")
+            .returning(|_, _| Ok(()));
+        let provider = ResourceService {
+            backend_driver: Arc::new(backend),
+        };
+
+        assert!(
+            provider
+                .delete_project(&ExecutionContext::internal(&state), "pid")
+                .await
+                .is_ok()
+        );
     }
 }
