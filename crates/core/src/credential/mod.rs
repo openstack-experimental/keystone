@@ -28,6 +28,7 @@ pub mod error;
 pub mod hook;
 mod provider_api;
 pub mod service;
+pub mod totp;
 
 pub use error::CredentialProviderError;
 pub use hook::CredentialHook;

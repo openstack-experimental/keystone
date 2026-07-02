@@ -88,6 +88,22 @@ pub trait IdentityApi: Send + Sync {
         auth: &UserPasswordAuthRequest,
     ) -> Result<AuthenticationResult, IdentityProviderError>;
 
+    /// Authenticate a user by a TOTP passcode (ADR 0019 §3).
+    ///
+    /// Resolves the user (by ID, or by name + domain), then verifies the
+    /// passcode against every `type='totp'` credential registered for that
+    /// user via the credential provider, accepting a match against the
+    /// current or immediately preceding time-step.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `auth`: The TOTP authentication request.
+    async fn authenticate_by_totp<'a>(
+        &self,
+        ctx: &ExecutionContext<'a>,
+        auth: &UserTotpAuthRequest,
+    ) -> Result<AuthenticationResult, IdentityProviderError>;
+
     /// Create a new group.
     ///
     /// # Parameters

@@ -27,7 +27,10 @@ use openstack_keystone_config::Config;
 use openstack_keystone_core_types::events::{Event, EventPayload, Operation};
 use openstack_keystone_core_types::identity::*;
 
-use crate::auth::{AuthenticationResult, ExecutionContext};
+use crate::auth::{
+    AuthenticationContext, AuthenticationError, AuthenticationResult, AuthenticationResultBuilder,
+    ExecutionContext, IdentityInfo, PrincipalInfo, UserIdentityInfoBuilder,
+};
 use crate::events::AuditDispatchError;
 use crate::identity::{IdentityApi, IdentityProviderError, backend::IdentityBackend};
 use crate::plugin_manager::PluginManagerApi;
@@ -347,6 +350,112 @@ impl IdentityApi for IdentityService {
         self.backend_driver
             .authenticate_by_password(state, &auth)
             .await
+    }
+
+    /// Authenticate user with a TOTP passcode (ADR 0019 §3).
+    ///
+    /// Resolves the user (by ID, or by name + domain, mirroring
+    /// [`Self::authenticate_by_password`]'s resolution), then verifies the
+    /// passcode against every `type='totp'` credential registered for that
+    /// user, accepting a match against the current or immediately preceding
+    /// time-step.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `auth`: The TOTP authentication request.
+    async fn authenticate_by_totp<'a>(
+        &self,
+        ctx: &ExecutionContext<'a>,
+        auth: &UserTotpAuthRequest,
+    ) -> Result<AuthenticationResult, IdentityProviderError> {
+        let state = ctx.state();
+        let mut auth = auth.clone();
+        if auth.id.is_none() {
+            if auth.name.is_none() {
+                return Err(IdentityProviderError::UserIdOrNameWithDomain);
+            }
+
+            if let Some(ref mut domain) = auth.domain {
+                if let Some(dname) = &domain.name {
+                    let d = state
+                        .provider
+                        .get_resource_provider()
+                        .find_domain_by_name(ctx, dname)
+                        .await?
+                        .ok_or(ResourceProviderError::DomainNotFound(dname.clone()))?;
+                    domain.id = Some(d.id);
+                } else if domain.id.is_none() {
+                    return Err(IdentityProviderError::UserIdOrNameWithDomain);
+                }
+            } else {
+                return Err(IdentityProviderError::UserIdOrNameWithDomain);
+            }
+        }
+
+        // The resolution above guarantees either `auth.id`, or `auth.name` +
+        // `auth.domain.id`, is populated at this point.
+        let user = if let Some(id) = &auth.id {
+            self.get_user(ctx, id)
+                .await?
+                .ok_or(AuthenticationError::TotpPasscodeInvalid)?
+        } else {
+            let params = UserListParametersBuilder::default()
+                .domain_id(auth.domain.as_ref().and_then(|d| d.id.clone()))
+                .name(auth.name.clone())
+                .build()?;
+            self.list_users(ctx, &params)
+                .await?
+                .into_iter()
+                .next()
+                .ok_or(AuthenticationError::TotpPasscodeInvalid)?
+        };
+
+        if !user.enabled {
+            return Err(AuthenticationError::UserDisabled(user.id.clone()).into());
+        }
+
+        let credentials = state
+            .provider
+            .get_credential_provider()
+            .list_credentials_for_user(ctx, &user.id, Some("totp"))
+            .await?;
+
+        let now = Utc::now().timestamp();
+        let matched = credentials.iter().any(|credential| {
+            let Ok(blob) = serde_json::from_str::<serde_json::Value>(&credential.blob) else {
+                return false;
+            };
+            let Some(seed) = blob.get("seed").and_then(serde_json::Value::as_str) else {
+                return false;
+            };
+            let digits = blob
+                .get("digits")
+                .and_then(serde_json::Value::as_u64)
+                .map(|d| d as u32)
+                .unwrap_or(6);
+            let period = blob
+                .get("period")
+                .and_then(serde_json::Value::as_u64)
+                .map(|d| d as u32)
+                .unwrap_or(30);
+            crate::credential::totp::verify_totp(seed, &auth.passcode, digits, period, now)
+        });
+
+        if !matched {
+            return Err(AuthenticationError::TotpPasscodeInvalid.into());
+        }
+
+        Ok(AuthenticationResultBuilder::default()
+            .context(AuthenticationContext::Totp)
+            .principal(PrincipalInfo {
+                identity: IdentityInfo::User(
+                    UserIdentityInfoBuilder::default()
+                        .user_id(user.id.clone())
+                        .user(user)
+                        .build()?,
+                ),
+            })
+            .build()?)
     }
 
     /// Create group.
@@ -1204,7 +1313,10 @@ impl IdentityApi for IdentityService {
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
+
     use openstack_keystone_config::Config;
+    use openstack_keystone_core_types::credential::{Credential, CredentialBuilder};
     use openstack_keystone_core_types::identity::{
         UserCreateBuilder, UserResponseBuilder, UserUpdateBuilder,
     };
@@ -1213,6 +1325,7 @@ mod tests {
     use crate::credential::MockCredentialProvider;
     use crate::identity::backend::MockIdentityBackend;
     use crate::provider::Provider;
+    use crate::resource::MockResourceProvider;
     use crate::tests::get_mocked_state;
 
     fn get_config_with_password_regex(regex_str: &str) -> Config {
@@ -1369,6 +1482,260 @@ mod tests {
                 .await
                 .is_ok()
         );
+    }
+
+    /// RFC 6238 Appendix B seed/passcode used across the TOTP tests below,
+    /// with an oversized `period` so the resulting HOTP counter (`now /
+    /// period`) stays `0` for the foreseeable future regardless of the
+    /// wall-clock time the test actually runs at.
+    fn totp_credential(user_id: &str) -> Credential {
+        CredentialBuilder::default()
+            .id("cred_id")
+            .blob(
+                json!({
+                    "seed": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+                    "digits": 8,
+                    "period": 10_000_000_000u64,
+                })
+                .to_string(),
+            )
+            .r#type("totp")
+            .user_id(user_id)
+            .build()
+            .unwrap()
+    }
+
+    const TOTP_PASSCODE_COUNTER_0: &str = "84755224";
+
+    fn totp_user(user_id: &str, domain_id: &str, enabled: bool) -> UserResponse {
+        UserResponseBuilder::default()
+            .id(user_id)
+            .domain_id(domain_id)
+            .enabled(enabled)
+            .name("uname")
+            .build()
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn test_authenticate_by_totp_success_by_id() {
+        let mut credential_mock = MockCredentialProvider::default();
+        credential_mock
+            .expect_list_credentials_for_user()
+            .withf(|_, uid: &'_ str, r#type: &Option<&str>| uid == "uid" && *r#type == Some("totp"))
+            .returning(|_, _, _| Ok(vec![totp_credential("uid")]));
+        let state = get_mocked_state(
+            None,
+            Some(Provider::mocked_builder().mock_credential(credential_mock)),
+        )
+        .await;
+        let mut backend = MockIdentityBackend::default();
+        backend
+            .expect_get_user()
+            .withf(|_, uid: &'_ str| uid == "uid")
+            .returning(|_, _| Ok(Some(totp_user("uid", "did", true))));
+        let provider = IdentityService::from_driver(backend);
+
+        let result = provider
+            .authenticate_by_totp(
+                &ExecutionContext::internal(&state),
+                &UserTotpAuthRequestBuilder::default()
+                    .id("uid")
+                    .passcode(TOTP_PASSCODE_COUNTER_0)
+                    .build()
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(result.context, AuthenticationContext::Totp);
+        assert_eq!(result.principal.get_user_id(), "uid");
+    }
+
+    #[tokio::test]
+    async fn test_authenticate_by_totp_wrong_passcode() {
+        let mut credential_mock = MockCredentialProvider::default();
+        credential_mock
+            .expect_list_credentials_for_user()
+            .returning(|_, _, _| Ok(vec![totp_credential("uid")]));
+        let state = get_mocked_state(
+            None,
+            Some(Provider::mocked_builder().mock_credential(credential_mock)),
+        )
+        .await;
+        let mut backend = MockIdentityBackend::default();
+        backend
+            .expect_get_user()
+            .returning(|_, _| Ok(Some(totp_user("uid", "did", true))));
+        let provider = IdentityService::from_driver(backend);
+
+        let result = provider
+            .authenticate_by_totp(
+                &ExecutionContext::internal(&state),
+                &UserTotpAuthRequestBuilder::default()
+                    .id("uid")
+                    .passcode("00000000")
+                    .build()
+                    .unwrap(),
+            )
+            .await;
+
+        assert!(matches!(
+            result,
+            Err(IdentityProviderError::Authentication {
+                source: AuthenticationError::TotpPasscodeInvalid
+            })
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_authenticate_by_totp_no_credentials() {
+        let mut credential_mock = MockCredentialProvider::default();
+        credential_mock
+            .expect_list_credentials_for_user()
+            .returning(|_, _, _| Ok(vec![]));
+        let state = get_mocked_state(
+            None,
+            Some(Provider::mocked_builder().mock_credential(credential_mock)),
+        )
+        .await;
+        let mut backend = MockIdentityBackend::default();
+        backend
+            .expect_get_user()
+            .returning(|_, _| Ok(Some(totp_user("uid", "did", true))));
+        let provider = IdentityService::from_driver(backend);
+
+        let result = provider
+            .authenticate_by_totp(
+                &ExecutionContext::internal(&state),
+                &UserTotpAuthRequestBuilder::default()
+                    .id("uid")
+                    .passcode(TOTP_PASSCODE_COUNTER_0)
+                    .build()
+                    .unwrap(),
+            )
+            .await;
+
+        assert!(matches!(
+            result,
+            Err(IdentityProviderError::Authentication {
+                source: AuthenticationError::TotpPasscodeInvalid
+            })
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_authenticate_by_totp_user_disabled() {
+        let mut credential_mock = MockCredentialProvider::default();
+        credential_mock.expect_list_credentials_for_user().times(0);
+        let state = get_mocked_state(
+            None,
+            Some(Provider::mocked_builder().mock_credential(credential_mock)),
+        )
+        .await;
+        let mut backend = MockIdentityBackend::default();
+        backend
+            .expect_get_user()
+            .returning(|_, _| Ok(Some(totp_user("uid", "did", false))));
+        let provider = IdentityService::from_driver(backend);
+
+        let result = provider
+            .authenticate_by_totp(
+                &ExecutionContext::internal(&state),
+                &UserTotpAuthRequestBuilder::default()
+                    .id("uid")
+                    .passcode(TOTP_PASSCODE_COUNTER_0)
+                    .build()
+                    .unwrap(),
+            )
+            .await;
+
+        assert!(matches!(
+            result,
+            Err(IdentityProviderError::Authentication {
+                source: AuthenticationError::UserDisabled(id)
+            }) if id == "uid"
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_authenticate_by_totp_user_not_found() {
+        let state = get_mocked_state(None, None).await;
+        let mut backend = MockIdentityBackend::default();
+        backend.expect_get_user().returning(|_, _| Ok(None));
+        let provider = IdentityService::from_driver(backend);
+
+        let result = provider
+            .authenticate_by_totp(
+                &ExecutionContext::internal(&state),
+                &UserTotpAuthRequestBuilder::default()
+                    .id("uid")
+                    .passcode(TOTP_PASSCODE_COUNTER_0)
+                    .build()
+                    .unwrap(),
+            )
+            .await;
+
+        assert!(matches!(
+            result,
+            Err(IdentityProviderError::Authentication {
+                source: AuthenticationError::TotpPasscodeInvalid
+            })
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_authenticate_by_totp_success_by_name_and_domain() {
+        let mut credential_mock = MockCredentialProvider::default();
+        credential_mock
+            .expect_list_credentials_for_user()
+            .withf(|_, uid: &'_ str, r#type: &Option<&str>| uid == "uid" && *r#type == Some("totp"))
+            .returning(|_, _, _| Ok(vec![totp_credential("uid")]));
+        let mut resource_mock = MockResourceProvider::default();
+        resource_mock
+            .expect_find_domain_by_name()
+            .withf(|_, name: &'_ str| name == "dname")
+            .returning(|_, _| {
+                Ok(Some(openstack_keystone_core_types::resource::Domain {
+                    id: "did".into(),
+                    enabled: true,
+                    ..Default::default()
+                }))
+            });
+        let state = get_mocked_state(
+            None,
+            Some(
+                Provider::mocked_builder()
+                    .mock_credential(credential_mock)
+                    .mock_resource(resource_mock),
+            ),
+        )
+        .await;
+        let mut backend = MockIdentityBackend::default();
+        backend
+            .expect_list_users()
+            .withf(|_, params: &UserListParameters| {
+                params.name.as_deref() == Some("uname_lookup")
+                    && params.domain_id.as_deref() == Some("did")
+            })
+            .returning(|_, _| Ok(vec![totp_user("uid", "did", true)]));
+        let provider = IdentityService::from_driver(backend);
+
+        let result = provider
+            .authenticate_by_totp(
+                &ExecutionContext::internal(&state),
+                &UserTotpAuthRequestBuilder::default()
+                    .name("uname_lookup")
+                    .domain(DomainBuilder::default().name("dname").build().unwrap())
+                    .passcode(TOTP_PASSCODE_COUNTER_0)
+                    .build()
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(result.context, AuthenticationContext::Totp);
+        assert_eq!(result.principal.get_user_id(), "uid");
     }
 
     /// Password regex rejects invalid password on user creation.

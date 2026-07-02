@@ -205,6 +205,14 @@ pub enum AuthenticationError {
     #[error("EC2 SigV4 credential scope date does not match the request date")]
     Ec2CredentialScopeDateMismatch,
 
+    /// TOTP authentication (ADR 0019 §3): the submitted passcode did not
+    /// match any `type='totp'` credential registered for the resolved user
+    /// (including the case where no user or no TOTP credential could be
+    /// resolved at all). Deliberately generic, mirroring
+    /// `UserNameOrPasswordWrong`, to avoid leaking which lookup failed.
+    #[error("invalid TOTP passcode")]
+    TotpPasscodeInvalid,
+
     /// A provider error that occurred during authentication validation.
     ///
     /// The `context` field provides a descriptive label for debugging,
@@ -704,6 +712,7 @@ impl SecurityContext {
                     AuthenticationContext::K8s(_) => Err(AuthenticationError::ScopeNotAllowed),
                     AuthenticationContext::Password => Ok(()),
                     AuthenticationContext::Ec2Credential => Ok(()),
+                    AuthenticationContext::Totp => Ok(()),
                     AuthenticationContext::Admin => Ok(()),
                     AuthenticationContext::Token(_) => Ok(()),
                     AuthenticationContext::Trust { .. } => {
@@ -735,6 +744,7 @@ impl SecurityContext {
                     AuthenticationContext::K8s(_) => Ok(()),
                     AuthenticationContext::Password => Ok(()),
                     AuthenticationContext::Ec2Credential => Ok(()),
+                    AuthenticationContext::Totp => Ok(()),
                     AuthenticationContext::Admin => Ok(()),
                     AuthenticationContext::Token(_) => Ok(()),
                     AuthenticationContext::Trust { .. } => {
@@ -758,6 +768,7 @@ impl SecurityContext {
                     AuthenticationContext::K8s(_) => Err(AuthenticationError::ScopeNotAllowed),
                     AuthenticationContext::Password => Ok(()),
                     AuthenticationContext::Ec2Credential => Ok(()),
+                    AuthenticationContext::Totp => Ok(()),
                     AuthenticationContext::Admin => Ok(()),
                     AuthenticationContext::Token(_) => Ok(()),
                     AuthenticationContext::Trust { .. } => Err(AuthenticationError::Forbidden),
@@ -777,6 +788,7 @@ impl SecurityContext {
                     AuthenticationContext::K8s(_) => Err(AuthenticationError::ScopeNotAllowed),
                     AuthenticationContext::Password => Ok(()),
                     AuthenticationContext::Ec2Credential => Ok(()),
+                    AuthenticationContext::Totp => Ok(()),
                     AuthenticationContext::Admin => Ok(()),
                     AuthenticationContext::Token(_) => Ok(()),
                     AuthenticationContext::Trust { .. } => {
@@ -798,6 +810,7 @@ impl SecurityContext {
                     AuthenticationContext::K8s(_) => Err(AuthenticationError::ScopeNotAllowed),
                     AuthenticationContext::Password => Ok(()),
                     AuthenticationContext::Ec2Credential => Ok(()),
+                    AuthenticationContext::Totp => Ok(()),
                     AuthenticationContext::Admin => Ok(()),
                     AuthenticationContext::Token(_) => Ok(()),
                     AuthenticationContext::Trust { .. } => {
@@ -1254,6 +1267,9 @@ pub enum AuthenticationContext {
     /// variant, so the existing bounded-object validation in
     /// `ValidatedSecurityContext::new_for_scope` applies unchanged.
     Ec2Credential,
+    /// Login using a TOTP passcode verified against a `type='totp'`
+    /// credential (ADR 0019 §3).
+    Totp,
 }
 
 /// K8s auth context.
@@ -1297,6 +1313,7 @@ impl AuthenticationContext {
             Self::WebauthN => once("x509".to_string()).collect(),
             Self::Mapping(_) => once("mapped".to_string()).collect(),
             Self::Ec2Credential => once("ec2credential".to_string()).collect(),
+            Self::Totp => once("totp".to_string()).collect(),
         }
     }
 }

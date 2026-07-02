@@ -112,6 +112,9 @@ impl FernetToken {
                 AuthenticationContext::Ec2Credential => {
                     Err(AuthenticationError::ScopeNotAllowed.into())
                 }
+                AuthenticationContext::Totp => Ok(Self::DomainScope(
+                    DomainScopePayload::from_security_context(ctx, domain, expires_at)?,
+                )),
             },
             ScopeInfo::Project { project, .. } => match ctx.authentication_context() {
                 AuthenticationContext::ApplicationCredential {

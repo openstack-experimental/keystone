@@ -4039,6 +4039,7 @@ dependencies = [
  "config",
  "crc32fast",
  "dashmap",
+ "data-encoding",
  "derive_builder",
  "eyre",
  "governor",

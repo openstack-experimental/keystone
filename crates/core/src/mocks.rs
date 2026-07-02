@@ -512,6 +512,12 @@ mod identity {
                 auth: &UserPasswordAuthRequest,
             ) -> Result<AuthenticationResult, IdentityProviderError>;
 
+            async fn authenticate_by_totp<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                auth: &UserTotpAuthRequest,
+            ) -> Result<AuthenticationResult, IdentityProviderError>;
+
             async fn create_group<'a>(
                 &self,
                 ctx: &ExecutionContext<'a>,

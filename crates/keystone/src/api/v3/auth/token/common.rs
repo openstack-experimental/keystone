@@ -41,6 +41,17 @@ pub(super) async fn authenticate_request(
                         .await?,
                 );
             }
+        } else if method == "totp" {
+            if let Some(totp_auth) = &req.auth.identity.totp {
+                let req = totp_auth.user.clone().try_into()?;
+                res.push(
+                    state
+                        .provider
+                        .get_identity_provider()
+                        .authenticate_by_totp(&ExecutionContext::internal(state), &req)
+                        .await?,
+                );
+            }
         } else if method == "token"
             && let Some(token) = &req.auth.identity.token
         {
@@ -131,6 +142,63 @@ mod tests {
                                     .unwrap(),
                             }),
                             token: None,
+                            totp: None,
+                        },
+                        scope: None,
+                    },
+                }
+            )
+            .await
+            .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_authenticate_request_totp() {
+        use openstack_keystone_core_types::identity::UserTotpAuthRequest;
+
+        let auth = AuthenticationResultBuilder::default()
+            .context(AuthenticationContext::Totp)
+            .principal(PrincipalInfo {
+                identity: IdentityInfo::User(
+                    UserIdentityInfoBuilder::default()
+                        .user_id("uid")
+                        .build()
+                        .unwrap(),
+                ),
+            })
+            .build()
+            .unwrap();
+        let auth_clone = auth.clone();
+        let mut identity_mock = MockIdentityProvider::default();
+        identity_mock
+            .expect_authenticate_by_totp()
+            .withf(|_, req: &UserTotpAuthRequest| {
+                req.id == Some("uid".to_string()) && req.passcode == "123456"
+            })
+            .returning(move |_, _| Ok(auth_clone.clone()));
+
+        let provider = Provider::mocked_builder().mock_identity(identity_mock);
+
+        let state = get_mocked_state(provider, true, None).await;
+
+        assert_eq!(
+            vec![auth],
+            authenticate_request(
+                &state,
+                &AuthRequest {
+                    auth: AuthRequestInner {
+                        identity: Identity {
+                            methods: vec!["totp".to_string()],
+                            password: None,
+                            token: None,
+                            totp: Some(TotpAuth {
+                                user: TotpUserBuilder::default()
+                                    .id("uid")
+                                    .passcode("123456")
+                                    .build()
+                                    .unwrap(),
+                            }),
                         },
                         scope: None,
                     },
@@ -210,6 +278,7 @@ mod tests {
                             token: Some(TokenAuth {
                                 id: "fake_token".to_string()
                             }),
+                            totp: None,
                         },
                         scope: None,
                     },
@@ -232,6 +301,7 @@ mod tests {
                         methods: vec!["fake".to_string()],
                         password: None,
                         token: None,
+                        totp: None,
                     },
                     scope: None,
                 },

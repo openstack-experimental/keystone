@@ -38,7 +38,7 @@ type HmacSha256 = Hmac<Sha256>;
 /// satisfy the `hmac` crate's `digest` 0.11 bound. SHA-1's 64-byte block
 /// size is fixed by the algorithm, so this is a direct, dependency-free
 /// implementation rather than a workaround with hidden edge cases.
-fn hmac_sha1_raw(key: &[u8], message: &[u8]) -> [u8; 20] {
+pub(crate) fn hmac_sha1_raw(key: &[u8], message: &[u8]) -> [u8; 20] {
     const BLOCK_SIZE: usize = 64;
     let mut key_block = [0u8; BLOCK_SIZE];
     if key.len() > BLOCK_SIZE {

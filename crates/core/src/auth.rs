@@ -136,6 +136,7 @@ impl ValidatedSecurityContext {
             AuthenticationContext::Password => {}
             AuthenticationContext::Admin => {}
             AuthenticationContext::Ec2Credential => {}
+            AuthenticationContext::Totp => {}
             AuthenticationContext::Trust { trust, .. } => {
                 // Validate the trust chain
                 state
