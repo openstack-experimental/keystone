@@ -14,11 +14,20 @@
 
 use goose::prelude::*;
 use serde_json::json;
+use std::sync::OnceLock;
 use uuid::Uuid;
 
 use crate::Session;
 
 const DEFAULT_DOMAIN_ID: &str = "default";
+
+static SEEDED_USER_IDS: OnceLock<Vec<String>> = OnceLock::new();
+
+/// Call once before `GooseAttack::execute()` to share the seeded user ID pool
+/// with all virtual users.
+pub fn set_seeded_ids(ids: Vec<String>) {
+    SEEDED_USER_IDS.set(ids).ok();
+}
 
 /// List all users (read-heavy scenario transaction).
 pub async fn list(user: &mut GooseUser) -> TransactionResult {
@@ -29,7 +38,32 @@ pub async fn list(user: &mut GooseUser) -> TransactionResult {
         .get_request_builder(&GooseMethod::Get, "/v3/users")?
         .header("x-auth-token", &token);
 
+    let goose_request = GooseRequest::builder().set_request_builder(req).build();
+
+    user.request(goose_request).await?;
+    Ok(())
+}
+
+/// Show a randomly chosen user from the pre-seeded pool.
+///
+/// Measures GET /v3/users/:id latency against a realistic, pre-populated dataset.
+/// Returns Ok(()) silently if the pool is empty (seed failed entirely).
+pub async fn show_random(user: &mut GooseUser) -> TransactionResult {
+    let ids = match SEEDED_USER_IDS.get() {
+        Some(v) if !v.is_empty() => v,
+        _ => return Ok(()),
+    };
+    let session = user.get_session_data_unchecked::<Session>();
+    let token = session.token.clone();
+    let id = &ids[fastrand::usize(..ids.len())];
+    let path = format!("/v3/users/{id}");
+
+    let req = user
+        .get_request_builder(&GooseMethod::Get, &path)?
+        .header("x-auth-token", &token);
+
     let goose_request = GooseRequest::builder()
+        .name("GET /v3/users/:id (catalog)")
         .set_request_builder(req)
         .build();
 

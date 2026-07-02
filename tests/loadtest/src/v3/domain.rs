@@ -25,9 +25,7 @@ pub async fn list(user: &mut GooseUser) -> TransactionResult {
         .get_request_builder(&GooseMethod::Get, "/v3/domains")?
         .header("x-auth-token", &token);
 
-    let goose_request = GooseRequest::builder()
-        .set_request_builder(req)
-        .build();
+    let goose_request = GooseRequest::builder().set_request_builder(req).build();
 
     user.request(goose_request).await?;
     Ok(())

@@ -24,9 +24,11 @@ use crate::v3::auth::{token_lifecycle, validate as validate_token};
 use crate::v3::domain::list as domain_list;
 use crate::v3::project::{
     create as project_create, delete as project_delete, list as project_list, show as project_show,
+    show_random as project_show_random,
 };
 use crate::v3::user::{
     create as user_create, delete as user_delete, list as user_list, show as user_show,
+    show_random as user_show_random,
 };
 
 /// Per-GooseUser session state shared across transactions.
@@ -47,11 +49,16 @@ async fn main() -> Result<(), GooseError> {
     // Pre-populate the database so list endpoints operate on non-trivial data.
     let seed_state = seed::seed(&host, &admin_token).await;
 
-    // Default to 20 users so all weighted scenarios get at least 1 user
-    // (total weight = 13; 20 ensures proportional coverage).
+    // Share the seeded ID pools with the catalog-read scenarios so virtual users
+    // can pick random IDs without needing to issue their own list calls first.
+    v3::user::set_seeded_ids(seed_state.user_ids.clone());
+    v3::project::set_seeded_ids(seed_state.project_ids.clone());
+
+    // Default to 30 users so all weighted scenarios get at least 1 user
+    // (total weight = 20; 30 ensures proportional coverage).
     // Can be overridden by passing --users on the CLI.
     let attack = GooseAttack::initialize()?
-        .set_default(GooseDefault::Users, 20usize)?
+        .set_default(GooseDefault::Users, 30usize)?
         // Read-heavy workload: list endpoints hit the most common production path.
         .register_scenario(
             scenario!("ReadHeavy")
@@ -92,6 +99,26 @@ async fn main() -> Result<(), GooseError> {
                 .register_transaction(transaction!(project_create).set_on_start())
                 .register_transaction(transaction!(project_show))
                 .register_transaction(transaction!(project_delete).set_on_stop()),
+        )
+        // Catalog read: list all users then fetch a randomly chosen one from the
+        // pre-seeded pool.  Exercises the list + point-read path under realistic
+        // data volumes (100 seeded users).
+        .register_scenario(
+            scenario!("UserRead")
+                .set_weight(4)?
+                .register_transaction(transaction!(openstack_login).set_on_start())
+                .register_transaction(transaction!(user_list))
+                .register_transaction(transaction!(user_show_random)),
+        )
+        // Catalog read: list all projects then fetch a randomly chosen one from the
+        // pre-seeded pool.  Exercises the list + point-read path under realistic
+        // data volumes (100 seeded projects).
+        .register_scenario(
+            scenario!("ProjectRead")
+                .set_weight(3)?
+                .register_transaction(transaction!(openstack_login).set_on_start())
+                .register_transaction(transaction!(project_list))
+                .register_transaction(transaction!(project_show_random)),
         );
 
     attack.execute().await?;
@@ -105,10 +132,7 @@ async fn main() -> Result<(), GooseError> {
 pub async fn openstack_login(user: &mut GooseUser) -> TransactionResult {
     let cfg = ConfigFile::new().unwrap();
     let cloud_name = env::var("OS_CLOUD").unwrap_or("devstack".to_string());
-    let profile = cfg
-        .get_cloud_config(cloud_name)
-        .unwrap()
-        .unwrap();
+    let profile = cfg.get_cloud_config(cloud_name).unwrap().unwrap();
     let session = AsyncOpenStack::new(&profile)
         .await
         .expect("cannot connect to the cloud");
