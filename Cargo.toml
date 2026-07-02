@@ -102,10 +102,10 @@ openstack-keystone-appcred-driver-sql = { version = "0.1", path = "crates/appcre
 openstack-keystone-assignment-driver-sql = { version = "0.1", path = "crates/assignment-driver-sql/" }
 openstack-keystone-catalog-driver-sql = { version = "0.1", path = "crates/catalog-driver-sql/" }
 openstack-keystone-config = { version = "0.1.0", path = "crates/config"}
-openstack-keystone-core = { version = "0.1.0", path = "crates/core" }
-openstack-keystone-core-types = { version = "0.1.0", path = "crates/core-types" }
+openstack-keystone-core = { version = "0.1.2", path = "crates/core" }
+openstack-keystone-core-types = { version = "0.1.1", path = "crates/core-types" }
 openstack-keystone-credential-driver-sql = { version = "0.1", path = "crates/credential-driver-sql/" }
-openstack-keystone-distributed-storage = { version = "0.1.0", path = "crates/storage"}
+openstack-keystone-distributed-storage = { version = "0.1.1", path = "crates/storage"}
 openstack-keystone-storage-api = { version = "0.1.0", path = "crates/storage-api" }
 openstack-keystone-storage-crypto = { version = "0.1.0", path = "crates/storage-crypto" }
 openstack-keystone-federation-driver-sql = { version = "0.1", path = "crates/federation-driver-sql" }
@@ -117,7 +117,7 @@ openstack-keystone-idmapping-driver-sql = { version = "0.1", path = "crates/idma
 openstack-keystone-resource-driver-sql = { version = "0.1", path = "crates/resource-driver-sql/" }
 openstack-keystone-revoke-driver-sql = { version = "0.1", path = "crates/revoke-driver-sql/" }
 openstack-keystone-role-driver-sql = { version = "0.1", path = "crates/role-driver-sql/" }
-openstack-keystone-token-driver-fernet = { version = "0.1.0", path = "crates/token-driver-fernet" }
+openstack-keystone-token-driver-fernet = { version = "0.1.1", path = "crates/token-driver-fernet" }
 openstack-keystone-token-restriction-driver-sql = { version = "0.1", path = "crates/token-restriction-driver-sql/" }
 openstack-keystone-trust-driver-sql = { version = "0.1", path = "crates/trust-driver-sql/" }
 openstack-keystone-webauthn = { version = "0.1", path = "crates/webauthn/"}
