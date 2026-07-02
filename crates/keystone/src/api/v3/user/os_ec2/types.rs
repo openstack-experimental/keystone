@@ -12,27 +12,4 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use utoipa_axum::{router::OpenApiRouter, routes};
-
-use crate::keystone::ServiceState;
-
-mod create;
-mod delete;
-mod groups;
-mod list;
-mod os_ec2;
-mod show;
-pub mod types;
-mod update;
-
-pub(super) fn openapi_router() -> OpenApiRouter<ServiceState> {
-    OpenApiRouter::new()
-        .routes(routes!(list::list, create::create))
-        .routes(routes!(show::show, delete::delete))
-        .routes(routes!(update::update))
-        .routes(routes!(groups::groups))
-        .merge(os_ec2::openapi_router())
-}
-
-#[cfg(test)]
-mod tests {}
+pub use openstack_keystone_api_types::v3::os_ec2_credential::*;

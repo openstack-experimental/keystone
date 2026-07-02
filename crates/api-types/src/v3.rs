@@ -16,6 +16,7 @@ pub mod auth;
 pub mod credential;
 pub mod domain;
 pub mod group;
+pub mod os_ec2_credential;
 pub mod project;
 pub mod role;
 pub mod role_assignment;
