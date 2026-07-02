@@ -21,8 +21,8 @@ use serde_json::json;
 use uuid::Uuid;
 
 const DEFAULT_DOMAIN_ID: &str = "default";
-const SEED_USERS: usize = 20;
-const SEED_PROJECTS: usize = 10;
+const SEED_USERS: usize = 100;
+const SEED_PROJECTS: usize = 100;
 
 pub struct SeedState {
     pub user_ids: Vec<String>,

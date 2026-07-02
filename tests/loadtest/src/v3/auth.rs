@@ -27,9 +27,7 @@ pub async fn validate(user: &mut GooseUser) -> TransactionResult {
         .header("x-auth-token", &token)
         .header("x-subject-token", &token);
 
-    let goose_request = GooseRequest::builder()
-        .set_request_builder(req)
-        .build();
+    let goose_request = GooseRequest::builder().set_request_builder(req).build();
 
     user.request(goose_request).await?;
     Ok(())

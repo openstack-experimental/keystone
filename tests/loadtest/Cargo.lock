@@ -1342,6 +1342,7 @@ checksum = "11d3d7f243d5c5a8b9bb5d6dd2b1602c0cb0b9db1621bafc7ed66e35ff9fe092"
 name = "load_test"
 version = "0.0.0"
 dependencies = [
+ "fastrand",
  "goose",
  "openstack_sdk",
  "reqwest 0.12.28",
