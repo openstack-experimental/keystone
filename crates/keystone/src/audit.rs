@@ -199,6 +199,46 @@ pub fn emit_perimeter_authenticate_event(
     dispatcher.dispatch(event);
 }
 
+/// Emit a `control` CADF event for an API Key lifecycle action performed by
+/// an administrator (revoke: ADR 0021 §5.C; janitor disablement/purge: §6.F
+/// use `action` `"maintenance"` instead via the same helper).
+///
+/// Unlike [`emit_perimeter_authenticate_event`], this is for low-volume
+/// administrative actions, not the high-volume authentication hot path.
+pub fn emit_api_key_control_event(
+    dispatcher: &Arc<AuditDispatcher>,
+    correlation_id: &str,
+    action: &str,
+    initiator: Initiator,
+    client_id: &str,
+    outcome: &str,
+    outcome_reason: Option<String>,
+) {
+    let node_id = dispatcher.node_id().to_string();
+    let event_id = format!("{}:{}", node_id, Uuid::new_v4());
+    let payload = CadfEventPayload::new(
+        event_id,
+        "1.0".to_string(),
+        "default".to_string(),
+        correlation_id.to_string(),
+        chrono::Utc::now().to_rfc3339(),
+        action.to_string(),
+        outcome.to_string(),
+        outcome_reason,
+        initiator,
+        Target {
+            id: client_id.to_string(),
+            type_uri: "data/security/keystone/api_key".to_string(),
+        },
+        Observer {
+            node_id: node_id.clone(),
+            id: format!("service/security/keystone/{node_id}"),
+        },
+    );
+    let event = payload.sign(dispatcher);
+    dispatcher.dispatch(event);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

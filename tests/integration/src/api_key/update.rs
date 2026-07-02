@@ -140,6 +140,91 @@ async fn test_update_disable_key() -> Result<()> {
 
 #[traced_test]
 #[tokio::test]
+async fn test_update_cannot_reactivate_revoked_key() -> Result<()> {
+    // ADR 0021 §5.C / Invariant 9: revocation is the emergency-response path
+    // and must not be reversible through the ordinary update surface.
+    let (state, _) = get_state().await?;
+    let domain = create_domain!(state)?;
+    let created = create_api_key(&state, sample_api_key_create(&domain.id, "provider-1")).await?;
+
+    state
+        .provider
+        .get_api_key_provider()
+        .revoke(&state, &domain.id, &created.client_id, "operator-1")
+        .await?;
+
+    let result = state
+        .provider
+        .get_api_key_provider()
+        .update(
+            &state,
+            &domain.id,
+            &created.client_id,
+            ApiClientResourceUpdate {
+                allowed_ips: None,
+                description: None,
+                enabled: Some(true),
+            },
+        )
+        .await;
+
+    assert!(result.is_err());
+
+    // The key must still be disabled: the rejected update must not have
+    // been applied.
+    let fetched = state
+        .provider
+        .get_api_key_provider()
+        .get_by_client_id(&state, &domain.id, &created.client_id)
+        .await?
+        .expect("key still exists");
+    assert!(!fetched.enabled);
+    assert!(fetched.revoked_at.is_some());
+
+    Ok(())
+}
+
+#[traced_test]
+#[tokio::test]
+async fn test_update_can_still_disable_a_revoked_key() -> Result<()> {
+    // The reactivation guard is narrowly scoped to `enabled: true`; other
+    // fields (and re-disabling, a no-op) on a revoked key remain updatable.
+    let (state, _) = get_state().await?;
+    let domain = create_domain!(state)?;
+    let created = create_api_key(&state, sample_api_key_create(&domain.id, "provider-1")).await?;
+
+    state
+        .provider
+        .get_api_key_provider()
+        .revoke(&state, &domain.id, &created.client_id, "operator-1")
+        .await?;
+
+    let updated = state
+        .provider
+        .get_api_key_provider()
+        .update(
+            &state,
+            &domain.id,
+            &created.client_id,
+            ApiClientResourceUpdate {
+                allowed_ips: None,
+                description: Some(Some("post-revocation note".to_string())),
+                enabled: None,
+            },
+        )
+        .await?;
+
+    assert_eq!(
+        updated.description,
+        Some("post-revocation note".to_string())
+    );
+    assert!(!updated.enabled);
+
+    Ok(())
+}
+
+#[traced_test]
+#[tokio::test]
 async fn test_update_missing_key_fails() -> Result<()> {
     let (state, _) = get_state().await?;
     let domain = create_domain!(state)?;

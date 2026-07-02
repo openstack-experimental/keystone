@@ -28,6 +28,7 @@ use crate::federation::api as federation;
 use crate::k8s_auth::api as k8s_auth;
 use crate::keystone::ServiceState;
 
+pub mod api_key;
 pub mod auth;
 pub mod group;
 pub mod mapping;
@@ -42,6 +43,7 @@ use crate::api::types::*;
 #[derive(OpenApi)]
 #[openapi(
     nest(
+      (path = "api-keys", api = api_key::ApiDoc),
       (path = "federation", api = federation::ApiDoc),
       (path = "k8s_auth", api = k8s_auth::ApiDoc),
       (path = "mappings", api = mapping::ApiDoc),
@@ -53,6 +55,7 @@ pub struct ApiDoc;
 
 pub(super) fn openapi_router() -> OpenApiRouter<ServiceState> {
     OpenApiRouter::new()
+        .nest("/api-keys", api_key::openapi_router())
         .nest("/auth", auth::openapi_router())
         .nest("/groups", group::openapi_router())
         .nest("/mappings", mapping::openapi_router())

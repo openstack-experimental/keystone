@@ -21,7 +21,6 @@ use eyre::Result;
 use tracing_test::traced_test;
 
 use openstack_keystone_core::auth::ExecutionContext;
-use openstack_keystone_core::mapping::MappingApi;
 use openstack_keystone_core_types::mapping::authorization::Authorization;
 use openstack_keystone_core_types::mapping::error::MappingProviderError;
 use openstack_keystone_core_types::mapping::resolution::IdentitySource;

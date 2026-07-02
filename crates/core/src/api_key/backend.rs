@@ -98,4 +98,21 @@ pub trait ApiKeyBackend: Send + Sync {
         lookup_hash: &'a str,
         secret_hash: String,
     ) -> Result<(), ApiKeyProviderError>;
+
+    /// Cross-domain listing of every `ApiClientResource`, for the janitor
+    /// sweep (ADR 0021 §6.F). Not part of the public admin API -- the
+    /// domain-scoped `list` above serves `GET /v4/api-keys`.
+    async fn list_all(
+        &self,
+        state: &ServiceState,
+    ) -> Result<Vec<ApiClientResource>, ApiKeyProviderError>;
+
+    /// Hard-delete a tombstoned record (ADR 0021 §6.F physical
+    /// reclamation). A no-op if the record is already gone.
+    async fn purge<'a>(
+        &self,
+        state: &ServiceState,
+        domain_id: &'a str,
+        client_id: &'a str,
+    ) -> Result<(), ApiKeyProviderError>;
 }

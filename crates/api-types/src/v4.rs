@@ -12,10 +12,13 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //! # V4 API types
+pub mod api_key;
 pub mod auth;
 pub mod mapping;
 pub mod token_restriction;
 pub mod user;
 
+#[cfg(feature = "conv")]
+mod api_key_conv;
 #[cfg(feature = "conv")]
 mod token_restriction_conv;

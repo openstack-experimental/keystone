@@ -99,7 +99,7 @@ impl RaftBackend {
             .map(|key| key[prefix.len()..].to_string()))
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
+    //#[cfg_attr(not(test), allow(dead_code))]
     async fn create_impl(
         &self,
         storage: &dyn StorageApi,
@@ -138,7 +138,6 @@ impl RaftBackend {
         Ok(obj)
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
     async fn get_by_lookup_hash_impl(
         &self,
         storage: &dyn StorageApi,
@@ -157,7 +156,6 @@ impl RaftBackend {
             .map(|x| x.data))
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
     async fn get_by_client_id_impl(
         &self,
         storage: &dyn StorageApi,
@@ -174,7 +172,6 @@ impl RaftBackend {
             .await
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
     async fn list_impl(
         &self,
         storage: &dyn StorageApi,
@@ -199,7 +196,53 @@ impl RaftBackend {
         Ok(res)
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
+    /// Cross-domain prefix scan over every `ApiClientResource`, for the
+    /// janitor sweep (ADR 0021 §6.F). `"api_client:v1:"` matches only primary
+    /// resource keys -- the secondary `client_id_idx` keys live under
+    /// `"api_client:client_id_idx:v1:..."`, a disjoint prefix, and in the
+    /// separate index keyspace besides.
+    async fn list_all_impl(
+        &self,
+        storage: &dyn StorageApi,
+    ) -> Result<Vec<ApiClientResource>, StoreError> {
+        let mut res: Vec<ApiClientResource> = Vec::new();
+        for (_, envelope) in storage.prefix(b"api_client:v1:", None).await? {
+            res.push(envelope.try_deserialize::<ApiClientResource>()?.data);
+        }
+        Ok(res)
+    }
+
+    /// Hard-delete a tombstoned record (ADR 0021 §6.F physical reclamation):
+    /// removes both the primary resource key and its `client_id_idx` entry.
+    /// A no-op (not an error) if the record is already gone.
+    async fn purge_impl(
+        &self,
+        storage: &dyn StorageApi,
+        domain_id: &str,
+        client_id: &str,
+    ) -> Result<(), StoreError> {
+        let Some(lookup_hash) = self
+            .resolve_lookup_hash(storage, domain_id, client_id)
+            .await?
+        else {
+            return Ok(());
+        };
+        let mutations = vec![
+            Mutation::remove(
+                self.get_resource_key_name(domain_id, &lookup_hash),
+                None::<&str>,
+                None,
+            ),
+            Mutation::remove_index(self.get_client_id_idx_key_name(
+                domain_id,
+                client_id,
+                &lookup_hash,
+            )),
+        ];
+        storage.transaction(mutations).await?;
+        Ok(())
+    }
+
     async fn update_impl(
         &self,
         storage: &dyn StorageApi,
@@ -239,7 +282,6 @@ impl RaftBackend {
         Ok(new)
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
     async fn revoke_impl(
         &self,
         storage: &dyn StorageApi,
@@ -279,7 +321,6 @@ impl RaftBackend {
         Ok(new)
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
     async fn update_last_used_impl(
         &self,
         storage: &dyn StorageApi,
@@ -313,7 +354,6 @@ impl RaftBackend {
         Ok(())
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
     async fn update_secret_hash_impl(
         &self,
         storage: &dyn StorageApi,
@@ -488,6 +528,34 @@ impl ApiKeyBackend for RaftBackend {
             .await
             .map_err(ApiKeyProviderError::raft)
     }
+
+    async fn list_all(
+        &self,
+        state: &ServiceState,
+    ) -> Result<Vec<ApiClientResource>, ApiKeyProviderError> {
+        let raft = state
+            .storage
+            .as_deref()
+            .ok_or(ApiKeyProviderError::RaftNotAvailable)?;
+        self.list_all_impl(raft)
+            .await
+            .map_err(ApiKeyProviderError::raft)
+    }
+
+    async fn purge<'a>(
+        &self,
+        state: &ServiceState,
+        domain_id: &'a str,
+        client_id: &'a str,
+    ) -> Result<(), ApiKeyProviderError> {
+        let raft = state
+            .storage
+            .as_deref()
+            .ok_or(ApiKeyProviderError::RaftNotAvailable)?;
+        self.purge_impl(raft, domain_id, client_id)
+            .await
+            .map_err(ApiKeyProviderError::raft)
+    }
 }
 
 /// Linkage anchor — see ADR-0018. Referenced by the `keystone` crate's
@@ -641,6 +709,68 @@ mod tests {
             .await
             .unwrap();
         assert!(fetched.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_list_all_spans_domains() {
+        let backend = RaftBackend::default();
+        let storage = MockStorage::default();
+
+        backend
+            .create_impl(&storage, make_create("client-1", "domain-1", "hash-1"))
+            .await
+            .unwrap();
+        backend
+            .create_impl(&storage, make_create("client-2", "domain-2", "hash-2"))
+            .await
+            .unwrap();
+
+        let all = backend.list_all_impl(&storage).await.unwrap();
+        assert_eq!(all.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_purge_removes_resource_and_index() {
+        let backend = RaftBackend::default();
+        let storage = MockStorage::default();
+
+        backend
+            .create_impl(&storage, make_create("client-1", "domain-1", "hash-1"))
+            .await
+            .unwrap();
+        backend
+            .revoke_impl(&storage, "domain-1", "client-1", "operator-1")
+            .await
+            .unwrap();
+
+        backend
+            .purge_impl(&storage, "domain-1", "client-1")
+            .await
+            .unwrap();
+
+        let fetched = backend
+            .get_by_lookup_hash_impl(&storage, "domain-1", "hash-1")
+            .await
+            .unwrap();
+        assert!(fetched.is_none());
+
+        let by_client_id = backend
+            .get_by_client_id_impl(&storage, "domain-1", "client-1")
+            .await
+            .unwrap();
+        assert!(by_client_id.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_purge_missing_record_is_noop() {
+        let backend = RaftBackend::default();
+        let storage = MockStorage::default();
+
+        // No prior create(): purging a record that never existed must not error.
+        backend
+            .purge_impl(&storage, "domain-1", "nonexistent")
+            .await
+            .unwrap();
     }
 
     #[tokio::test]

@@ -98,6 +98,24 @@ impl ApiKeyApi for ApiKeyService {
         client_id: &'a str,
         data: ApiClientResourceUpdate,
     ) -> Result<ApiClientResource, ApiKeyProviderError> {
+        // ADR 0021 §5.C: revocation is the emergency-response path and MUST
+        // NOT be reversible through the ordinary update surface. Enforced
+        // here (not just at the HTTP layer) so it holds for every caller,
+        // including direct provider use. Only checked when the caller is
+        // actually trying to re-enable, so the common update (allowed_ips /
+        // description, or disabling) doesn't pay for an extra read.
+        if data.enabled == Some(true) {
+            let current = self
+                .backend_driver
+                .get_by_client_id(state, domain_id, client_id)
+                .await?
+                .ok_or_else(|| ApiKeyProviderError::NotFound(client_id.to_string()))?;
+            if current.revoked_at.is_some() {
+                return Err(ApiKeyProviderError::Conflict(
+                    "cannot re-enable a revoked API key".to_string(),
+                ));
+            }
+        }
         self.backend_driver
             .update(state, domain_id, client_id, data)
             .await
@@ -137,5 +155,136 @@ impl ApiKeyApi for ApiKeyService {
         self.backend_driver
             .update_secret_hash(state, domain_id, lookup_hash, secret_hash)
             .await
+    }
+
+    async fn list_all(
+        &self,
+        state: &ServiceState,
+    ) -> Result<Vec<ApiClientResource>, ApiKeyProviderError> {
+        self.backend_driver.list_all(state).await
+    }
+
+    async fn purge<'a>(
+        &self,
+        state: &ServiceState,
+        domain_id: &'a str,
+        client_id: &'a str,
+    ) -> Result<(), ApiKeyProviderError> {
+        self.backend_driver.purge(state, domain_id, client_id).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::api_key::backend::MockApiKeyBackend;
+    use crate::tests::get_mocked_state;
+
+    fn sample_resource(revoked_at: Option<i64>) -> ApiClientResource {
+        ApiClientResource {
+            domain_id: "domain_id".into(),
+            provider_id: "provider-1".into(),
+            client_id: "client-1".into(),
+            lookup_hash: "hash-1".into(),
+            secret_hash: "$argon2id$v=19$m=8,t=1,p=1$c2FsdA$aGFzaA".into(),
+            allowed_ips: None,
+            description: None,
+            enabled: revoked_at.is_none(),
+            created_at: 0,
+            expires_at: i64::MAX / 2,
+            last_used_at: None,
+            revoked_at,
+            revoked_by: revoked_at.map(|_| "operator-1".to_string()),
+        }
+    }
+
+    fn enable_patch() -> ApiClientResourceUpdate {
+        ApiClientResourceUpdate {
+            allowed_ips: None,
+            description: None,
+            enabled: Some(true),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_update_rejects_reactivating_revoked_key() {
+        let mut mock = MockApiKeyBackend::new();
+        mock.expect_get_by_client_id()
+            .returning(|_, _, _| Ok(Some(sample_resource(Some(1_000)))));
+        // `expect_update` deliberately not configured: mockall panics if it's
+        // called, proving the guard short-circuits before reaching the backend.
+        let service = ApiKeyService {
+            backend_driver: Arc::new(mock),
+        };
+        let state = get_mocked_state(None, None).await;
+
+        let result = service
+            .update(&state, "domain_id", "client-1", enable_patch())
+            .await;
+
+        assert!(matches!(result, Err(ApiKeyProviderError::Conflict(_))));
+    }
+
+    #[tokio::test]
+    async fn test_update_allows_reactivating_non_revoked_key() {
+        let mut mock = MockApiKeyBackend::new();
+        mock.expect_get_by_client_id()
+            .returning(|_, _, _| Ok(Some(sample_resource(None))));
+        mock.expect_update()
+            .returning(|_, _, _, _| Ok(sample_resource(None)));
+        let service = ApiKeyService {
+            backend_driver: Arc::new(mock),
+        };
+        let state = get_mocked_state(None, None).await;
+
+        let result = service
+            .update(&state, "domain_id", "client-1", enable_patch())
+            .await;
+
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_update_skips_guard_when_not_reactivating() {
+        let mut mock = MockApiKeyBackend::new();
+        // `expect_get_by_client_id` deliberately not configured: the guard
+        // must not fire (and must not read) when `enabled` isn't `Some(true)`.
+        mock.expect_update()
+            .returning(|_, _, _, _| Ok(sample_resource(None)));
+        let service = ApiKeyService {
+            backend_driver: Arc::new(mock),
+        };
+        let state = get_mocked_state(None, None).await;
+
+        let result = service
+            .update(
+                &state,
+                "domain_id",
+                "client-1",
+                ApiClientResourceUpdate {
+                    allowed_ips: Some(Some(vec!["10.0.0.0/8".to_string()])),
+                    description: None,
+                    enabled: None,
+                },
+            )
+            .await;
+
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_update_reactivate_missing_key_is_not_found() {
+        let mut mock = MockApiKeyBackend::new();
+        mock.expect_get_by_client_id().returning(|_, _, _| Ok(None));
+        let service = ApiKeyService {
+            backend_driver: Arc::new(mock),
+        };
+        let state = get_mocked_state(None, None).await;
+
+        let result = service
+            .update(&state, "domain_id", "nonexistent", enable_patch())
+            .await;
+
+        assert!(matches!(result, Err(ApiKeyProviderError::NotFound(_))));
     }
 }

@@ -80,6 +80,7 @@ use openstack_keystone::webauthn;
 use openstack_keystone::{api, common};
 use openstack_keystone_audit::spool::{replay_spool, run_spool_writer, spool_path};
 use openstack_keystone_audit::{AuditDispatcher, HmacKeyStore, derive_audit_hmac_key};
+use openstack_keystone_core::api_key::janitor as api_key_janitor;
 use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core::cadf_hook::CadfAuditHook;
 use openstack_keystone_core::db::sync_schema;
@@ -395,6 +396,11 @@ async fn main() -> Result<(), Report> {
     );
 
     spawn(cleanup(cloned_token, shared_state.clone()));
+
+    // API Key (SCIM ingress) janitor: proactive inactivity disablement and
+    // tombstone purge (ADR 0021 §6.F). Runs on every node; gated to actually
+    // do work only on the current Raft leader.
+    api_key_janitor::spawn(shared_state.clone());
 
     // Reset the dummy-password-hash cache whenever the configuration is
     // hot-reloaded. The cache is keyed by (algorithm, rounds); if the operator

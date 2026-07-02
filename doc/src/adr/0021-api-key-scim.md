@@ -235,6 +235,19 @@ mappings must be formally ratified in an upcoming revision to **ADR 0002
 (OpenStack Policy Engine Integration)** to ensure central governance of the RBAC
 hierarchy.
 
+**Implementation status:** The five policies above are implemented under
+`policy/identity/api_key/` (`create.rego`, `list.rego`, `update.rego`,
+`revoke.rego`, `simulate_access.rego`; a sixth, `show.rego`, gates a
+`GET /v4/api-keys/{client_id}` endpoint not explicitly enumerated by this
+section but added for consistency with every other v4 resource), each
+requiring the pre-existing `manager` role scoped to the key's own domain
+(this codebase's realization of `DomainManager`, used identically by
+`identity.user.*` and `identity.mapping.ruleset.*`), or `admin`/`is_admin`
+(`SystemAdmin`). Unlike `identity.user.list`, there is no `reader` carve-out
+on `identity:api_key:list` — all actions sit at the same privilege bar. This
+does not by itself constitute the formal ADR 0002 ratification called for
+above (see §8).
+
 ### B. CRUD Endpoints
 
 - **`POST /v4/api-keys`**: Generates a new key.
@@ -244,11 +257,16 @@ hierarchy.
 ### C. Revocation & Incident Response
 
 - **`POST /v4/api-keys/{client_id}/revoke`**: **Emergency Revocation Path.**
-  Sets `enabled: false`, stamps `revoked_at` and `revoked_by`, and emits a
-  `control` CADF event. **It does not perform a hard delete.** This preserves
-  the cryptographic footprint (`lookup_hash`) and metadata for incident response
-  audits. Physical storage reclamation is deferred to the janitor after the
-  organization's audit retention period.
+  Sets `enabled: false`, stamps `revoked_at` and `revoked_by`, and emits a CADF
+  event (`action: revoke`). **It does not perform a hard delete.** This
+  preserves the cryptographic footprint (`lookup_hash`) and metadata for
+  incident response audits. Physical storage reclamation is deferred to the
+  janitor after the organization's audit retention period.
+- **Revocation is irreversible via `PUT`.** `ApiKeyApi::update` MUST reject
+  (`409 Conflict`) any patch that sets `enabled: true` on a key whose
+  `revoked_at` is set. Without this, an emergency revocation could be undone
+  by an ordinary configuration update, defeating its purpose as an
+  incident-response control (see Invariant 9, §7).
 
 ### D. Zero-Downtime Key Rotation (N:1 Provider Mapping)
 
@@ -332,13 +350,18 @@ traffic migrates seamlessly, and Key A is subsequently revoked.
   acceptable async write staleness of 24 hours. The janitor operates with a
   7-day grace period beyond the 90-day threshold, mathematically absorbing this
   write-failure window. Before executing a disablement, the janitor emits a
-  `maintenance` CADF audit event and pushes an administrative alert payload to
-  the system notification bus.
+  CADF event (`action: disable_inactive`) and pushes an administrative alert
+  payload to the system notification bus.
 
 2. **Physical Reclamation:** To prevent unbounded keyspace bloat, the janitor
    executes a secondary garbage-collection phase. Any `ApiClientResource`
    containing a `revoked_at` timestamp older than 365 days is permanently purged
    from FjallDB.
+
+3. **Per-key fault isolation:** a single key failing its disablement or purge
+   (e.g. a storage CAS conflict with a concurrent admin update) MUST NOT
+   prevent the rest of the sweep pass from running. Failures are counted and
+   logged, and retried on the next pass.
 
 ---
 
@@ -384,3 +407,69 @@ a security defect.
    stored PHC string MUST be validated against configured minimums before
    accepting a verification as sufficient. Parameters below the floor trigger a
    lazy re-hash regardless of verification outcome.
+
+9. **Revocation is irreversible via the update surface.** `ApiKeyApi::update`
+   MUST reject with a conflict error any patch that would set `enabled: true`
+   on an `ApiClientResource` whose `revoked_at` is `Some`. A revoked key MUST
+   NOT become authenticatable again through `PUT /v4/api-keys/{client_id}`;
+   the only way back into service is administratively creating a new key
+   (§5.D covers zero-downtime rotation for exactly this case).
+
+---
+
+## 8. Implementation Status
+
+- **Done:**
+  - The SCIM ingress authentication pipeline (§3), including all security
+    invariants (§7).
+  - The write-time `is_system` prohibition (§6.C).
+  - The storage layer and internal `ApiKeyApi`/`ApiKeyBackend` traits (§2,
+    §5.D) with a Raft-backed implementation, including the janitor's
+    cross-domain `list_all` and hard-delete `purge` operations (§6.F).
+  - Rate limiting (§6.A).
+  - The OPA policies for §5.A (`policy/identity/api_key/`), plus a `show`
+    policy for the `GET /v4/api-keys/{client_id}` endpoint this section does
+    not explicitly enumerate.
+  - The `/v4/api-keys*` HTTP admin surface (§5.B): create, list, show,
+    update. `update` rejects (`409 Conflict`) re-enabling a revoked key
+    (Invariant 9, §5.C), enforced in `ApiKeyService::update`
+    (`crates/core/src/api_key/service.rs`) so it holds for every caller, not
+    just the HTTP layer.
+  - The revoke endpoint (§5.C), including a CADF audit event
+    (`action: revoke`).
+  - The dry-run `simulate-access` endpoint (§5.E). Deviates from the literal
+    request shape in one way: the payload also carries `domain_id` alongside
+    `client_id`, because this implementation's storage partitions
+    `ApiClientResource` by domain (§2.A), making a `client_id`-only lookup
+    impossible without it. The same constraint applies to show/update/revoke,
+    which take `domain_id` as a query parameter rather than encoding it in
+    the (flat, ADR-specified) URL path. It also does not call
+    `MappingApi::authenticate_by_mapping` -- that path may provision a real
+    user row for `IdentityMode::Local` rules, an unacceptable side effect for
+    a dry-run endpoint -- and instead evaluates the ruleset and reads the
+    matched `Authorization`'s roles directly.
+  - The janitor (§6.F): an in-process, leader-gated `tokio::time::interval`
+    sweep (mirroring the storage crate's existing emergency-rotation
+    confirmation-timeout sweeper in `crates/storage/src/app.rs`) that
+    disables keys inactive beyond `janitor_inactive_days` +
+    `janitor_grace_days`, purges tombstones older than
+    `janitor_tombstone_retention_days`, and emits a CADF event
+    (`action: disable_inactive`) per disablement. Per-key failures are
+    isolated (§6.F.3): one key's disablement/purge error is logged and
+    counted in `JanitorReport::errors`, not propagated, so it cannot stall
+    the rest of the pass.
+
+    Action strings are intentionally more specific than this ADR's earlier
+    `control`/`maintenance` category wording (`revoke`/`disable_inactive`
+    rather than a repeated generic label) -- more useful for audit
+    filtering; the wording above has been reconciled to match the code
+    rather than the other way around.
+- **Known gap:** the ADR's "pushes an administrative alert payload to the
+  system notification bus" (§6.F) is not implemented -- no pub/sub or webhook
+  dispatch infrastructure exists in this codebase yet. The janitor emits a
+  structured `warn!` log and its CADF event (`action: disable_inactive`) as
+  the closest existing substitutes; a real notification channel is unbuilt
+  follow-up work, not something to improvise here.
+- **Not yet done:** the `DomainManager` role's formal ratification in ADR
+  0002. In the interim, the OPA policies enforce the equivalent scoped
+  privilege using this codebase's existing `manager` role (§5.A).

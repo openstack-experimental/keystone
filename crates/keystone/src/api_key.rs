@@ -11,18 +11,6 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-//! # API Key (SCIM ingress) machine identity management (ADR 0021)
+//! # API Key (SCIM ingress) provider re-export.
 
-pub mod backend;
-pub mod crypto;
-pub mod error;
-pub mod janitor;
-mod provider_api;
-pub mod service;
-pub mod token;
-
-#[cfg(any(test, feature = "mock"))]
-pub use crate::mocks::MockApiKeyProvider;
-pub use error::ApiKeyProviderError;
-pub use provider_api::ApiKeyApi;
-pub use service::ApiKeyService;
+pub use openstack_keystone_core::api_key::*;

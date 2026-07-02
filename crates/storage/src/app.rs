@@ -132,17 +132,17 @@ async fn check_node_id_uniqueness(
 /// Returns:
 /// - `Ok(true)` if at least one configured peer was reached and its live
 ///   membership confirms no conflict.
-/// - `Ok(false)` if no configured peer could be reached at all —
-///   verification is inconclusive. The caller should log a prominent
-///   warning but proceed rather than refuse to start: treating "no peer
-///   reachable" as fail-closed would make it impossible to recover from a
-///   full-cluster outage where every node restarts simultaneously with no
-///   live peer to ask (the ADR's literal fail-closed wording does not
-///   distinguish that case from an active network partition, so this is a
-///   deliberate, documented deviation in favor of cluster recoverability).
-/// - `Err` if a reachable peer's live membership shows an actual
-///   `(node_id, rpc_addr)` conflict — a real, actionable signal, so this
-///   remains fail-closed.
+/// - `Ok(false)` if no configured peer could be reached at all — verification
+///   is inconclusive. The caller should log a prominent warning but proceed
+///   rather than refuse to start: treating "no peer reachable" as fail-closed
+///   would make it impossible to recover from a full-cluster outage where every
+///   node restarts simultaneously with no live peer to ask (the ADR's literal
+///   fail-closed wording does not distinguish that case from an active network
+///   partition, so this is a deliberate, documented deviation in favor of
+///   cluster recoverability).
+/// - `Err` if a reachable peer's live membership shows an actual `(node_id,
+///   rpc_addr)` conflict — a real, actionable signal, so this remains
+///   fail-closed.
 async fn verify_node_id_uniqueness_live(
     tls_client: &RaftTlsClient,
     node_id: u64,

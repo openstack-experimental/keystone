@@ -95,6 +95,18 @@ mod api_key {
                 lookup_hash: &'a str,
                 secret_hash: String,
             ) -> Result<(), ApiKeyProviderError>;
+
+            async fn list_all(
+                &self,
+                state: &ServiceState,
+            ) -> Result<Vec<ApiClientResource>, ApiKeyProviderError>;
+
+            async fn purge<'a>(
+                &self,
+                state: &ServiceState,
+                domain_id: &'a str,
+                client_id: &'a str,
+            ) -> Result<(), ApiKeyProviderError>;
         }
     }
 }
