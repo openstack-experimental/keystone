@@ -11,7 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-//! OpenStack Keystone SQL driver for the ID Mapping provider
+//! # OpenStack Keystone SQL driver for the ID Mapping provider
 use async_trait::async_trait;
 
 use sea_orm::{DatabaseConnection, Schema};

@@ -89,7 +89,9 @@ impl SqlBackend {
                             further
                                 .iter()
                                 .filter(|fid| {
-                                    !imply_rules.get(&snapshot_role_id).unwrap().contains(*fid)
+                                    !imply_rules
+                                        .get(&snapshot_role_id)
+                                        .is_some_and(|s| s.contains(*fid))
                                 })
                                 .cloned()
                                 .collect::<BTreeSet<String>>()

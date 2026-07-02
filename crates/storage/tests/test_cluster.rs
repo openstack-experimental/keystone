@@ -12,6 +12,9 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 #![allow(clippy::uninlined_format_args)]
+#![allow(clippy::unwrap_used)]
+#![allow(clippy::expect_used)]
+#![allow(clippy::print_stdout)]
 use std::collections::BTreeMap;
 use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
@@ -111,8 +114,10 @@ async fn test_kek_gating_production_mode_rejected_inner() -> Result<()> {
     let mut ds_config = get_ds_config(101, storage_dir.path().to_path_buf(), tls_configuration);
     ds_config.dev_mode = false;
 
-    let mut config = Config::default();
-    config.distributed_storage = Some(ds_config);
+    let config = Config {
+        distributed_storage: Some(ds_config),
+        ..Default::default()
+    };
 
     // SAFETY: no concurrent env readers; test is `#[serial_test::serial]`.
     unsafe {
@@ -148,8 +153,10 @@ async fn test_kek_gating_dev_mode_requires_allow_env_kek_inner() -> Result<()> {
     let ds_config = get_ds_config(102, storage_dir.path().to_path_buf(), tls_configuration);
     // dev_mode is true via get_ds_config, but KEYSTONE_ALLOW_ENV_KEK is unset.
 
-    let mut config = Config::default();
-    config.distributed_storage = Some(ds_config);
+    let config = Config {
+        distributed_storage: Some(ds_config),
+        ..Default::default()
+    };
 
     // SAFETY: no concurrent env readers; test is `#[serial_test::serial]`.
     unsafe {
@@ -184,8 +191,10 @@ async fn test_quarantine_committed_via_raft_inner() -> Result<()> {
     let tls_configuration = make_certificates()?;
     let ds_config = get_ds_config(103, storage_dir.path().to_path_buf(), tls_configuration);
 
-    let mut config = Config::default();
-    config.distributed_storage = Some(ds_config);
+    let config = Config {
+        distributed_storage: Some(ds_config),
+        ..Default::default()
+    };
 
     // SAFETY: no concurrent env readers; test is `#[serial_test::serial]`.
     unsafe {
@@ -279,8 +288,10 @@ async fn test_abort_pending_rotation_via_raft_inner() -> Result<()> {
     let tls_configuration = make_certificates()?;
     let ds_config = get_ds_config(104, storage_dir.path().to_path_buf(), tls_configuration);
 
-    let mut config = Config::default();
-    config.distributed_storage = Some(ds_config);
+    let config = Config {
+        distributed_storage: Some(ds_config),
+        ..Default::default()
+    };
 
     // SAFETY: no concurrent env readers; test is `#[serial_test::serial]`.
     unsafe {
@@ -384,8 +395,10 @@ async fn test_live_uniqueness_check_detects_conflict_inner() -> Result<()> {
         storage_dir_a.path().to_path_buf(),
         tls_configuration.clone(),
     );
-    let mut config_a = Config::default();
-    config_a.distributed_storage = Some(ds_config_a);
+    let config_a = Config {
+        distributed_storage: Some(ds_config_a),
+        ..Default::default()
+    };
 
     let storage_a = init_storage(&ConfigManager::not_watched(config_a.clone())).await?;
 
@@ -438,8 +451,10 @@ async fn test_live_uniqueness_check_detects_conflict_inner() -> Result<()> {
         tls_configuration,
     );
     ds_config_b.retry_join_nodes = vec![(200, get_addr(200).to_string())];
-    let mut config_b = Config::default();
-    config_b.distributed_storage = Some(ds_config_b);
+    let config_b = Config {
+        distributed_storage: Some(ds_config_b),
+        ..Default::default()
+    };
 
     // from_env() removes KEYSTONE_DEV_KEK after reading it, so it must be
     // re-set before every init_storage call in this process.
@@ -497,8 +512,10 @@ async fn test_live_uniqueness_check_proceeds_when_no_peer_reachable_inner() -> R
     // must fail, exercising the "no peer reachable" branch.
     ds_config.retry_join_nodes = vec![(210, "127.0.0.1:21999".to_string())];
 
-    let mut config = Config::default();
-    config.distributed_storage = Some(ds_config);
+    let config = Config {
+        distributed_storage: Some(ds_config),
+        ..Default::default()
+    };
 
     // SAFETY: no concurrent env readers; test is `#[serial_test::serial]`.
     unsafe {
@@ -539,8 +556,10 @@ async fn test_node_restart_inner() -> Result<()> {
         dev_mode: true,
         retry_join_nodes: vec![],
     };
-    let mut config = Config::default();
-    config.distributed_storage = Some(ds_config);
+    let config = Config {
+        distributed_storage: Some(ds_config),
+        ..Default::default()
+    };
 
     // SAFETY: no concurrent env reads
     unsafe {
@@ -627,8 +646,10 @@ async fn test_node_restart_inner() -> Result<()> {
         dev_mode: true,
         retry_join_nodes: vec![],
     };
-    let mut config_restart = Config::default();
-    config_restart.distributed_storage = Some(ds_config_restart);
+    let config_restart = Config {
+        distributed_storage: Some(ds_config_restart),
+        ..Default::default()
+    };
 
     // SAFETY: no concurrent env reads
     unsafe {
@@ -699,8 +720,11 @@ impl InstanceHolder {
             storage_dir.path().to_path_buf(),
             tls_config,
         );
-        let mut config = Config::default();
-        config.distributed_storage = Some(ds_config);
+        let config = Config {
+            distributed_storage: Some(ds_config),
+            ..Default::default()
+        };
+
         unsafe {
             std::env::set_var("KEYSTONE_DEV_KEK", TEST_KEK_HEX);
             std::env::set_var("KEYSTONE_ALLOW_ENV_KEK", "1");
@@ -1532,10 +1556,10 @@ fn get_addr_with_port(node_id: u64, port_base: u16) -> SocketAddr {
 
 async fn wait_for_leader(client: &mut ClusterAdminServiceClient<Channel>, expected_leader: u64) {
     for _ in 0..50 {
-        if let Ok(resp) = client.metrics(()).await {
-            if resp.into_inner().current_leader == Some(expected_leader) {
-                return;
-            }
+        if let Ok(resp) = client.metrics(()).await
+            && resp.into_inner().current_leader == Some(expected_leader)
+        {
+            return;
         }
         TypeConfig::sleep(Duration::from_millis(100)).await;
     }

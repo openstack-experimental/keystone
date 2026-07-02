@@ -733,7 +733,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_credential_storage<'a>() {
+    async fn test_credential_storage() {
         let driver = RaftDriver::default();
         let storage = MockStorage::default();
 
@@ -764,7 +764,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_credential_keys<'a>() {
+    async fn test_credential_keys() {
         let driver = RaftDriver::default();
         assert_eq!(
             driver.get_cred_key_name("user-1", "cred-1"),
@@ -774,7 +774,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_state_auth_key<'a>() {
+    async fn test_state_auth_key() {
         let driver = RaftDriver::default();
         assert_eq!(
             driver.get_user_cred_auth_state_key_name("user-1"),
@@ -783,7 +783,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_state_reg_key<'a>() {
+    async fn test_state_reg_key() {
         let driver = RaftDriver::default();
         assert_eq!(
             driver.get_user_cred_registration_state_key_name("user-1"),
@@ -792,7 +792,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_auth_state_save_and_get<'a>() {
+    async fn test_auth_state_save_and_get() {
         let driver = RaftDriver::default();
         let storage = MockStorage::default();
 
@@ -823,7 +823,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_reg_state_save_and_get<'a>() {
+    async fn test_reg_state_save_and_get() {
         let driver = RaftDriver::default();
         let storage = MockStorage::default();
 
@@ -854,7 +854,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_credential_deletion<'a>() {
+    async fn test_credential_deletion() {
         let driver = RaftDriver::default();
         let storage = MockStorage::default();
 
@@ -885,7 +885,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_state_deletion<'a>() {
+    async fn test_state_deletion() {
         let driver = RaftDriver::default();
         let storage = MockStorage::default();
 

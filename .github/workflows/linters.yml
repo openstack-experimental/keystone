@@ -10,7 +10,7 @@ on:
   merge_group:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'merge_group' && github.run_id || github.event.pull_request.number || github.sha }}
   cancel-in-progress: true
 
 env:
@@ -53,6 +53,11 @@ jobs:
 
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
+      - name: Install protobuf-compiler
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler
+
       - name: Install Rust ${{ env.rust_min }}
         uses: dtolnay/rust-toolchain@6d653acede28d24f02e3cd41383119e8b1b35921 # stable
         with:
@@ -68,9 +73,9 @@ jobs:
         run: cargo binstall clippy-sarif sarif-fmt --force
 
       - name: Run rust-clippy
-        run:
-          cargo clippy
-          --lib --tests
+        run: |
+          cargo clippy \
+          --lib --tests \
           --message-format=json | ${CARGO_HOME}/bin/clippy-sarif | tee rust-clippy-results.sarif | ${CARGO_HOME}/bin/sarif-fmt
 
       - name: Upload analysis results to GitHub
@@ -109,7 +114,7 @@ jobs:
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - name: Setup OPA
-        uses: open-policy-agent/setup-opa@34a30e8a924d1b03ce2cf7abe97250bbb1f332b5 # v2.2.0
+        uses: open-policy-agent/setup-opa@b2b258e089860efaadaaf71bf6e3aecb4a3eeff1 # v2.4.0
         with:
           version: 1.6.0
 
@@ -132,7 +137,8 @@ jobs:
         fetch-depth: 0
 
     - name: Lint Commits
-      env:
-        # Forces committed to look only at the final proposed commit at the tip of the queue
-        COMMITTED_REV: ${{ github.event_name == 'merge_group' && 'HEAD~1..HEAD' || '' }}
       uses: crate-ci/committed@15229711f8f597474c0b636f327cde5969f9a529 # v1.1.7
+      with:
+        # committed's default range (HEAD~..HEAD^2) assumes a 2-parent PR merge
+        # commit, which doesn't exist on the merge queue's single-commit ref.
+        commits: ${{ github.event_name == 'merge_group' && 'HEAD~1..HEAD' || 'HEAD~..HEAD^2' }}

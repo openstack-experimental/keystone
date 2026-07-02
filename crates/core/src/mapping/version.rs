@@ -243,7 +243,7 @@ mod tests {
             },
             &DomainResolutionMode::Fixed,
             true,
-            &[rule.clone()],
+            std::slice::from_ref(&rule),
         );
         let v2 = compute_ruleset_version_from_parts(
             "test-123",
@@ -269,7 +269,7 @@ mod tests {
             },
             &DomainResolutionMode::Fixed,
             true,
-            &[rule.clone()],
+            std::slice::from_ref(&rule),
         );
         let v2 = compute_ruleset_version_from_parts(
             "test-123",

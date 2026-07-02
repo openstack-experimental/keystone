@@ -68,7 +68,6 @@ pub(super) struct RestoreCommand {
 
 #[async_trait]
 impl PerformAction for RestoreCommand {
-    #[allow(clippy::print_stdout)]
     async fn take_action(self, config: &Config) -> Result<(), Report> {
         let file = File::open(&self.snapshot)
             .await

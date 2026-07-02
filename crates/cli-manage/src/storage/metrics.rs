@@ -39,7 +39,6 @@ pub(super) struct MetricsCommand {
 
 #[async_trait]
 impl PerformAction for MetricsCommand {
-    #[allow(clippy::print_stdout)]
     async fn take_action(self, config: &Config) -> Result<(), Report> {
         if config.distributed_storage.is_none() {
             return Err(eyre!("no distributed_storage configuration"));

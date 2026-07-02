@@ -68,7 +68,6 @@ fn setup_logging(verbose: u8) {
     let _ = tracing::subscriber::set_global_default(tracing_subscriber::registry().with(log_layer));
 }
 
-#[allow(clippy::print_stdout)]
 #[async_trait]
 impl PerformAction for BootstrapCommand {
     async fn take_action(self, config: &Config) -> Result<()> {

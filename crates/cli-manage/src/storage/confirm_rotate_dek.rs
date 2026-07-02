@@ -44,7 +44,6 @@ pub(super) struct ConfirmRotateDekCommand {
 
 #[async_trait]
 impl PerformAction for ConfirmRotateDekCommand {
-    #[allow(clippy::print_stdout)]
     async fn take_action(self, config: &Config) -> Result<(), Report> {
         let mut client = get_grpc_client(config, self.cluster_addr).await?;
 

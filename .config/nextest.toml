@@ -20,6 +20,15 @@ command = { command-line = [ "tools/raft-env.sh" ] }
 [scripts.setup.start-api]
 command = { command-line = [ "tools/start-api.sh" ] }
 
+
+[profile.ci]
+inherits = "default"
+
+[profile.ci.junit]
+path = "junit.xml"
+store-success-output = false
+store-failure-output = true
+
 # --- POSTGRES PROFILE ---
 [profile.postgres]
 
@@ -32,6 +41,13 @@ setup = "setup-pg"
 [[profile.postgres.scripts]]
 filter = "binary(provider)"
 setup = "setup-pg"
+
+[profile.ci-postgres]
+inherits = "postgres"
+[profile.ci-postgres.junit]
+path = "junit.xml"
+store-success-output = false
+store-failure-output = true
 
 # --- MYSQL PROFILE ---
 [profile.mysql]
@@ -46,6 +62,13 @@ setup = "setup-mysql"
 filter = "binary(provider)"
 setup = "setup-mysql"
 
+[profile.ci-mysql]
+inherits = "mysql"
+[profile.ci-mysql.junit]
+path = "junit.xml"
+store-success-output = false
+store-failure-output = true
+
 # --- Raft based integration test ---
 [profile.raft]
 default-filter = "all()"
@@ -54,9 +77,28 @@ default-filter = "all()"
 filter = "binary(integration) + binary(test_cluster)"
 setup = "raft-env"
 
+[profile.ci-raft]
+inherits = "raft"
+[profile.ci-raft.junit]
+path = "junit.xml"
+store-success-output = false
+store-failure-output = true
+
 # --- API tests ---
 [profile.api]
+#default-filter = "binary(integration_api_v3) + binary(integration_api_v4)"
 
 [[profile.api.scripts]]
 filter = "binary(integration_api_v3) + binary(integration_api_v4)"
 setup = "start-api"
+
+[profile.ci-api]
+inherits = "api"
+[[profile.ci-api.scripts]]
+filter = "binary(integration_api_v3) + binary(integration_api_v4)"
+setup = "start-api"
+[profile.ci-api.junit]
+path = "junit.xml"
+store-success-output = false
+store-failure-output = true
+

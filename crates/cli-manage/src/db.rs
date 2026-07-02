@@ -141,7 +141,6 @@ async fn connect_db(config: &Config) -> Result<DatabaseConnection> {
         .wrap_err("Database connection failed")
 }
 
-#[allow(clippy::print_stdout)]
 #[async_trait]
 impl PerformAction for DbCommand {
     async fn take_action(self, config: &Config) -> Result<(), Report> {

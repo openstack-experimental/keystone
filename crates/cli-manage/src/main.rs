@@ -12,6 +12,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //! Keystone manage executable.
+#![allow(clippy::print_stdout)]
 
 use std::path::PathBuf;
 
@@ -51,7 +52,7 @@ struct Args {
 
 #[derive(Parser)]
 enum Command {
-    /// Bootstrap
+    /// Bootstrap.
     Bootstrap(BootstrapCommand),
 
     /// Database management commands.

@@ -235,10 +235,10 @@ mod tests {
 
     #[test]
     fn flatten_number_claim() {
-        let json = serde_json::json!({"age": 42, "score": 3.14});
+        let json = serde_json::json!({"age": 42, "score": std::f32::consts::PI});
         let claims = flatten_federation_claims(&json).unwrap();
         assert_eq!(*claims.get("age").unwrap(), vec!["42"]);
-        assert_eq!(*claims.get("score").unwrap(), vec!["3.14"]);
+        assert_eq!(*claims.get("score").unwrap(), vec!["3.1415927410125732"]);
     }
 
     #[test]
@@ -337,7 +337,7 @@ mod tests {
     fn flatten_empty_key_default() {
         // Top-level value with no prefix should use "*" key.
         let claims = flatten_federation_claims(&serde_json::json!("orphan"));
-        assert!(claims.is_ok() && claims.unwrap().get("*").is_some());
+        assert!(claims.is_ok() && claims.unwrap().contains_key("*"));
     }
 
     #[test]
