@@ -19,6 +19,7 @@ use validator::Validate;
 use openstack_keystone_api_types::error::KeystoneApiError;
 use openstack_keystone_core::auth::ExecutionContext;
 
+use crate::WebauthnError;
 use crate::api::types::{CombinedExtensionState, auth::*};
 
 /// Start passkey authentication for the user.
@@ -47,8 +48,6 @@ pub async fn start(
     Json(req): Json<PasskeyAuthenticationStartRequest>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
     req.validate()?;
-    // TODO: Check user existence and simulate the response when the user does not
-    // exist.
     let allow_credentials: Vec<webauthn_rs::prelude::Passkey> = state
         .extension
         .provider
@@ -65,7 +64,28 @@ pub async fn start(
         .webauthn
         .start_passkey_authentication(allow_credentials.as_ref())
     {
-        Ok((rcr, auth_state)) => {
+        Ok((mut rcr, auth_state)) => {
+            if allow_credentials.is_empty() {
+                // The user does not exist or has no registered passkeys. To
+                // prevent user enumeration respond with deterministic decoy
+                // credential IDs (stable per user_id) instead of an empty
+                // `allow_credentials` list. The ceremony state is stored as
+                // usual; completing it fails exactly like an attempt against
+                // a real user with a credential that is not in the allow
+                // list.
+                rcr.public_key.allow_credentials = state
+                    .extension
+                    .fake_credential_generator
+                    .generate(req.passkey.user_id.as_bytes())
+                    .map_err(WebauthnError::from)?
+                    .iter()
+                    .map(|id| webauthn_rs_proto::options::AllowCredentials {
+                        type_: "public-key".to_string(),
+                        id: id.as_ref().into(),
+                        transports: None,
+                    })
+                    .collect();
+            }
             state
                 .extension
                 .provider

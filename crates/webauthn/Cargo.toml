@@ -22,6 +22,7 @@ openstack-keystone-core-types.workspace = true
 openstack-keystone-distributed-storage = { workspace = true, features = ["mock"] }
 rmp-serde.workspace = true
 sea-orm = { workspace = true, features = ["default"] }
+secrecy.workspace = true
 sea-orm-migration = { workspace = true }
 serde.workspace = true
 serde_json.workspace = true
@@ -34,6 +35,7 @@ utoipa-axum.workspace = true
 uuid = { workspace = true, features = ["v4"] }
 validator.workspace = true
 webauthn-rs = { workspace = true, features = ["danger-allow-state-serialisation"] }
+webauthn-rs-proto.workspace = true
 
 [dev-dependencies]
 axum = { workspace = true, features = ["http2", "tokio"] }

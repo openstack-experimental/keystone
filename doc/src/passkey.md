@@ -27,6 +27,22 @@ sequenceDiagram
     Server->>Client: Token
 ```
 
+## User enumeration prevention
+
+The `/auth/passkey/start` endpoint must not reveal whether a user exists or
+has registered passkeys. When authentication is started for an unknown user
+(or a user without passkeys), Keystone responds with a regular challenge
+containing deterministic **decoy** credential IDs (stable per user id) instead
+of an error or an empty `allow_credentials` list. Completing such a ceremony
+fails with the same `401` as an attempt against a real user with a credential
+that is not in the allow list.
+
+The decoy credential IDs are derived with an HMAC key configured as
+`[webauthn]fake_credential_hmac_key`. The key must stay stable across restarts
+and be identical on all nodes of a deployment, otherwise decoys become
+distinguishable from real credentials. When unset, a random per-process key is
+generated at startup and a warning is logged.
+
 ## API changes
 
 Few dedicated API resources are added controlling the necessary aspects:

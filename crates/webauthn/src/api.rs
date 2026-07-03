@@ -14,14 +14,16 @@
 //! # WebAuthN extension REST API
 
 use axum::Router;
+use secrecy::ExposeSecret;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::{spawn, time};
 use tokio_util::sync::CancellationToken;
-use tracing::{error, info, trace};
+use tracing::{error, info, trace, warn};
 use utoipa::OpenApi;
 use utoipa_axum::router::OpenApiRouter;
 use webauthn_rs::WebauthnBuilder;
+use webauthn_rs::fake::{FakePasskeyDistribution, WebauthnFakeCredentialGenerator};
 
 use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core::error::KeystoneError;
@@ -99,9 +101,25 @@ pub async fn init_extension_state(
         "raft" => Box::new(RaftDriver::default()),
         other => return Err(WebauthnError::UnsupportedDriver(other.to_string()))?,
     };
+    let fake_credential_hmac_key: Vec<u8> = match &config.fake_credential_hmac_key {
+        Some(key) => key.expose_secret().as_bytes().to_vec(),
+        None => {
+            warn!(
+                "`[webauthn]fake_credential_hmac_key` is not configured; using a random \
+                 per-process key for decoy credential IDs. Configure a stable key to keep user \
+                 enumeration prevention effective across restarts and in multi-node deployments."
+            );
+            WebauthnFakeCredentialGenerator::<FakePasskeyDistribution>::new_hmac_key()
+                .map_err(WebauthnError::from)?
+        }
+    };
+    let fake_credential_generator = WebauthnFakeCredentialGenerator::new(&fake_credential_hmac_key)
+        .map_err(WebauthnError::from)?;
+
     let extension_state = Arc::new(ExtensionState {
         provider: driver,
         webauthn,
+        fake_credential_generator,
     });
 
     let combined_state = CombinedExtensionState {

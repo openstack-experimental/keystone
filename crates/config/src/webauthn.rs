@@ -14,6 +14,7 @@
 //! # Keystone configuration
 //!
 //! Parsing of the Keystone configuration file implementation.
+use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 use url::Url;
 
@@ -26,6 +27,17 @@ pub struct WebauthnSection {
     /// Enable WebauthN support.
     #[serde(default)]
     pub enabled: bool,
+    /// Secret HMAC key used to derive deterministic decoy credential IDs for
+    /// authentication start requests naming users that do not exist or have
+    /// no registered passkeys. This hides whether an account exists (user
+    /// enumeration prevention). Any sufficiently random string (16+
+    /// characters) is suitable. The key must stay stable across restarts and
+    /// be identical on all nodes of a deployment; otherwise decoy credential
+    /// IDs change between requests, which lets a caller distinguish decoys
+    /// from real credentials. When unset, a random per-process key is
+    /// generated at startup (adequate only for single-node deployments).
+    #[serde(default)]
+    pub fake_credential_hmac_key: Option<SecretString>,
     /// The relying party configuration for the WebauthN.
     #[serde(default, flatten)]
     pub relying_party: Option<RelyingParty>,
@@ -57,6 +69,7 @@ impl Default for WebauthnSection {
         Self {
             driver: default_raft(),
             enabled: false,
+            fake_credential_hmac_key: None,
             relying_party: None,
         }
     }
