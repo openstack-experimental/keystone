@@ -29,6 +29,8 @@ use openstack_keystone_core_types::api_key::*;
 
 mod create;
 mod get;
+mod ingress;
+mod janitor;
 mod last_used;
 mod list;
 mod mapping_system_scope;

@@ -345,43 +345,24 @@ async fn hydrate_ephemeral_context(
         return Err(AuthenticationError::SystemScopeForbiddenForApiKey.into());
     }
 
-    let scope = match authorization {
-        Authorization::Project {
-            project_id,
-            project_domain_id,
-            ..
-        } => openstack_keystone_core_types::auth::ScopeInfo::Project {
-            project: openstack_keystone_core_types::resource::Project {
-                id: project_id.clone(),
-                domain_id: project_domain_id.clone(),
-                name: String::new(),
-                description: None,
-                enabled: true,
-                is_domain: false,
-                parent_id: None,
-                extra: Default::default(),
-            },
-            project_domain: openstack_keystone_core_types::resource::Domain {
-                id: project_domain_id.clone(),
-                name: String::new(),
-                description: None,
-                enabled: true,
-                extra: Default::default(),
-            },
-        },
-        Authorization::Domain { domain_id, .. } => {
-            openstack_keystone_core_types::auth::ScopeInfo::Domain(
-                openstack_keystone_core_types::resource::Domain {
-                    id: domain_id.clone(),
-                    name: String::new(),
-                    description: None,
-                    enabled: true,
-                    extra: Default::default(),
-                },
-            )
-        }
-        Authorization::System { .. } => unreachable!("rejected above"),
+    // Invariant: API Keys are domain-owned machine identities (ADR 0021 §2);
+    // only a domain-scoped authorization is accepted at ingress. This is an
+    // allowlist, not a per-type denylist, so any non-domain authorization
+    // (including `Authorization::Project`) is rejected here. The write-time
+    // prohibition (ADR 0021 §6.C) is defense-in-depth, not a substitute for
+    // this runtime check.
+    let Authorization::Domain { domain_id, .. } = authorization else {
+        return Err(AuthenticationError::NonDomainScopeForbiddenForApiKey.into());
     };
+    let scope = openstack_keystone_core_types::auth::ScopeInfo::Domain(
+        openstack_keystone_core_types::resource::Domain {
+            id: domain_id.clone(),
+            name: String::new(),
+            description: None,
+            enabled: true,
+            extra: Default::default(),
+        },
+    );
     scope.validate()?;
 
     // Invariant 6: user_id derived exclusively from client_id, never from

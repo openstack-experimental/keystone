@@ -2,11 +2,18 @@
 
 **Date:** 2026-06-12
 
-**Last-revised:** 2026-06-24 (security review)
+**Last-revised:** 2026-07-02 (implementation-status review)
 
 ## Status
 
-Proposed
+Accepted
+
+**Implementation-status review 2026-07-02:** implementation confirmed complete
+against every §7 Security Invariant and §5/§6 requirement (see §8). Status
+moved from Proposed to Accepted. §6.B's `subtle`-crate wording corrected to
+match what's actually implemented (Argon2's own constant-time comparison);
+this was a doc/code drift, not a security gap. Added janitor and full-pipeline
+integration test coverage (previously mock/unit-test only) per §8.
 
 **Security review 2026-06-24:**
 
@@ -148,7 +155,11 @@ The entropy is verified against the PHC-formatted `secret_hash` using
 ### Step 4: Ephemeral Context Hydration (Anti-Bleed Scoping)
 
 To prevent cross-domain privilege bleeding, an Ephemeral Security Context must
-operate under exactly _one_ scope.
+operate under exactly _one_ scope. API Keys are **domain-owned machine
+identities** (§2); by design only a domain-scoped authorization is accepted.
+This is an allowlist -- `Authorization::Domain` is the sole accepted variant
+-- rather than a denylist naming each forbidden authorization type, so it
+also covers any authorization type added in the future.
 
 ```rust
 pub async fn hydrate_ephemeral_context(...) -> Result<ValidatedSecurityContext, AuthenticationError> {
@@ -174,24 +185,23 @@ pub async fn hydrate_ephemeral_context(...) -> Result<ValidatedSecurityContext, 
 
     validate_target_entities_are_active(state, &match_result.authorizations)?;
 
-    let mut effective_roles = Vec::new();
-    if let Some(auth) = match_result.authorizations.first() {
-        match auth {
-            Authorization::Domain { domain_id, roles } => {
-                ctx.set_scope(ScopeInfo::Domain(domain_id.clone()));
-                effective_roles.extend(roles.clone());
-            },
-            Authorization::Project { project_id, roles } => {
-                ctx.set_scope(ScopeInfo::Project(project_id.clone()));
-                effective_roles.extend(roles.clone());
-            },
-            Authorization::System { .. } => {
-                // System scopes are strictly forbidden for API-Key ingress.
-                return Err(AuthenticationError::SystemScopeForbiddenForApiKey);
-            }
-        }
+    let authorization = &match_result.authorizations[0];
+
+    // System scopes are strictly forbidden for API-Key ingress.
+    if matches!(authorization, Authorization::System { .. }) {
+        return Err(AuthenticationError::SystemScopeForbiddenForApiKey);
     }
 
+    // Allowlist: only a domain-scoped authorization is accepted. API Keys
+    // are domain-owned machine identities (§2), so anything else --
+    // `Authorization::Project` included -- is rejected here rather than
+    // being enumerated as its own forbidden case.
+    let Authorization::Domain { domain_id, roles } = authorization else {
+        return Err(AuthenticationError::NonDomainScopeForbiddenForApiKey);
+    };
+    ctx.set_scope(ScopeInfo::Domain(domain_id.clone()));
+
+    let mut effective_roles = roles.clone();
     effective_roles.sort();
     effective_roles.dedup();
     Ok(ValidatedSecurityContext::finalize(ctx, effective_roles))
@@ -307,7 +317,10 @@ traffic migrates seamlessly, and Key A is subsequently revoked.
 - **Measures:** Argon2id parameters are globally defined in `keystone.conf` with
   OWASP-compliant strict minimums (e.g., $m=65536, t=3, p=4$). Dummy hashes for
   invalid tokens utilize these exact parameters. Comparisons against the PHC
-  strings use the `subtle` crate for constant-time equality checks.
+  strings are constant-time, performed internally by the `argon2` crate's
+  `verify_password` (not a separate manual `subtle::ConstantTimeEq` step --
+  `verify_password` already provides this property, so a second comparison
+  would be redundant).
 
 ### C. Write-Time `is_system` Prohibition
 
@@ -317,7 +330,12 @@ traffic migrates seamlessly, and Key A is subsequently revoked.
   mapping rule where the `provider_id` belongs to an
   `IdentitySource::ApiClient`, and any authorization grants `is_system: true` or
   `Authorization::System`, the Mapping Engine CRUD API rejects it immediately
-  with `422 Unprocessable Entity`.
+  with `422 Unprocessable Entity`. The same write-time guard also enforces a
+  domain-scope-only allowlist for `IdentitySource::ApiClient` rulesets: once
+  `is_system`/`Authorization::System` is excluded, every remaining
+  authorization MUST be `Authorization::Domain` -- API Keys are domain-owned
+  machine identities (§2) -- so `Authorization::Project` (or any other
+  non-domain authorization) is rejected the same way.
 
 ### D. OPSEC Leakage & Log Injection
 
@@ -383,6 +401,17 @@ a security defect.
    companion write-time prohibition (§6.C) is defense-in-depth, not a substitute
    for this runtime check.
 
+3a. **Domain scope only, by allowlist.** API Keys are domain-owned machine
+   identities (§2). Once the Invariant 3 system-scope check passes,
+   `hydrate_ephemeral_context` MUST accept only `Authorization::Domain`; any
+   other authorization (`Authorization::Project` included) MUST return
+   `NonDomainScopeForbiddenForApiKey` rather than resolving a non-domain
+   `ScopeInfo`. This is an allowlist keyed on the accepted variant, not a
+   denylist enumerating each forbidden one, so it also covers any
+   authorization type added in the future. The companion write-time
+   prohibition (§6.C) is defense-in-depth, not a substitute for this runtime
+   check.
+
 4. **XFF rightmost-non-trusted algorithm.** Effective client IP MUST be the
    rightmost address in the XFF chain (with TCP peer appended) that is not in
    `trusted_proxies`. Implementations MUST NOT use XFF[0] (leftmost) as the
@@ -422,7 +451,15 @@ a security defect.
 - **Done:**
   - The SCIM ingress authentication pipeline (§3), including all security
     invariants (§7).
-  - The write-time `is_system` prohibition (§6.C).
+  - The write-time `is_system` prohibition (§6.C), plus the domain-scope-only
+    allowlist (Invariant 3a): both `hydrate_ephemeral_context`
+    (`crates/core/src/api/api_key_auth.rs`) and the write-time mapping
+    validation (`crates/core/src/mapping/validation.rs`) accept only
+    `Authorization::Domain` for `IdentitySource::ApiClient` rulesets, since
+    API Keys are domain-owned machine identities (§2). `Authorization::Project`
+    is rejected as a consequence of the allowlist, not as a named special
+    case. The `simulate-access` dry-run endpoint (§5.E) mirrors this and
+    reports `matched: false` for any non-domain match.
   - The storage layer and internal `ApiKeyApi`/`ApiKeyBackend` traits (§2,
     §5.D) with a Raft-backed implementation, including the janitor's
     cross-domain `list_all` and hard-delete `purge` operations (§6.F).
@@ -464,6 +501,15 @@ a security defect.
     rather than a repeated generic label) -- more useful for audit
     filtering; the wording above has been reconciled to match the code
     rather than the other way around.
+  - Integration test coverage exercising the real Raft-backed provider and a
+    live HTTP router, not just mocks: a janitor sweep suite
+    (`tests/integration/src/api_key/janitor.rs`) covering disablement,
+    tombstone purge, and cross-domain sweeping against the real storage/CAS
+    layer; and a full-pipeline suite
+    (`tests/integration/src/api_key/ingress.rs`) driving real requests
+    through `openstack_keystone::scim::router()` -- successful end-to-end
+    authentication, wrong-secret rejection, an XFF-spoof-through-a-trusted-
+    proxy regression case (Invariant 4), and rate-limit tripping (§6.A).
 - **Known gap:** the ADR's "pushes an administrative alert payload to the
   system notification bus" (§6.F) is not implemented -- no pub/sub or webhook
   dispatch infrastructure exists in this codebase yet. The janitor emits a

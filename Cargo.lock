@@ -7362,8 +7362,10 @@ name = "test_integration"
 version = "0.0.0"
 dependencies = [
  "async-trait",
+ "axum",
  "chrono",
  "eyre",
+ "http-body-util",
  "inventory",
  "itertools 0.15.0",
  "openstack-keystone",
@@ -7389,6 +7391,7 @@ dependencies = [
  "time",
  "tokio",
  "tokio-util",
+ "tower",
  "tracing",
  "tracing-test",
  "uuid",

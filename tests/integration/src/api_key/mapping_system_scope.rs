@@ -13,9 +13,11 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Cross-provider integration test: the mapping engine's write-time guard
 //! (ADR 0021 §6.C, Invariant 3 defense-in-depth) must reject any
-//! `IdentitySource::ApiClient` ruleset that grants system scope, exercised
-//! through the real (raft-backed) mapping provider rather than the
-//! `crates/core` unit tests.
+//! `IdentitySource::ApiClient` ruleset that grants system scope, and must
+//! accept only `Authorization::Domain` for every other authorization (API
+//! Keys are domain-owned machine identities, ADR 0021 §2), exercised through
+//! the real (raft-backed) mapping provider rather than the `crates/core`
+//! unit tests.
 
 use eyre::Result;
 use tracing_test::traced_test;
@@ -117,7 +119,7 @@ async fn test_api_client_ruleset_rejects_system_authorization() -> Result<()> {
 
 #[traced_test]
 #[tokio::test]
-async fn test_api_client_ruleset_allows_non_system_scope() -> Result<()> {
+async fn test_api_client_ruleset_rejects_non_domain_scope() -> Result<()> {
     let (state, _) = get_state().await?;
     let domain = create_domain!(state)?;
 
@@ -135,6 +137,44 @@ async fn test_api_client_ruleset_allows_non_system_scope() -> Result<()> {
             vec![Authorization::Project {
                 project_id: "project-1".into(),
                 project_domain_id: domain.id.clone(),
+                roles: Vec::new(),
+            }],
+        )],
+    };
+
+    let result = state
+        .provider
+        .get_mapping_provider()
+        .create_ruleset(&ExecutionContext::internal(&state), ruleset)
+        .await;
+
+    assert!(matches!(
+        result,
+        Err(MappingProviderError::ApiClientNonDomainScopeForbidden(ref name)) if name == "project-rule"
+    ));
+
+    Ok(())
+}
+
+#[traced_test]
+#[tokio::test]
+async fn test_api_client_ruleset_allows_domain_scope() -> Result<()> {
+    let (state, _) = get_state().await?;
+    let domain = create_domain!(state)?;
+
+    let ruleset = MappingRuleSetCreate {
+        mapping_id: Some(uuid::Uuid::new_v4().simple().to_string()),
+        domain_id: Some(domain.id.clone()),
+        source: IdentitySource::ApiClient {
+            provider_id: "provider-1".into(),
+        },
+        domain_resolution_mode: DomainResolutionMode::Fixed,
+        enabled: true,
+        rules: vec![api_client_rule(
+            "domain-rule",
+            false,
+            vec![Authorization::Domain {
+                domain_id: domain.id.clone(),
                 roles: Vec::new(),
             }],
         )],

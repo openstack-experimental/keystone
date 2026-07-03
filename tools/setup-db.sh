@@ -38,14 +38,14 @@ else
       printf "."
       sleep 1
     done
-    
+
     echo -e "\nMySQL temporary server detected. Waiting for final restart..."
-    
+
     until $CMD logs "$TARGET" 2>&1 | grep -q "Shutting down mysqld"; do
         printf "s"
         sleep 1
     done
-    
+
     # 3. Now wait for the FINAL server to be ready.
     echo -e "\nInitialization finished. Waiting for final server..."
     until $CMD exec "$TARGET" mysql -u root -p'password' -e "SELECT 1" > /dev/null 2>&1; do

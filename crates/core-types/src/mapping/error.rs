@@ -149,6 +149,16 @@ pub enum MappingProviderError {
         "rule '{0}' grants system scope, which is forbidden for API Key (ApiClient) mapping rulesets"
     )]
     ApiClientSystemScopeForbidden(String),
+
+    /// A ruleset sourced from an API Key (SCIM ingress) provider granted an
+    /// authorization other than `Authorization::Domain`. Per ADR 0021, API
+    /// Keys are domain-owned machine identities, so only a domain-scoped
+    /// authorization is accepted; this is an allowlist enforced at
+    /// write-time as defense-in-depth for the runtime ingress guard.
+    #[error(
+        "rule '{0}' grants a non-domain scope, which is forbidden for API Key (ApiClient) mapping rulesets (only domain scope is accepted)"
+    )]
+    ApiClientNonDomainScopeForbidden(String),
 }
 
 impl MappingProviderError {

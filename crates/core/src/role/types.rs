@@ -15,5 +15,5 @@
 pub mod provider_api;
 //pub mod role;
 
-pub use provider_api::*;
 pub use openstack_keystone_core_types::role::*;
+pub use provider_api::*;

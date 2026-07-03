@@ -59,7 +59,7 @@ spec:
 #             - mountPath: /etc/dex/config.docker.yaml
 #               name: dex
 #               subPath: config.yaml
-#       volumes: 
+#       volumes:
 #         - name: dex
 #           configMap:
 #             name: dex

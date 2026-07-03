@@ -161,6 +161,10 @@ async fn simulate(
         ));
     }
 
+    // API Keys are domain-owned machine identities (ADR 0021 §2): only a
+    // domain-scoped authorization is accepted. This is an allowlist, not a
+    // denylist naming each forbidden variant, so it also covers any
+    // authorization type added in the future.
     let (scope, roles) = match &mr.authorizations[0] {
         Authorization::Domain { domain_id, roles } => (
             SimulatedScope::Domain {
@@ -168,20 +172,14 @@ async fn simulate(
             },
             roles,
         ),
-        Authorization::Project {
-            project_id,
-            project_domain_id,
-            roles,
-        } => (
-            SimulatedScope::Project {
-                project_id: project_id.clone(),
-                project_domain_id: project_domain_id.clone(),
-            },
-            roles,
-        ),
         Authorization::System { .. } => {
             return Ok(not_matched(
                 "mapping resolved to system scope, which is forbidden for API keys",
+            ));
+        }
+        _ => {
+            return Ok(not_matched(
+                "mapping resolved to a non-domain scope, which is forbidden for API keys (only domain scope is accepted)",
             ));
         }
     };
@@ -262,9 +260,8 @@ mod tests {
                     user_domain_id: None,
                     is_system: false,
                 },
-                authorizations: vec![mapping_types::Authorization::Project {
-                    project_id: "project-1".into(),
-                    project_domain_id: "domain_id".into(),
+                authorizations: vec![mapping_types::Authorization::Domain {
+                    domain_id: "domain_id".into(),
                     roles: vec![RoleRef {
                         id: "role-1".into(),
                         name: Some("member".into()),
@@ -328,6 +325,74 @@ mod tests {
         assert!(res.matched);
         assert_eq!(res.roles, vec!["member".to_string()]);
         assert!(res.reason.is_none());
+    }
+
+    fn sample_ruleset_project_scoped() -> mapping_types::MappingRuleSet {
+        let mut ruleset = sample_ruleset_matching();
+        ruleset.rules[0].authorizations = vec![mapping_types::Authorization::Project {
+            project_id: "project-1".into(),
+            project_domain_id: "domain_id".into(),
+            roles: vec![RoleRef {
+                id: "role-1".into(),
+                name: Some("member".into()),
+                domain_id: None,
+            }],
+        }];
+        ruleset
+    }
+
+    #[tokio::test]
+    async fn test_simulate_access_project_scope_not_matched() {
+        // API Keys are domain-owned machine identities (ADR 0021 §2) and
+        // must resolve to a domain scope only; a project-scoped match must
+        // not be reported as `matched`.
+        let vsc = test_fixture_scoped();
+        let mut provider = Provider::mocked_builder();
+        let mut api_key_mock = MockApiKeyProvider::default();
+        api_key_mock
+            .expect_get_by_client_id()
+            .returning(|_, _, _| Ok(Some(sample_resource_core())));
+        provider = provider.mock_api_key(api_key_mock);
+        let mut mapping_mock = MockMappingProvider::default();
+        mapping_mock
+            .expect_get_ruleset_by_source()
+            .returning(|_, _, _| Ok(Some(sample_ruleset_project_scoped())));
+        provider = provider.mock_mapping(mapping_mock);
+
+        let state = get_mocked_state(provider, true, None).await;
+
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state.clone());
+
+        let req = sample_request();
+
+        let response = api
+            .as_service()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/simulate-access")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .extension(vsc)
+                    .body(Body::from(serde_json::to_string(&req).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let res: ApiKeySimulateAccessResponse = serde_json::from_slice(&body).unwrap();
+        assert!(!res.matched);
+        assert!(res.scope.is_none());
+        assert_eq!(
+            res.reason.as_deref(),
+            Some(
+                "mapping resolved to a non-domain scope, which is forbidden for API keys (only domain scope is accepted)"
+            )
+        );
     }
 
     #[tokio::test]

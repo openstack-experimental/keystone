@@ -220,13 +220,18 @@ fn validate_rules(rules: &[MappingRule]) -> Result<(), MappingProviderError> {
     Ok(())
 }
 
-/// Reject `is_system` or `Authorization::System` grants in any rule of a
-/// ruleset sourced from an API Key (`IdentitySource::ApiClient`) provider.
+/// Reject `is_system`/`Authorization::System` grants, and enforce a
+/// domain-scope-only allowlist for every other authorization, in any rule of
+/// a ruleset sourced from an API Key (`IdentitySource::ApiClient`) provider.
 ///
 /// Per ADR 0021 §6.C, allowing an API Key to hold system scope is dangerous
 /// enough that the prohibition is enforced at both write-time (here) and at
 /// authentication time (`hydrate_ephemeral_context`); this check is
-/// defense-in-depth, not a substitute for the runtime guard.
+/// defense-in-depth, not a substitute for the runtime guard. By design, API
+/// Keys are domain-owned machine identities (§2), so once system scope is
+/// excluded, every remaining authorization MUST be `Authorization::Domain`
+/// -- this is an allowlist, not a denylist naming each forbidden variant, so
+/// it also covers any authorization type added in the future.
 fn validate_api_client_no_system_scope(
     source: &IdentitySource,
     rules: &[MappingRule],
@@ -242,6 +247,15 @@ fn validate_api_client_no_system_scope(
                 .any(|auth| matches!(auth, Authorization::System { .. }))
         {
             return Err(MappingProviderError::ApiClientSystemScopeForbidden(
+                rule.name.clone(),
+            ));
+        }
+        if rule
+            .authorizations
+            .iter()
+            .any(|auth| !matches!(auth, Authorization::Domain { .. }))
+        {
+            return Err(MappingProviderError::ApiClientNonDomainScopeForbidden(
                 rule.name.clone(),
             ));
         }
@@ -1530,6 +1544,68 @@ mod tests {
         assert!(matches!(
             result,
             Err(MappingProviderError::ApiClientSystemScopeForbidden(ref name)) if name == "new-system-rule"
+        ));
+    }
+
+    fn rule_with_project_authorization(name: &str) -> MappingRule {
+        let mut rule = simple_rule(name, "user-name");
+        rule.authorizations = vec![Authorization::Project {
+            project_id: "project-1".to_string(),
+            project_domain_id: "test-domain".to_string(),
+            roles: Vec::new(),
+        }];
+        rule
+    }
+
+    #[test]
+    fn api_client_ruleset_rejects_non_domain_scope() {
+        // API Keys are domain-owned machine identities (ADR 0021 §2); only a
+        // domain-scoped authorization is accepted (allowlist, not a denylist
+        // naming each forbidden variant). Exercised here with Project, but
+        // the guard applies to any non-Domain authorization.
+        let ruleset = MappingRuleSetCreate {
+            source: api_client_source(),
+            rules: vec![rule_with_project_authorization("project-auth-rule")],
+            ..sample_ruleset_create()
+        };
+        let result = validate_ruleset_create(&ruleset);
+        assert!(matches!(
+            result,
+            Err(MappingProviderError::ApiClientNonDomainScopeForbidden(ref name)) if name == "project-auth-rule"
+        ));
+    }
+
+    #[test]
+    fn non_api_client_ruleset_allows_project_scope() {
+        // Defense-in-depth is scoped to ApiClient sources only; other
+        // sources (e.g. Federation) are unaffected by this guard.
+        let ruleset = MappingRuleSetCreate {
+            rules: vec![rule_with_project_authorization("project-auth-rule")],
+            ..sample_ruleset_create()
+        };
+        assert!(validate_ruleset_create(&ruleset).is_ok());
+    }
+
+    #[test]
+    fn api_client_ruleset_update_rejects_non_domain_scope() {
+        let existing = MappingRuleSet {
+            mapping_id: "test-123".to_string(),
+            domain_id: Some("test-domain".to_string()),
+            source: api_client_source(),
+            domain_resolution_mode: DomainResolutionMode::Fixed,
+            enabled: true,
+            rules: vec![simple_rule("existing-rule", "user-exists")],
+            ruleset_version: 0,
+        };
+        let update = MappingRuleSetUpdate {
+            rules: Some(vec![rule_with_project_authorization("new-project-rule")]),
+            enabled: None,
+            allowed_domains: None,
+        };
+        let result = validate_ruleset_update(&existing, &update);
+        assert!(matches!(
+            result,
+            Err(MappingProviderError::ApiClientNonDomainScopeForbidden(ref name)) if name == "new-project-rule"
         ));
     }
 }

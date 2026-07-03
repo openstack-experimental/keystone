@@ -283,6 +283,9 @@ impl From<MappingProviderError> for KeystoneApiError {
             MappingProviderError::ApiClientSystemScopeForbidden(x) => Self::BadRequest(format!(
                 "rule '{x}' grants system scope, which is forbidden for API Key (ApiClient) mapping rulesets"
             )),
+            MappingProviderError::ApiClientNonDomainScopeForbidden(x) => Self::BadRequest(format!(
+                "rule '{x}' grants a non-domain scope, which is forbidden for API Key (ApiClient) mapping rulesets (only domain scope is accepted)"
+            )),
             MappingProviderError::RaftNotAvailable => Self::InternalError(
                 "raft storage is not available in the mapping provider".to_string(),
             ),

@@ -51,7 +51,7 @@ agent {
     server_port = "13081"
     socket_path = "$AGENT_SOCKET"
     trust_domain = "$TRUST_DOMAIN"
-    insecure_bootstrap = true 
+    insecure_bootstrap = true
 }
 plugins {
     KeyManager "memory" {

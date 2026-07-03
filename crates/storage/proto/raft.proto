@@ -293,4 +293,3 @@ message BackupChunk {
 message RestoreChunk {
   bytes data = 1;
 }
-

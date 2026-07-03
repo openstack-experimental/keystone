@@ -129,6 +129,7 @@ pub fn sanitize_authentication_error(e: &AuthenticationError) -> &'static str {
         AuthenticationError::NoAuthorizationsFound => "NoAuthorizationsFound",
         AuthenticationError::MultipleScopesForbidden => "MultipleScopesForbidden",
         AuthenticationError::SystemScopeForbiddenForApiKey => "SystemScopeForbiddenForApiKey",
+        AuthenticationError::NonDomainScopeForbiddenForApiKey => "NonDomainScopeForbiddenForApiKey",
     }
 }
 

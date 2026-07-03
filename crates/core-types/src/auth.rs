@@ -159,6 +159,14 @@ pub enum AuthenticationError {
     #[error("system scope is forbidden for API-Key ingress")]
     SystemScopeForbiddenForApiKey,
 
+    /// An API Key's mapping resolved to an authorization other than
+    /// `Authorization::Domain`. API Keys are domain-owned machine identities
+    /// (ADR 0021 §2), so only a domain-scoped authorization is accepted at
+    /// ingress; the write-time prohibition (ADR 0021 §6.C) is
+    /// defense-in-depth, not a substitute for this runtime check.
+    #[error("only domain scope is accepted for API-Key ingress")]
+    NonDomainScopeForbiddenForApiKey,
+
     /// A role assignment failed to convert to a valid RoleRef.
     #[error("role assignment cannot be converted to a role reference")]
     RoleConversionFailed,

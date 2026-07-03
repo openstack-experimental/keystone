@@ -145,4 +145,3 @@ cases.
   - Update tests:
     `"target": { "binding": { ... } }, "existing": { "binding": { ... } }`
   - Show/Delete tests: `"target": { "binding": { ... } }`
-

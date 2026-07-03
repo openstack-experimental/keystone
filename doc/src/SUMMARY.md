@@ -52,6 +52,7 @@
   - [Okta](federation/okta.md)
   - [Dex](federation/dex.md)
 - [Passkeys](passkey.md)
+- [API-Key Authentication (SCIM)](api_key.md)
 - [Kubernetes TokenReview Auth](k8s_auth.md)
 - [Mapping Engine](mapping.md)
 

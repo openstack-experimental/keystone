@@ -441,7 +441,7 @@ mod tests {
         .build(DatabaseBackend::Sqlite)
         .to_string();
         assert!(
-            query.contains("AND (\"revocation_event\".\"domain_id\" IS NULL OR \"revocation_event\".\"domain_id\" IN ('d1', 'd2'))"), 
+            query.contains("AND (\"revocation_event\".\"domain_id\" IS NULL OR \"revocation_event\".\"domain_id\" IN ('d1', 'd2'))"),
             "{}", query
         );
     }
@@ -459,7 +459,7 @@ mod tests {
         .to_string();
         assert!(
             query.contains("AND (\"revocation_event\".\"project_id\" IS NULL OR \"revocation_event\".\"project_id\" = 'pid')"),
-            "{}", 
+            "{}",
             query
         );
     }
@@ -494,8 +494,8 @@ mod tests {
         .build(DatabaseBackend::Sqlite)
         .to_string();
         assert!(
-            query.contains("AND (\"revocation_event\".\"role_id\" IS NULL OR \"revocation_event\".\"role_id\" IN ('d1', 'd2'))"), 
-            "{}", 
+            query.contains("AND (\"revocation_event\".\"role_id\" IS NULL OR \"revocation_event\".\"role_id\" IN ('d1', 'd2'))"),
+            "{}",
             query
         );
     }
@@ -530,8 +530,8 @@ mod tests {
         .build(DatabaseBackend::Sqlite)
         .to_string();
         assert!(
-            query.contains("AND (\"revocation_event\".\"user_id\" IS NULL OR \"revocation_event\".\"user_id\" IN ('d1', 'd2'))"), 
-            "{}", 
+            query.contains("AND (\"revocation_event\".\"user_id\" IS NULL OR \"revocation_event\".\"user_id\" IN ('d1', 'd2'))"),
+            "{}",
             query
         );
     }

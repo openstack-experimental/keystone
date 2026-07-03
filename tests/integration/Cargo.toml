@@ -11,8 +11,10 @@ dist = false
 
 [dependencies]
 async-trait.workspace = true
+axum = { workspace = true, features = ["http1", "tokio"] }
 chrono.workspace = true
 eyre.workspace = true
+http-body-util.workspace = true
 inventory.workspace = true
 itertools.workspace = true
 openstack-keystone-audit = { workspace = true, features = ["testing"] }
@@ -36,6 +38,7 @@ serde_json.workspace = true
 serde_urlencoded.workspace = true
 time = { version = "0.3", default-features = true }
 tempfile.workspace = true
+tower.workspace = true
 tracing.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
