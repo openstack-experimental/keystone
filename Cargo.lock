@@ -4429,6 +4429,7 @@ dependencies = [
  "rmp-serde",
  "sea-orm",
  "sea-orm-migration",
+ "secrecy",
  "serde",
  "serde_json",
  "tempfile",

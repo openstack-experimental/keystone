@@ -317,3 +317,74 @@ async fn test_webauthn_roundtrip() -> Result<()> {
         .to_string();
     Ok(())
 }
+
+/// Authentication start for a user without passkeys (e.g. a non-existing
+/// user) must be indistinguishable from a real one: a `200` response with
+/// decoy `allow_credentials` that are stable per user id, so the endpoint
+/// cannot be used for user enumeration.
+#[tracing_test::traced_test]
+#[tokio::test]
+async fn test_webauthn_auth_start_unknown_user_returns_decoys() -> Result<()> {
+    let (state, _dir) = get_state(None).await?;
+
+    let addr = ReservedSocketAddr::reserve_random_socket_addr()?.socket_addr();
+    let cancel_token = CancellationToken::new();
+    let listener = TcpListener::bind(&addr).await?;
+    let mut handles = tokio::task::JoinSet::new();
+    let app = init_extension(state.core.clone(), cancel_token).await?;
+    handles.spawn(async move {
+        axum::serve(listener, app.into_make_service())
+            .await
+            .unwrap();
+    });
+    let client = Client::new();
+
+    let start = async |user_id: &str| -> Result<PasskeyAuthenticationStartResponse> {
+        let rsp = client
+            .post(format!("http://{}/auth/passkey/start", addr))
+            .json(&serde_json::to_value(&PasskeyAuthenticationStartRequest {
+                passkey: PasskeyUserAuthenticationRequest {
+                    user_id: user_id.into(),
+                },
+            })?)
+            .send()
+            .await?;
+        assert_eq!(rsp.status(), 200, "start must succeed for unknown users");
+        Ok(rsp.json::<PasskeyAuthenticationStartResponse>().await?)
+    };
+
+    let mut users_with_decoys = 0;
+    let mut all_decoy_ids: Vec<Vec<String>> = Vec::new();
+    for _ in 0..20 {
+        let user_id = Uuid::new_v4().to_string();
+        let first = start(&user_id).await?;
+        let second = start(&user_id).await?;
+
+        // Decoy credential IDs are deterministic per user id, while the
+        // challenge is freshly random - just like for real users.
+        let ids = |r: &PasskeyAuthenticationStartResponse| {
+            r.public_key
+                .allow_credentials
+                .iter()
+                .map(|c| c.id.clone())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(ids(&first), ids(&second));
+        assert_ne!(first.public_key.challenge, second.public_key.challenge);
+
+        if !first.public_key.allow_credentials.is_empty() {
+            users_with_decoys += 1;
+            all_decoy_ids.push(ids(&first));
+        }
+    }
+    // The decoy distribution may legitimately produce zero credentials for
+    // some user ids, but over 20 users it is virtually impossible that all
+    // of them get an empty list.
+    assert!(users_with_decoys > 0, "expected decoy credentials");
+    // Different users must get different decoys.
+    let unique = all_decoy_ids
+        .iter()
+        .collect::<std::collections::HashSet<_>>();
+    assert_eq!(unique.len(), all_decoy_ids.len());
+    Ok(())
+}

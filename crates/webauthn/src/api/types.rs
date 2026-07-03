@@ -15,6 +15,7 @@
 use axum::{extract::FromRequestParts, http::request::Parts};
 use std::sync::Arc;
 use webauthn_rs::Webauthn;
+use webauthn_rs::fake::{FakePasskeyDistribution, WebauthnFakeCredentialGenerator};
 
 use openstack_keystone_core::api::KeystoneApiError;
 use openstack_keystone_core::api::auth::Auth;
@@ -32,6 +33,11 @@ pub struct ExtensionState {
     pub provider: Box<dyn WebauthnApi>,
     /// WebAuthN provider.
     pub webauthn: Webauthn,
+    /// Generator of deterministic decoy credential IDs, used to answer
+    /// authentication start requests for unknown users (or users without
+    /// passkeys) indistinguishably from real ones (user enumeration
+    /// prevention).
+    pub fake_credential_generator: WebauthnFakeCredentialGenerator<FakePasskeyDistribution>,
 }
 
 /// Combined state of core Keystone and WebAuthN extension.
