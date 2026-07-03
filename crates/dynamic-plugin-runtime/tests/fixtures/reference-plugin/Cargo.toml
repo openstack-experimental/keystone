@@ -1,0 +1,25 @@
+# Standalone crate, deliberately NOT a member of the top-level workspace
+# (see the `[workspace]` table below): it compiles to `wasm32-unknown-
+# unknown` with a completely different dependency graph (the Extism guest
+# PDK) than the rest of the repo, and must never affect the shipped
+# `keystone` binary's dependency resolution. See
+# `doc/src/adr/0025-implementation-plan.md` PR 0.3.
+[workspace]
+
+[package]
+name = "reference-plugin"
+description = "ADR 0025 reference dynamic auth plugin, used only by openstack-keystone-dynamic-plugin-runtime's test suite"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+extism-pdk = "1.4"
+serde = { version = "1.0", features = ["derive"] }
+
+[profile.release]
+opt-level = "s"
+lto = true
