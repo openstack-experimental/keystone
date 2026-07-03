@@ -78,6 +78,7 @@ use openstack_keystone::revoke::RevokeHook;
 use openstack_keystone::role::RoleHook;
 use openstack_keystone::scim;
 use openstack_keystone::server::listener::{raft_grpc, spiffe_tls, spiffe_tls_uds};
+use openstack_keystone::server::proxy_headers;
 use openstack_keystone::token::TokenHook;
 use openstack_keystone::trust::TrustHook;
 use openstack_keystone::webauthn;
@@ -692,11 +693,16 @@ async fn build_router(
         .layer(
             TraceLayer::new(common::KeystoneResponseClassifier)
                 .make_span_with(|request: &Request<_>| {
-                    // Raw TCP peer address captured by
-                    // `into_make_service_with_connect_info` on the public
-                    // listener (the keystone-ng analogue of Python Keystone's
-                    // WSGI REMOTE_ADDR / flask.request.remote_addr). `None` for
-                    // the SPIFFE interfaces, which do not populate ConnectInfo.
+                    // Client address captured into `ConnectInfo<SocketAddr>`
+                    // (the keystone-ng analogue of Python Keystone's WSGI
+                    // REMOTE_ADDR / flask.request.remote_addr): the raw TCP peer
+                    // on the public listener via
+                    // `into_make_service_with_connect_info`, or the mTLS peer on
+                    // the internal SPIFFE-TLS listener (injected by hand, see
+                    // issue #358). When `enable_proxy_headers_parsing` is on, the
+                    // public value has been overwritten with the proxy-resolved
+                    // client address. `None` on the admin UDS interface, which
+                    // has no meaningful `SocketAddr`.
                     let client_addr = request
                         .extensions()
                         .get::<ConnectInfo<SocketAddr>>()
@@ -1017,7 +1023,20 @@ async fn spawn_public_listener(
             info!("Starting Rest API at {}", cfg.interface_public.tcp_address);
             let listener = TcpListener::bind(&cfg.interface_public.tcp_address).await?;
             let rest_cancel_token = token.clone();
-            let rest_app = app;
+            // When operating behind a trusted reverse proxy (config-gated,
+            // off by default), parse `Forwarded`/`X-Forwarded-For` and rewrite
+            // the raw-peer `ConnectInfo` with the originating client address
+            // *before* the tracing span and handlers read it (issue #358). The
+            // layer is added only on this public interface — never on the
+            // internal SPIFFE/admin listeners, whose peers are the mTLS mesh.
+            let rest_app = if cfg.oslo_middleware.enable_proxy_headers_parsing {
+                info!("Proxy header parsing enabled on the public interface");
+                app.layer(axum::middleware::from_fn(
+                    proxy_headers::rewrite_client_addr,
+                ))
+            } else {
+                app
+            };
             handles.spawn(async move {
                 // `rest_app` is a `Router` whose fallback is the
                 // `NormalizePath`-wrapped API service (issue #734, #1467); use

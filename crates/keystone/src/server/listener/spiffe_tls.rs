@@ -14,6 +14,7 @@
 //! # TLS server listener with the SPIFFE integration
 
 use axum::Router;
+use axum::extract::ConnectInfo;
 use color_eyre::eyre::{Report, Result};
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use hyper_util::server::conn::auto::Builder;
@@ -75,13 +76,12 @@ pub async fn start_axum_app(
                                 let interface_clone = interface_clone.clone();
                                 async move {
                                     let mut req = req;
-                                    if let Some(spiffe_id) = spiffe_id {
-                                        // Move the client TLS certificate into the request extensions
-                                        tracing::debug!("The client supplied certificate for spiffe_id: {:?}", spiffe_id);
-
-                                        req.extensions_mut().insert(spiffe_id);
-                                    }
-                                    req.extensions_mut().insert(interface_clone);
+                                    attach_request_context(
+                                        req.extensions_mut(),
+                                        spiffe_id,
+                                        peer_addr,
+                                        interface_clone,
+                                    );
                                     // Call Axum and explicitly wrap the result
                                     app.call(req).await
                                 }
@@ -119,4 +119,73 @@ pub async fn start_axum_app(
     }
 
     Ok(())
+}
+
+/// Attach the per-request context derived from an mTLS connection onto the
+/// request extensions before it is handed to the axum app.
+///
+/// Because `hyper::service::service_fn` bypasses axum's make-service, the
+/// context the public HTTP path gets for free must be injected by hand here:
+///   * the peer's validated [`CoreSpiffeId`], when present;
+///   * the raw TCP peer address in the same [`ConnectInfo<SocketAddr>`]
+///     extension the public listener populates via
+///     `into_make_service_with_connect_info` (issue #358), so `client.addr`
+///     is captured on the internal interface too;
+///   * the [`Interface`] the request arrived on.
+fn attach_request_context(
+    extensions: &mut axum::http::Extensions,
+    spiffe_id: Option<CoreSpiffeId>,
+    peer_addr: std::net::SocketAddr,
+    interface: Interface,
+) {
+    if let Some(spiffe_id) = spiffe_id {
+        // Move the client TLS certificate into the request extensions
+        tracing::debug!(
+            "The client supplied certificate for spiffe_id: {:?}",
+            spiffe_id
+        );
+        extensions.insert(spiffe_id);
+    }
+    extensions.insert(ConnectInfo(peer_addr));
+    extensions.insert(interface);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn attaches_connect_info_and_interface_without_spiffe_id() {
+        let mut ext = axum::http::Extensions::new();
+        let peer: std::net::SocketAddr = "203.0.113.7:4711".parse().unwrap();
+
+        attach_request_context(&mut ext, None, peer, Interface::Internal);
+
+        // Issue #358: the mTLS peer address is captured in the same extension
+        // type the public listener uses, so `client.addr` is populated here.
+        assert_eq!(
+            ext.get::<ConnectInfo<std::net::SocketAddr>>()
+                .map(|ci| ci.0),
+            Some(peer)
+        );
+        assert_eq!(ext.get::<Interface>(), Some(&Interface::Internal));
+        // No SVID presented → no SpiffeId extension.
+        assert!(ext.get::<CoreSpiffeId>().is_none());
+    }
+
+    #[test]
+    fn attaches_spiffe_id_when_present() {
+        let mut ext = axum::http::Extensions::new();
+        let peer: std::net::SocketAddr = "[2001:db8::1]:8443".parse().unwrap();
+        let spiffe_id = CoreSpiffeId::new("spiffe://example.org/workload").unwrap();
+
+        attach_request_context(&mut ext, Some(spiffe_id.clone()), peer, Interface::Internal);
+
+        assert_eq!(ext.get::<CoreSpiffeId>(), Some(&spiffe_id));
+        assert_eq!(
+            ext.get::<ConnectInfo<std::net::SocketAddr>>()
+                .map(|ci| ci.0),
+            Some(peer)
+        );
+    }
 }

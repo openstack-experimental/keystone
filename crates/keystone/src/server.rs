@@ -13,3 +13,4 @@
 // SPDX-License-Identifier: Apache-2.0
 //! # Keystone server listeners
 pub mod listener;
+pub mod proxy_headers;

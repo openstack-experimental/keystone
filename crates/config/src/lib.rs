@@ -78,6 +78,7 @@ mod interface;
 mod k8s_auth;
 mod listener;
 mod mapping;
+mod oslo_middleware;
 mod policy;
 mod rate_limit;
 mod resource;
@@ -113,6 +114,7 @@ pub use interface::*;
 pub use k8s_auth::*;
 pub use listener::*;
 pub use mapping::*;
+pub use oslo_middleware::*;
 pub use policy::*;
 pub use rate_limit::*;
 pub use resource::*;
@@ -213,6 +215,10 @@ pub struct Config {
     /// Mapping provider configuration.
     #[serde(default)]
     pub mapping: MappingProvider,
+
+    /// `[oslo_middleware]` configuration (proxy header parsing, issue #358).
+    #[serde(default)]
+    pub oslo_middleware: OsloMiddleware,
 
     /// Server listener configuration for the internal interface.
     #[serde(rename = "interface_internal", default)]

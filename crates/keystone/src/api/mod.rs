@@ -214,4 +214,54 @@ pub(crate) mod tests {
             .unwrap();
         assert_eq!(&body[..], b"192.0.2.4:5555");
     }
+
+    /// Issue #358 follow-up: when proxy-header parsing is enabled (config-gated,
+    /// off by default), the public listener wraps the router with the
+    /// `rewrite_client_addr` layer, exactly as `spawn_public_listener` does:
+    /// the layer sits on the outer `Router`, *outside* the #734
+    /// `NormalizePathLayer` fallback. This drives that full production
+    /// composition in-process and asserts that a `/echo/` request carrying
+    /// `X-Forwarded-For` (a) still normalizes the trailing slash, (b) reaches
+    /// the handler, and (c) delivers the *proxy-resolved* client address — not
+    /// the raw TCP peer — proving the layer runs before routing/normalization
+    /// and rewrites `ConnectInfo` end to end.
+    #[tokio::test]
+    async fn proxy_headers_rewrite_client_addr_and_normalize() {
+        async fn echo_addr(ConnectInfo(addr): ConnectInfo<SocketAddr>) -> String {
+            addr.ip().to_string()
+        }
+
+        let router = Router::new().route("/echo", get(echo_addr));
+        // Mirror `build_router`: the API service is `NormalizePath`-wrapped and
+        // mounted as the outer router's fallback.
+        let normalized = NormalizePathLayer::trim_trailing_slash().layer(router);
+        let app = Router::new()
+            .fallback_service(normalized)
+            .layer(axum::middleware::from_fn(
+                crate::server::proxy_headers::rewrite_client_addr,
+            ));
+
+        let make =
+            AxumServiceExt::<Request<Body>>::into_make_service_with_connect_info::<SocketAddr>(app);
+        // Raw TCP peer is the reverse proxy; the header carries the real client.
+        let peer: SocketAddr = "10.0.0.9:5555".parse().unwrap();
+        let svc = make.oneshot(peer).await.unwrap();
+
+        let response = svc
+            .oneshot(
+                Request::builder()
+                    .uri("/echo/")
+                    .header("x-forwarded-for", "203.0.113.7, 10.0.0.9")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert_eq!(&body[..], b"203.0.113.7");
+    }
 }
