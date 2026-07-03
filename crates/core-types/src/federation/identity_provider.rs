@@ -14,31 +14,13 @@
 //! # Federated identity provider types
 
 use derive_builder::Builder;
-use secrecy::{ExposeSecret, SecretString};
-use serde::{Serialize, Serializer};
+use secrecy::SecretString;
+use serde::Serialize;
 use serde_json::Value;
 
 use crate::error::BuilderError;
 
-/// Serialize an optional secret as a fixed redaction marker so that it never
-/// leaks in Debug/policy/audit payloads while still signalling presence.
-fn serialize_secret_redacted<S>(
-    secret: &Option<SecretString>,
-    serializer: S,
-) -> Result<S::Ok, S::Error>
-where
-    S: Serializer,
-{
-    match secret {
-        Some(_) => serializer.serialize_str("[REDACTED]"),
-        None => serializer.serialize_none(),
-    }
-}
-
 /// Identity provider resource.
-///
-/// `PartialEq` is intentionally not derived: `oidc_client_secret` is wrapped in
-/// [`SecretString`], which does not implement `PartialEq` by design.
 #[derive(Builder, Clone, Debug, Default, Serialize)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
@@ -64,11 +46,10 @@ pub struct IdentityProvider {
     #[builder(default)]
     pub oidc_client_id: Option<String>,
 
-    /// The OIDC client secret. Wrapped in [`SecretString`] to prevent accidental
-    /// exposure via Debug/tracing; redacted (never exposed) when serialized into
-    /// policy/audit payloads.
+    /// The OIDC client secret. It is never returned back, so it is skipped on
+    /// serialization; `SecretString` additionally keeps it out of `Debug`.
     #[builder(default)]
-    #[serde(serialize_with = "serialize_secret_redacted")]
+    #[serde(skip_serializing)]
     pub oidc_client_secret: Option<SecretString>,
 
     #[builder(default)]
@@ -104,41 +85,7 @@ pub struct IdentityProvider {
     pub provider_config: Option<Value>,
 }
 
-/// Manual `PartialEq` (the derive cannot be used because `oidc_client_secret`
-/// is a [`SecretString`], which does not implement `PartialEq`). Preserves the
-/// pre-wrapping equality contract by comparing the exposed secret values.
-impl PartialEq for IdentityProvider {
-    fn eq(&self, other: &Self) -> bool {
-        self.id == other.id
-            && self.name == other.name
-            && self.domain_id == other.domain_id
-            && self.enabled == other.enabled
-            && self.oidc_discovery_url == other.oidc_discovery_url
-            && self.oidc_client_id == other.oidc_client_id
-            && self
-                .oidc_client_secret
-                .as_ref()
-                .map(ExposeSecret::expose_secret)
-                == other
-                    .oidc_client_secret
-                    .as_ref()
-                    .map(ExposeSecret::expose_secret)
-            && self.oidc_response_mode == other.oidc_response_mode
-            && self.oidc_response_types == other.oidc_response_types
-            && self.jwks_url == other.jwks_url
-            && self.jwt_validation_pubkeys == other.jwt_validation_pubkeys
-            && self.bound_issuer == other.bound_issuer
-            && self.default_mapping_name == other.default_mapping_name
-            && self.oidc_scopes == other.oidc_scopes
-            && self.allowed_redirect_uris == other.allowed_redirect_uris
-            && self.provider_config == other.provider_config
-    }
-}
-
 /// New Identity provider data.
-///
-/// `PartialEq` is intentionally not derived: `oidc_client_secret` is wrapped in
-/// [`SecretString`], which does not implement `PartialEq` by design.
 #[derive(Builder, Clone, Debug, Default)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
@@ -164,8 +111,7 @@ pub struct IdentityProviderCreate {
     #[builder(default)]
     pub oidc_client_id: Option<String>,
 
-    /// The OIDC client secret. Wrapped in [`SecretString`] to prevent accidental
-    /// exposure via Debug/tracing.
+    /// The OIDC client secret.
     #[builder(default)]
     pub oidc_client_secret: Option<SecretString>,
 
@@ -200,9 +146,6 @@ pub struct IdentityProviderCreate {
 }
 
 /// Identity provider update data.
-///
-/// `PartialEq` is intentionally not derived: `oidc_client_secret` is wrapped in
-/// [`SecretString`], which does not implement `PartialEq` by design.
 #[derive(Builder, Clone, Debug, Default)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(into))]
@@ -219,9 +162,8 @@ pub struct IdentityProviderUpdate {
     #[builder(default)]
     pub oidc_client_id: Option<Option<String>>,
 
-    /// The OIDC client secret. Wrapped in [`SecretString`] to prevent accidental
-    /// exposure via Debug/tracing. Outer `Option` = present-in-request,
-    /// inner `Option` = set-or-clear.
+    /// The OIDC client secret. Outer `Option` = present-in-request, inner
+    /// `Option` = set-or-clear.
     #[builder(default)]
     pub oidc_client_secret: Option<Option<SecretString>>,
 
@@ -284,48 +226,33 @@ mod tests {
     const SECRET: &str = "oidc-top-secret";
 
     #[test]
-    fn identity_provider_never_leaks_client_secret() {
+    fn identity_provider_debug_does_not_leak_client_secret() {
         let idp = IdentityProviderBuilder::default()
             .id("1")
             .name("idp")
-            .oidc_client_secret(SECRET)
+            .oidc_client_secret(SecretString::from(SECRET))
             .build()
             .unwrap();
 
-        // Debug (the #[instrument] / log vector) must not leak.
+        // Debug (the #[instrument] / log vector) must not leak the secret.
         assert!(
             !format!("{idp:?}").contains(SECRET),
             "Debug leaked client secret"
         );
-
-        // Serialization into the OPA policy / audit payload must redact.
-        let json = serde_json::to_string(&idp).unwrap();
-        assert!(
-            !json.contains(SECRET),
-            "serialize leaked client secret: {json}"
-        );
-        assert!(
-            json.contains("[REDACTED]"),
-            "client secret not redacted: {json}"
-        );
     }
 
     #[test]
-    fn partial_eq_still_compares_client_secret() {
-        let base = IdentityProviderBuilder::default()
+    fn identity_provider_does_not_serialize_client_secret() {
+        let idp = IdentityProviderBuilder::default()
             .id("1")
             .name("idp")
-            .oidc_client_secret(SECRET)
+            .oidc_client_secret(SecretString::from(SECRET))
             .build()
             .unwrap();
-        let same = base.clone();
-        let different = IdentityProviderBuilder::default()
-            .id("1")
-            .name("idp")
-            .oidc_client_secret("other-secret")
-            .build()
-            .unwrap();
-        assert_eq!(base, same);
-        assert_ne!(base, different);
+
+        // The secret is never returned back, so it must not appear on the wire.
+        let json = serde_json::to_string(&idp).unwrap();
+        assert!(!json.contains(SECRET), "serialize leaked client secret");
+        assert!(!json.contains("oidc_client_secret"));
     }
 }

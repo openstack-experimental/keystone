@@ -16,7 +16,7 @@
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use secrecy::SecretString;
+use secrecy::{ExposeSecret, SecretString};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -438,7 +438,13 @@ impl IdentityApi for IdentityService {
                 .and_then(serde_json::Value::as_u64)
                 .map(|d| d as u32)
                 .unwrap_or(30);
-            crate::credential::totp::verify_totp(seed, &auth.passcode, digits, period, now)
+            crate::credential::totp::verify_totp(
+                seed,
+                auth.passcode.expose_secret(),
+                digits,
+                period,
+                now,
+            )
         });
 
         if !matched {

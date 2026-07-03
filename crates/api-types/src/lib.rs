@@ -30,7 +30,6 @@ pub mod k8s_auth;
 pub mod scope;
 #[cfg(feature = "conv")]
 mod scope_conv;
-pub(crate) mod secret_serde;
 pub mod trust;
 pub mod v3;
 pub mod v4;

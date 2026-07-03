@@ -13,6 +13,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use openstack_keystone_core_types::error::BuilderError;
+use secrecy::ExposeSecret;
 
 use crate::v3::auth::token as api_types;
 
@@ -41,7 +42,7 @@ impl TryFrom<api_types::UserPassword>
             }
             upa.domain(domain_builder.build()?);
         }
-        upa.password(value.password.clone());
+        upa.password(value.password.expose_secret());
         upa.build()
     }
 }

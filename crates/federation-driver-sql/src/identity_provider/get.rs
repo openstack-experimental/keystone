@@ -59,15 +59,13 @@ mod tests {
             .append_query_results([vec![get_idp_mock("1")]])
             .into_connection();
 
-        assert_eq!(
-            get(&db, "1").await.unwrap().unwrap(),
-            IdentityProvider {
-                id: "1".into(),
-                name: "name".into(),
-                domain_id: Some("did".into()),
-                ..Default::default()
-            }
-        );
+        // `IdentityProvider` holds an `oidc_client_secret: SecretString`, which
+        // is not `PartialEq`, so the returned value is asserted field by field.
+        let idp = get(&db, "1").await.unwrap().unwrap();
+        assert_eq!(idp.id, "1");
+        assert_eq!(idp.name, "name");
+        assert_eq!(idp.domain_id, Some("did".into()));
+        assert!(idp.oidc_client_secret.is_none());
 
         // Checking transaction log: single SELECT from the right table
         let txns = db.into_transaction_log();

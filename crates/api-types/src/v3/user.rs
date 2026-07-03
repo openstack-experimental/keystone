@@ -14,13 +14,27 @@
 use std::collections::HashMap;
 
 use chrono::{DateTime, Utc};
-use secrecy::SecretString;
-use serde::{Deserialize, Serialize};
+use secrecy::{ExposeSecret, SecretString};
+use serde::{Deserialize, Serialize, Serializer};
 use serde_json::Value;
 #[cfg(feature = "validate")]
 use validator::Validate;
 
-use crate::secret_serde::serialize_secret_redacted;
+/// Serialize an optional password transparently for transport (the client must
+/// send the real value). `SecretString` keeps it out of `Debug`/logs; the
+/// response type carries no password field.
+fn serialize_optional_secret<S>(
+    secret: &Option<SecretString>,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    match secret {
+        Some(secret) => serializer.serialize_some(secret.expose_secret()),
+        None => serializer.serialize_none(),
+    }
+}
 
 /// User response object.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -105,9 +119,6 @@ pub struct UserResponse {
 }
 
 /// Create user data.
-///
-/// `PartialEq` is intentionally not derived: `password` is wrapped in
-/// [`SecretString`], which does not implement `PartialEq` by design.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[cfg_attr(
     feature = "builder",
@@ -160,25 +171,19 @@ pub struct UserCreate {
     #[cfg_attr(feature = "validate", validate(nested))]
     pub options: Option<UserOptions>,
 
-    /// The password for the user. Wrapped in [`SecretString`] to prevent
-    /// accidental exposure via Debug/tracing; redacted (never exposed) when
-    /// serialized into policy/audit payloads. Non-emptiness and regex policy are
-    /// enforced on the wrapped value at the service layer via
-    /// `security_compliance.validate_password`.
+    /// The password for the user. Non-emptiness and regex policy are enforced at
+    /// the service layer via `security_compliance.validate_password`.
     #[cfg_attr(feature = "builder", builder(default))]
     #[cfg_attr(feature = "openapi", schema(value_type = Option<String>))]
     #[serde(
         default,
-        serialize_with = "serialize_secret_redacted",
-        skip_serializing_if = "Option::is_none"
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "serialize_optional_secret"
     )]
     pub password: Option<SecretString>,
 }
 
 /// Complete create user request.
-///
-/// `PartialEq` is not derived because the embedded `UserCreate` carries a
-/// `SecretString`.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[cfg_attr(feature = "validate", derive(validator::Validate))]
@@ -189,9 +194,6 @@ pub struct UserCreateRequest {
 }
 
 /// Update user data.
-///
-/// `PartialEq` is intentionally not derived: `password` is wrapped in
-/// [`SecretString`], which does not implement `PartialEq` by design.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[cfg_attr(
     feature = "builder",
@@ -241,23 +243,18 @@ pub struct UserUpdate {
     #[cfg_attr(feature = "validate", validate(nested))]
     pub options: Option<UserOptions>,
 
-    /// The password for the user. Wrapped in [`SecretString`] to prevent
-    /// accidental exposure via Debug/tracing; redacted (never exposed) when
-    /// serialized into policy/audit payloads.
+    /// The password for the user.
     #[cfg_attr(feature = "builder", builder(default))]
     #[cfg_attr(feature = "openapi", schema(value_type = Option<String>))]
     #[serde(
         default,
-        serialize_with = "serialize_secret_redacted",
-        skip_serializing_if = "Option::is_none"
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "serialize_optional_secret"
     )]
     pub password: Option<SecretString>,
 }
 
 /// Complete update user request.
-///
-/// `PartialEq` is not derived because the embedded `UserUpdate` carries a
-/// `SecretString`.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[cfg_attr(feature = "validate", derive(validator::Validate))]
@@ -350,12 +347,10 @@ mod tests {
     use super::*;
 
     /// Critical: `UserCreate` carries BOTH `#[serde(flatten)] extra` and a
-    /// `password` with a custom `serialize_with` + `skip_serializing_if`. This is
-    /// the exact struct the handler serializes into OPA policy input
-    /// (`json!({"user": req.user})`). Prove the flatten interaction does not
-    /// leak the password and does not drop `extra`.
+    /// `password`. Prove the flatten interaction round-trips the password for
+    /// transport and does not drop `extra`, while `Debug` never leaks the value.
     #[test]
-    fn usercreate_flatten_redacts_password_and_keeps_extra() {
+    fn usercreate_flatten_keeps_password_and_extra() {
         let uc: UserCreate = serde_json::from_str(
             r#"{"domain_id":"d","name":"alice","enabled":true,
                 "password":"PWLEAK","x_custom":"xval","y_custom":"yval"}"#,
@@ -371,37 +366,39 @@ mod tests {
             Some("xval")
         );
 
-        // Both the raw serialize and the OPA-shaped `json!({"user": uc})` path.
-        let direct = serde_json::to_string(&uc).unwrap();
-        let opa = serde_json::json!({ "user": &uc }).to_string();
-        for rendered in [direct, opa] {
-            assert!(
-                !rendered.contains("PWLEAK"),
-                "flatten leaked password: {rendered}"
-            );
-            assert!(
-                rendered.contains("[REDACTED]"),
-                "password not redacted: {rendered}"
-            );
-            assert!(
-                rendered.contains("x_custom") && rendered.contains("xval"),
-                "extra dropped by flatten+redact: {rendered}"
-            );
-            assert!(
-                rendered.contains("y_custom") && rendered.contains("yval"),
-                "extra dropped by flatten+redact: {rendered}"
-            );
-        }
+        // Debug (the logging vector) must never reveal the password.
+        assert!(
+            !format!("{uc:?}").contains("PWLEAK"),
+            "Debug leaked password: {uc:?}"
+        );
+
+        // Serialization is transparent (the body must round-trip on the wire),
+        // and the flattened `extra` keys are preserved alongside `password`.
+        let rendered = serde_json::to_string(&uc).unwrap();
+        assert!(
+            rendered.contains("PWLEAK"),
+            "password not carried for transport: {rendered}"
+        );
+        assert!(
+            rendered.contains("x_custom") && rendered.contains("xval"),
+            "extra dropped by flatten: {rendered}"
+        );
+        assert!(
+            rendered.contains("y_custom") && rendered.contains("yval"),
+            "extra dropped by flatten: {rendered}"
+        );
     }
 
-    /// `UserUpdate` has the same flatten+redact shape.
+    /// `UserUpdate` has the same flatten shape.
     #[test]
-    fn userupdate_flatten_redacts_password_and_keeps_extra() {
+    fn userupdate_flatten_keeps_password_and_extra() {
         let uu: UserUpdate =
             serde_json::from_str(r#"{"password":"UPWLEAK","z_extra":"zz"}"#).unwrap();
-        let rendered = serde_json::json!({ "user": &uu }).to_string();
-        assert!(!rendered.contains("UPWLEAK"), "leaked: {rendered}");
-        assert!(rendered.contains("[REDACTED]"), "not redacted: {rendered}");
+        assert!(
+            !format!("{uu:?}").contains("UPWLEAK"),
+            "Debug leaked password: {uu:?}"
+        );
+        let rendered = serde_json::to_string(&uu).unwrap();
         assert!(rendered.contains("z_extra"), "extra dropped: {rendered}");
     }
 

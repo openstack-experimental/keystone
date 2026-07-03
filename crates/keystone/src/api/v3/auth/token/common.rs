@@ -13,6 +13,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use openstack_keystone_core::auth::ExecutionContext;
+use secrecy::ExposeSecret;
 
 use crate::api::error::KeystoneApiError;
 use crate::api::v3::auth::token::types::AuthRequest;
@@ -60,7 +61,7 @@ pub(super) async fn authenticate_request(
                 .get_token_provider()
                 .authorize_by_token(
                     &ExecutionContext::internal(state),
-                    &token.id,
+                    token.id.expose_secret(),
                     Some(false),
                     None,
                 )
@@ -175,7 +176,7 @@ mod tests {
         identity_mock
             .expect_authenticate_by_totp()
             .withf(|_, req: &UserTotpAuthRequest| {
-                req.id == Some("uid".to_string()) && req.passcode == "123456"
+                req.id == Some("uid".to_string()) && req.passcode.expose_secret() == "123456"
             })
             .returning(move |_, _| Ok(auth_clone.clone()));
 
@@ -277,7 +278,7 @@ mod tests {
                             methods: vec!["token".to_string()],
                             password: None,
                             token: Some(TokenAuth {
-                                id: "fake_token".to_string()
+                                id: "fake_token".into()
                             }),
                             totp: None,
                         },

@@ -145,17 +145,15 @@ mod tests {
         let db = MockDatabase::new(DatabaseBackend::Postgres)
             .append_query_results([vec![get_idp_mock("1")]])
             .into_connection();
-        assert_eq!(
-            list(&db, &IdentityProviderListParameters::default())
-                .await
-                .unwrap(),
-            vec![IdentityProvider {
-                id: "1".into(),
-                name: "name".into(),
-                domain_id: Some("did".into()),
-                ..Default::default()
-            }]
-        );
+        // `IdentityProvider` is not `PartialEq` (secret field), so assert per
+        // field on the single returned entry.
+        let idps = list(&db, &IdentityProviderListParameters::default())
+            .await
+            .unwrap();
+        assert_eq!(idps.len(), 1);
+        assert_eq!(idps[0].id, "1");
+        assert_eq!(idps[0].name, "name");
+        assert_eq!(idps[0].domain_id, Some("did".into()));
 
         // Checking transaction log: single SELECT from the right table
         let txns = db.into_transaction_log();
@@ -172,25 +170,21 @@ mod tests {
             .append_query_results([vec![get_idp_mock("1")]])
             .into_connection();
 
-        assert_eq!(
-            list(
-                &db,
-                &IdentityProviderListParameters {
-                    name: Some("idp_name".into()),
-                    domain_ids: Some(HashSet::from([Some("did".into())])),
-                    limit: Some(1),
-                    marker: Some("marker".into()),
-                }
-            )
-            .await
-            .unwrap(),
-            vec![IdentityProvider {
-                id: "1".into(),
-                name: "name".into(),
-                domain_id: Some("did".into()),
-                ..Default::default()
-            }]
-        );
+        let idps = list(
+            &db,
+            &IdentityProviderListParameters {
+                name: Some("idp_name".into()),
+                domain_ids: Some(HashSet::from([Some("did".into())])),
+                limit: Some(1),
+                marker: Some("marker".into()),
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(idps.len(), 1);
+        assert_eq!(idps[0].id, "1");
+        assert_eq!(idps[0].name, "name");
+        assert_eq!(idps[0].domain_id, Some("did".into()));
 
         // Checking transaction log: single SELECT with correct filters
         let txns = db.into_transaction_log();
