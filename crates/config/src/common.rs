@@ -123,14 +123,18 @@ impl<'de> serde::de::Visitor<'de> for U32StrOrIntVisitor {
     type Value = u32;
 
     fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-        formatter.write_str("a u32 as string or integer")
+        formatter.write_str("a u32 as string or integer, optionally 0x-prefixed hex")
     }
 
     fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
     where
         E: serde::de::Error,
     {
-        v.parse().map_err(E::custom)
+        if let Some(hex) = v.strip_prefix("0x").or_else(|| v.strip_prefix("0X")) {
+            u32::from_str_radix(hex, 16).map_err(E::custom)
+        } else {
+            v.parse().map_err(E::custom)
+        }
     }
 
     fn visit_u64<E>(self, v: u64) -> Result<Self::Value, E>

@@ -159,6 +159,7 @@ pub struct Config {
 
     /// Distributed storage configuration.
     #[serde(default)]
+    #[validate(nested)]
     pub distributed_storage: Option<DistributedStorageConfiguration>,
 
     /// Federation provider configuration.
@@ -268,11 +269,20 @@ impl Config {
     /// - `Ok(Self)` if the config was parsed successfully
     pub fn load_all(path: PathBuf) -> Result<Self, Report> {
         let mut cfg = Self::new(path)?;
-        if let Some(ref mut ds) = cfg.distributed_storage
-            && let RaftTlsConfiguration::Tls(ref mut tls) = ds.tls_configuration
-        {
-            tls.read_certs()
-                .wrap_err("reading distributed storage TLS configuration")?;
+        if let Some(ref mut ds) = cfg.distributed_storage {
+            if let RaftTlsConfiguration::Tls(ref mut tls) = ds.tls_configuration {
+                tls.read_certs()
+                    .wrap_err("reading distributed storage TLS configuration")?;
+            }
+            if let Some(ref mut pkcs11) = ds.pkcs11 {
+                pkcs11
+                    .load_secrets()
+                    .wrap_err("reading distributed storage PKCS#11 configuration")?;
+            }
+            if let Some(ref mut tpm) = ds.tpm {
+                tpm.load_secrets()
+                    .wrap_err("reading distributed storage TPM configuration")?;
+            }
         }
         // Compile password regex at load time.
         cfg.security_compliance
@@ -628,6 +638,7 @@ mod tests {
     node_cluster_addr = https://localhost:8310
     node_id = 1
     path = /keystone/storage
+    dev_mode = true
     tls_key_file = {:?}
     tls_cert_file = {:?}
     tls_client_ca_file = {:?}
@@ -777,6 +788,7 @@ mod tests {
     node_cluster_addr = "https://localhost:8310"
     node_id = 1
     path = "/keystone/storage"
+    dev_mode = true
 
     [api_key]
     trusted_proxies = 10.0.0.0/8,192.168.1.0/24

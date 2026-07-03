@@ -21,7 +21,7 @@ use tempfile::TempDir;
 use tokio::runtime::Runtime;
 
 use openstack_keystone_config::{
-    Config, ConfigManager, DistributedStorageConfiguration, TlsConfiguration,
+    Config, ConfigManager, DistributedStorageConfiguration, KekProvider, TlsConfiguration,
     TlsConfigurationBuilder,
 };
 use openstack_keystone_distributed_storage::{
@@ -58,6 +58,9 @@ impl InstanceHolder {
             ),
             dev_mode: true,
             retry_join_nodes: vec![],
+            kek_provider: KekProvider::Env,
+            pkcs11: None,
+            tpm: None,
         }
     }
 

@@ -1,7 +1,7 @@
 # ADR 0016-v2: Distributed Encrypted Storage via Raft and Fjall
 
 Date: 2026-06-13
-Last-revised: 2026-06-24 (security review)
+Last-revised: 2026-07-02 (PKCS#11/TPM KEK provisioning addendum)
 
 ## Status
 
@@ -18,6 +18,11 @@ Proposed
 - F6 LOW: Emergency rotation confirmation timeout now has an explicit abort + audit path (§6.2)
 - F7 LOW: NodeId uniqueness check specified as fail-closed when leader is unreachable (§4.3)
 - F8 LOW: Sub-key derivation notation changed from `HKDF-SHA256` to `HKDF-Expand` (§2.1)
+
+**Addendum applied (2026-07-02):** §2.5 added, specifying the concrete PKCS#11
+and TPM 2.0 KEK provider mechanisms that §2.1 previously deferred ("HSM /
+PKCS#11 / Cloud KMS"), the `kek_provider` configuration schema, and new
+invariants 13–15 (§10).
 
 ## Context
 
@@ -219,6 +224,99 @@ capabilities:
   has reviewed this limitation against applicable regulations (GDPR
   pseudonymisation obligations) and confirmed it meets the organization's
   privacy requirements.
+
+### 2.5 PKCS#11 and TPM KEK Provisioning
+
+§2.1 named "HSM / PKCS#11 / Cloud KMS" as the production KEK source but did
+not specify a mechanism. This section specifies the PKCS#11 and TPM 2.0
+`KekProvider` implementations. Both satisfy invariant 2 (§10): the KEK itself
+never enters process memory in plaintext, only wrapped DEK bytes cross the
+provider boundary.
+
+**Provider selection:** `[distributed_storage] kek_provider` selects between
+`env` (dev-mode only, §2.1), `pkcs11`, and `tpm`. Exactly one provider is
+active per node. Production deployments (`dev_mode = false`) MUST set this to
+`pkcs11` or `tpm`; `kek_provider = "env"` outside `dev_mode` is rejected at
+config-validation time, before any KEK material is touched (invariant 6).
+
+#### 2.5.1 PKCS#11
+
+The KEK is an AES-256 key object resident on a PKCS#11 token (a hardware HSM
+or, for development/CI, SoftHSM2), created with `CKA_EXTRACTABLE = false` and
+`CKA_SENSITIVE = true`. `wrap_dek`/`unwrap_dek` invoke `CKM_AES_GCM` directly
+against that key object (`C_EncryptInit`/`C_Encrypt` and
+`C_DecryptInit`/`C_Decrypt` with a `CK_GCM_PARAMS` structure carrying a
+freshly generated 12-byte nonce, `DEK_WRAP_AD` as additional authenticated
+data, and a 128-bit tag). The resulting wire format is byte-identical to
+`EnvKek`'s: `[12-byte nonce][ciphertext][16-byte tag]` — no downstream code
+(DEK bootstrap, Fjall metadata storage) needs to distinguish which
+`KekProvider` produced a wrapped blob.
+
+- **Key provisioning:** creating the AES-256 key object on the token is an
+  out-of-band operator step (e.g. `pkcs11-tool --keygen` or
+  `softhsm2-util --init-token` for development), documented in the operator
+  guide. The provider MAY auto-generate the key via `CKM_AES_KEY_GEN` on
+  first startup if `pkcs11_key_label` is not found on the configured slot —
+  this is an ergonomic convenience for fresh clusters, not a substitute for
+  operator-controlled key ceremony in regulated deployments.
+- **PIN handling:** the token PIN is read once at startup from
+  `pkcs11_pin_file` into a `Zeroizing` buffer, used for `C_Login`, and
+  zeroed immediately after. The PIN is never accepted via environment
+  variable or inline config value — only a file path, consistent with the
+  existing `tls_key_file`/`tls_cert_file` convention (§4.2).
+- **Failure handling:** a login failure, missing key object, or GCM tag
+  mismatch on unwrap is fatal to node startup (or, post-startup, treated the
+  same as any other GCM tag failure under invariant 5's quarantine logic).
+
+#### 2.5.2 TPM 2.0
+
+The KEK is a non-duplicable, TPM-resident symmetric-cipher key
+(`fixedTPM | fixedParent | sensitiveDataOrigin`, no duplication attribute).
+As with PKCS#11, the raw key material never leaves the TPM and never enters
+process memory — only the wrapped DEK crosses the boundary.
+
+**TPM 2.0 has no native AES-GCM command.** `TPM2_EncryptDecrypt2` supports
+only CFB/CBC/CTR/OFB/ECB symmetric modes; there is no AEAD primitive. The TPM
+provider therefore uses Encrypt-then-MAC instead of AES-GCM:
+
+```text
+wrap_dek(dek):
+  iv          = random 16 bytes
+  ciphertext  = TPM2_EncryptDecrypt2(key = tpm_kek, mode = AES-256-CFB, iv, data = dek)
+  tag         = TPM2_HMAC(key = tpm_hmac, data = iv ++ ciphertext ++ DEK_WRAP_AD)
+  wrapped     = iv ++ ciphertext ++ tag        // [16b][32b][32b] = 80 bytes
+
+unwrap_dek(wrapped):
+  split wrapped into iv, ciphertext, tag
+  expected_tag = TPM2_HMAC(key = tpm_hmac, data = iv ++ ciphertext ++ DEK_WRAP_AD)
+  reject unless expected_tag == tag (constant-time compare) — never attempt
+  TPM2_EncryptDecrypt2 on an unauthenticated ciphertext
+  dek = TPM2_EncryptDecrypt2(key = tpm_kek, mode = AES-256-CFB, iv, data = ciphertext, decrypt = true)
+```
+
+This is a deliberate deviation from "AES-256-GCM for all payloads" (§2.2)
+scoped strictly to the TPM KEK-wrap boundary: it does not touch the Log DEK,
+State DEK, or Backup DEK, which remain AES-256-GCM as specified elsewhere in
+this ADR. `tpm_kek` and `tpm_hmac` MAY be the same TPM key object used in two
+different USAGE modes if the provisioning tooling supports it, or two
+separate persistent handles; either is acceptable provided both satisfy the
+non-duplicable, non-extractable attributes above.
+
+- **Key provisioning:** a persistent handle (`tpm_key_handle`) or a saved key
+  context (`tpm_key_context_file`) identifying the pre-provisioned TPM key(s).
+  Provisioning itself (via `tpm2_create`/`tpm2_evictcontrol` or equivalent) is
+  an out-of-band operator step, documented alongside the PKCS#11 key ceremony.
+- **Auth handling:** if the key was provisioned with `userWithAuth`, the auth
+  value is read once from `tpm_auth_file` into a `Zeroizing` buffer and used
+  to authorize the TPM session; zeroed immediately after. As with PKCS#11,
+  only a file path is accepted, never an environment variable or inline
+  value. A key relying purely on PCR/policy session authorization may omit
+  `tpm_auth_file`.
+- **Sample scope:** the TPM provider ships with a runnable example targeting
+  a software TPM (`swtpm`) for local exploration, and is not part of the
+  required CI gate — real and virtual TPM availability in CI runners is not
+  reliable enough to gate merges on. The PKCS#11 path (§2.5.1), backed by
+  SoftHSM2, is the CI-gated path (§1).
 
 ---
 
@@ -782,3 +880,20 @@ Any code change violating the following is rejected at review:
 12. **Startup pre-flight:** At process startup (before KEK/DEK are loaded), the
     node must verify `RLIMIT_CORE == 0` and `PR_SET_DUMPABLE == 0`. If either
     check fails, the node must refuse to start in production mode.
+13. **Non-extractable KEK key material (§2.5):** PKCS#11 KEK key objects MUST
+    be created with `CKA_EXTRACTABLE = false` / `CKA_SENSITIVE = true`; TPM
+    KEK key objects MUST be created with `fixedTPM | fixedParent` and no
+    duplication attribute. A `KekProvider` implementation that can export raw
+    key bytes from the token/TPM is non-compliant regardless of how it is
+    otherwise used.
+14. **No PKCS#11/TPM credential via environment variable:** The PKCS#11 PIN
+    and TPM auth value are supplied only via `pkcs11_pin_file` /
+    `tpm_auth_file` (a file path in config). Neither may be supplied via an
+    environment variable or inline config value — that channel is reserved
+    exclusively for the dev-mode `KEYSTONE_DEV_KEK` path (invariant 6).
+15. **Authenticate-before-decrypt for Encrypt-then-MAC contexts:** Any
+    `KekProvider` that does not use an AEAD primitive natively (the TPM
+    provider, §2.5.2) MUST verify the MAC over the full ciphertext before
+    performing any decryption operation, and MUST use a constant-time
+    comparison. Decrypting unauthenticated ciphertext, even transiently, is
+    prohibited.

@@ -37,7 +37,7 @@ use uuid::Uuid;
 use openstack_keystone::plugin_manager::PluginManager;
 use openstack_keystone_audit::AuditDispatcher;
 use openstack_keystone_config::{
-    Config, ConfigManager, DistributedStorageConfiguration, TlsConfiguration,
+    Config, ConfigManager, DistributedStorageConfiguration, KekProvider, TlsConfiguration,
     TlsConfigurationBuilder,
 };
 use openstack_keystone_core::policy::MockPolicy;
@@ -166,6 +166,9 @@ pub async fn get_state() -> Result<(Arc<Service>, TempDir)> {
             tls_configuration,
             dev_mode: true,
             retry_join_nodes: vec![],
+            kek_provider: KekProvider::Env,
+            pkcs11: None,
+            tpm: None,
         });
         cfg.k8s_auth.driver = "raft".to_string();
     }

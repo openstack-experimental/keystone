@@ -33,8 +33,8 @@ use webauthn_authenticator_rs::{AuthenticatorBackend, WebauthnAuthenticator};
 
 use openstack_keystone_audit::AuditDispatcher;
 use openstack_keystone_config::{
-    Config, ConfigManager, DistributedStorageConfiguration, RaftTlsConfiguration, RelyingParty,
-    TlsConfiguration, TlsConfigurationBuilder,
+    Config, ConfigManager, DistributedStorageConfiguration, KekProvider, RaftTlsConfiguration,
+    RelyingParty, TlsConfiguration, TlsConfigurationBuilder,
 };
 use openstack_keystone_core::SqlDriverRegistration;
 use openstack_keystone_core::keystone::Service;
@@ -153,6 +153,9 @@ pub async fn get_state(
             tls_configuration: RaftTlsConfiguration::Tls(tls_configuration),
             dev_mode: true,
             retry_join_nodes: vec![],
+            kek_provider: KekProvider::Env,
+            pkcs11: None,
+            tpm: None,
         });
     }
     let mut policy_enforcer_mock = MockPolicy::default();

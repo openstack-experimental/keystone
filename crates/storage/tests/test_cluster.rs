@@ -35,7 +35,7 @@ use tempfile::TempDir;
 use tonic::transport::{Channel, ClientTlsConfig, Uri};
 
 use openstack_keystone_config::{
-    Config, ConfigManager, DistributedStorageConfiguration, TlsConfiguration,
+    Config, ConfigManager, DistributedStorageConfiguration, KekProvider, TlsConfiguration,
     TlsConfigurationBuilder,
 };
 use openstack_keystone_distributed_storage::app::{Storage, get_app_server, init_storage};
@@ -555,6 +555,9 @@ async fn test_node_restart_inner() -> Result<()> {
         ),
         dev_mode: true,
         retry_join_nodes: vec![],
+        kek_provider: KekProvider::Env,
+        pkcs11: None,
+        tpm: None,
     };
     let config = Config {
         distributed_storage: Some(ds_config),
@@ -645,6 +648,9 @@ async fn test_node_restart_inner() -> Result<()> {
         ),
         dev_mode: true,
         retry_join_nodes: vec![],
+        kek_provider: KekProvider::Env,
+        pkcs11: None,
+        tpm: None,
     };
     let config_restart = Config {
         distributed_storage: Some(ds_config_restart),
@@ -1662,5 +1668,8 @@ fn get_ds_config_with_port(
         tls_configuration: openstack_keystone_config::RaftTlsConfiguration::Tls(tls_config.clone()),
         dev_mode: true,
         retry_join_nodes: vec![],
+        kek_provider: KekProvider::Env,
+        pkcs11: None,
+        tpm: None,
     }
 }
