@@ -221,6 +221,38 @@ impl FernetKeyRepository {
         })
     }
 
+    /// Startup-time Null Key check (ADR 0019 §4, Security).
+    ///
+    /// Unlike [`Self::load`], this does not require any key files to be
+    /// present — an unconfigured repository (before `credential_setup` has
+    /// run) is not itself a Null Key problem. It only inspects whatever key
+    /// files already exist and, for any that decode to the well-known Null
+    /// Key, emits a hard warning log and — unless `insecure_allow_null_key`
+    /// is set — returns an error so the caller can refuse to start the
+    /// service.
+    ///
+    /// # Errors
+    /// [`CredentialFernetError::NullKeyDetected`] if a key file decodes to
+    /// the Null Key and `insecure_allow_null_key` is `false`.
+    pub fn check_startup_null_key(
+        &self,
+        insecure_allow_null_key: bool,
+    ) -> Result<(), CredentialFernetError> {
+        for (idx, raw) in self.read_key_files()? {
+            if Self::is_null_key(&raw) {
+                tracing::error!(
+                    key_index = idx,
+                    insecure_allow_null_key,
+                    "credential key repository contains the well-known Null Key at startup"
+                );
+                if !insecure_allow_null_key {
+                    return Err(CredentialFernetError::NullKeyDetected);
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Promote the staged key `0` to primary, stage a fresh key `0`, and
     /// prune beyond [`MAX_ACTIVE_KEYS`].
     ///
@@ -346,6 +378,38 @@ mod tests {
         ));
         // Explicit opt-in still loads it.
         assert!(repo.load(true).is_ok());
+    }
+
+    #[test]
+    fn test_check_startup_null_key_on_unconfigured_repository() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = FernetKeyRepository::new(dir.path().join("does-not-exist"));
+        // No key files at all (repository not yet set up) is not itself a
+        // Null Key problem.
+        assert!(repo.check_startup_null_key(false).is_ok());
+    }
+
+    #[test]
+    fn test_check_startup_null_key_refuses_by_default() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = FernetKeyRepository::new(dir.path().to_path_buf());
+        let null_key = URL_SAFE.encode([0u8; 32]);
+        std::fs::write(dir.path().join("0"), null_key).unwrap();
+
+        assert!(matches!(
+            repo.check_startup_null_key(false),
+            Err(CredentialFernetError::NullKeyDetected)
+        ));
+        // Explicit opt-in allows startup to proceed.
+        assert!(repo.check_startup_null_key(true).is_ok());
+    }
+
+    #[test]
+    fn test_check_startup_null_key_passes_with_real_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = FernetKeyRepository::new(dir.path().to_path_buf());
+        repo.setup().unwrap();
+        assert!(repo.check_startup_null_key(false).is_ok());
     }
 
     #[test]

@@ -85,6 +85,7 @@ use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core::cadf_hook::CadfAuditHook;
 use openstack_keystone_core::db::sync_schema;
 use openstack_keystone_core::error::KeystoneError;
+use openstack_keystone_credential_driver_sql::fernet::FernetKeyRepository;
 use openstack_keystone_distributed_storage::{StorageApi, app::Storage};
 
 // Default body limit 256kB
@@ -173,6 +174,16 @@ async fn main() -> Result<(), Report> {
     color_eyre::install()?;
 
     info!("Starting Keystone...");
+
+    // ADR 0019 §4: refuse to start if the credential Fernet key repository
+    // contains the well-known Null Key, unless the operator has explicitly
+    // opted in via [credential] insecure_allow_null_key. This is a startup
+    // check in addition to the check `FernetKeyRepository::load` already
+    // performs lazily on first credential access, so a misconfigured
+    // repository is caught immediately rather than on first request.
+    FernetKeyRepository::new(cfg.credential.key_repository.clone())
+        .check_startup_null_key(cfg.credential.insecure_allow_null_key)
+        .wrap_err("credential key repository failed startup check")?;
 
     let token = CancellationToken::new();
     let cloned_token = token.clone();
