@@ -47,7 +47,8 @@ impl TryFrom<db_federated_identity_provider::Model> for IdentityProvider {
             builder.oidc_client_id(val);
         }
         if let Some(val) = &value.oidc_client_secret {
-            builder.oidc_client_secret(val);
+            // Wrap the plaintext DB value back into a SecretString on read.
+            builder.oidc_client_secret(val.as_str());
         }
         if let Some(val) = &value.oidc_response_mode {
             builder.oidc_response_mode(val);

@@ -156,6 +156,7 @@ mod tests {
     use openstack_keystone_core_types::identity::UserPasswordAuthRequest;
     use openstack_keystone_core_types::resource::{Domain, DomainBuilder, Project};
     use openstack_keystone_core_types::token::{ProjectScopePayload, TokenProviderError};
+    use secrecy::ExposeSecret;
 
     use crate::api::v3::auth::token::types::*;
     use crate::assignment::MockAssignmentProvider;
@@ -213,7 +214,7 @@ mod tests {
             .expect_authenticate_by_password()
             .withf(|_, req: &UserPasswordAuthRequest| {
                 req.id == Some("uid".to_string())
-                    && req.password == "pass"
+                    && req.password.expose_secret() == "pass"
                     && req.name == Some("uname".to_string())
             })
             .returning(move |_, _| Ok(auth.clone()));
@@ -442,7 +443,7 @@ mod tests {
             .expect_authenticate_by_password()
             .withf(|_, req: &UserPasswordAuthRequest| {
                 req.id == Some("uid".to_string())
-                    && req.password == "pass"
+                    && req.password.expose_secret() == "pass"
                     && req.name == Some("uname".to_string())
             })
             .returning(move |_, _| Ok(auth.clone()));

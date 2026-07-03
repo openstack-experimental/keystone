@@ -15,6 +15,7 @@
 
 use axum::{Json, debug_handler, extract::State, http::StatusCode, response::IntoResponse};
 use chrono::Utc;
+use secrecy::ExposeSecret;
 use url::Url;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
@@ -157,7 +158,8 @@ async fn callback_inner(
     let token_response = exchange_code(
         &metadata.token_endpoint,
         client_id,
-        idp.oidc_client_secret.as_deref(),
+        // Exposure boundary: unwrapped only to build the token-endpoint request.
+        idp.oidc_client_secret.as_ref().map(|s| s.expose_secret()),
         &query.code,
         &auth_state.redirect_uri,
         &auth_state.pkce_verifier,
@@ -171,7 +173,8 @@ async fn callback_inner(
     // claim MUST contain the RP's client ID.  Validate issuer, nonce, and
     // audience in a single verification pass.
     let claims_value: serde_json::Value = verify_jwt(
-        &id_token,
+        // Exposure boundary: the ID token is unwrapped only to verify it.
+        id_token.expose_secret(),
         &jwks,
         Some(metadata.issuer.as_str()),
         Some(&auth_state.nonce),

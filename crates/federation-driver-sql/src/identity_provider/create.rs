@@ -16,6 +16,7 @@ use sea_orm::DatabaseConnection;
 use sea_orm::TransactionTrait;
 use sea_orm::entity::*;
 use sea_orm::sea_query::OnConflict;
+use secrecy::ExposeSecret;
 use uuid::Uuid;
 
 use openstack_keystone_core::error::DbContextExt;
@@ -61,10 +62,12 @@ pub async fn create(
             .unwrap_or(NotSet)
             .into(),
         oidc_client_id: idp.oidc_client_id.clone().map(Set).unwrap_or(NotSet).into(),
+        // Exposure boundary: the secret is persisted as plaintext in the DB
+        // column, so it is unwrapped only here at the final storage write.
         oidc_client_secret: idp
             .oidc_client_secret
-            .clone()
-            .map(Set)
+            .as_ref()
+            .map(|s| Set(s.expose_secret().to_string()))
             .unwrap_or(NotSet)
             .into(),
         oidc_response_mode: idp

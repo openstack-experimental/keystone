@@ -14,10 +14,13 @@
 use std::collections::HashMap;
 
 use chrono::{DateTime, Utc};
+use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 #[cfg(feature = "validate")]
 use validator::Validate;
+
+use crate::secret_serde::serialize_secret_redacted;
 
 /// User response object.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -102,7 +105,10 @@ pub struct UserResponse {
 }
 
 /// Create user data.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+///
+/// `PartialEq` is intentionally not derived: `password` is wrapped in
+/// [`SecretString`], which does not implement `PartialEq` by design.
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[cfg_attr(
     feature = "builder",
     derive(derive_builder::Builder),
@@ -154,14 +160,26 @@ pub struct UserCreate {
     #[cfg_attr(feature = "validate", validate(nested))]
     pub options: Option<UserOptions>,
 
-    /// The password for the user.
+    /// The password for the user. Wrapped in [`SecretString`] to prevent
+    /// accidental exposure via Debug/tracing; redacted (never exposed) when
+    /// serialized into policy/audit payloads. Non-emptiness and regex policy are
+    /// enforced on the wrapped value at the service layer via
+    /// `security_compliance.validate_password`.
     #[cfg_attr(feature = "builder", builder(default))]
-    #[cfg_attr(feature = "validate", validate(length(min = 1, max = 72)))]
-    pub password: Option<String>,
+    #[cfg_attr(feature = "openapi", schema(value_type = Option<String>))]
+    #[serde(
+        default,
+        serialize_with = "serialize_secret_redacted",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub password: Option<SecretString>,
 }
 
 /// Complete create user request.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+///
+/// `PartialEq` is not derived because the embedded `UserCreate` carries a
+/// `SecretString`.
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct UserCreateRequest {
@@ -171,7 +189,10 @@ pub struct UserCreateRequest {
 }
 
 /// Update user data.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+///
+/// `PartialEq` is intentionally not derived: `password` is wrapped in
+/// [`SecretString`], which does not implement `PartialEq` by design.
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[cfg_attr(
     feature = "builder",
     derive(derive_builder::Builder),
@@ -220,13 +241,24 @@ pub struct UserUpdate {
     #[cfg_attr(feature = "validate", validate(nested))]
     pub options: Option<UserOptions>,
 
-    /// The password for the user.
+    /// The password for the user. Wrapped in [`SecretString`] to prevent
+    /// accidental exposure via Debug/tracing; redacted (never exposed) when
+    /// serialized into policy/audit payloads.
     #[cfg_attr(feature = "builder", builder(default))]
-    pub password: Option<String>,
+    #[cfg_attr(feature = "openapi", schema(value_type = Option<String>))]
+    #[serde(
+        default,
+        serialize_with = "serialize_secret_redacted",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub password: Option<SecretString>,
 }
 
 /// Complete update user request.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+///
+/// `PartialEq` is not derived because the embedded `UserUpdate` carries a
+/// `SecretString`.
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct UserUpdateRequest {
@@ -313,7 +345,88 @@ pub struct UserListParameters {
 
 #[cfg(test)]
 mod tests {
+    use secrecy::ExposeSecret;
+
     use super::*;
+
+    /// Critical: `UserCreate` carries BOTH `#[serde(flatten)] extra` and a
+    /// `password` with a custom `serialize_with` + `skip_serializing_if`. This is
+    /// the exact struct the handler serializes into OPA policy input
+    /// (`json!({"user": req.user})`). Prove the flatten interaction does not
+    /// leak the password and does not drop `extra`.
+    #[test]
+    fn usercreate_flatten_redacts_password_and_keeps_extra() {
+        let uc: UserCreate = serde_json::from_str(
+            r#"{"domain_id":"d","name":"alice","enabled":true,
+                "password":"PWLEAK","x_custom":"xval","y_custom":"yval"}"#,
+        )
+        .unwrap();
+        // sanity: password wrapped, extra captured via flatten
+        assert_eq!(
+            uc.password.as_ref().map(|s| s.expose_secret()),
+            Some("PWLEAK")
+        );
+        assert_eq!(
+            uc.extra.get("x_custom").and_then(|v| v.as_str()),
+            Some("xval")
+        );
+
+        // Both the raw serialize and the OPA-shaped `json!({"user": uc})` path.
+        let direct = serde_json::to_string(&uc).unwrap();
+        let opa = serde_json::json!({ "user": &uc }).to_string();
+        for rendered in [direct, opa] {
+            assert!(
+                !rendered.contains("PWLEAK"),
+                "flatten leaked password: {rendered}"
+            );
+            assert!(
+                rendered.contains("[REDACTED]"),
+                "password not redacted: {rendered}"
+            );
+            assert!(
+                rendered.contains("x_custom") && rendered.contains("xval"),
+                "extra dropped by flatten+redact: {rendered}"
+            );
+            assert!(
+                rendered.contains("y_custom") && rendered.contains("yval"),
+                "extra dropped by flatten+redact: {rendered}"
+            );
+        }
+    }
+
+    /// `UserUpdate` has the same flatten+redact shape.
+    #[test]
+    fn userupdate_flatten_redacts_password_and_keeps_extra() {
+        let uu: UserUpdate =
+            serde_json::from_str(r#"{"password":"UPWLEAK","z_extra":"zz"}"#).unwrap();
+        let rendered = serde_json::json!({ "user": &uu }).to_string();
+        assert!(!rendered.contains("UPWLEAK"), "leaked: {rendered}");
+        assert!(rendered.contains("[REDACTED]"), "not redacted: {rendered}");
+        assert!(rendered.contains("z_extra"), "extra dropped: {rendered}");
+    }
+
+    /// Explicit `null` and absent password both deserialize to `None` (no panic,
+    /// no plaintext resurrected).
+    #[test]
+    fn usercreate_password_null_and_absent_are_none() {
+        let with_null: UserCreate =
+            serde_json::from_str(r#"{"domain_id":"d","name":"a","enabled":true,"password":null}"#)
+                .unwrap();
+        assert!(with_null.password.is_none());
+        let absent: UserCreate =
+            serde_json::from_str(r#"{"domain_id":"d","name":"a","enabled":true}"#).unwrap();
+        assert!(absent.password.is_none());
+    }
+
+    /// Debug of a populated `UserCreate` never renders the password.
+    #[test]
+    fn usercreate_debug_does_not_leak_password() {
+        let uc: UserCreate = serde_json::from_str(
+            r#"{"domain_id":"d","name":"a","enabled":true,"password":"DBGLEAK"}"#,
+        )
+        .unwrap();
+        assert!(!format!("{uc:?}").contains("DBGLEAK"));
+    }
 
     #[cfg(feature = "builder")]
     #[test]

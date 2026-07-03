@@ -4858,6 +4858,7 @@ dependencies = [
  "openstack-keystone-core-types",
  "sea-orm",
  "sea-orm-migration",
+ "secrecy",
  "serde_json",
  "tokio",
  "tracing",

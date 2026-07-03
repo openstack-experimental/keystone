@@ -14,6 +14,7 @@
 //! User account authentication implementation.
 use chrono::Utc;
 use sea_orm::DatabaseConnection;
+use secrecy::ExposeSecret;
 use tracing::info;
 
 use openstack_keystone_config::Config;
@@ -79,9 +80,11 @@ pub async fn authenticate_by_password(
             .await
             .map_err(IdentityProviderError::password_hash)?;
 
-        let _ = password_hashing::verify_password(config, &auth.password, dummy_hash)
-            .await
-            .map_err(IdentityProviderError::password_hash)?;
+        // Exposure boundary: unwrapped only to feed the constant-time verify.
+        let _ =
+            password_hashing::verify_password(config, auth.password.expose_secret(), dummy_hash)
+                .await
+                .map_err(IdentityProviderError::password_hash)?;
         return Err(AuthenticationError::UserNameOrPasswordWrong.into());
     }
 
@@ -128,7 +131,8 @@ pub async fn authenticate_by_password(
 
     // Verify the password
     let now = Utc::now();
-    if !password_hashing::verify_password(config, &auth.password, expected_hash)
+    // Exposure boundary: unwrapped only to feed the constant-time verify.
+    if !password_hashing::verify_password(config, auth.password.expose_secret(), expected_hash)
         .await
         .map_err(IdentityProviderError::password_hash)?
     {
@@ -473,7 +477,7 @@ mod tests {
                 &db,
                 &UserPasswordAuthRequest {
                     id: Some("user_id".into()),
-                    password,
+                    password: password.clone().into(),
                     ..Default::default()
                 },
             )
@@ -877,7 +881,7 @@ mod tests {
             &db,
             &UserPasswordAuthRequest {
                 id: Some("user_id".into()),
-                password: password.clone(),
+                password: password.clone().into(),
                 ..Default::default()
             },
         )
@@ -927,7 +931,7 @@ mod tests {
                 &db,
                 &UserPasswordAuthRequest {
                     id: Some("user_id".into()),
-                    password: password.clone(),
+                    password: password.clone().into(),
                     ..Default::default()
                 },
             )

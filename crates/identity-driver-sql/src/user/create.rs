@@ -196,14 +196,8 @@ pub async fn create(
         response_builder.merge_local_user_data(&local_user);
 
         if let Some(password) = &user.password {
-            password::set_new_password(
-                &txn,
-                conf,
-                local_user.id,
-                secrecy::SecretString::from(password.as_str()),
-                Vec::new(),
-            )
-            .await?;
+            password::set_new_password(&txn, conf, local_user.id, password.clone(), Vec::new())
+                .await?;
             response_builder.merge_passwords_data(password::list(&txn, local_user.id).await?);
         }
     }

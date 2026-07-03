@@ -13,12 +13,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use chrono::{DateTime, Utc};
+use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "validate")]
 use validator::Validate;
 
 use crate::catalog::*;
 use crate::scope::*;
+use crate::secret_serde::serialize_secret_redacted_required;
 use crate::trust::TokenTrustRepr;
 use crate::v3::role::RoleRef;
 
@@ -131,7 +133,10 @@ pub struct TokenResponse {
 }
 
 /// An authentication request.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+///
+/// `PartialEq` is not derived: the embedded identity carries a `SecretString`
+/// password.
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct AuthRequest {
@@ -141,7 +146,10 @@ pub struct AuthRequest {
 }
 
 /// An authentication request.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+///
+/// `PartialEq` is not derived: the embedded identity carries a `SecretString`
+/// password.
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct AuthRequestInner {
@@ -164,7 +172,9 @@ pub struct AuthRequestInner {
 }
 
 /// An identity object.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+///
+/// `PartialEq` is not derived: the embedded password carries a `SecretString`.
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[cfg_attr(
     feature = "builder",
     derive(derive_builder::Builder),
@@ -198,7 +208,10 @@ pub struct Identity {
 }
 
 /// The password object, contains the authentication information.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+///
+/// `PartialEq` is not derived: the embedded user carries a `SecretString`
+/// password.
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[cfg_attr(
     feature = "builder",
     derive(derive_builder::Builder),
@@ -216,7 +229,10 @@ pub struct PasswordAuth {
 }
 
 /// User password information.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+///
+/// `PartialEq` is intentionally not derived: `password` is wrapped in
+/// [`SecretString`], which does not implement `PartialEq` by design.
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[cfg_attr(
     feature = "builder",
     derive(derive_builder::Builder),
@@ -240,9 +256,11 @@ pub struct UserPassword {
     #[cfg_attr(feature = "builder", builder(default))]
     #[cfg_attr(feature = "validate", validate(nested))]
     pub domain: Option<Domain>,
-    /// User password.
-    #[cfg_attr(feature = "validate", validate(length(max = 255)))]
-    pub password: String,
+    /// User password. Wrapped in [`SecretString`] to prevent accidental
+    /// exposure via Debug/tracing; redacted (never exposed) when serialized.
+    #[cfg_attr(feature = "openapi", schema(value_type = String))]
+    #[serde(serialize_with = "serialize_secret_redacted_required")]
+    pub password: SecretString,
 }
 
 /// The TOTP object, contains the authentication information.
@@ -375,4 +393,70 @@ pub struct ValidateTokenParameters {
 pub struct System {
     /// All.
     pub all: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use secrecy::ExposeSecret;
+
+    use super::*;
+
+    const PWD: &str = "hunter2-plaintext";
+
+    #[test]
+    fn user_password_deserializes_plaintext_but_never_leaks() {
+        // Plaintext arrives on the wire and is accepted into the SecretString.
+        let up: UserPassword =
+            serde_json::from_str(&format!(r#"{{"name":"alice","password":"{PWD}"}}"#)).unwrap();
+        assert_eq!(up.password.expose_secret(), PWD);
+
+        // Debug must not leak (the #[instrument] / log vector).
+        assert!(
+            !format!("{up:?}").contains(PWD),
+            "Debug leaked the password"
+        );
+
+        // Serialization (e.g. into a policy/audit payload) must redact.
+        let json = serde_json::to_string(&up).unwrap();
+        assert!(!json.contains(PWD), "serialize leaked the password: {json}");
+        assert!(json.contains("[REDACTED]"), "password not redacted: {json}");
+    }
+
+    #[test]
+    fn full_auth_request_debug_does_not_leak_password() {
+        let req = nested_auth_request();
+        // Debug of the whole nested request tree must not leak the password.
+        assert!(
+            !format!("{req:?}").contains(PWD),
+            "Debug leaked via nested request"
+        );
+    }
+
+    #[test]
+    fn full_auth_request_serialize_redacts_password_at_depth() {
+        // The password sits 4 levels deep (auth -> identity -> password -> user).
+        // Prove redaction survives the whole nested Serialize tree, via both
+        // `to_string` and `to_value`.
+        let req = nested_auth_request();
+        let as_string = serde_json::to_string(&req).unwrap();
+        let as_value = serde_json::to_value(&req).unwrap().to_string();
+        for rendered in [as_string, as_value] {
+            assert!(
+                !rendered.contains(PWD),
+                "serialize leaked password at depth: {rendered}"
+            );
+            assert!(
+                rendered.contains("[REDACTED]"),
+                "nested password not redacted: {rendered}"
+            );
+        }
+    }
+
+    fn nested_auth_request() -> AuthRequest {
+        serde_json::from_str(&format!(
+            r#"{{"auth":{{"identity":{{"methods":["password"],
+                 "password":{{"user":{{"name":"alice","password":"{PWD}"}}}}}}}}}}"#
+        ))
+        .unwrap()
+    }
 }

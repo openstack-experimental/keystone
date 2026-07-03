@@ -87,6 +87,7 @@ mod tests {
     use openstack_keystone_core_types::auth::*;
     use openstack_keystone_core_types::identity::{UserPasswordAuthRequest, UserResponseBuilder};
     use openstack_keystone_core_types::resource::Domain;
+    use secrecy::ExposeSecret;
 
     use super::super::types::*;
     use super::*;
@@ -116,7 +117,7 @@ mod tests {
             .expect_authenticate_by_password()
             .withf(|_, req: &UserPasswordAuthRequest| {
                 req.id == Some("uid".to_string())
-                    && req.password == "pwd"
+                    && req.password.expose_secret() == "pwd"
                     && req.name == Some("uname".to_string())
             })
             .returning(move |_, _| Ok(auth_clone.clone()));

@@ -21,6 +21,7 @@ use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use jsonwebtoken::{
     Algorithm, DecodingKey, Header, TokenData, Validation, decode, decode_header, jwk::JwkSet,
 };
+use secrecy::SecretString;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use url::Url;
@@ -129,11 +130,15 @@ pub(super) fn build_auth_url(
 }
 
 /// Response body from the token endpoint.
+///
+/// `id_token` and `access_token` are OAuth/OIDC bearer tokens: wrapped in
+/// [`SecretString`] so this `Debug`-deriving struct can never leak them through
+/// tracing/logs. They are consumed only at the JWT-verification boundary.
 #[derive(Debug, Deserialize)]
 pub(super) struct TokenExchangeResponse {
-    pub id_token: Option<String>,
+    pub id_token: Option<SecretString>,
     #[allow(dead_code)]
-    pub access_token: Option<String>,
+    pub access_token: Option<SecretString>,
     #[allow(dead_code)]
     pub token_type: String,
     #[allow(dead_code)]
@@ -335,6 +340,8 @@ pub(super) fn build_http_client() -> Result<reqwest::Client, OidcError> {
 
 #[cfg(test)]
 mod tests {
+    use secrecy::ExposeSecret;
+
     use super::*;
     use chrono::{TimeDelta, Utc};
     use httpmock::prelude::*;
@@ -701,8 +708,35 @@ nCCsPCcZ_m39ehWRD5EuL3yrQGE7HJo2a7E9J2bb0xBQEzXd_UzBI-lOOw2nvwIm\
         .await
         .unwrap();
 
-        assert_eq!(resp.access_token, Some("at-value".to_string()));
-        assert_eq!(resp.id_token, Some("id.token.value".to_string()));
+        assert_eq!(
+            resp.access_token.as_ref().map(|s| s.expose_secret()),
+            Some("at-value")
+        );
+        assert_eq!(
+            resp.id_token.as_ref().map(|s| s.expose_secret()),
+            Some("id.token.value")
+        );
+    }
+
+    #[test]
+    fn token_exchange_response_debug_never_leaks_tokens() {
+        let resp: TokenExchangeResponse = serde_json::from_value(json!({
+            "id_token": "id.token.LEAKME",
+            "access_token": "access.token.LEAKME",
+            "token_type": "Bearer",
+        }))
+        .unwrap();
+        // The Debug-derived struct must never render the bearer tokens.
+        let dbg = format!("{resp:?}");
+        assert!(
+            !dbg.contains("LEAKME"),
+            "Debug leaked OIDC bearer tokens: {dbg}"
+        );
+        // ...but the values remain retrievable at the exposure boundary.
+        assert_eq!(
+            resp.id_token.as_ref().map(|s| s.expose_secret()),
+            Some("id.token.LEAKME")
+        );
     }
 
     #[tokio::test]
@@ -1123,11 +1157,14 @@ nCCsPCcZ_m39ehWRD5EuL3yrQGE7HJo2a7E9J2bb0xBQEzXd_UzBI-lOOw2nvwIm\
         .await
         .unwrap();
 
-        assert_eq!(
-            resp.access_token, None,
+        assert!(
+            resp.access_token.is_none(),
             "access_token must be absent in id-token-only response"
         );
-        assert_eq!(resp.id_token, Some("id.token.value".to_string()));
+        assert_eq!(
+            resp.id_token.as_ref().map(|s| s.expose_secret()),
+            Some("id.token.value")
+        );
     }
 
     // ── iat validation ────────────────────────────────────────────────────────

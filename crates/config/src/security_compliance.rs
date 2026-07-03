@@ -67,8 +67,11 @@ pub struct SecurityComplianceProvider {
     /// used in distributed installations working with the same backend, to make
     /// them all generate equal hashes for equal invalid passwords). 16 bytes
     /// (128 bits) or more is recommended.
+    ///
+    /// Wrapped in [`SecretString`] to prevent accidental exposure via
+    /// Debug/tracing (mirrors `database.connection`).
     #[serde(default)]
-    pub invalid_password_hash_key: Option<String>,
+    pub invalid_password_hash_key: Option<SecretString>,
     /// This option has a sample default set, which means that its actual
     /// default value may vary from the one documented above.
     ///
@@ -225,16 +228,27 @@ impl SecurityComplianceProvider {
         Ok(())
     }
 
-    /// Validate a password against the configured regex pattern.
+    /// Validate a password against the security-compliance policy.
     ///
-    /// Returns `Ok(())` when the password matches the configured pattern, or
-    /// when no pattern is configured. Returns
-    /// `Err(SecurityComplianceError::PasswordInvalid)`
-    /// with the human-readable policy description on mismatch.
+    /// An empty password is **always** rejected, regardless of configuration —
+    /// this is the central guard for every write path (create/update/change),
+    /// and replaces the per-DTO `length(min = 1)` check that could not be kept on
+    /// the wrapped [`SecretString`] fields (validator's `custom`/`length` require
+    /// the field to be `Serialize`, which secrets deliberately are not).
+    ///
+    /// Beyond that, returns `Ok(())` when the password matches the configured
+    /// regex pattern (or when no pattern is configured), otherwise
+    /// `Err(SecurityComplianceError::PasswordInvalid)` with the human-readable
+    /// policy description.
     pub fn validate_password(
         &self,
         password: &SecretString,
     ) -> Result<(), SecurityComplianceError> {
+        if password.expose_secret().is_empty() {
+            return Err(SecurityComplianceError::PasswordInvalid(
+                "password must not be empty".to_string(),
+            ));
+        }
         if let Some(ref re) = self.password_regex_re
             && !re.is_match(password.expose_secret())
         {
@@ -404,5 +418,36 @@ mod tests {
         // Default has no regex, so compile_regex is a no-op
         assert!(cfg.compile_regex().is_ok());
         assert!(cfg.password_regex_re.is_none());
+    }
+
+    /// Regression guard for #369: wrapping the password in `SecretString` meant
+    /// the per-DTO `length(min = 1)` guard could not be kept (validator's
+    /// `custom` needs the field to be `Serialize`). The non-empty check moved
+    /// here and MUST reject an empty password even when no regex is configured.
+    #[test]
+    fn validate_password_rejects_empty_without_regex() {
+        let sc = SecurityComplianceProvider::default();
+        assert!(sc.password_regex_re.is_none(), "precondition: no regex");
+        let result = sc.validate_password(&SecretString::from(""));
+        assert!(
+            matches!(result, Err(SecurityComplianceError::PasswordInvalid(_))),
+            "empty password must be rejected without a regex, got {result:?}"
+        );
+        // A non-empty password still passes when no policy is configured.
+        assert!(sc.validate_password(&SecretString::from("x")).is_ok());
+    }
+
+    /// The `invalid_password_hash_key` secret must never render under `Debug`
+    /// (Sea-ORM/tracing could otherwise log the whole config section).
+    #[test]
+    fn invalid_password_hash_key_redacts_under_debug() {
+        let sc = SecurityComplianceProvider {
+            invalid_password_hash_key: Some(SecretString::from("HASHKEYLEAK")),
+            ..Default::default()
+        };
+        assert!(
+            !format!("{sc:?}").contains("HASHKEYLEAK"),
+            "invalid_password_hash_key leaked via Debug"
+        );
     }
 }

@@ -15,6 +15,7 @@
 use sea_orm::DatabaseConnection;
 use sea_orm::TransactionTrait;
 use sea_orm::entity::*;
+use secrecy::ExposeSecret;
 
 use openstack_keystone_core::error::DbContextExt;
 use openstack_keystone_core::federation::FederationProviderError;
@@ -74,7 +75,8 @@ pub async fn update<S: AsRef<str>>(
         entry.oidc_client_id = Set(val.to_owned());
     }
     if let Some(val) = idp.oidc_client_secret {
-        entry.oidc_client_secret = Set(val.to_owned());
+        // Exposure boundary: unwrapped only here at the final storage write.
+        entry.oidc_client_secret = Set(val.map(|s| s.expose_secret().to_string()));
     }
     if let Some(val) = idp.oidc_response_mode {
         entry.oidc_response_mode = Set(val.to_owned());

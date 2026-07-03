@@ -107,7 +107,7 @@ pub async fn update(
             &txn,
             conf,
             local_user.id,
-            secrecy::SecretString::from(new_password.as_str()),
+            new_password.clone(),
             passwords_vec,
         )
         .await?;
@@ -334,7 +334,7 @@ mod tests {
             .into_connection();
 
         let req = UserUpdate {
-            password: Some("new_password".to_string()),
+            password: Some("new_password".into()),
             ..Default::default()
         };
 
@@ -408,7 +408,7 @@ mod tests {
             .into_connection();
 
         let req = UserUpdate {
-            password: Some("new_password".to_string()),
+            password: Some("new_password".into()),
             ..Default::default()
         };
 
@@ -454,7 +454,7 @@ mod tests {
             .into_connection();
 
         let req = UserUpdate {
-            password: Some("new_password".to_string()),
+            password: Some("new_password".into()),
             ..Default::default()
         };
 
@@ -494,7 +494,7 @@ mod tests {
 
         let req = UserUpdate {
             name: Some("new_name".to_string()),
-            password: Some("new_password".to_string()),
+            password: Some("new_password".into()),
             ..Default::default()
         };
 
@@ -541,7 +541,7 @@ mod tests {
             .into_connection();
 
         let req = UserUpdate {
-            password: Some(new_password.to_string()),
+            password: Some(new_password.into()),
             ..Default::default()
         };
 

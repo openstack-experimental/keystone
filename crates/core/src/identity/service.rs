@@ -589,8 +589,7 @@ impl IdentityApi for IdentityService {
         // Validate password against configured regex pattern.
         if let Some(ref password) = mod_user.password {
             let cfg = ctx.state().config_manager.config.read().await;
-            cfg.security_compliance
-                .validate_password(&SecretString::from(password.as_str()))?;
+            cfg.security_compliance.validate_password(password)?;
         }
         let user = if let Some(vsc) = ctx.ctx() {
             let backend_driver = &self.backend_driver;
@@ -1257,8 +1256,7 @@ impl IdentityApi for IdentityService {
         // Validate password against configured regex pattern.
         if let Some(ref password) = user.password {
             let cfg = ctx.state().config_manager.config.read().await;
-            cfg.security_compliance
-                .validate_password(&SecretString::from(password.as_str()))?;
+            cfg.security_compliance.validate_password(password)?;
         }
         let user = if let Some(vsc) = ctx.ctx() {
             let backend_driver = &self.backend_driver;

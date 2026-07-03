@@ -15,11 +15,18 @@ use std::collections::HashMap;
 
 use chrono::{DateTime, Utc};
 use derive_builder::Builder;
+use secrecy::SecretString;
 use serde::Serialize;
 use serde_json::Value;
 use validator::Validate;
 
 use crate::error::BuilderError;
+
+// NOTE: password length/non-emptiness is not validated with a field-level
+// validator here — `SecretString` cannot use validator's `length` (no
+// `ValidateLength`) nor `custom` (which requires the field to be `Serialize`).
+// Non-emptiness is enforced centrally on the wrapped value at the service layer
+// via `security_compliance.validate_password`.
 
 #[derive(Builder, Clone, Debug, PartialEq, Serialize, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
@@ -75,7 +82,10 @@ pub struct UserResponse {
 }
 
 /// User creation data.
-#[derive(Builder, Clone, Debug, PartialEq, Validate)]
+///
+/// `PartialEq` is intentionally not derived: `password` is wrapped in
+/// [`SecretString`], which does not implement `PartialEq` by design.
+#[derive(Builder, Clone, Debug, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct UserCreate {
@@ -119,10 +129,12 @@ pub struct UserCreate {
     #[validate(nested)]
     pub options: Option<UserOptions>,
 
-    /// User password.
+    /// User password. Wrapped in [`SecretString`] to prevent accidental
+    /// exposure via Debug/tracing. Non-emptiness and regex policy are enforced on
+    /// the wrapped value at the service layer via
+    /// `security_compliance.validate_password`.
     #[builder(default)]
-    #[validate(length(max = 72))]
-    pub password: Option<String>,
+    pub password: Option<SecretString>,
 
     /// The kind of local-authentication row to create for the user:
     /// `Local` creates a `local_user` row (password allowed), `NonLocal`
@@ -133,7 +145,11 @@ pub struct UserCreate {
     pub user_type: UserType,
 }
 
-#[derive(Builder, Clone, Debug, Default, PartialEq, Validate)]
+/// User update data.
+///
+/// `PartialEq` is intentionally not derived: `password` is wrapped in
+/// [`SecretString`], which does not implement `PartialEq` by design.
+#[derive(Builder, Clone, Debug, Default, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct UserUpdate {
@@ -169,10 +185,11 @@ pub struct UserUpdate {
     #[validate(nested)]
     pub options: Option<UserOptions>,
 
-    /// New user password.
+    /// New user password. Wrapped in [`SecretString`] to prevent accidental
+    /// exposure via Debug/tracing. Non-emptiness/policy enforced at the service
+    /// layer via `security_compliance.validate_password`.
     #[builder(default)]
-    #[validate(length(max = 72))]
-    pub password: Option<String>,
+    pub password: Option<SecretString>,
 }
 
 /// User options.
@@ -279,7 +296,10 @@ pub enum UserType {
 }
 
 /// User password information.
-#[derive(Builder, Clone, Debug, Default, PartialEq, Validate)]
+///
+/// `Default` and `PartialEq` are intentionally not derived: `password` is a
+/// required [`SecretString`], which implements neither by design.
+#[derive(Builder, Clone, Debug, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct UserPasswordAuthRequest {
@@ -298,10 +318,25 @@ pub struct UserPasswordAuthRequest {
     #[validate(nested)]
     pub domain: Option<Domain>,
 
-    /// User password expiry date.
-    #[builder(default)]
-    #[validate(length(max = 72))]
-    pub password: String,
+    /// User password. Wrapped in [`SecretString`] to prevent accidental
+    /// exposure via Debug/tracing. Required (no builder default: `SecretString`
+    /// does not implement `Default`).
+    pub password: SecretString,
+}
+
+/// Manual `Default` (the derive cannot be used because `SecretString` does not
+/// implement `Default`). Preserves the pre-wrapping default of an empty
+/// password. Production code constructs this via the builder, which requires an
+/// explicit password.
+impl Default for UserPasswordAuthRequest {
+    fn default() -> Self {
+        Self {
+            id: None,
+            name: None,
+            domain: None,
+            password: SecretString::from(""),
+        }
+    }
 }
 
 /// User TOTP authentication request.
