@@ -235,6 +235,10 @@ pub struct Config {
     #[serde(rename = "rate_limit_global_ip", default)]
     pub rate_limit_global_ip: RateLimitSection,
 
+    /// Reverse proxies trusted by the global per-IP rate limiter.
+    #[serde(rename = "rate_limit_trusted_proxies", default)]
+    pub rate_limit_trusted_proxies: RateLimitTrustedProxiesSection,
+
     /// Resource provider configuration.
     #[serde(default)]
     pub resource: ResourceProvider,
@@ -875,6 +879,7 @@ mod tests {
     node_cluster_addr = "https://localhost:8310"
     node_id = 1
     path = "/keystone/storage"
+    dev_mode = true
 
     [api_key]
     argon2_memory_kib = 0

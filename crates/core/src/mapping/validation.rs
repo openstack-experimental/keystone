@@ -466,19 +466,17 @@ fn check_body_for_nested_quantifiers(rep: &HirRepetition, body: &Hir, errors: &m
     // to find the nested Repetition.
     match body.kind() {
         // Direct nested quantifier: `a++`, `(a+)*`, etc.
-        HirKind::Repetition(_) => {
-            if errors.is_empty() {
+        HirKind::Repetition(_)
+            if errors.is_empty() => {
                 errors.push("nested quantifier detected".to_string());
             }
-        }
         // Unbounded alternation: `(a|b)*`, `(x|y)+`, etc.
         // HIR may normalize `(a|b)` to `[ab]`, so this checks the remaining cases
-        HirKind::Alternation(alts) => {
+        HirKind::Alternation(alts)
             // Multiple branches under quantifier can cause pathological matching
-            if alts.len() > 1 && errors.is_empty() {
+            if alts.len() > 1 && errors.is_empty() => {
                 errors.push("unbounded alternation under quantifier".to_string());
             }
-        }
         // Capture wraps another node — look inside.
         // e.g., `(a+)+` has `Repetition -> Capture -> Repetition`.
         HirKind::Capture(capture) => {

@@ -205,9 +205,7 @@ async fn resolve_verified_api_client(
             // brute-force garbage traffic doesn't bypass rate limiting by
             // sending malformed tokens.
             if let Some(ip) = peer_ip
-                && let Err(not_until) = state
-                    .api_key_rate_limiter
-                    .check_key(&ip.to_string())
+                && let Err(not_until) = state.api_key_rate_limiter.check_key(&ip.to_string())
             {
                 let retry_after = not_until
                     .wait_time_from(state.api_key_rate_limiter.clock().now())
@@ -219,10 +217,7 @@ async fn resolve_verified_api_client(
         }
     };
 
-    if let Err(not_until) = state
-        .api_key_rate_limiter
-        .check_key(&parsed.lookup_hash)
-    {
+    if let Err(not_until) = state.api_key_rate_limiter.check_key(&parsed.lookup_hash) {
         let retry_after = not_until
             .wait_time_from(state.api_key_rate_limiter.clock().now())
             .as_secs()

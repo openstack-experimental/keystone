@@ -282,6 +282,10 @@ async fn main() -> Result<(), Report> {
         token.clone(),
         shared_state.clone(),
     ));
+    spawn(reload_rate_limits_on_config_change(
+        token.clone(),
+        shared_state.clone(),
+    ));
 
     subscribe_event_hooks(&shared_state).await;
 
@@ -1046,6 +1050,41 @@ async fn reset_dummy_hash_on_reload(cancel: CancellationToken, state: ServiceSta
             }
             () = cancel.cancelled() => {
                 info!("Cancellation requested. Stopping dummy-hash reset task.");
+                break;
+            }
+        }
+    }
+}
+
+/// Atomically rebuild rate limiters when their configuration changes.
+///
+/// Invalid runtime replacements are logged and ignored, preserving the
+/// previous validated limiter and its counters. Initial configuration remains
+/// fail-hard in [`KeystoneServiceState::new`].
+async fn reload_rate_limits_on_config_change(cancel: CancellationToken, state: ServiceState) {
+    let mut reload_rx = state.config_manager.notify_tx.subscribe();
+    loop {
+        tokio::select! {
+            recv = reload_rx.recv() => {
+                match recv {
+                    Ok(()) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                        let config = state.config_manager.config.read().await;
+                        match state.rate_limiters.reload(&config) {
+                            Ok(true) => info!("Rate-limit configuration reloaded"),
+                            Ok(false) => {}
+                            Err(error) => {
+                                error!(
+                                    %error,
+                                    "Invalid rate-limit configuration reload; retaining last-known-good state"
+                                );
+                            }
+                        }
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                }
+            }
+            () = cancel.cancelled() => {
+                info!("Cancellation requested. Stopping rate-limit reload task.");
                 break;
             }
         }

@@ -109,11 +109,15 @@ async fn create_inner(
     // Global per-IP rate-limit check (ADR-0022, Invariant 4).
     // Fires BEFORE authenticate_request to avoid consuming CPU on password
     // hashing for rejected requests.
-    if let Some(addr) = peer_addr
-        && let Err(retry_after) = state.rate_limiters.check_ip(addr.ip())
+    let xff_header = headers
+        .get("x-forwarded-for")
+        .and_then(|value| value.to_str().ok());
+    if let Err(retry_after) = state
+        .rate_limiters
+        .check_ip(xff_header, peer_addr.map(|addr| addr.ip()))
     {
         return Err(KeystoneApiError::TooManyRequests {
-            retry_after: retry_after.as_secs().max(1),
+            retry_after: retry_after.as_secs(),
         });
     }
 
@@ -813,6 +817,73 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
+    async fn test_rate_limit_uses_xff_only_for_trusted_peer() {
+        let mut config = Config {
+            rate_limit_global_ip: RateLimitSection {
+                enabled: true,
+                burst_size: 1,
+                replenish_rate_per_second: 1,
+            },
+            ..Config::default()
+        };
+        config
+            .rate_limit_trusted_proxies
+            .trusted_proxies
+            .push("10.0.0.0/8".to_string());
+
+        let mut identity_mock = MockIdentityProvider::default();
+        identity_mock
+            .expect_authenticate_by_password()
+            .times(2)
+            .returning(|_, _| Err(IdentityProviderError::UserNotFound("uid".into())));
+        let provider = Provider::mocked_builder()
+            .mock_identity(identity_mock)
+            .build()
+            .unwrap();
+        let state = Arc::new(
+            Service::new(
+                ConfigManager::not_watched(config),
+                DatabaseConnection::Disconnected,
+                provider,
+                Arc::new(MockPolicy::default()),
+                AuditDispatcher::noop(),
+                None,
+            )
+            .await
+            .unwrap(),
+        );
+        let peer: SocketAddr = "10.0.0.1:1234".parse().unwrap();
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        for client_ip in ["203.0.113.1", "203.0.113.2"] {
+            let mut request = Request::builder()
+                .uri("/")
+                .method("POST")
+                .header(header::CONTENT_TYPE, "application/json")
+                .header("x-forwarded-for", client_ip)
+                .body(Body::from(auth_body()))
+                .unwrap();
+            request.extensions_mut().insert(ConnectInfo(peer));
+            let response = api.as_service().oneshot(request).await.unwrap();
+            assert_ne!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+        }
+
+        let mut request = Request::builder()
+            .uri("/")
+            .method("POST")
+            .header(header::CONTENT_TYPE, "application/json")
+            .header("x-forwarded-for", "203.0.113.1")
+            .body(Body::from(auth_body()))
+            .unwrap();
+        request.extensions_mut().insert(ConnectInfo(peer));
+        let response = api.as_service().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+    }
+
+    #[tokio::test]
+    #[traced_test]
     async fn test_rate_limit_does_not_apply_without_connect_info() {
         // When there is no ConnectInfo in extensions (SPIFFE/internal interface),
         // requests must never be rate-limited regardless of the configured quota.
@@ -877,8 +948,8 @@ mod tests {
     /// (`into_make_service_with_connect_info::<SocketAddr>`) with a fixed peer
     /// address, so the `ConnectInfo<SocketAddr>` extension is populated by axum
     /// itself — not injected by the test. This proves the whole chain wires up:
-    /// TCP peer → `ConnectInfo` extension → `Option<Extension<ConnectInfo<_>>>`
-    /// extractor → `check_ip` → 429 + `Retry-After`. Confirms the `401 → 429`
+    /// TCP peer → `ConnectInfo` extension → `PeerAddr` extractor → `check_ip`
+    /// → 429 + `Retry-After`. Confirms the `401 → 429`
     /// flip the manual `curl` loop in the PR test plan would show, without a
     /// live database or socket (`Connected<SocketAddr> for SocketAddr` drives
     /// the make-service with a synthetic peer).

@@ -52,8 +52,7 @@ impl IntoResponse for KeystoneApiError {
                     "message": self.to_string(),
                 }
             }));
-            let retry_value = HeaderValue::from_str(&retry_after.to_string())
-                .unwrap_or_else(|_| HeaderValue::from_static("60"));
+            let retry_value = HeaderValue::from(*retry_after);
             let mut response = (StatusCode::TOO_MANY_REQUESTS, body).into_response();
             response
                 .headers_mut()
@@ -674,6 +673,7 @@ mod tests {
     #[test]
     fn too_many_requests_returns_429_with_retry_after() {
         let err = KeystoneApiError::TooManyRequests { retry_after: 42 };
+        assert_eq!(err.to_string(), "Rate limit exceeded. Retry in 42 seconds.");
         let response = <KeystoneApiError as IntoResponse>::into_response(err);
         assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
         let retry_after = response
@@ -681,18 +681,5 @@ mod tests {
             .get(header::RETRY_AFTER)
             .expect("Retry-After header must be present");
         assert_eq!(retry_after.to_str().unwrap(), "42");
-    }
-
-    #[test]
-    fn too_many_requests_retry_after_fallback_on_large_value() {
-        // u64::MAX cannot fit in a header value — the fallback must be "60".
-        // In practice our handler always passes a small Duration::as_secs()
-        // value, but the fallback path must be covered.
-        // We verify the fallback by constructing a HeaderValue that fails.
-        let bad_value = "not\na valid\nheader";
-        let result = HeaderValue::from_str(bad_value);
-        assert!(result.is_err(), "sanity: newlines must be rejected");
-        let fallback = result.unwrap_or_else(|_| HeaderValue::from_static("60"));
-        assert_eq!(fallback.to_str().unwrap(), "60");
     }
 }

@@ -81,7 +81,7 @@ pub enum KeystoneApiError {
     /// `retry_after` is the number of seconds the client must wait before
     /// retrying. Surfaced via the `Retry-After` response header (ADR-0022,
     /// Invariant 3). No key-identifying information is included.
-    #[error("Rate limit exceeded. Retry in {retry_after}s.")]
+    #[error("Rate limit exceeded. Retry in {retry_after} seconds.")]
     TooManyRequests {
         /// Minimum seconds to wait before retrying.
         retry_after: u64,
