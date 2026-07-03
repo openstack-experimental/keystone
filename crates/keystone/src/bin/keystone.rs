@@ -698,11 +698,11 @@ async fn build_router(
                     // REMOTE_ADDR / flask.request.remote_addr): the raw TCP peer
                     // on the public listener via
                     // `into_make_service_with_connect_info`, or the mTLS peer on
-                    // the internal SPIFFE-TLS listener (injected by hand, see
-                    // issue #358). When `enable_proxy_headers_parsing` is on, the
-                    // public value has been overwritten with the proxy-resolved
-                    // client address. `None` on the admin UDS interface, which
-                    // has no meaningful `SocketAddr`.
+                    // the internal SPIFFE-TLS listener (injected by hand). When
+                    // `enable_proxy_headers_parsing` is on, the public value has
+                    // been overwritten with the proxy-resolved client address.
+                    // `None` on the admin UDS interface, which has no meaningful
+                    // `SocketAddr`.
                     let client_addr = request
                         .extensions()
                         .get::<ConnectInfo<SocketAddr>>()
@@ -1026,12 +1026,19 @@ async fn spawn_public_listener(
             // When operating behind a trusted reverse proxy (config-gated,
             // off by default), parse `Forwarded`/`X-Forwarded-For` and rewrite
             // the raw-peer `ConnectInfo` with the originating client address
-            // *before* the tracing span and handlers read it (issue #358). The
-            // layer is added only on this public interface — never on the
-            // internal SPIFFE/admin listeners, whose peers are the mTLS mesh.
+            // *before* the tracing span and handlers read it. The header is
+            // honoured only when the immediate peer matches `trusted_proxies`,
+            // so an empty allowlist keeps the raw peer. The layer is added only
+            // on this public interface — never on the internal SPIFFE/admin
+            // listeners, whose peers are the mTLS mesh.
             let rest_app = if cfg.oslo_middleware.enable_proxy_headers_parsing {
-                info!("Proxy header parsing enabled on the public interface");
-                app.layer(axum::middleware::from_fn(
+                info!(
+                    trusted_proxies = cfg.oslo_middleware.trusted_proxies.len(),
+                    "Proxy header parsing enabled on the public interface"
+                );
+                let trusted = Arc::new(cfg.oslo_middleware.trusted_proxies.clone());
+                app.layer(axum::middleware::from_fn_with_state(
+                    trusted,
                     proxy_headers::rewrite_client_addr,
                 ))
             } else {
@@ -1046,11 +1053,11 @@ async fn spawn_public_listener(
                 // `into_make_service_with_connect_info::<SocketAddr>` stores the
                 // raw TCP peer address in a `ConnectInfo<SocketAddr>` request
                 // extension (the analogue of Python Keystone's WSGI REMOTE_ADDR).
-                // This is the *raw* peer, not proxy-resolved: behind a reverse
-                // proxy/LB it is the proxy's address. A trusted forwarded-header
-                // layer (mirroring oslo_middleware's `enable_proxy_headers_parsing`,
-                // off by default) is a deliberate follow-up before this is used
-                // for any IP-based login control. See issue #358.
+                // Behind a reverse proxy/LB this is the proxy's address; the
+                // `rewrite_client_addr` layer wired above (when
+                // `enable_proxy_headers_parsing` is on) overwrites it with the
+                // trusted-proxy-resolved client address before any consumer
+                // reads it.
                 let cancel_token = rest_cancel_token.clone();
                 if let Err(e) = axum::serve(
                     listener,

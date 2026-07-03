@@ -235,11 +235,16 @@ pub(crate) mod tests {
         // Mirror `build_router`: the API service is `NormalizePath`-wrapped and
         // mounted as the outer router's fallback.
         let normalized = NormalizePathLayer::trim_trailing_slash().layer(router);
-        let app = Router::new()
-            .fallback_service(normalized)
-            .layer(axum::middleware::from_fn(
-                crate::server::proxy_headers::rewrite_client_addr,
-            ));
+        // The raw peer (10.0.0.9) must be a trusted proxy for the header to be
+        // honoured, mirroring the `[oslo_middleware] trusted_proxies` allowlist.
+        let trusted = std::sync::Arc::new(vec!["10.0.0.0/8".to_string()]);
+        let app =
+            Router::new()
+                .fallback_service(normalized)
+                .layer(axum::middleware::from_fn_with_state(
+                    trusted,
+                    crate::server::proxy_headers::rewrite_client_addr,
+                ));
 
         let make =
             AxumServiceExt::<Request<Body>>::into_make_service_with_connect_info::<SocketAddr>(app);

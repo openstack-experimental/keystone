@@ -15,6 +15,7 @@
 pub mod api_key_auth;
 pub mod auth;
 pub mod common;
+pub mod forwarded;
 pub mod v3;
 pub mod v4;
 

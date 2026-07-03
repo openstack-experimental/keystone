@@ -11,7 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-//! # Proxy forwarded-header parsing (issue #358)
+//! # Proxy forwarded-header parsing
 //!
 //! When Keystone runs behind a trusted reverse proxy / load balancer, the raw
 //! TCP peer captured in [`ConnectInfo<SocketAddr>`] is the proxy's address, not
@@ -22,246 +22,138 @@
 //! real client.
 //!
 //! It mirrors upstream Python Keystone's `[oslo_middleware]
-//! enable_proxy_headers_parsing` (oslo.middleware `HTTPProxyToWSGI`): the
-//! [`rewrite_client_addr`] layer is only wired onto the **public** listener
-//! when that flag is enabled, and it is **off by default**. Enabling it asserts
-//! that the immediate peer is a trusted proxy; a deployment not behind such a
-//! proxy leaves it off and cannot be tricked into trusting a spoofed header.
+//! enable_proxy_headers_parsing`: the [`rewrite_client_addr`] layer is only
+//! wired onto the **public** listener when that flag is enabled, and it is
+//! **off by default**.
 //!
-//! [RFC 7239] `Forwarded` is honoured first; `X-Forwarded-For` is the fallback.
-//! In both the originating client is the **leftmost** entry (each proxy appends
-//! the peer it received the request from), matching the trusted-proxy model.
-//!
-//! [RFC 7239]: https://datatracker.ietf.org/doc/html/rfc7239
+//! Extraction is not blind. The header is honoured only when the immediate TCP
+//! peer matches the operator-configured `trusted_proxies` allowlist, and the
+//! effective client is the rightmost address in the chain that is not itself a
+//! trusted proxy — the same rightmost-non-trusted-proxy algorithm the API-Key
+//! ingress uses ([`openstack_keystone_core::api::forwarded`]). A client able to
+//! reach the listener directly therefore cannot spoof its apparent address, and
+//! an empty allowlist trusts no one (the raw peer is always kept).
 
-use std::net::{IpAddr, Ipv6Addr, SocketAddr};
+use std::net::SocketAddr;
+use std::sync::Arc;
 
 use axum::extract::ConnectInfo;
 use axum::extract::Request;
-use axum::http::HeaderMap;
+use axum::extract::State;
 use axum::middleware::Next;
 use axum::response::Response;
 
+use openstack_keystone_core::api::forwarded::resolve_client_ip;
+
 /// Axum middleware that overwrites the request's [`ConnectInfo<SocketAddr>`]
-/// with the proxy-resolved client address when a forwarding header is present.
+/// with the proxy-resolved client address when the immediate peer is a trusted
+/// proxy and a forwarding header carries a different upstream client.
 ///
-/// Wired onto the public listener only, and only when
-/// `[oslo_middleware] enable_proxy_headers_parsing` is on — so its mere
-/// presence in the stack already means the operator has opted in to trusting
-/// the peer's forwarding headers. The recovered address has no meaningful
-/// source port, so port `0` is used.
-pub async fn rewrite_client_addr(mut req: Request, next: Next) -> Response {
-    if let Some(ip) = resolve_forwarded_ip(req.headers()) {
+/// `trusted_proxies` is the operator-configured CIDR allowlist (`[oslo_middleware]
+/// trusted_proxies`). When the resolved client equals the raw peer (direct
+/// client, untrusted peer, or an all-trusted chain), `ConnectInfo` is left
+/// untouched so the real source port is preserved. The recovered address has no
+/// meaningful source port, so port `0` is used.
+pub async fn rewrite_client_addr(
+    State(trusted_proxies): State<Arc<Vec<String>>>,
+    mut req: Request,
+    next: Next,
+) -> Response {
+    let peer_ip = req
+        .extensions()
+        .get::<ConnectInfo<SocketAddr>>()
+        .map(|ConnectInfo(addr)| addr.ip());
+
+    if let Some(client_ip) = resolve_client_ip(req.headers(), peer_ip, &trusted_proxies)
+        && Some(client_ip) != peer_ip
+    {
         req.extensions_mut()
-            .insert(ConnectInfo(SocketAddr::new(ip, 0)));
+            .insert(ConnectInfo(SocketAddr::new(client_ip, 0)));
     }
     next.run(req).await
-}
-
-/// Resolve the originating client IP from forwarding headers, preferring
-/// RFC 7239 `Forwarded` over `X-Forwarded-For`. Returns `None` when neither is
-/// present or parseable (e.g. an obfuscated `for=_hidden` identifier), leaving
-/// the raw peer address untouched.
-fn resolve_forwarded_ip(headers: &HeaderMap) -> Option<IpAddr> {
-    if let Some(ip) = headers
-        .get("forwarded")
-        .and_then(|v| v.to_str().ok())
-        .and_then(parse_forwarded_client)
-    {
-        return Some(ip);
-    }
-
-    headers
-        .get("x-forwarded-for")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.split(',').next())
-        .and_then(|s| parse_ip_maybe_port(s.trim()))
-}
-
-/// Extract the client IP from the leftmost element's `for=` parameter of an
-/// RFC 7239 `Forwarded` header value.
-fn parse_forwarded_client(value: &str) -> Option<IpAddr> {
-    let first = value.split(',').next()?;
-    for param in first.split(';') {
-        let mut kv = param.trim().splitn(2, '=');
-        let key = kv.next()?.trim();
-        if key.eq_ignore_ascii_case("for") {
-            let raw = kv.next()?.trim().trim_matches('"');
-            return parse_ip_maybe_port(raw);
-        }
-    }
-    None
-}
-
-/// Parse an address token that may be a bare IP, an `ip:port`, or a bracketed
-/// IPv6 (`[::1]` / `[::1]:443`), returning just the IP. Obfuscated or malformed
-/// tokens yield `None`.
-fn parse_ip_maybe_port(s: &str) -> Option<IpAddr> {
-    let s = s.trim();
-    if s.is_empty() {
-        return None;
-    }
-    // Bracketed IPv6 (RFC 7239 form), with an optional trailing port.
-    if let Some(rest) = s.strip_prefix('[') {
-        let end = rest.find(']')?;
-        return rest[..end].parse::<Ipv6Addr>().ok().map(IpAddr::V6);
-    }
-    // `ip:port` (only unambiguous for IPv4; a bare IPv6 has many colons and is
-    // handled by the bare-IP branch below).
-    if let Ok(sa) = s.parse::<SocketAddr>() {
-        return Some(sa.ip());
-    }
-    // Bare IPv4 or IPv6, no port.
-    s.parse::<IpAddr>().ok()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn headers(pairs: &[(&str, &str)]) -> HeaderMap {
-        let mut h = HeaderMap::new();
-        for (k, v) in pairs {
-            h.insert(
-                axum::http::HeaderName::from_bytes(k.as_bytes()).unwrap(),
-                v.parse().unwrap(),
-            );
-        }
-        h
+    use axum::body::Body;
+    use axum::routing::get;
+    use axum::{Router, ServiceExt as AxumServiceExt};
+    use tower::ServiceExt as _;
+
+    async fn echo(ConnectInfo(addr): ConnectInfo<SocketAddr>) -> String {
+        addr.to_string()
     }
 
-    fn ip(s: &str) -> IpAddr {
-        s.parse().unwrap()
-    }
-
-    #[test]
-    fn no_headers_yields_none() {
-        assert_eq!(resolve_forwarded_ip(&HeaderMap::new()), None);
-    }
-
-    #[test]
-    fn xff_takes_leftmost_originating_client() {
-        // client, proxy1, proxy2 — leftmost is the origin.
-        let h = headers(&[("x-forwarded-for", "203.0.113.7, 10.0.0.1, 10.0.0.2")]);
-        assert_eq!(resolve_forwarded_ip(&h), Some(ip("203.0.113.7")));
-    }
-
-    #[test]
-    fn forwarded_header_takes_precedence_over_xff() {
-        let h = headers(&[
-            ("forwarded", "for=203.0.113.9"),
-            ("x-forwarded-for", "198.51.100.1"),
-        ]);
-        assert_eq!(resolve_forwarded_ip(&h), Some(ip("203.0.113.9")));
-    }
-
-    #[test]
-    fn forwarded_parses_leftmost_for_with_other_params() {
-        let h = headers(&[(
-            "forwarded",
-            "for=203.0.113.9;proto=https;by=203.0.113.43, for=198.51.100.17",
-        )]);
-        assert_eq!(resolve_forwarded_ip(&h), Some(ip("203.0.113.9")));
-    }
-
-    #[test]
-    fn forwarded_parses_quoted_ipv6_with_port() {
-        let h = headers(&[("forwarded", r#"for="[2001:db8:cafe::17]:4711""#)]);
-        assert_eq!(resolve_forwarded_ip(&h), Some(ip("2001:db8:cafe::17")));
-    }
-
-    #[test]
-    fn forwarded_obfuscated_identifier_is_ignored() {
-        let h = headers(&[("forwarded", "for=_hidden")]);
-        assert_eq!(resolve_forwarded_ip(&h), None);
-    }
-
-    #[test]
-    fn forwarded_case_insensitive_for_key() {
-        let h = headers(&[("forwarded", "For=203.0.113.9")]);
-        assert_eq!(resolve_forwarded_ip(&h), Some(ip("203.0.113.9")));
-    }
-
-    #[test]
-    fn xff_ipv4_with_port_strips_port() {
-        let h = headers(&[("x-forwarded-for", "203.0.113.7:5555")]);
-        assert_eq!(resolve_forwarded_ip(&h), Some(ip("203.0.113.7")));
-    }
-
-    #[test]
-    fn xff_bare_ipv6_is_parsed() {
-        let h = headers(&[("x-forwarded-for", "2001:db8::1, 10.0.0.1")]);
-        assert_eq!(resolve_forwarded_ip(&h), Some(ip("2001:db8::1")));
-    }
-
-    #[test]
-    fn garbage_xff_yields_none() {
-        let h = headers(&[("x-forwarded-for", "not-an-ip")]);
-        assert_eq!(resolve_forwarded_ip(&h), None);
-    }
-
-    #[tokio::test]
-    async fn middleware_overwrites_connect_info_when_forwarded_present() {
-        use axum::body::Body;
-        use axum::routing::get;
-        use axum::{Router, ServiceExt as AxumServiceExt};
-        use tower::ServiceExt as _;
-
-        async fn echo(ConnectInfo(addr): ConnectInfo<SocketAddr>) -> String {
-            addr.ip().to_string()
-        }
-
-        let app = Router::new()
-            .route("/echo", get(echo))
-            .layer(axum::middleware::from_fn(rewrite_client_addr));
+    /// Build the app with the middleware carrying a fixed trusted-proxy list,
+    /// drive it with `peer` as the raw TCP peer, and return the address the
+    /// handler observed.
+    async fn observed_addr(trusted: &[&str], peer: &str, headers: &[(&str, &str)]) -> String {
+        let trusted = Arc::new(trusted.iter().map(|s| s.to_string()).collect::<Vec<_>>());
+        let app =
+            Router::new()
+                .route("/echo", get(echo))
+                .layer(axum::middleware::from_fn_with_state(
+                    trusted,
+                    rewrite_client_addr,
+                ));
         let make =
             AxumServiceExt::<Request>::into_make_service_with_connect_info::<SocketAddr>(app);
-        // Raw TCP peer is the proxy (10.0.0.9); the header carries the client.
-        let peer: SocketAddr = "10.0.0.9:1111".parse().unwrap();
+        let peer: SocketAddr = peer.parse().unwrap();
         let svc = make.oneshot(peer).await.unwrap();
 
+        let mut builder = Request::builder().uri("/echo");
+        for (k, v) in headers {
+            builder = builder.header(*k, *v);
+        }
         let resp = svc
-            .oneshot(
-                Request::builder()
-                    .uri("/echo")
-                    .header("x-forwarded-for", "203.0.113.7")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
+            .oneshot(builder.body(Body::empty()).unwrap())
             .await
             .unwrap();
         let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
             .await
             .unwrap();
-        assert_eq!(&body[..], b"203.0.113.7");
+        String::from_utf8(body.to_vec()).unwrap()
     }
 
     #[tokio::test]
-    async fn middleware_preserves_peer_when_no_forwarded_header() {
-        use axum::body::Body;
-        use axum::routing::get;
-        use axum::{Router, ServiceExt as AxumServiceExt};
-        use tower::ServiceExt as _;
+    async fn rewrites_to_client_when_peer_is_trusted() {
+        // Raw peer 10.0.0.9 is a trusted proxy; the XFF chain carries the client.
+        let addr = observed_addr(
+            &["10.0.0.0/8"],
+            "10.0.0.9:1111",
+            &[("x-forwarded-for", "203.0.113.7, 10.0.0.9")],
+        )
+        .await;
+        // Rewritten to the client IP (with the conventional port 0).
+        assert_eq!(addr, "203.0.113.7:0");
+    }
 
-        async fn echo(ConnectInfo(addr): ConnectInfo<SocketAddr>) -> String {
-            addr.ip().to_string()
-        }
+    #[tokio::test]
+    async fn ignores_header_when_peer_is_untrusted() {
+        // A direct (untrusted) client cannot spoof its address via the header;
+        // the raw peer address — including its real port — is preserved.
+        let addr = observed_addr(
+            &["10.0.0.0/8"],
+            "203.0.113.50:2222",
+            &[("x-forwarded-for", "1.2.3.4")],
+        )
+        .await;
+        assert_eq!(addr, "203.0.113.50:2222");
+    }
 
-        let app = Router::new()
-            .route("/echo", get(echo))
-            .layer(axum::middleware::from_fn(rewrite_client_addr));
-        let make =
-            AxumServiceExt::<Request>::into_make_service_with_connect_info::<SocketAddr>(app);
-        let peer: SocketAddr = "203.0.113.50:2222".parse().unwrap();
-        let svc = make.oneshot(peer).await.unwrap();
+    #[tokio::test]
+    async fn preserves_peer_when_no_forwarded_header() {
+        let addr = observed_addr(&["10.0.0.0/8"], "10.0.0.9:3333", &[]).await;
+        // Peer is trusted but there is no header, so it stays the peer.
+        assert_eq!(addr, "10.0.0.9:3333");
+    }
 
-        let resp = svc
-            .oneshot(Request::builder().uri("/echo").body(Body::empty()).unwrap())
-            .await
-            .unwrap();
-        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
-            .await
-            .unwrap();
-        assert_eq!(&body[..], b"203.0.113.50");
+    #[tokio::test]
+    async fn empty_allowlist_trusts_no_one() {
+        // With no trusted proxies configured, the header is never honoured.
+        let addr = observed_addr(&[], "10.0.0.9:4444", &[("x-forwarded-for", "203.0.113.7")]).await;
+        assert_eq!(addr, "10.0.0.9:4444");
     }
 }

@@ -216,7 +216,7 @@ pub struct Config {
     #[serde(default)]
     pub mapping: MappingProvider,
 
-    /// `[oslo_middleware]` configuration (proxy header parsing, issue #358).
+    /// `[oslo_middleware]` configuration (proxy header parsing).
     #[serde(default)]
     pub oslo_middleware: OsloMiddleware,
 

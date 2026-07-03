@@ -35,6 +35,7 @@ use openstack_keystone_core_types::mapping::resolution::IdentitySource;
 use openstack_keystone_core_types::mapping::virtual_user::MatchResult;
 
 use crate::api::KeystoneApiError;
+use crate::api::forwarded::resolve_client_ip;
 use crate::api_key::{crypto, token};
 use crate::auth::{ExecutionContext, ValidatedSecurityContext};
 use crate::keystone::ServiceState;
@@ -253,13 +254,10 @@ async fn resolve_verified_api_client(
         return Err(AuthenticationError::Unauthorized.into());
     }
 
-    let xff_header = parts
-        .headers
-        .get(axum::http::header::HeaderName::from_static(
-            "x-forwarded-for",
-        ))
-        .and_then(|h| h.to_str().ok());
-    let effective_ip = crate::net::resolve_client_ip(xff_header, peer_ip, &cfg.trusted_proxies);
+    // Resolve the effective client IP behind trusted proxies from the RFC 7239
+    // `Forwarded` header (preferred) or `X-Forwarded-For` (#358 follow-up),
+    // honouring the header only when the immediate peer is a trusted proxy.
+    let effective_ip = resolve_client_ip(&parts.headers, peer_ip, &cfg.trusted_proxies);
     if !ip_allowed(effective_ip, &resource.allowed_ips) {
         return Err(AuthenticationError::Unauthorized.into());
     }
@@ -483,7 +481,6 @@ async fn hydrate_ephemeral_context(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::net::resolve_client_ip;
 
     use openstack_keystone_core_types::auth::{
         AuthenticationContext, AuthzInfoBuilder, IdentityInfo, PrincipalInfo, ScopeInfo,
@@ -571,63 +568,6 @@ mod tests {
 
     fn ip(s: &str) -> IpAddr {
         s.parse().unwrap()
-    }
-
-    // ---------------------------------------------------------------------
-    // resolve_client_ip (ADR 0021 §3 Step 2, §6.E, Invariant 4)
-    // ---------------------------------------------------------------------
-
-    #[test]
-    fn untrusted_peer_ignores_xff_entirely() {
-        // Peer itself is not a trusted proxy: XFF must not be consulted at
-        // all, even if present (prevents spoofing via an untrusted hop).
-        let peer = Some(ip("203.0.113.5"));
-        let trusted = vec!["10.0.0.0/8".to_string()];
-        assert_eq!(
-            resolve_client_ip(Some("1.2.3.4"), peer, &trusted),
-            Some(ip("203.0.113.5"))
-        );
-    }
-
-    #[test]
-    fn trusted_peer_walks_xff_rightmost_non_trusted() {
-        // Chain (left to right): 1.2.3.4 (attacker-controlled), 10.0.0.5
-        // (trusted intermediate hop), peer 10.0.0.1 (trusted, terminal
-        // proxy). Effective IP must be 10.0.0.5's predecessor scanning
-        // right-to-left: append peer, walk right-to-left, first non-trusted.
-        let peer = Some(ip("10.0.0.1"));
-        let trusted = vec!["10.0.0.0/8".to_string()];
-        assert_eq!(
-            resolve_client_ip(Some("1.2.3.4, 10.0.0.5"), peer, &trusted),
-            Some(ip("1.2.3.4"))
-        );
-    }
-
-    #[test]
-    fn trusted_peer_all_hops_trusted_falls_back_to_peer() {
-        let peer = Some(ip("10.0.0.1"));
-        let trusted = vec!["10.0.0.0/8".to_string()];
-        assert_eq!(
-            resolve_client_ip(Some("10.0.0.9"), peer, &trusted),
-            Some(ip("10.0.0.1"))
-        );
-    }
-
-    #[test]
-    fn leftmost_xff_entry_is_never_trusted_blindly() {
-        // Regression guard for the leftmost-take vulnerability (ADR 0021 F2):
-        // an attacker prepending a spoofed IP as the leftmost XFF entry must
-        // not be accepted just because it's present.
-        let peer = Some(ip("10.0.0.1"));
-        let trusted = vec!["10.0.0.0/8".to_string()];
-        let effective = resolve_client_ip(Some("203.0.113.99, 1.2.3.4, 10.0.0.5"), peer, &trusted);
-        assert_ne!(effective, Some(ip("203.0.113.99")));
-        assert_eq!(effective, Some(ip("1.2.3.4")));
-    }
-
-    #[test]
-    fn no_peer_ip_resolves_to_none() {
-        assert_eq!(resolve_client_ip(None, None, &[]), None);
     }
 
     // ---------------------------------------------------------------------
