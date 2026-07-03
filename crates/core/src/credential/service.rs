@@ -21,7 +21,7 @@ use uuid::Uuid;
 use validator::Validate;
 
 use openstack_keystone_config::Config;
-use openstack_keystone_core_types::auth::ScopeInfo;
+use openstack_keystone_core_types::auth::{AuthenticationContext, ScopeInfo};
 use openstack_keystone_core_types::credential::*;
 use openstack_keystone_core_types::events::{Event, EventPayload, Operation};
 
@@ -30,9 +30,61 @@ use crate::credential::{CredentialApi, CredentialProviderError, backend::Credent
 use crate::events::AuditDispatchError;
 use crate::plugin_manager::PluginManagerApi;
 
-/// Fields inside the EC2 `blob` that are immutable on update (ADR 0019 §2,
-/// Update; CVE-2020-12691 fix scope extended to the delegation fields).
-const IMMUTABLE_BLOB_FIELDS: &[&str] = &["access", "trust_id", "app_cred_id", "access_token_id"];
+/// The EC2 `blob` field that is immutable on update and must always be
+/// present and unchanged (ADR 0019 §2, Update).
+const IMMUTABLE_ACCESS_FIELD: &str = "access";
+
+/// Delegation-metadata fields inside the EC2 `blob` (ADR 0019 §1). These are
+/// never client-settable: they are derived server-side from the creating
+/// request's own [`AuthenticationContext`] (OSSA-2026-005 / CVE-2026-33551)
+/// and, once set, are carried forward untouched across updates rather than
+/// requiring the caller to resupply them (CVE-2020-12691 fix scope).
+const DELEGATION_BLOB_FIELDS: &[&str] = &["trust_id", "app_cred_id", "access_token_id"];
+
+/// Stamps `trust_id`/`app_cred_id` into an EC2 credential's `blob` from the
+/// *actual* authentication context of the creating request, discarding any
+/// client-supplied value for these fields first.
+///
+/// # Security Note
+///
+/// Without this, an EC2 credential created while authenticated via a
+/// trust or (critically, per OSSA-2026-015 / CVE-2026-33551) a *restricted*
+/// application credential would be indistinguishable at `/v3/ec2tokens`
+/// validation time from a directly-authenticated EC2 credential, silently
+/// regaining the parent user's full, unrestricted project role set on
+/// every subsequent use.
+fn stamp_ec2_delegation_metadata(
+    blob: &str,
+    vsc: Option<&crate::auth::ValidatedSecurityContext>,
+) -> Result<String, CredentialProviderError> {
+    let mut blob_val: Value = serde_json::from_str(blob)
+        .map_err(|e| CredentialProviderError::InvalidBlob(e.to_string()))?;
+    let Value::Object(map) = &mut blob_val else {
+        return Err(CredentialProviderError::InvalidBlob(
+            "ec2 blob must be a JSON object".into(),
+        ));
+    };
+    for field in DELEGATION_BLOB_FIELDS {
+        map.remove(*field);
+    }
+    match vsc.map(|vsc| vsc.authentication_context()) {
+        Some(AuthenticationContext::Trust { trust, .. }) => {
+            map.insert("trust_id".to_string(), Value::String(trust.id.clone()));
+        }
+        Some(AuthenticationContext::ApplicationCredential {
+            application_credential,
+            ..
+        }) => {
+            map.insert(
+                "app_cred_id".to_string(),
+                Value::String(application_credential.id.clone()),
+            );
+        }
+        _ => {}
+    }
+    serde_json::to_string(&blob_val)
+        .map_err(|e| CredentialProviderError::InvalidBlob(e.to_string()))
+}
 
 /// Credential provider.
 pub struct CredentialService {
@@ -62,8 +114,11 @@ impl CredentialApi for CredentialService {
         rec.validate()?;
         let mut rec = rec;
 
-        if rec.r#type == "ec2" && rec.project_id.is_none() {
-            return Err(CredentialProviderError::MissingProjectId);
+        if rec.r#type == "ec2" {
+            if rec.project_id.is_none() {
+                return Err(CredentialProviderError::MissingProjectId);
+            }
+            rec.blob = stamp_ec2_delegation_metadata(&rec.blob, ctx.ctx())?;
         }
 
         if rec.user_id.is_none() {
@@ -197,6 +252,7 @@ impl CredentialApi for CredentialService {
         rec: CredentialUpdate,
     ) -> Result<Credential, CredentialProviderError> {
         rec.validate()?;
+        let mut rec = rec;
 
         if let Some(new_blob) = &rec.blob {
             let existing = self
@@ -206,14 +262,44 @@ impl CredentialApi for CredentialService {
                 .ok_or_else(|| CredentialProviderError::CredentialNotFound(id.to_string()))?;
 
             let old_val: Value = serde_json::from_str(&existing.blob)?;
-            let new_val: Value = serde_json::from_str(new_blob)?;
-            for field in IMMUTABLE_BLOB_FIELDS {
-                if old_val.get(field) != new_val.get(field) {
-                    return Err(CredentialProviderError::ImmutableField(
-                        (*field).to_string(),
-                    ));
+            let mut new_val: Value = serde_json::from_str(new_blob)?;
+
+            if old_val.get(IMMUTABLE_ACCESS_FIELD) != new_val.get(IMMUTABLE_ACCESS_FIELD) {
+                return Err(CredentialProviderError::ImmutableField(
+                    IMMUTABLE_ACCESS_FIELD.to_string(),
+                ));
+            }
+
+            // Delegation metadata is server-managed (see
+            // `stamp_ec2_delegation_metadata`): the caller's patch is not
+            // expected to resupply it, so a missing field carries the
+            // stored value forward rather than being treated as a change.
+            // An explicitly *different* value is still rejected.
+            if let Value::Object(new_map) = &mut new_val {
+                for field in DELEGATION_BLOB_FIELDS {
+                    match old_val.get(*field) {
+                        Some(old) if new_map.get(*field).is_none_or(|new| new == old) => {
+                            new_map.insert((*field).to_string(), old.clone());
+                        }
+                        None if new_map.contains_key(*field) => {
+                            return Err(CredentialProviderError::ImmutableField(
+                                (*field).to_string(),
+                            ));
+                        }
+                        Some(_) => {
+                            return Err(CredentialProviderError::ImmutableField(
+                                (*field).to_string(),
+                            ));
+                        }
+                        None => {}
+                    }
                 }
             }
+
+            rec.blob = Some(
+                serde_json::to_string(&new_val)
+                    .map_err(|e| CredentialProviderError::InvalidBlob(e.to_string()))?,
+            );
         }
 
         let user_id = self
@@ -483,5 +569,280 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(updated.blob, r#"{"access":"AKIA_OLD","secret":"new"}"#);
+    }
+
+    fn vsc_for_app_cred(unrestricted: bool) -> crate::auth::ValidatedSecurityContext {
+        use openstack_keystone_core_types::application_credential::ApplicationCredential;
+        use openstack_keystone_core_types::auth::{
+            IdentityInfo, PrincipalInfo, SecurityContextTestingBuilder, UserIdentityInfoBuilder,
+        };
+
+        let ac = ApplicationCredential {
+            id: "ac1".to_string(),
+            user_id: "user_id".to_string(),
+            project_id: "project_id".to_string(),
+            name: "cred".to_string(),
+            description: None,
+            roles: vec![],
+            unrestricted,
+            expires_at: None,
+            access_rules: None,
+        };
+        let ctx = SecurityContextTestingBuilder::default()
+            .authentication_context(AuthenticationContext::ApplicationCredential {
+                application_credential: ac,
+                token: None,
+            })
+            .principal(PrincipalInfo {
+                identity: IdentityInfo::User(
+                    UserIdentityInfoBuilder::default()
+                        .user_id("user_id")
+                        .build()
+                        .unwrap(),
+                ),
+            })
+            .build();
+        crate::auth::ValidatedSecurityContext::test_new(ctx)
+    }
+
+    fn vsc_for_trust(trust_id: &str) -> crate::auth::ValidatedSecurityContext {
+        use openstack_keystone_core_types::auth::{
+            IdentityInfo, PrincipalInfo, SecurityContextTestingBuilder, UserIdentityInfoBuilder,
+        };
+        use openstack_keystone_core_types::trust::Trust;
+
+        let trust = Trust {
+            id: trust_id.to_string(),
+            impersonation: false,
+            project_id: Some("project_id".to_string()),
+            trustee_user_id: "user_id".to_string(),
+            trustor_user_id: "trustor_id".to_string(),
+            ..Default::default()
+        };
+        let ctx = SecurityContextTestingBuilder::default()
+            .authentication_context(AuthenticationContext::Trust { trust, token: None })
+            .principal(PrincipalInfo {
+                identity: IdentityInfo::User(
+                    UserIdentityInfoBuilder::default()
+                        .user_id("user_id")
+                        .build()
+                        .unwrap(),
+                ),
+            })
+            .build();
+        crate::auth::ValidatedSecurityContext::test_new(ctx)
+    }
+
+    #[tokio::test]
+    async fn test_create_ec2_stamps_app_cred_id_from_auth_context() {
+        let state = get_mocked_state(None, None).await;
+        let mut backend = MockCredentialBackend::default();
+        backend
+            .expect_create_credential()
+            .withf(|_, rec: &CredentialCreate| {
+                let blob: Value = serde_json::from_str(&rec.blob).unwrap();
+                blob.get("app_cred_id").and_then(Value::as_str) == Some("ac1")
+                    && blob.get("trust_id").is_none()
+            })
+            .returning(|_, rec| {
+                Ok(Credential {
+                    id: rec.id.clone().unwrap_or_default(),
+                    user_id: rec.user_id.clone().unwrap_or_default(),
+                    project_id: rec.project_id.clone(),
+                    blob: rec.blob.clone(),
+                    r#type: rec.r#type.clone(),
+                    extra: rec.extra.clone(),
+                })
+            });
+        let provider = create_provider(backend);
+
+        // A malicious caller cannot forge a *different* trust_id/app_cred_id
+        // via the blob: it must be discarded and replaced by the real one
+        // derived from the creating request's own auth context.
+        let rec = CredentialCreate {
+            blob: r#"{"access":"AKIA123","secret":"s3cr3t","app_cred_id":"forged"}"#.into(),
+            r#type: "ec2".into(),
+            user_id: Some("user_id".into()),
+            project_id: Some("project_id".into()),
+            ..Default::default()
+        };
+
+        let vsc = vsc_for_app_cred(true);
+        let ctx = ExecutionContext::from_auth(&state, &vsc);
+        provider.create_credential(&ctx, rec).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_create_ec2_stamps_trust_id_from_auth_context() {
+        let state = get_mocked_state(None, None).await;
+        let mut backend = MockCredentialBackend::default();
+        backend
+            .expect_create_credential()
+            .withf(|_, rec: &CredentialCreate| {
+                let blob: Value = serde_json::from_str(&rec.blob).unwrap();
+                blob.get("trust_id").and_then(Value::as_str) == Some("trust1")
+            })
+            .returning(|_, rec| {
+                Ok(Credential {
+                    id: rec.id.clone().unwrap_or_default(),
+                    user_id: rec.user_id.clone().unwrap_or_default(),
+                    project_id: rec.project_id.clone(),
+                    blob: rec.blob.clone(),
+                    r#type: rec.r#type.clone(),
+                    extra: rec.extra.clone(),
+                })
+            });
+        let provider = create_provider(backend);
+
+        let rec = CredentialCreate {
+            blob: r#"{"access":"AKIA123","secret":"s3cr3t"}"#.into(),
+            r#type: "ec2".into(),
+            user_id: Some("user_id".into()),
+            project_id: Some("project_id".into()),
+            ..Default::default()
+        };
+
+        let vsc = vsc_for_trust("trust1");
+        let ctx = ExecutionContext::from_auth(&state, &vsc);
+        provider.create_credential(&ctx, rec).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_create_ec2_no_delegation_metadata_without_delegated_auth() {
+        let state = get_mocked_state(None, None).await;
+        let mut backend = MockCredentialBackend::default();
+        backend
+            .expect_create_credential()
+            .withf(|_, rec: &CredentialCreate| {
+                let blob: Value = serde_json::from_str(&rec.blob).unwrap();
+                blob.get("trust_id").is_none() && blob.get("app_cred_id").is_none()
+            })
+            .returning(|_, rec| {
+                Ok(Credential {
+                    id: rec.id.clone().unwrap_or_default(),
+                    user_id: rec.user_id.clone().unwrap_or_default(),
+                    project_id: rec.project_id.clone(),
+                    blob: rec.blob.clone(),
+                    r#type: rec.r#type.clone(),
+                    extra: rec.extra.clone(),
+                })
+            });
+        let provider = create_provider(backend);
+
+        let rec = CredentialCreate {
+            blob: r#"{"access":"AKIA123","secret":"s3cr3t"}"#.into(),
+            r#type: "ec2".into(),
+            user_id: Some("user_id".into()),
+            project_id: Some("project_id".into()),
+            ..Default::default()
+        };
+
+        provider
+            .create_credential(&ExecutionContext::internal(&state), rec)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_update_carries_forward_delegation_metadata_when_omitted() {
+        let state = get_mocked_state(None, None).await;
+        let mut backend = MockCredentialBackend::default();
+        backend.expect_get_credential().returning(|_, _| {
+            Ok(Some(Credential {
+                id: "cred_id".into(),
+                user_id: "user_id".into(),
+                project_id: Some("project_id".into()),
+                blob: r#"{"access":"AKIA_OLD","secret":"old","app_cred_id":"ac1"}"#.into(),
+                r#type: "ec2".into(),
+                extra: None,
+            }))
+        });
+        backend
+            .expect_update_credential()
+            .withf(|_, _, rec: &CredentialUpdate| {
+                let blob: Value = serde_json::from_str(rec.blob.as_ref().unwrap()).unwrap();
+                blob.get("app_cred_id").and_then(Value::as_str) == Some("ac1")
+                    && blob.get("secret").and_then(Value::as_str) == Some("new")
+            })
+            .returning(|_, id, rec| {
+                Ok(Credential {
+                    id: id.to_string(),
+                    user_id: "user_id".into(),
+                    project_id: Some("project_id".into()),
+                    blob: rec.blob.clone().unwrap(),
+                    r#type: "ec2".into(),
+                    extra: None,
+                })
+            });
+        let provider = create_provider(backend);
+
+        // Caller's patch omits app_cred_id entirely (as any real client
+        // would, since it's a server-managed field) — it must be carried
+        // forward from the stored blob, not dropped.
+        let rec = CredentialUpdate {
+            blob: Some(r#"{"access":"AKIA_OLD","secret":"new"}"#.into()),
+            ..Default::default()
+        };
+
+        provider
+            .update_credential(&ExecutionContext::internal(&state), "cred_id", rec)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_update_rejects_forged_delegation_metadata() {
+        let state = get_mocked_state(None, None).await;
+        let mut backend = MockCredentialBackend::default();
+        backend.expect_get_credential().returning(|_, _| {
+            Ok(Some(Credential {
+                id: "cred_id".into(),
+                user_id: "user_id".into(),
+                project_id: Some("project_id".into()),
+                blob: r#"{"access":"AKIA_OLD","secret":"old","app_cred_id":"ac1"}"#.into(),
+                r#type: "ec2".into(),
+                extra: None,
+            }))
+        });
+        let provider = create_provider(backend);
+
+        let rec = CredentialUpdate {
+            blob: Some(r#"{"access":"AKIA_OLD","secret":"new","app_cred_id":"forged"}"#.into()),
+            ..Default::default()
+        };
+
+        let err = provider
+            .update_credential(&ExecutionContext::internal(&state), "cred_id", rec)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, CredentialProviderError::ImmutableField(f) if f == "app_cred_id"));
+    }
+
+    #[tokio::test]
+    async fn test_update_rejects_injecting_delegation_metadata_not_originally_set() {
+        let state = get_mocked_state(None, None).await;
+        let mut backend = MockCredentialBackend::default();
+        backend.expect_get_credential().returning(|_, _| {
+            Ok(Some(Credential {
+                id: "cred_id".into(),
+                user_id: "user_id".into(),
+                project_id: Some("project_id".into()),
+                blob: r#"{"access":"AKIA_OLD","secret":"old"}"#.into(),
+                r#type: "ec2".into(),
+                extra: None,
+            }))
+        });
+        let provider = create_provider(backend);
+
+        let rec = CredentialUpdate {
+            blob: Some(r#"{"access":"AKIA_OLD","secret":"new","app_cred_id":"injected"}"#.into()),
+            ..Default::default()
+        };
+
+        let err = provider
+            .update_credential(&ExecutionContext::internal(&state), "cred_id", rec)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, CredentialProviderError::ImmutableField(f) if f == "app_cred_id"));
     }
 }

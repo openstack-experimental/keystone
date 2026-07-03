@@ -81,6 +81,7 @@ pub mod auth;
 pub mod catalog;
 pub mod common;
 pub mod config;
+pub mod credential;
 pub mod error;
 pub mod federation;
 pub mod identity;

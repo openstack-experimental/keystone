@@ -46,6 +46,34 @@ impl TryFrom<api_types::UserPassword>
     }
 }
 
+impl TryFrom<api_types::TotpUser> for openstack_keystone_core_types::identity::UserTotpAuthRequest {
+    type Error = BuilderError;
+
+    fn try_from(value: api_types::TotpUser) -> Result<Self, Self::Error> {
+        let mut uta =
+            openstack_keystone_core_types::identity::UserTotpAuthRequestBuilder::default();
+        if let Some(id) = &value.id {
+            uta.id(id);
+        }
+        if let Some(name) = &value.name {
+            uta.name(name);
+        }
+        if let Some(domain) = &value.domain {
+            let mut domain_builder =
+                openstack_keystone_core_types::identity::DomainBuilder::default();
+            if let Some(id) = &domain.id {
+                domain_builder.id(id);
+            }
+            if let Some(name) = &domain.name {
+                domain_builder.name(name);
+            }
+            uta.domain(domain_builder.build()?);
+        }
+        uta.passcode(value.passcode.clone());
+        uta.build()
+    }
+}
+
 impl TryFrom<&openstack_keystone_core_types::token::FernetToken> for api_types::Token {
     type Error = BuilderError;
 

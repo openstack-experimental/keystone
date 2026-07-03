@@ -171,6 +171,56 @@ pub enum AuthenticationError {
     #[error("role assignment cannot be converted to a role reference")]
     RoleConversionFailed,
 
+    /// `POST /v3/ec2tokens`: no EC2 credential matches the supplied access
+    /// key (ADR 0019 §5).
+    #[error("EC2 access key not found")]
+    Ec2AccessKeyNotFound,
+
+    /// `POST /v3/ec2tokens`: the `credentials` object did not carry a
+    /// `signature` to compare against.
+    #[error("EC2 signature not supplied")]
+    Ec2SignatureMissing,
+
+    /// `POST /v3/ec2tokens`: the supplied signature did not match the
+    /// server-generated one (including the boto port-stripping retry).
+    #[error("invalid EC2 signature")]
+    Ec2SignatureInvalid,
+
+    /// `POST /v3/ec2tokens`: `SignatureVersion` was not one of `0`/`1`/`2`,
+    /// and the request could not be recognised as a v4 (SigV4) request via
+    /// the `Authorization` header or `X-Amz-Algorithm` param.
+    #[error("unknown EC2 signature version")]
+    Ec2UnknownSignatureVersion,
+
+    /// `POST /v3/ec2tokens`: the replay-prevention timestamp was absent from
+    /// the location mandated for the detected signature version.
+    #[error("EC2 request timestamp not supplied")]
+    Ec2TimestampMissing,
+
+    /// `POST /v3/ec2tokens`: the replay-prevention timestamp could not be
+    /// parsed in the expected format for the detected signature version.
+    #[error("EC2 request timestamp is not a valid timestamp: {0}")]
+    Ec2TimestampInvalid(String),
+
+    /// `POST /v3/ec2tokens`: the replay-prevention timestamp fell outside the
+    /// `[ec2] auth_ttl` window (CVE-2020-12692).
+    #[error("EC2 request timestamp is outside the permitted window")]
+    Ec2TimestampExpired,
+
+    /// `POST /v3/ec2tokens` (SigV4 only): the date embedded in the
+    /// `X-Amz-Date` header/param does not match the date embedded in the
+    /// `Credential` scope.
+    #[error("EC2 SigV4 credential scope date does not match the request date")]
+    Ec2CredentialScopeDateMismatch,
+
+    /// TOTP authentication (ADR 0019 §3): the submitted passcode did not
+    /// match any `type='totp'` credential registered for the resolved user
+    /// (including the case where no user or no TOTP credential could be
+    /// resolved at all). Deliberately generic, mirroring
+    /// `UserNameOrPasswordWrong`, to avoid leaking which lookup failed.
+    #[error("invalid TOTP passcode")]
+    TotpPasscodeInvalid,
+
     /// A provider error that occurred during authentication validation.
     ///
     /// The `context` field provides a descriptive label for debugging,
@@ -657,34 +707,39 @@ impl SecurityContext {
     /// scope are performed. This is an AuthN/AuthZ context boundaries check.
     #[must_use = "A new scope must always be checked against authentication constraints"]
     pub fn validate_scope_boundaries(&self, scope: &ScopeInfo) -> Result<(), AuthenticationError> {
-        match scope {
-            ScopeInfo::Domain(_domain) => {
-                if self.token_restriction.is_some() {
-                    return Err(AuthenticationError::ScopeNotAllowed);
-                };
-                match &self.authentication_context {
-                    AuthenticationContext::ApplicationCredential { .. } => {
-                        Err(AuthenticationError::ScopeNotAllowed)
+        // A restricted token may only be used to obtain a token for its own
+        // project; every other scope is prohibited outright. Checked once,
+        // up front, instead of duplicating the `token_restriction.is_some()`
+        // guard in every non-Project branch below.
+        if let Some(token_restriction) = &self.token_restriction {
+            match scope {
+                ScopeInfo::Project { project, .. } => {
+                    if let Some(tr_pid) = &token_restriction.project_id
+                        && *tr_pid != project.id
+                    {
+                        return Err(AuthenticationError::ScopeNotAllowed);
                     }
-                    AuthenticationContext::Oidc { .. } => Ok(()),
-                    AuthenticationContext::K8s(_) => Err(AuthenticationError::ScopeNotAllowed),
-                    AuthenticationContext::Password => Ok(()),
-                    AuthenticationContext::Admin => Ok(()),
-                    AuthenticationContext::Token(_) => Ok(()),
-                    AuthenticationContext::Trust { .. } => {
-                        Err(AuthenticationError::ScopeNotAllowed)
-                    }
-                    AuthenticationContext::WebauthN => Ok(()),
-                    AuthenticationContext::Mapping(_) => Ok(()),
                 }
+                _ => return Err(AuthenticationError::ScopeNotAllowed),
             }
-            ScopeInfo::Project { project, .. } => {
-                if let Some(token_restriction) = &self.token_restriction
-                    && let Some(tr_pid) = &token_restriction.project_id
-                    && *tr_pid != project.id
-                {
-                    return Err(AuthenticationError::ScopeNotAllowed);
+        }
+        match scope {
+            ScopeInfo::Domain(_domain) => match &self.authentication_context {
+                AuthenticationContext::ApplicationCredential { .. } => {
+                    Err(AuthenticationError::ScopeNotAllowed)
                 }
+                AuthenticationContext::Oidc { .. } => Ok(()),
+                AuthenticationContext::K8s(_) => Err(AuthenticationError::ScopeNotAllowed),
+                AuthenticationContext::Password => Ok(()),
+                AuthenticationContext::Ec2Credential => Ok(()),
+                AuthenticationContext::Totp => Ok(()),
+                AuthenticationContext::Admin => Ok(()),
+                AuthenticationContext::Token(_) => Ok(()),
+                AuthenticationContext::Trust { .. } => Err(AuthenticationError::ScopeNotAllowed),
+                AuthenticationContext::WebauthN => Ok(()),
+                AuthenticationContext::Mapping(_) => Ok(()),
+            },
+            ScopeInfo::Project { project, .. } => {
                 match &self.authentication_context {
                     AuthenticationContext::ApplicationCredential {
                         application_credential,
@@ -699,75 +754,97 @@ impl SecurityContext {
                     AuthenticationContext::Oidc { .. } => Ok(()),
                     AuthenticationContext::K8s(_) => Ok(()),
                     AuthenticationContext::Password => Ok(()),
+                    AuthenticationContext::Ec2Credential => Ok(()),
+                    AuthenticationContext::Totp => Ok(()),
                     AuthenticationContext::Admin => Ok(()),
                     AuthenticationContext::Token(_) => Ok(()),
-                    AuthenticationContext::Trust { .. } => {
-                        // Trust authentication must use TrustProject scope. Rescoping to a plain
-                        // Project scope would bypass the trust's role and project constraints.
-                        Err(AuthenticationError::ScopeNotAllowed)
+                    AuthenticationContext::Trust { trust, token } => {
+                        // A plain Project scope is legal for a trust ONLY when
+                        // (a) it is the trust's own bound project, mirroring the
+                        // ApplicationCredential arm above, AND (b) the context was
+                        // freshly reconstructed rather than decoded from a bearer
+                        // trust token (`token.is_none()`). A real OS-Trust auth
+                        // request can only ever request `OS-TRUST:trust` scope --
+                        // there is no client-facing way to present a trust
+                        // identity and ask for a plain project scope. The one
+                        // legitimate producer of this exact shape is `/v3/ec2tokens`
+                        // redemption of an EC2 credential minted under a trust: it
+                        // reconstructs `AuthenticationContext::Trust` directly from
+                        // the credential's stored `trust_id` blob field (`token:
+                        // None`, see `create_inner` in
+                        // `crates/keystone/src/api/v3/ec2tokens/create.rs`) because
+                        // the credential carries a bare `project_id`, not a
+                        // `TrustProject` scope -- see
+                        // `calculate_effective_roles()`'s Trust-on-Project handling,
+                        // which bounds the resulting roles to the trust's delegated
+                        // set exactly as the native `TrustProject` path does
+                        // (OSSA-2026-015). A caller reauthenticating with method
+                        // "token" against an actual trust-scoped bearer token
+                        // (`token: Some(_)`, see `validate_to_context_impl` in
+                        // `crates/core/src/token/service.rs`) and requesting a
+                        // project scope must be rejected here: trust tokens can
+                        // never be used to mint another token ("token renewal ...
+                        // is prohibited"), and the `TrustProject` arm below already
+                        // blocks the same caller from renewing via its native
+                        // scope -- this closes the equivalent Project-scope escape
+                        // hatch.
+                        if token.is_some()
+                            || trust.project_id.as_deref() != Some(project.id.as_str())
+                        {
+                            Err(AuthenticationError::ScopeNotAllowed)
+                        } else {
+                            Ok(())
+                        }
                     }
                     AuthenticationContext::WebauthN => Ok(()),
                     AuthenticationContext::Mapping(_) => Ok(()),
                 }
             }
-            ScopeInfo::TrustProject(_) => {
-                if self.token_restriction.is_some() {
-                    return Err(AuthenticationError::ScopeNotAllowed);
-                };
-                match &self.authentication_context {
-                    AuthenticationContext::ApplicationCredential { .. } => {
-                        Err(AuthenticationError::ScopeNotAllowed)
-                    }
-                    AuthenticationContext::Oidc { .. } => Err(AuthenticationError::ScopeNotAllowed),
-                    AuthenticationContext::K8s(_) => Err(AuthenticationError::ScopeNotAllowed),
-                    AuthenticationContext::Password => Ok(()),
-                    AuthenticationContext::Admin => Ok(()),
-                    AuthenticationContext::Token(_) => Ok(()),
-                    AuthenticationContext::Trust { .. } => Err(AuthenticationError::Forbidden),
-                    AuthenticationContext::WebauthN => Err(AuthenticationError::ScopeNotAllowed),
-                    AuthenticationContext::Mapping(_) => Err(AuthenticationError::ScopeNotAllowed),
+            ScopeInfo::TrustProject(_) => match &self.authentication_context {
+                AuthenticationContext::ApplicationCredential { .. } => {
+                    Err(AuthenticationError::ScopeNotAllowed)
                 }
-            }
-            ScopeInfo::System(_system) => {
-                if self.token_restriction.is_some() {
-                    return Err(AuthenticationError::ScopeNotAllowed);
-                };
-                match &self.authentication_context {
-                    AuthenticationContext::ApplicationCredential { .. } => {
-                        Err(AuthenticationError::ScopeNotAllowed)
-                    }
-                    AuthenticationContext::Oidc { .. } => Err(AuthenticationError::ScopeNotAllowed),
-                    AuthenticationContext::K8s(_) => Err(AuthenticationError::ScopeNotAllowed),
-                    AuthenticationContext::Password => Ok(()),
-                    AuthenticationContext::Admin => Ok(()),
-                    AuthenticationContext::Token(_) => Ok(()),
-                    AuthenticationContext::Trust { .. } => {
-                        Err(AuthenticationError::ScopeNotAllowed)
-                    }
-                    AuthenticationContext::WebauthN => Ok(()),
-                    AuthenticationContext::Mapping(_) => Ok(()),
+                AuthenticationContext::Oidc { .. } => Err(AuthenticationError::ScopeNotAllowed),
+                AuthenticationContext::K8s(_) => Err(AuthenticationError::ScopeNotAllowed),
+                AuthenticationContext::Password => Ok(()),
+                AuthenticationContext::Ec2Credential => Ok(()),
+                AuthenticationContext::Totp => Ok(()),
+                AuthenticationContext::Admin => Ok(()),
+                AuthenticationContext::Token(_) => Ok(()),
+                AuthenticationContext::Trust { .. } => Err(AuthenticationError::Forbidden),
+                AuthenticationContext::WebauthN => Err(AuthenticationError::ScopeNotAllowed),
+                AuthenticationContext::Mapping(_) => Err(AuthenticationError::ScopeNotAllowed),
+            },
+            ScopeInfo::System(_system) => match &self.authentication_context {
+                AuthenticationContext::ApplicationCredential { .. } => {
+                    Err(AuthenticationError::ScopeNotAllowed)
                 }
-            }
-            ScopeInfo::Unscoped => {
-                if self.token_restriction.is_some() {
-                    return Err(AuthenticationError::ScopeNotAllowed);
-                };
-                match &self.authentication_context {
-                    AuthenticationContext::ApplicationCredential { .. } => {
-                        Err(AuthenticationError::ScopeNotAllowed)
-                    }
-                    AuthenticationContext::Oidc { .. } => Ok(()),
-                    AuthenticationContext::K8s(_) => Err(AuthenticationError::ScopeNotAllowed),
-                    AuthenticationContext::Password => Ok(()),
-                    AuthenticationContext::Admin => Ok(()),
-                    AuthenticationContext::Token(_) => Ok(()),
-                    AuthenticationContext::Trust { .. } => {
-                        Err(AuthenticationError::ScopeNotAllowed)
-                    }
-                    AuthenticationContext::WebauthN => Ok(()),
-                    AuthenticationContext::Mapping(_) => Ok(()),
+                AuthenticationContext::Oidc { .. } => Err(AuthenticationError::ScopeNotAllowed),
+                AuthenticationContext::K8s(_) => Err(AuthenticationError::ScopeNotAllowed),
+                AuthenticationContext::Password => Ok(()),
+                AuthenticationContext::Ec2Credential => Ok(()),
+                AuthenticationContext::Totp => Ok(()),
+                AuthenticationContext::Admin => Ok(()),
+                AuthenticationContext::Token(_) => Ok(()),
+                AuthenticationContext::Trust { .. } => Err(AuthenticationError::ScopeNotAllowed),
+                AuthenticationContext::WebauthN => Ok(()),
+                AuthenticationContext::Mapping(_) => Ok(()),
+            },
+            ScopeInfo::Unscoped => match &self.authentication_context {
+                AuthenticationContext::ApplicationCredential { .. } => {
+                    Err(AuthenticationError::ScopeNotAllowed)
                 }
-            }
+                AuthenticationContext::Oidc { .. } => Ok(()),
+                AuthenticationContext::K8s(_) => Err(AuthenticationError::ScopeNotAllowed),
+                AuthenticationContext::Password => Ok(()),
+                AuthenticationContext::Ec2Credential => Ok(()),
+                AuthenticationContext::Totp => Ok(()),
+                AuthenticationContext::Admin => Ok(()),
+                AuthenticationContext::Token(_) => Ok(()),
+                AuthenticationContext::Trust { .. } => Err(AuthenticationError::ScopeNotAllowed),
+                AuthenticationContext::WebauthN => Ok(()),
+                AuthenticationContext::Mapping(_) => Ok(()),
+            },
         }
     }
 
@@ -1206,6 +1283,18 @@ pub enum AuthenticationContext {
     WebauthN,
     /// Login via the unified mapping engine (virtual user).
     Mapping(crate::mapping::MappingContext),
+    /// Login using a signed EC2 request (`POST /v3/ec2tokens`, ADR 0019 §5),
+    /// where the EC2 credential carries no delegation metadata. When the
+    /// credential *was* created via a trust or application credential
+    /// (`trust_id`/`app_cred_id` in its blob), the delegation metadata is
+    /// passed through by using [`AuthenticationContext::Trust`] or
+    /// [`AuthenticationContext::ApplicationCredential`] instead of this
+    /// variant, so the existing bounded-object validation in
+    /// `ValidatedSecurityContext::new_for_scope` applies unchanged.
+    Ec2Credential,
+    /// Login using a TOTP passcode verified against a `type='totp'`
+    /// credential (ADR 0019 §3).
+    Totp,
 }
 
 /// K8s auth context.
@@ -1248,7 +1337,59 @@ impl AuthenticationContext {
             Self::Trust { .. } => once("trust".to_string()).collect(),
             Self::WebauthN => once("x509".to_string()).collect(),
             Self::Mapping(_) => once("mapped".to_string()).collect(),
+            Self::Ec2Credential => once("ec2credential".to_string()).collect(),
+            Self::Totp => once("totp".to_string()).collect(),
         }
+    }
+
+    /// Returns the canonical auth-method string for *this* authentication
+    /// context (top-level variant only).
+    ///
+    /// Passed to the policy engine as `input.credentials.auth_type` so
+    /// `.rego` rules can distinguish delegated authentication (trust,
+    /// application credential) from direct authentication (password,
+    /// token, TOTP, ...). Use [`Self::is_delegated`] rather than comparing
+    /// this string directly, since a re-scoped [`Self::Token`] reports
+    /// `"token"` here even when its underlying payload originated from a
+    /// trust or application credential.
+    #[must_use]
+    pub fn auth_type(&self) -> &'static str {
+        match self {
+            Self::ApplicationCredential { .. } => "application_credential",
+            Self::Oidc { .. } => "openid",
+            Self::K8s(_) => "k8s",
+            Self::Password => "password",
+            Self::Admin => "admin",
+            Self::Token(_) => "token",
+            Self::Trust { .. } => "trust",
+            Self::WebauthN => "webauthn",
+            Self::Mapping(_) => "mapped",
+            Self::Ec2Credential => "ec2credential",
+            Self::Totp => "totp",
+        }
+    }
+
+    /// Returns `true` if this authentication is bound to a delegation
+    /// (a trust or an application credential), either directly or carried
+    /// forward through a re-scoped [`Self::Token`].
+    ///
+    /// # Security Note
+    ///
+    /// Delegated tokens are scoped to a single project at delegation time
+    /// (OSSA-2026-015 / ADR 0019 §2). Resource authorization must check
+    /// this flag alongside `project_id` so a delegated token cannot reach
+    /// resources outside its delegation project just because a re-scope
+    /// (`Self::Token`) hides the original delegated method behind
+    /// `auth_type() == "token"`.
+    #[must_use]
+    pub fn is_delegated(&self) -> bool {
+        matches!(
+            self,
+            Self::ApplicationCredential { .. } | Self::Trust { .. }
+        ) || self
+            .methods()
+            .iter()
+            .any(|m| m == "trust" || m == "application_credential")
     }
 }
 
@@ -1528,6 +1669,7 @@ mod tests {
     use crate::role::RoleRefBuilder;
     use crate::token::FernetToken;
     use crate::token::TokenRestrictionBuilder;
+    use crate::token::payload::TrustPayloadBuilder;
     use crate::token::payload::UnscopedPayloadBuilder;
     use crate::trust::*;
 
@@ -2130,13 +2272,18 @@ mod tests {
             ctx.validate_scope_boundaries(&ScopeInfo::Domain(d)),
             Err(AuthenticationError::ScopeNotAllowed)
         ));
-        assert!(matches!(
+        // A plain Project scope for the trust's OWN project is legal (the
+        // shape an EC2 credential minted under this trust presents at
+        // redemption; roles are still bounded via
+        // `calculate_effective_roles()`'s Trust-on-Project handling).
+        assert!(
             ctx.validate_scope_boundaries(&ScopeInfo::Project {
                 project: p,
                 project_domain: make_domain(),
-            }),
-            Err(AuthenticationError::ScopeNotAllowed)
-        ));
+            })
+            .is_ok()
+        );
+        // A different project is still rejected.
         assert!(matches!(
             ctx.validate_scope_boundaries(&ScopeInfo::Project {
                 project: p2,
@@ -2154,6 +2301,42 @@ mod tests {
         ));
         assert!(matches!(
             ctx.validate_scope_boundaries(&unscoped),
+            Err(AuthenticationError::ScopeNotAllowed)
+        ));
+
+        // A trust reconstructed from a *presented bearer token* (`token:
+        // Some(_)`, the shape produced when decoding an actual trust-scoped
+        // Fernet token for reauth/"token" auth method) must NOT be allowed to
+        // reach a plain Project scope even for its own project -- a real
+        // OS-Trust auth request can only ever request `OS-TRUST:trust` scope,
+        // and trust tokens can never be used to mint another token. Only the
+        // `token: None` shape (freshly reconstructed, e.g. `/v3/ec2tokens`
+        // redemption) may legally reach Project scope, per the assertion
+        // above.
+        let p3 = make_project();
+        let trust2 = make_trust_with_project(&p3.id);
+        let bearer_token = FernetToken::Trust(
+            TrustPayloadBuilder::default()
+                .user_id("uid")
+                .methods(["password".to_string()].into_iter())
+                .expires_at(Utc::now())
+                .trust_id(trust2.id.clone())
+                .project_id(p3.id.clone())
+                .build()
+                .unwrap(),
+        );
+        let ctx_from_bearer_token = make_auth_ctx_with_scope(
+            AuthenticationContext::Trust {
+                trust: trust2,
+                token: Some(bearer_token),
+            },
+            make_principal("uid"),
+        );
+        assert!(matches!(
+            ctx_from_bearer_token.validate_scope_boundaries(&ScopeInfo::Project {
+                project: p3,
+                project_domain: make_domain(),
+            }),
             Err(AuthenticationError::ScopeNotAllowed)
         ));
     }

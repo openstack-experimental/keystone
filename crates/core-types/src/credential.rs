@@ -20,7 +20,9 @@
 //! against it.
 
 mod credential;
+mod ec2_signature;
 mod error;
 
 pub use credential::*;
+pub use ec2_signature::*;
 pub use error::*;

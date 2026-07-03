@@ -63,6 +63,16 @@ pub enum PolicyError {
     #[error("security context is not resolved")]
     SecurityContextNotResolved,
 
+    /// A delegated caller's token scope diverged from its own delegation
+    /// project. `SecurityContext::validate_scope_boundaries` is supposed to
+    /// keep the two pinned equal at all times (OSSA-2026-015); observing a
+    /// mismatch here means that invariant did not hold, so the request is
+    /// rejected outright rather than handed to the (rego-level) policy
+    /// engine, which enforces the same check only per-endpoint. See
+    /// `doc/src/security.md` I3.
+    #[error("delegated token scope has drifted from its delegation project")]
+    ScopeDrift,
+
     /// Structures builder error.
     #[error(transparent)]
     StructBuilder {
@@ -208,6 +218,60 @@ pub struct Credentials {
     #[builder(default)]
     #[serde(default)]
     pub trust: Option<Trust>,
+
+    /// Canonical auth-method string for this request (e.g. `"password"`,
+    /// `"token"`, `"trust"`, `"application_credential"`), from
+    /// [`AuthenticationContext::auth_type`]. See [`Self::is_delegated`]
+    /// for the derived, rescope-aware delegation flag `.rego` rules
+    /// should actually gate on.
+    pub auth_type: String,
+
+    /// Whether this request is authenticated via a delegated credential
+    /// (trust or application credential), directly or carried forward
+    /// through a re-scoped token — [`AuthenticationContext::is_delegated`].
+    ///
+    /// # Security Note
+    ///
+    /// Delegated tokens must remain bounded to their delegation
+    /// `project_id` (OSSA-2026-015 / ADR 0019 §2). Policies that grant
+    /// access based on `user_id` ownership alone must additionally check
+    /// this flag together with `project_id` before allowing a delegated
+    /// caller to reach a resource.
+    pub is_delegated: bool,
+
+    /// For application-credential authentication only: whether the
+    /// application credential is `unrestricted` (may be used for
+    /// management operations such as creating other application
+    /// credentials, trusts, or EC2 credentials). `None` for every other
+    /// authentication method.
+    ///
+    /// # Security Note
+    ///
+    /// A *restricted* application credential (`unrestricted == false`)
+    /// must not be usable to create new credentials that outlive or
+    /// escape its own limited role set (OSSA-2026-005 / CVE-2026-33551).
+    #[builder(default)]
+    #[serde(default)]
+    pub unrestricted: Option<bool>,
+
+    /// The immutable project the active delegation (trust or application
+    /// credential) is bound to, taken from the authentication chain held
+    /// in [`ValidatedSecurityContext`] rather than from the request's
+    /// token scope. `None` for non-delegated authentication.
+    ///
+    /// # Security Note
+    ///
+    /// Delegation boundary checks (OSSA-2026-015) must anchor on this
+    /// chain-derived value, **not** on [`Self::project_id`] (the token
+    /// scope), so that a scope rebind can never move a delegated caller's
+    /// boundary. Policies should additionally assert `project_id ==
+    /// delegated_project_id` for delegated callers as a scope-drift
+    /// tripwire — the two are pinned equal at token-issuance time
+    /// ([`SecurityContext::validate_scope_boundaries`]), so any divergence
+    /// signals a compromised or malformed context and must fail closed.
+    #[builder(default)]
+    #[serde(default)]
+    pub delegated_project_id: Option<String>,
 }
 
 impl TryFrom<&ValidatedSecurityContext> for Credentials {
@@ -223,6 +287,27 @@ impl TryFrom<&ValidatedSecurityContext> for Credentials {
         let mut builder = CredentialsBuilder::default();
         builder.user_id(sc.principal().get_user_id());
         builder.is_admin(sc.is_admin());
+        builder.auth_type(sc.authentication_context().auth_type());
+        builder.is_delegated(sc.authentication_context().is_delegated());
+        // Delegation facts are taken from the authentication chain, not the
+        // token scope, so the policy engine sees the delegation's own
+        // immutable binding (OSSA-2026-015). See `delegated_project_id`.
+        match sc.authentication_context() {
+            AuthenticationContext::ApplicationCredential {
+                application_credential,
+                ..
+            } => {
+                builder.unrestricted(application_credential.unrestricted);
+                builder.delegated_project_id(application_credential.project_id.clone());
+            }
+            AuthenticationContext::Trust { trust, .. } => {
+                if let Some(project_id) = &trust.project_id {
+                    builder.delegated_project_id(project_id.clone());
+                }
+                builder.trust(trust.clone());
+            }
+            _ => {}
+        }
         if let Some(authz) = sc.authorization() {
             match &authz.scope {
                 ScopeInfo::Domain(domain) => {
@@ -258,6 +343,20 @@ impl TryFrom<&ValidatedSecurityContext> for Credentials {
             }
         }
         let cred = builder.build()?;
+        // Rust-side scope-drift tripwire (I3): mirrors the check every
+        // delegated .rego policy carries individually, but here it covers
+        // *every* caller of `Credentials::try_from`, including any future
+        // policy that forgets to copy the rego-level assertion.
+        // `validate_scope_boundaries` is supposed to keep a delegated
+        // caller's scope pinned to its delegation project, so any observed
+        // divergence means that upstream invariant broke -- fail closed
+        // rather than trust the (already-suspect) request further.
+        if let Some(delegated_project_id) = &cred.delegated_project_id
+            && let Some(project_id) = &cred.project_id
+            && project_id != delegated_project_id
+        {
+            return Err(PolicyError::ScopeDrift);
+        }
         Ok(cred)
     }
 }

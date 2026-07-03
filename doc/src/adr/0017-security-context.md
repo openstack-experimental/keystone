@@ -1,7 +1,6 @@
 # 17. SecurityContext Design and Security Principles
 
-Date: 2025-11-15
-Updated: 2026-05-21
+Date: 2025-11-15 Updated: 2026-07-03
 
 ## Status
 
@@ -13,28 +12,28 @@ values, and validation architecture. Clippy clean.
 All auth types use a single `validate()` method returning `AuthenticationError`
 for both structural checks (field presence, length) and business rules (user
 enabled, domain enabled, trust chain). The `validator` crate is not used in
-`auth.rs` — all validation is manual, ensuring every check produces a
-dedicated, typed error (`UserDisabled(id)`, `DomainDisabled(id)`,
-`AuthzPrincipalMismatch`, etc.) rather than an opaque `ValidationErrors` bag.
+`auth.rs` — all validation is manual, ensuring every check produces a dedicated,
+typed error (`UserDisabled(id)`, `DomainDisabled(id)`, `AuthzPrincipalMismatch`,
+etc.) rather than an opaque `ValidationErrors` bag.
 
 Validation flow:
 
-1. `SecurityContext::validate()` validates the principal (identity, domain,
-   user data), then checks authentication-context-specific constraints
-   (Trust/AppCred user_id match).
+1. `SecurityContext::validate()` validates the principal (identity, domain, user
+   data), then checks authentication-context-specific constraints (Trust/AppCred
+   user_id match).
 2. `PrincipalInfo::validate()` checks `domain_id` length, then delegates to
    `IdentityInfo::validate()`.
 3. `IdentityInfo::validate()` dispatches:
-   - `UserIdentityInfo::validate()` — checks user_id length, user presence/match,
-     user enabled, domain enabled.
+   - `UserIdentityInfo::validate()` — checks user_id length, user
+     presence/match, user enabled, domain enabled.
    - `PrincipalIdentityInfo::validate()` — checks id and issuer non-empty;
      IdentityInfo then checks domain enabled.
 4. `ScopeInfo::validate()` — checks domain/project/trust project enabled status.
-5. `SecurityContext::fully_resolved()` — calls `validate()` + checks that
-   scoped authorization carries non-empty roles.
+5. `SecurityContext::fully_resolved()` — calls `validate()` + checks that scoped
+   authorization carries non-empty roles.
 
-The `validator` crate remains in use by other core-types modules
-(`identity`, `assignment`, `token`), but is not used by `auth.rs`.
+The `validator` crate remains in use by other core-types modules (`identity`,
+`assignment`, `token`), but is not used by `auth.rs`.
 
 ## Context
 
@@ -99,7 +98,8 @@ observe a partially-authenticated context:
    control over the target scope. It:
    - If `ctx.authorization()` already set and differs from `scope`, calls
      `ctx.validate_scope_boundaries(&scope)` to guard scope override
-   - If `ctx.authorization()` is `None`, calls `ctx.set_authorization_scope(scope)`
+   - If `ctx.authorization()` is `None`, calls
+     `ctx.set_authorization_scope(scope)`
    - Populates `user_domain` for `IdentityInfo::User` by querying the resource
      provider — required before `xvalidate()`
    - Calls `ctx.validate()` to check principal integrity (user enabled, appcred/
@@ -127,18 +127,20 @@ the context is wrapped in `ValidatedSecurityContext`.
 
 ### `#[cfg]`-Guarded Test Constructors and Builder
 
-During testing, two mechanisms are available under `#[cfg(any(test, feature = "mock"))]`:
+During testing, two mechanisms are available under
+`#[cfg(any(test, feature = "mock"))]`:
 
 1. `ValidatedSecurityContext::test_new(ctx)` — constructs a validated context
    without going through the validation pipeline. This allows unit tests and
    integration test mocks to inject a pre-built context.
 
-2. `SecurityContextTestingBuilder` (accessed via `SecurityContext::test_build()`)
-   — a named-setter builder that replaces the positional `for_testing()` approach.
-   Required fields are `authentication_context` and `principal`; optional fields
-   are `token`, `authorization`, `expires_at`, and `token_restriction`. The
-   builder derives `auth_methods` from `authentication_context.methods()`. Both
-   compile-time tests (`#[cfg(test)]`) and the optional `mock` feature gate these
+2. `SecurityContextTestingBuilder` (accessed via
+   `SecurityContext::test_build()`) — a named-setter builder that replaces the
+   positional `for_testing()` approach. Required fields are
+   `authentication_context` and `principal`; optional fields are `token`,
+   `authorization`, `expires_at`, and `token_restriction`. The builder derives
+   `auth_methods` from `authentication_context.methods()`. Both compile-time
+   tests (`#[cfg(test)]`) and the optional `mock` feature gate these
    constructors, so production builds can never call them.
 
 ### API Extractor Enforcement
@@ -189,8 +191,8 @@ than deferring all role computation to a later phase.
 For token authentication, `FernetToken::from_security_context(ctx, expires_at)`
 constructs the appropriate token variant from the validated context, using the
 scope and role data from `ctx.authorization()`. The token provider's
-`build_authz_info_from_fernet_token()` method maps each `FernetToken` variant
-to `AuthzInfo { scope, roles }` by fetching scope objects (project, domain,
+`build_authz_info_from_fernet_token()` method maps each `FernetToken` variant to
+`AuthzInfo { scope, roles }` by fetching scope objects (project, domain,
 project_domain) from the database.
 
 The `TryFrom<AuthenticationResult>` and `TryFrom<Vec<AuthenticationResult>>`
@@ -223,6 +225,19 @@ Based on the scope type:
   applies implied role expansion
 - **Unscoped**: no role query is performed; roles remain `None`
 
+A trust (or restricted application credential) can also arrive on a **plain
+`Project` scope** rather than its native `TrustProject`/app-cred scope — most
+notably an EC2 credential minted under a trust and redeemed at `/v3/ec2tokens`,
+which reconstructs the delegated `AuthenticationContext` but presents a bare
+project scope. In that case role resolution must still be bounded by the
+delegation, not by the trustee's own assignments on the project:
+`calculate_effective_roles()` detects `AuthenticationContext::Trust` under a
+`ScopeInfo::Project` and routes it through `resolve_trust_roles()` (the same
+path as `TrustProject`), and the application-credential path takes the
+intersection with the AC's frozen roles. Without this bound a restricted
+delegation redeemed via EC2 could escape its role restriction (OSSA-2026-005 /
+CVE-2026-33551).
+
 After assignment queries, if `roles` is empty and the scope is not unscoped,
 `ActorHasNoRolesOnTarget` is returned. Token restrictions are applied last to
 potentially narrow the role set.
@@ -242,20 +257,53 @@ Key constraints:
 - Trust authentication cannot be re-scoped to a different trust
 - K8s authentication is limited by its token restriction
 
+This method is the mechanism that keeps a delegated token's scope pinned to its
+delegation project, and it is what the policy-layer scope-drift tripwire (see
+_Delegation Facts Sourced from the Authentication Chain_) relies on. Note the
+pinning is enforced on scope _change_; the initial scope set at issuance is not
+re-checked here, so the tripwire in the policy layer remains the backstop.
+
 ### Policy Credentials Projection
 
 `Credentials` is the subset of `ValidatedSecurityContext` projected for OPA
 policy evaluation. The `TryFrom<&ValidatedSecurityContext>` implementation at
 `core/src/policy.rs` extracts `user_id` via `sc.principal().get_user_id()`,
 `role_ids` via `sc.authorization().effective_roles()`, and scope-specific
-identifiers (`project_id`, `domain_id`, `system`). The implementation uses
-only read-only getters — no `&mut` borrows are involved.
+identifiers (`project_id`, `domain_id`, `system`). The implementation uses only
+read-only getters — no `&mut` borrows are involved.
 
-Unscoped tokens produce `role_ids: []` with no scope ID set. The OPA policy
-must handle this unscoped case correctly. For scoped contexts, the implementation
+Unscoped tokens produce `role_ids: []` with no scope ID set. The OPA policy must
+handle this unscoped case correctly. For scoped contexts, the implementation
 returns `SecurityContextNotResolved` if `authorization.roles` is unexpectedly
 `None` — this is a defense-in-depth check that catches the case where
 `fully_resolved()` was not properly gated.
+
+#### Delegation Facts Sourced from the Authentication Chain
+
+Delegation-related facts on `Credentials` — `auth_type`, `is_delegated`,
+`unrestricted`, `trust`, and `delegated_project_id` — are read from
+`sc.authentication_context()` (the immutable authentication chain), **never**
+inferred from the authorization _scope_. The token scope (`project_id`) is
+attacker-influenceable across a rescope, while the delegation object's own
+project binding is fixed at delegation-creation time. Sourcing these facts from
+the chain is what lets a policy pin a delegated caller to the delegation's own
+project rather than to whatever project the current token happens to be scoped
+to (OSSA-2026-015).
+
+`delegated_project_id: Option<String>` carries this immutable binding:
+
+- `AuthenticationContext::ApplicationCredential` → the application credential's
+  `project_id`
+- `AuthenticationContext::Trust` → the trust's `project_id`
+- all non-delegated contexts → `None`
+
+Policies anchor the delegation boundary on `delegated_project_id` and
+additionally assert `credentials.project_id == credentials.delegated_project_id`
+as a **scope-drift tripwire**: it fails closed if a delegated token's scope is
+ever observed diverging from its delegation project.
+`validate_scope_boundaries()` keeps the two equal today, so the tripwire is
+defense-in-depth against a future regression in scope pinning, not the primary
+control.
 
 ## Consequences
 
@@ -270,9 +318,9 @@ returns `SecurityContextNotResolved` if `authorization.roles` is unexpectedly
   crate, so it also cannot mutate the fields directly — only through the
   getter/setter API. After wrapping, no `&mut` reference is reachable.
 - **Explicit getter/setter API**: All field access goes through getters
-  (returning `&T` or `Option<&T>`) and setters (taking `&mut self`). No
-  interior mutability (`RefCell`, `Cell`, `UnsafeCell`, atomics) is used
-  anywhere in the auth context types.
+  (returning `&T` or `Option<&T>`) and setters (taking `&mut self`). No interior
+  mutability (`RefCell`, `Cell`, `UnsafeCell`, atomics) is used anywhere in the
+  auth context types.
 - **Validation is mandatory**: `fully_resolved()` is called both in the
   production Auth extractor path and the test extension-injection path, ensuring
   no endpoint receives an unresolved context.
@@ -281,8 +329,9 @@ returns `SecurityContextNotResolved` if `authorization.roles` is unexpectedly
   scope specifications. The scope override guard in `new_for_scope` calls
   `validate_scope_boundaries()` when the requested scope differs from the
   context's existing scope.
-- **Test/production separation**: `test_new()` and `SecurityContextTestingBuilder`
-  are compile-time excluded from production builds, preventing accidental bypass.
+- **Test/production separation**: `test_new()` and
+  `SecurityContextTestingBuilder` are compile-time excluded from production
+  builds, preventing accidental bypass.
 
 ### Performance Considerations
 
@@ -316,14 +365,15 @@ returns `SecurityContextNotResolved` if `authorization.roles` is unexpectedly
   3. Ensuring `AuthenticationContext::methods()` returns the correct method
      names
   4. Verifying `validate_scope_boundaries()` handles the new context variant
-  5. Adding a match arm in `new_for_scope()` for auth-context-specific validation
-     (even if empty, to trigger a compile error for future context additions)
+  5. Adding a match arm in `new_for_scope()` for auth-context-specific
+     validation (even if empty, to trigger a compile error for future context
+     additions)
 - Adding a new `ScopeInfo` variant requires updating
   `validate_scope_boundaries()`, `fully_resolved()`,
   `calculate_effective_roles()`, `ScopeInfo::validate()`,
   `FernetToken::from_security_context()`,
-  `build_authz_info_from_fernet_token()`, `Credentials::try_from`,
-  and all downstream match arms that consume scope information.
+  `build_authz_info_from_fernet_token()`, `Credentials::try_from`, and all
+  downstream match arms that consume scope information.
 - The `ScopeInfo::TrustProject` variant boxes its payload as
   `Box<TrustProjectInfo>` to keep the enum size reasonable. Adding fields to
   `TrustProjectInfo` only affects the trust variant, not the smaller variants

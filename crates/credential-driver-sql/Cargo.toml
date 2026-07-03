@@ -33,7 +33,7 @@ uuid = { workspace = true, features = ["v4"] }
 
 [dev-dependencies]
 openstack-keystone-core = { workspace = true, features = ["mock"] }
-sea-orm = { workspace = true, features = ["mock", "sqlx-sqlite"] }
+sea-orm = { workspace = true, features = ["mock", "sqlx-sqlite", "runtime-tokio"] }
 tempfile = { workspace = true }
 
 [features]

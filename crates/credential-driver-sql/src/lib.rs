@@ -13,24 +13,21 @@
 // SPDX-License-Identifier: Apache-2.0
 //! # OpenStack Keystone Credentials SQL driver (ADR 0019)
 //!
-//! Persists to the `credential` table, which is owned and schema-managed
-//! **exclusively** by the Python Keystone service via `alembic`. Unlike
-//! every other SQL driver in this workspace, [`SqlBackend::setup`] is a
-//! deliberate no-op: it must never issue DDL against this table, including
-//! when `sync_schema()` iterates the [`SqlDriverRegistration`] inventory for
-//! test/dev bootstrapping. Tests that need the table to exist create it via
-//! [`test_support::create_credential_table`] instead, kept separate from the
-//! production setup path.
+//! Persists to the `credential` table.
 
 use async_trait::async_trait;
 use sea_orm::{DatabaseConnection, Schema};
 
-use openstack_keystone_core::{SqlDriver, SqlDriverRegistration, error::DatabaseError};
+use openstack_keystone_core::{
+    SqlDriver, SqlDriverRegistration, db::create_table, error::DatabaseError,
+};
 
 mod credential;
 pub mod entity;
 pub mod error;
 pub mod fernet;
+pub mod migrate;
+pub mod rotate;
 
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;
@@ -58,16 +55,32 @@ inventory::submit! {
 
 #[async_trait]
 impl SqlDriver for SqlBackend {
-    /// Deliberate no-op (ADR 0019: "Keystone-NG never runs DDL against
-    /// tables owned by the Python Keystone service"). The `credential`
-    /// table's schema is exclusively managed by Python's `alembic`
-    /// migrations, in every environment including tests that share this
-    /// setup path with other, Rust-owned drivers.
+    /// Create the `credential` table.
     async fn setup(
         &self,
-        _connection: &DatabaseConnection,
-        _schema: &Schema,
+        connection: &DatabaseConnection,
+        schema: &Schema,
     ) -> Result<(), DatabaseError> {
+        create_table(connection, schema, crate::entity::prelude::Credential).await?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use sea_orm::{ConnectionTrait, DbBackend, Schema};
+
+    use super::*;
+
+    #[tokio::test]
+    async fn test_setup_creates_credential_table() {
+        let db = sea_orm::Database::connect("sqlite::memory:").await.unwrap();
+        let schema = Schema::new(DbBackend::Sqlite);
+
+        SqlBackend::default().setup(&db, &schema).await.unwrap();
+
+        db.execute_unprepared("SELECT 1 FROM credential LIMIT 1")
+            .await
+            .unwrap();
     }
 }

@@ -17,6 +17,7 @@ use thiserror::Error;
 use openstack_keystone_config::SecurityComplianceError;
 
 use crate::auth::AuthenticationError;
+use crate::credential::CredentialProviderError;
 use crate::error::BuilderError;
 use crate::resource::ResourceProviderError;
 
@@ -33,6 +34,14 @@ pub enum IdentityProviderError {
     /// Conflict.
     #[error("conflict: {0}")]
     Conflict(String),
+
+    /// Credential provider error, surfaced when cascading a user deletion
+    /// into `delete_credentials_for_user` (ADR 0019 §3).
+    #[error(transparent)]
+    CredentialProvider {
+        #[from]
+        source: CredentialProviderError,
+    },
 
     #[error("Date calculation error")]
     DateError,

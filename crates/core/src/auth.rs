@@ -71,9 +71,26 @@ impl ValidatedSecurityContext {
     /// Validate the SecurityContext for the given scope, resolving effective
     /// roles and returning a locked context.
     ///
-    /// When a scope is requested that differs from any scope already set on the
-    /// context, [`SecurityContext::validate_scope_boundaries`] is enforced to
-    /// guard the override. Scope-setting, validation, and role resolution
+    /// When a scope is requested that differs from any scope already set on
+    /// the context, [`SecurityContext::validate_scope_boundaries`] is
+    /// enforced to guard the override. When it is unset, it is always
+    /// enforced via [`SecurityContext::set_authorization_scope`] (every
+    /// fresh scope assignment is validated; see I5 in `doc/src/security.md`
+    /// -- there is no "first scope is trusted" carve-out).
+    ///
+    /// Re-presenting an *already-validated* token with its stored scope
+    /// unchanged (e.g. token/trust re-authentication, which reconstructs
+    /// `authorization` directly from the decoded Fernet token via
+    /// `SecurityContext::set_authorization` rather than through this
+    /// constructor) intentionally skips re-validation here: the scope was
+    /// checked once at issuance, and a Fernet token is authenticated
+    /// encryption, so the stored scope cannot have been tampered with
+    /// between issuance and reuse. This is *not* the same case as a caller
+    /// pre-setting an arbitrary, never-validated scope and then requesting
+    /// that exact scope to dodge the gate -- every `authorization`-setting
+    /// path in this codebase either runs through `set_authorization_scope`
+    /// (validated) or reconstructs a value that was already validated when
+    /// its token was minted. Scope-setting, validation, and role resolution
     /// happen as a single atomic step.
     #[tracing::instrument(skip(state), err(Debug))]
     pub async fn new_for_scope(
@@ -81,8 +98,6 @@ impl ValidatedSecurityContext {
         scope: ScopeInfo,
         state: &ServiceState,
     ) -> Result<Self, AuthenticationError> {
-        // Scope conflict check: if scope already set and differs, enforce
-        // boundary validation to prevent accidental scope override.
         if let Some(existing_authz) = ctx.authorization() {
             if existing_authz.scope != scope {
                 ctx.validate_scope_boundaries(&scope)?;
@@ -135,6 +150,8 @@ impl ValidatedSecurityContext {
             AuthenticationContext::K8s(..) => {}
             AuthenticationContext::Password => {}
             AuthenticationContext::Admin => {}
+            AuthenticationContext::Ec2Credential => {}
+            AuthenticationContext::Totp => {}
             AuthenticationContext::Trust { trust, .. } => {
                 // Validate the trust chain
                 state
@@ -580,6 +597,27 @@ async fn calculate_effective_roles(
         return Ok(roles.to_vec());
     }
 
+    // A trust presented on a plain Project scope — e.g. an EC2 credential
+    // created under a trust and redeemed at `/v3/ec2tokens`, where the scope
+    // is rebuilt from the credential's project rather than the trust's own
+    // `TrustProject` scope — must still have its effective roles bounded by
+    // the trust's delegated role set, never the trustee's own project
+    // assignments (OSSA-2026-015 defense-in-depth; mirrors the
+    // application-credential handling in `resolve_project_default_roles`).
+    if let AuthenticationContext::Trust { trust, .. } = ctx.authentication_context()
+        && let ScopeInfo::Project {
+            project,
+            project_domain,
+        } = scope
+    {
+        let tpi = TrustProjectInfo {
+            trust: trust.clone(),
+            project: project.clone(),
+            project_domain: project_domain.clone(),
+        };
+        return resolve_trust_roles(state, &tpi).await;
+    }
+
     let roles = match scope {
         ScopeInfo::Domain(domain) => resolve_domain_roles(state, ctx, &domain.id).await?,
         ScopeInfo::Project { project, .. } => {
@@ -827,7 +865,7 @@ mod tests {
         AuthenticationContext, AuthzInfoBuilder, IdentityInfo, PrincipalInfo, ScopeInfo,
         SecurityContextTestingBuilder, TrustProjectInfo, UserIdentityInfo,
     };
-    use openstack_keystone_core_types::identity::{UserOptions, UserResponse};
+    use openstack_keystone_core_types::identity::{UserOptions, UserResponse, UserResponseBuilder};
     use openstack_keystone_core_types::mapping::authorization::Authorization;
     use openstack_keystone_core_types::mapping::{MappingContext, VirtualUser};
     use openstack_keystone_core_types::resource::Project;
@@ -837,10 +875,12 @@ mod tests {
     use std::collections::HashMap;
 
     use crate::assignment::MockAssignmentProvider;
+    use crate::identity::MockIdentityProvider;
     use crate::mapping::MockMappingProvider;
     use crate::provider::Provider;
     use crate::role::{MockRoleProvider, RoleProviderError};
     use crate::tests::get_mocked_state;
+    use crate::trust::MockTrustProvider;
 
     use super::*;
 
@@ -3149,5 +3189,214 @@ mod tests {
             .unwrap();
         assert_eq!(eff.len(), 1);
         assert_eq!(eff[0].id, rid);
+    }
+
+    // OSSA-2026-005 / CVE-2026-33551 / OSSA-2026-015 regression matrix:
+    // drives `ValidatedSecurityContext::new_for_scope()` end-to-end (not
+    // just `calculate_effective_roles` in isolation) across every scope
+    // shape a delegated auth (Trust, ApplicationCredential) can legally
+    // present, and asserts the resulting effective roles never exceed the
+    // delegation's own restricted role set -- even when the delegating
+    // principal personally holds broader roles on the target project. See
+    // `doc/src/security.md` I4 and its reviewer-checklist item "New scope
+    // shape or redemption path for a delegated auth?".
+    #[tokio::test]
+    async fn test_new_for_scope_delegated_roles_never_exceed_delegation_matrix() {
+        let trustor = "trustor";
+        let appcred_owner = "appcred_owner";
+        let pid = "pid";
+        let allowed_rid = "reader";
+        let escalated_rid = "admin";
+
+        // The delegating principal (trustor, or the app-cred owner) holds
+        // BOTH roles on the project; the delegation itself (trust.roles /
+        // application_credential.roles) restricts to just `allowed_rid`.
+        // A correct implementation must never let the wider assignment
+        // leak through.
+        let mut assignment_mock = MockAssignmentProvider::default();
+        assignment_mock
+            .expect_list_role_assignments()
+            .withf(move |_, q: &RoleAssignmentListParameters| q.project_id.as_deref() == Some(pid))
+            .returning(move |_e, q: &RoleAssignmentListParameters| {
+                let actor = q.user_id.clone().unwrap_or_default();
+                Ok(vec![
+                    assignment_with_role_actor(allowed_rid, &actor),
+                    assignment_with_role_actor(escalated_rid, &actor),
+                ])
+            });
+        let mut role_mock = MockRoleProvider::default();
+        role_mock
+            .expect_expand_implied_roles()
+            .returning(|_e, _roles| Ok(()));
+        let mut trust_mock = MockTrustProvider::default();
+        trust_mock
+            .expect_validate_trust_delegation_chain()
+            .returning(|_e, _trust| Ok(true));
+        let mut identity_mock = MockIdentityProvider::default();
+        identity_mock.expect_get_user().returning(|_e, id| {
+            Ok(Some(
+                UserResponseBuilder::default()
+                    .id(id)
+                    .domain_id("d1")
+                    .enabled(true)
+                    .name(id)
+                    .build()
+                    .unwrap(),
+            ))
+        });
+        let state = get_mocked_state(
+            None,
+            Some(
+                Provider::mocked_builder()
+                    .mock_assignment(assignment_mock)
+                    .mock_role(role_mock)
+                    .mock_trust(trust_mock)
+                    .mock_identity(identity_mock),
+            ),
+        )
+        .await;
+
+        // Case 1: Trust presented on its native TrustProject scope, as
+        // reconstructed when an already-issued trust token is re-presented
+        // (`TokenService::build_authz_info_from_fernet_token` +
+        // `SecurityContext::set_authorization`): `authorization` is
+        // pre-set to the trust's own scope, which `new_for_scope` then
+        // re-confirms is unchanged rather than re-running boundary
+        // validation (see this function's doc comment).
+        let trust = Trust {
+            id: "t1".to_string(),
+            trustor_user_id: trustor.to_string(),
+            trustee_user_id: "trustee".to_string(),
+            impersonation: false,
+            project_id: Some(pid.to_string()),
+            expires_at: None,
+            deleted_at: None,
+            extra: None,
+            remaining_uses: None,
+            redelegated_trust_id: None,
+            redelegation_count: None,
+            roles: Some(vec![role_ref(allowed_rid, "reader")]),
+        };
+        let trust_project_scope = ScopeInfo::TrustProject(Box::new(TrustProjectInfo {
+            trust: trust.clone(),
+            project: make_project(pid),
+            project_domain: openstack_keystone_core_types::resource::Domain {
+                id: "d1".to_string(),
+                description: None,
+                enabled: true,
+                name: "default".to_string(),
+                extra: HashMap::new(),
+            },
+        }));
+        let authz = AuthzInfoBuilder::default()
+            .scope(trust_project_scope.clone())
+            .roles(Vec::new())
+            .build()
+            .unwrap();
+        let ctx = SecurityContextTestingBuilder::default()
+            .authentication_context(AuthenticationContext::Trust {
+                trust: trust.clone(),
+                token: None,
+            })
+            .principal(make_user_identity("trustee"))
+            .authorization(authz)
+            .build();
+        let validated = ValidatedSecurityContext::new_for_scope(ctx, trust_project_scope, &state)
+            .await
+            .unwrap();
+        let roles = validated
+            .0
+            .authorization()
+            .unwrap()
+            .effective_roles()
+            .unwrap();
+        assert_eq!(roles.len(), 1, "trust/TrustProject: {roles:?}");
+        assert_eq!(roles[0].id, allowed_rid);
+
+        // Case 2: the same trust reconstructed on a bare Project scope --
+        // the shape an EC2 credential minted under this trust presents at
+        // `/v3/ec2tokens` redemption.
+        let ctx = SecurityContextTestingBuilder::default()
+            .authentication_context(AuthenticationContext::Trust {
+                trust: trust.clone(),
+                token: None,
+            })
+            .principal(make_user_identity("trustee"))
+            .build();
+        let validated =
+            ValidatedSecurityContext::new_for_scope(ctx, make_project_scope(pid), &state)
+                .await
+                .unwrap();
+        let roles = validated
+            .0
+            .authorization()
+            .unwrap()
+            .effective_roles()
+            .unwrap();
+        assert_eq!(roles.len(), 1, "trust/Project (EC2 shape): {roles:?}");
+        assert_eq!(roles[0].id, allowed_rid);
+
+        // Case 3: a restricted application credential on its (only legal)
+        // Project scope.
+        let ac = openstack_keystone_core_types::application_credential::ApplicationCredential {
+            id: "ac1".to_string(),
+            user_id: appcred_owner.to_string(),
+            project_id: pid.to_string(),
+            name: "cred".to_string(),
+            description: None,
+            roles: vec![role_ref(allowed_rid, "reader")],
+            unrestricted: false,
+            expires_at: None,
+            access_rules: None,
+        };
+        let ctx = SecurityContextTestingBuilder::default()
+            .authentication_context(AuthenticationContext::ApplicationCredential {
+                application_credential: ac,
+                token: None,
+            })
+            .principal(make_user_identity(appcred_owner))
+            .build();
+        let validated =
+            ValidatedSecurityContext::new_for_scope(ctx, make_project_scope(pid), &state)
+                .await
+                .unwrap();
+        let roles = validated
+            .0
+            .authorization()
+            .unwrap()
+            .effective_roles()
+            .unwrap();
+        assert_eq!(roles.len(), 1, "application_credential/Project: {roles:?}");
+        assert_eq!(roles[0].id, allowed_rid);
+    }
+
+    // Companion negative case: a trust may reach a plain Project scope only
+    // for its OWN bound project -- it must not be usable to reach a
+    // different project by presenting the EC2-redemption shape.
+    #[tokio::test]
+    async fn test_new_for_scope_trust_on_foreign_project_rejected() {
+        let state = get_mocked_state(None, None).await;
+        let trust = Trust {
+            id: "t1".to_string(),
+            trustor_user_id: "trustor".to_string(),
+            trustee_user_id: "trustee".to_string(),
+            impersonation: false,
+            project_id: Some("own_pid".to_string()),
+            expires_at: None,
+            deleted_at: None,
+            extra: None,
+            remaining_uses: None,
+            redelegated_trust_id: None,
+            redelegation_count: None,
+            roles: None,
+        };
+        let ctx = SecurityContextTestingBuilder::default()
+            .authentication_context(AuthenticationContext::Trust { trust, token: None })
+            .principal(make_user_identity("trustee"))
+            .build();
+        let result =
+            ValidatedSecurityContext::new_for_scope(ctx, make_project_scope("other_pid"), &state)
+                .await;
+        assert!(matches!(result, Err(AuthenticationError::ScopeNotAllowed)));
     }
 }

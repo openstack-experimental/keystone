@@ -17,6 +17,7 @@ base64.workspace = true
 bcrypt = { workspace = true, features = ["alloc"] }
 chrono = { workspace = true, default-features = false }
 crc32fast.workspace = true
+data-encoding.workspace = true
 derive_builder.workspace = true
 eyre.workspace = true
 governor.workspace = true
@@ -35,6 +36,7 @@ regex-syntax.workspace = true
 sea-orm.workspace = true
 sea-orm-migration.workspace = true
 secrecy = { workspace = true, features = ["serde"] }
+sha1.workspace = true
 sha2.workspace = true
 serde.workspace = true
 serde_json.workspace = true

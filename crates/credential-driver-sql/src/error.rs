@@ -68,3 +68,30 @@ impl From<CredentialFernetError> for CredentialProviderError {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_null_key_detected_converts_to_encryption_error_with_message() {
+        let err: CredentialProviderError = CredentialFernetError::NullKeyDetected.into();
+        match err {
+            CredentialProviderError::Encryption(msg) => {
+                assert!(msg.contains("Null Key"));
+            }
+            other => panic!("expected Encryption variant, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_other_variants_convert_to_encryption_error() {
+        let err: CredentialProviderError = CredentialFernetError::KeysMissing.into();
+        assert!(
+            matches!(err, CredentialProviderError::Encryption(msg) if msg.contains("no Fernet keys"))
+        );
+
+        let err: CredentialProviderError = CredentialFernetError::DecryptionFailed.into();
+        assert!(matches!(err, CredentialProviderError::Encryption(_)));
+    }
+}

@@ -86,6 +86,9 @@ tls_cert_file = ${STATE_DIR}/ks.pem
 tls_key_file = ${STATE_DIR}/ks.key
 dev_mode = true
 
+[credential]
+key_repository = ${STATE_DIR}/etc/fernet-keys
+
 [webauthn]
 driver = raft
 enabled = true

@@ -23,9 +23,11 @@ use {
 };
 
 use openstack_keystone_core_types::api_key::ApiKeyProviderError;
+use openstack_keystone_core_types::application_credential::ApplicationCredentialProviderError;
 use openstack_keystone_core_types::assignment::AssignmentProviderError;
 use openstack_keystone_core_types::auth::AuthenticationError;
 use openstack_keystone_core_types::catalog::CatalogProviderError;
+use openstack_keystone_core_types::credential::CredentialProviderError;
 use openstack_keystone_core_types::error::BuilderError;
 use openstack_keystone_core_types::error::KeystoneError;
 use openstack_keystone_core_types::identity::IdentityProviderError;
@@ -184,10 +186,50 @@ impl From<RoleProviderError> for KeystoneApiError {
     }
 }
 
+impl From<CredentialProviderError> for KeystoneApiError {
+    fn from(source: CredentialProviderError) -> Self {
+        match source {
+            CredentialProviderError::CredentialNotFound(x) => Self::NotFound {
+                resource: "credential".into(),
+                identifier: x,
+            },
+            ref err @ CredentialProviderError::Conflict(..) => Self::Conflict(err.to_string()),
+            ref err @ CredentialProviderError::Validation { .. } => {
+                Self::BadRequest(err.to_string())
+            }
+            ref err @ (CredentialProviderError::MissingUserId
+            | CredentialProviderError::MissingProjectId
+            | CredentialProviderError::InvalidBlob(..)
+            | CredentialProviderError::ImmutableField(..)) => Self::BadRequest(err.to_string()),
+            other => Self::InternalError(other.to_string()),
+        }
+    }
+}
+
 impl From<CatalogProviderError> for KeystoneApiError {
     fn from(value: CatalogProviderError) -> Self {
         match value {
             ref err @ CatalogProviderError::Conflict(..) => Self::Conflict(err.to_string()),
+            other => Self::InternalError(other.to_string()),
+        }
+    }
+}
+
+impl From<ApplicationCredentialProviderError> for KeystoneApiError {
+    fn from(source: ApplicationCredentialProviderError) -> Self {
+        match source {
+            ApplicationCredentialProviderError::ApplicationCredentialNotFound(x) => {
+                Self::NotFound {
+                    resource: "application_credential".into(),
+                    identifier: x,
+                }
+            }
+            ref err @ ApplicationCredentialProviderError::Conflict(..) => {
+                Self::Conflict(err.to_string())
+            }
+            err @ ApplicationCredentialProviderError::ApplicationCredentialExpired => {
+                Self::unauthorized(err, None::<String>)
+            }
             other => Self::InternalError(other.to_string()),
         }
     }
@@ -363,6 +405,7 @@ impl From<KeystoneError> for KeystoneApiError {
             KeystoneError::AssignmentProvider { source } => source.into(),
             KeystoneError::Authentication { source } => source.into(),
             KeystoneError::CatalogProvider { source } => source.into(),
+            KeystoneError::CredentialProvider { source } => source.into(),
             KeystoneError::FederationProvider { source } => source.into(),
             KeystoneError::Json { source } => source.into(),
             KeystoneError::K8sAuthProvider { source } => source.into(),

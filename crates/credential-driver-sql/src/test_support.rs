@@ -12,18 +12,10 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //! # Test-only table creation
-//!
-//! `SqlBackend::setup()` is a deliberate no-op in production (ADR 0019: the
-//! `credential` table's schema is exclusively owned by Python Keystone's
-//! `alembic` migrations). Integration tests that exercise this crate
-//! against a real (throwaway, in-memory) database need the table to exist,
-//! so this helper creates it directly — entirely separate from the
-//! production `SqlDriver::setup()` path, and never wired into
-//! `sync_schema()`.
 
 use sea_orm::{ConnectionTrait, DatabaseConnection, Schema};
 
-use openstack_keystone_core::db::create_table;
+use openstack_keystone_core::SqlDriver;
 use openstack_keystone_core::error::DatabaseError;
 
 /// Create the `credential` table in a test database.
@@ -32,5 +24,5 @@ use openstack_keystone_core::error::DatabaseError;
 /// Returns a [`DatabaseError`] if the table creation fails.
 pub async fn create_credential_table(db: &DatabaseConnection) -> Result<(), DatabaseError> {
     let schema = Schema::new(db.get_database_backend());
-    create_table(db, &schema, crate::entity::prelude::Credential).await
+    crate::SqlBackend::default().setup(db, &schema).await
 }

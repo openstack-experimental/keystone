@@ -14,11 +14,21 @@
 
 use thiserror::Error;
 
+use crate::credential::CredentialProviderError;
+
 #[derive(Error, Debug)]
 pub enum ResourceProviderError {
     /// Conflict.
     #[error("conflict: {0}")]
     Conflict(String),
+
+    /// Credential provider error, surfaced when cascading a project
+    /// deletion into `delete_credentials_for_project` (ADR 0019 §3).
+    #[error(transparent)]
+    CredentialProvider {
+        #[from]
+        source: CredentialProviderError,
+    },
 
     /// Domain not found.
     #[error("domain {0} not found")]

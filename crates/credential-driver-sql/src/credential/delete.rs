@@ -57,3 +57,83 @@ pub async fn delete_for_project(
         .context("deleting credentials for project")?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use sea_orm::ActiveValue::Set;
+    use sea_orm::DatabaseConnection;
+    use sea_orm::entity::*;
+
+    use crate::test_support::create_credential_table;
+
+    use super::*;
+
+    async fn test_db() -> DatabaseConnection {
+        let db = sea_orm::Database::connect("sqlite::memory:").await.unwrap();
+        create_credential_table(&db).await.unwrap();
+        db
+    }
+
+    async fn insert_credential(
+        db: &DatabaseConnection,
+        id: &str,
+        user_id: &str,
+        project_id: Option<&str>,
+    ) {
+        db_credential::ActiveModel {
+            id: Set(id.to_string()),
+            user_id: Set(user_id.to_string()),
+            project_id: Set(project_id.map(str::to_string)),
+            encrypted_blob: Set(String::new()),
+            r#type: Set("totp".to_string()),
+            key_hash: Set("hash".to_string()),
+            extra: Set(None),
+        }
+        .insert(db)
+        .await
+        .unwrap();
+    }
+
+    async fn remaining_ids(db: &DatabaseConnection) -> Vec<String> {
+        DbCredential::find()
+            .all(db)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|m| m.id)
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn test_delete_removes_only_matching_id() {
+        let db = test_db().await;
+        insert_credential(&db, "cred-1", "user-1", None).await;
+        insert_credential(&db, "cred-2", "user-1", None).await;
+
+        delete(&db, "cred-1").await.unwrap();
+
+        assert_eq!(remaining_ids(&db).await, vec!["cred-2".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn test_delete_for_user_removes_only_owned_credentials() {
+        let db = test_db().await;
+        insert_credential(&db, "cred-1", "user-1", None).await;
+        insert_credential(&db, "cred-2", "user-2", None).await;
+
+        delete_for_user(&db, "user-1").await.unwrap();
+
+        assert_eq!(remaining_ids(&db).await, vec!["cred-2".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn test_delete_for_project_removes_only_bound_credentials() {
+        let db = test_db().await;
+        insert_credential(&db, "cred-1", "user-1", Some("project-a")).await;
+        insert_credential(&db, "cred-2", "user-1", Some("project-b")).await;
+
+        delete_for_project(&db, "project-a").await.unwrap();
+
+        assert_eq!(remaining_ids(&db).await, vec!["cred-2".to_string()]);
+    }
+}

@@ -74,6 +74,20 @@ names above (not `access_id`) are the cross-service contract; a Rust and a
 Python node must serialize identical keys or the two services will silently fail
 to exchange delegation metadata.
 
+**Server-managed, never client-settable** (OSSA-2026-005 / CVE-2026-33551): on
+create, the server discards any `trust_id`/`app_cred_id`/`access_token_id`
+supplied in the request's `blob` and re-derives them from the _actual_
+authentication context of the creating request (trust or application credential;
+absent for direct authentication). Without this, an EC2 credential created while
+authenticated via a delegation would be indistinguishable from a
+directly-authenticated one at `/v3/ec2tokens` validation time, silently
+regaining the parent user's full, unrestricted project role set on every
+subsequent use. On update, these fields are immutable and carried forward from
+the stored blob when the caller's patch omits them (as any normal client would,
+since the fields are never meant to be client-supplied); a patch that explicitly
+supplies a _different_ value, or supplies one where none was stored, is
+rejected.
+
 **TOTP Blob:**
 
 ```json
@@ -167,6 +181,74 @@ Keystone-NG treats this table as read/write but never issues DDL against it.
     the wrong target (e.g. the caller's own attributes, or a cached target from
     the first item) would make the re-check a no-op and reintroduce a variant of
     CVE-2019-19687 rather than closing it.
+
+#### Delegation Project Boundary (OSSA-2026-015)
+
+All CRUD operations on `/v3/credentials` must bind delegated authentication
+(trust-scoped tokens, application credentials) to the delegation's own
+`project_id`, not just the credential's `user_id`. Checking ownership via
+`user_id` alone is insufficient: a stolen or reused trust/application-credential
+token scoped to project A must not be able to read, modify, or delete a
+credential belonging to the same user but bound to project B, nor reach
+credentials with no project binding at all (e.g. TOTP/MFA seeds).
+
+- The policy engine receives `input.credentials.is_delegated` (derived from
+  [`AuthenticationContext::is_delegated`], true for trust/application-credential
+  auth, including when carried forward through a re-scoped token) on every
+  request.
+- The boundary is anchored on `input.credentials.delegated_project_id` — the
+  delegation's own **immutable** project taken directly from the authentication
+  chain held in [`ValidatedSecurityContext`] (`trust.project_id` /
+  `application_credential.project_id`), **not** on
+  `input.credentials.project_id` (the request's token scope). Sourcing the
+  boundary from the chain rather than the scope means a scope rebind can never
+  move a delegated caller's boundary. The two are pinned equal at token-issuance
+  time ([`SecurityContext::validate_scope_boundaries`]), so policies
+  additionally assert `project_id == delegated_project_id` for delegated callers
+  as a scope-drift tripwire that fails closed.
+- **Show/Delete/Update**: a delegated caller may only act on a credential whose
+  `project_id` equals `delegated_project_id`; unscoped credentials
+  (`project_id == null`) are unreachable via any delegated caller.
+- **Update**: additionally, a delegated caller's patch must not move the
+  credential's `project_id` outside the delegation's own
+  (`delegated_project_id`) project.
+- **Create**: a delegated caller's new credential must set `project_id` equal to
+  `delegated_project_id`; delegated callers cannot create unscoped credentials.
+- **List**: unaffected directly — the delegation boundary is enforced entirely
+  by the per-item `identity/credential/show` re-check described above.
+- Non-delegated authentication (password, token, TOTP, ...) is unaffected;
+  `user_id`-only ownership remains sufficient.
+- **Effective-role bounding on redemption**: a trust presented on a plain
+  project scope (an EC2 credential created under a trust, redeemed at
+  `POST /v3/ec2tokens`, where the scope is rebuilt from the credential's project
+  rather than the trust's own `TrustProject` scope) has its effective roles
+  bounded by the trust's delegated role set, never the trustee's own project
+  assignments — mirroring the application-credential role intersection so a
+  delegated EC2 credential can never widen its role set beyond the delegation.
+
+#### Restricted Application Credentials and EC2 (OSSA-2026-005)
+
+A _restricted_ application credential (`unrestricted == false`) must not be
+usable to create an `ec2`-type credential at all, via either
+`POST /v3/credentials` or `POST /v3/users/{user_id}/credentials/OS-EC2`. This is
+independent of the project-boundary check above and of the delegation role set:
+an EC2 credential, once created, authenticates via `POST /v3/ec2tokens` on its
+own terms (see §1, "Server-managed, never client-settable") — restricting _who
+may create one_ is the only point at which a restricted application credential's
+intentionally narrow capability set can be enforced against this particular
+escape hatch.
+
+- The policy engine receives `input.credentials.auth_type` (e.g.
+  `"application_credential"`) and, for application-credential authentication
+  only, `input.credentials.unrestricted` (`Some(bool)`; absent/`null` for every
+  other auth method).
+- `identity/credential/create` denies when
+  `auth_type == "application_credential"`, `unrestricted` is falsy, and the
+  target credential's `type == "ec2"`; every other credential type is
+  unaffected.
+- `identity/os_ec2/create_credential` applies the same restricted-app-cred
+  denial unconditionally, since every credential created through that endpoint
+  is `ec2`-typed.
 
 #### Update (`PATCH /v3/credentials/{id}`)
 
@@ -632,7 +714,13 @@ Keystone-NG must check both locations from the start.
    `/v3/ec2tokens` as fully unauthenticated. Keystone-NG must enforce this
    policy and not mark the endpoint as `@unenforced_api`.
 3. **Credential Lookup**: Query the `credential` table using `SHA-256(access)`
-   as the record ID. Return `401` if not found.
+   as the record ID. Return `401` if not found. **Type guard**: reject (`401`)
+   any record whose `type != "ec2"`. The lookup keys on `SHA-256(access) == id`,
+   an invariant only established for `ec2`-type credentials at creation (see §1,
+   "Automatic Creation"); without this guard a credential mislabelled to a
+   non-`ec2` type — thereby dodging the `ec2`-only create-time guards (project
+   binding, delegation stamping, the restricted-app-cred gate of OSSA-2026-005)
+   — could still be redeemed here if its id ever collided with an access hash.
 4. **User/Project Validation**: After locating the credential, verify:
    - The owning user is enabled (`identity_api.assert_user_enabled`).
    - The user's domain is enabled.
@@ -650,10 +738,23 @@ Keystone-NG must check both locations from the start.
 9. **Failure**: Return `401 Unauthorized` for any verification failure.
 
 **Credential metadata in the token**: If the EC2 credential was created via a
-trust (`trust_id` in the blob), application credential (`app_cred_id`), or
-access token (`access_token_id`), this delegation metadata must be passed
-through to the token provider so it resolves the correct role assignments.
-Omitting this was a historical bug fixed in Python Keystone.
+trust (`trust_id` in the blob) or application credential (`app_cred_id`), this
+delegation metadata must be passed through to the token provider so it resolves
+the correct (bounded) role assignments — the trust/application-credential
+authentication context is rebuilt so the effective roles are bounded by the
+delegation's role set, never the owner's full project assignments. Omitting this
+was a historical bug fixed in Python Keystone. `access_token_id` (OAuth1) is
+**rejected** until OAuth1 delegation is implemented: redeeming such a credential
+would otherwise fall through to an unbounded EC2 authentication and silently
+drop the OAuth1 restriction.
+
+**Policy-input hygiene**: the credential `blob` holds the _decrypted_ secret
+(EC2 secret key, TOTP seed). No credential policy rule references it, so the API
+layer strips `blob` from every credential object before it is sent to the policy
+engine (`identity/credential/{create,show,update}` and the per-item `show`
+re-check on list). Shipping the plaintext secret to an external OPA would expose
+it to decision logging, turning the authorization channel into a secret
+exfiltration path.
 
 #### Error Codes
 

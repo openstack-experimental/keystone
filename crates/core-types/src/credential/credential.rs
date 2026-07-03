@@ -110,11 +110,6 @@ pub struct CredentialUpdate {
     #[builder(default)]
     pub blob: Option<String>,
 
-    /// New project association.
-    #[builder(default)]
-    #[validate(length(max = 64))]
-    pub project_id: Option<String>,
-
     /// New credential type.
     #[builder(default)]
     #[validate(length(min = 1, max = 255))]

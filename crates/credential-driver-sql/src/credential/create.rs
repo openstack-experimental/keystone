@@ -70,3 +70,100 @@ pub async fn create(
         extra: rec.extra,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use sea_orm::DatabaseConnection;
+
+    use openstack_keystone_core::credential::CredentialProviderError;
+
+    use crate::credential::get::get;
+    use crate::test_support::create_credential_table;
+
+    use super::*;
+
+    fn test_config(key_repo: &std::path::Path) -> Config {
+        let mut cfg = Config::default();
+        cfg.credential.key_repository = key_repo.to_path_buf();
+        cfg
+    }
+
+    async fn test_db() -> DatabaseConnection {
+        let db = sea_orm::Database::connect("sqlite::memory:").await.unwrap();
+        create_credential_table(&db).await.unwrap();
+        db
+    }
+
+    #[tokio::test]
+    async fn test_create_persists_encrypted_and_returns_plaintext() {
+        let key_dir = tempfile::tempdir().unwrap();
+        let cfg = test_config(key_dir.path());
+        let db = test_db().await;
+        crate::fernet::FernetKeyRepository::new(key_dir.path().to_path_buf())
+            .setup()
+            .unwrap();
+
+        let rec = CredentialCreate {
+            id: Some("cred-1".into()),
+            user_id: Some("user-1".into()),
+            project_id: Some("project-1".into()),
+            blob: "secret-blob".into(),
+            r#type: "totp".into(),
+            extra: None,
+        };
+
+        let created = create(&cfg, &db, rec).await.unwrap();
+        assert_eq!(created.id, "cred-1");
+        assert_eq!(created.blob, "secret-blob");
+
+        // The row on disk must be encrypted, not plaintext.
+        let stored = crate::entity::prelude::Credential::find_by_id("cred-1".to_string())
+            .one(&db)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_ne!(stored.encrypted_blob, "secret-blob");
+
+        // Round-trips back to plaintext through get().
+        let fetched = get(&cfg, &db, "cred-1").await.unwrap().unwrap();
+        assert_eq!(fetched.blob, "secret-blob");
+    }
+
+    #[tokio::test]
+    async fn test_create_missing_id_errors() {
+        let key_dir = tempfile::tempdir().unwrap();
+        let cfg = test_config(key_dir.path());
+        let db = test_db().await;
+
+        let rec = CredentialCreate {
+            id: None,
+            user_id: Some("user-1".into()),
+            project_id: None,
+            blob: "secret-blob".into(),
+            r#type: "totp".into(),
+            extra: None,
+        };
+
+        let err = create(&cfg, &db, rec).await.unwrap_err();
+        assert!(matches!(err, CredentialProviderError::Driver(_)));
+    }
+
+    #[tokio::test]
+    async fn test_create_missing_user_id_errors() {
+        let key_dir = tempfile::tempdir().unwrap();
+        let cfg = test_config(key_dir.path());
+        let db = test_db().await;
+
+        let rec = CredentialCreate {
+            id: Some("cred-1".into()),
+            user_id: None,
+            project_id: None,
+            blob: "secret-blob".into(),
+            r#type: "totp".into(),
+            extra: None,
+        };
+
+        let err = create(&cfg, &db, rec).await.unwrap_err();
+        assert!(matches!(err, CredentialProviderError::MissingUserId));
+    }
+}

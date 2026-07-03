@@ -23,10 +23,12 @@
 //! service can be decrypted by the other.
 
 pub mod backend;
+pub mod ec2_signature;
 pub mod error;
 pub mod hook;
 mod provider_api;
 pub mod service;
+pub mod totp;
 
 pub use error::CredentialProviderError;
 pub use hook::CredentialHook;

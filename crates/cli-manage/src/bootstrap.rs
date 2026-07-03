@@ -20,10 +20,6 @@ use eyre::Result;
 use reqwest::{Client, StatusCode, Url};
 use serde_json::json;
 use spiffe_rustls::{authorizer, mtls_client};
-use tracing_subscriber::{
-    filter::{LevelFilter, Targets},
-    prelude::*,
-};
 
 use openstack_keystone_api_types::v3::domain::*;
 use openstack_keystone_api_types::v3::project::*;
@@ -32,6 +28,7 @@ use openstack_keystone_api_types::v3::user::*;
 use openstack_keystone_config::Config;
 
 use crate::PerformAction;
+use crate::common::setup_logging;
 
 /// Bootstrap Keystone data.
 #[derive(Parser)]
@@ -51,21 +48,6 @@ pub struct BootstrapCommand {
     /// Verbosity level. Repeat to increase level.
     #[arg(short, long, action = clap::ArgAction::Count)]
     verbose: u8,
-}
-
-fn setup_logging(verbose: u8) {
-    let filter = Targets::new().with_default(match verbose {
-        0 => LevelFilter::WARN,
-        1 => LevelFilter::INFO,
-        2 => LevelFilter::DEBUG,
-        _ => LevelFilter::TRACE,
-    });
-
-    let log_layer = tracing_subscriber::fmt::layer()
-        .with_writer(std::io::stderr)
-        .with_filter(filter);
-
-    let _ = tracing::subscriber::set_global_default(tracing_subscriber::registry().with(log_layer));
 }
 
 #[async_trait]

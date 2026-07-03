@@ -12,7 +12,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 #![allow(clippy::doc_paragraphs_missing_punctuation)]
-//! `SeaORM` entities for the (Python-owned) `credential` table.
+//! `SeaORM` entities for the `credential` table.
 
 pub mod prelude;
 

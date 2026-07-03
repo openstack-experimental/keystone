@@ -65,3 +65,105 @@ pub async fn list_for_user<'a>(
     )
     .await
 }
+
+#[cfg(test)]
+mod tests {
+    use sea_orm::ActiveValue::Set;
+    use sea_orm::DatabaseConnection;
+    use sea_orm::entity::*;
+
+    use crate::fernet::FernetKeyRepository;
+    use crate::test_support::create_credential_table;
+
+    use super::*;
+
+    fn test_config(key_repo: &std::path::Path) -> Config {
+        let mut cfg = Config::default();
+        cfg.credential.key_repository = key_repo.to_path_buf();
+        cfg
+    }
+
+    async fn test_db() -> DatabaseConnection {
+        let db = sea_orm::Database::connect("sqlite::memory:").await.unwrap();
+        create_credential_table(&db).await.unwrap();
+        db
+    }
+
+    async fn insert_credential(
+        cfg: &Config,
+        db: &DatabaseConnection,
+        id: &str,
+        user_id: &str,
+        r#type: &str,
+        plaintext: &[u8],
+    ) {
+        let repo = FernetKeyRepository::new(cfg.credential.key_repository.clone());
+        let keys = repo.load(false).unwrap();
+        db_credential::ActiveModel {
+            id: Set(id.to_string()),
+            user_id: Set(user_id.to_string()),
+            project_id: Set(None),
+            encrypted_blob: Set(keys.multi_fernet.encrypt(plaintext)),
+            r#type: Set(r#type.to_string()),
+            key_hash: Set(keys.primary_key_hash),
+            extra: Set(None),
+        }
+        .insert(db)
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_list_returns_all_when_unfiltered() {
+        let key_dir = tempfile::tempdir().unwrap();
+        let cfg = test_config(key_dir.path());
+        let db = test_db().await;
+        FernetKeyRepository::new(key_dir.path().to_path_buf())
+            .setup()
+            .unwrap();
+        insert_credential(&cfg, &db, "cred-1", "user-1", "totp", b"a").await;
+        insert_credential(&cfg, &db, "cred-2", "user-2", "ec2", b"b").await;
+
+        let results = list(&cfg, &db, &CredentialListParameters::default())
+            .await
+            .unwrap();
+        assert_eq!(results.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_list_filters_by_user_and_type() {
+        let key_dir = tempfile::tempdir().unwrap();
+        let cfg = test_config(key_dir.path());
+        let db = test_db().await;
+        FernetKeyRepository::new(key_dir.path().to_path_buf())
+            .setup()
+            .unwrap();
+        insert_credential(&cfg, &db, "cred-1", "user-1", "totp", b"a").await;
+        insert_credential(&cfg, &db, "cred-2", "user-1", "ec2", b"b").await;
+        insert_credential(&cfg, &db, "cred-3", "user-2", "totp", b"c").await;
+
+        let params = CredentialListParameters {
+            user_id: Some("user-1".into()),
+            r#type: Some("totp".into()),
+        };
+        let results = list(&cfg, &db, &params).await.unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "cred-1");
+    }
+
+    #[tokio::test]
+    async fn test_list_for_user_filters_by_owner() {
+        let key_dir = tempfile::tempdir().unwrap();
+        let cfg = test_config(key_dir.path());
+        let db = test_db().await;
+        FernetKeyRepository::new(key_dir.path().to_path_buf())
+            .setup()
+            .unwrap();
+        insert_credential(&cfg, &db, "cred-1", "user-1", "totp", b"a").await;
+        insert_credential(&cfg, &db, "cred-2", "user-2", "totp", b"b").await;
+
+        let results = list_for_user(&cfg, &db, "user-1", None).await.unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "cred-1");
+    }
+}

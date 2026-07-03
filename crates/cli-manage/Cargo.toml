@@ -26,6 +26,7 @@ openstack-keystone-api-types.workspace = true
 openstack-keystone = { version = "0.1", path = "../keystone" }
 openstack-keystone-config.workspace = true
 openstack-keystone-core.workspace = true
+openstack-keystone-credential-driver-sql.workspace = true
 openstack-keystone-distributed-storage.workspace = true
 openstack-keystone-federation-driver-sql.workspace = true
 openstack-keystone-k8s-auth-driver-sql.workspace = true
@@ -49,5 +50,7 @@ workspace = true
 
 [dev-dependencies]
 httpmock = { version = "0.8", features = ["http2"] }
+openstack-keystone-credential-driver-sql = { version = "0.1", path = "../credential-driver-sql", features = ["test-support"] }
 serde.workspace = true
 temp-env.workspace = true
+tempfile.workspace = true

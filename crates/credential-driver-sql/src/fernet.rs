@@ -221,12 +221,15 @@ impl FernetKeyRepository {
         })
     }
 
-    /// `credential_rotate`: promote the staged key `0` to primary, stage a
-    /// fresh key `0`, and prune beyond [`MAX_ACTIVE_KEYS`].
+    /// Promote the staged key `0` to primary, stage a fresh key `0`, and
+    /// prune beyond [`MAX_ACTIVE_KEYS`].
     ///
-    /// Callers are responsible for the safety check described in ADR 0019
-    /// §4 (all credentials must already be encrypted with the current
-    /// primary key before calling this).
+    /// # Warning
+    /// This performs **no safety check**. Calling it while any credential
+    /// is still encrypted with a non-primary key can permanently strand
+    /// that credential once its key is pruned. Application code must not
+    /// call this directly — use [`crate::rotate::rotate`], which performs
+    /// the mandatory stale-credential check before promoting.
     pub fn rotate(&self) -> Result<(), CredentialFernetError> {
         let key_files = self.read_key_files()?;
         if !key_files.contains_key(&0) {

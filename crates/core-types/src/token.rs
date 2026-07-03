@@ -107,6 +107,14 @@ impl FernetToken {
                 AuthenticationContext::Mapping(_) => Ok(Self::DomainScope(
                     DomainScopePayload::from_security_context(ctx, domain, expires_at)?,
                 )),
+                // EC2 credentials always resolve to a project scope (ADR 0019
+                // §5); a domain-scoped EC2 token has no legitimate use case.
+                AuthenticationContext::Ec2Credential => {
+                    Err(AuthenticationError::ScopeNotAllowed.into())
+                }
+                AuthenticationContext::Totp => Ok(Self::DomainScope(
+                    DomainScopePayload::from_security_context(ctx, domain, expires_at)?,
+                )),
             },
             ScopeInfo::Project { project, .. } => match ctx.authentication_context() {
                 AuthenticationContext::ApplicationCredential {
@@ -124,6 +132,26 @@ impl FernetToken {
                         ctx, project, oidc, expires_at,
                     )?,
                 )),
+                // A trust presented on a plain Project scope (the EC2-redemption
+                // shape, `validate_scope_boundaries` guarantees `project.id ==
+                // trust.project_id` here) MUST NOT fall through to a plain
+                // `ProjectScope` payload: that payload type carries no trust
+                // reference, so decoding it back (`build_authz_info_from_fernet_token`
+                // / `validate_to_context_impl`) would reconstruct a generic
+                // `AuthenticationContext::Token` with the trustee's own live
+                // project role assignments instead of the trust's bounded set —
+                // silently dropping the delegation restriction on every reuse of
+                // the issued token (OSSA-2026-015). Emit the same `Trust` payload
+                // used for the native `TrustProject` scope so the round-trip
+                // always re-derives `AuthenticationContext::Trust`.
+                AuthenticationContext::Trust { trust, .. } => {
+                    Ok(Self::Trust(TrustPayload::from_security_context(
+                        ctx,
+                        trust.id.clone(),
+                        project.id.clone(),
+                        expires_at,
+                    )?))
+                }
                 _ => Ok(Self::ProjectScope(
                     ProjectScopePayload::from_security_context(ctx, project, expires_at)?,
                 )),
@@ -324,6 +352,86 @@ impl Validate for FernetToken {
             Self::SystemScope(x) => x.validate(),
             Self::Trust(x) => x.validate(),
             Self::Unscoped(x) => x.validate(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use chrono::Utc;
+
+    use super::*;
+    use crate::resource::*;
+    use crate::trust::TrustBuilder;
+
+    fn make_project(id: &str) -> Project {
+        ProjectBuilder::default()
+            .id(id)
+            .domain_id("did")
+            .name("pname")
+            .enabled(true)
+            .build()
+            .unwrap()
+    }
+
+    fn make_domain() -> Domain {
+        DomainBuilder::default()
+            .id("did")
+            .name("dname")
+            .enabled(true)
+            .build()
+            .unwrap()
+    }
+
+    fn make_trust_ctx(project_id: &str) -> SecurityContext {
+        let trust = TrustBuilder::default()
+            .id("trust_id")
+            .trustor_user_id("trustor")
+            .trustee_user_id("trustee")
+            .project_id(project_id)
+            .impersonation(false)
+            .build()
+            .unwrap();
+        let auth = AuthenticationResultBuilder::default()
+            .context(AuthenticationContext::Trust { trust, token: None })
+            .principal(PrincipalInfo {
+                identity: IdentityInfo::User(
+                    UserIdentityInfoBuilder::default()
+                        .user_id("trustee")
+                        .build()
+                        .unwrap(),
+                ),
+            })
+            .build()
+            .unwrap();
+        let mut ctx = SecurityContext::try_from(auth).unwrap();
+        ctx.set_authorization(
+            AuthzInfoBuilder::default()
+                .scope(ScopeInfo::Project {
+                    project: make_project(project_id),
+                    project_domain: make_domain(),
+                })
+                .build()
+                .unwrap(),
+        );
+        ctx
+    }
+
+    /// A trust presented on a plain `Project` scope (the EC2-redemption shape)
+    /// MUST still be encoded as a `Trust` payload, never `ProjectScope` --
+    /// otherwise decoding the issued token back drops the delegation binding
+    /// entirely (OSSA-2026-015, see doc/src/security.md I4).
+    #[test]
+    fn test_from_security_context_trust_on_project_scope_emits_trust_payload() {
+        let ctx = make_trust_ctx("pid");
+        let token = FernetToken::from_security_context(&ctx, Utc::now()).unwrap();
+
+        match token {
+            FernetToken::Trust(payload) => {
+                assert_eq!("trust_id", payload.trust_id);
+                assert_eq!("pid", payload.project_id);
+            }
+            other => panic!("expected FernetToken::Trust, got {other:?}"),
         }
     }
 }

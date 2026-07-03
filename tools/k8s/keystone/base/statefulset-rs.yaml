@@ -74,6 +74,8 @@ spec:
               name: keystone-logs
             - mountPath: /etc/keystone/fernet-keys
               name: fernet
+            - mountPath: /etc/keystone/credential-keys
+              name: fernet
             - mountPath: /certs
               name: certs
               readOnly: true

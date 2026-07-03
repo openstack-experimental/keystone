@@ -74,6 +74,7 @@ color-eyre = { version = "0.6" }
 config = { version = "0.15" }
 criterion = { version = "0.8" }
 dashmap = "6.2"
+data-encoding = "2"
 derive_builder = { version = "0.20" }
 dyn-clone = { version = "1.0" }
 eyre = { version = "0.6" }

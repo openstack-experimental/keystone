@@ -11,11 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-//! `SeaORM` entity mirroring the `credential` table owned by Python Keystone
-//! (ADR 0019 §1). This entity is used for reads/writes only — the table's
-//! schema is exclusively managed by Python's `alembic` migrations, and no
-//! `SqlDriver::setup()` in this crate issues DDL against it (see
-//! `crate::SqlBackend`).
+//! `SeaORM` entity for the `credential` table (ADR 0019 §1).
 
 use sea_orm::entity::prelude::*;
 

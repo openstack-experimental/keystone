@@ -46,9 +46,6 @@ pub async fn update(
     if let Some(new_type) = rec.r#type {
         active.r#type = Set(new_type);
     }
-    if let Some(new_project_id) = rec.project_id {
-        active.project_id = Set(Some(new_project_id));
-    }
     if let Some(new_blob) = rec.blob {
         let repo = FernetKeyRepository::new(cfg.credential.key_repository.clone());
         let keys = repo.load(cfg.credential.insecure_allow_null_key)?;
@@ -59,4 +56,106 @@ pub async fn update(
     let updated = active.update(db).await.context("updating credential")?;
 
     to_plaintext(cfg, updated)
+}
+
+#[cfg(test)]
+mod tests {
+    use sea_orm::DatabaseConnection;
+
+    use openstack_keystone_core::credential::CredentialProviderError;
+
+    use crate::fernet::FernetKeyRepository;
+    use crate::test_support::create_credential_table;
+
+    use super::*;
+
+    fn test_config(key_repo: &std::path::Path) -> Config {
+        let mut cfg = Config::default();
+        cfg.credential.key_repository = key_repo.to_path_buf();
+        cfg
+    }
+
+    async fn test_db() -> DatabaseConnection {
+        let db = sea_orm::Database::connect("sqlite::memory:").await.unwrap();
+        create_credential_table(&db).await.unwrap();
+        db
+    }
+
+    async fn insert_credential(cfg: &Config, db: &DatabaseConnection, id: &str, plaintext: &[u8]) {
+        let repo = FernetKeyRepository::new(cfg.credential.key_repository.clone());
+        let keys = repo.load(false).unwrap();
+        db_credential::ActiveModel {
+            id: Set(id.to_string()),
+            user_id: Set("user-1".to_string()),
+            project_id: Set(None),
+            encrypted_blob: Set(keys.multi_fernet.encrypt(plaintext)),
+            r#type: Set("totp".to_string()),
+            key_hash: Set(keys.primary_key_hash),
+            extra: Set(None),
+        }
+        .insert(db)
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_update_not_found() {
+        let key_dir = tempfile::tempdir().unwrap();
+        let cfg = test_config(key_dir.path());
+        let db = test_db().await;
+        FernetKeyRepository::new(key_dir.path().to_path_buf())
+            .setup()
+            .unwrap();
+
+        let err = update(&cfg, &db, "missing", CredentialUpdate::default())
+            .await
+            .unwrap_err();
+        assert!(matches!(err, CredentialProviderError::CredentialNotFound(id) if id == "missing"));
+    }
+
+    #[tokio::test]
+    async fn test_update_type_only_leaves_blob_and_key_hash_unchanged() {
+        let key_dir = tempfile::tempdir().unwrap();
+        let cfg = test_config(key_dir.path());
+        let db = test_db().await;
+        FernetKeyRepository::new(key_dir.path().to_path_buf())
+            .setup()
+            .unwrap();
+        insert_credential(&cfg, &db, "cred-1", b"original-secret").await;
+
+        let rec = CredentialUpdate {
+            blob: None,
+            r#type: Some("ec2".into()),
+        };
+        let updated = update(&cfg, &db, "cred-1", rec).await.unwrap();
+        assert_eq!(updated.r#type, "ec2");
+        assert_eq!(updated.blob, "original-secret");
+    }
+
+    #[tokio::test]
+    async fn test_update_blob_reencrypts_with_current_primary_key() {
+        let key_dir = tempfile::tempdir().unwrap();
+        let cfg = test_config(key_dir.path());
+        let db = test_db().await;
+        FernetKeyRepository::new(key_dir.path().to_path_buf())
+            .setup()
+            .unwrap();
+        insert_credential(&cfg, &db, "cred-1", b"original-secret").await;
+
+        let rec = CredentialUpdate {
+            blob: Some("new-secret".into()),
+            r#type: None,
+        };
+        let updated = update(&cfg, &db, "cred-1", rec).await.unwrap();
+        assert_eq!(updated.blob, "new-secret");
+
+        let repo = FernetKeyRepository::new(cfg.credential.key_repository.clone());
+        let keys = repo.load(false).unwrap();
+        let stored = DbCredential::find_by_id("cred-1".to_string())
+            .one(&db)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(stored.key_hash, keys.primary_key_hash);
+    }
 }

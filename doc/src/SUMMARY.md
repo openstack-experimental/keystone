@@ -38,6 +38,7 @@
     - [Dynamic Auth Plugins](adr/0025-dynamic-auth-plugins.md)
   - [Distributed Encrypted Storage](raft_storage.md)
 - [Policy enforcement](policy.md)
+- [Security model](security.md)
 - [Fernet token]()
   - [Token payloads]()
 
