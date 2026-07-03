@@ -237,7 +237,7 @@ pub struct Config {
     #[serde(rename = "interface_internal", default)]
     pub interface_internal: Option<InternalInterface>,
 
-    /// Server listener configuration for the internal interface.
+    /// Server listener configuration for the public interface.
     #[serde(rename = "interface_public", default)]
     pub interface_public: PublicInterface,
 
@@ -257,6 +257,10 @@ pub struct Config {
     /// Reverse proxies trusted by the global per-IP rate limiter.
     #[serde(rename = "rate_limit_trusted_proxies", default)]
     pub rate_limit_trusted_proxies: RateLimitTrustedProxiesSection,
+    
+    /// Server listener configuration for the health/metrics interface.
+    #[serde(rename = "interface_metrics", default)]
+    pub interface_metrics: MetricsInterface,
 
     /// Per-user authentication rate limiting (ADR-0022, §1).
     ///

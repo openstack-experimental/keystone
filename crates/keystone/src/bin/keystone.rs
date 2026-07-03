@@ -328,6 +328,7 @@ async fn main() -> Result<(), Report> {
     spawn_opa_subprocess(&cfg, &token, &mut handles).await?;
     spawn_public_listener(&cfg, app.clone(), &token, &mut handles).await?;
     spawn_internal_listener(&cfg, app.clone(), &token, &mut handles)?;
+    spawn_metrics_listener(&cfg, &shared_state, &token, &mut handles).await?;
     spawn_admin_listener(&cfg, app, &token, &mut handles);
 
     // Wait for both (or handle errors)
@@ -740,13 +741,7 @@ async fn build_router(
         .layer(PropagateRequestIdLayer::new(x_request_id));
     //.layer(middleware::from_fn(cert_extension_middleware));
 
-    let metrics_router = Router::new()
-        .route("/metrics", axum::routing::get(metrics_handler))
-        .with_state(shared_state.clone());
-
-    let mut app = Router::new()
-        .merge(main_router.with_state(shared_state.clone()))
-        .merge(metrics_router);
+    let mut app = Router::new().merge(main_router.with_state(shared_state.clone()));
 
     if shared_state
         .config_manager
@@ -1164,6 +1159,39 @@ fn spawn_internal_listener(
     Ok(())
 }
 
+/// Start the metrics and health interface listener on a dedicated port.
+async fn spawn_metrics_listener(
+    cfg: &Config,
+    shared_state: &ServiceState,
+    token: &CancellationToken,
+    handles: &mut tokio::task::JoinSet<()>,
+) -> Result<(), Report> {
+    info!(
+        "Starting metrics/health API at {}",
+        cfg.interface_metrics.tcp_address
+    );
+    let listener = TcpListener::bind(&cfg.interface_metrics.tcp_address).await?;
+    let cancel_token = token.clone();
+
+    let (metrics_router, _) = api::metrics_router().split_for_parts();
+    let metrics_app = Router::new()
+        .merge(metrics_router.with_state(shared_state.clone()))
+        .route("/metrics", axum::routing::get(metrics_handler))
+        .with_state(shared_state.clone());
+
+    handles.spawn(async move {
+        if let Err(e) = axum::serve(listener, metrics_app.into_make_service())
+            .with_graceful_shutdown(async move {
+                cancel_token.cancelled().await;
+            })
+            .await
+        {
+            error!("Metrics/health listener error: {:#}", e);
+        }
+    });
+    Ok(())
+}
+
 /// Start the SPIFFE mTLS listener on the admin Unix-domain-socket interface,
 /// when configured.
 fn spawn_admin_listener(
@@ -1460,7 +1488,7 @@ mod tests {
         let response = app
             .oneshot(
                 Request::builder()
-                    .uri("/metrics/")
+                    .uri("/v3/")
                     .body(axum::body::Body::empty())
                     .unwrap(),
             )

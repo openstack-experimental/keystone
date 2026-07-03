@@ -295,7 +295,7 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn health_returns_service_unavailable_for_disconnected_db() {
         let state = get_mocked_state(Provider::mocked_builder(), true, None).await;
-        let (router, _api) = super::super::openapi_router().split_for_parts();
+        let (router, _api) = super::super::metrics_router().split_for_parts();
         let app = router.with_state(state);
 
         let response = app

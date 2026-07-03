@@ -70,8 +70,12 @@ pub fn openapi_router() -> OpenApiRouter<ServiceState> {
     OpenApiRouter::new()
         .nest("/v3", v3::openapi_router())
         .nest("/v4", v4::openapi_router())
-        .merge(health::openapi_router())
         .routes(routes!(version))
+}
+
+/// Dedicated health/metrics router for the internal health/metrics interface.
+pub fn metrics_router() -> OpenApiRouter<ServiceState> {
+    health::openapi_router()
 }
 
 /// Version discovery endpoint.
