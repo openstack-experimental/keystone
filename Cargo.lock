@@ -4538,6 +4538,7 @@ dependencies = [
  "openstack-keystone-distributed-storage",
  "openstack-keystone-federation-driver-sql",
  "openstack-keystone-k8s-auth-driver-sql",
+ "openstack-keystone-token-driver-fernet",
  "openstack-keystone-token-restriction-driver-sql",
  "openstack-keystone-webauthn",
  "reqwest",
@@ -4660,15 +4661,13 @@ dependencies = [
  "base64 0.22.1",
  "fernet",
  "inventory",
- "nix 0.31.3",
  "openstack-keystone-config",
  "openstack-keystone-core",
  "openstack-keystone-core-types",
- "scopeguard",
+ "openstack-keystone-key-repository",
  "sea-orm",
  "secrecy",
  "serde_json",
- "sha1",
  "sha2 0.11.0",
  "tempfile",
  "thiserror 2.0.18",
@@ -4830,6 +4829,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "openstack-keystone-key-repository"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "base64 0.22.1",
+ "fernet",
+ "nix 0.31.3",
+ "notify",
+ "scopeguard",
+ "sha1",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "openstack-keystone-mapping-driver-raft"
 version = "0.1.0"
 dependencies = [
@@ -4937,9 +4953,8 @@ dependencies = [
  "openstack-keystone-config",
  "openstack-keystone-core",
  "openstack-keystone-core-types",
+ "openstack-keystone-key-repository",
  "rmp",
- "scopeguard",
- "secrecy",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",

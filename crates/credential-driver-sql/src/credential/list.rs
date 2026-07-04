@@ -43,7 +43,7 @@ pub async fn list(
 
     let mut result = Vec::with_capacity(models.len());
     for model in models {
-        result.push(to_plaintext(cfg, model)?);
+        result.push(to_plaintext(cfg, model).await?);
     }
     Ok(result)
 }
@@ -98,7 +98,7 @@ mod tests {
         plaintext: &[u8],
     ) {
         let repo = FernetKeyRepository::new(cfg.credential.key_repository.clone());
-        let keys = repo.load(false).unwrap();
+        let keys = repo.load(false).await.unwrap();
         db_credential::ActiveModel {
             id: Set(id.to_string()),
             user_id: Set(user_id.to_string()),
@@ -120,6 +120,7 @@ mod tests {
         let db = test_db().await;
         FernetKeyRepository::new(key_dir.path().to_path_buf())
             .setup()
+            .await
             .unwrap();
         insert_credential(&cfg, &db, "cred-1", "user-1", "totp", b"a").await;
         insert_credential(&cfg, &db, "cred-2", "user-2", "ec2", b"b").await;
@@ -137,6 +138,7 @@ mod tests {
         let db = test_db().await;
         FernetKeyRepository::new(key_dir.path().to_path_buf())
             .setup()
+            .await
             .unwrap();
         insert_credential(&cfg, &db, "cred-1", "user-1", "totp", b"a").await;
         insert_credential(&cfg, &db, "cred-2", "user-1", "ec2", b"b").await;
@@ -158,6 +160,7 @@ mod tests {
         let db = test_db().await;
         FernetKeyRepository::new(key_dir.path().to_path_buf())
             .setup()
+            .await
             .unwrap();
         insert_credential(&cfg, &db, "cred-1", "user-1", "totp", b"a").await;
         insert_credential(&cfg, &db, "cred-2", "user-2", "totp", b"b").await;

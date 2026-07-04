@@ -15,6 +15,7 @@
 use std::path::PathBuf;
 
 use openstack_keystone_core::credential::CredentialProviderError;
+use openstack_keystone_key_repository::KeyRepositoryError;
 use thiserror::Error;
 
 /// Errors from the Fernet key repository (ADR 0019 §4).
@@ -56,6 +57,26 @@ pub enum CredentialFernetError {
     /// Persisting a rotated/staged key file failed.
     #[error("failed to persist key file: {0}")]
     Persist(String),
+}
+
+impl From<KeyRepositoryError> for CredentialFernetError {
+    fn from(err: KeyRepositoryError) -> Self {
+        match err {
+            KeyRepositoryError::Io { source, path } => Self::Io { source, path },
+            KeyRepositoryError::KeysMissing => Self::KeysMissing,
+            KeyRepositoryError::InvalidKey(idx) => Self::InvalidKey(idx),
+            KeyRepositoryError::NullKeyDetected => Self::NullKeyDetected,
+            KeyRepositoryError::IndexOverflow => Self::IndexOverflow,
+            KeyRepositoryError::Persist(msg) => Self::Persist(msg),
+            // Unreachable in practice: the credential repository never
+            // configures a `run_as` uid/gid, the only path that produces
+            // this variant. Mapped rather than left a `match` gap so this
+            // conversion stays exhaustive if that ever changes.
+            KeyRepositoryError::NixErrno { context, source } => {
+                Self::Persist(format!("{context}: {source}"))
+            }
+        }
+    }
 }
 
 impl From<CredentialFernetError> for CredentialProviderError {

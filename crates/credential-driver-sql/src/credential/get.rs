@@ -25,12 +25,12 @@ use crate::entity::{credential as db_credential, prelude::Credential as DbCreden
 use crate::fernet::FernetKeyRepository;
 
 /// Decrypt a stored credential row into the plaintext API representation.
-pub fn to_plaintext(
+pub async fn to_plaintext(
     cfg: &Config,
     model: db_credential::Model,
 ) -> Result<Credential, CredentialProviderError> {
     let repo = FernetKeyRepository::new(cfg.credential.key_repository.clone());
-    let keys = repo.load(cfg.credential.insecure_allow_null_key)?;
+    let keys = repo.load(cfg.credential.insecure_allow_null_key).await?;
     let plaintext = keys
         .multi_fernet
         .decrypt(&model.encrypted_blob)
@@ -64,7 +64,7 @@ pub async fn get<I: AsRef<str>>(
     let select = DbCredential::find().filter(db_credential::Column::Id.eq(id.as_ref()));
 
     if let Some(model) = select.one(db).await.context("fetching credential by id")? {
-        return Ok(Some(to_plaintext(cfg, model)?));
+        return Ok(Some(to_plaintext(cfg, model).await?));
     }
     Ok(None)
 }
@@ -124,19 +124,19 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_to_plaintext_roundtrip() {
+    #[tokio::test]
+    async fn test_to_plaintext_roundtrip() {
         let dir = tempfile::tempdir().unwrap();
         let mut cfg = Config::default();
         cfg.credential.key_repository = dir.path().to_path_buf();
         let repo = FernetKeyRepository::new(cfg.credential.key_repository.clone());
-        repo.setup().unwrap();
-        let keys = repo.load(false).unwrap();
+        repo.setup().await.unwrap();
+        let keys = repo.load(false).await.unwrap();
 
         let mut model = mock_model();
         model.encrypted_blob = keys.multi_fernet.encrypt(br#"{"access":"AKIA"}"#);
 
-        let cred = to_plaintext(&cfg, model).unwrap();
+        let cred = to_plaintext(&cfg, model).await.unwrap();
         assert_eq!(cred.blob, r#"{"access":"AKIA"}"#);
         assert_eq!(cred.id, "cred_id");
     }

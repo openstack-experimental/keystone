@@ -105,6 +105,7 @@ impl PerformAction for CredentialCommand {
             CredentialCommands::Setup => {
                 let repo = FernetKeyRepository::new(config.credential.key_repository.clone());
                 repo.setup()
+                    .await
                     .wrap_err("setting up credential key repository")?;
                 println!(
                     "credential key repository initialized at {}",

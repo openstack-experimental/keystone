@@ -26,6 +26,14 @@ pub struct FernetTokenProvider {
     /// Maximal number of fernet keys to keep as active.
     #[serde(default = "default_fernet_max_active_keys")]
     pub max_active_keys: usize,
+
+    /// Allow starting (and encrypting/decrypting with) the well-known Null
+    /// Key (`base64.urlsafe_b64encode(b'\x00' * 32)`). This exists solely as
+    /// a transient migration aid; it must be `false` in any real deployment.
+    /// Defaults to `false` (refuse to start if a key decodes to the Null
+    /// Key). Mirrors `[credential] insecure_allow_null_key`.
+    #[serde(default)]
+    pub insecure_allow_null_key: bool,
 }
 
 fn default_fernet_key_repository() -> PathBuf {
@@ -41,6 +49,7 @@ impl Default for FernetTokenProvider {
         Self {
             key_repository: default_fernet_key_repository(),
             max_active_keys: default_fernet_max_active_keys(),
+            insecure_allow_null_key: false,
         }
     }
 }

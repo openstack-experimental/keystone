@@ -146,7 +146,7 @@ pub async fn get_state() -> Result<(Arc<Service>, TempDir)> {
         max_active_keys: cfg.fernet_tokens.max_active_keys,
     };
     cfg.federation.default_authorization_ttl = 20;
-    fernet_utils.initialize_key_repository()?;
+    fernet_utils.initialize_key_repository().await?;
     cfg.mapping.cluster_salt = Some(SecretString::new(
         "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
             .to_string()
@@ -173,7 +173,7 @@ pub async fn get_state() -> Result<(Arc<Service>, TempDir)> {
         cfg.k8s_auth.driver = "raft".to_string();
     }
 
-    let plugin_manager = PluginManager::with_config(&cfg);
+    let plugin_manager = PluginManager::with_config(&cfg).await?;
     let k8s_http_client =
         Arc::new(openstack_keystone::k8s_auth_client::MockK8sHttpClient::default());
     let provider = Provider::new(&cfg, &plugin_manager, k8s_http_client)?;

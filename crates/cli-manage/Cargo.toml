@@ -30,6 +30,7 @@ openstack-keystone-credential-driver-sql.workspace = true
 openstack-keystone-distributed-storage.workspace = true
 openstack-keystone-federation-driver-sql.workspace = true
 openstack-keystone-k8s-auth-driver-sql.workspace = true
+openstack-keystone-token-driver-fernet.workspace = true
 openstack-keystone-token-restriction-driver-sql.workspace = true
 openstack-keystone-webauthn.workspace = true
 sea-orm = { workspace = true, features = ["sqlx-mysql", "sqlx-postgres", "sqlx-sqlite", "runtime-tokio", "runtime-tokio-native-tls"] }

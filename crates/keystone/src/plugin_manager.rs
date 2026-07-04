@@ -677,7 +677,9 @@ impl PluginManager {
     ///
     /// # Returns
     /// A new instance of `PluginManager`.
-    pub fn with_config(config: &Config) -> Self {
+    pub async fn with_config(
+        config: &Config,
+    ) -> Result<Self, openstack_keystone_token_driver_fernet::FernetDriverError> {
         let mut slf = Self {
             api_key_backends: HashMap::new(),
             application_credential_backends: HashMap::new(),
@@ -697,12 +699,14 @@ impl PluginManager {
             trust_backends: HashMap::new(),
         };
         slf.register_sql_drivers();
-        slf.register_token_backend(
-            "fernet",
-            Arc::new(
-                openstack_keystone_token_driver_fernet::FernetTokenProvider::new(config.clone()),
-            ),
-        );
+        let mut fernet_token_provider =
+            openstack_keystone_token_driver_fernet::FernetTokenProvider::new(config.clone());
+        // Eagerly start the auto-refreshing key cache here, before the
+        // provider is erased behind `Arc<dyn TokenBackend>`: `decrypt`/
+        // `encrypt` are synchronous (called on every request) and require
+        // `load_keys` to have already run.
+        fernet_token_provider.load_keys().await?;
+        slf.register_token_backend("fernet", Arc::new(fernet_token_provider));
         slf.register_k8s_auth_backend(
             "raft",
             Arc::new(openstack_keystone_k8s_auth_driver_raft::RaftBackend::default()),
@@ -715,16 +719,6 @@ impl PluginManager {
             "raft",
             Arc::new(openstack_keystone_api_key_driver_raft::RaftBackend::default()),
         );
-        slf
-    }
-}
-
-impl Default for PluginManager {
-    /// Returns the default instance of the [PluginManager].
-    ///
-    /// # Returns
-    /// A `PluginManager` instance initialized with default configuration.
-    fn default() -> Self {
-        Self::with_config(&Config::default())
+        Ok(slf)
     }
 }

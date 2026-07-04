@@ -60,7 +60,9 @@ pub async fn get_state() -> Result<(ServiceState, TempDir)> {
 
     let key_repository = tmp_dir.path().join("credential-keys");
     create_dir(&key_repository)?;
-    FernetKeyRepository::new(key_repository.clone()).setup()?;
+    FernetKeyRepository::new(key_repository.clone())
+        .setup()
+        .await?;
 
     {
         let mut cfg = state.config_manager.config.write().await;

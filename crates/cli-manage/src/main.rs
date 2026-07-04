@@ -27,11 +27,13 @@ mod common;
 mod credential;
 mod db;
 mod storage;
+mod token;
 
 use crate::bootstrap::*;
 use crate::credential::*;
 use crate::db::*;
 use crate::storage::*;
+use crate::token::*;
 
 /// OpenStack Keystone management CLI.
 ///
@@ -66,6 +68,9 @@ enum Command {
 
     /// Distributed storage management.
     Storage(StorageCommand),
+
+    /// Fernet token encryption key management (ADR 0019 §4).
+    Token(TokenCommand),
 }
 
 #[async_trait]
@@ -83,6 +88,7 @@ async fn main() -> Result<(), Report> {
         Command::Credential(x) => x.take_action(&cfg).await?,
         Command::Db(x) => x.take_action(&cfg).await?,
         Command::Storage(x) => x.take_action(&cfg).await?,
+        Command::Token(x) => x.take_action(&cfg).await?,
     }
     Ok(())
 }

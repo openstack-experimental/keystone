@@ -87,6 +87,7 @@ use openstack_keystone_core::db::sync_schema;
 use openstack_keystone_core::error::KeystoneError;
 use openstack_keystone_credential_driver_sql::fernet::FernetKeyRepository;
 use openstack_keystone_distributed_storage::{StorageApi, app::Storage};
+use openstack_keystone_token_driver_fernet::utils::FernetUtils;
 
 // Default body limit 256kB
 const DEFAULT_BODY_LIMIT: usize = 1024 * 256;
@@ -183,7 +184,18 @@ async fn main() -> Result<(), Report> {
     // repository is caught immediately rather than on first request.
     FernetKeyRepository::new(cfg.credential.key_repository.clone())
         .check_startup_null_key(cfg.credential.insecure_allow_null_key)
+        .await
         .wrap_err("credential key repository failed startup check")?;
+
+    // Same check for the token Fernet key repository (ADR 0019 §4, now
+    // shared logic with the credential key repository above).
+    FernetUtils {
+        key_repository: cfg.fernet_tokens.key_repository.clone(),
+        max_active_keys: cfg.fernet_tokens.max_active_keys,
+    }
+    .check_startup_null_key(cfg.fernet_tokens.insecure_allow_null_key)
+    .await
+    .wrap_err("token key repository failed startup check")?;
 
     let token = CancellationToken::new();
     let cloned_token = token.clone();
@@ -204,7 +216,9 @@ async fn main() -> Result<(), Report> {
             .wrap_err("failed to sync schema for in-memory database")?;
     };
 
-    let plugin_manager = PluginManager::with_config(&cfg);
+    let plugin_manager = PluginManager::with_config(&cfg)
+        .await
+        .wrap_err("initializing plugin manager")?;
     let k8s_http_client: Arc<dyn openstack_keystone_core::k8s_auth::K8sHttpClient> =
         Arc::new(KeystoneK8sHttpClient::new());
     let provider = Provider::new(&cfg, &plugin_manager, k8s_http_client)?;

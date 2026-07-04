@@ -31,7 +31,10 @@ fn bench_decrypt_token(c: &mut Criterion) {
     config.fernet_tokens.key_repository = tmp_dir.keep();
 
     let mut backend = FernetTokenProvider::new(config.clone());
-    backend.load_keys().unwrap();
+    tokio::runtime::Runtime::new()
+        .unwrap()
+        .block_on(backend.load_keys())
+        .unwrap();
 
     let token = "gAAAAABns2ixy75K_KfoosWLrNNqG6KW8nm3Xzv0_2dOx8ODWH7B8i2g8CncGLO6XBEH_TYLg83P6XoKQ5bU8An8Kqgw9WX3bvmEQXphnwPM6aRAOQUSdVhTlUm_8otDG9BS2rc70Q7pfy57S3_yBgimy-174aKdP8LPusvdHZsQPEJO9pfeXWw";
 

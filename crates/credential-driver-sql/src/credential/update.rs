@@ -48,14 +48,14 @@ pub async fn update(
     }
     if let Some(new_blob) = rec.blob {
         let repo = FernetKeyRepository::new(cfg.credential.key_repository.clone());
-        let keys = repo.load(cfg.credential.insecure_allow_null_key)?;
+        let keys = repo.load(cfg.credential.insecure_allow_null_key).await?;
         active.encrypted_blob = Set(keys.multi_fernet.encrypt(new_blob.as_bytes()));
         active.key_hash = Set(keys.primary_key_hash);
     }
 
     let updated = active.update(db).await.context("updating credential")?;
 
-    to_plaintext(cfg, updated)
+    to_plaintext(cfg, updated).await
 }
 
 #[cfg(test)]
@@ -83,7 +83,7 @@ mod tests {
 
     async fn insert_credential(cfg: &Config, db: &DatabaseConnection, id: &str, plaintext: &[u8]) {
         let repo = FernetKeyRepository::new(cfg.credential.key_repository.clone());
-        let keys = repo.load(false).unwrap();
+        let keys = repo.load(false).await.unwrap();
         db_credential::ActiveModel {
             id: Set(id.to_string()),
             user_id: Set("user-1".to_string()),
@@ -105,6 +105,7 @@ mod tests {
         let db = test_db().await;
         FernetKeyRepository::new(key_dir.path().to_path_buf())
             .setup()
+            .await
             .unwrap();
 
         let err = update(&cfg, &db, "missing", CredentialUpdate::default())
@@ -120,6 +121,7 @@ mod tests {
         let db = test_db().await;
         FernetKeyRepository::new(key_dir.path().to_path_buf())
             .setup()
+            .await
             .unwrap();
         insert_credential(&cfg, &db, "cred-1", b"original-secret").await;
 
@@ -139,6 +141,7 @@ mod tests {
         let db = test_db().await;
         FernetKeyRepository::new(key_dir.path().to_path_buf())
             .setup()
+            .await
             .unwrap();
         insert_credential(&cfg, &db, "cred-1", b"original-secret").await;
 
@@ -150,7 +153,7 @@ mod tests {
         assert_eq!(updated.blob, "new-secret");
 
         let repo = FernetKeyRepository::new(cfg.credential.key_repository.clone());
-        let keys = repo.load(false).unwrap();
+        let keys = repo.load(false).await.unwrap();
         let stored = DbCredential::find_by_id("cred-1".to_string())
             .one(&db)
             .await

@@ -59,7 +59,7 @@ pub async fn migrate(
     }
 
     let repo = FernetKeyRepository::new(cfg.credential.key_repository.clone());
-    let keys = repo.load(cfg.credential.insecure_allow_null_key)?;
+    let keys = repo.load(cfg.credential.insecure_allow_null_key).await?;
 
     let mut total = 0u64;
     loop {
@@ -166,11 +166,11 @@ mod tests {
         let db = test_db().await;
 
         let repo = FernetKeyRepository::new(key_dir.path().to_path_buf());
-        repo.setup().unwrap();
+        repo.setup().await.unwrap();
         // First rotation: original key becomes primary (renamed 0 -> 1); a
         // fresh key is staged as the new 0.
-        repo.rotate().unwrap();
-        let keys_after_first_rotate = repo.load(false).unwrap();
+        repo.rotate().await.unwrap();
+        let keys_after_first_rotate = repo.load(false).await.unwrap();
         let old_primary_hash = keys_after_first_rotate.primary_key_hash.clone();
         let blob = keys_after_first_rotate
             .multi_fernet
@@ -180,8 +180,8 @@ mod tests {
         // Second rotation: the credential above is now stale relative to
         // the new primary, but its encrypting key is still active (within
         // MAX_ACTIVE_KEYS) so it remains decryptable.
-        repo.rotate().unwrap();
-        let keys_after_second_rotate = repo.load(false).unwrap();
+        repo.rotate().await.unwrap();
+        let keys_after_second_rotate = repo.load(false).await.unwrap();
         assert_ne!(
             old_primary_hash, keys_after_second_rotate.primary_key_hash,
             "test setup sanity: the credential must actually be stale"
@@ -214,8 +214,8 @@ mod tests {
         let db = test_db().await;
 
         let repo = FernetKeyRepository::new(key_dir.path().to_path_buf());
-        repo.setup().unwrap();
-        let keys = repo.load(false).unwrap();
+        repo.setup().await.unwrap();
+        let keys = repo.load(false).await.unwrap();
         let blob = keys.multi_fernet.encrypt(b"already-current");
         insert_credential(&db, "cred-1", blob.clone(), keys.primary_key_hash.clone()).await;
 

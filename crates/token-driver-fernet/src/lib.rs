@@ -17,13 +17,14 @@ use std::collections::BTreeMap;
 use std::collections::HashSet;
 use std::fmt;
 use std::io::{Cursor, Write};
+use std::sync::Arc;
 
 use base64::Engine;
 use byteorder::ReadBytesExt;
 use bytes::Bytes;
 use chrono::{DateTime, Utc};
-use fernet::MultiFernet;
 use itertools::Itertools;
+use openstack_keystone_key_repository::{CachedKeyRepository, FilesystemKeySource, LoadedKeys};
 use rmp::{
     Marker,
     decode::{ValueReadError, read_marker, read_u8},
@@ -61,11 +62,13 @@ pub mod utils;
 pub use error::FernetDriverError;
 
 /// Fernet token provider.
-#[derive(Clone, Default)]
 pub struct FernetTokenProvider {
     config: Config,
     utils: FernetUtils,
-    fernet: Option<MultiFernet>,
+    /// Populated by [`Self::load_keys`]: an always-fresh, auto-refreshing
+    /// view of the key repository. `None` until then — `encrypt`/`decrypt`
+    /// error rather than silently reading the filesystem on every call.
+    cached: Option<CachedKeyRepository<FilesystemKeySource>>,
     /// Map of the configured authentication methods.
     auth_map: BTreeMap<u8, String>,
     /// Cached permutations of auth_methods to the payload code.
@@ -171,7 +174,7 @@ impl FernetTokenProvider {
                 max_active_keys: config.fernet_tokens.max_active_keys,
             },
             config,
-            fernet: None,
+            cached: None,
             auth_map: BTreeMap::new(),
             auth_methods_code_cache: BTreeMap::new(),
         };
@@ -401,25 +404,35 @@ impl FernetTokenProvider {
         Ok(buf.into())
     }
 
-    /// Get MultiFernet initialized with repository keys.
+    /// The current key snapshot, kept fresh in the background once
+    /// [`Self::load_keys`] has started it.
     ///
-    /// # Returns
-    /// A `Result` containing the initialized `MultiFernet` if successful, or a
-    /// `FernetDriverError`.
-    #[tracing::instrument(level = "trace", skip(self))]
-    pub fn get_fernet(&self) -> Result<MultiFernet, FernetDriverError> {
-        Ok(MultiFernet::new(
-            self.utils.load_keys()?.into_iter().collect::<Vec<_>>(),
-        ))
+    /// # Errors
+    /// [`FernetDriverError::FernetKeysMissing`] if [`Self::load_keys`] has
+    /// not been called yet.
+    fn current_keys(&self) -> Result<Arc<LoadedKeys>, FernetDriverError> {
+        self.cached
+            .as_ref()
+            .map(CachedKeyRepository::current)
+            .ok_or(FernetDriverError::FernetKeysMissing)
     }
 
-    /// Load fernet keys from FS.
+    /// Load fernet keys from FS and start watching for changes: this is a
+    /// one-time initialization (call once before serving traffic) that
+    /// keeps `decrypt`/`encrypt` on a cheap, always-current cached snapshot
+    /// rather than reading the filesystem on every call, and picks up a
+    /// rotation without a service restart (ADR 0019 §4, shared with the
+    /// credential key repository).
     ///
     /// # Returns
     /// A `Result` indicating success or a `FernetDriverError`.
     #[tracing::instrument(level = "trace", skip(self))]
-    pub fn load_keys(&mut self) -> Result<(), FernetDriverError> {
-        self.fernet = Some(self.get_fernet()?);
+    pub async fn load_keys(&mut self) -> Result<(), FernetDriverError> {
+        self.cached = Some(
+            self.utils
+                .start_cached(self.config.fernet_tokens.insecure_allow_null_key)
+                .await?,
+        );
         Ok(())
     }
 
@@ -435,13 +448,8 @@ impl FernetTokenProvider {
     /// A `Result` containing the decrypted `Token` if successful, or a
     /// `FernetDriverError`.
     pub fn decrypt(&self, credential: &str) -> Result<FernetToken, FernetDriverError> {
-        // TODO: Implement fernet keys change watching. Keystone loads them from FS on
-        // every request and in the best case it costs 15µs.
-        let fernet = match &self.fernet {
-            Some(f) => f,
-            None => &self.get_fernet()?,
-        };
-        let payload = fernet.decrypt(credential)?;
+        let keys = self.current_keys()?;
+        let payload = keys.multi_fernet.decrypt(credential)?;
 
         self.decode(&mut payload.as_slice(), get_fernet_timestamp(credential)?)
     }
@@ -456,11 +464,8 @@ impl FernetTokenProvider {
     /// `FernetDriverError`.
     pub fn encrypt(&self, token: &FernetToken) -> Result<String, FernetDriverError> {
         let payload = self.encode(token)?;
-        let res = match &self.fernet {
-            Some(fernet) => fernet.encrypt(&payload),
-            _ => self.get_fernet()?.encrypt(&payload),
-        };
-        Ok(res)
+        let keys = self.current_keys()?;
+        Ok(keys.multi_fernet.encrypt(&payload))
     }
 }
 
@@ -613,7 +618,7 @@ pub mod tests {
         let token = "gAAAAABnt12vpnYCuUxl1lWQfTxwkBcZcgdK5wYons4BFHxxZLk326To5afinp29in7f5ZHR5K61Pl2voIjfbPKlL51KempshD4shfSje4RutbeXq-NT498eEcorzige5XBYGaoWuDTOKEDH2eXCMHhw9722j9iPP3Z4r_1Zlmcqq1n2tndmvsA";
 
         let mut provider = FernetTokenProvider::new(setup_config());
-        provider.load_keys().unwrap();
+        provider.load_keys().await.unwrap();
 
         if let FernetToken::Unscoped(decrypted) = provider.decrypt(token).unwrap() {
             assert_eq!(decrypted.user_id, "4b7d364ad87d400bbd91798e3c15e9c2");
@@ -644,7 +649,7 @@ pub mod tests {
         });
 
         let mut provider = FernetTokenProvider::new(setup_config());
-        provider.load_keys().unwrap();
+        provider.load_keys().await.unwrap();
 
         let encrypted = provider.encrypt(&token).unwrap();
         let dec_token = discard_issued_at(provider.decrypt(&encrypted).unwrap());
@@ -656,7 +661,7 @@ pub mod tests {
         let token = "gAAAAABnt16C_ve4dDc7TeU857pwTXGJfGqNA4uJ308_2o_F9T_8WenNBatll0Q36wGz79dSI6RQnuN2PbK17wxQbn9jXscDh2ie3ZrW-WL5gG3gWK6FiPleAiU3kJN5mkskViJOIN-ZpP2B15fmZiYijelQ9TQuhQ";
 
         let mut provider = FernetTokenProvider::new(setup_config());
-        provider.load_keys().unwrap();
+        provider.load_keys().await.unwrap();
 
         if let FernetToken::DomainScope(decrypted) = provider.decrypt(token).unwrap() {
             assert_eq!(decrypted.user_id, "4b7d364ad87d400bbd91798e3c15e9c2");
@@ -684,7 +689,7 @@ pub mod tests {
         });
 
         let mut provider = FernetTokenProvider::new(setup_config());
-        provider.load_keys().unwrap();
+        provider.load_keys().await.unwrap();
 
         let encrypted = provider.encrypt(&token).unwrap();
         let dec_token = discard_issued_at(provider.decrypt(&encrypted).unwrap());
@@ -696,7 +701,7 @@ pub mod tests {
         let token = "gAAAAABns2ixy75K_KfoosWLrNNqG6KW8nm3Xzv0_2dOx8ODWH7B8i2g8CncGLO6XBEH_TYLg83P6XoKQ5bU8An8Kqgw9WX3bvmEQXphnwPM6aRAOQUSdVhTlUm_8otDG9BS2rc70Q7pfy57S3_yBgimy-174aKdP8LPusvdHZsQPEJO9pfeXWw";
 
         let mut provider = FernetTokenProvider::new(setup_config());
-        provider.load_keys().unwrap();
+        provider.load_keys().await.unwrap();
 
         if let FernetToken::ProjectScope(decrypted) = provider.decrypt(token).unwrap() {
             assert_eq!(decrypted.user_id, "4b7d364ad87d400bbd91798e3c15e9c2");
@@ -724,7 +729,7 @@ pub mod tests {
         });
 
         let mut provider = FernetTokenProvider::new(setup_config());
-        provider.load_keys().unwrap();
+        provider.load_keys().await.unwrap();
 
         let encrypted = provider.encrypt(&token).unwrap();
         let dec_token = discard_issued_at(provider.decrypt(&encrypted).unwrap());
@@ -736,7 +741,7 @@ pub mod tests {
         let token = "gAAAAABoMdfwBgwjAfYCp3RisL_XKSdGKmBqg7ia8jkfsKIXnap_bQ5gUTZGwgEERlpFKzbwpkV-cpiFDuhe9RAnCtbQxEhP7Rg1vt1VLm8afGTulDaLclqot2NC-BONFO2k3V3KyIa-Xrq0mCEGOk-BhNZy2C6iwrWanPCjCuZrWCq4FBirtMs2vrnZPWG5FTGqqkvdQvGj";
 
         let mut provider = FernetTokenProvider::new(setup_config());
-        provider.load_keys().unwrap();
+        provider.load_keys().await.unwrap();
 
         if let FernetToken::FederationUnscoped(decrypted) = provider.decrypt(token).unwrap() {
             assert_eq!(decrypted.user_id, "8980e124df5245509131bdc5c66c54cc");
@@ -772,7 +777,7 @@ pub mod tests {
         });
 
         let mut provider = FernetTokenProvider::new(setup_config());
-        provider.load_keys().unwrap();
+        provider.load_keys().await.unwrap();
 
         let encrypted = provider.encrypt(&token).unwrap();
         let dec_token = discard_issued_at(provider.decrypt(&encrypted).unwrap());
@@ -784,7 +789,7 @@ pub mod tests {
         let token = "gAAAAABoNdYE5zCP0qQtHqhdbZHQ7YdLvfDlUTpLou8FJFoMKsd4I9jyVyaWrluYXKXofnwzemA-wybhtbNruwqDYH-wmHdMlgYuZyy21o8ylphU5yd2b-5KvGpXo61fTVTzhdHFTzJKVit_7Lcwq0S45xQ9x14sVRd870NEwfmOvUVR5BGzmnpFLvWtkaPSpbxMAzfn_NSC";
 
         let mut provider = FernetTokenProvider::new(setup_config());
-        provider.load_keys().unwrap();
+        provider.load_keys().await.unwrap();
 
         if let FernetToken::FederationProjectScope(decrypted) = provider.decrypt(token).unwrap() {
             assert_eq!(decrypted.user_id, "8980e124df5245509131bdc5c66c54cc");
@@ -821,7 +826,7 @@ pub mod tests {
         });
 
         let mut provider = FernetTokenProvider::new(setup_config());
-        provider.load_keys().unwrap();
+        provider.load_keys().await.unwrap();
 
         let encrypted = provider.encrypt(&token).unwrap();
         let dec_token = discard_issued_at(provider.decrypt(&encrypted).unwrap());
@@ -833,7 +838,7 @@ pub mod tests {
         let token = "gAAAAABoNddwFaB2Oq26-4f8nRK3Bph7-QsIh30Rbefbb78owJXaQcjNQm5Qq1gHouS6JSqgfpdna3ML1vdTVnVnFScX-T-CZ-CqtBPUuEBHFEzdNBDKQHloYajZ2sknwbe_uIs1SDS9tBFLvkVth1eVjDhdEawINHjUCFhNPObZKas5V0j7bsvChNeZBKsznruJwCtcrWr5";
 
         let mut provider = FernetTokenProvider::new(setup_config());
-        provider.load_keys().unwrap();
+        provider.load_keys().await.unwrap();
 
         if let FernetToken::FederationDomainScope(decrypted) = provider.decrypt(token).unwrap() {
             assert_eq!(decrypted.user_id, "8980e124df5245509131bdc5c66c54cc");
@@ -871,7 +876,7 @@ pub mod tests {
 
         let config = setup_config();
         let mut provider = FernetTokenProvider::new(config);
-        provider.load_keys().unwrap();
+        provider.load_keys().await.unwrap();
 
         let encrypted = provider.encrypt(&token).unwrap();
         let dec_token = discard_issued_at(provider.decrypt(&encrypted).unwrap());
@@ -883,7 +888,7 @@ pub mod tests {
         let token = "gAAAAABnt11m57ZlI9JU0g2BKJw2EN-InbAIijcIG7SxvPATntgTlcTMwha-Fh7isNNIwDq2WaWglV1nYgftfoUK245ZnEJ0_gXaIhl6COhNommYv2Bs9PnJqfgrrxrIrB8rh4pfeyCtMkv5ePYgFFPyRFE37l3k7qL5p7qVhYT37yT1-K5lYAV0f6Vy70h3KX1HO0m6Rl90";
 
         let mut provider = FernetTokenProvider::new(setup_config());
-        provider.load_keys().unwrap();
+        provider.load_keys().await.unwrap();
 
         if let FernetToken::ApplicationCredential(decrypted) = provider.decrypt(token).unwrap() {
             assert_eq!(decrypted.user_id, "4b7d364ad87d400bbd91798e3c15e9c2");
@@ -916,7 +921,7 @@ pub mod tests {
         });
 
         let mut provider = FernetTokenProvider::new(setup_config());
-        provider.load_keys().unwrap();
+        provider.load_keys().await.unwrap();
 
         let encrypted = provider.encrypt(&token).unwrap();
         let dec_token = discard_issued_at(provider.decrypt(&encrypted).unwrap());
@@ -938,7 +943,7 @@ pub mod tests {
         });
 
         let mut provider = FernetTokenProvider::new(setup_config());
-        provider.load_keys().unwrap();
+        provider.load_keys().await.unwrap();
 
         let encrypted = provider.encrypt(&token).unwrap();
         let dec_token = discard_issued_at(provider.decrypt(&encrypted).unwrap());
@@ -958,7 +963,7 @@ pub mod tests {
         });
 
         let mut provider = FernetTokenProvider::new(setup_config());
-        provider.load_keys().unwrap();
+        provider.load_keys().await.unwrap();
 
         let encrypted = provider.encrypt(&token).unwrap();
         let dec_token = discard_issued_at(provider.decrypt(&encrypted).unwrap());
@@ -1012,7 +1017,7 @@ pub mod tests {
         config.fernet_tokens.key_repository = keys_dir.keep();
 
         let mut provider = FernetTokenProvider::new(config);
-        provider.load_keys().unwrap();
+        provider.load_keys().await.unwrap();
 
         let token = FernetToken::Unscoped(UnscopedPayload {
             user_id: Uuid::new_v4().simple().to_string(),

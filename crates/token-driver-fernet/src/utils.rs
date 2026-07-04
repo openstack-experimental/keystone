@@ -14,27 +14,31 @@
 //! # Fernet utils
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::{DateTime, Utc};
-use fernet::Fernet;
-use nix::sys::stat::{Mode, umask};
-use nix::unistd::{Gid, Uid, getegid, geteuid, setegid, seteuid};
 use rmp::{
     Marker,
     decode::{self, *},
     encode::{self, *},
 };
-use secrecy::{ExposeSecret, SecretString};
-use std::collections::BTreeMap;
-use std::fs;
-use std::io::{self, Read, Write};
+use std::io::{self, Read};
 use std::path::PathBuf;
-use tempfile::NamedTempFile;
-use tokio::fs as fs_async;
-use tracing::{error, info, trace, warn};
+use std::time::Duration;
 use uuid::Uuid;
+
+use openstack_keystone_key_repository::{CachedKeyRepository, FilesystemKeySource, KeyRepository};
 
 use crate::error::FernetDriverError;
 
-/// Fernet utils.
+/// How often the filesystem watcher's poll fallback checks for changes if
+/// inotify doesn't fire — only relevant to [`FernetUtils::start_cached`],
+/// the one long-lived, auto-refreshing view a [`crate::FernetTokenProvider`]
+/// holds. The one-shot operations below (`initialize_key_repository`,
+/// `rotate`, `check_startup_null_key`) don't watch at all.
+const POLL_INTERVAL: Duration = Duration::from_secs(30);
+
+/// Fernet utils: a thin adapter over
+/// [`openstack_keystone_key_repository`], which owns the actual key
+/// parsing/rotation/Null-Key-detection logic shared with the credential
+/// driver (ADR 0019 §4).
 #[derive(Clone, Debug, Default)]
 pub struct FernetUtils {
     pub key_repository: PathBuf,
@@ -42,202 +46,57 @@ pub struct FernetUtils {
 }
 
 impl FernetUtils {
-    /// Validate fernet key key_repository.
-    ///
-    /// Perform validation of the fernet keys repository.
-    ///
-    /// # Returns
-    /// A `Result` containing a boolean indicating if the repository exists, or
-    /// a `FernetDriverError`.
-    fn validate_key_repository(&self) -> Result<bool, FernetDriverError> {
-        Ok(self.key_repository.exists())
+    fn repo(&self) -> KeyRepository<FilesystemKeySource> {
+        KeyRepository::new(
+            FilesystemKeySource::new(self.key_repository.clone()),
+            self.max_active_keys,
+        )
     }
 
-    /// Securely create a new tmp encryption key.
-    ///
-    /// This created key is not effective until `become_valid_new_key` method is
-    /// executed.
-    ///
-    /// # Parameters
-    /// - `user_id`: Optional user ID for file ownership.
-    /// - `group_id`: Optional group ID for file ownership.
-    ///
-    /// # Returns
-    /// A `Result` indicating success or a `FernetDriverError`.
-    fn create_tmp_new_key(
+    /// `token_setup`: create the initial staged key. Idempotent-ish:
+    /// overwrites the staged key if it already exists, matching the
+    /// underlying atomic-write semantics.
+    pub async fn initialize_key_repository(&self) -> Result<(), FernetDriverError> {
+        self.repo().setup().await.map_err(Into::into)
+    }
+
+    /// Startup-time Null Key check (ADR 0019 §4, Security), mirroring the
+    /// credential key repository's equivalent check.
+    pub async fn check_startup_null_key(
         &self,
-        user_id: Option<u32>,
-        group_id: Option<u32>,
+        insecure_allow_null_key: bool,
     ) -> Result<(), FernetDriverError> {
-        // 1. Generate key and wrap in a secret-protecting type
-        let key = SecretString::new(Fernet::generate_key().into());
-        let target_path = self.key_repository.join("0.tmp");
-
-        // 2. Set umask and handle privilege escalation using scope_guard
-        let old_umask = umask(Mode::from_bits_truncate(0o177));
-        let _umask_guard = scopeguard::guard(old_umask, |old| {
-            umask(old);
-        });
-
-        if let (Some(uid), Some(gid)) = (user_id, group_id) {
-            let (old_euid, old_egid) = (geteuid(), getegid());
-
-            setegid(Gid::from_raw(gid)).map_err(|e| FernetDriverError::NixErrno {
-                context: "setting effective process GID".into(),
-                source: e,
-            })?;
-
-            // Install the restore guard immediately after the first privilege
-            // transition succeeds, so a failure in the second transition below
-            // still restores the original ids via `?` instead of leaving the
-            // process running with a half-dropped privilege state (egid
-            // changed, euid not).
-            let _id_guard = scopeguard::guard((old_euid, old_egid), |(u, g)| {
-                let _ = seteuid(u);
-                let _ = setegid(g);
-            });
-
-            seteuid(Uid::from_raw(uid)).map_err(|e| FernetDriverError::NixErrno {
-                context: "setting effective process UID".into(),
-                source: e,
-            })?;
-        }
-
-        // 3. Atomic Write: Create a temp file in the same directory
-        // This handles the "cleanup on failure" automatically.
-        let mut tmp_file = NamedTempFile::new_in(self.key_repository.clone())?;
-
-        // Write the actual secret data
-        tmp_file.write_all(key.expose_secret().as_bytes())?;
-        tmp_file.flush()?;
-
-        // 4. Atomically persist the file to "0"
-        // If persist() isn't called, the file is deleted when tmp_file goes out of
-        // scope.
-        info!("Created new Fernet key at {:?}", target_path);
-        tmp_file.persist(&target_path)?;
-
-        Ok(())
+        self.repo()
+            .check_startup_null_key(insecure_allow_null_key)
+            .await
+            .map_err(Into::into)
     }
 
-    /// Make the tmp new key a valid new key.
-    ///
-    /// Renames '0.tmp' to '0' atomically.
-    ///
-    /// # Returns
-    /// A `Result` indicating success or a `FernetDriverError`.
-    fn become_valid_new_key(&self) -> Result<(), FernetDriverError> {
-        let tmp_key_file = self.key_repository.join("0.tmp");
-        let valid_key_file = self.key_repository.join("0");
-
-        // Check if the source exists before attempting rename to provide better errors
-        if !tmp_key_file.exists() {
-            error!("Temporary key file not found: {:?}", tmp_key_file);
-            return Err(FernetDriverError::FernetKeysMissing);
-        }
-
-        // std::fs::rename is atomic on most Unix-like systems.
-        // If '0' already exists, it will be overwritten in a single operation.
-        fs::rename(&tmp_key_file, &valid_key_file)?;
-
-        // Sync the directory to ensure the rename is persisted to disk
-        // This is a "pro" Rust move for high-reliability systems.
-        let dir = fs::File::open(&self.key_repository)?;
-        dir.sync_all()?;
-
-        info!("Become a valid new key: {:?}", valid_key_file);
-        Ok(())
+    /// `token_rotate`: promote the staged key to primary, stage a fresh
+    /// key, and prune beyond `max_active_keys`. Unlike the credential
+    /// driver's rotate, there is no "still-encrypted-with-a-stale-key"
+    /// safety check to run first — expired tokens simply fail to decrypt,
+    /// they are never migrated.
+    pub async fn rotate(&self) -> Result<(), FernetDriverError> {
+        self.repo().rotate().await.map_err(Into::into)
     }
 
-    /// Initialize the key repository by creating and validating a new key.
-    ///
-    /// # Returns
-    /// A `Result` indicating success or a `FernetDriverError`.
-    pub fn initialize_key_repository(&self) -> Result<(), FernetDriverError> {
-        self.create_tmp_new_key(None, None)?;
-        self.become_valid_new_key()?;
-        Ok(())
-    }
-
-    /// Load keys from the key repository.
-    ///
-    /// # Returns
-    /// A `Result` containing an iterator of `Fernet` keys if successful, or a
-    /// `FernetDriverError`.
-    pub fn load_keys(&self) -> Result<impl IntoIterator<Item = Fernet>, FernetDriverError> {
-        info!("loading keys from {:?}", self.key_repository);
-        let mut keys: BTreeMap<i8, Fernet> = BTreeMap::new();
-        if self.validate_key_repository()? {
-            for entry in fs::read_dir(&self.key_repository)? {
-                let entry = entry?;
-                if let Ok(fname) = entry.file_name().into_string()
-                    && let Ok(key_order) = fname.parse::<i8>()
-                {
-                    // We are only interested in files named as integer (0, 1, 2, ...)
-                    trace!("Loading key {:?}", entry.file_name());
-                    if let Some(fernet) = Fernet::new(
-                        fs::read_to_string(entry.path())
-                            .map_err(|e| FernetDriverError::FernetKeyRead {
-                                source: e,
-                                path: entry.path(),
-                            })?
-                            .trim_end(),
-                    ) {
-                        keys.insert(key_order, fernet);
-                    } else {
-                        warn!(
-                            "The key {:?} is not usable for Fernet library",
-                            entry.file_name()
-                        )
-                    }
-                }
-            }
-        }
-        if keys.is_empty() {
-            return Err(FernetDriverError::FernetKeysMissing);
-        }
-        Ok(keys.into_values().rev())
-    }
-
-    /// Load keys from the key repository asynchronously.
-    ///
-    /// # Returns
-    /// A `Result` containing an iterator of `Fernet` keys if successful, or a
-    /// `FernetDriverError`.
-    pub async fn load_keys_async(
+    /// Start a cached, auto-refreshing view of this key repository: the
+    /// initial load happens here, and a background task keeps it fresh as
+    /// keys are rotated on disk, so [`crate::FernetTokenProvider`] never
+    /// touches the filesystem on the encrypt/decrypt hot path and never
+    /// serves a stale key set after a rotation.
+    pub async fn start_cached(
         &self,
-    ) -> Result<impl IntoIterator<Item = Fernet>, FernetDriverError> {
-        let mut keys: BTreeMap<i8, Fernet> = BTreeMap::new();
-        if self.validate_key_repository()? {
-            let mut entries = fs_async::read_dir(&self.key_repository).await?;
-            while let Some(entry) = entries.next_entry().await? {
-                if let Ok(fname) = entry.file_name().into_string()
-                    && let Ok(key_order) = fname.parse::<i8>()
-                {
-                    // We are only interested in files named as integer (0, 1, 2, ...)
-                    trace!("Loading key {:?}", entry.file_name());
-                    if let Some(fernet) = Fernet::new(
-                        fs::read_to_string(entry.path())
-                            .map_err(|e| FernetDriverError::FernetKeyRead {
-                                source: e,
-                                path: entry.path(),
-                            })?
-                            .trim_end(),
-                    ) {
-                        keys.insert(key_order, fernet);
-                    } else {
-                        warn!(
-                            "The key {:?} is not usable for Fernet library",
-                            entry.file_name()
-                        )
-                    }
-                }
-            }
-        }
-        if keys.is_empty() {
-            return Err(FernetDriverError::FernetKeysMissing);
-        }
-        Ok(keys.into_values().rev())
+        insecure_allow_null_key: bool,
+    ) -> Result<CachedKeyRepository<FilesystemKeySource>, FernetDriverError> {
+        let repo = KeyRepository::new(
+            FilesystemKeySource::watched(self.key_repository.clone(), POLL_INTERVAL),
+            self.max_active_keys,
+        );
+        CachedKeyRepository::start(repo, insecure_allow_null_key)
+            .await
+            .map_err(Into::into)
     }
 }
 
@@ -643,67 +502,64 @@ pub fn write_bool<W: RmpWrite>(wd: &mut W, data: bool) -> Result<(), FernetDrive
 mod tests {
     use super::FernetUtils;
     use chrono::{Local, SubsecRound};
-    use std::fs::File;
-    use std::io::Write;
     use tempfile::tempdir;
 
     use super::*;
 
+    // Low-level key parsing/rotation/Null-Key-detection coverage lives with
+    // `openstack-keystone-key-repository`, which this adapter delegates to.
+    // These tests only cover the adapter wiring itself.
+
     #[tokio::test]
-    async fn test_load_keys_valid() {
+    async fn test_initialize_and_rotate_roundtrip() {
         let tmp_dir = tempdir().unwrap();
-        for i in 0..5 {
-            let file_path = tmp_dir.path().join(format!("{i}"));
-            let mut tmp_file = File::create(file_path).unwrap();
-            write!(tmp_file, "{}", Fernet::generate_key()).unwrap();
-        }
         let utils = FernetUtils {
-            key_repository: tmp_dir.keep(),
-            ..Default::default()
+            key_repository: tmp_dir.path().to_path_buf(),
+            max_active_keys: 3,
         };
-        let keys: Vec<Fernet> = utils.load_keys().unwrap().into_iter().collect();
-        assert_eq!(5, keys.len());
+        utils.initialize_key_repository().await.unwrap();
+        assert!(tmp_dir.path().join("0").exists());
+
+        utils.rotate().await.unwrap();
+        assert!(tmp_dir.path().join("1").exists(), "staged key promoted");
+        assert!(tmp_dir.path().join("0").exists(), "fresh key staged");
     }
 
     #[tokio::test]
-    async fn test_load_keys_all_invalid() {
+    async fn test_check_startup_null_key_refuses_by_default() {
+        use base64::Engine as _;
+        use base64::engine::general_purpose::URL_SAFE;
+
         let tmp_dir = tempdir().unwrap();
-        for i in 0..5 {
-            let file_path = tmp_dir.path().join(format!("{i}"));
-            let mut tmp_file = File::create(file_path).unwrap();
-            write!(tmp_file, "{i}").unwrap();
-        }
-        // write dummy file to check it is ignored
-        let file_path = tmp_dir.path().join("dummy");
-        let mut tmp_file = File::create(file_path).unwrap();
-        write!(tmp_file, "foo").unwrap();
-
         let utils = FernetUtils {
-            key_repository: tmp_dir.keep(),
-            ..Default::default()
+            key_repository: tmp_dir.path().to_path_buf(),
+            max_active_keys: 3,
         };
-        let res = utils.load_keys();
+        let null_key = URL_SAFE.encode([0u8; 32]);
+        std::fs::write(tmp_dir.path().join("0"), null_key).unwrap();
 
-        if let Err(FernetDriverError::FernetKeysMissing) = res {
-        } else {
-            panic!("Should have raised an exception");
-        }
+        assert!(matches!(
+            utils.check_startup_null_key(false).await,
+            Err(FernetDriverError::NullKeyDetected)
+        ));
+        assert!(utils.check_startup_null_key(true).await.is_ok());
     }
 
     #[tokio::test]
-    async fn test_load_keys_trim() {
+    async fn test_start_cached_encrypts_and_decrypts() {
         let tmp_dir = tempdir().unwrap();
-        for i in 0..5 {
-            let file_path = tmp_dir.path().join(format!("{i}"));
-            let mut tmp_file = File::create(file_path).unwrap();
-            writeln!(tmp_file, "{}", Fernet::generate_key()).unwrap();
-        }
         let utils = FernetUtils {
-            key_repository: tmp_dir.keep(),
-            ..Default::default()
+            key_repository: tmp_dir.path().to_path_buf(),
+            max_active_keys: 3,
         };
-        let keys: Vec<Fernet> = utils.load_keys().unwrap().into_iter().collect();
-        assert_eq!(5, keys.len());
+        utils.initialize_key_repository().await.unwrap();
+
+        let cached = utils.start_cached(false).await.unwrap();
+        let token = cached.current().multi_fernet.encrypt(b"payload");
+        assert_eq!(
+            cached.current().multi_fernet.decrypt(&token).unwrap(),
+            b"payload"
+        );
     }
 
     #[test]

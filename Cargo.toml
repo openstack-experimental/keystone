@@ -16,6 +16,7 @@ members = [
   "crates/idmapping-driver-sql",
   "crates/k8s-auth-driver-raft",
   "crates/k8s-auth-driver-sql",
+  "crates/key-repository",
   "crates/keystone",
   "crates/mapping-driver-raft",
   "crates/resource-driver-sql",
@@ -115,6 +116,7 @@ openstack-keystone-storage-crypto = { version = "0.1.0", path = "crates/storage-
 openstack-keystone-federation-driver-sql = { version = "0.1", path = "crates/federation-driver-sql" }
 openstack-keystone-k8s-auth-driver-sql = { version = "0.1", path = "crates/k8s-auth-driver-sql/" }
 openstack-keystone-k8s-auth-driver-raft = { version = "0.1", path = "crates/k8s-auth-driver-raft/" }
+openstack-keystone-key-repository = { version = "0.1.0", path = "crates/key-repository" }
 openstack-keystone-mapping-driver-raft = { version = "0.1", path = "crates/mapping-driver-raft/" }
 openstack-keystone-identity-driver-sql = { version = "0.1", path = "crates/identity-driver-sql" }
 openstack-keystone-idmapping-driver-sql = { version = "0.1", path = "crates/idmapping-driver-sql/" }

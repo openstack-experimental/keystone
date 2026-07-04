@@ -15,6 +15,7 @@
 
 use std::num::TryFromIntError;
 
+use openstack_keystone_key_repository::KeyRepositoryError;
 use thiserror::Error;
 
 use openstack_keystone_core::token::TokenProviderError;
@@ -38,6 +39,26 @@ pub enum FernetDriverError {
     /// Missing fernet keys.
     #[error("no usable fernet keys has been found")]
     FernetKeysMissing,
+
+    /// A key's contents could not be parsed as a Fernet key.
+    #[error("fernet key at index {0} is not usable")]
+    InvalidKey(i8),
+
+    /// Fernet index arithmetic would overflow the `i8` file-naming scheme.
+    #[error("fernet key rotation index overflow")]
+    IndexOverflow,
+
+    /// Persisting a rotated/staged key entry failed.
+    #[error("failed to persist fernet key entry: {0}")]
+    KeyPersistFailed(String),
+
+    /// A key decodes to the well-known Null Key and
+    /// `insecure_allow_null_key` is not set (ADR 0019 §4, Security).
+    #[error(
+        "token fernet key repository contains the well-known Null Key; refusing to start (set \
+         [fernet_tokens] insecure_allow_null_key to override — production tolerance is zero)"
+    )]
+    NullKeyDetected,
 
     /// Fernet key read error.
     #[error("fernet key read error: {}", source)]
@@ -117,6 +138,20 @@ pub enum FernetDriverError {
     /// Validation error.
     #[error("Token validation error: {0}")]
     Validation(#[from] validator::ValidationErrors),
+}
+
+impl From<KeyRepositoryError> for FernetDriverError {
+    fn from(err: KeyRepositoryError) -> Self {
+        match err {
+            KeyRepositoryError::Io { source, .. } => Self::Io { source },
+            KeyRepositoryError::KeysMissing => Self::FernetKeysMissing,
+            KeyRepositoryError::InvalidKey(idx) => Self::InvalidKey(idx),
+            KeyRepositoryError::NullKeyDetected => Self::NullKeyDetected,
+            KeyRepositoryError::IndexOverflow => Self::IndexOverflow,
+            KeyRepositoryError::Persist(msg) => Self::KeyPersistFailed(msg),
+            KeyRepositoryError::NixErrno { context, source } => Self::NixErrno { context, source },
+        }
+    }
 }
 
 impl From<FernetDriverError> for TokenProviderError {

@@ -45,7 +45,7 @@ pub async fn create(
         .ok_or(CredentialProviderError::MissingUserId)?;
 
     let repo = FernetKeyRepository::new(cfg.credential.key_repository.clone());
-    let keys = repo.load(cfg.credential.insecure_allow_null_key)?;
+    let keys = repo.load(cfg.credential.insecure_allow_null_key).await?;
     let encrypted_blob = keys.multi_fernet.encrypt(rec.blob.as_bytes());
 
     let extra = rec.extra.as_ref().map(serde_json::to_string).transpose()?;
@@ -101,6 +101,7 @@ mod tests {
         let db = test_db().await;
         crate::fernet::FernetKeyRepository::new(key_dir.path().to_path_buf())
             .setup()
+            .await
             .unwrap();
 
         let rec = CredentialCreate {

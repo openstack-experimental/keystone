@@ -51,7 +51,7 @@ use crate::fernet::FernetKeyRepository;
 /// repository can't be loaded or rotated, or a database operation fails.
 pub async fn rotate(cfg: &Config, db: &DatabaseConnection) -> Result<(), CredentialProviderError> {
     let repo = FernetKeyRepository::new(cfg.credential.key_repository.clone());
-    let keys = repo.load(cfg.credential.insecure_allow_null_key)?;
+    let keys = repo.load(cfg.credential.insecure_allow_null_key).await?;
 
     let stale = DbCredential::find()
         .filter(db_credential::Column::KeyHash.ne(keys.primary_key_hash.as_str()))
@@ -65,7 +65,7 @@ pub async fn rotate(cfg: &Config, db: &DatabaseConnection) -> Result<(), Credent
         )));
     }
 
-    repo.rotate()?;
+    repo.rotate().await?;
     Ok(())
 }
 
@@ -117,8 +117,8 @@ mod tests {
         let db = test_db().await;
 
         let repo = FernetKeyRepository::new(key_dir.path().to_path_buf());
-        repo.setup().unwrap();
-        let keys = repo.load(false).unwrap();
+        repo.setup().await.unwrap();
+        let keys = repo.load(false).await.unwrap();
         let stale_blob = keys.multi_fernet.encrypt(b"stale-secret");
         // Wrong key_hash: never matches the current primary.
         insert_credential(&db, "cred-1", stale_blob, "not-the-primary-hash".into()).await;
@@ -139,8 +139,8 @@ mod tests {
         let db = test_db().await;
 
         let repo = FernetKeyRepository::new(key_dir.path().to_path_buf());
-        repo.setup().unwrap();
-        let keys = repo.load(false).unwrap();
+        repo.setup().await.unwrap();
+        let keys = repo.load(false).await.unwrap();
         let blob = keys.multi_fernet.encrypt(b"current-secret");
         insert_credential(&db, "cred-1", blob, keys.primary_key_hash.clone()).await;
 

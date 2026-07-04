@@ -1,0 +1,30 @@
+[package]
+name = "openstack-keystone-key-repository"
+description = "OpenStack Keystone shared Fernet key repository (filesystem, Vault-ready)"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+homepage.workspace = true
+exclude.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+base64.workspace = true
+fernet = { workspace = true, features = ["rustcrypto"] }
+nix = { workspace = true, features = ["fs", "user"] }
+notify = "8.2"
+scopeguard.workspace = true
+sha1.workspace = true
+tempfile.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["fs", "macros", "rt", "sync", "time"] }
+tracing.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+
+[lints]
+workspace = true

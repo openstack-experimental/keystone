@@ -13,26 +13,19 @@
 // SPDX-License-Identifier: Apache-2.0
 //! # Credential Fernet key repository (ADR 0019 §4)
 //!
+//! Thin adapter over [`openstack_keystone_key_repository`], which owns the
+//! actual key parsing/rotation/Null-Key-detection logic shared with the
+//! Fernet token driver. This module exists to keep this crate's existing
+//! public API (`FernetKeyRepository`, `LoadedKeys`, `MAX_ACTIVE_KEYS`,
+//! `CredentialFernetError`) stable for its callers.
+//!
 //! Separate from `[fernet_tokens] key_repository`. Hard-capped at
 //! [`MAX_ACTIVE_KEYS`] active keys, matching the Python Keystone constant —
 //! unlike token Fernet keys this is intentionally not configurable.
-//!
-//! Rotation is staged-key promotion, not primary renumbering: the staged key
-//! `0` is renamed to `old_primary + 1` (becoming the new primary), the old
-//! primary is left in place for decryption, a fresh key is staged as the new
-//! `0`, and files beyond [`MAX_ACTIVE_KEYS`] are pruned.
-use std::collections::BTreeMap;
-use std::fs;
-use std::io::Write;
 use std::path::PathBuf;
 
-use base64::Engine as _;
-use base64::engine::general_purpose::URL_SAFE;
-use fernet::{Fernet, MultiFernet};
-use nix::sys::stat::{Mode, umask};
-use sha1::{Digest, Sha1};
-use tempfile::NamedTempFile;
-use tracing::{info, warn};
+pub use openstack_keystone_key_repository::LoadedKeys;
+use openstack_keystone_key_repository::{FilesystemKeySource, KeyRepository};
 
 use crate::error::CredentialFernetError;
 
@@ -40,35 +33,20 @@ use crate::error::CredentialFernetError;
 /// keys (ADR 0019 §4). Intentionally not configurable.
 pub const MAX_ACTIVE_KEYS: usize = 3;
 
-/// A loaded, ready-to-use view of the key repository.
-pub struct LoadedKeys {
-    /// All active keys, primary first, wrapped for
-    /// decrypt-any/encrypt-with-primary use.
-    pub multi_fernet: MultiFernet,
-
-    /// SHA-1 hex digest of the *raw base64url bytes* of the primary key
-    /// file (ADR 0019 §4, `key_hash` Specification) — not the decoded
-    /// 32-byte AES key.
-    pub primary_key_hash: String,
-
-    /// Number of active key files loaded.
-    pub key_count: usize,
-}
-
 /// The Fernet key repository on the local filesystem.
 ///
 /// Per ADR 0019 §4, this directory must resolve to the identical file set on
 /// every Python and Rust node — that synchronization is an operational
 /// deployment requirement, not something this type enforces.
-#[derive(Clone, Debug)]
-pub struct FernetKeyRepository {
-    pub key_repository: PathBuf,
-}
+pub struct FernetKeyRepository(KeyRepository<FilesystemKeySource>);
 
 impl FernetKeyRepository {
     /// Create a new repository handle for the given directory.
     pub fn new(key_repository: PathBuf) -> Self {
-        Self { key_repository }
+        Self(KeyRepository::new(
+            FilesystemKeySource::new(key_repository),
+            MAX_ACTIVE_KEYS,
+        ))
     }
 
     /// Compute `key_hash` per the ADR 0019 §4 specification: SHA-1 hex
@@ -76,102 +54,21 @@ impl FernetKeyRepository {
     /// disk (i.e. *before* base64url-decoding).
     #[must_use]
     pub fn key_hash(raw_key_file_bytes: &[u8]) -> String {
-        let mut hasher = Sha1::new();
-        hasher.update(raw_key_file_bytes);
-        hasher
-            .finalize()
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect()
+        KeyRepository::<FilesystemKeySource>::key_hash(raw_key_file_bytes)
     }
 
     /// Whether the given raw (base64url-encoded) key-file bytes decode to
     /// the well-known Null Key (32 zero bytes).
     #[must_use]
     pub fn is_null_key(raw_key_file_bytes: &[u8]) -> bool {
-        match URL_SAFE.decode(raw_key_file_bytes) {
-            Ok(decoded) => decoded.len() == 32 && decoded.iter().all(|b| *b == 0),
-            Err(_) => false,
-        }
-    }
-
-    /// Read all integer-named key files, keyed by their file-name index.
-    /// The raw bytes are exactly as read from disk with a single trailing
-    /// newline stripped (matching Python's `hashlib.sha1(keys[0]).hexdigest()`
-    /// over the file's content stripped of its trailing newline).
-    fn read_key_files(&self) -> Result<BTreeMap<i8, Vec<u8>>, CredentialFernetError> {
-        let mut keys = BTreeMap::new();
-        if !self.key_repository.exists() {
-            return Ok(keys);
-        }
-        for entry in fs::read_dir(&self.key_repository).map_err(|e| CredentialFernetError::Io {
-            source: e,
-            path: self.key_repository.clone(),
-        })? {
-            let entry = entry.map_err(|e| CredentialFernetError::Io {
-                source: e,
-                path: self.key_repository.clone(),
-            })?;
-            let Ok(fname) = entry.file_name().into_string() else {
-                continue;
-            };
-            let Ok(idx) = fname.parse::<i8>() else {
-                continue;
-            };
-            let mut raw = fs::read(entry.path()).map_err(|e| CredentialFernetError::Io {
-                source: e,
-                path: entry.path(),
-            })?;
-            if raw.last() == Some(&b'\n') {
-                raw.pop();
-            }
-            keys.insert(idx, raw);
-        }
-        Ok(keys)
-    }
-
-    /// Atomically write `contents` to `key_repository/<name>` using a
-    /// temp-file-then-rename strategy with `umask 0o177` (ADR 0019 §4,
-    /// Security).
-    fn write_key_file(&self, name: &str, contents: &[u8]) -> Result<(), CredentialFernetError> {
-        fs::create_dir_all(&self.key_repository).map_err(|e| CredentialFernetError::Io {
-            source: e,
-            path: self.key_repository.clone(),
-        })?;
-        let old_umask = umask(Mode::from_bits_truncate(0o177));
-        let _umask_guard = scopeguard::guard(old_umask, |old| {
-            umask(old);
-        });
-
-        let mut tmp_file =
-            NamedTempFile::new_in(&self.key_repository).map_err(|e| CredentialFernetError::Io {
-                source: e,
-                path: self.key_repository.clone(),
-            })?;
-        tmp_file
-            .write_all(contents)
-            .map_err(|e| CredentialFernetError::Io {
-                source: e,
-                path: self.key_repository.clone(),
-            })?;
-        tmp_file.flush().map_err(|e| CredentialFernetError::Io {
-            source: e,
-            path: self.key_repository.clone(),
-        })?;
-        tmp_file
-            .persist(self.key_repository.join(name))
-            .map_err(|e| CredentialFernetError::Persist(e.to_string()))?;
-        Ok(())
+        KeyRepository::<FilesystemKeySource>::is_null_key(raw_key_file_bytes)
     }
 
     /// `credential_setup`: create the initial staged key (`0.tmp` -> `0`).
     /// Idempotent-ish: overwrites `0` if it already exists, matching the
     /// underlying atomic-rename semantics.
-    pub fn setup(&self) -> Result<(), CredentialFernetError> {
-        let key = Fernet::generate_key();
-        self.write_key_file("0", key.as_bytes())?;
-        info!("Created new credential Fernet staged key at index 0");
-        Ok(())
+    pub async fn setup(&self) -> Result<(), CredentialFernetError> {
+        self.0.setup().await.map_err(Into::into)
     }
 
     /// Load all active keys, primary first (highest index).
@@ -180,45 +77,14 @@ impl FernetKeyRepository {
     /// - [`CredentialFernetError::KeysMissing`] if the repository is empty.
     /// - [`CredentialFernetError::NullKeyDetected`] if any key file decodes to
     ///   the Null Key and `insecure_allow_null_key` is `false`.
-    pub fn load(&self, insecure_allow_null_key: bool) -> Result<LoadedKeys, CredentialFernetError> {
-        let key_files = self.read_key_files()?;
-        if key_files.is_empty() {
-            return Err(CredentialFernetError::KeysMissing);
-        }
-
-        for (idx, raw) in &key_files {
-            if Self::is_null_key(raw) {
-                if insecure_allow_null_key {
-                    warn!(
-                        key_index = idx,
-                        "credential key repository contains the well-known Null Key \
-                         (insecure_allow_null_key=true — any credential encrypted with it \
-                         is effectively stored in plaintext)"
-                    );
-                } else {
-                    return Err(CredentialFernetError::NullKeyDetected);
-                }
-            }
-        }
-
-        let mut fernets = Vec::with_capacity(key_files.len());
-        let mut primary_key_hash = None;
-        // Highest index first == primary first.
-        for (_idx, raw) in key_files.iter().rev() {
-            let key_str = String::from_utf8_lossy(raw);
-            let fernet =
-                Fernet::new(key_str.trim()).ok_or(CredentialFernetError::InvalidKey(*_idx))?;
-            if primary_key_hash.is_none() {
-                primary_key_hash = Some(Self::key_hash(raw));
-            }
-            fernets.push(fernet);
-        }
-
-        Ok(LoadedKeys {
-            multi_fernet: MultiFernet::new(fernets),
-            primary_key_hash: primary_key_hash.ok_or(CredentialFernetError::KeysMissing)?,
-            key_count: key_files.len(),
-        })
+    pub async fn load(
+        &self,
+        insecure_allow_null_key: bool,
+    ) -> Result<LoadedKeys, CredentialFernetError> {
+        self.0
+            .load_keys(insecure_allow_null_key)
+            .await
+            .map_err(Into::into)
     }
 
     /// Startup-time Null Key check (ADR 0019 §4, Security).
@@ -234,23 +100,14 @@ impl FernetKeyRepository {
     /// # Errors
     /// [`CredentialFernetError::NullKeyDetected`] if a key file decodes to
     /// the Null Key and `insecure_allow_null_key` is `false`.
-    pub fn check_startup_null_key(
+    pub async fn check_startup_null_key(
         &self,
         insecure_allow_null_key: bool,
     ) -> Result<(), CredentialFernetError> {
-        for (idx, raw) in self.read_key_files()? {
-            if Self::is_null_key(&raw) {
-                tracing::error!(
-                    key_index = idx,
-                    insecure_allow_null_key,
-                    "credential key repository contains the well-known Null Key at startup"
-                );
-                if !insecure_allow_null_key {
-                    return Err(CredentialFernetError::NullKeyDetected);
-                }
-            }
-        }
-        Ok(())
+        self.0
+            .check_startup_null_key(insecure_allow_null_key)
+            .await
+            .map_err(Into::into)
     }
 
     /// Promote the staged key `0` to primary, stage a fresh key `0`, and
@@ -262,65 +119,18 @@ impl FernetKeyRepository {
     /// that credential once its key is pruned. Application code must not
     /// call this directly — use [`crate::rotate::rotate`], which performs
     /// the mandatory stale-credential check before promoting.
-    pub fn rotate(&self) -> Result<(), CredentialFernetError> {
-        let key_files = self.read_key_files()?;
-        if !key_files.contains_key(&0) {
-            return Err(CredentialFernetError::KeysMissing);
-        }
-
-        let old_primary_idx = key_files
-            .keys()
-            .copied()
-            .filter(|i| *i != 0)
-            .max()
-            .unwrap_or(0);
-        let new_primary_idx = old_primary_idx
-            .checked_add(1)
-            .ok_or(CredentialFernetError::IndexOverflow)?;
-
-        // 1. Promote: rename staged `0` -> new_primary_idx. This is a rename of the
-        //    *staged* file, not the outgoing primary — the outgoing primary keeps its
-        //    own file name and stays active for decryption.
-        fs::rename(
-            self.key_repository.join("0"),
-            self.key_repository.join(new_primary_idx.to_string()),
-        )
-        .map_err(|e| CredentialFernetError::Io {
-            source: e,
-            path: self.key_repository.clone(),
-        })?;
-
-        // 2. Stage a fresh key `0` for the next rotation cycle.
-        self.setup()?;
-
-        // 3. Prune beyond MAX_ACTIVE_KEYS, oldest (smallest positive index) first. `0`
-        //    (staged) is never pruned.
-        let mut remaining = self.read_key_files()?;
-        remaining.remove(&0);
-        while remaining.len() + 1 > MAX_ACTIVE_KEYS {
-            if let Some((&oldest, _)) = remaining.iter().min_by_key(|(idx, _)| **idx) {
-                fs::remove_file(self.key_repository.join(oldest.to_string())).map_err(|e| {
-                    CredentialFernetError::Io {
-                        source: e,
-                        path: self.key_repository.clone(),
-                    }
-                })?;
-                remaining.remove(&oldest);
-            } else {
-                break;
-            }
-        }
-
-        info!(
-            new_primary = new_primary_idx,
-            "Rotated credential Fernet key repository"
-        );
-        Ok(())
+    pub async fn rotate(&self) -> Result<(), CredentialFernetError> {
+        self.0.rotate().await.map_err(Into::into)
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use base64::Engine as _;
+    use base64::engine::general_purpose::URL_SAFE;
+    use fernet::Fernet;
+    use openstack_keystone_key_repository::KeySource as _;
+
     use super::*;
 
     #[test]
@@ -350,13 +160,13 @@ mod tests {
         assert!(!FernetKeyRepository::is_null_key(real_key_raw.as_bytes()));
     }
 
-    #[test]
-    fn test_setup_load_roundtrip() {
+    #[tokio::test]
+    async fn test_setup_load_roundtrip() {
         let dir = tempfile::tempdir().unwrap();
         let repo = FernetKeyRepository::new(dir.path().to_path_buf());
-        repo.setup().unwrap();
+        repo.setup().await.unwrap();
 
-        let loaded = repo.load(false).unwrap();
+        let loaded = repo.load(false).await.unwrap();
         assert_eq!(loaded.key_count, 1);
 
         let plaintext = b"super secret ec2 key";
@@ -365,64 +175,64 @@ mod tests {
         assert_eq!(decrypted, plaintext);
     }
 
-    #[test]
-    fn test_load_refuses_null_key_by_default() {
+    #[tokio::test]
+    async fn test_load_refuses_null_key_by_default() {
         let dir = tempfile::tempdir().unwrap();
         let repo = FernetKeyRepository::new(dir.path().to_path_buf());
         let null_key = URL_SAFE.encode([0u8; 32]);
         std::fs::write(dir.path().join("0"), null_key).unwrap();
 
         assert!(matches!(
-            repo.load(false),
+            repo.load(false).await,
             Err(CredentialFernetError::NullKeyDetected)
         ));
         // Explicit opt-in still loads it.
-        assert!(repo.load(true).is_ok());
+        assert!(repo.load(true).await.is_ok());
     }
 
-    #[test]
-    fn test_check_startup_null_key_on_unconfigured_repository() {
+    #[tokio::test]
+    async fn test_check_startup_null_key_on_unconfigured_repository() {
         let dir = tempfile::tempdir().unwrap();
         let repo = FernetKeyRepository::new(dir.path().join("does-not-exist"));
         // No key files at all (repository not yet set up) is not itself a
         // Null Key problem.
-        assert!(repo.check_startup_null_key(false).is_ok());
+        assert!(repo.check_startup_null_key(false).await.is_ok());
     }
 
-    #[test]
-    fn test_check_startup_null_key_refuses_by_default() {
+    #[tokio::test]
+    async fn test_check_startup_null_key_refuses_by_default() {
         let dir = tempfile::tempdir().unwrap();
         let repo = FernetKeyRepository::new(dir.path().to_path_buf());
         let null_key = URL_SAFE.encode([0u8; 32]);
         std::fs::write(dir.path().join("0"), null_key).unwrap();
 
         assert!(matches!(
-            repo.check_startup_null_key(false),
+            repo.check_startup_null_key(false).await,
             Err(CredentialFernetError::NullKeyDetected)
         ));
         // Explicit opt-in allows startup to proceed.
-        assert!(repo.check_startup_null_key(true).is_ok());
+        assert!(repo.check_startup_null_key(true).await.is_ok());
     }
 
-    #[test]
-    fn test_check_startup_null_key_passes_with_real_key() {
+    #[tokio::test]
+    async fn test_check_startup_null_key_passes_with_real_key() {
         let dir = tempfile::tempdir().unwrap();
         let repo = FernetKeyRepository::new(dir.path().to_path_buf());
-        repo.setup().unwrap();
-        assert!(repo.check_startup_null_key(false).is_ok());
+        repo.setup().await.unwrap();
+        assert!(repo.check_startup_null_key(false).await.is_ok());
     }
 
-    #[test]
-    fn test_rotate_promotes_staged_key_and_keeps_old_primary_decryptable() {
+    #[tokio::test]
+    async fn test_rotate_promotes_staged_key_and_keeps_old_primary_decryptable() {
         let dir = tempfile::tempdir().unwrap();
         let repo = FernetKeyRepository::new(dir.path().to_path_buf());
-        repo.setup().unwrap();
+        repo.setup().await.unwrap();
         // First rotation: 0 -> 1, new 0 staged.
-        repo.rotate().unwrap();
+        repo.rotate().await.unwrap();
         assert!(dir.path().join("1").exists());
         assert!(dir.path().join("0").exists());
 
-        let after_first_rotation = repo.load(false).unwrap();
+        let after_first_rotation = repo.load(false).await.unwrap();
         let token_v1 = after_first_rotation.multi_fernet.encrypt(b"payload-v1");
         // key_hash after first rotation must reflect key `1` as primary.
         let key1_raw = std::fs::read(dir.path().join("1")).unwrap();
@@ -433,7 +243,7 @@ mod tests {
 
         // Second rotation: staged 0 -> 2 (not overwriting 1). Old primary
         // (1) must remain in place and still decryptable.
-        repo.rotate().unwrap();
+        repo.rotate().await.unwrap();
         assert!(dir.path().join("2").exists());
         assert!(
             dir.path().join("1").exists(),
@@ -441,7 +251,7 @@ mod tests {
         );
         assert!(dir.path().join("0").exists(), "a fresh key must be staged");
 
-        let after_second_rotation = repo.load(false).unwrap();
+        let after_second_rotation = repo.load(false).await.unwrap();
         assert_eq!(after_second_rotation.key_count, 3);
         // A blob encrypted with the now-superseded key `1` must still
         // decrypt via MultiFernet.
@@ -452,17 +262,17 @@ mod tests {
         assert_eq!(decrypted, b"payload-v1");
     }
 
-    #[test]
-    fn test_rotate_prunes_beyond_max_active_keys() {
+    #[tokio::test]
+    async fn test_rotate_prunes_beyond_max_active_keys() {
         let dir = tempfile::tempdir().unwrap();
         let repo = FernetKeyRepository::new(dir.path().to_path_buf());
-        repo.setup().unwrap();
+        repo.setup().await.unwrap();
         // Rotate MAX_ACTIVE_KEYS + 2 times; repository must never exceed
         // MAX_ACTIVE_KEYS files, and the oldest primaries get pruned first.
         for _ in 0..(MAX_ACTIVE_KEYS + 2) {
-            repo.rotate().unwrap();
+            repo.rotate().await.unwrap();
         }
-        let remaining = repo.read_key_files().unwrap();
+        let remaining = repo.0.source().load().await.unwrap();
         assert_eq!(remaining.len(), MAX_ACTIVE_KEYS);
         assert!(
             remaining.contains_key(&0),
