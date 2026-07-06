@@ -19,13 +19,17 @@ use crate::entity::group;
 
 mod create;
 mod delete;
+mod find_by_name;
 mod get;
 mod list;
+mod update;
 
 pub use create::create;
 pub use delete::delete;
+pub use find_by_name::find_by_name_ci;
 pub use get::get;
 pub use list::list;
+pub use update::update;
 
 impl From<group::Model> for Group {
     fn from(value: group::Model) -> Self {

@@ -24,13 +24,19 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use openstack_keystone_core::identity::generate_public_id;
-use openstack_keystone_core_types::identity::{UserCreate, UserResponse, UserType, UserUpdate};
+use openstack_keystone_core_types::identity::{
+    Group, GroupCreate, GroupUpdate, UserCreate, UserResponse, UserType, UserUpdate,
+};
 use openstack_keystone_core_types::scim::ScimResourceIndex;
 
 /// `urn:ietf:params:scim:schemas:core:2.0:User` schema URI.
 pub const USER_SCHEMA: &str = "urn:ietf:params:scim:schemas:core:2.0:User";
+/// `urn:ietf:params:scim:schemas:core:2.0:Group` schema URI.
+pub const GROUP_SCHEMA: &str = "urn:ietf:params:scim:schemas:core:2.0:Group";
 /// `urn:ietf:params:scim:api:messages:2.0:ListResponse` schema URI.
 pub const LIST_RESPONSE_SCHEMA: &str = "urn:ietf:params:scim:api:messages:2.0:ListResponse";
+/// ADR 0024 §11 membership-graph-bomb cap: max `members` entries per request.
+pub const MAX_GROUP_MEMBERS: usize = 1000;
 
 const EXTRA_GIVEN_NAME: &str = "scim_given_name";
 const EXTRA_FAMILY_NAME: &str = "scim_family_name";
@@ -231,6 +237,106 @@ pub struct ScimListResponse {
     pub start_index: usize,
     pub items_per_page: usize,
     pub resources: Vec<ScimUser>,
+}
+
+/// A single `members` entry — RFC 7644 permits `display`/`$ref`/`type` too,
+/// but ADR 0024 §4's Group mapping table only requires the member `User.id`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScimGroupMember {
+    pub value: String,
+}
+
+/// `GET`/`POST`/`PUT` response representation of a SCIM `Group`.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScimGroup {
+    pub schemas: Vec<String>,
+    pub id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub external_id: Option<String>,
+    pub display_name: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub members: Vec<ScimGroupMember>,
+    pub meta: ScimMeta,
+}
+
+impl ScimGroup {
+    /// Build the wire representation from the core Identity record, its SCIM
+    /// ownership anchor, and its resolved membership (ADR 0024 §4, §7).
+    pub fn from_domain(group: &Group, index: &ScimResourceIndex, member_ids: &[String]) -> Self {
+        Self {
+            schemas: vec![GROUP_SCHEMA.to_string()],
+            id: group.id.clone(),
+            external_id: index.external_id.clone(),
+            display_name: group.name.clone(),
+            members: member_ids
+                .iter()
+                .map(|id| ScimGroupMember { value: id.clone() })
+                .collect(),
+            meta: ScimMeta {
+                resource_type: "Group".to_string(),
+                created: epoch_to_rfc3339(index.created_at),
+                last_modified: epoch_to_rfc3339(index.updated_at),
+            },
+        }
+    }
+}
+
+/// `POST`/`PUT` request body — also used for `PUT` full-replace (ADR 0024
+/// PR3 scope: no `PATCH`). Unlike `User`, a SCIM `Group`'s `id` stays
+/// server-assigned: nothing federates in *as* a Group, so there is no
+/// convergence hazard for a deterministic id to solve (see the SCIM Users
+/// identity-convergence note in `to_user_create`).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScimGroupWrite {
+    #[serde(default)]
+    pub schemas: Vec<String>,
+    #[serde(default)]
+    pub external_id: Option<String>,
+    pub display_name: String,
+    #[serde(default)]
+    pub members: Vec<ScimGroupMember>,
+}
+
+impl ScimGroupWrite {
+    /// The member `User.id`s this write requests, in request order.
+    pub fn member_ids(&self) -> Vec<String> {
+        self.members.iter().map(|m| m.value.clone()).collect()
+    }
+
+    /// Convert to a core Identity `GroupCreate` (ADR 0024 §4 attribute
+    /// mapping). `externalId` is excluded — it lives only in
+    /// `ScimResourceIndex.external_id`, never on the `Group` itself.
+    pub fn to_group_create(&self, domain_id: &str) -> GroupCreate {
+        GroupCreate {
+            id: None,
+            domain_id: domain_id.to_string(),
+            name: self.display_name.clone(),
+            description: None,
+            extra: HashMap::new(),
+        }
+    }
+
+    /// Convert to a core Identity `GroupUpdate` (full-replace `PUT`).
+    pub fn to_group_update(&self) -> GroupUpdate {
+        GroupUpdate {
+            name: Some(self.display_name.clone()),
+            description: None,
+            extra: HashMap::new(),
+        }
+    }
+}
+
+/// `GET /Groups` list response envelope.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScimGroupListResponse {
+    pub schemas: Vec<String>,
+    pub total_results: usize,
+    pub start_index: usize,
+    pub items_per_page: usize,
+    pub resources: Vec<ScimGroup>,
 }
 
 fn extra_str(extra: &HashMap<String, Value>, key: &str) -> Option<String> {

@@ -906,6 +906,87 @@ impl IdentityApi for IdentityService {
             .await
     }
 
+    /// List the IDs of users that are members of a group.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `group_id`: The ID of the group.
+    async fn list_users_of_group<'a>(
+        &self,
+        ctx: &ExecutionContext<'a>,
+        group_id: &'a str,
+    ) -> Result<Vec<String>, IdentityProviderError> {
+        self.backend_driver
+            .list_users_of_group(ctx.state(), group_id)
+            .await
+    }
+
+    /// Find any group in `domain_id` whose name matches `name`,
+    /// case-insensitively, regardless of which realm (or nothing) created it.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `domain_id`: The domain to search within.
+    /// - `name`: The name to match, case-insensitively.
+    async fn find_group_by_name_ci<'a>(
+        &self,
+        ctx: &ExecutionContext<'a>,
+        domain_id: &'a str,
+        name: &'a str,
+    ) -> Result<Option<String>, IdentityProviderError> {
+        self.backend_driver
+            .find_group_by_name_ci(ctx.state(), domain_id, name)
+            .await
+    }
+
+    /// Update group.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `group_id`: The ID of the group to update.
+    /// - `group`: The group update request.
+    async fn update_group<'a>(
+        &self,
+        ctx: &ExecutionContext<'a>,
+        group_id: &'a str,
+        group: GroupUpdate,
+    ) -> Result<Group, IdentityProviderError> {
+        let group = if let Some(vsc) = ctx.ctx() {
+            let backend_driver = &self.backend_driver;
+            let state = ctx.state();
+            let group_id_clone = group_id.to_string();
+            crate::audited_op! {
+                dispatcher: &ctx.state().event_dispatcher,
+                ctx: vsc,
+                event: Event::new(
+                    Operation::Update,
+                    EventPayload::Group { id: group_id_clone },
+                ),
+                operation: async {
+                    backend_driver.update_group(state, group_id, group).await
+                },
+                on_audit_error: |_: AuditDispatchError| IdentityProviderError::Driver("audit dispatch failed".into()),
+            }?
+        } else {
+            let group = self
+                .backend_driver
+                .update_group(ctx.state(), group_id, group)
+                .await?;
+            ctx.state()
+                .event_dispatcher
+                .emit(Event::new(
+                    Operation::Update,
+                    EventPayload::Group {
+                        id: group.id.clone(),
+                    },
+                ))
+                .await;
+            group
+        };
+
+        Ok(group)
+    }
+
     /// Remove the user from the group.
     ///
     /// # Parameters

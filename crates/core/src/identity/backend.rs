@@ -266,6 +266,44 @@ pub trait IdentityBackend: Send + Sync {
         user_id: &'a str,
     ) -> Result<Vec<Group>, IdentityProviderError>;
 
+    /// List the IDs of users that are members of a group.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `group_id`: The ID of the group.
+    async fn list_users_of_group<'a>(
+        &self,
+        state: &ServiceState,
+        group_id: &'a str,
+    ) -> Result<Vec<String>, IdentityProviderError>;
+
+    /// Find any group in `domain_id` whose name matches `name`,
+    /// case-insensitively, regardless of which realm (or nothing) created it.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `domain_id`: The domain to search within.
+    /// - `name`: The name to match, case-insensitively.
+    async fn find_group_by_name_ci<'a>(
+        &self,
+        state: &ServiceState,
+        domain_id: &'a str,
+        name: &'a str,
+    ) -> Result<Option<String>, IdentityProviderError>;
+
+    /// Update group.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `group_id`: The ID of the group to update.
+    /// - `group`: The group update request.
+    async fn update_group<'a>(
+        &self,
+        state: &ServiceState,
+        group_id: &'a str,
+        group: GroupUpdate,
+    ) -> Result<Group, IdentityProviderError>;
+
     /// Remove the user from the group.
     ///
     /// # Parameters

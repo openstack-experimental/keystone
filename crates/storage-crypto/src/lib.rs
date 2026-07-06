@@ -16,8 +16,8 @@
 //! Implements the cryptographic barrier described in ADR 0016-v2 §2:
 //!
 //! * **Key Encryption Key (KEK):** provided by [`kek::KekProvider`].
-//!   Development mode uses [`kek::EnvKek`]; production uses the PKCS#11 or
-//!   TPM 2.0 providers in the separate `storage-crypto-pkcs11` /
+//!   Development mode uses [`kek::EnvKek`]; production uses the PKCS#11 or TPM
+//!   2.0 providers in the separate `storage-crypto-pkcs11` /
 //!   `storage-crypto-tpm` crates (ADR 0016-v2 §2.5).
 //!
 //! * **Data Encryption Key (DEK) hierarchy:** [`dek::DekEpoch`] holds the

@@ -2,9 +2,26 @@
 
 **Date:** 2026-07-01
 
+**Last-revised:** 2026-07-06 (PR1+PR2+PR3 implementation note)
+
 ## Status
 
 Proposed
+
+**Implementation note (2026-07-06):** PR1 (Realm Foundation), PR2 (Users
+vertical slice), and PR3 (Groups + membership isolation) have landed. During
+implementation, the realm/user identity design was refined beyond what this
+ADR originally specified: `ScimRealmResource` gained a mandatory `idp_id` link
+to a federation `IdentityProvider`, and a SCIM-provisioned `User`'s `id` is
+derived deterministically rather than server-assigned, so it converges with a
+later federated JIT login for the same person instead of producing a
+duplicate account. §2.A and §4 below have been updated to match the as-built
+behavior; the "Rejected alternative" callout in §4 is revised accordingly.
+`Group`, by contrast, keeps a normal server-assigned `id` and an optional
+`externalId` — nothing federates in *as* a Group, so there is no convergence
+hazard a deterministic id would solve. The filter/PATCH/ETag protocol surface
+(§5.B–E), the janitor purge phase (§6.C), and CLI parity (§12) remain
+unimplemented — this ADR stays `Proposed` until all of it lands.
 
 ## Reference
 
@@ -54,6 +71,7 @@ accidentally provision Users/Groups.
 pub struct ScimRealmResource {
     pub domain_id: String,
     pub provider_id: String,       // shared coordinate with ApiClientResource / MappingRuleSet
+    pub idp_id: String,            // federation IdentityProvider this realm's users belong to
     pub display_name: String,
     pub enabled: bool,
     pub created_at: i64,
@@ -62,6 +80,16 @@ pub struct ScimRealmResource {
 ```
 
 **Keyspace:** `data:scim_realm:v1:<domain_id>:<provider_id>`.
+
+**`idp_id` is mandatory** and must resolve to an existing `IdentityProvider`
+(checked at both realm create and update; an unresolvable `idp_id` is `404`).
+This exists because of the identity-convergence scheme in §4: a SCIM-provisioned
+`User`'s `id` is derived from `(domain_id, externalId)`, the same formula used
+for a federation JIT shadow user's `id` — so the realm has to know, up front,
+which `IdentityProvider`'s `sub` claims its `externalId`s are expected to equal
+for that convergence to actually line up. A realm not bound to a real IdP would
+still create syntactically valid `User` rows, but they'd never converge with
+anything, silently defeating the point of §4's scheme.
 
 Groups provisioned under a realm always inherit the realm's own `domain_id` — no
 separate target-domain override is offered, keeping "one realm, one domain" the
@@ -232,18 +260,37 @@ the ADR 0020 ephemeral shadow-registry path. A SCIM-provisioned user is expected
 to authenticate later through an entirely separate channel (OIDC, password,
 passkey); SCIM only manages the account's existence and attributes.
 
+**Identity convergence with federation JIT (as-implemented).** `externalId` is
+**mandatory** on `POST .../Users` (`400` if empty/absent), and the created
+`User.id` is not server-assigned: it's derived deterministically as
+`generate_public_id(domain_id, externalId, "user")` — the identical sha256-based
+formula this codebase's ADR 0020 UME path already uses to derive a federation
+JIT shadow user's `id`. The user row is created as `UserType::NonLocal` (no
+password, no `local_user` row). The practical effect: a person provisioned
+ahead of time via SCIM (`externalId` == the IdP's `sub` claim), who later
+authenticates for the first time via that same realm's `idp_id` (§2.A),
+converges onto the *same* `User` row a JIT login would otherwise have created
+from scratch — rather than ending up with two accounts for one person, one
+SCIM-managed and one federation-managed. `POST .../Users` additionally probes
+for a user already occupying that deterministic id (e.g. one a federated JIT
+login already created before SCIM provisioning caught up) and returns `409
+Conflict` (`scimType: "uniqueness"`) rather than surfacing a raw
+primary-key-collision error from the Identity driver.
+
 **Rejected alternative:** reusing `User.federated: Option<Vec<Federation>>` (on
 `UserResponse`/`UserCreate`/`UserUpdate`;
-`Federation { idp_id, protocols, unique_id }`) to carry the SCIM `externalId`.
-`Federation` is scoped to authentication-protocol linkage (`idp_id` +
+`Federation { idp_id, protocols, unique_id }`) to carry the SCIM `externalId`
+directly. `Federation` is scoped to authentication-protocol linkage (`idp_id` +
 `protocol_id`) and is not realm-fenced or version-tracked; overloading it would
 conflate two different provenance concepts and bypass the ownership fencing in
-§3.C. `ScimResourceIndex` is kept as a dedicated, parallel structure instead.
+§3.C. `ScimResourceIndex` is kept as a dedicated, parallel structure for
+provenance/ownership instead — the convergence above is achieved purely through
+the shared `id`-derivation formula, not by writing into `User.federated`.
 
 | SCIM Attribute (User)                | Keystone `User` field                                    |
 | ------------------------------------ | -------------------------------------------------------- |
-| `id`                                 | `id` (Keystone UUID; immutable, server-assigned)         |
-| `externalId`                         | `ScimResourceIndex.external_id`                          |
+| `id`                                 | `id` (`generate_public_id(domain_id, externalId, "user")`; deterministic, not server-random — see above) |
+| `externalId`                         | `ScimResourceIndex.external_id` (mandatory on create — see above) |
 | `userName`                           | `name`                                                   |
 | `active`                             | `enabled`                                                |
 | `name.givenName` / `name.familyName` | `extra["scim_given_name"]` / `extra["scim_family_name"]` |

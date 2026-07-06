@@ -71,6 +71,24 @@ pub struct GroupListParameters {
 #[derive(Builder, Clone, Debug, Default, PartialEq)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
+pub struct GroupUpdate {
+    /// New description. `None` = unchanged, `Some(None)` = clear.
+    #[builder(default)]
+    pub description: Option<Option<String>>,
+
+    /// Additional group properties. The provider merges this into the
+    /// existing `extra` before persisting; an empty map means unchanged.
+    #[builder(default)]
+    pub extra: HashMap<String, Value>,
+
+    /// New name. `None` = unchanged.
+    #[builder(default)]
+    pub name: Option<String>,
+}
+
+#[derive(Builder, Clone, Debug, Default, PartialEq)]
+#[builder(build_fn(error = "BuilderError"))]
+#[builder(setter(strip_option, into))]
 pub struct GroupCreate {
     /// The description of the group.
     #[builder(default)]

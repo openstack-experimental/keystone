@@ -399,6 +399,69 @@ impl IdentityBackend for SqlBackend {
         Ok(user_group::list_user_groups(&state.db, user_id, &cutoff_time).await?)
     }
 
+    /// List the IDs of users that are members of a group.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `group_id`: The ID of the group.
+    ///
+    /// # Returns
+    /// A `Result` containing a list of member user IDs, or an `Error`.
+    #[tracing::instrument(skip(self, state))]
+    async fn list_users_of_group<'a>(
+        &self,
+        state: &ServiceState,
+        group_id: &'a str,
+    ) -> Result<Vec<String>, IdentityProviderError> {
+        let cutoff_time = state
+            .config_manager
+            .config
+            .read()
+            .await
+            .federation
+            .get_expiring_user_group_membership_cutof_datetime();
+        Ok(user_group::list_group_user_ids(&state.db, group_id, &cutoff_time).await?)
+    }
+
+    /// Find any group in `domain_id` whose name matches `name`,
+    /// case-insensitively.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `domain_id`: The domain to search within.
+    /// - `name`: The name to match, case-insensitively.
+    ///
+    /// # Returns
+    /// A `Result` containing the matched group's ID, if any, or an `Error`.
+    #[tracing::instrument(skip(self, state))]
+    async fn find_group_by_name_ci<'a>(
+        &self,
+        state: &ServiceState,
+        domain_id: &'a str,
+        name: &'a str,
+    ) -> Result<Option<String>, IdentityProviderError> {
+        group::find_by_name_ci(&state.db, domain_id, name).await
+    }
+
+    /// Update group.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `group_id`: The ID of the group to update.
+    /// - `group`: The group update request.
+    ///
+    /// # Returns
+    /// A `Result` containing the updated `Group`, or an `Error`.
+    #[tracing::instrument(skip(self, state, group))]
+    async fn update_group<'a>(
+        &self,
+        state: &ServiceState,
+        group_id: &'a str,
+        group: GroupUpdate,
+    ) -> Result<Group, IdentityProviderError> {
+        Ok(group::update(&state.db, group_id, group).await?)
+    }
+
     /// Fetch users from the database.
     ///
     /// # Parameters

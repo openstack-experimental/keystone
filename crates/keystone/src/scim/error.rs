@@ -51,6 +51,10 @@ pub enum ScimApiError {
     /// `userName`/`displayName`/`externalId` collision (409, `scimType:
     /// "uniqueness"`, ADR 0024 §3.C/§3.D).
     Uniqueness(String),
+    /// Cross-realm/manual-user membership reference, or membership count
+    /// exceeding the §11 cap (400, `scimType: "invalidValue"`, ADR 0024 §7,
+    /// §11).
+    InvalidValue(String),
     /// Everything else — reuses the generic Keystone error envelope.
     Api(KeystoneApiError),
 }
@@ -64,6 +68,16 @@ impl IntoResponse for ScimApiError {
                     schemas: vec![SCIM_ERROR_SCHEMA.to_string()],
                     status: StatusCode::CONFLICT.as_str().to_string(),
                     scim_type: Some("uniqueness".to_string()),
+                    detail,
+                }),
+            )
+                .into_response(),
+            Self::InvalidValue(detail) => (
+                StatusCode::BAD_REQUEST,
+                Json(ScimErrorBody {
+                    schemas: vec![SCIM_ERROR_SCHEMA.to_string()],
+                    status: StatusCode::BAD_REQUEST.as_str().to_string(),
+                    scim_type: Some("invalidValue".to_string()),
                     detail,
                 }),
             )

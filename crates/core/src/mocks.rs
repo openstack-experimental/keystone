@@ -613,6 +613,26 @@ mod identity {
                 user_id: &'a str,
             ) -> Result<Vec<Group>, IdentityProviderError>;
 
+            async fn list_users_of_group<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                group_id: &'a str,
+            ) -> Result<Vec<String>, IdentityProviderError>;
+
+            async fn find_group_by_name_ci<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                domain_id: &'a str,
+                name: &'a str,
+            ) -> Result<Option<String>, IdentityProviderError>;
+
+            async fn update_group<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                group_id: &'a str,
+                group: GroupUpdate,
+            ) -> Result<Group, IdentityProviderError>;
+
             async fn list_users<'a>(
                 &self,
                 ctx: &ExecutionContext<'a>,

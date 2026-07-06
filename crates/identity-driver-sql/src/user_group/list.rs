@@ -26,6 +26,54 @@ use crate::entity::{
     user_group_membership,
 };
 
+/// List the IDs of users that are members of a group (direct plus
+/// not-yet-expired federated memberships), mirroring [`list_user_groups`]'s
+/// reversed direction.
+///
+/// # Parameters
+/// - `db`: Database connection.
+/// - `group_id`: Group ID.
+/// - `last_verified_cutof`: Cutoff date for verifying expiring memberships.
+///
+/// # Returns
+/// A `Result` containing a `Vec` of member `User.id`s, or an `Error`.
+#[tracing::instrument(skip_all)]
+pub async fn list_group_user_ids<S: AsRef<str>>(
+    db: &DatabaseConnection,
+    group_id: S,
+    last_verified_cutof: &DateTime<Utc>,
+) -> Result<Vec<String>, IdentityProviderError> {
+    let rows: Vec<(String,)> = user_group_membership::Entity::find()
+        .select_only()
+        .column(user_group_membership::Column::UserId)
+        .filter(user_group_membership::Column::GroupId.eq(group_id.as_ref()))
+        .into_tuple()
+        .all(db)
+        .await
+        .context("listing direct members of a group")?;
+
+    let expiring_rows: Vec<(String,)> = expiring_user_group_membership::Entity::find()
+        .select_only()
+        .column(expiring_user_group_membership::Column::UserId)
+        .filter(expiring_user_group_membership::Column::GroupId.eq(group_id.as_ref()))
+        .filter(
+            expiring_user_group_membership::Column::LastVerified
+                .gt(last_verified_cutof.naive_utc()),
+        )
+        .into_tuple()
+        .all(db)
+        .await
+        .context("listing expiring members of a group")?;
+
+    let mut user_ids: Vec<String> = rows.into_iter().map(|(id,)| id).collect();
+    for (id,) in expiring_rows {
+        if !user_ids.contains(&id) {
+            user_ids.push(id);
+        }
+    }
+    Ok(user_ids)
+}
+
 /// List all groups the user is member of.
 ///
 /// Selects all groups with the ID in the list of user group memberships and
@@ -80,7 +128,9 @@ pub async fn list_user_groups<S: AsRef<str>>(
 
 #[cfg(test)]
 mod tests {
-    use sea_orm::{DatabaseBackend, MockDatabase, Transaction};
+    use std::collections::BTreeMap;
+
+    use sea_orm::{DatabaseBackend, IntoMockRow, MockDatabase, Transaction, Value};
 
     use openstack_keystone_config::Config;
 
@@ -115,5 +165,23 @@ mod tests {
                 ]
             ),]
         );
+    }
+
+    #[tokio::test]
+    async fn test_list_group_user_ids() {
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([
+                vec![BTreeMap::from([("user_id", Into::<Value>::into("user-1"))]).into_mock_row()],
+                vec![BTreeMap::from([("user_id", Into::<Value>::into("user-2"))]).into_mock_row()],
+            ])
+            .into_connection();
+        let expiring_datetime = Config::default()
+            .federation
+            .get_expiring_user_group_membership_cutof_datetime();
+
+        let ids = list_group_user_ids(&db, "group-1", &expiring_datetime)
+            .await
+            .unwrap();
+        assert_eq!(ids, vec!["user-1".to_string(), "user-2".to_string()]);
     }
 }

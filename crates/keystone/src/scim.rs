@@ -30,6 +30,7 @@ use openstack_keystone_core::api::api_key_auth::ApiKeyAuth;
 use openstack_keystone_core::keystone::ServiceState;
 
 pub mod error;
+mod group;
 pub mod types;
 mod user;
 
@@ -56,4 +57,5 @@ pub fn router() -> Router<ServiceState> {
     Router::new()
         .route("/{domain_id}/whoami", get(whoami))
         .nest("/{domain_id}/Users", user::router())
+        .nest("/{domain_id}/Groups", group::router())
 }
