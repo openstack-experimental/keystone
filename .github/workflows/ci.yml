@@ -70,6 +70,32 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y protobuf-compiler
 
+      # Build-time dependency of the `tpm` feature (`storage-crypto-tpm`'s
+      # `tss-esapi` needs `libtss2-dev` + `pkg-config` to compile at all, even
+      # without a real or virtual TPM present — `cargo nextest run
+      # --all-features` below builds it). No TPM device is required in CI:
+      # per ADR 0016-v2 §2.5.2's test/sample scope, `storage-crypto-tpm` has
+      # no CI-gated tests, only the example built in "Build TPM KEK example"
+      # below.
+      - name: Install libtss2-dev
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libtss2-dev pkg-config
+
+      # Run-time dependency of the `pkcs11` feature's SoftHSM2-backed
+      # integration tests (`storage-crypto-pkcs11/tests/softhsm.rs`,
+      # `storage/tests/test_pkcs11_cluster.rs`). Each test provisions its own
+      # isolated token via `SOFTHSM2_CONF`, so no system-wide token
+      # initialization is needed here — only the module itself
+      # (`libsofthsm2.so`) needs to be present. Tests skip themselves
+      # (rather than fail) if it isn't, so this step is not a hard
+      # requirement for CI to pass, only for the pkcs11 tests to actually run
+      # instead of skipping.
+      - name: Install SoftHSM2
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y softhsm2
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@6d653acede28d24f02e3cd41383119e8b1b35921 # stable
         with:
@@ -107,6 +133,13 @@ jobs:
 
       - name: Run tests (unit)
         run: cargo nextest run --all-features --profile ci
+
+      # Compile-only: catches rot in the TPM sample without requiring a
+      # real/virtual TPM in CI (ADR 0016-v2 §2.5.2 test/sample scope decision
+      # — real/virtual TPM availability in CI runners isn't reliable enough
+      # to gate merges on, so `swtpm` is intentionally not installed here).
+      - name: Build TPM KEK example
+        run: cargo build -p openstack-keystone-storage-crypto-tpm --example tpm_kek_demo
 
       - name: Run integration tests (sqlite)
         run: cargo nextest run -p test_integration --profile ci
@@ -168,7 +201,7 @@ jobs:
       - name: Install protobuf-compiler
         run: |
           sudo apt-get update
-          sudo apt-get install -y protobuf-compiler
+          sudo apt-get install -y protobuf-compiler libtss2-dev pkg-config
 
       - name: Rust Cache
         uses: swatinem/rust-cache@98c8021b550208e191a6a3145459bfc9fb29c4c0 # v2.8.0

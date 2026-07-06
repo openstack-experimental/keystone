@@ -53,6 +53,8 @@ openraft = { workspace = true, features = ["serde", "type-alias"] }
 openstack-keystone-config.workspace = true
 openstack-keystone-storage-api.workspace = true
 openstack-keystone-storage-crypto.workspace = true
+openstack-keystone-storage-crypto-pkcs11 = { workspace = true, optional = true }
+openstack-keystone-storage-crypto-tpm = { workspace = true, optional = true }
 prost.workspace = true
 rand.workspace = true
 rmp.workspace = true
@@ -78,6 +80,7 @@ x509-parser.workspace = true
 
 [dev-dependencies]
 criterion = { workspace = true, features = ["async_tokio"] }
+cryptoki = "0.12"
 rcgen.workspace = true
 reserve-port = "2.5.0"
 rustls.workspace = true
@@ -99,3 +102,5 @@ tonic-prost-build.workspace = true
 default = []
 bench_internals = []
 mock = []
+pkcs11 = ["dep:openstack-keystone-storage-crypto-pkcs11"]
+tpm = ["dep:openstack-keystone-storage-crypto-tpm"]

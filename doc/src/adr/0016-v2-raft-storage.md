@@ -91,7 +91,12 @@ dependency. `cargo-vet` or equivalent is used in CI for these two crates
 specifically. `cargo deny` rules reject any transitive dependency that stores
 key material without implementing `ZeroizeOnDrop`. `cargo-vet` coverage is
 extended to all crates that directly handle key material or ciphertext: the
-AES-GCM provider, the mlock wrapper, and the HKDF implementation. Any new
+AES-GCM provider, the mlock wrapper, the HKDF implementation, and — per the
+§2.5 PKCS#11/TPM addendum — the two production KEK-provider crates' HSM/TPM
+client libraries: `cryptoki` (pinned `0.12.0`, `storage-crypto-pkcs11`) and
+`tss-esapi` (pinned `7.7.0`, `storage-crypto-tpm`). Both hold the unwrapped DEK
+transiently during `wrap_dek`/`unwrap_dek` and sit directly in the KEK call
+path, so they meet criteria (a) and (b) below. Any new
 dependency falls under extended cargo-vet coverage if it: (a) receives or stores
 a `Zeroizing<T>` value; (b) is in the AES-HKDF-KMS call path; (c) provides
 `mlock` or `VirtualLock` functionality; or (d) processes raw ciphertext before
@@ -260,10 +265,14 @@ data, and a 128-bit tag). The resulting wire format is byte-identical to
   this is an ergonomic convenience for fresh clusters, not a substitute for
   operator-controlled key ceremony in regulated deployments.
 - **PIN handling:** the token PIN is read once at startup from
-  `pkcs11_pin_file` into a `Zeroizing` buffer, used for `C_Login`, and
-  zeroed immediately after. The PIN is never accepted via environment
-  variable or inline config value — only a file path, consistent with the
-  existing `tls_key_file`/`tls_cert_file` convention (§4.2).
+  `pkcs11_pin_file` into a `SecretSlice` (zeroized on `Drop`), used for
+  `C_Login`. It is held for the duration of the `init_storage` call — not
+  scrubbed the instant `C_Login` returns, since the same in-memory config
+  clone is threaded through the rest of node startup — and zeroized once
+  that call completes and the clone is dropped. The PIN is never accepted
+  via environment variable or inline config value — only a file path,
+  consistent with the existing `tls_key_file`/`tls_cert_file` convention
+  (§4.2).
 - **Failure handling:** a login failure, missing key object, or GCM tag
   mismatch on unwrap is fatal to node startup (or, post-startup, treated the
   same as any other GCM tag failure under invariant 5's quarantine logic).
@@ -307,11 +316,13 @@ non-duplicable, non-extractable attributes above.
   Provisioning itself (via `tpm2_create`/`tpm2_evictcontrol` or equivalent) is
   an out-of-band operator step, documented alongside the PKCS#11 key ceremony.
 - **Auth handling:** if the key was provisioned with `userWithAuth`, the auth
-  value is read once from `tpm_auth_file` into a `Zeroizing` buffer and used
-  to authorize the TPM session; zeroed immediately after. As with PKCS#11,
-  only a file path is accepted, never an environment variable or inline
-  value. A key relying purely on PCR/policy session authorization may omit
-  `tpm_auth_file`.
+  value is read once from `tpm_auth_file` into a `SecretSlice` (zeroized on
+  `Drop`) and used to authorize the TPM session. As with the PKCS#11 PIN
+  (§2.5.1), it is held for the duration of the `init_storage` call rather
+  than scrubbed immediately after use, and zeroized once that call
+  completes. Only a file path is accepted, never an environment variable or
+  inline value. A key relying purely on PCR/policy session authorization may
+  omit `tpm_auth_file`.
 - **Sample scope:** the TPM provider ships with a runnable example targeting
   a software TPM (`swtpm`) for local exploration, and is not part of the
   required CI gate — real and virtual TPM availability in CI runners is not

@@ -93,10 +93,11 @@ fn test_node_restart_with_address_format_change() {
     TypeConfig::run(test_node_restart_inner()).unwrap();
 }
 
-/// `init_storage` must refuse to start in production mode (`dev_mode =
-/// false`): there is currently no production `KekProvider` (HSM/PKCS#11/KMS)
-/// wired up, so falling back to an environment-provided KEK would silently
-/// violate ADR 0016-v2 §2.1 / invariant 6.
+/// `init_storage` must refuse to start with `kek_provider = "env"` (the
+/// default) when `dev_mode = false`: the dev-mode `EnvKek` is never a valid
+/// production KEK source, so falling back to it would silently violate ADR
+/// 0016-v2 §2.1 / invariant 6. Production deployments select `"pkcs11"` or
+/// `"tpm"` instead (`test_pkcs11_cluster.rs` covers that path end-to-end).
 #[serial_test::serial]
 #[tracing_test::traced_test]
 #[test]

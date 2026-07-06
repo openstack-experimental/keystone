@@ -14,19 +14,18 @@
 //! # Key Encryption Key (KEK) providers
 //!
 //! A `KekProvider` wraps and unwraps the Data Encryption Key (DEK) using an
-//! external key source.  Two implementations are provided:
+//! external key source. This crate provides [`EnvKek`], a dev-mode-only
+//! implementation that reads a hex-encoded 256-bit key from the
+//! `KEYSTONE_DEV_KEK` environment variable — requires `--dev-mode` and
+//! `KEYSTONE_ALLOW_ENV_KEK=1`. After reading, the variable is removed from
+//! the Rust environment map (via `unsafe env::remove_var`). Zeroing the
+//! underlying bytes in `/proc/<pid>/environ` was attempted but is currently a
+//! no-op (see [`zero_environ_entry`]) — the raw `environ` bytes are not
+//! scrubbed, so this is a best-effort dev-mode control, not a guarantee.
 //!
-//! * [`EnvKek`] — reads a hex-encoded 256-bit key from the `KEYSTONE_DEV_KEK`
-//!   environment variable.  Requires `--dev-mode` and
-//!   `KEYSTONE_ALLOW_ENV_KEK=1`.  After reading, the variable is removed from
-//!   the Rust environment map (via `unsafe env::remove_var`).  Zeroing the
-//!   underlying bytes in `/proc/<pid>/environ` was attempted but is currently a
-//!   no-op (see [`zero_environ_entry`]) — the raw `environ` bytes are not
-//!   scrubbed, so this is a best-effort dev-mode control, not a guarantee.
-//!
-//! * [`Pkcs11KekStub`] — placeholder that always returns
-//!   [`CryptoError::Pkcs11NotImplemented`].  Reserves the production interface
-//!   so the abstraction boundary is locked in before the HSM is wired up.
+//! Production KEK sources — PKCS#11 and TPM 2.0 — live in the separate
+//! `storage-crypto-pkcs11` and `storage-crypto-tpm` crates (ADR 0016-v2
+//! §2.5), each implementing the same [`KekProvider`] trait defined here.
 
 use std::env;
 
@@ -204,27 +203,6 @@ impl KekProvider for EnvKek {
 }
 
 // ---------------------------------------------------------------------------
-// Pkcs11KekStub
-// ---------------------------------------------------------------------------
-
-/// PKCS#11 HSM-backed KEK — interface stub only.
-///
-/// All calls return [`CryptoError::Pkcs11NotImplemented`].  Reserves the
-/// production abstraction boundary so callers can be written against the trait
-/// without a live HSM.
-pub struct Pkcs11KekStub;
-
-impl KekProvider for Pkcs11KekStub {
-    fn wrap_dek(&self, _dek: &[u8; 32]) -> Result<Vec<u8>, CryptoError> {
-        Err(CryptoError::Pkcs11NotImplemented)
-    }
-
-    fn unwrap_dek(&self, _wrapped: &[u8]) -> Result<Zeroizing<[u8; 32]>, CryptoError> {
-        Err(CryptoError::Pkcs11NotImplemented)
-    }
-}
-
-// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
@@ -313,24 +291,6 @@ mod tests {
     #[test]
     fn test_decode_hex_odd_length() {
         assert!(decode_hex("abc").is_err());
-    }
-
-    #[test]
-    fn test_pkcs11_stub_wrap_not_implemented() {
-        let stub = Pkcs11KekStub;
-        assert!(matches!(
-            stub.wrap_dek(&[0u8; 32]),
-            Err(CryptoError::Pkcs11NotImplemented)
-        ));
-    }
-
-    #[test]
-    fn test_pkcs11_stub_unwrap_not_implemented() {
-        let stub = Pkcs11KekStub;
-        assert!(matches!(
-            stub.unwrap_dek(&[0u8; 60]),
-            Err(CryptoError::Pkcs11NotImplemented)
-        ));
     }
 
     // `EnvKek::from_env` reads and removes a process-global environment

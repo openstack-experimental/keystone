@@ -25,6 +25,8 @@ members = [
   "crates/storage",
   "crates/storage-api",
   "crates/storage-crypto",
+  "crates/storage-crypto-pkcs11",
+  "crates/storage-crypto-tpm",
   "crates/token-driver-fernet",
   "crates/token-restriction-driver-sql",
   "crates/trust-driver-sql",
@@ -113,6 +115,8 @@ openstack-keystone-distributed-storage = { version = "0.1.0", path = "crates/sto
 openstack-keystone-dynamic-plugin-runtime = { version = "0.1.0", path = "crates/dynamic-plugin-runtime" }
 openstack-keystone-storage-api = { version = "0.1.0", path = "crates/storage-api" }
 openstack-keystone-storage-crypto = { version = "0.1.0", path = "crates/storage-crypto" }
+openstack-keystone-storage-crypto-pkcs11 = { version = "0.1.0", path = "crates/storage-crypto-pkcs11" }
+openstack-keystone-storage-crypto-tpm = { version = "0.1.0", path = "crates/storage-crypto-tpm" }
 openstack-keystone-federation-driver-sql = { version = "0.1", path = "crates/federation-driver-sql" }
 openstack-keystone-k8s-auth-driver-sql = { version = "0.1", path = "crates/k8s-auth-driver-sql/" }
 openstack-keystone-k8s-auth-driver-raft = { version = "0.1", path = "crates/k8s-auth-driver-raft/" }

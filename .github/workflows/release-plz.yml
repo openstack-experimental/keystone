@@ -29,10 +29,10 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Install protobuf-compiler
+      - name: Install build dependencies
         run: |
           sudo apt update
-          sudo apt install -y protobuf-compiler
+          sudo apt-get install -y protobuf-compiler libtss2-dev pkg-config
 
       - name: Install Rust toolchain
         run: rustup update stable
