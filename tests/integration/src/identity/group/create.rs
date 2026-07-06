@@ -11,9 +11,24 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+//! Test create group functionality.
 
-mod create;
-mod delete;
-mod get;
-mod list;
-mod update;
+use eyre::Result;
+use tracing_test::traced_test;
+
+use crate::common::get_state;
+use crate::{create_domain, create_group};
+
+#[tokio::test]
+#[traced_test]
+async fn test_create() -> Result<()> {
+    let (state, _tmp) = get_state().await?;
+    let domain = create_domain!(state)?;
+
+    let group = create_group!(state, domain.id.clone())?;
+
+    assert!(!group.id.is_empty(), "an id was generated");
+    assert!(!group.name.is_empty());
+    assert_eq!(group.domain_id, domain.id);
+    Ok(())
+}

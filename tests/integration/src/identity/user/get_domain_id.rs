@@ -11,29 +11,28 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+//! Test get_user_domain_id functionality.
 
-use eyre::Report;
+use eyre::Result;
+use tracing_test::traced_test;
 
 use openstack_keystone_core::auth::ExecutionContext;
-use openstack_keystone_core::keystone::ServiceState;
-use openstack_keystone_core_types::identity::*;
 
-mod add;
-mod bulk;
-mod expiring;
-mod list;
-mod remove;
-mod set;
+use crate::common::get_state;
+use crate::{create_domain, create_user};
 
-async fn list_user_groups<U>(state: &ServiceState, user_id: U) -> Result<Vec<Group>, Report>
-where
-    U: AsRef<str>,
-{
-    Ok(state
+#[tokio::test]
+#[traced_test]
+async fn test_get_user_domain_id() -> Result<()> {
+    let (state, _tmp) = get_state().await?;
+    let domain = create_domain!(state)?;
+    let user = create_user!(state, domain.id.clone())?;
+
+    let domain_id = state
         .provider
         .get_identity_provider()
-        .list_groups_of_user(&ExecutionContext::internal(state), user_id.as_ref())
-        .await?
-        .into_iter()
-        .collect())
+        .get_user_domain_id(&ExecutionContext::internal(&state), &user.id)
+        .await?;
+    assert_eq!(domain_id, domain.id, "domain id matches the user's domain");
+    Ok(())
 }
