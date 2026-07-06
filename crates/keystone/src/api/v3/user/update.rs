@@ -64,7 +64,7 @@ pub(super) async fn update(
         .enforce(
             "identity/user/update",
             &user_auth,
-            json!({"user": req.user}),
+            json!({"user": req.user.to_policy_input()}),
             existing_user,
         )
         .await?;

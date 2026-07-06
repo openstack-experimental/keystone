@@ -12,45 +12,13 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //! Federated identity provider types.
-use secrecy::{ExposeSecret, SecretString};
-use serde::{Deserialize, Serialize, Serializer};
+use secrecy::SecretString;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 #[cfg(feature = "validate")]
 use validator::Validate;
 
 use crate::Link;
-
-/// Serialize an optional client secret transparently for transport (the client
-/// must send the real value). `Debug` redaction from `SecretString` is what
-/// keeps it out of logs; the value is never serialized back to a client because
-/// the response type has no secret field.
-fn serialize_optional_secret<S>(
-    secret: &Option<SecretString>,
-    serializer: S,
-) -> Result<S::Ok, S::Error>
-where
-    S: Serializer,
-{
-    match secret {
-        Some(secret) => serializer.serialize_some(secret.expose_secret()),
-        None => serializer.serialize_none(),
-    }
-}
-
-/// Same as [`serialize_optional_secret`] for the update DTO's nested option
-/// (outer = present-in-request, inner = set-or-clear).
-fn serialize_nested_optional_secret<S>(
-    secret: &Option<Option<SecretString>>,
-    serializer: S,
-) -> Result<S::Ok, S::Error>
-where
-    S: Serializer,
-{
-    match secret {
-        Some(Some(secret)) => serializer.serialize_some(secret.expose_secret()),
-        _ => serializer.serialize_none(),
-    }
-}
 
 /// Identity provider data.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -166,6 +134,10 @@ pub struct IdentityProviderResponse {
 )]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[cfg_attr(feature = "validate", derive(validator::Validate))]
+#[cfg_attr(
+    feature = "validate",
+    validate(schema(function = "validate_identity_provider_create_secret"))
+)]
 pub struct IdentityProviderCreate {
     // TODO: add ID
     /// Identity provider name.
@@ -208,7 +180,7 @@ pub struct IdentityProviderCreate {
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
-        serialize_with = "serialize_optional_secret"
+        serialize_with = "crate::common::serialize_optional_secret"
     )]
     pub oidc_client_secret: Option<SecretString>,
 
@@ -275,6 +247,71 @@ pub struct IdentityProviderCreate {
     pub provider_config: Option<Value>,
 }
 
+impl IdentityProviderCreate {
+    #[must_use]
+    pub fn to_policy_input(&self) -> serde_json::Value {
+        let mut input = serde_json::Map::new();
+        input.insert("name".to_string(), serde_json::json!(self.name));
+        input.insert("enabled".to_string(), serde_json::json!(self.enabled));
+        if let Some(value) = &self.domain_id {
+            input.insert("domain_id".to_string(), serde_json::json!(value));
+        }
+        if let Some(value) = &self.oidc_discovery_url {
+            input.insert("oidc_discovery_url".to_string(), serde_json::json!(value));
+        }
+        if let Some(value) = &self.oidc_client_id {
+            input.insert("oidc_client_id".to_string(), serde_json::json!(value));
+        }
+        if self.oidc_client_secret.is_some() {
+            input.insert(
+                "oidc_client_secret".to_string(),
+                serde_json::json!("[REDACTED]"),
+            );
+        }
+        if let Some(value) = &self.oidc_response_mode {
+            input.insert("oidc_response_mode".to_string(), serde_json::json!(value));
+        }
+        if let Some(value) = &self.oidc_response_types {
+            input.insert("oidc_response_types".to_string(), serde_json::json!(value));
+        }
+        if let Some(value) = &self.jwks_url {
+            input.insert("jwks_url".to_string(), serde_json::json!(value));
+        }
+        if let Some(value) = &self.jwt_validation_pubkeys {
+            input.insert(
+                "jwt_validation_pubkeys".to_string(),
+                serde_json::json!(value),
+            );
+        }
+        if let Some(value) = &self.bound_issuer {
+            input.insert("bound_issuer".to_string(), serde_json::json!(value));
+        }
+        if let Some(value) = &self.default_mapping_name {
+            input.insert("default_mapping_name".to_string(), serde_json::json!(value));
+        }
+        if let Some(value) = &self.oidc_scopes {
+            input.insert("oidc_scopes".to_string(), serde_json::json!(value));
+        }
+        if let Some(value) = &self.allowed_redirect_uris {
+            input.insert(
+                "allowed_redirect_uris".to_string(),
+                serde_json::json!(value),
+            );
+        }
+        if let Some(value) = &self.provider_config {
+            input.insert("provider_config".to_string(), value.clone());
+        }
+        serde_json::Value::Object(input)
+    }
+}
+
+#[cfg(feature = "validate")]
+fn validate_identity_provider_create_secret(
+    value: &IdentityProviderCreate,
+) -> Result<(), validator::ValidationError> {
+    crate::common::validate_optional_secret_length(&value.oidc_client_secret, 255)
+}
+
 /// New identity provider data.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[cfg_attr(
@@ -287,6 +324,10 @@ pub struct IdentityProviderCreate {
 )]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[cfg_attr(feature = "validate", derive(validator::Validate))]
+#[cfg_attr(
+    feature = "validate",
+    validate(schema(function = "validate_identity_provider_update_secret"))
+)]
 pub struct IdentityProviderUpdate {
     /// The new name of the federated identity provider.
     #[cfg_attr(feature = "validate", validate(length(max = 255)))]
@@ -310,7 +351,10 @@ pub struct IdentityProviderUpdate {
     /// The new oidc `client_secret` to use for the private client.
     #[cfg_attr(feature = "builder", builder(default))]
     #[cfg_attr(feature = "openapi", schema(value_type = Option<String>))]
-    #[serde(default, serialize_with = "serialize_nested_optional_secret")]
+    #[serde(
+        default,
+        serialize_with = "crate::common::serialize_nested_optional_secret"
+    )]
     pub oidc_client_secret: Option<Option<SecretString>>,
 
     /// The new oidc response mode.
@@ -358,6 +402,70 @@ pub struct IdentityProviderUpdate {
     #[cfg_attr(feature = "builder", builder(default))]
     #[cfg_attr(feature = "openapi", schema(value_type = Object))]
     pub provider_config: Option<Option<Value>>,
+}
+
+impl IdentityProviderUpdate {
+    #[must_use]
+    pub fn to_policy_input(&self) -> serde_json::Value {
+        let mut input = serde_json::Map::new();
+        input.insert("name".to_string(), serde_json::json!(self.name));
+        input.insert("enabled".to_string(), serde_json::json!(self.enabled));
+        input.insert(
+            "oidc_discovery_url".to_string(),
+            serde_json::json!(self.oidc_discovery_url),
+        );
+        input.insert(
+            "oidc_client_id".to_string(),
+            serde_json::json!(self.oidc_client_id),
+        );
+        if self.oidc_client_secret.is_some() {
+            input.insert(
+                "oidc_client_secret".to_string(),
+                serde_json::json!("[REDACTED]"),
+            );
+        }
+        input.insert(
+            "oidc_response_mode".to_string(),
+            serde_json::json!(self.oidc_response_mode),
+        );
+        input.insert(
+            "oidc_response_types".to_string(),
+            serde_json::json!(self.oidc_response_types),
+        );
+        input.insert("jwks_url".to_string(), serde_json::json!(self.jwks_url));
+        input.insert(
+            "jwt_validation_pubkeys".to_string(),
+            serde_json::json!(self.jwt_validation_pubkeys),
+        );
+        input.insert(
+            "bound_issuer".to_string(),
+            serde_json::json!(self.bound_issuer),
+        );
+        input.insert(
+            "default_mapping_name".to_string(),
+            serde_json::json!(self.default_mapping_name),
+        );
+        input.insert(
+            "oidc_scopes".to_string(),
+            serde_json::json!(self.oidc_scopes),
+        );
+        input.insert(
+            "allowed_redirect_uris".to_string(),
+            serde_json::json!(self.allowed_redirect_uris),
+        );
+        input.insert(
+            "provider_config".to_string(),
+            serde_json::json!(self.provider_config),
+        );
+        serde_json::Value::Object(input)
+    }
+}
+
+#[cfg(feature = "validate")]
+fn validate_identity_provider_update_secret(
+    value: &IdentityProviderUpdate,
+) -> Result<(), validator::ValidationError> {
+    crate::common::validate_nested_optional_secret_length(&value.oidc_client_secret, 255)
 }
 
 /// Identity provider create request.
@@ -454,6 +562,30 @@ mod tests {
         assert!(
             !format!("{update:?}").contains("CSLEAK2"),
             "Debug leaked client secret: {update:?}"
+        );
+    }
+
+    #[test]
+    fn idp_policy_input_redacts_client_secret() {
+        let create: IdentityProviderCreate =
+            serde_json::from_str(r#"{"name":"idp","oidc_client_secret":"CSLEAK"}"#).unwrap();
+        let rendered = create.to_policy_input().to_string();
+        assert!(
+            !rendered.contains("CSLEAK"),
+            "policy input leaked client secret: {rendered}"
+        );
+
+        let update: IdentityProviderUpdate =
+            serde_json::from_str(r#"{"oidc_client_secret":"CSLEAK2"}"#).unwrap();
+        let input = update.to_policy_input();
+        let rendered = input.to_string();
+        assert!(
+            !rendered.contains("CSLEAK2"),
+            "policy input leaked client secret: {rendered}"
+        );
+        assert_eq!(
+            input.get("oidc_client_secret").and_then(|v| v.as_str()),
+            Some("[REDACTED]")
         );
     }
 

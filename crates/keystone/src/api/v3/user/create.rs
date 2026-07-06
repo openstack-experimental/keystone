@@ -45,7 +45,7 @@ pub(super) async fn create(
         .enforce(
             "identity/user/create",
             &user_auth,
-            json!({"user": req.user}),
+            json!({"user": req.user.to_policy_input()}),
             None,
         )
         .await?;

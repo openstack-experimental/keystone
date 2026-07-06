@@ -13,8 +13,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //! # K8s Auth configuration types.
 
-use secrecy::{ExposeSecret, SecretString};
-use serde::{Deserialize, Serialize, Serializer};
+use secrecy::SecretString;
+use serde::{Deserialize, Serialize};
 
 /// K8s authentication request.
 ///
@@ -24,7 +24,7 @@ use serde::{Deserialize, Serialize, Serializer};
 #[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct K8sAuthRequest {
     #[cfg_attr(feature = "openapi", schema(value_type = String))]
-    #[serde(serialize_with = "serialize_secret_string")]
+    #[serde(serialize_with = "crate::common::serialize_secret_string")]
     /// JWT service account token.
     pub jwt: SecretString,
 
@@ -32,11 +32,4 @@ pub struct K8sAuthRequest {
     /// mapping engine evaluates the named rule first.
     #[cfg_attr(feature = "validate", validate(length(max = 255)))]
     pub rule_name: Option<String>,
-}
-
-fn serialize_secret_string<S>(secret: &SecretString, serializer: S) -> Result<S::Ok, S::Error>
-where
-    S: Serializer,
-{
-    serializer.serialize_str(secret.expose_secret())
 }

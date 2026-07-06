@@ -22,6 +22,7 @@ use serde::{Deserialize, Serialize};
 pub mod catalog;
 #[cfg(feature = "conv")]
 mod catalog_conv;
+mod common;
 pub mod error;
 #[cfg(feature = "conv")]
 mod error_conv;

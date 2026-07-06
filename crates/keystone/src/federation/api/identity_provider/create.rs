@@ -57,7 +57,7 @@ pub(super) async fn create(
         .enforce(
             "identity/federation/identity_provider/create",
             &user_auth,
-            json!({"identity_provider": req.identity_provider}),
+            json!({"identity_provider": req.identity_provider.to_policy_input()}),
             None,
         )
         .await?;

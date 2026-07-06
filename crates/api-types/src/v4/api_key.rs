@@ -14,8 +14,8 @@
 //! API Key (SCIM ingress machine identity) API types (ADR 0021).
 
 use chrono::{DateTime, Utc};
-use secrecy::{ExposeSecret, SecretString};
-use serde::{Deserialize, Serialize, Serializer};
+use secrecy::SecretString;
+use serde::{Deserialize, Serialize};
 #[cfg(feature = "validate")]
 use validator::Validate;
 
@@ -116,15 +116,8 @@ pub struct ApiKeyCreateResponse {
 
     /// The full `kscim_...` bearer token. Shown once; store it now.
     #[cfg_attr(feature = "openapi", schema(value_type = String))]
-    #[serde(serialize_with = "serialize_secret_string")]
+    #[serde(serialize_with = "crate::common::serialize_secret_string")]
     pub token: SecretString,
-}
-
-fn serialize_secret_string<S>(secret: &SecretString, serializer: S) -> Result<S::Ok, S::Error>
-where
-    S: Serializer,
-{
-    serializer.serialize_str(secret.expose_secret())
 }
 
 /// API Key update request payload (`PUT /v4/api-keys/{client_id}`).

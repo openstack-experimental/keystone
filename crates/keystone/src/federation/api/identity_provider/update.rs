@@ -70,8 +70,8 @@ pub(super) async fn update(
         .enforce(
             "identity/federation/identity_provider/update",
             &user_auth,
-            json!({"identity_provider": current}),
-            Some(json!({"identity_provider": req.identity_provider})),
+            json!({"identity_provider": req.identity_provider.to_policy_input()}),
+            Some(json!({"identity_provider": current})),
         )
         .await?;
 

@@ -21,6 +21,7 @@
 //! Fernet decryption that already produces the shared plaintext seed.
 
 use data_encoding::BASE32_NOPAD;
+use secrecy::{ExposeSecret, SecretString};
 
 use super::ec2_signature::hmac_sha1_raw;
 
@@ -67,7 +68,14 @@ fn generate_hotp(secret: &[u8], counter: u64, digits: u32) -> String {
 /// `true` if `passcode` matches the current or immediately preceding
 /// time-step's HOTP value; `false` on any mismatch or malformed seed.
 #[must_use]
-pub fn verify_totp(seed: &str, passcode: &str, digits: u32, period: u32, now_unix: i64) -> bool {
+pub fn verify_totp(
+    seed: &str,
+    passcode: &SecretString,
+    digits: u32,
+    period: u32,
+    now_unix: i64,
+) -> bool {
+    let passcode = passcode.expose_secret();
     if digits == 0 || digits > 10 || period == 0 || passcode.len() != digits as usize {
         return false;
     }
@@ -112,7 +120,7 @@ mod tests {
     fn test_verify_totp_current_window() {
         assert!(verify_totp(
             RFC6238_SEED_BASE32,
-            "94287082",
+            &SecretString::from("94287082"),
             8,
             30,
             59, // counter = 59/30 = 1
@@ -124,22 +132,46 @@ mod tests {
         // counter for now_unix=90 is 3; passcode for counter=1 must still be
         // rejected since it is two windows back (only current & previous are
         // accepted).
-        assert!(!verify_totp(RFC6238_SEED_BASE32, "94287082", 8, 30, 90));
+        assert!(!verify_totp(
+            RFC6238_SEED_BASE32,
+            &SecretString::from("94287082"),
+            8,
+            30,
+            90
+        ));
         // But the passcode for counter=2 (previous window relative to now=90,
         // counter=3) must be accepted.
         let secret = decode_base32_seed(RFC6238_SEED_BASE32).unwrap();
         let previous_code = generate_hotp(&secret, 2, 8);
-        assert!(verify_totp(RFC6238_SEED_BASE32, &previous_code, 8, 30, 90));
+        assert!(verify_totp(
+            RFC6238_SEED_BASE32,
+            &SecretString::from(previous_code),
+            8,
+            30,
+            90
+        ));
     }
 
     #[test]
     fn test_verify_totp_wrong_passcode() {
-        assert!(!verify_totp(RFC6238_SEED_BASE32, "00000000", 8, 30, 59));
+        assert!(!verify_totp(
+            RFC6238_SEED_BASE32,
+            &SecretString::from("00000000"),
+            8,
+            30,
+            59
+        ));
     }
 
     #[test]
     fn test_verify_totp_malformed_seed() {
-        assert!(!verify_totp("not-valid-base32!!!", "123456", 6, 30, 59));
+        assert!(!verify_totp(
+            "not-valid-base32!!!",
+            &SecretString::from("123456"),
+            6,
+            30,
+            59
+        ));
     }
 
     #[test]
@@ -147,7 +179,13 @@ mod tests {
         // A 4-digit passcode against a 6-digit credential must be rejected
         // outright rather than falling through to a (mismatched-length)
         // constant-time comparison.
-        assert!(!verify_totp("JBSWY3DPEHPK3PXP", "1234", 6, 30, 59));
+        assert!(!verify_totp(
+            "JBSWY3DPEHPK3PXP",
+            &SecretString::from("1234"),
+            6,
+            30,
+            59
+        ));
     }
 
     #[test]

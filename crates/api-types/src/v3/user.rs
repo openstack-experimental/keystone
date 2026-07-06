@@ -14,27 +14,11 @@
 use std::collections::HashMap;
 
 use chrono::{DateTime, Utc};
-use secrecy::{ExposeSecret, SecretString};
-use serde::{Deserialize, Serialize, Serializer};
+use secrecy::SecretString;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 #[cfg(feature = "validate")]
 use validator::Validate;
-
-/// Serialize an optional password transparently for transport (the client must
-/// send the real value). `SecretString` keeps it out of `Debug`/logs; the
-/// response type carries no password field.
-fn serialize_optional_secret<S>(
-    secret: &Option<SecretString>,
-    serializer: S,
-) -> Result<S::Ok, S::Error>
-where
-    S: Serializer,
-{
-    match secret {
-        Some(secret) => serializer.serialize_some(secret.expose_secret()),
-        None => serializer.serialize_none(),
-    }
-}
 
 /// User response object.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -130,6 +114,10 @@ pub struct UserResponse {
 )]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[cfg_attr(feature = "validate", derive(validator::Validate))]
+#[cfg_attr(
+    feature = "validate",
+    validate(schema(function = "validate_user_create_secret"))
+)]
 pub struct UserCreate {
     /// The ID of the default project for the user. A user's default project
     /// must not be a domain. Setting this attribute does not grant any actual
@@ -178,9 +166,37 @@ pub struct UserCreate {
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
-        serialize_with = "serialize_optional_secret"
+        serialize_with = "crate::common::serialize_optional_secret"
     )]
     pub password: Option<SecretString>,
+}
+
+impl UserCreate {
+    #[must_use]
+    pub fn to_policy_input(&self) -> serde_json::Value {
+        let mut input = self
+            .extra
+            .clone()
+            .into_iter()
+            .collect::<serde_json::Map<_, _>>();
+        input.insert(
+            "default_project_id".to_string(),
+            serde_json::json!(self.default_project_id),
+        );
+        input.insert("domain_id".to_string(), serde_json::json!(self.domain_id));
+        input.insert("enabled".to_string(), serde_json::json!(self.enabled));
+        input.insert("name".to_string(), serde_json::json!(self.name));
+        input.insert("options".to_string(), serde_json::json!(self.options));
+        if self.password.is_some() {
+            input.insert("password".to_string(), serde_json::json!("[REDACTED]"));
+        }
+        serde_json::Value::Object(input)
+    }
+}
+
+#[cfg(feature = "validate")]
+fn validate_user_create_secret(value: &UserCreate) -> Result<(), validator::ValidationError> {
+    crate::common::validate_optional_secret_length(&value.password, 72)
 }
 
 /// Complete create user request.
@@ -205,6 +221,10 @@ pub struct UserCreateRequest {
 )]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[cfg_attr(feature = "validate", derive(validator::Validate))]
+#[cfg_attr(
+    feature = "validate",
+    validate(schema(function = "validate_user_update_secret"))
+)]
 pub struct UserUpdate {
     /// The ID of the default project for the user. A user's default project
     /// must not be a domain. Setting this attribute does not grant any actual
@@ -249,9 +269,36 @@ pub struct UserUpdate {
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
-        serialize_with = "serialize_optional_secret"
+        serialize_with = "crate::common::serialize_optional_secret"
     )]
     pub password: Option<SecretString>,
+}
+
+impl UserUpdate {
+    #[must_use]
+    pub fn to_policy_input(&self) -> serde_json::Value {
+        let mut input = self
+            .extra
+            .clone()
+            .into_iter()
+            .collect::<serde_json::Map<_, _>>();
+        input.insert(
+            "default_project_id".to_string(),
+            serde_json::json!(self.default_project_id),
+        );
+        input.insert("enabled".to_string(), serde_json::json!(self.enabled));
+        input.insert("name".to_string(), serde_json::json!(self.name));
+        input.insert("options".to_string(), serde_json::json!(self.options));
+        if self.password.is_some() {
+            input.insert("password".to_string(), serde_json::json!("[REDACTED]"));
+        }
+        serde_json::Value::Object(input)
+    }
+}
+
+#[cfg(feature = "validate")]
+fn validate_user_update_secret(value: &UserUpdate) -> Result<(), validator::ValidationError> {
+    crate::common::validate_optional_secret_length(&value.password, 72)
 }
 
 /// Complete update user request.
@@ -400,6 +447,34 @@ mod tests {
         );
         let rendered = serde_json::to_string(&uu).unwrap();
         assert!(rendered.contains("z_extra"), "extra dropped: {rendered}");
+    }
+
+    #[test]
+    fn user_policy_input_redacts_password_and_keeps_extra() {
+        let create: UserCreate = serde_json::from_str(
+            r#"{"domain_id":"d","name":"alice","enabled":true,
+                "password":"PWLEAK","x_custom":"xval"}"#,
+        )
+        .unwrap();
+        let input = create.to_policy_input();
+        let rendered = input.to_string();
+        assert!(
+            !rendered.contains("PWLEAK"),
+            "policy input leaked password: {rendered}"
+        );
+        assert_eq!(
+            input.get("password").and_then(|v| v.as_str()),
+            Some("[REDACTED]")
+        );
+        assert_eq!(input.get("x_custom").and_then(|v| v.as_str()), Some("xval"));
+
+        let update: UserUpdate =
+            serde_json::from_str(r#"{"password":"UPWLEAK","z_extra":"zz"}"#).unwrap();
+        let rendered = update.to_policy_input().to_string();
+        assert!(
+            !rendered.contains("UPWLEAK"),
+            "policy input leaked password: {rendered}"
+        );
     }
 
     /// Explicit `null` and absent password both deserialize to `None` (no panic,
