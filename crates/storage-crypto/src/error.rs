@@ -17,13 +17,22 @@ use thiserror::Error;
 /// Errors produced by the storage cryptographic layer.
 #[derive(Error, Debug)]
 pub enum CryptoError {
-    /// AES-256-GCM encryption failed (internal AES error).
-    #[error("AES-256-GCM encryption error")]
+    /// AES encryption (wrap) failed, whether the AEAD construction is
+    /// AES-256-GCM ([`EnvKek`], PKCS#11) or AES-256-CFB + HMAC
+    /// Encrypt-then-MAC (TPM).
+    ///
+    /// [`EnvKek`]: crate::kek::EnvKek
+    #[error("AES encryption error")]
     AesEncrypt,
 
-    /// AES-256-GCM decryption failed — GCM tag mismatch indicates data
-    /// corruption or tampering.
-    #[error("AES-256-GCM decryption error: GCM tag verification failed")]
+    /// AES decryption (unwrap) failed — tag mismatch indicates data
+    /// corruption or tampering. Covers both AES-256-GCM ([`EnvKek`],
+    /// PKCS#11) and AES-256-CFB + HMAC Encrypt-then-MAC (TPM); the shared
+    /// variant intentionally makes the two constructions' failures
+    /// indistinguishable to callers.
+    ///
+    /// [`EnvKek`]: crate::kek::EnvKek
+    #[error("AES decryption error: authentication tag verification failed")]
     AesDecrypt,
 
     /// DEK epoch has not been loaded; `bootstrap_dek` must be called first.
@@ -81,7 +90,17 @@ pub enum CryptoError {
     #[error("DEK epoch {version} was revoked; decryption refused")]
     RevokedDek { version: u32 },
 
-    /// PKCS#11 backend is not yet implemented.
-    #[error("PKCS#11 HSM backend is not implemented in this build")]
-    Pkcs11NotImplemented,
+    /// A PKCS#11 setup or session operation failed (module load, slot lookup,
+    /// login, key generation/lookup). Wrap/unwrap operation failures use
+    /// [`CryptoError::AesEncrypt`] / [`CryptoError::AesDecrypt`] instead, so
+    /// this variant is confined to provider construction.
+    #[error("PKCS#11 operation failed: {0}")]
+    Pkcs11(String),
+
+    /// A TPM 2.0 setup or session operation failed (context open, primary
+    /// creation, key generation/lookup, persistence). Wrap/unwrap operation
+    /// failures use [`CryptoError::AesEncrypt`] / [`CryptoError::AesDecrypt`]
+    /// instead, so this variant is confined to provider construction.
+    #[error("TPM operation failed: {0}")]
+    Tpm(String),
 }

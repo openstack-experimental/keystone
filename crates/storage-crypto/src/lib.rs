@@ -16,8 +16,9 @@
 //! Implements the cryptographic barrier described in ADR 0016-v2 §2:
 //!
 //! * **Key Encryption Key (KEK):** provided by [`kek::KekProvider`].
-//!   Development mode uses [`kek::EnvKek`]; production uses
-//!   [`kek::Pkcs11KekStub`] (stub — full HSM integration is a future phase).
+//!   Development mode uses [`kek::EnvKek`]; production uses the PKCS#11 or
+//!   TPM 2.0 providers in the separate `storage-crypto-pkcs11` /
+//!   `storage-crypto-tpm` crates (ADR 0016-v2 §2.5).
 //!
 //! * **Data Encryption Key (DEK) hierarchy:** [`dek::DekEpoch`] holds the
 //!   current epoch version and its HKDF-derived sub-keys ([`dek::LogDek`],
@@ -55,6 +56,6 @@ pub use cipher::{
 };
 pub use dek::{BackupDek, DekEpoch, LogDek, StateDek, generate_dek};
 pub use error::CryptoError;
-pub use kek::{EnvKek, KekProvider, Pkcs11KekStub};
+pub use kek::{EnvKek, KekProvider};
 pub use mlock::LockedKey;
 pub use nonce::{NonceManager, NoncePersistence};

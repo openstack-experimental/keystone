@@ -3,8 +3,11 @@
 This guide covers the architecture, cryptographic design, and operational
 procedures for the Keystone-RS distributed storage engine. The design is
 specified in [ADR 0016-v2](adr/0016-v2-raft-storage.md) and implemented across
-two crates: `openstack-keystone-distributed-storage` (consensus, state machine,
-gRPC) and `openstack-keystone-storage-crypto` (all cryptographic primitives).
+four crates: `openstack-keystone-distributed-storage` (consensus, state
+machine, gRPC), `openstack-keystone-storage-crypto` (shared cryptographic
+primitives and the `KekProvider` trait), and the two production KEK
+providers, `openstack-keystone-storage-crypto-pkcs11` and
+`openstack-keystone-storage-crypto-tpm`.
 
 ## Table of Contents
 
@@ -23,6 +26,7 @@ gRPC) and `openstack-keystone-storage-crypto` (all cryptographic primitives).
 9. [DEK Rotation](#dek-rotation)
 10. [Deployment Guide](#deployment-guide)
     - [Configuration Reference](#configuration-reference)
+    - [PKCS#11 and TPM KEK Providers](#pkcs11-and-tpm-kek-providers)
     - [First-Time Cluster Bootstrap](#first-time-cluster-bootstrap)
     - [Adding Nodes](#adding-nodes)
     - [TLS Certificate Management](#tls-certificate-management)
@@ -126,12 +130,22 @@ crates/
 ├── storage-crypto/            # All cryptographic primitives
 │   └── src/
 │       ├── lib.rs             # Public re-exports
-│       ├── kek.rs             # KekProvider trait, EnvKek, Pkcs11KekStub
+│       ├── kek.rs             # KekProvider trait, EnvKek (production
+│       │                      #   providers: storage-crypto-pkcs11, -tpm)
 │       ├── dek.rs             # DekEpoch, LogDek, StateDek, BackupDek, generate_dek
 │       ├── cipher.rs          # log_encrypt/decrypt, state_encrypt/decrypt,
 │       │                      #   backup_encrypt/decrypt
 │       ├── nonce.rs           # NonceManager — durable monotonic counter
 │       └── audit.rs           # AuditHmacKey
+│
+├── storage-crypto-pkcs11/     # Production KekProvider: PKCS#11 HSM/token
+│   ├── src/lib.rs             # Pkcs11Kek, Pkcs11KekParams, SlotSelector
+│   └── tests/softhsm.rs       # SoftHSM2-backed wrap/unwrap round-trip test
+│
+├── storage-crypto-tpm/        # Production KekProvider: TPM 2.0 resident key
+│   ├── src/lib.rs             # TpmKek, TpmKekParams, KeyReference
+│   └── examples/
+│       └── tpm_kek_demo.rs    # Runnable sample against a software TPM (swtpm)
 │
 └── storage/                   # Consensus, gRPC, state machine
     └── src/
@@ -156,7 +170,7 @@ crates/
 ## Key Hierarchy
 
 ```text
- HSM / Cloud KMS  (production)
+ PKCS#11 HSM/token, or TPM 2.0 resident key  (production)
   │  or
   KEYSTONE_DEV_KEK env var  (dev mode only)
   │
@@ -446,7 +460,9 @@ node restarts mid-rotation, it resumes from the last checkpoint.
 
 - Rust toolchain (see `rust-toolchain.toml`)
 - A SPIRE deployment, or TLS certificates from a dedicated Intermediate CA
-- For production: HSM or Cloud KMS for KEK storage
+- For production: a PKCS#11 HSM/token (`kek_provider = "pkcs11"`) or a TPM 2.0
+  chip (`kek_provider = "tpm"`) for KEK storage — see
+  [PKCS#11 and TPM KEK Providers](#pkcs11-and-tpm-kek-providers)
 - For development: set `KEYSTONE_DEV_KEK` and `KEYSTONE_ALLOW_ENV_KEK=1`
 
 ### Configuration Reference
@@ -477,6 +493,11 @@ dek_rotation_days = 90
 # Per-record write version threshold before blocking further writes (default: 2^30).
 write_rate_threshold = 1073741824
 
+# Selects the production KEK source. "env" (default) is dev-mode only and is
+# rejected unless dev_mode = true. See "PKCS#11 and TPM KEK Providers" below.
+# kek_provider = "pkcs11"
+# kek_provider = "tpm"
+
 # --- Transport: SPIFFE (default) ---
 trust_domains = "example.org"
 
@@ -500,6 +521,97 @@ trust_domains = "example.org"
 > **Warning:** `KEYSTONE_DEV_KEK` and `KEYSTONE_ALLOW_ENV_KEK` must never appear
 > in production Dockerfiles, Kubernetes manifests, or systemd units. The CI gate
 > `tools/check_no_dev_mode.sh` enforces this.
+
+### PKCS#11 and TPM KEK Providers
+
+Production deployments select one of the two hardware-backed `KekProvider`
+implementations (ADR 0016-v2 §2.5). Both wrap/unwrap the DEK with
+`CKM_AES_GCM`/TPM2 AES-GCM directly against a non-extractable AES-256 key
+object — the key material never leaves the token or chip.
+
+#### PKCS#11 (HSM or token)
+
+```toml
+[distributed_storage]
+kek_provider = "pkcs11"
+
+[distributed_storage.pkcs11]
+# Path to the vendor's (or SoftHSM2's) Cryptoki shared library.
+pkcs11_module_path = "/usr/lib/softhsm/libsofthsm2.so"
+
+# CKA_LABEL of the AES-256 key object. Must have CKA_EXTRACTABLE = false
+# (ADR 0016-v2 §10 invariant 13). init_storage never creates this key —
+# it must already exist via an operator's out-of-band provisioning step.
+pkcs11_key_label = "keystone-kek"
+
+# Either the slot id or the token label must be given; label is preferred
+# since slot ids can shift across token re-initialisation.
+pkcs11_slot_label = "keystone-storage"
+# pkcs11_slot_id = 0
+
+# File containing the token PIN. Never accepted inline or via env var
+# (ADR 0016-v2 §10 invariant 14).
+pkcs11_pin_file = "/etc/keystone/storage/pkcs11.pin"
+```
+
+Provisioning the key (a one-time operator ceremony, run once per token before
+the cluster's first boot) uses any Cryptoki client capable of generating a
+non-extractable AES-256 key under the target label — for example,
+`pkcs11-tool --keygen --key-type AES:32 --label keystone-kek`, or the
+provisioning helper in `crates/storage-crypto-pkcs11/tests/softhsm.rs` and
+`crates/storage/tests/test_pkcs11_cluster.rs`, which do the equivalent
+programmatically against SoftHSM2 for local testing.
+
+**Local testing against SoftHSM2:**
+
+```sh
+# libsofthsm2.so and the softhsm2-util CLI:
+sudo apt-get install -y softhsm2
+
+# Run the SoftHSM2-backed tests (skip themselves if the module isn't found):
+cargo test -p openstack-keystone-storage-crypto-pkcs11
+cargo test -p openstack-keystone-distributed-storage --features pkcs11 --test test_pkcs11_cluster
+```
+
+#### TPM 2.0
+
+```toml
+[distributed_storage]
+kek_provider = "tpm"
+
+[distributed_storage.tpm]
+# TCTI connection string: a hardware TPM's resource manager device, or a
+# software TPM (swtpm) for testing.
+tpm_tcti = "device:/dev/tpmrm0"
+
+# Exactly one of the following identifies the pre-provisioned AES-256 key:
+tpm_key_handle = "0x81000001"      # persistent handle, or:
+# tpm_key_context_file = "/etc/keystone/storage/tpm-kek.ctx"
+
+# Optional: file containing the key's auth value (userWithAuth keys only).
+# tpm_auth_file = "/etc/keystone/storage/tpm.auth"
+```
+
+As with PKCS#11, `init_storage` only ever opens the key with
+`auto_generate: false` — provisioning is a separate operator step.
+`crates/storage-crypto-tpm/examples/tpm_kek_demo.rs` is a runnable sample that
+provisions and exercises a KEK against a software TPM:
+
+```sh
+# 1. Start a software TPM:
+mkdir -p /tmp/swtpm-state
+swtpm socket --tpmstate dir=/tmp/swtpm-state \
+    --ctrl type=tcp,port=2322 --server type=tcp,port=2321 \
+    --tpm2 --flags not-need-init &
+TPM2TOOLS_TCTI="swtpm:host=127.0.0.1,port=2321" tpm2_startup -c
+
+# 2. Run the sample (first run provisions the key, later runs reload it):
+cargo run -p openstack-keystone-storage-crypto-tpm --example tpm_kek_demo
+```
+
+This example is compiled in CI on every run to catch rot, but is not executed
+there — real/virtual TPM availability isn't reliable enough on shared CI
+runners to gate merges on (ADR 0016-v2 §2.5.2).
 
 ### First-Time Cluster Bootstrap
 

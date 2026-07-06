@@ -1,0 +1,32 @@
+[package]
+name = "openstack-keystone-storage-crypto-tpm"
+description = "TPM 2.0-backed KEK provider for Keystone distributed storage (ADR 0016-v2 §2.5.2)."
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+homepage.workspace = true
+exclude.workspace = true
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+enum_glob_use = "deny"
+expect_used = "deny"
+print_stdout = "deny"
+unwrap_used = "deny"
+doc_paragraphs_missing_punctuation = "warn"
+
+[dependencies]
+openstack-keystone-storage-crypto.workspace = true
+rand.workspace = true
+subtle = "2.6"
+tracing.workspace = true
+tss-esapi = "7.7"
+zeroize = "1"
+
+[dev-dependencies]
+tempfile.workspace = true

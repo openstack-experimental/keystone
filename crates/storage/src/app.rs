@@ -19,7 +19,7 @@ use dashmap::DashMap;
 use eyre::eyre;
 use openraft::Config;
 use openraft::async_runtime::WatchReceiver;
-use openstack_keystone_storage_crypto::{DekEpoch, EnvKek, KekProvider, Pkcs11KekStub};
+use openstack_keystone_storage_crypto::{DekEpoch, EnvKek, KekProvider};
 
 use crate::protobuf as pb;
 use openraft::ReadPolicy;
@@ -213,6 +213,150 @@ async fn verify_node_id_uniqueness_live(
     Ok(false)
 }
 
+/// Build the Key Encryption Key provider selected by `ds_config.kek_provider`
+/// (ADR 0016-v2 §2.1 / §2.5).
+fn build_kek(
+    ds_config: &openstack_keystone_config::DistributedStorageConfiguration,
+) -> Result<Arc<dyn KekProvider>, StoreError> {
+    use openstack_keystone_config::KekProvider as KekProviderKind;
+
+    match ds_config.kek_provider {
+        KekProviderKind::Env => {
+            if !ds_config.dev_mode {
+                return Err(StoreError::Other(eyre!(
+                    "kek_provider = \"env\" is only valid when dev_mode = true \
+                     (ADR 0016-v2 invariant 6)"
+                )));
+            }
+            if std::env::var("KEYSTONE_ALLOW_ENV_KEK").as_deref() != Ok("1") {
+                return Err(StoreError::Other(eyre!(
+                    "dev_mode is enabled but KEYSTONE_ALLOW_ENV_KEK=1 is not set; \
+                     refusing to start with an environment-provided KEK \
+                     (ADR 0016-v2 §2.1, invariant 6)"
+                )));
+            }
+            let kek = EnvKek::from_env()
+                .map_err(|e| StoreError::Other(eyre!("failed to load KEYSTONE_DEV_KEK: {e}")))?;
+            Ok(Arc::new(kek))
+        }
+        KekProviderKind::Pkcs11 => build_pkcs11_kek(ds_config),
+        KekProviderKind::Tpm => build_tpm_kek(ds_config),
+    }
+}
+
+/// Open the PKCS#11 KEK from `ds_config.pkcs11` (ADR 0016-v2 §2.5.1).
+///
+/// `auto_generate` is hardcoded to `false`: whether first-run
+/// auto-provisioning of the AES key on the token is acceptable is an
+/// operator/deployment decision (regulated environments may require an
+/// out-of-band key ceremony instead), so it is not offered as an implicit
+/// default here. A dedicated `keystone-manage` provisioning path is a
+/// candidate follow-up if auto-provisioning in-process turns out to be
+/// wanted.
+#[cfg(feature = "pkcs11")]
+fn build_pkcs11_kek(
+    ds_config: &openstack_keystone_config::DistributedStorageConfiguration,
+) -> Result<Arc<dyn KekProvider>, StoreError> {
+    use secrecy::ExposeSecret;
+
+    use openstack_keystone_storage_crypto_pkcs11::{Pkcs11Kek, Pkcs11KekParams, SlotSelector};
+
+    let cfg = ds_config.pkcs11.as_ref().ok_or_else(|| {
+        StoreError::Other(eyre!(
+            "kek_provider = \"pkcs11\" requires a [distributed_storage.pkcs11] section"
+        ))
+    })?;
+    let pin = cfg.pkcs11_pin_content.as_ref().ok_or_else(|| {
+        StoreError::Other(eyre!("PKCS#11 PIN was not loaded from pkcs11_pin_file"))
+    })?;
+    let slot = match (&cfg.pkcs11_slot_label, cfg.pkcs11_slot_id) {
+        (Some(label), _) => SlotSelector::Label(label.clone()),
+        (None, Some(id)) => SlotSelector::Id(id),
+        (None, None) => {
+            return Err(StoreError::Other(eyre!(
+                "[distributed_storage.pkcs11] requires either pkcs11_slot_id or \
+                 pkcs11_slot_label"
+            )));
+        }
+    };
+
+    let kek = Pkcs11Kek::open(Pkcs11KekParams {
+        module_path: &cfg.pkcs11_module_path,
+        slot,
+        key_label: &cfg.pkcs11_key_label,
+        pin: pin.expose_secret(),
+        auto_generate: false,
+    })
+    .map_err(|e| StoreError::Other(eyre!("failed to open PKCS#11 KEK: {e}")))?;
+    Ok(Arc::new(kek))
+}
+
+#[cfg(not(feature = "pkcs11"))]
+fn build_pkcs11_kek(
+    _ds_config: &openstack_keystone_config::DistributedStorageConfiguration,
+) -> Result<Arc<dyn KekProvider>, StoreError> {
+    Err(StoreError::Other(eyre!(
+        "kek_provider = \"pkcs11\" was selected but this build was compiled without the \
+         `pkcs11` feature"
+    )))
+}
+
+/// Open the TPM KEK from `ds_config.tpm` (ADR 0016-v2 §2.5.2).
+///
+/// `auto_generate` is hardcoded to `false` for the same reason as
+/// [`build_pkcs11_kek`]. The AES/HMAC child-key pair is located via
+/// `tpm_key_handle` (HMAC key at `handle + 1`) or `tpm_key_context_file`
+/// (HMAC blobs at `<path>.hmac`) — a convention owned by the
+/// `storage-crypto-tpm` crate rather than a second config field, since
+/// `TpmKekConfiguration` already carries exactly one key reference and
+/// splitting it in two would only matter if an operator needed the two
+/// child keys at independently chosen locations, which no deployment has
+/// asked for.
+#[cfg(feature = "tpm")]
+fn build_tpm_kek(
+    ds_config: &openstack_keystone_config::DistributedStorageConfiguration,
+) -> Result<Arc<dyn KekProvider>, StoreError> {
+    use secrecy::ExposeSecret;
+
+    use openstack_keystone_storage_crypto_tpm::{KeyReference, TpmKek, TpmKekParams};
+
+    let cfg = ds_config.tpm.as_ref().ok_or_else(|| {
+        StoreError::Other(eyre!(
+            "kek_provider = \"tpm\" requires a [distributed_storage.tpm] section"
+        ))
+    })?;
+    let key_reference = match (cfg.tpm_key_handle, &cfg.tpm_key_context_file) {
+        (Some(handle), _) => KeyReference::PersistentHandle(handle),
+        (None, Some(path)) => KeyReference::ContextFile(path.clone()),
+        (None, None) => {
+            return Err(StoreError::Other(eyre!(
+                "[distributed_storage.tpm] requires either tpm_key_handle or \
+                 tpm_key_context_file"
+            )));
+        }
+    };
+    let auth = cfg.tpm_auth_content.as_ref().map(|s| s.expose_secret());
+
+    let kek = TpmKek::open(TpmKekParams {
+        tcti: &cfg.tpm_tcti,
+        key_reference,
+        auth,
+        auto_generate: false,
+    })
+    .map_err(|e| StoreError::Other(eyre!("failed to open TPM KEK: {e}")))?;
+    Ok(Arc::new(kek))
+}
+
+#[cfg(not(feature = "tpm"))]
+fn build_tpm_kek(
+    _ds_config: &openstack_keystone_config::DistributedStorageConfiguration,
+) -> Result<Arc<dyn KekProvider>, StoreError> {
+    Err(StoreError::Other(eyre!(
+        "kek_provider = \"tpm\" was selected but this build was compiled without the `tpm` \
+         feature"
+    )))
+}
+
 /// Initialize storage services backed by the raft.
 ///
 /// # Parameters
@@ -245,27 +389,11 @@ pub async fn init_storage(config_manager: &Arc<ConfigManager>) -> Result<Arc<Sto
     // initialisation (ADR 0016-v2 §2.1).  Loading/erasing it first means core
     // dumps triggered during preflight cannot leak the key.
     //
-    // The environment-provided KEK is a dev-mode-only fallback: ADR 0016-v2
-    // §2.1 and invariant 6 require both `--dev-mode` and
-    // `KEYSTONE_ALLOW_ENV_KEK=1` before it may be used. Outside dev-mode there
-    // is currently no production KekProvider implementation (HSM/PKCS#11/KMS
-    // is not yet wired up — see Pkcs11KekStub), so the node refuses to start
-    // rather than silently falling back to an environment-provided key.
-    let kek: Arc<dyn KekProvider> = if ds_config.dev_mode {
-        if std::env::var("KEYSTONE_ALLOW_ENV_KEK").as_deref() != Ok("1") {
-            return Err(StoreError::Other(eyre!(
-                "dev_mode is enabled but KEYSTONE_ALLOW_ENV_KEK=1 is not set; \
-                 refusing to start with an environment-provided KEK \
-                 (ADR 0016-v2 §2.1, invariant 6)"
-            )));
-        }
-        Arc::new(
-            EnvKek::from_env()
-                .map_err(|e| StoreError::Other(eyre!("failed to load KEYSTONE_DEV_KEK: {e}")))?,
-        )
-    } else {
-        Arc::new(Pkcs11KekStub)
-    };
+    // `ds_config.kek_provider` drives the choice; config-time validation
+    // (`validate_kek_selection`) already rejects `env` outside `dev_mode` and
+    // missing `pkcs11`/`tpm` sections, but that is a fail-fast, not the sole
+    // enforcement point — `build_kek` re-checks at construction time too.
+    let kek: Arc<dyn KekProvider> = build_kek(&ds_config)?;
 
     // Run OS-level security pre-flight checks after key material is cleared.
     // In production mode (dev_mode = false) any failure is fatal per ADR
