@@ -93,19 +93,19 @@ pub(super) async fn show(
             identifier: String::new(),
         })?;
 
+    let token = TokenBuilder::try_from(&vsc)?.build()?;
+
     state
         .policy_enforcer
         .enforce(
             "identity/auth/token/show",
             &user_auth,
             Value::Null,
-            Some(to_value(json!({"token": &vsc.token()?}))?),
+            Some(to_value(json!({"token": &token}))?),
         )
         .await?;
 
-    let mut response_token = TokenResponse {
-        token: TokenBuilder::try_from(&vsc)?.build()?,
-    };
+    let mut response_token = TokenResponse { token };
 
     if !query.nocatalog.is_some_and(|x| x) {
         let catalog: Catalog = Catalog(

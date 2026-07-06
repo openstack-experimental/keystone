@@ -21,6 +21,7 @@ use axum::{
 use serde_json::{Value, json, to_value};
 use tracing::error;
 
+use openstack_keystone_api_types::v3::auth::token::TokenBuilder;
 use openstack_keystone_core::auth::ExecutionContext;
 
 use crate::api::{auth::Auth, error::KeystoneApiError};
@@ -76,13 +77,15 @@ pub(super) async fn delete(
             identifier: String::new(),
         })?;
 
+    let token = TokenBuilder::try_from(&vsc)?.build()?;
+
     state
         .policy_enforcer
         .enforce(
             "identity/auth/token/revoke",
             &user_auth,
             Value::Null,
-            Some(to_value(json!({"token": &vsc.token()?}))?),
+            Some(to_value(json!({"token": &token}))?),
         )
         .await?;
 
