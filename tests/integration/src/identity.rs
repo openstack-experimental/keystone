@@ -25,6 +25,7 @@ use openstack_keystone_core_types::identity::*;
 use crate::common::*;
 use crate::impl_deleter;
 
+mod group;
 mod service_account;
 mod user;
 mod user_group;
