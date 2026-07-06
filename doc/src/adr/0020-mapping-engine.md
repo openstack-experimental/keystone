@@ -1051,6 +1051,18 @@ single database transaction:
 | `AllowedDomainsRequired(mode)`            | 422         | `"detail.allowed_domains_required"`              | `ClaimsOnly`/`ClaimsOrMapping` ruleset submitted without non-empty `allowed_domains`                       |
 | `InterpolatedValueTooLong(msg)`           | 400         | `"detail.interpolated_value_too_long"`           | Template interpolation exceeds 256 char limit (rejects blank records)                                      |
 | `RulesetVersionMismatch`                  | 401         | `"detail.ruleset_version_mismatch"`              | Token shadow version differs from live ruleset (version numbers omitted from error response)               |
+| `RoleNotFound(id)`                        | 422         | `"detail.role_not_found"`                        | A rule's `Authorization::{Project,Domain,System}.roles` references a `RoleRef` whose `id` does not match any existing `Role` |
+
+`RoleNotFound` closes a gap distinct from the other write-time checks above:
+a typo'd or invented role reference previously produced a rule whose
+authorization could never resolve to a real `Role`, and failed silently
+rather than at creation time (see ADR 0024 §8, where exactly this class of
+bug — invented `SystemAdmin`/`DomainManager` role literals with no backing
+`Role` — was found and fixed in the SCIM policies). Rule create/update now
+resolves every referenced `RoleRef.id` against the `Role` store
+(`RoleApi::get_role`) and rejects the ruleset with `422` if it does not
+exist. `RoleRef.id` is mandatory (unlike `name`, which is optional), so this
+is the field the check keys on.
 
 ---
 

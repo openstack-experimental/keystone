@@ -315,6 +315,23 @@ impl IdentityBackend for SqlBackend {
         Ok(user::get_user_domain_id(&state.db, user_id).await?)
     }
 
+    /// Find the `user_id` of any user in `domain_id` whose name matches
+    /// `name`, case-insensitively (ADR 0024 §3.D).
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `domain_id`: The domain to search within.
+    /// - `name`: The name to match, case-insensitively.
+    #[tracing::instrument(skip(self, state))]
+    async fn find_user_by_name_ci<'a>(
+        &self,
+        state: &ServiceState,
+        domain_id: &'a str,
+        name: &'a str,
+    ) -> Result<Option<String>, IdentityProviderError> {
+        user::find_by_name_ci(&state.db, domain_id, name).await
+    }
+
     /// Find federated user by IDP and Unique ID
     ///
     /// # Parameters

@@ -43,7 +43,7 @@ use openstack_keystone_core_types::role::RoleRefBuilder;
 use super::{create_api_key, sample_api_key_create};
 
 use crate::common::{AsyncResourceGuard, get_state};
-use crate::create_domain;
+use crate::{create_domain, create_role};
 
 /// Generate a real `kscim_...` bearer token, persist its `ApiClientResource`
 /// (with a genuine Argon2id `secret_hash`, unlike `sample_api_key_create`'s
@@ -70,6 +70,14 @@ async fn provision_working_api_key(
     create.allowed_ips = allowed_ips;
     let guard = create_api_key(state, create).await?;
 
+    // `validate_roles_exist` (crates/core/src/mapping/service.rs) rejects a
+    // ruleset that references a role id that doesn't exist yet, so the
+    // `member` role referenced below must be created first. The role is
+    // scoped to the per-test isolated database, so leaking its guard (rather
+    // than binding it to a variable that lives for the test's duration) is
+    // fine -- there's nothing else that will race to delete it.
+    let member_role = create_role!(state, "member")?;
+
     let ruleset = MappingRuleSetCreate {
         mapping_id: Some(uuid::Uuid::new_v4().simple().to_string()),
         domain_id: Some(domain.id.clone()),
@@ -93,8 +101,8 @@ async fn provision_working_api_key(
                 domain_id: domain.id.clone(),
                 roles: vec![
                     RoleRefBuilder::default()
-                        .id("member")
-                        .name("member")
+                        .id(member_role.id.clone())
+                        .name(member_role.name.clone())
                         .build()
                         .unwrap(),
                 ],

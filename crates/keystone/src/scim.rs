@@ -29,6 +29,10 @@ use serde::Serialize;
 use openstack_keystone_core::api::api_key_auth::ApiKeyAuth;
 use openstack_keystone_core::keystone::ServiceState;
 
+pub mod error;
+pub mod types;
+mod user;
+
 /// Diagnostic response describing the resolved ephemeral security context.
 #[derive(Serialize)]
 struct WhoAmI {
@@ -49,5 +53,7 @@ async fn whoami(Path(_domain_id): Path<String>, ApiKeyAuth(vsc): ApiKeyAuth) -> 
 
 /// SCIM ingress sub-router, nested at `/SCIM/v2` in the main binary.
 pub fn router() -> Router<ServiceState> {
-    Router::new().route("/{domain_id}/whoami", get(whoami))
+    Router::new()
+        .route("/{domain_id}/whoami", get(whoami))
+        .nest("/{domain_id}/Users", user::router())
 }

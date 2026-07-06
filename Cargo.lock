@@ -4471,6 +4471,7 @@ dependencies = [
  "openstack-keystone-resource-driver-sql",
  "openstack-keystone-revoke-driver-sql",
  "openstack-keystone-role-driver-sql",
+ "openstack-keystone-scim-driver-raft",
  "openstack-keystone-storage-api",
  "openstack-keystone-token-driver-fernet",
  "openstack-keystone-token-restriction-driver-sql",
@@ -5005,6 +5006,20 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "openstack-keystone-scim-driver-raft"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "openstack-keystone-core",
+ "openstack-keystone-core-types",
+ "openstack-keystone-distributed-storage",
+ "rmp-serde",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

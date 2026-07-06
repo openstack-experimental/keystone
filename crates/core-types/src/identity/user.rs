@@ -123,6 +123,14 @@ pub struct UserCreate {
     #[builder(default)]
     #[validate(length(max = 72))]
     pub password: Option<String>,
+
+    /// The kind of local-authentication row to create for the user:
+    /// `Local` creates a `local_user` row (password allowed), `NonLocal`
+    /// creates a `nonlocal_user` row (no password allowed, for externally
+    /// managed identities such as SCIM-provisioned users). Ignored when
+    /// `federated` is set.
+    #[builder(default = "UserType::Local")]
+    pub user_type: UserType,
 }
 
 #[derive(Builder, Clone, Debug, Default, PartialEq, Validate)]

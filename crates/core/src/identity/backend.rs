@@ -201,6 +201,21 @@ pub trait IdentityBackend: Send + Sync {
         user_id: &'a str,
     ) -> Result<String, IdentityProviderError>;
 
+    /// Find the `user_id` of any user in `domain_id` whose name matches
+    /// `name`, case-insensitively, regardless of which realm (or nothing)
+    /// created it (ADR 0024 §3.D domain-wide uniqueness check).
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `domain_id`: The domain to search within.
+    /// - `name`: The name to match, case-insensitively.
+    async fn find_user_by_name_ci<'a>(
+        &self,
+        state: &ServiceState,
+        domain_id: &'a str,
+        name: &'a str,
+    ) -> Result<Option<String>, IdentityProviderError>;
+
     /// Find federated user by IDP and Unique ID.
     ///
     /// # Parameters

@@ -51,6 +51,10 @@ use openstack_keystone_core::revoke::RevokeProviderError;
 use openstack_keystone_core::revoke::backend::RevokeBackend;
 use openstack_keystone_core::role::RoleProviderError;
 use openstack_keystone_core::role::backend::RoleBackend;
+use openstack_keystone_core::scim_realm::ScimRealmProviderError;
+use openstack_keystone_core::scim_realm::backend::ScimRealmBackend;
+use openstack_keystone_core::scim_resource::ScimResourceProviderError;
+use openstack_keystone_core::scim_resource::backend::ScimResourceBackend;
 use openstack_keystone_core::token::TokenProviderError;
 use openstack_keystone_core::token::backend::{TokenBackend, TokenRestrictionBackend};
 use openstack_keystone_core::trust::TrustProviderError;
@@ -88,6 +92,10 @@ pub struct PluginManager {
     revoke_backends: HashMap<String, Arc<dyn RevokeBackend>>,
     /// Role backend plugins.
     role_backends: HashMap<String, Arc<dyn RoleBackend>>,
+    /// SCIM realm backend plugins.
+    scim_realm_backends: HashMap<String, Arc<dyn ScimRealmBackend>>,
+    /// SCIM resource ownership index backend plugins.
+    scim_resource_backends: HashMap<String, Arc<dyn ScimResourceBackend>>,
     /// Token backend plugins.
     token_backends: HashMap<String, Arc<dyn TokenBackend>>,
     /// Token restriction backend plugins.
@@ -351,6 +359,42 @@ impl PluginManagerApi for PluginManager {
             ))
     }
 
+    /// Get registered SCIM realm backend.
+    ///
+    /// # Parameters
+    /// * `name` - The name of the backend to retrieve.
+    ///
+    /// # Returns
+    /// A `Result` containing a reference to the `ScimRealmBackend` if found,
+    /// or a `ScimRealmProviderError`.
+    #[allow(clippy::borrowed_box)]
+    fn get_scim_realm_backend<S: AsRef<str>>(
+        &self,
+        name: S,
+    ) -> Result<&Arc<dyn ScimRealmBackend>, ScimRealmProviderError> {
+        self.scim_realm_backends.get(name.as_ref()).ok_or(
+            ScimRealmProviderError::UnsupportedDriver(name.as_ref().to_string()),
+        )
+    }
+
+    /// Get registered SCIM resource ownership index backend.
+    ///
+    /// # Parameters
+    /// * `name` - The name of the backend to retrieve.
+    ///
+    /// # Returns
+    /// A `Result` containing a reference to the `ScimResourceBackend` if
+    /// found, or a `ScimResourceProviderError`.
+    #[allow(clippy::borrowed_box)]
+    fn get_scim_resource_backend<S: AsRef<str>>(
+        &self,
+        name: S,
+    ) -> Result<&Arc<dyn ScimResourceBackend>, ScimResourceProviderError> {
+        self.scim_resource_backends.get(name.as_ref()).ok_or(
+            ScimResourceProviderError::UnsupportedDriver(name.as_ref().to_string()),
+        )
+    }
+
     /// Get registered token backend.
     ///
     /// # Parameters
@@ -578,6 +622,34 @@ impl PluginManagerApi for PluginManager {
         self.role_backends.insert(name.as_ref().to_string(), plugin);
     }
 
+    /// Register SCIM realm backend.
+    ///
+    /// # Parameters
+    /// * `name` - The name of the backend to register.
+    /// * `plugin` - The backend implementation to register.
+    fn register_scim_realm_backend<S: AsRef<str>>(
+        &mut self,
+        name: S,
+        plugin: Arc<dyn ScimRealmBackend>,
+    ) {
+        self.scim_realm_backends
+            .insert(name.as_ref().to_string(), plugin);
+    }
+
+    /// Register SCIM resource ownership index backend.
+    ///
+    /// # Parameters
+    /// * `name` - The name of the backend to register.
+    /// * `plugin` - The backend implementation to register.
+    fn register_scim_resource_backend<S: AsRef<str>>(
+        &mut self,
+        name: S,
+        plugin: Arc<dyn ScimResourceBackend>,
+    ) {
+        self.scim_resource_backends
+            .insert(name.as_ref().to_string(), plugin);
+    }
+
     /// Register token backend.
     ///
     /// # Parameters
@@ -694,6 +766,8 @@ impl PluginManager {
             resource_backends: HashMap::new(),
             revoke_backends: HashMap::new(),
             role_backends: HashMap::new(),
+            scim_realm_backends: HashMap::new(),
+            scim_resource_backends: HashMap::new(),
             token_backends: HashMap::new(),
             token_restriction_backends: HashMap::new(),
             trust_backends: HashMap::new(),
@@ -719,6 +793,10 @@ impl PluginManager {
             "raft",
             Arc::new(openstack_keystone_api_key_driver_raft::RaftBackend::default()),
         );
+        let scim_raft_backend =
+            Arc::new(openstack_keystone_scim_driver_raft::RaftBackend::default());
+        slf.register_scim_realm_backend("raft", scim_raft_backend.clone());
+        slf.register_scim_resource_backend("raft", scim_raft_backend);
         Ok(slf)
     }
 }

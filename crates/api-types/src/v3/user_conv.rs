@@ -90,6 +90,7 @@ impl From<api_types::UserCreateRequest> for provider_types::UserCreate {
             name: user.name,
             options: user.options.map(Into::into),
             password: user.password,
+            user_type: provider_types::UserType::Local,
         }
     }
 }

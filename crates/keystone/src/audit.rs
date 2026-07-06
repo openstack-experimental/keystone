@@ -93,6 +93,7 @@ pub fn error_variant_name(error: &KeystoneApiError) -> String {
         KeystoneApiError::Serde { .. } => "BadRequest".to_string(),
         KeystoneApiError::Other(_) => "InternalServerError".to_string(),
         KeystoneApiError::TooManyRequests => "TooManyRequests".to_string(),
+        KeystoneApiError::UnprocessableEntity(_) => "UnprocessableEntity".to_string(),
     }
 }
 

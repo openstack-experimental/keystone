@@ -35,6 +35,7 @@ use openstack_keystone_core_types::mapping::MappingProviderError;
 use openstack_keystone_core_types::resource::ResourceProviderError;
 use openstack_keystone_core_types::revoke::RevokeProviderError;
 use openstack_keystone_core_types::role::RoleProviderError;
+use openstack_keystone_core_types::scim::{ScimRealmProviderError, ScimResourceProviderError};
 use openstack_keystone_core_types::token::TokenProviderError;
 
 use crate::error::KeystoneApiError;
@@ -55,6 +56,7 @@ impl IntoResponse for KeystoneApiError {
                 StatusCode::INTERNAL_SERVER_ERROR
             }
             KeystoneApiError::TooManyRequests => StatusCode::TOO_MANY_REQUESTS,
+            KeystoneApiError::UnprocessableEntity(_) => StatusCode::UNPROCESSABLE_ENTITY,
             _ => StatusCode::BAD_REQUEST,
         };
 
@@ -328,6 +330,14 @@ impl From<MappingProviderError> for KeystoneApiError {
             MappingProviderError::ApiClientNonDomainScopeForbidden(x) => Self::BadRequest(format!(
                 "rule '{x}' grants a non-domain scope, which is forbidden for API Key (ApiClient) mapping rulesets (only domain scope is accepted)"
             )),
+            MappingProviderError::ScimRealmProjectScopeForbidden(x) => {
+                Self::UnprocessableEntity(format!(
+                    "rule '{x}' grants project scope, which is forbidden for a mapping ruleset bound to an active SCIM realm"
+                ))
+            }
+            MappingProviderError::RoleNotFound(x) => Self::UnprocessableEntity(format!(
+                "rule references role '{x}' which does not exist"
+            )),
             MappingProviderError::RaftNotAvailable => Self::InternalError(
                 "raft storage is not available in the mapping provider".to_string(),
             ),
@@ -344,6 +354,64 @@ impl From<MappingProviderError> for KeystoneApiError {
                 Self::InternalError(format!("structure builder error: {e}"))
             }
             // MappingProviderError is non-exhaustive; catch any future variants
+            _ => Self::InternalError(value.to_string()),
+        }
+    }
+}
+
+impl From<ScimRealmProviderError> for KeystoneApiError {
+    fn from(value: ScimRealmProviderError) -> Self {
+        match value {
+            ScimRealmProviderError::NotFound(x) => Self::NotFound {
+                resource: "scim_realm".into(),
+                identifier: x,
+            },
+            ScimRealmProviderError::Conflict(x) => Self::Conflict(x),
+            ScimRealmProviderError::RaftNotAvailable => Self::InternalError(
+                "raft storage is not available in the scim_realm provider".to_string(),
+            ),
+            ScimRealmProviderError::RaftStoreError { source } => {
+                Self::InternalError(format!("raft storage error: {source}"))
+            }
+            ScimRealmProviderError::Driver { source } => {
+                Self::InternalError(format!("backend driver error: {source}"))
+            }
+            ScimRealmProviderError::UnsupportedDriver(x) => {
+                Self::InternalError(format!("unsupported driver `{x}`"))
+            }
+            ScimRealmProviderError::StructBuilder(e) => {
+                Self::InternalError(format!("structure builder error: {e}"))
+            }
+            // ScimRealmProviderError is non-exhaustive; catch any future variants
+            _ => Self::InternalError(value.to_string()),
+        }
+    }
+}
+
+impl From<ScimResourceProviderError> for KeystoneApiError {
+    fn from(value: ScimResourceProviderError) -> Self {
+        match value {
+            ScimResourceProviderError::NotFound(x) => Self::NotFound {
+                resource: "scim_resource".into(),
+                identifier: x,
+            },
+            ScimResourceProviderError::Conflict(x) => Self::Conflict(x),
+            ScimResourceProviderError::RaftNotAvailable => Self::InternalError(
+                "raft storage is not available in the scim_resource provider".to_string(),
+            ),
+            ScimResourceProviderError::RaftStoreError { source } => {
+                Self::InternalError(format!("raft storage error: {source}"))
+            }
+            ScimResourceProviderError::Driver { source } => {
+                Self::InternalError(format!("backend driver error: {source}"))
+            }
+            ScimResourceProviderError::UnsupportedDriver(x) => {
+                Self::InternalError(format!("unsupported driver `{x}`"))
+            }
+            ScimResourceProviderError::StructBuilder(e) => {
+                Self::InternalError(format!("structure builder error: {e}"))
+            }
+            // ScimResourceProviderError is non-exhaustive; catch any future variants
             _ => Self::InternalError(value.to_string()),
         }
     }

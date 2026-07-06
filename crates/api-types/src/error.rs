@@ -89,6 +89,13 @@ pub enum KeystoneApiError {
     #[error("rate limit exceeded, retry later")]
     TooManyRequests,
 
+    /// Request is syntactically valid but semantically invalid (RFC 4918
+    /// §11.2 / RFC 7231 §6.5.1's `422` successor). Used for write-time
+    /// validation failures that are not simple malformed-request errors
+    /// (e.g. ADR 0024 §2.C's `Authorization::Project` prohibition).
+    #[error("{0}.")]
+    UnprocessableEntity(String),
+
     #[error("The request you have made requires authentication.")]
     UnauthorizedNoContext,
 

@@ -49,6 +49,10 @@ use crate::revoke::RevokeProviderError;
 use crate::revoke::backend::RevokeBackend;
 use crate::role::RoleProviderError;
 use crate::role::backend::RoleBackend;
+use crate::scim_realm::backend::ScimRealmBackend;
+use crate::scim_realm::error::ScimRealmProviderError;
+use crate::scim_resource::backend::ScimResourceBackend;
+use crate::scim_resource::error::ScimResourceProviderError;
 use crate::token::TokenProviderError;
 use crate::token::backend::TokenBackend;
 use crate::token::backend::TokenRestrictionBackend;
@@ -226,6 +230,32 @@ pub trait PluginManagerApi {
         name: S,
     ) -> Result<&Arc<dyn RoleBackend>, RoleProviderError>;
 
+    /// Get registered SCIM realm backend.
+    ///
+    /// # Parameters
+    /// - `name`: The name of the backend to retrieve.
+    ///
+    /// # Returns
+    /// - `Ok(&Arc<dyn ScimRealmBackend>)` if found, otherwise
+    ///   `Err(ScimRealmProviderError)`.
+    fn get_scim_realm_backend<S: AsRef<str>>(
+        &self,
+        name: S,
+    ) -> Result<&Arc<dyn ScimRealmBackend>, ScimRealmProviderError>;
+
+    /// Get registered SCIM resource ownership index backend.
+    ///
+    /// # Parameters
+    /// - `name`: The name of the backend to retrieve.
+    ///
+    /// # Returns
+    /// - `Ok(&Arc<dyn ScimResourceBackend>)` if found, otherwise
+    ///   `Err(ScimResourceProviderError)`.
+    fn get_scim_resource_backend<S: AsRef<str>>(
+        &self,
+        name: S,
+    ) -> Result<&Arc<dyn ScimResourceBackend>, ScimResourceProviderError>;
+
     /// Get registered token backend.
     ///
     /// # Parameters
@@ -387,6 +417,28 @@ pub trait PluginManagerApi {
     /// - `name`: The name to register the backend under.
     /// - `plugin`: The backend implementation.
     fn register_role_backend<S: AsRef<str>>(&mut self, name: S, plugin: Arc<dyn RoleBackend>);
+
+    /// Register SCIM realm backend.
+    ///
+    /// # Parameters
+    /// - `name`: The name to register the backend under.
+    /// - `plugin`: The backend implementation.
+    fn register_scim_realm_backend<S: AsRef<str>>(
+        &mut self,
+        name: S,
+        plugin: Arc<dyn ScimRealmBackend>,
+    );
+
+    /// Register SCIM resource ownership index backend.
+    ///
+    /// # Parameters
+    /// - `name`: The name to register the backend under.
+    /// - `plugin`: The backend implementation.
+    fn register_scim_resource_backend<S: AsRef<str>>(
+        &mut self,
+        name: S,
+        plugin: Arc<dyn ScimResourceBackend>,
+    );
 
     /// Register token backend.
     ///

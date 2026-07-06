@@ -24,8 +24,8 @@ use openstack_keystone_core_types::mapping::rule::{ClaimCondition, MatchConditio
 use openstack_keystone_core_types::mapping::*;
 
 use crate::common::*;
-use crate::create_domain;
 use crate::mapping::ruleset::create_ruleset;
+use crate::{create_domain, create_role};
 
 /// Construct a SPIFFE ruleset creation payload.
 fn spiffe_ruleset_create(domain_id: Option<String>) -> MappingRuleSetCreate {
@@ -454,6 +454,10 @@ async fn test_spiffe_all_of_strict_with_auth() -> Result<()> {
     let domain = create_domain!(state)?;
     let domain_id = domain.id.clone();
 
+    // `validate_roles_exist` rejects a ruleset referencing a role id that
+    // doesn't exist yet.
+    let role = create_role!(state, uuid::Uuid::new_v4().simple().to_string())?;
+
     let mut ruleset_create = spiffe_ruleset_create(Some(domain_id.clone()));
     ruleset_create.rules = vec![MappingRule {
         name: "spiffe-strict-rule".into(),
@@ -482,8 +486,8 @@ async fn test_spiffe_all_of_strict_with_auth() -> Result<()> {
             openstack_keystone_core_types::mapping::authorization::Authorization::Domain {
                 domain_id: domain_id.clone(),
                 roles: vec![openstack_keystone_core_types::role::RoleRef {
-                    id: "reader-role".into(),
-                    name: Some("reader".into()),
+                    id: role.id.clone(),
+                    name: Some(role.name.clone()),
                     domain_id: None,
                 }],
             },

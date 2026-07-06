@@ -81,6 +81,8 @@ mod policy;
 mod resource;
 mod revoke;
 mod role;
+mod scim_realm;
+mod scim_resource;
 mod security_compliance;
 mod token;
 mod token_restriction;
@@ -112,6 +114,8 @@ pub use policy::*;
 pub use resource::*;
 pub use revoke::*;
 pub use role::*;
+pub use scim_realm::*;
+pub use scim_resource::*;
 pub use security_compliance::*;
 pub use token::*;
 pub use token_restriction::*;
@@ -225,6 +229,14 @@ pub struct Config {
     /// Role provider configuration.
     #[serde(default)]
     pub role: RoleProvider,
+
+    /// SCIM realm provider configuration (ADR 0024).
+    #[serde(default)]
+    pub scim_realm: ScimRealmProvider,
+
+    /// SCIM resource ownership index provider configuration (ADR 0024 §3.A).
+    #[serde(default)]
+    pub scim_resource: ScimResourceProvider,
 
     /// Security compliance configuration.
     #[serde(default)]

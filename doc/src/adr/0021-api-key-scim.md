@@ -254,8 +254,19 @@ requiring the pre-existing `manager` role scoped to the key's own domain
 (this codebase's realization of `DomainManager`, used identically by
 `identity.user.*` and `identity.mapping.ruleset.*`), or `admin`/`is_admin`
 (`SystemAdmin`). Unlike `identity.user.list`, there is no `reader` carve-out
-on `identity:api_key:list` — all actions sit at the same privilege bar. This
-does not by itself constitute the formal ADR 0002 ratification called for
+on `identity:api_key:list` — all actions sit at the same privilege bar.
+
+ADR 0024's SCIM resource-CRUD policies (`identity/scim/user/*`) reuse this same
+`manager`/`admin` string convention, but resolve it through a materially
+different path: those requests are authenticated by an API key, which carries
+no Role/RoleAssignment at all, so the `manager`/`admin`/`scim_provisioner`
+strings they check are produced entirely by the realm's own `MappingRuleSet`
+output (§3 Step 4 above), never by a `RoleAssignment` row. The admin CRUD
+surface for API keys/realms documented in this section is the opposite case —
+invoked by a Fernet-authenticated human operator, where `manager`/`admin` can
+be a real RBAC grant.
+
+This does not by itself constitute the formal ADR 0002 ratification called for
 above (see §8).
 
 ### B. CRUD Endpoints

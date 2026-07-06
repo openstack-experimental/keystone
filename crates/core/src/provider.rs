@@ -65,6 +65,12 @@ use crate::revoke::RevokeApi;
 use crate::role::MockRoleProvider;
 use crate::role::RoleApi;
 #[cfg(any(test, feature = "mock"))]
+use crate::scim_realm::MockScimRealmProvider;
+use crate::scim_realm::ScimRealmApi;
+#[cfg(any(test, feature = "mock"))]
+use crate::scim_resource::MockScimResourceProvider;
+use crate::scim_resource::ScimResourceApi;
+#[cfg(any(test, feature = "mock"))]
 use crate::token::MockTokenProvider;
 use crate::token::TokenApi;
 #[cfg(any(test, feature = "mock"))]
@@ -101,6 +107,10 @@ pub struct Provider {
     revoke: Box<dyn RevokeApi>,
     /// Role provider.
     role: Box<dyn RoleApi>,
+    /// SCIM realm provider.
+    scim_realm: Box<dyn ScimRealmApi>,
+    /// SCIM resource ownership index provider.
+    scim_resource: Box<dyn ScimResourceApi>,
     /// Token provider.
     token: Box<dyn TokenApi>,
     /// Trust provider.
@@ -190,6 +200,18 @@ impl ProviderBuilder {
         new
     }
 
+    pub fn mock_scim_realm(self, value: impl ScimRealmApi + 'static) -> Self {
+        let mut new = self;
+        new.scim_realm = Some(Box::new(value));
+        new
+    }
+
+    pub fn mock_scim_resource(self, value: impl ScimResourceApi + 'static) -> Self {
+        let mut new = self;
+        new.scim_resource = Some(Box::new(value));
+        new
+    }
+
     pub fn mock_token(self, value: impl TokenApi + 'static) -> Self {
         let mut new = self;
         new.token = Some(Box::new(value));
@@ -240,6 +262,14 @@ impl Provider {
         let resource = Box::new(crate::resource::ResourceService::new(cfg, plugin_manager)?);
         let revoke = Box::new(crate::revoke::RevokeService::new(cfg, plugin_manager)?);
         let role = Box::new(crate::role::RoleService::new(cfg, plugin_manager)?);
+        let scim_realm = Box::new(crate::scim_realm::ScimRealmService::new(
+            cfg,
+            plugin_manager,
+        )?);
+        let scim_resource = Box::new(crate::scim_resource::ScimResourceService::new(
+            cfg,
+            plugin_manager,
+        )?);
         let token = Box::new(crate::token::TokenService::new(cfg, plugin_manager)?);
         let trust = Box::new(crate::trust::TrustService::new(cfg, plugin_manager)?);
 
@@ -257,6 +287,8 @@ impl Provider {
             resource,
             revoke,
             role,
+            scim_realm,
+            scim_resource,
             token,
             trust,
         })
@@ -279,6 +311,8 @@ impl Provider {
             .mock_resource(MockResourceProvider::default())
             .mock_revoke(MockRevokeProvider::default())
             .mock_role(MockRoleProvider::default())
+            .mock_scim_realm(MockScimRealmProvider::default())
+            .mock_scim_resource(MockScimResourceProvider::default())
             .mock_token(MockTokenProvider::default())
             .mock_trust(MockTrustProvider::default())
     }
@@ -346,6 +380,16 @@ impl Provider {
     /// Get the role provider.
     pub fn get_role_provider(&self) -> &dyn RoleApi {
         &*self.role
+    }
+
+    /// Get the SCIM realm provider.
+    pub fn get_scim_realm_provider(&self) -> &dyn ScimRealmApi {
+        &*self.scim_realm
+    }
+
+    /// Get the SCIM resource ownership index provider.
+    pub fn get_scim_resource_provider(&self) -> &dyn ScimResourceApi {
+        &*self.scim_resource
     }
 
     /// Get the token provider.

@@ -98,6 +98,9 @@ fn build_target_from_event(event: &Event) -> Target {
         }
         EventPayload::VirtualUser { user_id: id } => (id, "data/security/identity/virtual-user"),
         EventPayload::K8sAuthInstance { id } => (id, "data/security/identity/k8s-auth-instance"),
+        EventPayload::ScimRealm { provider_id } => {
+            (provider_id, "data/security/identity/scim-realm")
+        }
     };
     Target {
         id: sanitize_audit_id(raw_id),

@@ -22,6 +22,7 @@ use crate::entity::user as db_user;
 
 mod create;
 mod delete;
+mod find_by_name;
 mod get;
 mod list;
 mod set;
@@ -29,6 +30,7 @@ mod update;
 
 pub use create::create;
 pub use delete::delete;
+pub use find_by_name::find_by_name_ci;
 pub(super) use get::get_main_entry;
 pub use get::{get, get_user_domain_id};
 pub use list::list;

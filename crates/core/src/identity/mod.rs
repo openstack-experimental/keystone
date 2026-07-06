@@ -42,11 +42,13 @@ pub mod error;
 pub mod hook;
 mod provider_api;
 pub mod service;
+pub mod shadow_id;
 
 pub use error::IdentityProviderError;
 pub use hook::IdentityHook;
 pub use provider_api::IdentityApi;
 pub use service::IdentityService;
+pub use shadow_id::generate_public_id;
 
 #[cfg(any(test, feature = "mock"))]
 pub use crate::mocks::MockIdentityProvider;

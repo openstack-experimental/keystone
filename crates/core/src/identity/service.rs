@@ -816,6 +816,17 @@ impl IdentityApi for IdentityService {
         }
     }
 
+    async fn find_user_by_name_ci<'a>(
+        &self,
+        ctx: &ExecutionContext<'a>,
+        domain_id: &'a str,
+        name: &'a str,
+    ) -> Result<Option<String>, IdentityProviderError> {
+        self.backend_driver
+            .find_user_by_name_ci(ctx.state(), domain_id, name)
+            .await
+    }
+
     /// Find federated user by `idp_id` and `unique_id`.
     ///
     /// # Parameters

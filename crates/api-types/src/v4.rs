@@ -15,10 +15,13 @@
 pub mod api_key;
 pub mod auth;
 pub mod mapping;
+pub mod scim_realm;
 pub mod token_restriction;
 pub mod user;
 
 #[cfg(feature = "conv")]
 mod api_key_conv;
+#[cfg(feature = "conv")]
+mod scim_realm_conv;
 #[cfg(feature = "conv")]
 mod token_restriction_conv;

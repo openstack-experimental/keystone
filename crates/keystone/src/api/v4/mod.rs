@@ -34,6 +34,7 @@ pub mod group;
 pub mod mapping;
 pub mod role;
 pub mod role_assignment;
+pub mod scim_realm;
 pub mod token;
 pub mod user;
 
@@ -47,6 +48,7 @@ use crate::api::types::*;
       (path = "federation", api = federation::ApiDoc),
       (path = "k8s_auth", api = k8s_auth::ApiDoc),
       (path = "mappings", api = mapping::ApiDoc),
+      (path = "scim_realms", api = scim_realm::ApiDoc),
       (path = "tokens", api = token::ApiDoc),
       (path = "users", api = user::ApiDoc),
     ),
@@ -63,6 +65,7 @@ pub(super) fn openapi_router() -> OpenApiRouter<ServiceState> {
         .nest("/k8s_auth", k8s_auth::openapi_router())
         .nest("/role_assignments", role_assignment::openapi_router())
         .nest("/roles", role::openapi_router())
+        .nest("/scim_realms", scim_realm::openapi_router())
         .nest("/tokens", token::openapi_router())
         .nest("/users", user::openapi_router())
         .routes(routes!(version))

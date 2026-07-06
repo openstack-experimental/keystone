@@ -123,8 +123,8 @@ impl<S: KeySource> KeyRepository<S> {
     ///
     /// # Errors
     /// - [`KeyRepositoryError::KeysMissing`] if the repository is empty.
-    /// - [`KeyRepositoryError::NullKeyDetected`] if any key decodes to the
-    ///   Null Key and `insecure_allow_null_key` is `false`.
+    /// - [`KeyRepositoryError::NullKeyDetected`] if any key decodes to the Null
+    ///   Key and `insecure_allow_null_key` is `false`.
     pub async fn load_keys(
         &self,
         insecure_allow_null_key: bool,
@@ -221,15 +221,15 @@ impl<S: KeySource> KeyRepository<S> {
             .checked_add(1)
             .ok_or(KeyRepositoryError::IndexOverflow)?;
 
-        // 1. Promote: move staged `0` -> new_primary_idx. The outgoing
-        //    primary keeps its own entry and stays active for decryption.
+        // 1. Promote: move staged `0` -> new_primary_idx. The outgoing primary keeps
+        //    its own entry and stays active for decryption.
         self.source.promote(0, new_primary_idx, &staged).await?;
 
         // 2. Stage a fresh key `0` for the next rotation cycle.
         self.setup().await?;
 
-        // 3. Prune beyond max_active_keys, oldest (smallest positive index)
-        //    first. `0` (staged) is never pruned.
+        // 3. Prune beyond max_active_keys, oldest (smallest positive index) first. `0`
+        //    (staged) is never pruned.
         let mut remaining = self.source.load().await?;
         remaining.remove(&0);
         while remaining.len() + 1 > self.max_active_keys {

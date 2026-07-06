@@ -30,6 +30,7 @@ use crate::mapping::MappingProviderError;
 use crate::resource::ResourceProviderError;
 use crate::revoke::RevokeProviderError;
 use crate::role::RoleProviderError;
+use crate::scim::{ScimRealmProviderError, ScimResourceProviderError};
 use crate::token::TokenProviderError;
 use crate::trust::TrustProviderError;
 
@@ -197,6 +198,22 @@ pub enum KeystoneError {
         /// The source of the error.
         #[from]
         source: RoleProviderError,
+    },
+
+    /// SCIM realm provider.
+    #[error(transparent)]
+    ScimRealmProvider {
+        /// The source of the error.
+        #[from]
+        source: ScimRealmProviderError,
+    },
+
+    /// SCIM resource ownership index provider.
+    #[error(transparent)]
+    ScimResourceProvider {
+        /// The source of the error.
+        #[from]
+        source: ScimResourceProviderError,
     },
 
     /// Token provider.

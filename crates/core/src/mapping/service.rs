@@ -45,6 +45,98 @@ use crate::mapping::{
 };
 use crate::plugin_manager::PluginManagerApi;
 
+/// Reject `Authorization::Project` entries in a ruleset whose `source` is
+/// `IdentitySource::ApiClient` and whose `provider_id` has an active
+/// `ScimRealmResource` (ADR 0024 §2.C write-time ruleset constraint).
+///
+/// Mirrors `validate_api_client_no_system_scope`'s defense-in-depth
+/// rationale (ADR 0021 §6.C): `ScimRealmAuth` already enforces Domain-only
+/// scope at authentication time, but nothing stops an operator from adding a
+/// `Project`-scoped rule to the same ruleset for an unrelated claim match,
+/// which would make that enforcement flap unpredictably per-request. A
+/// realm lookup is required (async), so this check lives here rather than
+/// in the synchronous `validation` module.
+async fn validate_scim_realm_no_project_scope<'a>(
+    ctx: &ExecutionContext<'a>,
+    domain_id: Option<&str>,
+    source: &IdentitySource,
+    rules: &[MappingRule],
+) -> Result<(), MappingProviderError> {
+    let IdentitySource::ApiClient { provider_id } = source else {
+        return Ok(());
+    };
+    let Some(domain_id) = domain_id else {
+        return Ok(());
+    };
+    let realm = ctx
+        .state()
+        .provider
+        .get_scim_realm_provider()
+        .get_realm(ctx, domain_id, provider_id)
+        .await
+        .map_err(MappingProviderError::driver)?;
+    let Some(realm) = realm else {
+        return Ok(());
+    };
+    if !realm.enabled {
+        return Ok(());
+    }
+    for rule in rules {
+        if rule
+            .authorizations
+            .iter()
+            .any(|auth| matches!(auth, Authorization::Project { .. }))
+        {
+            return Err(MappingProviderError::ScimRealmProjectScopeForbidden(
+                rule.name.clone(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Reject any `RoleRef` in a rule's
+/// `Authorization::{Project,Domain,System}.roles` whose `id` does not
+/// correspond to an existing `Role`.
+///
+/// `RoleRef.id` is mandatory (unlike `name`, which is optional), so this
+/// check resolves against the `Role` store by `id`. Without it, a typo'd or
+/// invented role reference (e.g. the `SystemAdmin`/`DomainManager`
+/// naming-drift bug) silently produces an authorization that can never
+/// satisfy any policy check, instead of being rejected at write time.
+async fn validate_roles_exist<'a>(
+    ctx: &ExecutionContext<'a>,
+    rules: &[MappingRule],
+) -> Result<(), MappingProviderError> {
+    let mut checked: HashSet<&str> = HashSet::new();
+    for rule in rules {
+        for auth in &rule.authorizations {
+            let roles = match auth {
+                Authorization::Project { roles, .. } => roles,
+                Authorization::Domain { roles, .. } => roles,
+                Authorization::System { roles, .. } => roles,
+            };
+            for role_ref in roles {
+                let key = role_ref.id.as_str();
+                if !checked.insert(key) {
+                    continue;
+                }
+                let existing = ctx
+                    .state()
+                    .provider
+                    .get_role_provider()
+                    .get_role(ctx, key)
+                    .await
+                    .map_err(MappingProviderError::driver)?;
+                if existing.is_none() {
+                    return Err(MappingProviderError::RoleNotFound(key.to_string()));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Derive [`AuthzInfo`] from authorization list produced by a matched ruleset
 /// rule.
 ///
@@ -396,6 +488,21 @@ impl MappingService {
 
         let identity_provider = state.provider.get_identity_provider();
 
+        // A user already provisioned via SCIM (or any other python-keystone-
+        // compatible shadow mechanism) with this same `(domain_id,
+        // unique_workload_id)` pair has the exact same deterministic id —
+        // reuse it directly instead of creating a duplicate `federated_user`
+        // row for the same real person (ADR 0024 dedup fix).
+        let candidate_id =
+            crate::identity::generate_public_id(domain_id, unique_workload_id, "user");
+        if let Some(existing) = identity_provider
+            .get_user(&ctx, &candidate_id)
+            .await
+            .map_err(MappingProviderError::driver)?
+        {
+            return Ok(existing);
+        }
+
         if let Some(existing) = identity_provider
             .find_federated_user(&ctx, idp_id, unique_workload_id)
             .await
@@ -415,6 +522,14 @@ impl MappingService {
 
         let mut user_builder = UserCreateBuilder::default();
         user_builder
+            // Same deterministic id a SCIM (or other python-keystone-
+            // compatible shadow) provisioning of this same `(domain_id,
+            // unique_workload_id)` pair would compute. Setting it explicitly
+            // here (rather than letting the backend assign a random id)
+            // closes the reverse-ordering half of the ADR 0024 dedup fix:
+            // federation-first-then-SCIM-second now converges on one row
+            // too, not just SCIM-first-then-federation-second.
+            .id(candidate_id.clone())
             .domain_id(domain_id.to_string())
             .enabled(true)
             .name(user_name.to_string())
@@ -599,6 +714,14 @@ impl MappingApi for MappingService {
         mut ruleset: MappingRuleSetCreate,
     ) -> Result<MappingRuleSet, MappingProviderError> {
         validation::validate_ruleset_create(&ruleset)?;
+        validate_scim_realm_no_project_scope(
+            ctx,
+            ruleset.domain_id.as_deref(),
+            &ruleset.source,
+            &ruleset.rules,
+        )
+        .await?;
+        validate_roles_exist(ctx, &ruleset.rules).await?;
         let mapping_id = ruleset
             .mapping_id
             .take()
@@ -960,6 +1083,15 @@ impl MappingApi for MappingService {
         };
         validation::validate_ruleset_create(&create_payload)?;
 
+        validate_scim_realm_no_project_scope(
+            ctx,
+            existing.domain_id.as_deref(),
+            &existing.source,
+            &create_payload.rules,
+        )
+        .await?;
+        validate_roles_exist(ctx, &create_payload.rules).await?;
+
         // 5. Compute new version
         let new_version = version::compute_ruleset_version(&create_payload);
 
@@ -1038,6 +1170,16 @@ impl MappingApi for MappingService {
         validation::validate_ruleset_update(&existing, &data)?;
 
         let merged_rules = data.rules.clone().unwrap_or(existing.rules.clone());
+
+        validate_scim_realm_no_project_scope(
+            ctx,
+            existing.domain_id.as_deref(),
+            &existing.source,
+            &merged_rules,
+        )
+        .await?;
+        validate_roles_exist(ctx, &merged_rules).await?;
+
         let new_version = version::compute_ruleset_version_from_parts(
             &existing.mapping_id,
             existing.domain_id.as_deref(),
@@ -1279,6 +1421,341 @@ mod tests {
                 idp_id: "test-idp".to_string()
             }
         );
+    }
+
+    fn project_scope_rule() -> MappingRule {
+        MappingRule {
+            name: "grant-project".to_string(),
+            description: None,
+            r#match: MatchCriteria::AllOf(vec![]),
+            identity: IdentityBinding {
+                identity_mode: None,
+                user_name: "test".to_string(),
+                user_id: None,
+                user_domain_id: None,
+                is_system: false,
+            },
+            authorizations: vec![Authorization::Project {
+                project_id: "project-1".to_string(),
+                project_domain_id: "domain-1".to_string(),
+                roles: vec![],
+            }],
+            groups: vec![],
+        }
+    }
+
+    // ---------------------------------------------------------------------
+    // RoleRef existence validation (`validate_roles_exist`)
+    // ---------------------------------------------------------------------
+
+    fn domain_scope_rule_with_role(role_name: &str) -> MappingRule {
+        MappingRule {
+            name: "grant-domain".to_string(),
+            description: None,
+            r#match: MatchCriteria::AllOf(vec![]),
+            identity: IdentityBinding {
+                identity_mode: None,
+                user_name: "test".to_string(),
+                user_id: None,
+                user_domain_id: None,
+                is_system: false,
+            },
+            authorizations: vec![Authorization::Domain {
+                domain_id: "domain-1".to_string(),
+                roles: vec![RoleRef {
+                    id: role_name.to_string(),
+                    name: Some(role_name.to_string()),
+                    domain_id: None,
+                }],
+            }],
+            groups: vec![],
+        }
+    }
+
+    #[tokio::test]
+    async fn test_create_ruleset_rejects_nonexistent_role() {
+        let mut role_mock = crate::role::MockRoleProvider::default();
+        role_mock.expect_get_role().returning(|_, _| Ok(None));
+        let provider = crate::provider::Provider::mocked_builder().mock_role(role_mock);
+        let state = get_mocked_state(None, Some(provider)).await;
+
+        let service = MappingService::from_driver(MockMappingBackend::new());
+        let ruleset_create = MappingRuleSetCreate {
+            mapping_id: None,
+            domain_id: Some("domain-1".to_string()),
+            source: IdentitySource::Federation {
+                idp_id: "test-idp".to_string(),
+            },
+            domain_resolution_mode: DomainResolutionMode::Fixed,
+            enabled: true,
+            rules: vec![domain_scope_rule_with_role("NotARealRole")],
+        };
+
+        let result = service
+            .create_ruleset(&ExecutionContext::internal(&state), ruleset_create)
+            .await;
+
+        assert!(matches!(
+            result.unwrap_err(),
+            MappingProviderError::RoleNotFound(name) if name == "NotARealRole"
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_create_ruleset_accepts_existing_role() {
+        let mut role_mock = crate::role::MockRoleProvider::default();
+        role_mock.expect_get_role().returning(|_, role_id| {
+            if role_id == "manager" {
+                Ok(Some(
+                    openstack_keystone_core_types::role::RoleBuilder::default()
+                        .id("manager")
+                        .name("manager")
+                        .build()
+                        .unwrap(),
+                ))
+            } else {
+                Ok(None)
+            }
+        });
+        let provider = crate::provider::Provider::mocked_builder().mock_role(role_mock);
+        let state = get_mocked_state(None, Some(provider)).await;
+
+        let mut mock_backend = MockMappingBackend::new();
+        let ruleset_create = MappingRuleSetCreate {
+            mapping_id: None,
+            domain_id: Some("domain-1".to_string()),
+            source: IdentitySource::Federation {
+                idp_id: "test-idp".to_string(),
+            },
+            domain_resolution_mode: DomainResolutionMode::Fixed,
+            enabled: true,
+            rules: vec![domain_scope_rule_with_role("manager")],
+        };
+        let expected = MappingRuleSet {
+            mapping_id: "generated-id".to_string(),
+            domain_id: ruleset_create.domain_id.clone(),
+            source: ruleset_create.source.clone(),
+            domain_resolution_mode: ruleset_create.domain_resolution_mode.clone(),
+            enabled: ruleset_create.enabled,
+            rules: ruleset_create.rules.clone(),
+            ruleset_version: 1,
+        };
+        let expected_clone = expected.clone();
+        mock_backend
+            .expect_create_ruleset()
+            .returning(move |_, _| Ok(expected_clone.clone()));
+
+        let service = MappingService::from_driver(mock_backend);
+
+        let result = service
+            .create_ruleset(&ExecutionContext::internal(&state), ruleset_create)
+            .await;
+
+        assert!(result.is_ok());
+    }
+
+    // ---------------------------------------------------------------------
+    // ADR 0024 §2.C: Authorization::Project forbidden on SCIM realm rulesets
+    // ---------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_create_ruleset_rejects_project_scope_for_active_scim_realm() {
+        let mut scim_realm_mock = crate::scim_realm::MockScimRealmProvider::default();
+        scim_realm_mock
+            .expect_get_realm()
+            .withf(|_, domain_id, provider_id| {
+                domain_id == "domain-1" && provider_id == "provider-1"
+            })
+            .returning(|_, _, _| {
+                Ok(Some(
+                    openstack_keystone_core_types::scim::ScimRealmResource {
+                        domain_id: "domain-1".to_string(),
+                        provider_id: "provider-1".to_string(),
+                        idp_id: "idp-1".to_string(),
+                        display_name: "Okta".to_string(),
+                        enabled: true,
+                        created_at: 0,
+                        updated_at: 0,
+                    },
+                ))
+            });
+        let provider = crate::provider::Provider::mocked_builder().mock_scim_realm(scim_realm_mock);
+        let state = get_mocked_state(None, Some(provider)).await;
+
+        let mock_backend = MockMappingBackend::new();
+        let service = MappingService::from_driver(mock_backend);
+
+        let ruleset_create = MappingRuleSetCreate {
+            mapping_id: None,
+            domain_id: Some("domain-1".to_string()),
+            source: IdentitySource::ApiClient {
+                provider_id: "provider-1".to_string(),
+            },
+            domain_resolution_mode: DomainResolutionMode::Fixed,
+            enabled: true,
+            rules: vec![project_scope_rule()],
+        };
+
+        let result = service
+            .create_ruleset(&ExecutionContext::internal(&state), ruleset_create)
+            .await;
+
+        assert!(matches!(
+            result.unwrap_err(),
+            MappingProviderError::ScimRealmProjectScopeForbidden(name) if name == "grant-project"
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_create_ruleset_allows_project_scope_when_realm_disabled() {
+        let mut scim_realm_mock = crate::scim_realm::MockScimRealmProvider::default();
+        scim_realm_mock.expect_get_realm().returning(|_, _, _| {
+            Ok(Some(
+                openstack_keystone_core_types::scim::ScimRealmResource {
+                    domain_id: "domain-1".to_string(),
+                    provider_id: "provider-1".to_string(),
+                    idp_id: "idp-1".to_string(),
+                    display_name: "Okta".to_string(),
+                    enabled: false,
+                    created_at: 0,
+                    updated_at: 0,
+                },
+            ))
+        });
+        let provider = crate::provider::Provider::mocked_builder().mock_scim_realm(scim_realm_mock);
+        let state = get_mocked_state(None, Some(provider)).await;
+
+        let mut mock_backend = MockMappingBackend::new();
+        let ruleset_create = MappingRuleSetCreate {
+            mapping_id: None,
+            domain_id: Some("domain-1".to_string()),
+            source: IdentitySource::ApiClient {
+                provider_id: "provider-1".to_string(),
+            },
+            domain_resolution_mode: DomainResolutionMode::Fixed,
+            enabled: true,
+            rules: vec![project_scope_rule()],
+        };
+        let expected = MappingRuleSet {
+            mapping_id: "generated-id".to_string(),
+            domain_id: ruleset_create.domain_id.clone(),
+            source: ruleset_create.source.clone(),
+            domain_resolution_mode: ruleset_create.domain_resolution_mode.clone(),
+            enabled: ruleset_create.enabled,
+            rules: ruleset_create.rules.clone(),
+            ruleset_version: 1,
+        };
+        let expected_clone = expected.clone();
+        mock_backend
+            .expect_create_ruleset()
+            .returning(move |_, _| Ok(expected_clone.clone()));
+
+        let service = MappingService::from_driver(mock_backend);
+
+        let result = service
+            .create_ruleset(&ExecutionContext::internal(&state), ruleset_create)
+            .await;
+
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_create_ruleset_allows_project_scope_for_federation_source() {
+        // Non-ApiClient sources are never subject to the SCIM realm
+        // constraint — the realm provider must not even be consulted.
+        let mut scim_realm_mock = crate::scim_realm::MockScimRealmProvider::default();
+        scim_realm_mock.expect_get_realm().never();
+        let provider = crate::provider::Provider::mocked_builder().mock_scim_realm(scim_realm_mock);
+        let state = get_mocked_state(None, Some(provider)).await;
+
+        let mut mock_backend = MockMappingBackend::new();
+        let ruleset_create = MappingRuleSetCreate {
+            mapping_id: None,
+            domain_id: Some("domain-1".to_string()),
+            source: IdentitySource::Federation {
+                idp_id: "okta".to_string(),
+            },
+            domain_resolution_mode: DomainResolutionMode::Fixed,
+            enabled: true,
+            rules: vec![project_scope_rule()],
+        };
+        let expected = MappingRuleSet {
+            mapping_id: "generated-id".to_string(),
+            domain_id: ruleset_create.domain_id.clone(),
+            source: ruleset_create.source.clone(),
+            domain_resolution_mode: ruleset_create.domain_resolution_mode.clone(),
+            enabled: ruleset_create.enabled,
+            rules: ruleset_create.rules.clone(),
+            ruleset_version: 1,
+        };
+        let expected_clone = expected.clone();
+        mock_backend
+            .expect_create_ruleset()
+            .returning(move |_, _| Ok(expected_clone.clone()));
+
+        let service = MappingService::from_driver(mock_backend);
+
+        let result = service
+            .create_ruleset(&ExecutionContext::internal(&state), ruleset_create)
+            .await;
+
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_update_ruleset_rejects_project_scope_for_active_scim_realm() {
+        let mut scim_realm_mock = crate::scim_realm::MockScimRealmProvider::default();
+        scim_realm_mock.expect_get_realm().returning(|_, _, _| {
+            Ok(Some(
+                openstack_keystone_core_types::scim::ScimRealmResource {
+                    domain_id: "domain-1".to_string(),
+                    provider_id: "provider-1".to_string(),
+                    idp_id: "idp-1".to_string(),
+                    display_name: "Okta".to_string(),
+                    enabled: true,
+                    created_at: 0,
+                    updated_at: 0,
+                },
+            ))
+        });
+        let provider = crate::provider::Provider::mocked_builder().mock_scim_realm(scim_realm_mock);
+        let state = get_mocked_state(None, Some(provider)).await;
+
+        let mapping_id = "test-id";
+        let mut mock_backend = MockMappingBackend::new();
+        mock_backend.expect_get_ruleset().returning(move |_, _| {
+            Ok(Some(MappingRuleSet {
+                mapping_id: mapping_id.to_string(),
+                domain_id: Some("domain-1".to_string()),
+                source: IdentitySource::ApiClient {
+                    provider_id: "provider-1".to_string(),
+                },
+                domain_resolution_mode: DomainResolutionMode::Fixed,
+                enabled: true,
+                rules: vec![],
+                ruleset_version: 1,
+            }))
+        });
+        mock_backend.expect_update_ruleset().never();
+
+        let service = MappingService::from_driver(mock_backend);
+
+        let result = service
+            .update_ruleset(
+                &ExecutionContext::internal(&state),
+                mapping_id,
+                MappingRuleSetUpdate {
+                    enabled: Some(true),
+                    allowed_domains: None,
+                    rules: Some(vec![project_scope_rule()]),
+                },
+            )
+            .await;
+
+        assert!(matches!(
+            result.unwrap_err(),
+            MappingProviderError::ScimRealmProjectScopeForbidden(name) if name == "grant-project"
+        ));
     }
 
     #[tokio::test]
@@ -2227,6 +2704,256 @@ mod tests {
         } else {
             panic!("Expected Mapping context");
         }
+    }
+
+    #[tokio::test]
+    async fn test_authenticate_local_reuses_scim_provisioned_user() {
+        // ADR 0024 dedup fix: a user already provisioned via SCIM with the
+        // same deterministic id as this federated login would derive must
+        // be reused directly, without ever touching `find_federated_user`
+        // or `create_user` — proving the pre-check in
+        // `find_or_create_federated_user` short-circuits before the
+        // legacy `federated_user`-table lookup/create fallback.
+        let mut mock_backend = MockMappingBackend::new();
+
+        let source = IdentitySource::Federation {
+            idp_id: "okta".to_string(),
+        };
+
+        let rules = vec![MappingRule {
+            name: "matching-rule".to_string(),
+            description: None,
+            r#match: MatchCriteria::AllOf(vec![MatchCondition::Condition(
+                ClaimCondition::Equals {
+                    claim: "sub".to_string(),
+                    value: Value::String("ext-1".to_string()),
+                },
+            )]),
+            identity: IdentityBinding {
+                identity_mode: Some(IdentityMode::Local),
+                user_name: "should-not-be-used".to_string(),
+                user_id: None,
+                user_domain_id: None,
+                is_system: false,
+            },
+            authorizations: vec![],
+            groups: vec![],
+        }];
+
+        let matching_ruleset = MappingRuleSet {
+            mapping_id: "test-mapping".to_string(),
+            domain_id: Some("domain-1".to_string()),
+            source: source.clone(),
+            domain_resolution_mode: DomainResolutionMode::Fixed,
+            enabled: true,
+            rules,
+            ruleset_version: 1,
+        };
+
+        mock_backend
+            .expect_get_ruleset_by_source()
+            .returning(move |_, _, _| Ok(Some(matching_ruleset.clone())));
+
+        let scim_user_id = crate::identity::generate_public_id("domain-1", "ext-1", "user");
+        let scim_user_id_clone = scim_user_id.clone();
+
+        let mut federation_mock = crate::federation::MockFederationProvider::default();
+        federation_mock
+            .expect_get_identity_provider()
+            .returning(|_, id| {
+                Ok(Some(
+                    openstack_keystone_core_types::federation::IdentityProviderBuilder::default()
+                        .id(id)
+                        .name("okta")
+                        .enabled(true)
+                        .build()
+                        .unwrap(),
+                ))
+            });
+
+        let mut identity_mock = crate::identity::MockIdentityProvider::default();
+        identity_mock.expect_get_user().returning(move |_, id| {
+            if id == scim_user_id_clone {
+                Ok(Some(
+                    openstack_keystone_core_types::identity::UserResponseBuilder::default()
+                        .id(id.to_string())
+                        .domain_id("domain-1".to_string())
+                        .name("scim-provisioned-user".to_string())
+                        .enabled(true)
+                        .build()
+                        .unwrap(),
+                ))
+            } else {
+                Ok(None)
+            }
+        });
+        // Must never be reached: the deterministic-id pre-check short-
+        // circuits before this legacy lookup/create fallback.
+        identity_mock.expect_find_federated_user().never();
+        identity_mock.expect_create_user().never();
+        identity_mock
+            .expect_list_groups_of_user()
+            .returning(|_, _| Ok(vec![]));
+        identity_mock
+            .expect_list_groups()
+            .returning(|_, _| Ok(vec![]));
+
+        let provider = crate::provider::Provider::mocked_builder()
+            .mock_identity(identity_mock)
+            .mock_federation(federation_mock);
+        let mut cfg = Config::default();
+        cfg.mapping.cluster_salt = Some(SecretString::from("test-salt-for-hmac-derivation!"));
+        let state = get_mocked_state(Some(cfg), Some(provider)).await;
+
+        let service = MappingService::from_driver(mock_backend);
+
+        let mut claims = HashMap::new();
+        claims.insert("sub".to_string(), vec!["ext-1".to_string()]);
+
+        let result = service
+            .authenticate_by_mapping(
+                &ExecutionContext::internal(&state),
+                &MappingAuthRequest {
+                    domain_id: Some("domain-1".to_string()),
+                    source: source.clone(),
+                    unique_workload_id: "ext-1".to_string(),
+                    claims,
+                    rule_name: None,
+                },
+            )
+            .await
+            .unwrap();
+
+        let AuthenticationContext::Oidc { .. } = result.context else {
+            panic!("Expected Oidc authentication context");
+        };
+        let IdentityInfo::User(user_identity) = result.principal.identity else {
+            panic!("Expected a User principal");
+        };
+        assert_eq!(user_identity.user_id, scim_user_id);
+    }
+
+    #[tokio::test]
+    async fn test_authenticate_local_creates_new_federated_user_with_deterministic_id() {
+        // ADR 0024 dedup fix, reverse ordering: when federation JIT-
+        // provisions a brand-new user (no SCIM-provisioned row yet), the
+        // `create_user` call must still receive the same deterministic id
+        // `generate_public_id(domain_id, sub, "user")` would compute — so
+        // that a *later* SCIM provisioning of the same person (matching
+        // `externalId` == this `sub`) converges on this same row instead of
+        // creating a duplicate.
+        let mut mock_backend = MockMappingBackend::new();
+
+        let source = IdentitySource::Federation {
+            idp_id: "okta".to_string(),
+        };
+
+        let rules = vec![MappingRule {
+            name: "matching-rule".to_string(),
+            description: None,
+            r#match: MatchCriteria::AllOf(vec![MatchCondition::Condition(
+                ClaimCondition::Equals {
+                    claim: "sub".to_string(),
+                    value: Value::String("ext-2".to_string()),
+                },
+            )]),
+            identity: IdentityBinding {
+                identity_mode: Some(IdentityMode::Local),
+                user_name: "jit-user".to_string(),
+                user_id: None,
+                user_domain_id: None,
+                is_system: false,
+            },
+            authorizations: vec![],
+            groups: vec![],
+        }];
+
+        let matching_ruleset = MappingRuleSet {
+            mapping_id: "test-mapping".to_string(),
+            domain_id: Some("domain-1".to_string()),
+            source: source.clone(),
+            domain_resolution_mode: DomainResolutionMode::Fixed,
+            enabled: true,
+            rules,
+            ruleset_version: 1,
+        };
+
+        mock_backend
+            .expect_get_ruleset_by_source()
+            .returning(move |_, _, _| Ok(Some(matching_ruleset.clone())));
+
+        let expected_id = crate::identity::generate_public_id("domain-1", "ext-2", "user");
+        let expected_id_clone = expected_id.clone();
+
+        let mut federation_mock = crate::federation::MockFederationProvider::default();
+        federation_mock
+            .expect_get_identity_provider()
+            .returning(|_, id| {
+                Ok(Some(
+                    openstack_keystone_core_types::federation::IdentityProviderBuilder::default()
+                        .id(id)
+                        .name("okta")
+                        .enabled(true)
+                        .build()
+                        .unwrap(),
+                ))
+            });
+
+        let mut identity_mock = crate::identity::MockIdentityProvider::default();
+        // No SCIM-provisioned user exists yet at the deterministic id.
+        identity_mock.expect_get_user().returning(|_, _| Ok(None));
+        identity_mock
+            .expect_find_federated_user()
+            .returning(|_, _, _| Ok(None));
+        identity_mock.expect_create_user().returning(move |_, req| {
+            assert_eq!(req.id.as_deref(), Some(expected_id_clone.as_str()));
+            Ok(
+                openstack_keystone_core_types::identity::UserResponseBuilder::default()
+                    .id(req.id.clone().unwrap())
+                    .domain_id(req.domain_id.clone())
+                    .name(req.name.clone())
+                    .enabled(true)
+                    .build()
+                    .unwrap(),
+            )
+        });
+        identity_mock
+            .expect_list_groups_of_user()
+            .returning(|_, _| Ok(vec![]));
+        identity_mock
+            .expect_list_groups()
+            .returning(|_, _| Ok(vec![]));
+
+        let provider = crate::provider::Provider::mocked_builder()
+            .mock_identity(identity_mock)
+            .mock_federation(federation_mock);
+        let mut cfg = Config::default();
+        cfg.mapping.cluster_salt = Some(SecretString::from("test-salt-for-hmac-derivation!"));
+        let state = get_mocked_state(Some(cfg), Some(provider)).await;
+
+        let service = MappingService::from_driver(mock_backend);
+
+        let mut claims = HashMap::new();
+        claims.insert("sub".to_string(), vec!["ext-2".to_string()]);
+
+        let result = service
+            .authenticate_by_mapping(
+                &ExecutionContext::internal(&state),
+                &MappingAuthRequest {
+                    domain_id: Some("domain-1".to_string()),
+                    source: source.clone(),
+                    unique_workload_id: "ext-2".to_string(),
+                    claims,
+                    rule_name: None,
+                },
+            )
+            .await
+            .unwrap();
+
+        let IdentityInfo::User(user_identity) = result.principal.identity else {
+            panic!("Expected a User principal");
+        };
+        assert_eq!(user_identity.user_id, expected_id);
     }
 
     #[test]

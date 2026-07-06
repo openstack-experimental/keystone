@@ -587,6 +587,13 @@ mod identity {
                 user_id: &'a str,
             ) -> Result<String, IdentityProviderError>;
 
+            async fn find_user_by_name_ci<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                domain_id: &'a str,
+                name: &'a str,
+            ) -> Result<Option<String>, IdentityProviderError>;
+
             async fn find_federated_user<'a>(
                 &self,
                 ctx: &ExecutionContext<'a>,
@@ -1119,6 +1126,107 @@ mod token {
     }
 }
 pub use token::MockTokenProvider;
+
+mod scim_realm {
+    use super::*;
+
+    use openstack_keystone_core_types::scim::*;
+
+    use crate::scim_realm::{ScimRealmApi, error::ScimRealmProviderError};
+
+    mock! {
+        pub ScimRealmProvider {}
+
+        #[async_trait]
+        impl ScimRealmApi for ScimRealmProvider {
+            async fn create_realm<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                data: ScimRealmResourceCreate,
+            ) -> Result<ScimRealmResource, ScimRealmProviderError>;
+
+            async fn get_realm<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                domain_id: &'a str,
+                provider_id: &'a str,
+            ) -> Result<Option<ScimRealmResource>, ScimRealmProviderError>;
+
+            async fn list_realms<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                params: &ScimRealmResourceListParameters,
+            ) -> Result<Vec<ScimRealmResource>, ScimRealmProviderError>;
+
+            async fn update_realm<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                domain_id: &'a str,
+                provider_id: &'a str,
+                data: ScimRealmResourceUpdate,
+            ) -> Result<ScimRealmResource, ScimRealmProviderError>;
+        }
+    }
+}
+pub use scim_realm::MockScimRealmProvider;
+
+mod scim_resource {
+    use super::*;
+
+    use openstack_keystone_core_types::scim::*;
+
+    use crate::scim_resource::{ScimResourceApi, error::ScimResourceProviderError};
+
+    mock! {
+        pub ScimResourceProvider {}
+
+        #[async_trait]
+        impl ScimResourceApi for ScimResourceProvider {
+            async fn create_index<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                data: ScimResourceIndexCreate,
+            ) -> Result<ScimResourceIndex, ScimResourceProviderError>;
+
+            async fn get_index<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                domain_id: &'a str,
+                provider_id: &'a str,
+                resource_type: ScimResourceType,
+                keystone_id: &'a str,
+            ) -> Result<Option<ScimResourceIndex>, ScimResourceProviderError>;
+
+            async fn get_index_by_external_id<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                domain_id: &'a str,
+                provider_id: &'a str,
+                resource_type: ScimResourceType,
+                external_id: &'a str,
+            ) -> Result<Option<ScimResourceIndex>, ScimResourceProviderError>;
+
+            async fn list_index<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                domain_id: &'a str,
+                provider_id: &'a str,
+                resource_type: ScimResourceType,
+            ) -> Result<Vec<ScimResourceIndex>, ScimResourceProviderError>;
+
+            async fn update_index<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                domain_id: &'a str,
+                provider_id: &'a str,
+                resource_type: ScimResourceType,
+                keystone_id: &'a str,
+                data: ScimResourceIndexUpdate,
+            ) -> Result<ScimResourceIndex, ScimResourceProviderError>;
+        }
+    }
+}
+pub use scim_resource::MockScimResourceProvider;
 
 mod trust {
     use super::*;

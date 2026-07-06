@@ -158,6 +158,11 @@ pub enum EventPayload {
         id: String,
     },
 
+    // SCIM v2 provisioning (ADR 0024)
+    ScimRealm {
+        provider_id: String,
+    },
+
     // Trusts
     Trust {
         id: String,

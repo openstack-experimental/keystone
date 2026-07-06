@@ -62,105 +62,215 @@ where
     #[tracing::instrument(skip(state), err)]
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
         let state = ServiceState::from_ref(state);
-
-        // The SCIM route is domain-scoped: `/SCIM/v2/{domain_id}/...`. The
-        // key lookup keyspace is partitioned by domain_id (ADR 0021 §2.A),
-        // so it must be known before any storage access.
-        let Path(domain_id) = Path::<String>::from_request_parts(parts, &state)
-            .await
-            .map_err(|_| KeystoneApiError::from(AuthenticationError::Unauthorized))?;
-
-        let peer_ip = parts
-            .extensions
-            .get::<ConnectInfo<SocketAddr>>()
-            .map(|ConnectInfo(addr)| addr.ip());
-
-        let presented_token = parts
-            .headers
-            .get(axum::http::header::AUTHORIZATION)
-            .and_then(|h| h.to_str().ok())
-            .and_then(|h| h.strip_prefix("Bearer "))
-            .ok_or(KeystoneApiError::UnauthorizedNoContext)?;
-
-        let cfg = state.config_manager.config.read().await.api_key.clone();
-
-        // Step 1: format check + hash-based rate limiting (ADR 0021 §3 Step 1).
-        let parsed = match token::parse(presented_token) {
-            Ok(parsed) => parsed,
-            Err(_) => {
-                // No valid entropy: key the limiter on source IP instead, so
-                // brute-force garbage traffic doesn't bypass rate limiting by
-                // sending malformed tokens.
-                if let Some(ip) = peer_ip
-                    && state
-                        .api_key_rate_limiter
-                        .check_key(&ip.to_string())
-                        .is_err()
-                {
-                    return Err(KeystoneApiError::TooManyRequests);
-                }
-                return Err(AuthenticationError::Unauthorized.into());
-            }
-        };
-
-        if state
-            .api_key_rate_limiter
-            .check_key(&parsed.lookup_hash)
-            .is_err()
-        {
-            return Err(KeystoneApiError::TooManyRequests);
-        }
-
-        // Step 2: database lookup & IP allowlisting.
-        use secrecy::ExposeSecret;
-        let entropy = parsed.entropy.expose_secret();
-
-        let resource = state
-            .provider
-            .get_api_key_provider()
-            .get_by_lookup_hash(&state, &domain_id, &parsed.lookup_hash)
-            .await
-            .map_err(|e| {
-                warn!(error = %e, "api_key lookup failed");
-                AuthenticationError::Unauthorized
-            })?;
-
-        let Some(resource) = resource else {
-            // Dummy hash: burn the same Argon2id cost as a real verification
-            // to prevent timing-based enumeration of valid lookup hashes
-            // (ADR 0021 Invariant 7).
-            let _ = crypto::generate_dummy_hash(&cfg).await;
-            return Err(AuthenticationError::Unauthorized.into());
-        };
-
-        let now = chrono::Utc::now().timestamp();
-        if !resource.is_active(now) {
-            let _ = crypto::generate_dummy_hash(&cfg).await;
-            return Err(AuthenticationError::Unauthorized.into());
-        }
-
-        let effective_ip = resolve_client_ip(&parts.headers, peer_ip, &cfg.trusted_proxies);
-        if !ip_allowed(effective_ip, &resource.allowed_ips) {
-            return Err(AuthenticationError::Unauthorized.into());
-        }
-
-        // Step 3: cryptographic verification & lazy re-hash.
-        let verified = crypto::verify_secret(entropy, &resource.secret_hash)
-            .await
-            .map_err(|e| {
-                warn!(error = %e, "api_key argon2 verification errored");
-                AuthenticationError::Unauthorized
-            })?;
-        if !verified {
-            return Err(AuthenticationError::Unauthorized.into());
-        }
-
-        spawn_lazy_rehash(&state, &resource, entropy.to_string(), cfg.clone());
-        spawn_last_used_update(&state, &resource, now);
+        let (_domain_id, resource) = resolve_verified_api_client(parts, &state).await?;
 
         // Step 4: ephemeral context hydration (anti-bleed scoping).
         hydrate_ephemeral_context(&state, &resource).await
     }
+}
+
+/// Realm-aware ephemeral security context, additive to [`ApiKeyAuth`] (ADR
+/// 0024 §2.C amendment to ADR 0021 §3 Step 4).
+///
+/// Used exclusively by the `/SCIM/v2` resource handlers (Users/Groups)
+/// introduced by ADR 0024 — never by the diagnostic `whoami` route, which
+/// keeps using the plain [`ApiKeyAuth`] extractor and accepts any scope.
+/// Enforces two additional invariants beyond [`ApiKeyAuth`]:
+///
+/// 1. **Domain-only scope** (ADR 0024 §2.C): the resolved authorization must be
+///    `ScopeInfo::Domain` matching the path's `{domain_id}` — SCIM resource
+///    provisioning is a domain-level operation, never project-scoped.
+/// 2. **Realm Activation Gate** (ADR 0024 §2.B): `data:scim_realm:v1:
+///    <domain_id>:<provider_id>` must exist and be `enabled`, checked before
+///    any User/Group storage access.
+#[derive(Debug, Clone)]
+pub struct ScimRealmAuth {
+    /// The hydrated ephemeral security context (same as [`ApiKeyAuth`]).
+    pub ctx: ValidatedSecurityContext,
+    /// The realm coordinate the request authenticated under.
+    pub realm: ScimRealmContext,
+}
+
+impl Deref for ScimRealmAuth {
+    type Target = ValidatedSecurityContext;
+
+    fn deref(&self) -> &Self::Target {
+        &self.ctx
+    }
+}
+
+/// The `(domain_id, provider_id)` coordinate a [`ScimRealmAuth`] resolved
+/// under (ADR 0024 §2.C).
+#[derive(Debug, Clone)]
+pub struct ScimRealmContext {
+    pub domain_id: String,
+    pub provider_id: String,
+}
+
+impl<S> FromRequestParts<S> for ScimRealmAuth
+where
+    ServiceState: FromRef<S>,
+    S: Send + Sync,
+{
+    type Rejection = KeystoneApiError;
+
+    #[tracing::instrument(skip(state), err)]
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        let state = ServiceState::from_ref(state);
+        let (domain_id, resource) = resolve_verified_api_client(parts, &state).await?;
+        let provider_id = resource.provider_id.clone();
+
+        let ApiKeyAuth(ctx) = hydrate_ephemeral_context(&state, &resource).await?;
+
+        // Invariant 1: Domain-only scope (ADR 0024 §2.C).
+        if !is_domain_scoped(&ctx, &domain_id) {
+            return Err(AuthenticationError::Unauthorized.into());
+        }
+
+        // Invariant 2: Realm Activation Gate (ADR 0024 §2.B). Checked before
+        // any User/Group storage access.
+        let exec = ExecutionContext::internal(&state);
+        let realm = state
+            .provider
+            .get_scim_realm_provider()
+            .get_realm(&exec, &domain_id, &provider_id)
+            .await
+            .map_err(|e| {
+                warn!(error = %e, "scim_realm lookup failed");
+                AuthenticationError::Unauthorized
+            })?;
+        match realm {
+            Some(realm) if realm.enabled => {}
+            _ => return Err(AuthenticationError::Unauthorized.into()),
+        }
+
+        Ok(ScimRealmAuth {
+            ctx,
+            realm: ScimRealmContext {
+                domain_id,
+                provider_id,
+            },
+        })
+    }
+}
+
+/// Steps 1–3 of the API Key ingress pipeline (ADR 0021 §3): format check +
+/// rate limiting, database lookup + IP allowlisting, cryptographic
+/// verification. Shared by [`ApiKeyAuth`] and [`ScimRealmAuth`] so both
+/// extractors authenticate identically before diverging on scope/realm
+/// policy (ADR 0024 §2.C).
+async fn resolve_verified_api_client(
+    parts: &mut Parts,
+    state: &ServiceState,
+) -> Result<(String, ApiClientResource), KeystoneApiError> {
+    // The SCIM route is domain-scoped: `/SCIM/v2/{domain_id}/...`. The
+    // key lookup keyspace is partitioned by domain_id (ADR 0021 §2.A),
+    // so it must be known before any storage access.
+    //
+    // Extracted as a map rather than `Path<String>`: axum's `Path<T>` for a
+    // scalar `T` requires the *entire* matched route (including nested
+    // routers) to carry exactly one dynamic segment. ADR 0024's resource
+    // routes (e.g. `/{domain_id}/Users/{id}`) have two, which would
+    // otherwise make this extraction fail with `WrongNumberOfParameters`
+    // for every show/update/delete request.
+    let Path(params) =
+        Path::<std::collections::HashMap<String, String>>::from_request_parts(parts, state)
+            .await
+            .map_err(|_| KeystoneApiError::from(AuthenticationError::Unauthorized))?;
+    let domain_id = params
+        .get("domain_id")
+        .ok_or(KeystoneApiError::from(AuthenticationError::Unauthorized))?
+        .clone();
+
+    let peer_ip = parts
+        .extensions
+        .get::<ConnectInfo<SocketAddr>>()
+        .map(|ConnectInfo(addr)| addr.ip());
+
+    let presented_token = parts
+        .headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|h| h.to_str().ok())
+        .and_then(|h| h.strip_prefix("Bearer "))
+        .ok_or(KeystoneApiError::UnauthorizedNoContext)?;
+
+    let cfg = state.config_manager.config.read().await.api_key.clone();
+
+    // Step 1: format check + hash-based rate limiting (ADR 0021 §3 Step 1).
+    let parsed = match token::parse(presented_token) {
+        Ok(parsed) => parsed,
+        Err(_) => {
+            // No valid entropy: key the limiter on source IP instead, so
+            // brute-force garbage traffic doesn't bypass rate limiting by
+            // sending malformed tokens.
+            if let Some(ip) = peer_ip
+                && state
+                    .api_key_rate_limiter
+                    .check_key(&ip.to_string())
+                    .is_err()
+            {
+                return Err(KeystoneApiError::TooManyRequests);
+            }
+            return Err(AuthenticationError::Unauthorized.into());
+        }
+    };
+
+    if state
+        .api_key_rate_limiter
+        .check_key(&parsed.lookup_hash)
+        .is_err()
+    {
+        return Err(KeystoneApiError::TooManyRequests);
+    }
+
+    // Step 2: database lookup & IP allowlisting.
+    use secrecy::ExposeSecret;
+    let entropy = parsed.entropy.expose_secret();
+
+    let resource = state
+        .provider
+        .get_api_key_provider()
+        .get_by_lookup_hash(state, &domain_id, &parsed.lookup_hash)
+        .await
+        .map_err(|e| {
+            warn!(error = %e, "api_key lookup failed");
+            AuthenticationError::Unauthorized
+        })?;
+
+    let Some(resource) = resource else {
+        // Dummy hash: burn the same Argon2id cost as a real verification
+        // to prevent timing-based enumeration of valid lookup hashes
+        // (ADR 0021 Invariant 7).
+        let _ = crypto::generate_dummy_hash(&cfg).await;
+        return Err(AuthenticationError::Unauthorized.into());
+    };
+
+    let now = chrono::Utc::now().timestamp();
+    if !resource.is_active(now) {
+        let _ = crypto::generate_dummy_hash(&cfg).await;
+        return Err(AuthenticationError::Unauthorized.into());
+    }
+
+    let effective_ip = resolve_client_ip(&parts.headers, peer_ip, &cfg.trusted_proxies);
+    if !ip_allowed(effective_ip, &resource.allowed_ips) {
+        return Err(AuthenticationError::Unauthorized.into());
+    }
+
+    // Step 3: cryptographic verification & lazy re-hash.
+    let verified = crypto::verify_secret(entropy, &resource.secret_hash)
+        .await
+        .map_err(|e| {
+            warn!(error = %e, "api_key argon2 verification errored");
+            AuthenticationError::Unauthorized
+        })?;
+    if !verified {
+        return Err(AuthenticationError::Unauthorized.into());
+    }
+
+    spawn_lazy_rehash(state, &resource, entropy.to_string(), cfg.clone());
+    spawn_last_used_update(state, &resource, now);
+
+    Ok((domain_id, resource))
 }
 
 /// Fire-and-forget re-hash of the stored secret if its PHC parameters fall
@@ -276,6 +386,22 @@ fn ip_allowed(client_ip: Option<IpAddr>, allowed_ips: &Option<Vec<String>>) -> b
         .iter()
         .filter_map(|c| c.parse::<IpNet>().ok())
         .any(|net| net.contains(&ip))
+}
+
+/// Whether a hydrated [`ValidatedSecurityContext`] resolved to exactly
+/// `ScopeInfo::Domain` matching `domain_id` (ADR 0024 §2.C Domain-only scope
+/// restriction). A missing authorization, or any other scope variant
+/// (Project/System/Unscoped/TrustProject), is never domain-scoped.
+fn is_domain_scoped(ctx: &ValidatedSecurityContext, domain_id: &str) -> bool {
+    ctx.inner()
+        .authorization()
+        .map(|authz| {
+            matches!(
+                &authz.scope,
+                openstack_keystone_core_types::auth::ScopeInfo::Domain(d) if d.id == domain_id
+            )
+        })
+        .unwrap_or(false)
 }
 
 /// Evaluate the API Key's bound mapping ruleset and hydrate an
@@ -395,6 +521,90 @@ async fn hydrate_ephemeral_context(
 mod tests {
     use super::*;
     use axum::http::HeaderMap;
+
+    use openstack_keystone_core_types::auth::{
+        AuthenticationContext, AuthzInfoBuilder, IdentityInfo, PrincipalInfo, ScopeInfo,
+        SecurityContext, UserIdentityInfoBuilder,
+    };
+    use openstack_keystone_core_types::resource::Domain;
+
+    fn vsc_with_scope(scope: ScopeInfo) -> ValidatedSecurityContext {
+        let user = UserIdentityInfoBuilder::default()
+            .user_id("uid".to_string())
+            .build()
+            .unwrap();
+        let authz = AuthzInfoBuilder::default()
+            .scope(scope)
+            .roles(Vec::new())
+            .build()
+            .unwrap();
+        let sc = SecurityContext::test_build()
+            .authentication_context(AuthenticationContext::Password)
+            .principal(PrincipalInfo {
+                identity: IdentityInfo::User(user),
+            })
+            .authorization(authz)
+            .build();
+        ValidatedSecurityContext::test_new(sc)
+    }
+
+    // ---------------------------------------------------------------------
+    // is_domain_scoped (ADR 0024 §2.C Domain-only scope restriction)
+    // ---------------------------------------------------------------------
+
+    #[test]
+    fn domain_scope_matching_domain_id_is_domain_scoped() {
+        let vsc = vsc_with_scope(ScopeInfo::Domain(Domain {
+            id: "domain-1".to_string(),
+            name: String::new(),
+            description: None,
+            enabled: true,
+            extra: Default::default(),
+        }));
+        assert!(is_domain_scoped(&vsc, "domain-1"));
+    }
+
+    #[test]
+    fn domain_scope_mismatched_domain_id_is_not_domain_scoped() {
+        let vsc = vsc_with_scope(ScopeInfo::Domain(Domain {
+            id: "domain-1".to_string(),
+            name: String::new(),
+            description: None,
+            enabled: true,
+            extra: Default::default(),
+        }));
+        assert!(!is_domain_scoped(&vsc, "domain-2"));
+    }
+
+    #[test]
+    fn project_scope_is_never_domain_scoped() {
+        let vsc = vsc_with_scope(ScopeInfo::Project {
+            project: openstack_keystone_core_types::resource::Project {
+                id: "project-1".to_string(),
+                domain_id: "domain-1".to_string(),
+                name: String::new(),
+                description: None,
+                enabled: true,
+                is_domain: false,
+                parent_id: None,
+                extra: Default::default(),
+            },
+            project_domain: Domain {
+                id: "domain-1".to_string(),
+                name: String::new(),
+                description: None,
+                enabled: true,
+                extra: Default::default(),
+            },
+        });
+        assert!(!is_domain_scoped(&vsc, "domain-1"));
+    }
+
+    #[test]
+    fn unscoped_is_never_domain_scoped() {
+        let vsc = vsc_with_scope(ScopeInfo::Unscoped);
+        assert!(!is_domain_scoped(&vsc, "domain-1"));
+    }
 
     fn headers_with_xff(xff: &str) -> HeaderMap {
         let mut headers = HeaderMap::new();

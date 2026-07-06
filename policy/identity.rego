@@ -97,6 +97,10 @@ any_domain_id := input.target.domain.id if {
 	input.target.domain.id
 }
 
+any_domain_id := input.target.scim_realm.domain_id if {
+	input.target.scim_realm.domain_id
+}
+
 any_domain_id := input.existing.instance.domain_id if {
 	input.existing.instance.domain_id
 }
@@ -127,6 +131,22 @@ any_domain_id := input.existing.token.domain_id if {
 
 any_domain_id := input.existing.domain.id if {
 	input.existing.domain.id
+}
+
+any_domain_id := input.existing.scim_realm.domain_id if {
+	input.existing.scim_realm.domain_id
+}
+
+any_domain_id := input.target.scim_realm.domain_id if {
+	input.target.scim_realm.domain_id
+}
+
+any_domain_id := input.existing.user.domain_id if {
+	input.existing.user.domain_id
+}
+
+any_domain_id := input.target.user.domain_id if {
+	input.target.user.domain_id
 }
 
 project_domain_matches_domain_scope if {

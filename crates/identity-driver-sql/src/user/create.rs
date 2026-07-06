@@ -26,11 +26,13 @@ use openstack_keystone_core_types::identity::*;
 use crate::entity::{federated_user as db_federated_user, user as db_user};
 use crate::federated_user::MergeFederatedUserData;
 use crate::local_user::MergeLocalUserData;
+use crate::nonlocal_user::MergeNonlocalUserData;
 use crate::password::MergePasswordData;
 use crate::user::MergeUserData;
 
 use crate::federated_user;
 use crate::local_user;
+use crate::nonlocal_user;
 use crate::password;
 use crate::user_option;
 
@@ -181,10 +183,15 @@ pub async fn create(
             }
         }
         response_builder.merge_federated_user_data(federated_entities);
+    } else if user.user_type == UserType::NonLocal {
+        if user.password.is_some() {
+            return Err(IdentityProviderError::Conflict(
+                "password cannot be set on a nonlocal (externally managed) user".to_string(),
+            ));
+        }
+        let nonlocal_user = nonlocal_user::create(&txn, &main_user, user.name.clone()).await?;
+        response_builder.merge_nonlocal_user_data(&nonlocal_user);
     } else {
-        // When the user is not a federated one we can only assume it is a local user.
-        // For creating nonlocal user or service account dedicated API should be
-        // used.
         let local_user = local_user::create(conf, &txn, &main_user, &user).await?;
         response_builder.merge_local_user_data(&local_user);
 
@@ -221,7 +228,8 @@ mod tests {
 
     use crate::{
         federated_user::tests::get_federated_user_mock, local_user::tests::get_local_user_mock,
-        password::tests::get_password_mock, user::tests::get_user_mock,
+        nonlocal_user::tests::get_nonlocal_user_mock, password::tests::get_password_mock,
+        user::tests::get_user_mock,
     };
 
     #[test]
@@ -428,5 +436,41 @@ mod tests {
         let sot = create(&Config::default(), &db, req).await.unwrap();
         assert_eq!(sot.name, "foo_domain");
         assert_eq!(sot.options, user_opts);
+    }
+
+    #[tokio::test]
+    async fn test_create_nonlocal() {
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([vec![get_user_mock("1")]])
+            .append_query_results([vec![get_nonlocal_user_mock("1")]])
+            .into_connection();
+        let req = UserCreateBuilder::default()
+            .domain_id("did")
+            .id("1")
+            .name("foo")
+            .enabled(true)
+            .user_type(UserType::NonLocal)
+            .build()
+            .unwrap();
+        let sot = create(&Config::default(), &db, req).await.unwrap();
+        assert_eq!(sot.name, "foo");
+    }
+
+    #[tokio::test]
+    async fn test_create_nonlocal_rejects_password() {
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([vec![get_user_mock("1")]])
+            .into_connection();
+        let req = UserCreateBuilder::default()
+            .domain_id("did")
+            .id("1")
+            .name("foo")
+            .enabled(true)
+            .user_type(UserType::NonLocal)
+            .password("hunter2")
+            .build()
+            .unwrap();
+        let result = create(&Config::default(), &db, req).await;
+        assert!(matches!(result, Err(IdentityProviderError::Conflict(_))));
     }
 }

@@ -456,11 +456,14 @@ accounts — merely by guessing or enumerating a Keystone user ID.
 
 ## 8. Authorization & OPA Policies
 
-Realm CRUD (`POST/GET/PATCH /v4/scim-realms`) reuses the `DomainManager` role
-established in ADR 0021 §5.A (never `DomainAdmin`), under new policies named per
-the slash-separated convention actually used by every implemented policy call
-site in `crates/keystone/src/api/v4/**` and the corresponding `.rego` packages
-(e.g. `identity/user/create`) — **not** the colon-separated form
+Realm CRUD (`POST/GET/PATCH /v4/scim-realms`) is invoked by a
+Fernet-authenticated human operator, not a SCIM API key, so its authorization
+reuses the actual, pre-existing `manager` role (this codebase's realization of
+"DomainManager" — see ADR 0021 §5.A) or `admin`/`is_admin` (never
+`DomainAdmin`), under new policies named per the slash-separated convention
+actually used by every implemented policy call site in
+`crates/keystone/src/api/v4/**` and the corresponding `.rego` packages (e.g.
+`identity/user/create`) — **not** the colon-separated form
 `identity:api_key:create` that ADR 0021 §5.A used only in prose and was never
 implemented:
 
@@ -468,10 +471,17 @@ implemented:
   `identity/scim_realm/show` / `identity/scim_realm/disable`
 
 SCIM resource CRUD authorization is enforced exactly like any other v4 endpoint
-per ADR 0002: the ephemeral `ValidatedSecurityContext`'s UME-resolved roles (ADR
-0020/0021 — an operator maps a role such as `ScimProvisioner` onto the realm's
-`provider_id` in its `MappingRuleSet`, the same way any other API-key
-authorization is granted) are evaluated against:
+per ADR 0002, but with one important distinction from realm CRUD above: SCIM
+resource requests are authenticated exclusively via API-key ingress (ADR
+0021), and `ApiClientResource` carries **no Role field and no
+RoleAssignment at all**. The `roles` evaluated by these policies are therefore
+never RBAC-assigned — they are entirely the `Authorization::Domain{roles}`
+value produced by evaluating the realm's own `MappingRuleSet` (ADR 0020 UME /
+ADR 0021 §3 Step 4 `hydrate_ephemeral_context`) at request time. An operator
+grants access by authoring a mapping rule whose output includes the role
+string `manager`, `admin`, or `scim_provisioner` onto the realm's
+`provider_id` — not by assigning a Keystone `Role` to anything, since no such
+assignment surface exists for API keys. These policies are evaluated against:
 
 - `identity/scim/user/create` / `identity/scim/user/list` /
   `identity/scim/user/show` / `identity/scim/user/update` /
@@ -483,6 +493,16 @@ authorization is granted) are evaluated against:
 **Note for ADR 0021:** its §5.A policy names should be corrected to the same
 slash convention in a future revision of that ADR; this ADR does not attempt to
 fix 0021 retroactively, only avoids repeating its naming inconsistency.
+
+**Role-existence enforcement (ADR 0020 §7.3):** the `manager`/`admin`/
+`scim_provisioner` role strings above are only meaningful if a `Role` with
+that exact name actually exists — the naming-drift bug this ADR originally
+shipped with (invented `SystemAdmin`/`DomainManager` literals with no
+backing `Role`, silently producing an unreachable authorization) is now
+caught structurally: mapping rule create/update rejects any `RoleRef`
+whose `id` doesn't resolve against the `Role` store with `422
+Unprocessable Entity` (`MappingProviderError::RoleNotFound`), rather than
+relying on this ADR's prose staying in sync with the rego by hand.
 
 The §3.C ownership-fencing check happens **before** OPA evaluation and is not a
 substitute for it — a realm's own credential may still lack a role authorizing a
