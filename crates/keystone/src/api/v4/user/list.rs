@@ -197,6 +197,41 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_list_qp_type() {
+        let vsc = test_fixture_scoped();
+        let mut identity_mock = MockIdentityProvider::default();
+        identity_mock
+            .expect_list_users()
+            .withf(|_, qp: &UserListParameters| qp.user_type == Some(UserType::Local))
+            .returning(|_, _| Ok(Vec::new()));
+
+        let state = get_mocked_state(
+            Provider::mocked_builder().mock_identity(identity_mock),
+            true,
+            None,
+        )
+        .await;
+
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        let response = api
+            .as_service()
+            .oneshot(
+                Request::builder()
+                    .uri("/?type=local")
+                    .extension(vsc)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
     async fn test_list_unauth() {
         let state = get_mocked_state(Provider::mocked_builder(), false, None).await;
 
