@@ -30,3 +30,5 @@ mod oauth2_client_conv;
 mod scim_realm_conv;
 #[cfg(feature = "conv")]
 mod token_restriction_conv;
+#[cfg(feature = "conv")]
+mod user_conv;
