@@ -36,6 +36,7 @@
     - [Audit](adr/0023-audit.md)
     - [SCIM v2 Resource Provisioning](adr/0024-scim-v2-provisioning.md)
     - [Dynamic Auth Plugins](adr/0025-dynamic-auth-plugins.md)
+    - [OAuth2 / OIDC Provider](adr/0026-oauth2-oidc-provider.md)
   - [Distributed Encrypted Storage](raft_storage.md)
 - [Policy enforcement](policy.md)
 - [Security model](security.md)
