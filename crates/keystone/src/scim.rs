@@ -29,8 +29,12 @@ use serde::Serialize;
 use openstack_keystone_core::api::api_key_auth::ApiKeyAuth;
 use openstack_keystone_core::keystone::ServiceState;
 
+mod discovery;
 pub mod error;
+pub mod etag;
+pub mod filter;
 mod group;
+pub mod patch;
 pub mod types;
 mod user;
 
@@ -58,4 +62,5 @@ pub fn router() -> Router<ServiceState> {
         .route("/{domain_id}/whoami", get(whoami))
         .nest("/{domain_id}/Users", user::router())
         .nest("/{domain_id}/Groups", group::router())
+        .nest("/{domain_id}", discovery::router())
 }

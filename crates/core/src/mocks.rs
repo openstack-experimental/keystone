@@ -1242,6 +1242,7 @@ mod scim_resource {
                 resource_type: ScimResourceType,
                 keystone_id: &'a str,
                 data: ScimResourceIndexUpdate,
+                expected_version: Option<u64>,
             ) -> Result<ScimResourceIndex, ScimResourceProviderError>;
         }
     }

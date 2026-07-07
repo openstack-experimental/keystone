@@ -449,6 +449,7 @@ impl RaftBackend {
     }
 
     #[cfg_attr(not(test), allow(dead_code))]
+    #[allow(clippy::too_many_arguments)]
     async fn update_resource_impl(
         &self,
         storage: &dyn StorageApi,
@@ -457,6 +458,7 @@ impl RaftBackend {
         resource_type: ScimResourceType,
         keystone_id: &str,
         data: ScimResourceIndexUpdate,
+        expected_version: Option<u64>,
     ) -> Result<ScimResourceIndex, StoreError> {
         let key = self.get_resource_key_name(domain_id, provider_id, resource_type, keystone_id);
         let curr: StoreDataEnvelope<ScimResourceIndex> = storage
@@ -466,6 +468,20 @@ impl RaftBackend {
                 source: std::io::Error::new(std::io::ErrorKind::NotFound, "not found"),
             })?
             .try_deserialize()?;
+
+        // ADR 0024 §5.E: reject up front if the caller's `If-Match` version
+        // is already stale. This alone doesn't close the race (a concurrent
+        // writer could still land between this check and the CAS write
+        // below) -- the `set_value` violation check after the write is what
+        // actually closes it; this is just the fast, common-case rejection.
+        if let Some(expected) = expected_version
+            && curr.data.version != expected
+        {
+            return Err(StoreError::Conflict {
+                subject: key,
+                description: "ETag precondition failed: version mismatch".to_string(),
+            });
+        }
 
         // Re-claim `externalId` before persisting, if it changed: release
         // the old claim (if any) and atomically claim the new one so two
@@ -507,9 +523,9 @@ impl RaftBackend {
 
         let new = curr.data.with_update(data, Utc::now().timestamp());
         let new_meta = curr.metadata.new_revision();
-        storage
+        let response = storage
             .set_value(
-                key,
+                key.clone(),
                 StoreDataEnvelope {
                     data: rmp_serde::to_vec(&new)?,
                     metadata: new_meta,
@@ -518,6 +534,19 @@ impl RaftBackend {
                 Some(curr.metadata.revision),
             )
             .await?;
+        // `set_value`'s CAS mismatch surfaces as a `violations` entry on an
+        // `Ok` response, not an `Err` -- a concurrent writer that landed
+        // between our read above and this write must be treated the same as
+        // the up-front `expected_version` check, closing the race window
+        // ADR 0024 §5.E requires (this is what actually decides the race;
+        // the up-front check above only rejects the common, already-stale
+        // case cheaply).
+        if !response.violations.is_empty() {
+            return Err(StoreError::Conflict {
+                subject: key,
+                description: "ETag precondition failed: version mismatch".to_string(),
+            });
+        }
         Ok(new)
     }
 }
@@ -606,6 +635,7 @@ impl ScimResourceBackend for RaftBackend {
         resource_type: ScimResourceType,
         keystone_id: &'a str,
         data: ScimResourceIndexUpdate,
+        expected_version: Option<u64>,
     ) -> Result<ScimResourceIndex, ScimResourceProviderError> {
         let raft = state
             .storage
@@ -619,10 +649,14 @@ impl ScimResourceBackend for RaftBackend {
                 resource_type,
                 keystone_id,
                 data,
+                expected_version,
             )
             .await
         {
             Ok(obj) => Ok(obj),
+            Err(StoreError::Conflict { description, .. }) if description.contains("ETag") => {
+                Err(ScimResourceProviderError::VersionMismatch(description))
+            }
             Err(StoreError::Conflict { description, .. }) => {
                 Err(ScimResourceProviderError::Conflict(description))
             }
@@ -1165,11 +1199,89 @@ mod tests {
                     external_id: None,
                     deprovisioned_at: Some(Some(12345)),
                 },
+                None,
             )
             .await
             .unwrap();
         assert_eq!(updated.deprovisioned_at, Some(12345));
         assert_eq!(updated.version, 1);
+    }
+
+    #[tokio::test]
+    async fn test_update_resource_matching_expected_version_succeeds() {
+        let backend = RaftBackend::default();
+        let storage = MockStorage::default();
+
+        backend
+            .create_resource_impl(
+                &storage,
+                make_resource_create("domain-1", "provider-1", "user-1", None),
+            )
+            .await
+            .unwrap();
+
+        let updated = backend
+            .update_resource_impl(
+                &storage,
+                "domain-1",
+                "provider-1",
+                ScimResourceType::User,
+                "user-1",
+                ScimResourceIndexUpdate {
+                    external_id: None,
+                    deprovisioned_at: Some(Some(12345)),
+                },
+                Some(0),
+            )
+            .await
+            .unwrap();
+        assert_eq!(updated.version, 1);
+    }
+
+    #[tokio::test]
+    async fn test_update_resource_stale_expected_version_conflicts() {
+        let backend = RaftBackend::default();
+        let storage = MockStorage::default();
+
+        backend
+            .create_resource_impl(
+                &storage,
+                make_resource_create("domain-1", "provider-1", "user-1", None),
+            )
+            .await
+            .unwrap();
+
+        // Caller observed version 0, but pass a stale expectation of 7.
+        let result = backend
+            .update_resource_impl(
+                &storage,
+                "domain-1",
+                "provider-1",
+                ScimResourceType::User,
+                "user-1",
+                ScimResourceIndexUpdate {
+                    external_id: None,
+                    deprovisioned_at: Some(Some(12345)),
+                },
+                Some(7),
+            )
+            .await;
+        assert!(matches!(result, Err(StoreError::Conflict { .. })));
+
+        // The row must be untouched by the rejected write.
+        let fetched = backend
+            .get_resource_impl(
+                &storage,
+                "domain-1",
+                "provider-1",
+                ScimResourceType::User,
+                "user-1",
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(fetched.version, 0);
+        assert!(fetched.deprovisioned_at.is_none());
     }
 
     #[tokio::test]
@@ -1196,6 +1308,7 @@ mod tests {
                     external_id: Some(Some("ext-new".to_string())),
                     deprovisioned_at: None,
                 },
+                None,
             )
             .await
             .unwrap();
@@ -1240,6 +1353,7 @@ mod tests {
                     external_id: None,
                     deprovisioned_at: Some(Some(1)),
                 },
+                None,
             )
             .await;
         assert!(result.is_err());

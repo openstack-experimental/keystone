@@ -13,7 +13,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! `POST /SCIM/v2/{domain_id}/Users` (ADR 0024 §3.C, §3.D, §4).
 
-use axum::{Json, extract::State, http::StatusCode};
+use axum::{Json, extract::State, http::HeaderMap, http::StatusCode};
 use serde_json::json;
 
 use openstack_keystone_core::api::KeystoneApiError;
@@ -26,13 +26,14 @@ use openstack_keystone_core_types::scim::{
 
 use crate::keystone::ServiceState;
 use crate::scim::error::ScimApiError;
+use crate::scim::etag::etag_header;
 use crate::scim::types::{ScimUser, ScimUserWrite};
 
 pub(super) async fn create(
     ScimRealmAuth { ctx, realm }: ScimRealmAuth,
     State(state): State<ServiceState>,
     Json(req): Json<ScimUserWrite>,
-) -> Result<(StatusCode, Json<ScimUser>), ScimApiError> {
+) -> Result<(StatusCode, HeaderMap, Json<ScimUser>), ScimApiError> {
     if req.user_name.trim().is_empty() {
         return Err(KeystoneApiError::BadRequest("userName is required".to_string()).into());
     }
@@ -127,8 +128,16 @@ pub(super) async fn create(
         }
     };
 
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        "etag",
+        etag_header(index.version)
+            .parse()
+            .expect("weak etag is valid header value"),
+    );
     Ok((
         StatusCode::CREATED,
+        headers,
         Json(ScimUser::from_domain(&user, &index)),
     ))
 }
@@ -239,13 +248,15 @@ mod tests {
             active: true,
         };
 
-        let (status, Json(body)) = create(domain_scoped_auth("domain-1"), State(state), Json(req))
-            .await
-            .unwrap();
+        let (status, headers, Json(body)) =
+            create(domain_scoped_auth("domain-1"), State(state), Json(req))
+                .await
+                .unwrap();
         assert_eq!(status, StatusCode::CREATED);
         assert_eq!(body.user_name, "alice");
         assert_eq!(body.id, "user-1");
         assert_eq!(body.external_id.as_deref(), Some("ext-1"));
+        assert_eq!(headers.get("etag").unwrap(), r#"W/"0""#);
     }
 
     #[tokio::test]

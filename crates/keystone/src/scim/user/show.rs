@@ -13,7 +13,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! `GET /SCIM/v2/{domain_id}/Users/{id}` (ADR 0024 §3.C Ownership Fencing).
 
-use axum::{Json, extract::Path, extract::State};
+use axum::{Json, extract::Path, extract::State, http::HeaderMap};
 use serde_json::json;
 
 use openstack_keystone_core::api::KeystoneApiError;
@@ -23,6 +23,7 @@ use openstack_keystone_core_types::scim::ScimResourceType;
 
 use crate::keystone::ServiceState;
 use crate::scim::error::ScimApiError;
+use crate::scim::etag::etag_header;
 use crate::scim::types::ScimUser;
 
 /// Fetch `(UserResponse, ScimResourceIndex)` for `id` under the caller's own
@@ -72,7 +73,7 @@ pub(super) async fn show(
     ScimRealmAuth { ctx, realm }: ScimRealmAuth,
     Path((_domain_id, id)): Path<(String, String)>,
     State(state): State<ServiceState>,
-) -> Result<Json<ScimUser>, ScimApiError> {
+) -> Result<(HeaderMap, Json<ScimUser>), ScimApiError> {
     let exec = ExecutionContext::from_auth(&state, &ctx);
     let (user, index) =
         fetch_owned(&state, &exec, &realm.domain_id, &realm.provider_id, &id).await?;
@@ -87,7 +88,14 @@ pub(super) async fn show(
         )
         .await?;
 
-    Ok(Json(ScimUser::from_domain(&user, &index)))
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        "etag",
+        etag_header(index.version)
+            .parse()
+            .expect("weak etag is valid header value"),
+    );
+    Ok((headers, Json(ScimUser::from_domain(&user, &index))))
 }
 
 #[cfg(test)]
@@ -180,7 +188,7 @@ mod tests {
         )
         .await;
 
-        let result = show(
+        let (headers, Json(result)) = show(
             domain_scoped_auth("domain-1"),
             Path(("domain-1".to_string(), "user-1".to_string())),
             State(state),
@@ -188,6 +196,7 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(result.id, "user-1");
+        assert_eq!(headers.get("etag").unwrap(), r#"W/"0""#);
     }
 
     #[tokio::test]

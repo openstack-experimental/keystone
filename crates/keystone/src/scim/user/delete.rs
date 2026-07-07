@@ -80,6 +80,7 @@ pub(super) async fn delete(
                 external_id: None,
                 deprovisioned_at: Some(Some(now)),
             },
+            None,
         )
         .await?;
 
@@ -195,8 +196,8 @@ mod tests {
             });
         resource_mock
             .expect_update_index()
-            .withf(|_, _, _, _, _, update| matches!(update.deprovisioned_at, Some(Some(_))))
-            .returning(|_, _, _, _, id, _| {
+            .withf(|_, _, _, _, _, update, _| matches!(update.deprovisioned_at, Some(Some(_))))
+            .returning(|_, _, _, _, id, _, _| {
                 Ok(ScimResourceIndex {
                     domain_id: "domain-1".to_string(),
                     provider_id: "okta-1".to_string(),

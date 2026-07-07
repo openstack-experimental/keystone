@@ -88,6 +88,7 @@ pub(super) async fn delete(
                 external_id: None,
                 deprovisioned_at: Some(Some(now)),
             },
+            None,
         )
         .await?;
 
@@ -179,8 +180,8 @@ mod tests {
             .returning(|_, _, _, _, id| Ok(Some(make_index(id))));
         resource_mock
             .expect_update_index()
-            .withf(|_, _, _, _, _, update| matches!(update.deprovisioned_at, Some(Some(_))))
-            .returning(|_, _, _, _, id, _| Ok(make_index(id)));
+            .withf(|_, _, _, _, _, update, _| matches!(update.deprovisioned_at, Some(Some(_))))
+            .returning(|_, _, _, _, id, _, _| Ok(make_index(id)));
 
         let mut identity_mock = MockIdentityProvider::default();
         identity_mock.expect_get_group().returning(|_, id| {

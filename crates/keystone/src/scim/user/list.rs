@@ -11,7 +11,8 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-//! `GET /SCIM/v2/{domain_id}/Users` (ADR 0024 §3, §5.D bare pagination).
+//! `GET /SCIM/v2/{domain_id}/Users` (ADR 0024 §3, §5.B filter, §5.D
+//! pagination).
 
 use axum::{Json, extract::Query, extract::State};
 use serde::Deserialize;
@@ -23,6 +24,7 @@ use openstack_keystone_core_types::scim::ScimResourceType;
 
 use crate::keystone::ServiceState;
 use crate::scim::error::ScimApiError;
+use crate::scim::filter::{USER_FILTER_ATTRS, parse_filter};
 use crate::scim::types::{LIST_RESPONSE_SCHEMA, ScimListResponse, ScimUser};
 
 #[derive(Debug, Deserialize, Default)]
@@ -31,6 +33,8 @@ pub(super) struct ListParams {
     start_index: Option<usize>,
     #[serde(default)]
     count: Option<usize>,
+    #[serde(default)]
+    filter: Option<String>,
 }
 
 pub(super) async fn list(
@@ -48,6 +52,12 @@ pub(super) async fn list(
         )
         .await?;
 
+    let parsed_filter = params
+        .filter
+        .as_deref()
+        .map(|f| parse_filter(f, USER_FILTER_ATTRS))
+        .transpose()?;
+
     let exec = ExecutionContext::from_auth(&state, &ctx);
 
     let indexes = state
@@ -63,30 +73,48 @@ pub(super) async fn list(
 
     let start_index = params.start_index.unwrap_or(1).max(1);
     let count = params.count.unwrap_or(200).min(200);
-    let total_results = indexes.len();
 
-    let mut resources = Vec::new();
-    for index in indexes
-        .into_iter()
-        .filter(|i| i.deprovisioned_at.is_none())
-        .skip(start_index.saturating_sub(1))
-        .take(count)
-    {
-        if let Some(user) = state
+    // A `filter` requires hydrating every active resource up front to
+    // evaluate it (userName/active aren't on the index) -- still bounded to
+    // this realm's own resource count (§5.D), just no longer deferrable to
+    // the paginated slice alone.
+    let mut matched = Vec::new();
+    for index in indexes.into_iter().filter(|i| i.deprovisioned_at.is_none()) {
+        let Some(user) = state
             .provider
             .get_identity_provider()
             .get_user(&exec, &index.keystone_id)
             .await?
-        {
-            resources.push(ScimUser::from_domain(&user, &index));
+        else {
+            continue;
+        };
+        let scim_user = ScimUser::from_domain(&user, &index);
+        let matches = parsed_filter.as_ref().is_none_or(|f| {
+            f.matches(|attr| match attr {
+                "username" => Some(scim_user.user_name.clone()),
+                "externalid" => scim_user.external_id.clone(),
+                "id" => Some(scim_user.id.clone()),
+                "active" => Some(scim_user.active.to_string()),
+                _ => None,
+            })
+        });
+        if matches {
+            matched.push(scim_user);
         }
     }
+
+    let total_results = matched.len();
+    let resources: Vec<ScimUser> = matched
+        .into_iter()
+        .skip(start_index.saturating_sub(1))
+        .take(count)
+        .collect();
 
     Ok(Json(ScimListResponse {
         schemas: vec![LIST_RESPONSE_SCHEMA.to_string()],
         total_results,
         start_index,
-        items_per_page: resources.len(),
+        items_per_page: count,
         resources,
     }))
 }
@@ -196,9 +224,7 @@ mod tests {
         .unwrap();
         assert_eq!(result.resources.len(), 1);
         assert_eq!(result.resources[0].id, "user-1");
-        // total_results counts everything the realm owns, deprovisioned
-        // included, matching the raw index count before filtering.
-        assert_eq!(result.total_results, 2);
+        assert_eq!(result.total_results, 1);
     }
 
     #[tokio::test]
@@ -212,5 +238,80 @@ mod tests {
         )
         .await;
         assert!(matches!(result, Err(ScimApiError::Api(_))));
+    }
+
+    #[tokio::test]
+    async fn test_list_applies_username_filter() {
+        let mut resource_mock = MockScimResourceProvider::default();
+        resource_mock.expect_list_index().returning(|_, _, _, _| {
+            Ok(vec![
+                make_index("user-1", false),
+                make_index("user-2", false),
+            ])
+        });
+
+        let mut identity_mock = MockIdentityProvider::default();
+        identity_mock.expect_get_user().returning(|_, id| {
+            let name = if id == "user-1" { "alice" } else { "bob" };
+            Ok(Some(
+                UserResponseBuilder::default()
+                    .id(id)
+                    .domain_id("domain-1")
+                    .enabled(true)
+                    .name(name)
+                    .build()
+                    .unwrap(),
+            ))
+        });
+
+        let state = get_mocked_state(
+            Provider::mocked_builder()
+                .mock_identity(identity_mock)
+                .mock_scim_resource(resource_mock),
+            true,
+            None,
+        )
+        .await;
+
+        let result = list(
+            domain_scoped_auth("domain-1"),
+            State(state),
+            Query(ListParams {
+                start_index: None,
+                count: None,
+                filter: Some(r#"userName eq "bob""#.to_string()),
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.total_results, 1);
+        assert_eq!(result.resources[0].id, "user-2");
+    }
+
+    #[tokio::test]
+    async fn test_list_rejects_invalid_filter() {
+        let mut resource_mock = MockScimResourceProvider::default();
+        resource_mock
+            .expect_list_index()
+            .returning(|_, _, _, _| Ok(vec![]));
+
+        let state = get_mocked_state(
+            Provider::mocked_builder().mock_scim_resource(resource_mock),
+            true,
+            None,
+        )
+        .await;
+
+        let result = list(
+            domain_scoped_auth("domain-1"),
+            State(state),
+            Query(ListParams {
+                start_index: None,
+                count: None,
+                filter: Some(r#"password eq "x""#.to_string()),
+            }),
+        )
+        .await;
+        assert!(matches!(result, Err(ScimApiError::InvalidFilter(_))));
     }
 }

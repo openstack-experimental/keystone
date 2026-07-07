@@ -38,9 +38,9 @@ pub const LIST_RESPONSE_SCHEMA: &str = "urn:ietf:params:scim:api:messages:2.0:Li
 /// ADR 0024 §11 membership-graph-bomb cap: max `members` entries per request.
 pub const MAX_GROUP_MEMBERS: usize = 1000;
 
-const EXTRA_GIVEN_NAME: &str = "scim_given_name";
-const EXTRA_FAMILY_NAME: &str = "scim_family_name";
-const EXTRA_DISPLAY_NAME: &str = "scim_display_name";
+pub(crate) const EXTRA_GIVEN_NAME: &str = "scim_given_name";
+pub(crate) const EXTRA_FAMILY_NAME: &str = "scim_family_name";
+pub(crate) const EXTRA_DISPLAY_NAME: &str = "scim_display_name";
 const EXTRA_PRIMARY_EMAIL: &str = "scim_primary_email";
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -339,7 +339,7 @@ pub struct ScimGroupListResponse {
     pub resources: Vec<ScimGroup>,
 }
 
-fn extra_str(extra: &HashMap<String, Value>, key: &str) -> Option<String> {
+pub(crate) fn extra_str(extra: &HashMap<String, Value>, key: &str) -> Option<String> {
     extra.get(key).and_then(|v| v.as_str()).map(String::from)
 }
 

@@ -13,7 +13,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! `GET /SCIM/v2/{domain_id}/Groups/{id}` (ADR 0024 §3.C Ownership Fencing).
 
-use axum::{Json, extract::Path, extract::State};
+use axum::{Json, extract::Path, extract::State, http::HeaderMap};
 use serde_json::json;
 
 use openstack_keystone_core::api::KeystoneApiError;
@@ -23,6 +23,7 @@ use openstack_keystone_core_types::scim::ScimResourceType;
 
 use crate::keystone::ServiceState;
 use crate::scim::error::ScimApiError;
+use crate::scim::etag::etag_header;
 use crate::scim::types::ScimGroup;
 
 /// Fetch `(Group, ScimResourceIndex)` for `id` under the caller's own realm,
@@ -72,7 +73,7 @@ pub(super) async fn show(
     ScimRealmAuth { ctx, realm }: ScimRealmAuth,
     Path((_domain_id, id)): Path<(String, String)>,
     State(state): State<ServiceState>,
-) -> Result<Json<ScimGroup>, ScimApiError> {
+) -> Result<(HeaderMap, Json<ScimGroup>), ScimApiError> {
     let exec = ExecutionContext::from_auth(&state, &ctx);
     let (group, index) =
         fetch_owned(&state, &exec, &realm.domain_id, &realm.provider_id, &id).await?;
@@ -93,7 +94,17 @@ pub(super) async fn show(
         .list_users_of_group(&exec, &group.id)
         .await?;
 
-    Ok(Json(ScimGroup::from_domain(&group, &index, &member_ids)))
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        "etag",
+        etag_header(index.version)
+            .parse()
+            .expect("weak etag is valid header value"),
+    );
+    Ok((
+        headers,
+        Json(ScimGroup::from_domain(&group, &index, &member_ids)),
+    ))
 }
 
 #[cfg(test)]
@@ -189,7 +200,7 @@ mod tests {
         )
         .await;
 
-        let result = show(
+        let (headers, Json(result)) = show(
             domain_scoped_auth("domain-1"),
             Path(("domain-1".to_string(), "group-1".to_string())),
             State(state),
@@ -199,6 +210,7 @@ mod tests {
         assert_eq!(result.id, "group-1");
         assert_eq!(result.members.len(), 1);
         assert_eq!(result.members[0].value, "user-1");
+        assert_eq!(headers.get("etag").unwrap(), r#"W/"0""#);
     }
 
     #[tokio::test]

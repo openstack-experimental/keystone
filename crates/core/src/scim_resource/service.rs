@@ -121,6 +121,7 @@ impl ScimResourceApi for ScimResourceService {
         resource_type: ScimResourceType,
         keystone_id: &'a str,
         data: ScimResourceIndexUpdate,
+        expected_version: Option<u64>,
     ) -> Result<ScimResourceIndex, ScimResourceProviderError> {
         self.backend_driver
             .update(
@@ -130,6 +131,7 @@ impl ScimResourceApi for ScimResourceService {
                 resource_type,
                 keystone_id,
                 data,
+                expected_version,
             )
             .await
     }

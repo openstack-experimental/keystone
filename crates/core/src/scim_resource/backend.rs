@@ -65,6 +65,13 @@ pub trait ScimResourceBackend: Send + Sync {
     ) -> Result<Vec<ScimResourceIndex>, ScimResourceProviderError>;
 
     /// Apply a partial update (e.g. soft-disable, `externalId` change).
+    ///
+    /// `expected_version`, when `Some`, is the SCIM `If-Match` ETag version
+    /// the caller last observed; the update is rejected with
+    /// [`ScimResourceProviderError::VersionMismatch`] if the resource's
+    /// current `version` has moved on, closing the lost-update race ADR 0024
+    /// §5.E describes.
+    #[allow(clippy::too_many_arguments)]
     async fn update<'a>(
         &self,
         state: &ServiceState,
@@ -73,5 +80,6 @@ pub trait ScimResourceBackend: Send + Sync {
         resource_type: ScimResourceType,
         keystone_id: &'a str,
         data: ScimResourceIndexUpdate,
+        expected_version: Option<u64>,
     ) -> Result<ScimResourceIndex, ScimResourceProviderError>;
 }

@@ -2,26 +2,33 @@
 
 **Date:** 2026-07-01
 
-**Last-revised:** 2026-07-06 (PR1+PR2+PR3 implementation note)
+**Last-revised:** 2026-07-06 (PR1+PR2+PR3+PR4 implementation note)
 
 ## Status
 
 Proposed
 
 **Implementation note (2026-07-06):** PR1 (Realm Foundation), PR2 (Users
-vertical slice), and PR3 (Groups + membership isolation) have landed. During
-implementation, the realm/user identity design was refined beyond what this
-ADR originally specified: `ScimRealmResource` gained a mandatory `idp_id` link
-to a federation `IdentityProvider`, and a SCIM-provisioned `User`'s `id` is
-derived deterministically rather than server-assigned, so it converges with a
-later federated JIT login for the same person instead of producing a
-duplicate account. §2.A and §4 below have been updated to match the as-built
-behavior; the "Rejected alternative" callout in §4 is revised accordingly.
-`Group`, by contrast, keeps a normal server-assigned `id` and an optional
-`externalId` — nothing federates in *as* a Group, so there is no convergence
-hazard a deterministic id would solve. The filter/PATCH/ETag protocol surface
-(§5.B–E), the janitor purge phase (§6.C), and CLI parity (§12) remain
-unimplemented — this ADR stays `Proposed` until all of it lands.
+vertical slice), PR3 (Groups + membership isolation), and PR4 (Protocol
+Surface Completion — filter grammar, `PATCH`, ETags, discovery endpoints)
+have landed. During implementation, the realm/user identity design was
+refined beyond what this ADR originally specified: `ScimRealmResource` gained
+a mandatory `idp_id` link to a federation `IdentityProvider`, and a
+SCIM-provisioned `User`'s `id` is derived deterministically rather than
+server-assigned, so it converges with a later federated JIT login for the
+same person instead of producing a duplicate account. §2.A and §4 below have
+been updated to match the as-built behavior; the "Rejected alternative"
+callout in §4 is revised accordingly. `Group`, by contrast, keeps a normal
+server-assigned `id` and an optional `externalId` — nothing federates in *as*
+a Group, so there is no convergence hazard a deterministic id would solve.
+§5's filter/PATCH/ETag design matches the as-built PR4 behavior as written,
+with one addition worth noting here: closing the ETag CAS guarantee (§5.E)
+required fixing a latent bug in the storage driver's compare-and-swap path
+that predates PR4 (a concurrent-write violation was detected by the store but
+never surfaced to the caller) — `ScimResourceIndex.version` now bumps on
+every `PUT`/`PATCH`, not only ones that change `externalId`, so the ETag is
+meaningful on every write. The janitor purge phase (§6.C) and CLI parity
+(§12) remain unimplemented — this ADR stays `Proposed` until both land.
 
 ## Reference
 

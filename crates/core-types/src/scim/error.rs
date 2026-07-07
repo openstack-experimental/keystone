@@ -97,6 +97,13 @@ pub enum ScimResourceProviderError {
     #[error("conflict: {0}")]
     Conflict(String),
 
+    /// `If-Match` precondition failed — the caller's expected `version`
+    /// doesn't match the resource's current one, either because it was
+    /// already stale when read, or because a concurrent write won the race
+    /// between this write's read and its compare-and-swap (ADR 0024 §5.E).
+    #[error("ETag precondition failed: {0}")]
+    VersionMismatch(String),
+
     /// Driver error.
     #[error("backend driver error: {source}")]
     Driver {

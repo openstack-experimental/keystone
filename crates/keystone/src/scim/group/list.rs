@@ -11,7 +11,8 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-//! `GET /SCIM/v2/{domain_id}/Groups` (ADR 0024 §3, §5.D bare pagination).
+//! `GET /SCIM/v2/{domain_id}/Groups` (ADR 0024 §3, §5.B filter, §5.D
+//! pagination).
 
 use axum::{Json, extract::Query, extract::State};
 use serde::Deserialize;
@@ -23,6 +24,7 @@ use openstack_keystone_core_types::scim::ScimResourceType;
 
 use crate::keystone::ServiceState;
 use crate::scim::error::ScimApiError;
+use crate::scim::filter::{GROUP_FILTER_ATTRS, parse_filter};
 use crate::scim::types::{LIST_RESPONSE_SCHEMA, ScimGroup, ScimGroupListResponse};
 
 #[derive(Debug, Deserialize, Default)]
@@ -31,6 +33,8 @@ pub(super) struct ListParams {
     start_index: Option<usize>,
     #[serde(default)]
     count: Option<usize>,
+    #[serde(default)]
+    filter: Option<String>,
 }
 
 pub(super) async fn list(
@@ -48,6 +52,12 @@ pub(super) async fn list(
         )
         .await?;
 
+    let parsed_filter = params
+        .filter
+        .as_deref()
+        .map(|f| parse_filter(f, GROUP_FILTER_ATTRS))
+        .transpose()?;
+
     let exec = ExecutionContext::from_auth(&state, &ctx);
 
     let indexes = state
@@ -64,31 +74,45 @@ pub(super) async fn list(
     let start_index = params.start_index.unwrap_or(1).max(1);
     let count = params.count.unwrap_or(200).min(200);
 
-    let active_indexes: Vec<_> = indexes
-        .into_iter()
-        .filter(|i| i.deprovisioned_at.is_none())
-        .collect();
-    let total_results = active_indexes.len();
-
-    let mut resources = Vec::new();
-    for index in active_indexes
-        .into_iter()
-        .skip(start_index.saturating_sub(1))
-        .take(count)
-    {
-        if let Some(group) = state
+    // As with Users (§5.D), a `filter` requires hydrating every active
+    // group up front to evaluate `displayName` -- still bounded to this
+    // realm's own resource count.
+    let mut matched = Vec::new();
+    for index in indexes.into_iter().filter(|i| i.deprovisioned_at.is_none()) {
+        let Some(group) = state
             .provider
             .get_identity_provider()
             .get_group(&exec, &index.keystone_id)
             .await?
-        {
-            let member_ids = state
-                .provider
-                .get_identity_provider()
-                .list_users_of_group(&exec, &group.id)
-                .await?;
-            resources.push(ScimGroup::from_domain(&group, &index, &member_ids));
+        else {
+            continue;
+        };
+        let matches = parsed_filter.as_ref().is_none_or(|f| {
+            f.matches(|attr| match attr {
+                "displayname" => Some(group.name.clone()),
+                "externalid" => index.external_id.clone(),
+                "id" => Some(group.id.clone()),
+                _ => None,
+            })
+        });
+        if matches {
+            matched.push((group, index));
         }
+    }
+
+    let total_results = matched.len();
+    let mut resources = Vec::new();
+    for (group, index) in matched
+        .into_iter()
+        .skip(start_index.saturating_sub(1))
+        .take(count)
+    {
+        let member_ids = state
+            .provider
+            .get_identity_provider()
+            .list_users_of_group(&exec, &group.id)
+            .await?;
+        resources.push(ScimGroup::from_domain(&group, &index, &member_ids));
     }
 
     Ok(Json(ScimGroupListResponse {

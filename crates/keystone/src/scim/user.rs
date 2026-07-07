@@ -20,6 +20,7 @@ use openstack_keystone_core::keystone::ServiceState;
 mod create;
 mod delete;
 mod list;
+mod patch;
 mod show;
 mod update;
 
@@ -29,6 +30,9 @@ pub fn router() -> Router<ServiceState> {
         .route("/", get(list::list).post(create::create))
         .route(
             "/{id}",
-            get(show::show).put(update::update).delete(delete::delete),
+            get(show::show)
+                .put(update::update)
+                .patch(patch::patch)
+                .delete(delete::delete),
         )
 }

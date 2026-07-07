@@ -13,7 +13,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! `POST /SCIM/v2/{domain_id}/Groups` (ADR 0024 §3.C, §3.D, §4, §7, §11).
 
-use axum::{Json, extract::State, http::StatusCode};
+use axum::{Json, extract::State, http::HeaderMap, http::StatusCode};
 use serde_json::json;
 
 use openstack_keystone_core::api::KeystoneApiError;
@@ -25,6 +25,7 @@ use openstack_keystone_core_types::scim::{
 
 use crate::keystone::ServiceState;
 use crate::scim::error::ScimApiError;
+use crate::scim::etag::etag_header;
 use crate::scim::group::membership::validate_members_owned_by_realm;
 use crate::scim::types::{MAX_GROUP_MEMBERS, ScimGroup, ScimGroupWrite};
 
@@ -32,7 +33,7 @@ pub(super) async fn create(
     ScimRealmAuth { ctx, realm }: ScimRealmAuth,
     State(state): State<ServiceState>,
     Json(req): Json<ScimGroupWrite>,
-) -> Result<(StatusCode, Json<ScimGroup>), ScimApiError> {
+) -> Result<(StatusCode, HeaderMap, Json<ScimGroup>), ScimApiError> {
     if req.display_name.trim().is_empty() {
         return Err(KeystoneApiError::BadRequest("displayName is required".to_string()).into());
     }
@@ -137,8 +138,16 @@ pub(super) async fn create(
             .await?;
     }
 
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        "etag",
+        etag_header(index.version)
+            .parse()
+            .expect("weak etag is valid header value"),
+    );
     Ok((
         StatusCode::CREATED,
+        headers,
         Json(ScimGroup::from_domain(&group, &index, &member_ids)),
     ))
 }
@@ -249,7 +258,7 @@ mod tests {
         )
         .await;
 
-        let (status, Json(body)) = create(
+        let (status, headers, Json(body)) = create(
             domain_scoped_auth("domain-1"),
             State(state),
             Json(req("engineers", vec![])),
@@ -259,6 +268,7 @@ mod tests {
         assert_eq!(status, StatusCode::CREATED);
         assert_eq!(body.display_name, "engineers");
         assert_eq!(body.id, "group-1");
+        assert_eq!(headers.get("etag").unwrap(), r#"W/"0""#);
     }
 
     #[tokio::test]
@@ -321,7 +331,7 @@ mod tests {
         )
         .await;
 
-        let (status, Json(body)) = create(
+        let (status, _headers, Json(body)) = create(
             domain_scoped_auth("domain-1"),
             State(state),
             Json(req("engineers", vec!["user-1"])),

@@ -55,6 +55,16 @@ pub enum ScimApiError {
     /// exceeding the §11 cap (400, `scimType: "invalidValue"`, ADR 0024 §7,
     /// §11).
     InvalidValue(String),
+    /// A `filter` query parameter outside the ADR 0024 §5.B grammar (400,
+    /// `scimType: "invalidFilter"`).
+    InvalidFilter(String),
+    /// A `PATCH` `Operations[].path` outside the ADR 0024 §5.C allowlist
+    /// (400, `scimType: "invalidPath"`).
+    InvalidPath(String),
+    /// `If-Match` precondition failed against the resource's current ETag
+    /// version (412, ADR 0024 §5.E). RFC 7644 §3.12 doesn't define a
+    /// `scimType` for this status, so the body carries none.
+    PreconditionFailed(String),
     /// Everything else — reuses the generic Keystone error envelope.
     Api(KeystoneApiError),
 }
@@ -78,6 +88,36 @@ impl IntoResponse for ScimApiError {
                     schemas: vec![SCIM_ERROR_SCHEMA.to_string()],
                     status: StatusCode::BAD_REQUEST.as_str().to_string(),
                     scim_type: Some("invalidValue".to_string()),
+                    detail,
+                }),
+            )
+                .into_response(),
+            Self::InvalidFilter(detail) => (
+                StatusCode::BAD_REQUEST,
+                Json(ScimErrorBody {
+                    schemas: vec![SCIM_ERROR_SCHEMA.to_string()],
+                    status: StatusCode::BAD_REQUEST.as_str().to_string(),
+                    scim_type: Some("invalidFilter".to_string()),
+                    detail,
+                }),
+            )
+                .into_response(),
+            Self::InvalidPath(detail) => (
+                StatusCode::BAD_REQUEST,
+                Json(ScimErrorBody {
+                    schemas: vec![SCIM_ERROR_SCHEMA.to_string()],
+                    status: StatusCode::BAD_REQUEST.as_str().to_string(),
+                    scim_type: Some("invalidPath".to_string()),
+                    detail,
+                }),
+            )
+                .into_response(),
+            Self::PreconditionFailed(detail) => (
+                StatusCode::PRECONDITION_FAILED,
+                Json(ScimErrorBody {
+                    schemas: vec![SCIM_ERROR_SCHEMA.to_string()],
+                    status: StatusCode::PRECONDITION_FAILED.as_str().to_string(),
+                    scim_type: None,
                     detail,
                 }),
             )
