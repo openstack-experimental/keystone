@@ -34,8 +34,8 @@ impl PasswordHasher for ScryptHasher {
         let password_bytes = password.to_vec();
         let hash = task::spawn_blocking(move || {
             let salt = generate_salt();
-            // Params::new(log_n, r, p, output_len): ln=16 means n=2^16=65536.
-            let params = ::scrypt::Params::new(16, 8, 1, 32)
+            // Params::new(log_n, r, p): ln=16 means n=2^16=65536.
+            let params = ::scrypt::Params::new(16, 8, 1)
                 .map_err(|e| PasswordHashError::CryptoHash(e.to_string()))?;
             let mut digest = vec![0u8; 32];
             ::scrypt::scrypt(&password_bytes, &salt, &params, &mut digest)
@@ -99,7 +99,7 @@ impl PasswordHasher for ScryptHasher {
                 .decode(digest_b64.replace('.', "+").as_bytes())
                 .map_err(|_| PasswordHashError::CryptoHash("Invalid scrypt digest".into()))?;
 
-            let params = ::scrypt::Params::new(ln, r, p, expected.len())
+            let params = ::scrypt::Params::new(ln, r, p)
                 .map_err(|e| PasswordHashError::CryptoHash(e.to_string()))?;
             let mut computed = vec![0u8; expected.len()];
             ::scrypt::scrypt(&password_bytes, &salt, &params, &mut computed)
