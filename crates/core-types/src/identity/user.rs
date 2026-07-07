@@ -148,8 +148,8 @@ pub struct UserCreate {
     #[validate(nested)]
     pub options: Option<UserOptions>,
 
-    /// User password. Non-emptiness and regex policy are enforced at the service
-    /// layer via `security_compliance.validate_password`.
+    /// User password. Non-emptiness and regex policy are enforced at the
+    /// service layer via `security_compliance.validate_password`.
     #[builder(default)]
     pub password: Option<SecretString>,
 
@@ -162,6 +162,10 @@ pub struct UserCreate {
     pub user_type: UserType,
 }
 
+// NOTE: Struct-level (not field-level #[validate(custom)]) because validator
+// 0.20 serializes the failing field into ValidationError, which does not
+// compile for SecretString and would leak the secret; the derive still
+// validates all other fields.
 fn validate_user_create_secret(value: &UserCreate) -> Result<(), ValidationError> {
     validate_optional_secret_length(&value.password, 72)
 }
@@ -207,12 +211,16 @@ pub struct UserUpdate {
     #[validate(nested)]
     pub options: Option<UserOptions>,
 
-    /// New user password. Non-emptiness/policy enforced at the service layer via
-    /// `security_compliance.validate_password`.
+    /// New user password. Non-emptiness/policy enforced at the service layer
+    /// via `security_compliance.validate_password`.
     #[builder(default)]
     pub password: Option<SecretString>,
 }
 
+// NOTE: Struct-level (not field-level #[validate(custom)]) because validator
+// 0.20 serializes the failing field into ValidationError, which does not
+// compile for SecretString and would leak the secret; the derive still
+// validates all other fields.
 fn validate_user_update_secret(value: &UserUpdate) -> Result<(), ValidationError> {
     validate_optional_secret_length(&value.password, 72)
 }
@@ -349,6 +357,10 @@ pub struct UserPasswordAuthRequest {
     pub password: SecretString,
 }
 
+// NOTE: Struct-level (not field-level #[validate(custom)]) because validator
+// 0.20 serializes the failing field into ValidationError, which does not
+// compile for SecretString and would leak the secret; the derive still
+// validates all other fields.
 fn validate_user_password_auth_secret(
     value: &UserPasswordAuthRequest,
 ) -> Result<(), ValidationError> {
@@ -372,8 +384,8 @@ impl Default for UserPasswordAuthRequest {
 
 /// User TOTP authentication request.
 ///
-/// `PartialEq`/`Default` are intentionally not derived: `passcode` is a required
-/// [`SecretString`], which implements neither by design.
+/// `PartialEq`/`Default` are intentionally not derived: `passcode` is a
+/// required [`SecretString`], which implements neither by design.
 #[derive(Builder, Clone, Debug, Validate)]
 #[validate(schema(function = "validate_user_totp_auth_secret"))]
 #[builder(build_fn(error = "BuilderError"))]
@@ -398,6 +410,10 @@ pub struct UserTotpAuthRequest {
     pub passcode: SecretString,
 }
 
+// NOTE: Struct-level (not field-level #[validate(custom)]) because validator
+// 0.20 serializes the failing field into ValidationError, which does not
+// compile for SecretString and would leak the secret; the derive still
+// validates all other fields.
 fn validate_user_totp_auth_secret(value: &UserTotpAuthRequest) -> Result<(), ValidationError> {
     validate_secret_length(&value.passcode, 32)
 }

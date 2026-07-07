@@ -262,12 +262,6 @@ impl IdentityProviderCreate {
         if let Some(value) = &self.oidc_client_id {
             input.insert("oidc_client_id".to_string(), serde_json::json!(value));
         }
-        if self.oidc_client_secret.is_some() {
-            input.insert(
-                "oidc_client_secret".to_string(),
-                serde_json::json!("[REDACTED]"),
-            );
-        }
         if let Some(value) = &self.oidc_response_mode {
             input.insert("oidc_response_mode".to_string(), serde_json::json!(value));
         }
@@ -306,6 +300,10 @@ impl IdentityProviderCreate {
 }
 
 #[cfg(feature = "validate")]
+// NOTE: Struct-level (not field-level #[validate(custom)]) because validator
+// 0.20 serializes the failing field into ValidationError, which does not
+// compile for SecretString and would leak the secret; the derive still
+// validates all other fields.
 fn validate_identity_provider_create_secret(
     value: &IdentityProviderCreate,
 ) -> Result<(), validator::ValidationError> {
@@ -418,12 +416,6 @@ impl IdentityProviderUpdate {
             "oidc_client_id".to_string(),
             serde_json::json!(self.oidc_client_id),
         );
-        if self.oidc_client_secret.is_some() {
-            input.insert(
-                "oidc_client_secret".to_string(),
-                serde_json::json!("[REDACTED]"),
-            );
-        }
         input.insert(
             "oidc_response_mode".to_string(),
             serde_json::json!(self.oidc_response_mode),
@@ -462,6 +454,10 @@ impl IdentityProviderUpdate {
 }
 
 #[cfg(feature = "validate")]
+// NOTE: Struct-level (not field-level #[validate(custom)]) because validator
+// 0.20 serializes the failing field into ValidationError, which does not
+// compile for SecretString and would leak the secret; the derive still
+// validates all other fields.
 fn validate_identity_provider_update_secret(
     value: &IdentityProviderUpdate,
 ) -> Result<(), validator::ValidationError> {
@@ -566,14 +562,17 @@ mod tests {
     }
 
     #[test]
-    fn idp_policy_input_redacts_client_secret() {
+    fn idp_policy_input_omits_client_secret() {
         let create: IdentityProviderCreate =
             serde_json::from_str(r#"{"name":"idp","oidc_client_secret":"CSLEAK"}"#).unwrap();
-        let rendered = create.to_policy_input().to_string();
+        let input = create.to_policy_input();
+        let rendered = input.to_string();
         assert!(
             !rendered.contains("CSLEAK"),
             "policy input leaked client secret: {rendered}"
         );
+        assert!(input.get("oidc_client_secret").is_none());
+        assert_eq!(input.get("name").and_then(|v| v.as_str()), Some("idp"));
 
         let update: IdentityProviderUpdate =
             serde_json::from_str(r#"{"oidc_client_secret":"CSLEAK2"}"#).unwrap();
@@ -583,10 +582,8 @@ mod tests {
             !rendered.contains("CSLEAK2"),
             "policy input leaked client secret: {rendered}"
         );
-        assert_eq!(
-            input.get("oidc_client_secret").and_then(|v| v.as_str()),
-            Some("[REDACTED]")
-        );
+        assert!(input.get("oidc_client_secret").is_none());
+        assert!(input.get("oidc_client_id").is_some());
     }
 
     /// Regression guard: the read/response DTO has no client-secret field, so a
@@ -607,5 +604,17 @@ mod tests {
             !rendered.contains("SHOULD_BE_IGNORED"),
             "response leaked the secret value: {rendered}"
         );
+    }
+
+    #[cfg(feature = "validate")]
+    #[test]
+    fn idp_update_validates_overlong_client_secret() {
+        let update: IdentityProviderUpdate = serde_json::from_str(&format!(
+            r#"{{"oidc_client_secret":"{}"}}"#,
+            "x".repeat(256)
+        ))
+        .unwrap();
+
+        assert!(update.validate().is_err());
     }
 }

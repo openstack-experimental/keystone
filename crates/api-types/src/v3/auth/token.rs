@@ -252,6 +252,10 @@ pub struct UserPassword {
 }
 
 #[cfg(feature = "validate")]
+// NOTE: Struct-level (not field-level #[validate(custom)]) because validator
+// 0.20 serializes the failing field into ValidationError, which does not
+// compile for SecretString and would leak the secret; the derive still
+// validates all other fields.
 fn validate_user_password_secret(value: &UserPassword) -> Result<(), validator::ValidationError> {
     crate::common::validate_secret_length(&value.password, 72)
 }
@@ -310,6 +314,10 @@ pub struct TotpUser {
 }
 
 #[cfg(feature = "validate")]
+// NOTE: Struct-level (not field-level #[validate(custom)]) because validator
+// 0.20 serializes the failing field into ValidationError, which does not
+// compile for SecretString and would leak the secret; the derive still
+// validates all other fields.
 fn validate_totp_user_secret(value: &TotpUser) -> Result<(), validator::ValidationError> {
     crate::common::validate_secret_length(&value.passcode, 32)
 }
@@ -366,6 +374,10 @@ pub struct TokenAuth {
 }
 
 #[cfg(feature = "validate")]
+// NOTE: Struct-level (not field-level #[validate(custom)]) because validator
+// 0.20 serializes the failing field into ValidationError, which does not
+// compile for SecretString and would leak the secret; the derive still
+// validates all other fields.
 fn validate_token_auth_secret(value: &TokenAuth) -> Result<(), validator::ValidationError> {
     crate::common::validate_secret_length(&value.id, 1024)
 }

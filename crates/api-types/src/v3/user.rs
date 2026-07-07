@@ -159,8 +159,8 @@ pub struct UserCreate {
     #[cfg_attr(feature = "validate", validate(nested))]
     pub options: Option<UserOptions>,
 
-    /// The password for the user. Non-emptiness and regex policy are enforced at
-    /// the service layer via `security_compliance.validate_password`.
+    /// The password for the user. Non-emptiness and regex policy are enforced
+    /// at the service layer via `security_compliance.validate_password`.
     #[cfg_attr(feature = "builder", builder(default))]
     #[cfg_attr(feature = "openapi", schema(value_type = Option<String>))]
     #[serde(
@@ -187,14 +187,15 @@ impl UserCreate {
         input.insert("enabled".to_string(), serde_json::json!(self.enabled));
         input.insert("name".to_string(), serde_json::json!(self.name));
         input.insert("options".to_string(), serde_json::json!(self.options));
-        if self.password.is_some() {
-            input.insert("password".to_string(), serde_json::json!("[REDACTED]"));
-        }
         serde_json::Value::Object(input)
     }
 }
 
 #[cfg(feature = "validate")]
+// NOTE: Struct-level (not field-level #[validate(custom)]) because validator
+// 0.20 serializes the failing field into ValidationError, which does not
+// compile for SecretString and would leak the secret; the derive still
+// validates all other fields.
 fn validate_user_create_secret(value: &UserCreate) -> Result<(), validator::ValidationError> {
     crate::common::validate_optional_secret_length(&value.password, 72)
 }
@@ -289,14 +290,15 @@ impl UserUpdate {
         input.insert("enabled".to_string(), serde_json::json!(self.enabled));
         input.insert("name".to_string(), serde_json::json!(self.name));
         input.insert("options".to_string(), serde_json::json!(self.options));
-        if self.password.is_some() {
-            input.insert("password".to_string(), serde_json::json!("[REDACTED]"));
-        }
         serde_json::Value::Object(input)
     }
 }
 
 #[cfg(feature = "validate")]
+// NOTE: Struct-level (not field-level #[validate(custom)]) because validator
+// 0.20 serializes the failing field into ValidationError, which does not
+// compile for SecretString and would leak the secret; the derive still
+// validates all other fields.
 fn validate_user_update_secret(value: &UserUpdate) -> Result<(), validator::ValidationError> {
     crate::common::validate_optional_secret_length(&value.password, 72)
 }
@@ -395,7 +397,8 @@ mod tests {
 
     /// Critical: `UserCreate` carries BOTH `#[serde(flatten)] extra` and a
     /// `password`. Prove the flatten interaction round-trips the password for
-    /// transport and does not drop `extra`, while `Debug` never leaks the value.
+    /// transport and does not drop `extra`, while `Debug` never leaks the
+    /// value.
     #[test]
     fn usercreate_flatten_keeps_password_and_extra() {
         let uc: UserCreate = serde_json::from_str(
@@ -450,7 +453,7 @@ mod tests {
     }
 
     #[test]
-    fn user_policy_input_redacts_password_and_keeps_extra() {
+    fn user_policy_input_omits_password_and_keeps_extra() {
         let create: UserCreate = serde_json::from_str(
             r#"{"domain_id":"d","name":"alice","enabled":true,
                 "password":"PWLEAK","x_custom":"xval"}"#,
@@ -462,23 +465,23 @@ mod tests {
             !rendered.contains("PWLEAK"),
             "policy input leaked password: {rendered}"
         );
-        assert_eq!(
-            input.get("password").and_then(|v| v.as_str()),
-            Some("[REDACTED]")
-        );
+        assert!(input.get("password").is_none());
         assert_eq!(input.get("x_custom").and_then(|v| v.as_str()), Some("xval"));
 
         let update: UserUpdate =
             serde_json::from_str(r#"{"password":"UPWLEAK","z_extra":"zz"}"#).unwrap();
-        let rendered = update.to_policy_input().to_string();
+        let input = update.to_policy_input();
+        let rendered = input.to_string();
         assert!(
             !rendered.contains("UPWLEAK"),
             "policy input leaked password: {rendered}"
         );
+        assert!(input.get("password").is_none());
+        assert_eq!(input.get("z_extra").and_then(|v| v.as_str()), Some("zz"));
     }
 
-    /// Explicit `null` and absent password both deserialize to `None` (no panic,
-    /// no plaintext resurrected).
+    /// Explicit `null` and absent password both deserialize to `None` (no
+    /// panic, no plaintext resurrected).
     #[test]
     fn usercreate_password_null_and_absent_are_none() {
         let with_null: UserCreate =
@@ -498,6 +501,30 @@ mod tests {
         )
         .unwrap();
         assert!(!format!("{uc:?}").contains("DBGLEAK"));
+    }
+
+    #[cfg(feature = "validate")]
+    #[test]
+    fn usercreate_validates_password_and_other_fields() {
+        let valid: UserCreate = serde_json::from_str(
+            r#"{"domain_id":"d","name":"alice","enabled":true,"password":"secret"}"#,
+        )
+        .unwrap();
+        assert!(valid.validate().is_ok());
+
+        let overlong_password: UserCreate = serde_json::from_str(&format!(
+            r#"{{"domain_id":"d","name":"alice","enabled":true,"password":"{}"}}"#,
+            "x".repeat(73)
+        ))
+        .unwrap();
+        assert!(overlong_password.validate().is_err());
+
+        let overlong_name: UserCreate = serde_json::from_str(&format!(
+            r#"{{"domain_id":"d","name":"{}","enabled":true,"password":"secret"}}"#,
+            "x".repeat(256)
+        ))
+        .unwrap();
+        assert!(overlong_name.validate().is_err());
     }
 
     #[cfg(feature = "builder")]
