@@ -104,7 +104,7 @@ jobs:
           targets: "${{ matrix.target }},wasm32-unknown-unknown"
 
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@de6bbd1333b8f331563d54a051e542c7dfef81c3 # v2.68.34
+        uses: taiki-e/install-action@50414676f9f5d50a65992c6dd2ed02641263226c # v2.82.10
         with:
           tool: cargo-nextest
 
