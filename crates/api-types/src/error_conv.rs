@@ -330,11 +330,6 @@ impl From<MappingProviderError> for KeystoneApiError {
             MappingProviderError::ApiClientNonDomainScopeForbidden(x) => Self::BadRequest(format!(
                 "rule '{x}' grants a non-domain scope, which is forbidden for API Key (ApiClient) mapping rulesets (only domain scope is accepted)"
             )),
-            MappingProviderError::ScimRealmProjectScopeForbidden(x) => {
-                Self::UnprocessableEntity(format!(
-                    "rule '{x}' grants project scope, which is forbidden for a mapping ruleset bound to an active SCIM realm"
-                ))
-            }
             MappingProviderError::RoleNotFound(x) => Self::UnprocessableEntity(format!(
                 "rule references role '{x}' which does not exist"
             )),

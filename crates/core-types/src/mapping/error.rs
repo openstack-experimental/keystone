@@ -159,16 +159,6 @@ pub enum MappingProviderError {
         "rule '{0}' grants a non-domain scope, which is forbidden for API Key (ApiClient) mapping rulesets (only domain scope is accepted)"
     )]
     ApiClientNonDomainScopeForbidden(String),
-    /// A ruleset whose `provider_id` has an active SCIM realm (ADR 0024)
-    /// granted `Authorization::Project`, which is prohibited at write-time:
-    /// a SCIM realm's `ScimRealmAuth` extractor requires Domain-only scope
-    /// (ADR 0024 §2.C), so a Project-scoped rule sharing the same
-    /// `provider_id` would make realm authorization flap unpredictably
-    /// between pass/403 depending on which rule matched.
-    #[error(
-        "rule '{0}' grants project scope, which is forbidden for a mapping ruleset bound to an active SCIM realm (ADR 0024 \u{a7}2.C)"
-    )]
-    ScimRealmProjectScopeForbidden(String),
 
     /// A rule's `Authorization` granted a `RoleRef` whose `id` does not
     /// correspond to any existing `Role`. `RoleRef.id` is mandatory (unlike

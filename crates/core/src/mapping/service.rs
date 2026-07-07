@@ -45,56 +45,6 @@ use crate::mapping::{
 };
 use crate::plugin_manager::PluginManagerApi;
 
-/// Reject `Authorization::Project` entries in a ruleset whose `source` is
-/// `IdentitySource::ApiClient` and whose `provider_id` has an active
-/// `ScimRealmResource` (ADR 0024 §2.C write-time ruleset constraint).
-///
-/// Mirrors `validate_api_client_no_system_scope`'s defense-in-depth
-/// rationale (ADR 0021 §6.C): `ScimRealmAuth` already enforces Domain-only
-/// scope at authentication time, but nothing stops an operator from adding a
-/// `Project`-scoped rule to the same ruleset for an unrelated claim match,
-/// which would make that enforcement flap unpredictably per-request. A
-/// realm lookup is required (async), so this check lives here rather than
-/// in the synchronous `validation` module.
-async fn validate_scim_realm_no_project_scope<'a>(
-    ctx: &ExecutionContext<'a>,
-    domain_id: Option<&str>,
-    source: &IdentitySource,
-    rules: &[MappingRule],
-) -> Result<(), MappingProviderError> {
-    let IdentitySource::ApiClient { provider_id } = source else {
-        return Ok(());
-    };
-    let Some(domain_id) = domain_id else {
-        return Ok(());
-    };
-    let realm = ctx
-        .state()
-        .provider
-        .get_scim_realm_provider()
-        .get_realm(ctx, domain_id, provider_id)
-        .await
-        .map_err(MappingProviderError::driver)?;
-    let Some(realm) = realm else {
-        return Ok(());
-    };
-    if !realm.enabled {
-        return Ok(());
-    }
-    for rule in rules {
-        if rule
-            .authorizations
-            .iter()
-            .any(|auth| matches!(auth, Authorization::Project { .. }))
-        {
-            return Err(MappingProviderError::ScimRealmProjectScopeForbidden(
-                rule.name.clone(),
-            ));
-        }
-    }
-    Ok(())
-}
-
 /// Reject any `RoleRef` in a rule's
 /// `Authorization::{Project,Domain,System}.roles` whose `id` does not
 /// correspond to an existing `Role`.
@@ -714,13 +664,7 @@ impl MappingApi for MappingService {
         mut ruleset: MappingRuleSetCreate,
     ) -> Result<MappingRuleSet, MappingProviderError> {
         validation::validate_ruleset_create(&ruleset)?;
-        validate_scim_realm_no_project_scope(
-            ctx,
-            ruleset.domain_id.as_deref(),
-            &ruleset.source,
-            &ruleset.rules,
-        )
-        .await?;
+        validation::validate_api_client_domain_scope(&ruleset.source, &ruleset.rules)?;
         validate_roles_exist(ctx, &ruleset.rules).await?;
         let mapping_id = ruleset
             .mapping_id
@@ -1074,7 +1018,7 @@ impl MappingApi for MappingService {
 
         // 4. Re-validate the resulting ruleset
         let create_payload = MappingRuleSetCreate {
-            mapping_id: Some(existing.mapping_id.clone()),
+            mapping_id: Some(mapping_id.to_string()),
             domain_id: existing.domain_id.clone(),
             source: existing.source.clone(),
             domain_resolution_mode: existing.domain_resolution_mode.clone(),
@@ -1083,13 +1027,7 @@ impl MappingApi for MappingService {
         };
         validation::validate_ruleset_create(&create_payload)?;
 
-        validate_scim_realm_no_project_scope(
-            ctx,
-            existing.domain_id.as_deref(),
-            &existing.source,
-            &create_payload.rules,
-        )
-        .await?;
+        validation::validate_api_client_domain_scope(&existing.source, &create_payload.rules)?;
         validate_roles_exist(ctx, &create_payload.rules).await?;
 
         // 5. Compute new version
@@ -1171,13 +1109,7 @@ impl MappingApi for MappingService {
 
         let merged_rules = data.rules.clone().unwrap_or(existing.rules.clone());
 
-        validate_scim_realm_no_project_scope(
-            ctx,
-            existing.domain_id.as_deref(),
-            &existing.source,
-            &merged_rules,
-        )
-        .await?;
+        validation::validate_api_client_domain_scope(&existing.source, &merged_rules)?;
         validate_roles_exist(ctx, &merged_rules).await?;
 
         let new_version = version::compute_ruleset_version_from_parts(
@@ -1559,29 +1491,8 @@ mod tests {
     // ---------------------------------------------------------------------
 
     #[tokio::test]
-    async fn test_create_ruleset_rejects_project_scope_for_active_scim_realm() {
-        let mut scim_realm_mock = crate::scim_realm::MockScimRealmProvider::default();
-        scim_realm_mock
-            .expect_get_realm()
-            .withf(|_, domain_id, provider_id| {
-                domain_id == "domain-1" && provider_id == "provider-1"
-            })
-            .returning(|_, _, _| {
-                Ok(Some(
-                    openstack_keystone_core_types::scim::ScimRealmResource {
-                        domain_id: "domain-1".to_string(),
-                        provider_id: "provider-1".to_string(),
-                        idp_id: "idp-1".to_string(),
-                        display_name: "Okta".to_string(),
-                        enabled: true,
-                        created_at: 0,
-                        updated_at: 0,
-                    },
-                ))
-            });
-        let provider = crate::provider::Provider::mocked_builder().mock_scim_realm(scim_realm_mock);
-        let state = get_mocked_state(None, Some(provider)).await;
-
+    async fn test_create_ruleset_rejects_project_scope_for_api_client() {
+        let state = get_mocked_state(None, None).await;
         let mock_backend = MockMappingBackend::new();
         let service = MappingService::from_driver(mock_backend);
 
@@ -1602,72 +1513,14 @@ mod tests {
 
         assert!(matches!(
             result.unwrap_err(),
-            MappingProviderError::ScimRealmProjectScopeForbidden(name) if name == "grant-project"
+            MappingProviderError::ApiClientNonDomainScopeForbidden(name) if name == "grant-project"
         ));
     }
 
     #[tokio::test]
-    async fn test_create_ruleset_allows_project_scope_when_realm_disabled() {
-        let mut scim_realm_mock = crate::scim_realm::MockScimRealmProvider::default();
-        scim_realm_mock.expect_get_realm().returning(|_, _, _| {
-            Ok(Some(
-                openstack_keystone_core_types::scim::ScimRealmResource {
-                    domain_id: "domain-1".to_string(),
-                    provider_id: "provider-1".to_string(),
-                    idp_id: "idp-1".to_string(),
-                    display_name: "Okta".to_string(),
-                    enabled: false,
-                    created_at: 0,
-                    updated_at: 0,
-                },
-            ))
-        });
-        let provider = crate::provider::Provider::mocked_builder().mock_scim_realm(scim_realm_mock);
-        let state = get_mocked_state(None, Some(provider)).await;
-
-        let mut mock_backend = MockMappingBackend::new();
-        let ruleset_create = MappingRuleSetCreate {
-            mapping_id: None,
-            domain_id: Some("domain-1".to_string()),
-            source: IdentitySource::ApiClient {
-                provider_id: "provider-1".to_string(),
-            },
-            domain_resolution_mode: DomainResolutionMode::Fixed,
-            enabled: true,
-            rules: vec![project_scope_rule()],
-        };
-        let expected = MappingRuleSet {
-            mapping_id: "generated-id".to_string(),
-            domain_id: ruleset_create.domain_id.clone(),
-            source: ruleset_create.source.clone(),
-            domain_resolution_mode: ruleset_create.domain_resolution_mode.clone(),
-            enabled: ruleset_create.enabled,
-            rules: ruleset_create.rules.clone(),
-            ruleset_version: 1,
-        };
-        let expected_clone = expected.clone();
-        mock_backend
-            .expect_create_ruleset()
-            .returning(move |_, _| Ok(expected_clone.clone()));
-
-        let service = MappingService::from_driver(mock_backend);
-
-        let result = service
-            .create_ruleset(&ExecutionContext::internal(&state), ruleset_create)
-            .await;
-
-        assert!(result.is_ok());
-    }
-
-    #[tokio::test]
     async fn test_create_ruleset_allows_project_scope_for_federation_source() {
-        // Non-ApiClient sources are never subject to the SCIM realm
-        // constraint — the realm provider must not even be consulted.
-        let mut scim_realm_mock = crate::scim_realm::MockScimRealmProvider::default();
-        scim_realm_mock.expect_get_realm().never();
-        let provider = crate::provider::Provider::mocked_builder().mock_scim_realm(scim_realm_mock);
-        let state = get_mocked_state(None, Some(provider)).await;
-
+        // Non-ApiClient sources are not subject to domain-scope constraints.
+        let state = get_mocked_state(None, None).await;
         let mut mock_backend = MockMappingBackend::new();
         let ruleset_create = MappingRuleSetCreate {
             mapping_id: None,
@@ -1703,23 +1556,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_update_ruleset_rejects_project_scope_for_active_scim_realm() {
-        let mut scim_realm_mock = crate::scim_realm::MockScimRealmProvider::default();
-        scim_realm_mock.expect_get_realm().returning(|_, _, _| {
-            Ok(Some(
-                openstack_keystone_core_types::scim::ScimRealmResource {
-                    domain_id: "domain-1".to_string(),
-                    provider_id: "provider-1".to_string(),
-                    idp_id: "idp-1".to_string(),
-                    display_name: "Okta".to_string(),
-                    enabled: true,
-                    created_at: 0,
-                    updated_at: 0,
-                },
-            ))
-        });
-        let provider = crate::provider::Provider::mocked_builder().mock_scim_realm(scim_realm_mock);
-        let state = get_mocked_state(None, Some(provider)).await;
+    async fn test_update_ruleset_rejects_project_scope_for_api_client() {
+        let state = get_mocked_state(None, None).await;
 
         let mapping_id = "test-id";
         let mut mock_backend = MockMappingBackend::new();
@@ -1754,7 +1592,7 @@ mod tests {
 
         assert!(matches!(
             result.unwrap_err(),
-            MappingProviderError::ScimRealmProjectScopeForbidden(name) if name == "grant-project"
+            MappingProviderError::ApiClientNonDomainScopeForbidden(name) if name == "grant-project"
         ));
     }
 
