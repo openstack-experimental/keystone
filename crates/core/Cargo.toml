@@ -50,7 +50,7 @@ validator.workspace = true
 # pbkdf2 crate removed: PBKDF2-HMAC-SHA512 is implemented directly in
 # password_hashing.rs using the workspace hmac/sha2 to avoid a
 # digest v0.10 vs v0.11 version conflict (pbkdf2 v0.12 uses sha2 v0.10).
-scrypt = "0.11"
+scrypt = "0.12"
 subtle = "2.6.1"
 
 [dev-dependencies]
