@@ -44,6 +44,7 @@ jobs:
               - 'Cargo.lock'
               - 'benches/**'
               - 'crates/**'
+              - 'tests/**'
               - 'tools/setup-db.sh'
               - 'tools/docker-compose.test.yaml'
 
