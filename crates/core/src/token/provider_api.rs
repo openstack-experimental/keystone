@@ -14,6 +14,7 @@
 //! Token provider types.
 
 use async_trait::async_trait;
+use secrecy::SecretString;
 
 use openstack_keystone_core_types::token::*;
 
@@ -28,7 +29,7 @@ pub trait TokenApi: Send + Sync {
     ///
     /// # Parameters
     /// - `state`: The current service state.
-    /// - `credential`: The token credential string.
+    /// - `credential`: The token credential.
     /// - `allow_expired`: Whether to allow expired tokens.
     /// - `window_seconds`: Expiration buffer in seconds.
     ///
@@ -38,7 +39,7 @@ pub trait TokenApi: Send + Sync {
     async fn authorize_by_token<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
-        credential: &'a str,
+        credential: &SecretString,
         allow_expired: Option<bool>,
         window_seconds: Option<i64>,
     ) -> Result<ValidatedSecurityContext, TokenProviderError>;

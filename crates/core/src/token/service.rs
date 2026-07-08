@@ -24,6 +24,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use chrono::{DateTime, TimeDelta, Utc};
+use secrecy::{ExposeSecret, SecretString};
 use tracing::trace;
 use uuid::Uuid;
 
@@ -398,7 +399,7 @@ impl TokenApi for TokenService {
     ///
     /// # Parameters
     /// - `state`: The current service state.
-    /// - `credential`: The token credential string.
+    /// - `credential`: The token credential.
     /// - `allow_expired`: Whether to allow expired tokens.
     /// - `window_seconds`: Expiration buffer in seconds.
     ///
@@ -408,12 +409,17 @@ impl TokenApi for TokenService {
     async fn authorize_by_token<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
-        credential: &'a str,
+        credential: &SecretString,
         allow_expired: Option<bool>,
         window_seconds: Option<i64>,
     ) -> Result<ValidatedSecurityContext, TokenProviderError> {
         let vsc = self
-            .validate_to_context_impl(ctx, credential, allow_expired, window_seconds)
+            .validate_to_context_impl(
+                ctx,
+                credential.expose_secret(),
+                allow_expired,
+                window_seconds,
+            )
             .await?;
 
         if let FernetToken::Restricted(restriction) = vsc.token()?

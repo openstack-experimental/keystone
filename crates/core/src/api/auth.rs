@@ -20,6 +20,7 @@ use axum::{
     extract::{FromRef, FromRequestParts},
     http::request::Parts,
 };
+use secrecy::SecretString;
 use tracing::{debug, error};
 
 use openstack_keystone_config::Interface;
@@ -153,12 +154,13 @@ where
             .and_then(|h| h.to_str().ok())
         {
             tracing::debug!("authenticating request with the x-auth-token");
+            let auth_token = SecretString::from(auth_header.to_owned());
             let vsc = state
                 .provider
                 .get_token_provider()
                 .authorize_by_token(
                     &ExecutionContext::internal(&state),
-                    auth_header,
+                    &auth_token,
                     Some(false),
                     None,
                 )

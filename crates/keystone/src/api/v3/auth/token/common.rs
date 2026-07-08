@@ -13,7 +13,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use openstack_keystone_core::auth::ExecutionContext;
-use secrecy::ExposeSecret;
 
 use crate::api::error::KeystoneApiError;
 use crate::api::v3::auth::token::types::AuthRequest;
@@ -61,7 +60,7 @@ pub(super) async fn authenticate_request(
                 .get_token_provider()
                 .authorize_by_token(
                     &ExecutionContext::internal(state),
-                    token.id.expose_secret(),
+                    &token.id,
                     Some(false),
                     None,
                 )
@@ -251,8 +250,11 @@ mod tests {
         token_mock
             .expect_authorize_by_token()
             .withf(
-                |_, id: &'_ str, allow_expired: &Option<bool>, window: &Option<i64>| {
-                    id == "fake_token" && *allow_expired == Some(false) && window.is_none()
+                |_,
+                 _id: &secrecy::SecretString,
+                 allow_expired: &Option<bool>,
+                 window: &Option<i64>| {
+                    *allow_expired == Some(false) && window.is_none()
                 },
             )
             .returning(move |_state, _, _, _| Ok(vsc_clone.clone()));

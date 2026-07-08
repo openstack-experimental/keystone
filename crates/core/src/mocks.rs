@@ -1088,7 +1088,7 @@ mod token {
             async fn authorize_by_token<'a>(
                 &self,
                 ctx: &ExecutionContext<'a>,
-                credential: &'a str,
+                credential: &SecretString,
                 allow_expired: Option<bool>,
                 window_seconds: Option<i64>,
             ) -> Result<ValidatedSecurityContext, TokenProviderError>;
