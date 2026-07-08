@@ -19,7 +19,7 @@ use tracing_test::traced_test;
 use uuid::Uuid;
 
 use openstack_keystone::auth::*;
-use openstack_keystone::token::{FernetToken, TokenApi, TokenProviderError};
+use openstack_keystone::token::{FernetToken, TokenProviderError};
 use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core_types::application_credential::*;
 use openstack_keystone_core_types::resource::{DomainBuilder, ProjectBuilder};

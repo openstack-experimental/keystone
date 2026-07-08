@@ -39,7 +39,7 @@ pub async fn create_token_restriction(
     let res = state
         .provider
         .get_token_provider()
-        .create_token_restriction(&ExecutionContext::internal(&state), data)
+        .create_token_restriction(&ExecutionContext::internal(state), data)
         .await
         .unwrap();
     Ok(AsyncResourceGuard::new(res, state.clone()))

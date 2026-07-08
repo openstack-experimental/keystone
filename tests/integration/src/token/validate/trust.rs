@@ -21,7 +21,7 @@ use tracing_test::traced_test;
 use openstack_keystone_trust_driver_sql::entity::{trust as db_trust, trust_role as db_trust_role};
 
 use openstack_keystone::keystone::Service;
-use openstack_keystone::token::{FernetToken, TokenApi, TokenProviderError};
+use openstack_keystone::token::{FernetToken, TokenProviderError};
 use openstack_keystone_api_types::v3::auth::token::TokenBuilder;
 use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core_types::auth::*;
@@ -74,7 +74,7 @@ async fn get_trust<U: AsRef<str>>(state: &Arc<Service>, id: U) -> Result<Option<
     Ok(state
         .provider
         .get_trust_provider()
-        .get_trust(&ExecutionContext::internal(&state), id.as_ref())
+        .get_trust(&ExecutionContext::internal(state), id.as_ref())
         .await?)
 }
 

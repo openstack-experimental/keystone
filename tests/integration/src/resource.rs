@@ -38,7 +38,7 @@ pub async fn create_project(
     let res = state
         .provider
         .get_resource_provider()
-        .create_project(&ExecutionContext::internal(&state), data)
+        .create_project(&ExecutionContext::internal(state), data)
         .await
         .unwrap();
     Ok(AsyncResourceGuard::new(res, state.clone()))
@@ -51,7 +51,7 @@ pub async fn create_domain(
     let res = state
         .provider
         .get_resource_provider()
-        .create_domain(&ExecutionContext::internal(&state), data)
+        .create_domain(&ExecutionContext::internal(state), data)
         .await
         .unwrap();
     Ok(AsyncResourceGuard::new(res, state.clone()))

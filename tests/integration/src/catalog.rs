@@ -50,7 +50,7 @@ pub async fn create_endpoint(
     let res = state
         .provider
         .get_catalog_provider()
-        .create_endpoint(&ExecutionContext::internal(&state), data)
+        .create_endpoint(&ExecutionContext::internal(state), data)
         .await
         .unwrap();
     Ok(AsyncResourceGuard::new(res, state.clone()))
@@ -65,7 +65,7 @@ pub async fn create_region(
     let res = state
         .provider
         .get_catalog_provider()
-        .create_region(&ExecutionContext::internal(&state), data)
+        .create_region(&ExecutionContext::internal(state), data)
         .await
         .unwrap();
     Ok(AsyncResourceGuard::new(res, state.clone()))
@@ -80,7 +80,7 @@ pub async fn create_service(
     let res = state
         .provider
         .get_catalog_provider()
-        .create_service(&ExecutionContext::internal(&state), data)
+        .create_service(&ExecutionContext::internal(state), data)
         .await
         .unwrap();
     Ok(AsyncResourceGuard::new(res, state.clone()))

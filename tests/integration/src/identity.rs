@@ -39,7 +39,7 @@ pub async fn create_user(
     let res = state
         .provider
         .get_identity_provider()
-        .create_user(&ExecutionContext::internal(&state), data)
+        .create_user(&ExecutionContext::internal(state), data)
         .await
         .unwrap();
     Ok(AsyncResourceGuard::new(res, state.clone()))
@@ -52,7 +52,7 @@ pub async fn create_group(
     let res = state
         .provider
         .get_identity_provider()
-        .create_group(&ExecutionContext::internal(&state), data)
+        .create_group(&ExecutionContext::internal(state), data)
         .await?;
     Ok(AsyncResourceGuard::new(res, state.clone()))
 }
