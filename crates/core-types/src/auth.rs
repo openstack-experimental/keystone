@@ -20,6 +20,7 @@
 //! present here to be shared across different authentication methods. The
 //! same is valid for the authorization validation (project/domain must exist
 //! and be enabled).
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::iter::once;
 
@@ -738,6 +739,9 @@ impl SecurityContext {
                 AuthenticationContext::Trust { .. } => Err(AuthenticationError::ScopeNotAllowed),
                 AuthenticationContext::WebauthN => Ok(()),
                 AuthenticationContext::Mapping(_) => Ok(()),
+                // Direct, non-delegated authentication (ADR 0025 §4), same
+                // as Password/Token.
+                AuthenticationContext::WasmPlugin { .. } => Ok(()),
             },
             ScopeInfo::Project { project, .. } => {
                 match &self.authentication_context {
@@ -798,6 +802,7 @@ impl SecurityContext {
                     }
                     AuthenticationContext::WebauthN => Ok(()),
                     AuthenticationContext::Mapping(_) => Ok(()),
+                    AuthenticationContext::WasmPlugin { .. } => Ok(()),
                 }
             }
             ScopeInfo::TrustProject(_) => match &self.authentication_context {
@@ -814,6 +819,7 @@ impl SecurityContext {
                 AuthenticationContext::Trust { .. } => Err(AuthenticationError::Forbidden),
                 AuthenticationContext::WebauthN => Err(AuthenticationError::ScopeNotAllowed),
                 AuthenticationContext::Mapping(_) => Err(AuthenticationError::ScopeNotAllowed),
+                AuthenticationContext::WasmPlugin { .. } => Ok(()),
             },
             ScopeInfo::System(_system) => match &self.authentication_context {
                 AuthenticationContext::ApplicationCredential { .. } => {
@@ -829,6 +835,7 @@ impl SecurityContext {
                 AuthenticationContext::Trust { .. } => Err(AuthenticationError::ScopeNotAllowed),
                 AuthenticationContext::WebauthN => Ok(()),
                 AuthenticationContext::Mapping(_) => Ok(()),
+                AuthenticationContext::WasmPlugin { .. } => Ok(()),
             },
             ScopeInfo::Unscoped => match &self.authentication_context {
                 AuthenticationContext::ApplicationCredential { .. } => {
@@ -844,6 +851,7 @@ impl SecurityContext {
                 AuthenticationContext::Trust { .. } => Err(AuthenticationError::ScopeNotAllowed),
                 AuthenticationContext::WebauthN => Ok(()),
                 AuthenticationContext::Mapping(_) => Ok(()),
+                AuthenticationContext::WasmPlugin { .. } => Ok(()),
             },
         }
     }
@@ -1295,6 +1303,33 @@ pub enum AuthenticationContext {
     /// Login using a TOTP passcode verified against a `type='totp'`
     /// credential (ADR 0019 §3).
     Totp,
+    /// Login authenticated by a `mode = full_auth` dynamic auth plugin (ADR
+    /// 0025 §4). The handle a plugin presented back via
+    /// `Allow.resolved_identity` is deliberately not carried here - it's
+    /// verified once, at dispatch time
+    /// (`openstack_keystone_core::dynamic_plugin_auth::authenticate_via_wasm_plugin`),
+    /// and expires with that invocation; by the time an
+    /// `AuthenticationContext` exists, the real user is already resolved
+    /// and there is nothing left to verify a handle against.
+    WasmPlugin {
+        /// The plugin's configured `[auth] methods` name.
+        plugin_name: String,
+        /// SHA-256 of the exact compiled module that authenticated this
+        /// request - not yet consulted by anything in Phase 1 PR 1.2; PR
+        /// 1.4 (Plugin Version Binding) verifies a minted token's embedded
+        /// hash against the currently-loaded one for this `plugin_name`.
+        plugin_sha256: [u8; 32],
+        /// Extra claims the plugin's `authenticate` response attached,
+        /// surfaced to policy as `plugin_claims.<plugin_name>.*`
+        /// (`Credentials::plugin_claims`) - never a top-level,
+        /// privilege-relevant field (ADR §7 "Response Payload Bounds").
+        claims: HashMap<String, serde_json::Value>,
+        /// Always `None` in Phase 1 PR 1.2 - no code path mints a
+        /// `FernetToken::WasmPlugin` payload yet; that's PR 1.4's job. The
+        /// field exists now so this variant already has its ADR-final
+        /// shape and doesn't need a second breaking change later.
+        token: Option<FernetToken>,
+    },
 }
 
 /// K8s auth context.
@@ -1339,6 +1374,7 @@ impl AuthenticationContext {
             Self::Mapping(_) => once("mapped".to_string()).collect(),
             Self::Ec2Credential => once("ec2credential".to_string()).collect(),
             Self::Totp => once("totp".to_string()).collect(),
+            Self::WasmPlugin { plugin_name, .. } => once(plugin_name.clone()).collect(),
         }
     }
 
@@ -1353,19 +1389,20 @@ impl AuthenticationContext {
     /// `"token"` here even when its underlying payload originated from a
     /// trust or application credential.
     #[must_use]
-    pub fn auth_type(&self) -> &'static str {
+    pub fn auth_type(&self) -> Cow<'_, str> {
         match self {
-            Self::ApplicationCredential { .. } => "application_credential",
-            Self::Oidc { .. } => "openid",
-            Self::K8s(_) => "k8s",
-            Self::Password => "password",
-            Self::Admin => "admin",
-            Self::Token(_) => "token",
-            Self::Trust { .. } => "trust",
-            Self::WebauthN => "webauthn",
-            Self::Mapping(_) => "mapped",
-            Self::Ec2Credential => "ec2credential",
-            Self::Totp => "totp",
+            Self::ApplicationCredential { .. } => Cow::Borrowed("application_credential"),
+            Self::Oidc { .. } => Cow::Borrowed("openid"),
+            Self::K8s(_) => Cow::Borrowed("k8s"),
+            Self::Password => Cow::Borrowed("password"),
+            Self::Admin => Cow::Borrowed("admin"),
+            Self::Token(_) => Cow::Borrowed("token"),
+            Self::Trust { .. } => Cow::Borrowed("trust"),
+            Self::WebauthN => Cow::Borrowed("webauthn"),
+            Self::Mapping(_) => Cow::Borrowed("mapped"),
+            Self::Ec2Credential => Cow::Borrowed("ec2credential"),
+            Self::Totp => Cow::Borrowed("totp"),
+            Self::WasmPlugin { plugin_name, .. } => Cow::Owned(plugin_name.clone()),
         }
     }
 

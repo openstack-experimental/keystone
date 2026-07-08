@@ -59,6 +59,7 @@ use openstack_keystone::application_credential::ApplicationCredentialHook;
 use openstack_keystone::assignment::AssignmentHook;
 use openstack_keystone::catalog::CatalogHook;
 use openstack_keystone::config::{Config, ConfigManager, Interface, ListenerConfig};
+use openstack_keystone::dynamic_plugin_http_client::KeystoneDynamicPluginHttpFetcher;
 use openstack_keystone::dynamic_plugin_identity::DynamicPluginIdentityHook;
 use openstack_keystone::federation::FederationHook;
 use openstack_keystone::identity::IdentityHook;
@@ -85,6 +86,7 @@ use openstack_keystone_core::api_key::janitor as api_key_janitor;
 use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core::cadf_hook::CadfAuditHook;
 use openstack_keystone_core::db::sync_schema;
+use openstack_keystone_core::dynamic_plugin_startup::load_dynamic_plugins;
 use openstack_keystone_core::error::KeystoneError;
 use openstack_keystone_core::scim_resource::janitor as scim_resource_janitor;
 use openstack_keystone_credential_driver_sql::fernet::FernetKeyRepository;
@@ -279,6 +281,17 @@ async fn main() -> Result<(), Report> {
     ));
 
     subscribe_event_hooks(&shared_state).await;
+
+    // Dynamic auth plugins (ADR 0025): loaded post-construction, since
+    // `CoreHostFunctions` needs a fully-built `ServiceState` - see
+    // `load_dynamic_plugins`'s doc comment. A per-plugin load failure
+    // disables only that plugin; every other auth method still starts.
+    load_dynamic_plugins(
+        &shared_state,
+        Arc::new(KeystoneDynamicPluginHttpFetcher::new()),
+    )
+    .await;
+    warn_on_unresolvable_auth_methods(&shared_state).await;
 
     let app = build_router(&shared_state, &token, main_router, openapi).await?;
 
@@ -570,6 +583,43 @@ async fn subscribe_event_hooks(shared_state: &ServiceState) {
             &shared_state.audit_dispatcher,
         ))))
         .await;
+}
+
+/// Log a `WARN` for every `[auth] methods` entry that is neither a builtin
+/// auth method nor a successfully-loaded dynamic plugin name (ADR 0025 §5:
+/// a misconfiguration here degrades one method, not the node - never a
+/// startup error).
+async fn warn_on_unresolvable_auth_methods(shared_state: &ServiceState) {
+    const BUILTIN_AUTH_METHODS: &[&str] = &[
+        "password",
+        "token",
+        "totp",
+        "openid",
+        "application_credential",
+        "trust",
+        "webauthn",
+        "mapped",
+        "k8s",
+        "admin",
+    ];
+    let methods = shared_state
+        .config_manager
+        .config
+        .read()
+        .await
+        .auth
+        .methods
+        .clone();
+    let registry = shared_state.dynamic_plugin_registry.read().await;
+    for method in &methods {
+        if !BUILTIN_AUTH_METHODS.contains(&method.as_str()) && !registry.contains(method) {
+            warn!(
+                method = %method,
+                "[auth] methods names a method that is neither a builtin nor a loaded dynamic \
+                 auth plugin - this method will never authenticate anyone"
+            );
+        }
+    }
 }
 
 /// Assemble the full Axum application: merges the `OpenAPI`-generated

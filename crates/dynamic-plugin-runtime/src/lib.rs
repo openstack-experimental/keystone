@@ -40,7 +40,13 @@ use openstack_keystone_config::{DynamicPluginConfig, DynamicPluginsSection};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
+mod auth_contract;
 mod host_functions;
+pub use auth_contract::{
+    AuthPluginRequest, AuthPluginResponse, MAX_CLAIM_KEY_BYTES, MAX_CLAIM_VALUE_BYTES, MAX_CLAIMS,
+    MAX_RESPONSE_BYTES, RESERVED_ENVELOPE_KEY, RESERVED_KEY_PREFIX, ResponseBoundsError,
+    decode_and_validate_response,
+};
 pub use host_functions::{
     AssignRoleRequest, GuestUserCreate, HostFunctions, HttpFetchRequest, HttpFetchResponse,
     ProvisionUserRequest, ResolvedIdentityHandle, RoleAssignmentTarget,
@@ -128,7 +134,7 @@ impl InvokeError {
 /// called.
 pub struct LoadedPlugin {
     pub name: String,
-    pub sha256: String,
+    pub sha256: [u8; 32],
     compiled: CompiledPlugin,
 }
 
@@ -213,7 +219,8 @@ impl WasmPluginRegistry {
             source,
         })?;
 
-        let actual = hex::encode(Sha256::digest(&bytes));
+        let digest = Sha256::digest(&bytes);
+        let actual = hex::encode(digest);
         if !actual.eq_ignore_ascii_case(&config.sha256) {
             return Err(PluginLoadError::ChecksumMismatch {
                 path: config.path.display().to_string(),
@@ -221,6 +228,7 @@ impl WasmPluginRegistry {
                 actual,
             });
         }
+        let actual_bytes: [u8; 32] = digest.into();
 
         // Round up so a `memory_limit_mb` that isn't an exact multiple of
         // the 64 KiB page size still gets at least the requested budget,
@@ -260,7 +268,7 @@ impl WasmPluginRegistry {
 
         Ok(LoadedPlugin {
             name: name.to_string(),
-            sha256: actual,
+            sha256: actual_bytes,
             compiled,
         })
     }
@@ -346,6 +354,7 @@ mod tests {
     fn section(name: &str) -> DynamicPluginsSection {
         DynamicPluginsSection {
             plugins: vec![name.to_string()],
+            ..Default::default()
         }
     }
 
@@ -363,7 +372,7 @@ mod tests {
         assert!(errors.is_empty(), "unexpected load errors: {errors:?}");
         assert_eq!(registry.len(), 1);
         assert!(registry.contains("p"));
-        assert_eq!(registry.get("p").unwrap().sha256, sha256);
+        assert_eq!(hex::encode(registry.get("p").unwrap().sha256), sha256);
     }
 
     #[test]
@@ -410,6 +419,7 @@ mod tests {
         configs.insert("bad".to_string(), bad_config);
         let section = DynamicPluginsSection {
             plugins: vec!["good".to_string(), "bad".to_string()],
+            ..Default::default()
         };
         let (registry, errors) = WasmPluginRegistry::load(&section, &configs, None);
 

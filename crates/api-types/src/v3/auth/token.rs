@@ -196,6 +196,16 @@ pub struct Identity {
     #[cfg_attr(feature = "builder", builder(default))]
     #[cfg_attr(feature = "validate", validate(nested))]
     pub totp: Option<TotpAuth>,
+
+    /// Catch-all for a method name not among the builtins above - e.g.
+    /// `identity.<plugin_name>` for a `mode = full_auth` dynamic auth
+    /// plugin (ADR 0025 §4). Bounded by the same overall request
+    /// body-size limit as the rest of this request; the raw JSON value is
+    /// handed to the named plugin's `authenticate` entry point unexamined
+    /// by this type.
+    #[serde(flatten)]
+    #[cfg_attr(feature = "builder", builder(default))]
+    pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
 /// The password object, contains the authentication information.

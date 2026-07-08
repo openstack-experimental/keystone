@@ -251,7 +251,13 @@ async fn resolve_verified_api_client(
         return Err(AuthenticationError::Unauthorized.into());
     }
 
-    let effective_ip = resolve_client_ip(&parts.headers, peer_ip, &cfg.trusted_proxies);
+    let xff_header = parts
+        .headers
+        .get(axum::http::header::HeaderName::from_static(
+            "x-forwarded-for",
+        ))
+        .and_then(|h| h.to_str().ok());
+    let effective_ip = crate::net::resolve_client_ip(xff_header, peer_ip, &cfg.trusted_proxies);
     if !ip_allowed(effective_ip, &resource.allowed_ips) {
         return Err(AuthenticationError::Unauthorized.into());
     }
@@ -322,51 +328,6 @@ fn spawn_last_used_update(state: &ServiceState, resource: &ApiClientResource, no
             warn!(error = %e, "api_key last_used_at update failed");
         }
     });
-}
-
-/// Compute the effective client IP using the rightmost-non-trusted-proxy
-/// algorithm (ADR 0021 §3 Step 2, §6.E, Invariant 4): append the raw TCP
-/// peer to the right of the `X-Forwarded-For` chain, then walk right to
-/// left, returning the first address not in `trusted_proxies`. If the raw
-/// TCP peer itself is not trusted, it is used directly without consulting
-/// XFF at all.
-fn resolve_client_ip(
-    headers: &axum::http::HeaderMap,
-    peer_ip: Option<IpAddr>,
-    trusted_proxies: &[String],
-) -> Option<IpAddr> {
-    let trusted: Vec<IpNet> = trusted_proxies
-        .iter()
-        .filter_map(|c| c.parse::<IpNet>().ok())
-        .collect();
-
-    let is_trusted = |ip: &IpAddr| trusted.iter().any(|net| net.contains(ip));
-
-    let peer = peer_ip?;
-    if !is_trusted(&peer) {
-        return Some(peer);
-    }
-
-    let xff_chain: Vec<IpAddr> = headers
-        .get(axum::http::header::HeaderName::from_static(
-            "x-forwarded-for",
-        ))
-        .and_then(|h| h.to_str().ok())
-        .map(|h| {
-            h.split(',')
-                .filter_map(|s| s.trim().parse::<IpAddr>().ok())
-                .collect()
-        })
-        .unwrap_or_default();
-
-    let mut chain = xff_chain;
-    chain.push(peer);
-
-    chain
-        .into_iter()
-        .rev()
-        .find(|ip| !is_trusted(ip))
-        .or(Some(peer))
 }
 
 /// Whether `client_ip` satisfies the key's `allowed_ips` CIDR allowlist.
@@ -520,7 +481,7 @@ async fn hydrate_ephemeral_context(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::http::HeaderMap;
+    use crate::net::resolve_client_ip;
 
     use openstack_keystone_core_types::auth::{
         AuthenticationContext, AuthzInfoBuilder, IdentityInfo, PrincipalInfo, ScopeInfo,
@@ -606,15 +567,6 @@ mod tests {
         assert!(!is_domain_scoped(&vsc, "domain-1"));
     }
 
-    fn headers_with_xff(xff: &str) -> HeaderMap {
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            axum::http::header::HeaderName::from_static("x-forwarded-for"),
-            xff.parse().unwrap(),
-        );
-        headers
-    }
-
     fn ip(s: &str) -> IpAddr {
         s.parse().unwrap()
     }
@@ -627,11 +579,10 @@ mod tests {
     fn untrusted_peer_ignores_xff_entirely() {
         // Peer itself is not a trusted proxy: XFF must not be consulted at
         // all, even if present (prevents spoofing via an untrusted hop).
-        let headers = headers_with_xff("1.2.3.4");
         let peer = Some(ip("203.0.113.5"));
         let trusted = vec!["10.0.0.0/8".to_string()];
         assert_eq!(
-            resolve_client_ip(&headers, peer, &trusted),
+            resolve_client_ip(Some("1.2.3.4"), peer, &trusted),
             Some(ip("203.0.113.5"))
         );
     }
@@ -642,22 +593,20 @@ mod tests {
         // (trusted intermediate hop), peer 10.0.0.1 (trusted, terminal
         // proxy). Effective IP must be 10.0.0.5's predecessor scanning
         // right-to-left: append peer, walk right-to-left, first non-trusted.
-        let headers = headers_with_xff("1.2.3.4, 10.0.0.5");
         let peer = Some(ip("10.0.0.1"));
         let trusted = vec!["10.0.0.0/8".to_string()];
         assert_eq!(
-            resolve_client_ip(&headers, peer, &trusted),
+            resolve_client_ip(Some("1.2.3.4, 10.0.0.5"), peer, &trusted),
             Some(ip("1.2.3.4"))
         );
     }
 
     #[test]
     fn trusted_peer_all_hops_trusted_falls_back_to_peer() {
-        let headers = headers_with_xff("10.0.0.9");
         let peer = Some(ip("10.0.0.1"));
         let trusted = vec!["10.0.0.0/8".to_string()];
         assert_eq!(
-            resolve_client_ip(&headers, peer, &trusted),
+            resolve_client_ip(Some("10.0.0.9"), peer, &trusted),
             Some(ip("10.0.0.1"))
         );
     }
@@ -667,18 +616,16 @@ mod tests {
         // Regression guard for the leftmost-take vulnerability (ADR 0021 F2):
         // an attacker prepending a spoofed IP as the leftmost XFF entry must
         // not be accepted just because it's present.
-        let headers = headers_with_xff("203.0.113.99, 1.2.3.4, 10.0.0.5");
         let peer = Some(ip("10.0.0.1"));
         let trusted = vec!["10.0.0.0/8".to_string()];
-        let effective = resolve_client_ip(&headers, peer, &trusted);
+        let effective = resolve_client_ip(Some("203.0.113.99, 1.2.3.4, 10.0.0.5"), peer, &trusted);
         assert_ne!(effective, Some(ip("203.0.113.99")));
         assert_eq!(effective, Some(ip("1.2.3.4")));
     }
 
     #[test]
     fn no_peer_ip_resolves_to_none() {
-        let headers = HeaderMap::new();
-        assert_eq!(resolve_client_ip(&headers, None, &[]), None);
+        assert_eq!(resolve_client_ip(None, None, &[]), None);
     }
 
     // ---------------------------------------------------------------------

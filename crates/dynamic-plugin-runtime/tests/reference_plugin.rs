@@ -81,6 +81,7 @@ fn config_for(path: &Path, sha256: &str, extra: &str) -> DynamicPluginConfig {
 fn section() -> DynamicPluginsSection {
     DynamicPluginsSection {
         plugins: vec!["p".to_string()],
+        ..Default::default()
     }
 }
 
@@ -125,14 +126,21 @@ fn test_load_and_invoke_authenticate() {
 
     let plugin = registry.get("p").expect("plugin should have loaded");
     let out = plugin
-        .invoke("authenticate", br#"{"external_id":"alice","deny":false}"#)
+        .invoke(
+            "authenticate",
+            br#"{"payload":{"external_id":"alice","deny":false,"domain_id":"allowed-domain"},"headers":{},"remote_addr":null}"#,
+        )
         .expect("authenticate call should succeed");
     let out: serde_json::Value = serde_json::from_slice(&out).unwrap();
     assert_eq!(out["decision"], "allow");
-    assert_eq!(out["external_id"], "alice");
+    assert_eq!(out["resolved_identity"], "handle-for-alice");
+    assert_eq!(out["claims"]["source"], "reference-plugin");
 
     let out = plugin
-        .invoke("authenticate", br#"{"external_id":"bob","deny":true}"#)
+        .invoke(
+            "authenticate",
+            br#"{"payload":{"external_id":"bob","deny":true},"headers":{},"remote_addr":null}"#,
+        )
         .expect("authenticate call should succeed");
     let out: serde_json::Value = serde_json::from_slice(&out).unwrap();
     assert_eq!(out["decision"], "deny");
@@ -243,7 +251,10 @@ fn test_invocations_are_isolated_between_calls() {
         Err(InvokeError::FuelExhausted)
     ));
     let out = plugin
-        .invoke("authenticate", br#"{"external_id":"carol","deny":false}"#)
+        .invoke(
+            "authenticate",
+            br#"{"payload":{"external_id":"carol","deny":false,"domain_id":"allowed-domain"},"headers":{},"remote_addr":null}"#,
+        )
         .expect("a fresh invocation after a fuel-exhausted one should still succeed");
     let out: serde_json::Value = serde_json::from_slice(&out).unwrap();
     assert_eq!(out["decision"], "allow");

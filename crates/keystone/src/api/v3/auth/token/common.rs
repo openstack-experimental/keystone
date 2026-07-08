@@ -12,7 +12,12 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use std::net::IpAddr;
+
 use openstack_keystone_core::auth::ExecutionContext;
+use openstack_keystone_core::dynamic_plugin_auth::{
+    WasmPluginAuthError, WasmPluginAuthRequest, authenticate_via_wasm_plugin,
+};
 
 use crate::api::error::KeystoneApiError;
 use crate::api::v3::auth::token::types::AuthRequest;
@@ -23,10 +28,12 @@ use crate::keystone::ServiceState;
 /// expose any hints that user, project, domain, etc might exist before we have
 /// authenticated them by taking different amount of time in case of certain
 /// validations.
-#[tracing::instrument(skip(state), err)]
+#[tracing::instrument(skip(state, headers), err)]
 pub(super) async fn authenticate_request(
     state: &ServiceState,
     req: &AuthRequest,
+    headers: &axum::http::HeaderMap,
+    peer_ip: Option<IpAddr>,
 ) -> Result<Vec<AuthenticationResult>, KeystoneApiError> {
     let mut res = Vec::new();
     for method in req.auth.identity.methods.iter() {
@@ -74,6 +81,45 @@ pub(super) async fn authenticate_request(
                 token_restriction: vsc.inner().token_restriction().cloned(),
             };
             res.push(auth_res);
+        } else if let Some(payload) = req.auth.identity.extra.get(method) {
+            // Unrecognized method name with a matching request body block -
+            // dispatch to a loaded `mode = full_auth` dynamic auth plugin
+            // (ADR 0025 §4). `NotFound`/`WrongMode` degrade to the same
+            // silent skip an unmatched builtin method already gets;
+            // anything else fails the whole request closed (ADR §7) - a
+            // plugin's internal denial reason is never surfaced here, only
+            // audited.
+            let raw_headers: std::collections::HashMap<String, String> = headers
+                .iter()
+                .filter_map(|(name, value)| {
+                    value
+                        .to_str()
+                        .ok()
+                        .map(|v| (name.as_str().to_string(), v.to_string()))
+                })
+                .collect();
+            let xff_header = headers
+                .get(axum::http::header::HeaderName::from_static(
+                    "x-forwarded-for",
+                ))
+                .and_then(|h| h.to_str().ok())
+                .map(str::to_string);
+            match authenticate_via_wasm_plugin(
+                state,
+                method,
+                WasmPluginAuthRequest {
+                    payload: payload.clone(),
+                    raw_headers,
+                    xff_header,
+                    peer_ip,
+                },
+            )
+            .await
+            {
+                Ok(auth_res) => res.push(auth_res),
+                Err(WasmPluginAuthError::NotFound | WasmPluginAuthError::WrongMode) => {}
+                Err(_) => return Err(KeystoneApiError::UnauthorizedNoContext),
+            }
         }
     }
     if res.is_empty() {
@@ -144,10 +190,13 @@ mod tests {
                             }),
                             token: None,
                             totp: None,
+                            extra: Default::default(),
                         },
                         scope: None,
                     },
-                }
+                },
+                &axum::http::HeaderMap::new(),
+                None,
             )
             .await
             .unwrap()
@@ -200,10 +249,13 @@ mod tests {
                                     .build()
                                     .unwrap(),
                             }),
+                            extra: Default::default(),
                         },
                         scope: None,
                     },
-                }
+                },
+                &axum::http::HeaderMap::new(),
+                None,
             )
             .await
             .unwrap()
@@ -283,10 +335,13 @@ mod tests {
                                 id: "fake_token".into()
                             }),
                             totp: None,
+                            extra: Default::default(),
                         },
                         scope: None,
                     },
-                }
+                },
+                &axum::http::HeaderMap::new(),
+                None,
             )
             .await
             .unwrap()
@@ -306,10 +361,13 @@ mod tests {
                         password: None,
                         token: None,
                         totp: None,
+                        extra: Default::default(),
                     },
                     scope: None,
                 },
             },
+            &axum::http::HeaderMap::new(),
+            None,
         )
         .await;
         if let KeystoneApiError::UnauthorizedNoContext = rsp.unwrap_err() {

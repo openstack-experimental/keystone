@@ -16,12 +16,15 @@ use std::sync::Arc;
 
 use governor::{DefaultKeyedRateLimiter, Quota, RateLimiter};
 use sea_orm::DatabaseConnection;
+use tokio::sync::RwLock;
 use tracing::info;
 
 use openstack_keystone_audit::AuditDispatcher;
 use openstack_keystone_config::ConfigManager;
+use openstack_keystone_dynamic_plugin_runtime::WasmPluginRegistry;
 use openstack_keystone_storage_api::StorageApi;
 
+use crate::dynamic_plugin::CoreHostFunctions;
 use crate::error::KeystoneError;
 use crate::events::EventDispatcher;
 use crate::policy::PolicyEnforcer;
@@ -56,6 +59,22 @@ pub struct Service {
     /// authentication path, keyed on `lookup_hash` (or source IP when the
     /// presented token fails the format check) (ADR 0021 §6.A).
     pub api_key_rate_limiter: Arc<DefaultKeyedRateLimiter<String>>,
+
+    /// Loaded dynamic auth plugins (ADR 0025). Empty until
+    /// `crate::dynamic_plugin_startup::load_dynamic_plugins` runs
+    /// post-construction - `CoreHostFunctions` needs a `ServiceState`,
+    /// which doesn't exist until `Service::new` returns, so this can't be
+    /// populated inline here (mirrors how `subscribe_event_hooks` wires
+    /// provider hooks onto an already-`Arc`-wrapped `Service` at process
+    /// startup, in `crates/keystone/src/bin/keystone.rs`).
+    pub dynamic_plugin_registry: RwLock<Arc<WasmPluginRegistry>>,
+
+    /// The [`CoreHostFunctions`] instance the dynamic plugin registry above
+    /// was loaded with - kept alongside the registry so dispatch code can
+    /// call [`CoreHostFunctions::verify_handle`] using the *same*
+    /// process-lifetime HMAC key the registry's plugins were loaded with.
+    /// `None` until `load_dynamic_plugins` runs, same as the registry.
+    pub core_host_functions: RwLock<Option<Arc<CoreHostFunctions>>>,
 
     /// Shutdown flag.
     pub shutdown: bool,
@@ -110,6 +129,8 @@ impl Service {
             policy_enforcer,
             storage,
             api_key_rate_limiter,
+            dynamic_plugin_registry: RwLock::new(Arc::new(WasmPluginRegistry::default())),
+            core_host_functions: RwLock::new(None),
             shutdown: false,
         })
     }

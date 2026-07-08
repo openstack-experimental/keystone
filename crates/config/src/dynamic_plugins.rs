@@ -89,6 +89,15 @@ pub struct DynamicPluginsSection {
     /// have a matching `[dynamic_plugin.<name>]` section.
     #[serde(default, deserialize_with = "csv")]
     pub plugins: Vec<String>,
+
+    /// CIDR blocks of reverse proxies trusted to prepend
+    /// `X-Forwarded-For` entries for `full_auth`-mode dispatch's
+    /// `remote_addr` (ADR 0025 §4 Guest Contract). Deliberately separate
+    /// from `[api_key].trusted_proxies` - SCIM ingress and anonymous
+    /// pre-auth dynamic-plugin login are different trust boundaries and
+    /// must never share one trusted-proxy list.
+    #[serde(default, deserialize_with = "csv")]
+    pub trusted_proxies: Vec<String>,
 }
 
 /// A single `[dynamic_plugin.<name>]` section - ADR 0025 §5.

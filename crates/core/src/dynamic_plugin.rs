@@ -118,6 +118,45 @@ enum DynamicPluginHostError {
     AuditChannelDead,
 }
 
+/// Emit a mandatory CADF audit record for a dynamic-plugin-related event
+/// (ADR 0025 §6.E) - shared by [`CoreHostFunctions`]'s own host-function
+/// audit trail and by `crate::dynamic_plugin_auth`'s `authenticate`
+/// dispatch, so both paths produce audit events in exactly the same shape.
+/// `Err(())` means the audit channel itself is dead (fail-closed
+/// consideration is the caller's responsibility, per §6.E "mandatory
+/// audit").
+pub(crate) async fn emit_wasm_plugin_audit(
+    state: &ServiceState,
+    plugin_name: &str,
+    host_function: &str,
+    outcome: &str,
+    outcome_reason: Option<String>,
+) -> Result<(), ()> {
+    let dispatcher = &state.audit_dispatcher;
+    let node_id = dispatcher.node_id().to_string();
+    let payload = CadfEventPayload::new(
+        format!("{node_id}:{}", Uuid::new_v4()),
+        "1.0".to_string(),
+        "default".to_string(),
+        Uuid::new_v4().to_string(),
+        chrono::Utc::now().to_rfc3339(),
+        format!("wasm_plugin.{host_function}"),
+        outcome.to_string(),
+        outcome_reason,
+        build_initiator_unknown(),
+        Target {
+            id: plugin_name.to_string(),
+            type_uri: "data/security/identity/wasm-plugin".to_string(),
+        },
+        Observer {
+            node_id: node_id.clone(),
+            id: format!("service/security/keystone/{node_id}"),
+        },
+    );
+    let event = payload.sign(dispatcher);
+    dispatcher.dispatch_critical(event).await.map_err(|_| ())
+}
+
 /// `openstack_keystone_dynamic_plugin_runtime::HostFunctions` implementation
 /// backed by this crate's real `IdentityApi`/`AuditDispatcher`.
 pub struct CoreHostFunctions {
@@ -213,32 +252,15 @@ impl CoreHostFunctions {
         outcome: &str,
         outcome_reason: Option<String>,
     ) -> Result<(), DynamicPluginHostError> {
-        let dispatcher = &self.state.audit_dispatcher;
-        let node_id = dispatcher.node_id().to_string();
-        let payload = CadfEventPayload::new(
-            format!("{node_id}:{}", Uuid::new_v4()),
-            "1.0".to_string(),
-            "default".to_string(),
-            Uuid::new_v4().to_string(),
-            chrono::Utc::now().to_rfc3339(),
-            format!("wasm_plugin.{host_function}"),
-            outcome.to_string(),
+        emit_wasm_plugin_audit(
+            &self.state,
+            plugin_name,
+            host_function,
+            outcome,
             outcome_reason,
-            build_initiator_unknown(),
-            Target {
-                id: plugin_name.to_string(),
-                type_uri: "data/security/identity/wasm-plugin".to_string(),
-            },
-            Observer {
-                node_id: node_id.clone(),
-                id: format!("service/security/keystone/{node_id}"),
-            },
-        );
-        let event = payload.sign(dispatcher);
-        dispatcher
-            .dispatch_critical(event)
-            .await
-            .map_err(|_| DynamicPluginHostError::AuditChannelDead)
+        )
+        .await
+        .map_err(|()| DynamicPluginHostError::AuditChannelDead)
     }
 
     async fn provision_user_async(

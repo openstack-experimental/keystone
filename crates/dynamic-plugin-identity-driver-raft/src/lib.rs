@@ -28,7 +28,8 @@ use openstack_keystone_distributed_storage::{
 pub struct RaftBackend {}
 
 impl RaftBackend {
-    /// Primary storage key: `dynamic_plugin_identity:v1:<plugin_name>:<external_id>`
+    /// Primary storage key:
+    /// `dynamic_plugin_identity:v1:<plugin_name>:<external_id>`
     /// -> `user_id`.
     fn primary_key<P: AsRef<str>, E: AsRef<str>>(plugin_name: P, external_id: E) -> String {
         format!(

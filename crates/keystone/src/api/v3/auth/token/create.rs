@@ -13,10 +13,12 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Create token (authenticate).
 
+use std::net::SocketAddr;
+
 use axum::{
     Json,
-    extract::{Query, State},
-    http::StatusCode,
+    extract::{ConnectInfo, FromRequestParts, Query, State},
+    http::{HeaderMap, StatusCode, request::Parts},
     response::{IntoResponse, Response},
 };
 use validator::Validate;
@@ -39,6 +41,25 @@ use crate::audit::{
 use crate::common::TracedJson;
 use crate::keystone::ServiceState;
 
+/// Raw TCP peer address, if the connection came in through a listener
+/// configured with `into_make_service_with_connect_info` (the public
+/// interface) - `None` on interfaces that don't populate `ConnectInfo`
+/// (e.g. the SPIFFE admin interface), never a request-rejection.
+pub(super) struct PeerAddr(Option<SocketAddr>);
+
+impl<S: Send + Sync> FromRequestParts<S> for PeerAddr {
+    type Rejection = std::convert::Infallible;
+
+    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
+        Ok(PeerAddr(
+            parts
+                .extensions
+                .get::<ConnectInfo<SocketAddr>>()
+                .map(|ConnectInfo(addr)| *addr),
+        ))
+    }
+}
+
 /// Authenticate user issuing a new token.
 #[utoipa::path(
     post,
@@ -51,13 +72,16 @@ use crate::keystone::ServiceState;
     tag="auth"
 )]
 #[tracing::instrument(name = "api::v3::token::post", level = "debug", skip(state, req))]
+#[axum::debug_handler]
 pub(super) async fn create(
     CorrelationId(cid): CorrelationId,
     Query(query): Query<CreateTokenParameters>,
     State(state): State<ServiceState>,
+    headers: HeaderMap,
+    PeerAddr(peer_addr): PeerAddr,
     TracedJson(req): TracedJson<AuthRequest>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
-    let result = create_inner(&state, query, req).await;
+    let result = create_inner(&state, query, req, &headers, peer_addr).await;
     let initiator = result
         .as_ref()
         .ok()
@@ -77,9 +101,12 @@ async fn create_inner(
     state: &ServiceState,
     query: CreateTokenParameters,
     req: AuthRequest,
+    headers: &HeaderMap,
+    peer_addr: Option<SocketAddr>,
 ) -> Result<(ValidatedSecurityContext, Response), KeystoneApiError> {
     req.validate()?;
-    let auth_res = authenticate_request(state, &req).await?;
+    let auth_res =
+        authenticate_request(state, &req, headers, peer_addr.map(|addr| addr.ip())).await?;
     let ctx = SecurityContext::try_from(auth_res)?;
     let provider_scope: Option<ProviderScope> = req.auth.scope.clone().map(Into::into);
     let authz_info = get_authz_info(state, provider_scope.as_ref()).await?;

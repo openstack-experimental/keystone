@@ -49,15 +49,15 @@ pub struct FetchResponse {
 ///
 /// Implementations must:
 /// - connect to exactly `resolved_addr` - never re-resolve `url`'s host;
-/// - never automatically follow redirects (the caller performs bounded,
-///   per-hop re-validated manual redirects);
+/// - never automatically follow redirects (the caller performs bounded, per-hop
+///   re-validated manual redirects);
 /// - apply `auth_header`, if present, after `headers`, so a guest-supplied
 ///   header of the same name can never shadow or override it;
-/// - enforce `max_body_bytes` while *streaming* the response body, aborting
-///   the transfer as soon as the accumulated size crosses the cap, rather
-///   than buffering the full body and checking its length afterwards - a
-///   compromised or oversized upstream response must not be able to exhaust
-///   memory before the cap has a chance to reject it (ADR §6.A).
+/// - enforce `max_body_bytes` while *streaming* the response body, aborting the
+///   transfer as soon as the accumulated size crosses the cap, rather than
+///   buffering the full body and checking its length afterwards - a compromised
+///   or oversized upstream response must not be able to exhaust memory before
+///   the cap has a chance to reject it (ADR §6.A).
 #[async_trait]
 pub trait DynamicPluginHttpFetcher: Send + Sync {
     #[allow(clippy::too_many_arguments)]

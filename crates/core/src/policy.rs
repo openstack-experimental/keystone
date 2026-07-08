@@ -272,6 +272,20 @@ pub struct Credentials {
     #[builder(default)]
     #[serde(default)]
     pub delegated_project_id: Option<String>,
+
+    /// Extra claims a `mode = full_auth` dynamic auth plugin (ADR 0025)
+    /// attached to its `authenticate` response, outer-keyed by
+    /// `plugin_name` so `.rego` rules index as
+    /// `input.credentials.plugin_claims.<plugin_name>.<key>` - never
+    /// flattened to the top level, so a plugin-supplied key can never
+    /// collide with or shadow a privilege-relevant field above (ADR §7
+    /// "Response Payload Bounds"). `None`/absent for every other
+    /// authentication method, and for a `WasmPlugin` authentication whose
+    /// response carried no claims.
+    #[builder(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plugin_claims:
+        Option<std::collections::HashMap<String, std::collections::HashMap<String, Value>>>,
 }
 
 impl TryFrom<&ValidatedSecurityContext> for Credentials {
@@ -305,6 +319,16 @@ impl TryFrom<&ValidatedSecurityContext> for Credentials {
                     builder.delegated_project_id(project_id.clone());
                 }
                 builder.trust(trust.clone());
+            }
+            AuthenticationContext::WasmPlugin {
+                plugin_name,
+                claims,
+                ..
+            } if !claims.is_empty() => {
+                builder.plugin_claims(std::collections::HashMap::from([(
+                    plugin_name.clone(),
+                    claims.clone(),
+                )]));
             }
             _ => {}
         }

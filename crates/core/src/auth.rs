@@ -152,6 +152,15 @@ impl ValidatedSecurityContext {
             AuthenticationContext::Admin => {}
             AuthenticationContext::Ec2Credential => {}
             AuthenticationContext::Totp => {}
+            // No-op: the `resolved_identity` handle a dynamic auth plugin
+            // presented is already verified once, at dispatch time, in
+            // `crate::dynamic_plugin_auth::authenticate_via_wasm_plugin`
+            // (ADR 0025 §4 "Identity Binding") - by the time an
+            // `AuthenticationContext::WasmPlugin` exists here, the real
+            // user is already resolved and the handle itself was never
+            // carried into this context (it expires with that invocation).
+            // This arm exists only to keep the match exhaustive.
+            AuthenticationContext::WasmPlugin { .. } => {}
             AuthenticationContext::Trust { trust, .. } => {
                 // Validate the trust chain
                 state

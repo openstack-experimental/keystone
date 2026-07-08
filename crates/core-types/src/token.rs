@@ -115,6 +115,13 @@ impl FernetToken {
                 AuthenticationContext::Totp => Ok(Self::DomainScope(
                     DomainScopePayload::from_security_context(ctx, domain, expires_at)?,
                 )),
+                // Direct, non-delegated authentication (ADR 0025 §4), same
+                // as Password/Token - no dedicated payload variant exists
+                // yet (Phase 1 PR 1.4, plugin-version-bound token
+                // verification, is deferred).
+                AuthenticationContext::WasmPlugin { .. } => Ok(Self::DomainScope(
+                    DomainScopePayload::from_security_context(ctx, domain, expires_at)?,
+                )),
             },
             ScopeInfo::Project { project, .. } => match ctx.authentication_context() {
                 AuthenticationContext::ApplicationCredential {
