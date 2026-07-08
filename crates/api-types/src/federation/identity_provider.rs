@@ -250,52 +250,11 @@ pub struct IdentityProviderCreate {
 impl IdentityProviderCreate {
     #[must_use]
     pub fn to_policy_input(&self) -> serde_json::Value {
-        let mut input = serde_json::Map::new();
-        input.insert("name".to_string(), serde_json::json!(self.name));
-        input.insert("enabled".to_string(), serde_json::json!(self.enabled));
-        if let Some(value) = &self.domain_id {
-            input.insert("domain_id".to_string(), serde_json::json!(value));
+        let mut value = serde_json::to_value(self).unwrap_or_default();
+        if let Some(input) = value.as_object_mut() {
+            input.remove("oidc_client_secret");
         }
-        if let Some(value) = &self.oidc_discovery_url {
-            input.insert("oidc_discovery_url".to_string(), serde_json::json!(value));
-        }
-        if let Some(value) = &self.oidc_client_id {
-            input.insert("oidc_client_id".to_string(), serde_json::json!(value));
-        }
-        if let Some(value) = &self.oidc_response_mode {
-            input.insert("oidc_response_mode".to_string(), serde_json::json!(value));
-        }
-        if let Some(value) = &self.oidc_response_types {
-            input.insert("oidc_response_types".to_string(), serde_json::json!(value));
-        }
-        if let Some(value) = &self.jwks_url {
-            input.insert("jwks_url".to_string(), serde_json::json!(value));
-        }
-        if let Some(value) = &self.jwt_validation_pubkeys {
-            input.insert(
-                "jwt_validation_pubkeys".to_string(),
-                serde_json::json!(value),
-            );
-        }
-        if let Some(value) = &self.bound_issuer {
-            input.insert("bound_issuer".to_string(), serde_json::json!(value));
-        }
-        if let Some(value) = &self.default_mapping_name {
-            input.insert("default_mapping_name".to_string(), serde_json::json!(value));
-        }
-        if let Some(value) = &self.oidc_scopes {
-            input.insert("oidc_scopes".to_string(), serde_json::json!(value));
-        }
-        if let Some(value) = &self.allowed_redirect_uris {
-            input.insert(
-                "allowed_redirect_uris".to_string(),
-                serde_json::json!(value),
-            );
-        }
-        if let Some(value) = &self.provider_config {
-            input.insert("provider_config".to_string(), value.clone());
-        }
-        serde_json::Value::Object(input)
+        value
     }
 }
 
@@ -405,51 +364,11 @@ pub struct IdentityProviderUpdate {
 impl IdentityProviderUpdate {
     #[must_use]
     pub fn to_policy_input(&self) -> serde_json::Value {
-        let mut input = serde_json::Map::new();
-        input.insert("name".to_string(), serde_json::json!(self.name));
-        input.insert("enabled".to_string(), serde_json::json!(self.enabled));
-        input.insert(
-            "oidc_discovery_url".to_string(),
-            serde_json::json!(self.oidc_discovery_url),
-        );
-        input.insert(
-            "oidc_client_id".to_string(),
-            serde_json::json!(self.oidc_client_id),
-        );
-        input.insert(
-            "oidc_response_mode".to_string(),
-            serde_json::json!(self.oidc_response_mode),
-        );
-        input.insert(
-            "oidc_response_types".to_string(),
-            serde_json::json!(self.oidc_response_types),
-        );
-        input.insert("jwks_url".to_string(), serde_json::json!(self.jwks_url));
-        input.insert(
-            "jwt_validation_pubkeys".to_string(),
-            serde_json::json!(self.jwt_validation_pubkeys),
-        );
-        input.insert(
-            "bound_issuer".to_string(),
-            serde_json::json!(self.bound_issuer),
-        );
-        input.insert(
-            "default_mapping_name".to_string(),
-            serde_json::json!(self.default_mapping_name),
-        );
-        input.insert(
-            "oidc_scopes".to_string(),
-            serde_json::json!(self.oidc_scopes),
-        );
-        input.insert(
-            "allowed_redirect_uris".to_string(),
-            serde_json::json!(self.allowed_redirect_uris),
-        );
-        input.insert(
-            "provider_config".to_string(),
-            serde_json::json!(self.provider_config),
-        );
-        serde_json::Value::Object(input)
+        let mut value = serde_json::to_value(self).unwrap_or_default();
+        if let Some(input) = value.as_object_mut() {
+            input.remove("oidc_client_secret");
+        }
+        value
     }
 }
 

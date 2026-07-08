@@ -174,20 +174,11 @@ pub struct UserCreate {
 impl UserCreate {
     #[must_use]
     pub fn to_policy_input(&self) -> serde_json::Value {
-        let mut input = self
-            .extra
-            .clone()
-            .into_iter()
-            .collect::<serde_json::Map<_, _>>();
-        input.insert(
-            "default_project_id".to_string(),
-            serde_json::json!(self.default_project_id),
-        );
-        input.insert("domain_id".to_string(), serde_json::json!(self.domain_id));
-        input.insert("enabled".to_string(), serde_json::json!(self.enabled));
-        input.insert("name".to_string(), serde_json::json!(self.name));
-        input.insert("options".to_string(), serde_json::json!(self.options));
-        serde_json::Value::Object(input)
+        let mut value = serde_json::to_value(self).unwrap_or_default();
+        if let Some(input) = value.as_object_mut() {
+            input.remove("password");
+        }
+        value
     }
 }
 
