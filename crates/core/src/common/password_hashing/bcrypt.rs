@@ -58,6 +58,7 @@ mod tests {
     use super::super::{hash_password, verify_password};
     use openstack_keystone_config::PasswordHashingAlgo;
     use rand::distr::{Alphanumeric, SampleString};
+    use secrecy::SecretString;
     use tracing_test::traced_test;
 
     #[tokio::test]
@@ -66,7 +67,7 @@ mod tests {
         let python_hash = "$2b$12$0DJQbRXGHzPsBrwGt/DebuerSmDAslUjtPYtph84hMimE3XiK9K4e";
 
         assert!(
-            verify_password(&conf, "password123", python_hash)
+            verify_password(&conf, &SecretString::from("password123"), python_hash)
                 .await
                 .unwrap(),
             "Rust Bcrypt verification rejected a real Keystone Python Bcrypt hash"
@@ -83,9 +84,10 @@ mod tests {
         let conf = mock_config(PasswordHashingAlgo::Bcrypt, 255);
         let python_hash = "$2b$12$WzlPV/xopC8EI12Uz6kak.Edrg/n6QqM71MXoxegUUPxr.F52Hpsi";
         let untruncated_73_byte_password = "A".repeat(73);
+        let password = SecretString::from(untruncated_73_byte_password);
 
         assert!(
-            verify_password(&conf, &untruncated_73_byte_password, python_hash)
+            verify_password(&conf, &password, python_hash)
                 .await
                 .unwrap(),
             "Rust Bcrypt did not truncate at the same 72-byte boundary as Keystone Python"
@@ -97,11 +99,12 @@ mod tests {
     async fn test_roundtrip_bcrypt() {
         let conf = mock_config(PasswordHashingAlgo::Bcrypt, 255);
         let pass = "abcdefg";
-        let hashed = hash_password(&conf, &pass).await.unwrap();
+        let secret = SecretString::from(pass);
+        let hashed = hash_password(&conf, &secret).await.unwrap();
 
-        assert!(verify_password(&conf, &pass, &hashed).await.unwrap());
+        assert!(verify_password(&conf, &secret, &hashed).await.unwrap());
         assert!(
-            !verify_password(&conf, "wrong_password", &hashed)
+            !verify_password(&conf, &SecretString::from("wrong_password"), &hashed)
                 .await
                 .unwrap()
         );
@@ -114,6 +117,7 @@ mod tests {
     async fn test_roundtrip_bcrypt_bad_hash() {
         let conf = mock_config(PasswordHashingAlgo::Bcrypt, 255);
         let pass = Alphanumeric.sample_string(&mut rand::rng(), 80);
-        assert!(!verify_password(&conf, &pass, "foobar").await.unwrap());
+        let secret = SecretString::from(pass);
+        assert!(!verify_password(&conf, &secret, "foobar").await.unwrap());
     }
 }

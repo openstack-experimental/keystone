@@ -34,6 +34,7 @@ use thiserror::Error;
 use tracing::debug;
 
 use rand::distr::{Alphanumeric, SampleString};
+use secrecy::{ExposeSecret, SecretString};
 
 use openstack_keystone_config::{Config, PasswordHashingAlgo};
 
@@ -234,21 +235,22 @@ pub async fn generate_dummy_hash(conf: &Config) -> Result<String, PasswordHashEr
     // output when a uniform sampler is one call away.
     let dummy_password: String = Alphanumeric.sample_string(&mut rand::rng(), 32);
 
-    hash_password(conf, dummy_password).await
+    hash_password(conf, &SecretString::from(dummy_password)).await
 }
 
 /// Calculate password hash with the configuration defaults.
-pub async fn hash_password<S: AsRef<[u8]>>(
+pub async fn hash_password(
     conf: &Config,
-    password: S,
+    password: &SecretString,
 ) -> Result<String, PasswordHashError> {
     // Truncation uses the *configured* algorithm, not any algorithm detected
     // from an existing hash string. This is the correct behaviour during
     // algorithm migrations: a user whose hash is in the old format and whose
     // password is longer than the new algorithm's limit must be truncated
     // consistently with what Python Keystone would do.
+    let exposed = password.expose_secret();
     let truncated = verify_length_and_trunc_password(
-        password.as_ref(),
+        exposed.as_bytes(),
         &conf.identity.password_hashing_algorithm,
         conf.identity.max_password_length,
     );
@@ -263,9 +265,9 @@ pub async fn hash_password<S: AsRef<[u8]>>(
 }
 
 /// Verify the password matches the hashed value.
-pub async fn verify_password<P: AsRef<[u8]>, H: AsRef<str>>(
+pub async fn verify_password<H: AsRef<str>>(
     conf: &Config,
-    password: P,
+    password: &SecretString,
     hash: H,
 ) -> Result<bool, PasswordHashError> {
     let hash_str = hash.as_ref();
@@ -279,8 +281,9 @@ pub async fn verify_password<P: AsRef<[u8]>, H: AsRef<str>>(
     // verification once the config switches to a non-truncating algorithm.
     let detected = detect_algo(hash_str, &conf.identity.password_hashing_algorithm);
 
+    let exposed = password.expose_secret();
     let truncated = verify_length_and_trunc_password(
-        password.as_ref(),
+        exposed.as_bytes(),
         &conf.identity.password_hashing_algorithm,
         conf.identity.max_password_length,
     );
@@ -375,11 +378,13 @@ mod tests {
     async fn test_truncation_behavior_differences() {
         let long_password = "A".repeat(100);
         let truncated_72_password = "A".repeat(72);
+        let long_secret = SecretString::from(long_password);
+        let truncated_secret = SecretString::from(truncated_72_password);
 
         // 1. Standard Bcrypt Truncation Check
         let conf_bcrypt = mock_config(PasswordHashingAlgo::Bcrypt, 255);
-        let hash_bcrypt = hash_password(&conf_bcrypt, &long_password).await.unwrap();
-        let is_valid_bcrypt = verify_password(&conf_bcrypt, &truncated_72_password, &hash_bcrypt)
+        let hash_bcrypt = hash_password(&conf_bcrypt, &long_secret).await.unwrap();
+        let is_valid_bcrypt = verify_password(&conf_bcrypt, &truncated_secret, &hash_bcrypt)
             .await
             .unwrap();
         assert!(
@@ -389,25 +394,21 @@ mod tests {
 
         // 2. BcryptSha256 Arbitrary Length Check
         let conf_bcrypt_sha256 = mock_config(PasswordHashingAlgo::BcryptSha256, 255);
-        let hash_bcrypt_sha256 = hash_password(&conf_bcrypt_sha256, &long_password)
+        let hash_bcrypt_sha256 = hash_password(&conf_bcrypt_sha256, &long_secret)
             .await
             .unwrap();
-        let is_valid_substring = verify_password(
-            &conf_bcrypt_sha256,
-            &truncated_72_password,
-            &hash_bcrypt_sha256,
-        )
-        .await
-        .unwrap();
+        let is_valid_substring =
+            verify_password(&conf_bcrypt_sha256, &truncated_secret, &hash_bcrypt_sha256)
+                .await
+                .unwrap();
         assert!(
             !is_valid_substring,
             "BcryptSha256 incorrectly truncated the password to 72 bytes!"
         );
 
-        let is_valid_full =
-            verify_password(&conf_bcrypt_sha256, &long_password, &hash_bcrypt_sha256)
-                .await
-                .unwrap();
+        let is_valid_full = verify_password(&conf_bcrypt_sha256, &long_secret, &hash_bcrypt_sha256)
+            .await
+            .unwrap();
         assert!(
             is_valid_full,
             "BcryptSha256 failed to verify the full 100-byte password sequence."
@@ -428,7 +429,9 @@ mod tests {
         );
 
         let pass = Alphanumeric.sample_string(&mut rand::rng(), 32);
-        let result = verify_password(&conf, &pass, &dummy_hash).await.unwrap();
+        let result = verify_password(&conf, &SecretString::from(pass), &dummy_hash)
+            .await
+            .unwrap();
 
         assert!(
             !result,
@@ -445,7 +448,9 @@ mod tests {
         assert!(!dummy_hash.is_empty(), "Dummy hash should not be empty");
 
         let pass = Alphanumeric.sample_string(&mut rand::rng(), 32);
-        let result = verify_password(&conf, &pass, &dummy_hash).await.unwrap();
+        let result = verify_password(&conf, &SecretString::from(pass), &dummy_hash)
+            .await
+            .unwrap();
         assert!(!result);
     }
 
@@ -565,7 +570,9 @@ mod tests {
     async fn test_cross_verify_bcrypt() {
         let conf = mock_config(PasswordHashingAlgo::Bcrypt, 255);
         let password = "openstack123";
-        let hash = hash_password(&conf, password).await.unwrap();
+        let hash = hash_password(&conf, &SecretString::from(password))
+            .await
+            .unwrap();
 
         match python_cross_verify("bcrypt", password, &hash).await {
             None => return, // no Python checkout configured - skip
@@ -578,7 +585,9 @@ mod tests {
     async fn test_cross_verify_bcrypt_sha256() {
         let conf = mock_config(PasswordHashingAlgo::BcryptSha256, 255);
         let password = "openstack123";
-        let hash = hash_password(&conf, password).await.unwrap();
+        let hash = hash_password(&conf, &SecretString::from(password))
+            .await
+            .unwrap();
 
         match python_cross_verify("bcrypt_sha256", password, &hash).await {
             None => return,
@@ -591,7 +600,9 @@ mod tests {
     async fn test_cross_verify_scrypt() {
         let conf = mock_config(PasswordHashingAlgo::Scrypt, 255);
         let password = "openstack123";
-        let hash = hash_password(&conf, password).await.unwrap();
+        let hash = hash_password(&conf, &SecretString::from(password))
+            .await
+            .unwrap();
 
         match python_cross_verify("scrypt", password, &hash).await {
             None => return,
@@ -604,7 +615,9 @@ mod tests {
     async fn test_cross_verify_pbkdf2_sha512() {
         let conf = mock_config(PasswordHashingAlgo::Pbkdf2Sha512, 255);
         let password = "openstack123";
-        let hash = hash_password(&conf, password).await.unwrap();
+        let hash = hash_password(&conf, &SecretString::from(password))
+            .await
+            .unwrap();
 
         match python_cross_verify("pbkdf2_sha512", password, &hash).await {
             None => return,

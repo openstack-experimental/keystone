@@ -117,6 +117,7 @@ mod tests {
     use super::super::tests::{TEST_PASSWORD, mock_config};
     use super::super::{hash_password, verify_password};
     use openstack_keystone_config::PasswordHashingAlgo;
+    use secrecy::SecretString;
 
     #[tokio::test]
     async fn test_scrypt_matches_keystone_python_hash() {
@@ -126,7 +127,7 @@ mod tests {
         let python_hash = "$scrypt$ln=16,r=8,p=1$Gx7wZNue5sPNsfTOmI4YNg$umTMUw1tH3HhQBqHUG9tEr7x6RxfyVgNty/COb+m1IM";
 
         assert!(
-            verify_password(&conf, TEST_PASSWORD, python_hash)
+            verify_password(&conf, &SecretString::from(TEST_PASSWORD), python_hash)
                 .await
                 .unwrap(),
             "Rust Scrypt verification rejected a real Keystone Python Scrypt hash"
@@ -137,14 +138,15 @@ mod tests {
     async fn test_scrypt_hash_then_verify_roundtrip() {
         let conf = mock_config(PasswordHashingAlgo::Scrypt, 255);
         let password = "scrypt_roundtrip_password";
+        let secret = SecretString::from(password);
 
-        let hashed = hash_password(&conf, password).await.unwrap();
+        let hashed = hash_password(&conf, &secret).await.unwrap();
         assert!(
-            verify_password(&conf, password, &hashed).await.unwrap(),
+            verify_password(&conf, &secret, &hashed).await.unwrap(),
             "Scrypt hash_password output failed to verify against the same password"
         );
         assert!(
-            !verify_password(&conf, "wrong_password", &hashed)
+            !verify_password(&conf, &SecretString::from("wrong_password"), &hashed)
                 .await
                 .unwrap(),
             "Scrypt verification incorrectly accepted a wrong password"
@@ -156,7 +158,9 @@ mod tests {
         // Verify the wire format prefix matches what Python emits:
         // $scrypt$ln=16,r=8,p=1$<base64_salt>$<base64_digest>
         let conf = mock_config(PasswordHashingAlgo::Scrypt, 255);
-        let hashed = hash_password(&conf, "any_password").await.unwrap();
+        let hashed = hash_password(&conf, &SecretString::from("any_password"))
+            .await
+            .unwrap();
         assert!(
             hashed.starts_with("$scrypt$ln=16,r=8,p=1$"),
             "Scrypt hash format must match Python Keystone's prefix; got: {hashed}"

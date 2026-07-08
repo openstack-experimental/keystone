@@ -12,7 +12,6 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use secrecy::ExposeSecret;
 use secrecy::SecretString;
 
 use openstack_keystone_config::Config;
@@ -56,7 +55,7 @@ where
             if let Some(ref check_hash) = check_password.password_hash
                 && openstack_keystone_core::common::password_hashing::verify_password(
                     conf,
-                    new_password.expose_secret(),
+                    new_password,
                     check_hash,
                 )
                 .await

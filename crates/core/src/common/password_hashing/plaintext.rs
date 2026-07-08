@@ -49,37 +49,25 @@ mod tests {
     use super::super::tests::mock_config;
     use super::super::{hash_password, verify_password};
     use openstack_keystone_config::PasswordHashingAlgo;
+    use secrecy::SecretString;
 
     #[tokio::test]
     async fn test_none_algorithm_hash_then_verify_roundtrip() {
         let conf = mock_config(PasswordHashingAlgo::None, 255);
         let password = "plaintext_password";
+        let secret = SecretString::from(password);
 
-        let hashed = hash_password(&conf, password).await.unwrap();
+        let hashed = hash_password(&conf, &secret).await.unwrap();
         assert_eq!(
             hashed, password,
             "None algorithm must store the password unchanged"
         );
 
-        assert!(verify_password(&conf, password, &hashed).await.unwrap());
+        assert!(verify_password(&conf, &secret, &hashed).await.unwrap());
         assert!(
-            !verify_password(&conf, "wrong_password", &hashed)
+            !verify_password(&conf, &SecretString::from("wrong_password"), &hashed)
                 .await
                 .unwrap()
-        );
-    }
-
-    #[tokio::test]
-    async fn test_reject_invalid_utf8() {
-        let conf = mock_config(PasswordHashingAlgo::None, 72);
-        let invalid_utf8_password = b"bad\xFFpassword";
-
-        // Ensure our strict UTF-8 validation safely rejects invalid sequence
-        // vulnerabilities
-        let hash_result = hash_password(&conf, invalid_utf8_password).await;
-        assert!(
-            hash_result.is_err(),
-            "None algorithm should reject invalid UTF-8 strings during hash generation"
         );
     }
 }

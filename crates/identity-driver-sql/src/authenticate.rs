@@ -14,7 +14,6 @@
 //! User account authentication implementation.
 use chrono::Utc;
 use sea_orm::DatabaseConnection;
-use secrecy::ExposeSecret;
 use tracing::info;
 
 use openstack_keystone_config::Config;
@@ -80,11 +79,9 @@ pub async fn authenticate_by_password(
             .await
             .map_err(IdentityProviderError::password_hash)?;
 
-        // Exposure boundary: unwrapped only to feed the constant-time verify.
-        let _ =
-            password_hashing::verify_password(config, auth.password.expose_secret(), dummy_hash)
-                .await
-                .map_err(IdentityProviderError::password_hash)?;
+        let _ = password_hashing::verify_password(config, &auth.password, dummy_hash)
+            .await
+            .map_err(IdentityProviderError::password_hash)?;
         return Err(AuthenticationError::UserNameOrPasswordWrong.into());
     }
 
@@ -131,8 +128,7 @@ pub async fn authenticate_by_password(
 
     // Verify the password
     let now = Utc::now();
-    // Exposure boundary: unwrapped only to feed the constant-time verify.
-    if !password_hashing::verify_password(config, auth.password.expose_secret(), expected_hash)
+    if !password_hashing::verify_password(config, &auth.password, expected_hash)
         .await
         .map_err(IdentityProviderError::password_hash)?
     {
@@ -234,6 +230,7 @@ async fn should_lock(
 mod tests {
     use chrono::{DateTime, NaiveDateTime, TimeDelta, Utc};
     use sea_orm::{DatabaseBackend, MockDatabase, MockExecResult, Transaction};
+    use secrecy::SecretString;
     use tracing_test::traced_test;
 
     use openstack_keystone_core_types::identity::UserOptions;
@@ -456,9 +453,10 @@ mod tests {
     async fn test_authenticate() {
         let config = Config::default();
         let password = String::from("pass");
+        let password_secret = SecretString::from(password.clone());
         let db = MockDatabase::new(DatabaseBackend::Postgres)
             .append_query_results([vec![get_local_user_with_password_mock(
-                password_hashing::hash_password(&config, &password)
+                password_hashing::hash_password(&config, &password_secret)
                     .await
                     .unwrap(),
             )]])
@@ -592,7 +590,7 @@ mod tests {
                 db_password::ModelBuilder::default()
                     .local_user_id(1)
                     .password_hash(
-                        password_hashing::hash_password(&config, &password)
+                        password_hashing::hash_password(&config, &SecretString::from(password))
                             .await
                             .unwrap(),
                     )
@@ -857,12 +855,13 @@ mod tests {
     async fn test_authenticate_expired_password() {
         let config = Config::default();
         let password = String::from("foo_pass");
+        let password_secret = SecretString::from(password.clone());
         let db = MockDatabase::new(DatabaseBackend::Postgres)
             .append_query_results([vec![(
                 get_local_user_mock("user_id"),
                 db_password::ModelBuilder::default()
                     .password_hash(
-                        password_hashing::hash_password(&config, &password)
+                        password_hashing::hash_password(&config, &password_secret)
                             .await
                             .unwrap(),
                     )
@@ -903,12 +902,13 @@ mod tests {
     async fn test_authenticate_exempt_expired_password() {
         let config = Config::default();
         let password = String::from("foo_pass");
+        let password_secret = SecretString::from(password.clone());
         let db = MockDatabase::new(DatabaseBackend::Postgres)
             .append_query_results([vec![(
                 get_local_user_mock("user_id"),
                 db_password::ModelBuilder::expired()
                     .password_hash(
-                        password_hashing::hash_password(&config, &password)
+                        password_hashing::hash_password(&config, &password_secret)
                             .await
                             .unwrap(),
                     )

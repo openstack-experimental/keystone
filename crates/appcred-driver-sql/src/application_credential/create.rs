@@ -15,7 +15,6 @@
 use sea_orm::DatabaseConnection;
 use sea_orm::entity::*;
 use sea_orm::query::*;
-use secrecy::ExposeSecret;
 use uuid::Uuid;
 
 use openstack_keystone_config::Config;
@@ -84,11 +83,9 @@ pub async fn create(
         .context("starting transaction for persisting application credential")?;
     let mut model = db_application_credential::ActiveModel::try_from(rec.clone())?;
     model.secret_hash = if let Some(secret) = &rec.secret {
-        Set(
-            password_hashing::hash_password(conf, secret.expose_secret())
-                .await
-                .map_err(ApplicationCredentialProviderError::password_hash)?,
-        )
+        Set(password_hashing::hash_password(conf, secret)
+            .await
+            .map_err(ApplicationCredentialProviderError::password_hash)?)
     } else {
         return Err(ApplicationCredentialProviderError::SecretMissing);
     };

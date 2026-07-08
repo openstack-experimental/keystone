@@ -12,7 +12,6 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use secrecy::ExposeSecret;
 use secrecy::SecretString;
 
 use openstack_keystone_config::Config;
@@ -78,7 +77,7 @@ pub async fn update_password(
             ))?;
 
     // Verify original password
-    if !password_hashing::verify_password(conf, original_password.expose_secret(), expected_hash)
+    if !password_hashing::verify_password(conf, &original_password, expected_hash)
         .await
         .map_err(IdentityProviderError::password_hash)?
     {

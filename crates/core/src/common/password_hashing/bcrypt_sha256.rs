@@ -224,6 +224,7 @@ mod tests {
     use super::super::tests::mock_config;
     use super::super::{hash_password, verify_password};
     use openstack_keystone_config::PasswordHashingAlgo;
+    use secrecy::SecretString;
 
     #[tokio::test]
     async fn test_bcrypt_sha256_matches_keystone_python_ascii_password() {
@@ -232,7 +233,7 @@ mod tests {
             "$bcrypt-sha256$v=2,t=2b,r=12$dWWyn1sALNWeny6KjQhSUu$iOmfSpzioo6ThZbSXwWYSZAQcGlba/q";
 
         assert!(
-            verify_password(&conf, "password123", python_hash)
+            verify_password(&conf, &SecretString::from("password123"), python_hash)
                 .await
                 .unwrap(),
             "Rust BcryptSha256 verification rejected a real Keystone Python BcryptSha256 hash"
@@ -249,9 +250,10 @@ mod tests {
         let python_hash =
             "$bcrypt-sha256$v=2,t=2b,r=12$BL2N.GYa/h9LYksj.qtsb.$oUw7Xg.rbmPt8aXB2z544HOIQMrQbZ6";
         let full_73_byte_password = "A".repeat(73);
+        let password = SecretString::from(full_73_byte_password);
 
         assert!(
-            verify_password(&conf, &full_73_byte_password, python_hash)
+            verify_password(&conf, &password, python_hash)
                 .await
                 .unwrap(),
             "Rust BcryptSha256 must not truncate at 72 bytes - that would diverge from Keystone Python"
@@ -265,9 +267,13 @@ mod tests {
             "$bcrypt-sha256$v=2,t=2b,r=12$eP5KRHawhX/K86TK3IOLoO$fpoVOwh9QvOLy1Y9GKxMkf.RnkfO60.";
 
         assert!(
-            verify_password(&conf, "🚀-rocket-password", python_hash)
-                .await
-                .unwrap(),
+            verify_password(
+                &conf,
+                &SecretString::from("🚀-rocket-password"),
+                python_hash
+            )
+            .await
+            .unwrap(),
             "Rust BcryptSha256 verification rejected a real Keystone Python hash of a UTF-8 password"
         );
     }
@@ -275,9 +281,11 @@ mod tests {
     #[tokio::test]
     async fn test_bcrypt_sha256_rejects_wrong_password() {
         let conf = mock_config(PasswordHashingAlgo::BcryptSha256, 255);
-        let hash = hash_password(&conf, "correct_password").await.unwrap();
+        let hash = hash_password(&conf, &SecretString::from("correct_password"))
+            .await
+            .unwrap();
 
-        let result = verify_password(&conf, "wrong_password", &hash)
+        let result = verify_password(&conf, &SecretString::from("wrong_password"), &hash)
             .await
             .unwrap();
         assert!(
@@ -295,7 +303,7 @@ mod tests {
             "$bcrypt-sha256$",                        // nearly empty
             "not-even-a-hash-string",                 // no '$' at all
         ] {
-            let result = verify_password(&conf, "anything", malformed).await;
+            let result = verify_password(&conf, &SecretString::from("anything"), malformed).await;
             assert!(
                 matches!(result, Ok(false)) || result.is_err(),
                 "Malformed hash `{malformed}` should fail safely, not panic"
@@ -306,10 +314,10 @@ mod tests {
     #[tokio::test]
     async fn test_verify_bcrypt_sha256_roundtrip() {
         let conf = mock_config(PasswordHashingAlgo::BcryptSha256, 255);
-        let password = b"password123";
-        let generated_hash = hash_password(&conf, password).await.unwrap();
+        let password = SecretString::from("password123");
+        let generated_hash = hash_password(&conf, &password).await.unwrap();
 
-        let is_valid = verify_password(&conf, password, &generated_hash)
+        let is_valid = verify_password(&conf, &password, &generated_hash)
             .await
             .expect("Verification function failed");
         assert!(

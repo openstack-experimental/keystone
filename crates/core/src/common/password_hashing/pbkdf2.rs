@@ -163,6 +163,7 @@ mod tests {
     use super::super::tests::{TEST_PASSWORD, mock_config};
     use super::super::{hash_password, verify_password};
     use openstack_keystone_config::PasswordHashingAlgo;
+    use secrecy::SecretString;
 
     #[tokio::test]
     async fn test_pbkdf2_sha512_matches_keystone_python_hash() {
@@ -170,7 +171,7 @@ mod tests {
         let python_hash = "$pbkdf2-sha512$25000$z1PryJDTkFQEQN/E5K0nLQ$CzQ9XdgqUzdTOTjUSRGMN9r9O7WQmiyUl4fVA2jwJpB6zSXEonqw9Jfg4WImljlZ7fRPPFXmZZVdVhnCTJZymg";
 
         assert!(
-            verify_password(&conf, TEST_PASSWORD, python_hash)
+            verify_password(&conf, &SecretString::from(TEST_PASSWORD), python_hash)
                 .await
                 .unwrap(),
             "Rust PBKDF2-SHA512 verification rejected a real Keystone Python PBKDF2-SHA512 hash"
@@ -182,14 +183,15 @@ mod tests {
         let mut conf = mock_config(PasswordHashingAlgo::Pbkdf2Sha512, 255);
         conf.identity.password_hash_rounds = None; // exercise the default (25000)
         let password = "pbkdf2_roundtrip_password";
+        let secret = SecretString::from(password);
 
-        let hashed = hash_password(&conf, password).await.unwrap();
+        let hashed = hash_password(&conf, &secret).await.unwrap();
         assert!(
             hashed.starts_with("$pbkdf2-sha512$25000$"),
             "PBKDF2 hash should embed the default round count"
         );
         assert!(
-            verify_password(&conf, password, &hashed).await.unwrap(),
+            verify_password(&conf, &secret, &hashed).await.unwrap(),
             "PBKDF2 roundtrip failed with default rounds"
         );
     }
@@ -201,14 +203,15 @@ mod tests {
         let mut conf = mock_config(PasswordHashingAlgo::Pbkdf2Sha512, 255);
         conf.identity.password_hash_rounds = Some(10000);
         let password = "pbkdf2_custom_rounds";
+        let secret = SecretString::from(password);
 
-        let hashed = hash_password(&conf, password).await.unwrap();
+        let hashed = hash_password(&conf, &secret).await.unwrap();
         assert!(
             hashed.starts_with("$pbkdf2-sha512$10000$"),
             "PBKDF2 hash must embed the configured round count, not the default"
         );
         assert!(
-            verify_password(&conf, password, &hashed).await.unwrap(),
+            verify_password(&conf, &secret, &hashed).await.unwrap(),
             "PBKDF2 roundtrip failed with non-default rounds"
         );
     }

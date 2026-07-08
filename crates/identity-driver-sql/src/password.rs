@@ -12,7 +12,6 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 use chrono::{DateTime, Utc};
-use secrecy::ExposeSecret;
 use secrecy::SecretString;
 
 use openstack_keystone_config::Config;
@@ -67,7 +66,7 @@ pub async fn set_new_password<C: ConnectionTrait>(
         .security_compliance
         .unique_last_password_count
         .unwrap_or(0);
-    let hashed_password = password_hashing::hash_password(conf, password.expose_secret())
+    let hashed_password = password_hashing::hash_password(conf, &password)
         .await
         .map_err(IdentityProviderError::password_hash)?;
 
