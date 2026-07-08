@@ -43,6 +43,7 @@ rule_ba = "rule_ba"
 [type.rust.extend-words]
 ro = "ro"
 ser = "ser"
+mis = "mis"
 COSE = "COSE"
 BA = "BA"
 UE = "UE"

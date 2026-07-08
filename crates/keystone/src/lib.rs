@@ -82,6 +82,8 @@ pub mod catalog;
 pub mod common;
 pub mod config;
 pub mod credential;
+pub mod dynamic_plugin_http_client;
+pub mod dynamic_plugin_identity;
 pub mod error;
 pub mod federation;
 pub mod identity;

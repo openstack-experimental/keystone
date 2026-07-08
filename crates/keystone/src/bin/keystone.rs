@@ -59,6 +59,7 @@ use openstack_keystone::application_credential::ApplicationCredentialHook;
 use openstack_keystone::assignment::AssignmentHook;
 use openstack_keystone::catalog::CatalogHook;
 use openstack_keystone::config::{Config, ConfigManager, Interface, ListenerConfig};
+use openstack_keystone::dynamic_plugin_identity::DynamicPluginIdentityHook;
 use openstack_keystone::federation::FederationHook;
 use openstack_keystone::identity::IdentityHook;
 use openstack_keystone::idmapping::IdMappingHook;
@@ -501,9 +502,9 @@ async fn init_audit(cfg: &Config) -> Result<Arc<AuditDispatcher>, Report> {
 }
 
 /// Subscribe all provider event hooks (application-credential, assignment,
-/// catalog, federation, identity, ID-mapping, k8s-auth, resource, revoke,
-/// role, token, trust) plus the CADF audit hook to `shared_state`'s event
-/// dispatcher.
+/// catalog, dynamic-plugin-identity, federation, identity, ID-mapping,
+/// k8s-auth, resource, revoke, role, token, trust) plus the CADF audit hook
+/// to `shared_state`'s event dispatcher.
 async fn subscribe_event_hooks(shared_state: &ServiceState) {
     shared_state
         .event_dispatcher
@@ -518,6 +519,12 @@ async fn subscribe_event_hooks(shared_state: &ServiceState) {
     shared_state
         .event_dispatcher
         .subscribe(Arc::new(CatalogHook::new(shared_state.clone())))
+        .await;
+    shared_state
+        .event_dispatcher
+        .subscribe(Arc::new(DynamicPluginIdentityHook::new(
+            shared_state.clone(),
+        )))
         .await;
     shared_state
         .event_dispatcher

@@ -246,6 +246,50 @@ mod credential {
 }
 pub use credential::MockCredentialProvider;
 
+mod dynamic_plugin_identity {
+    use super::*;
+
+    use crate::dynamic_plugin_identity::{
+        DynamicPluginIdentityApi, DynamicPluginIdentityProviderError,
+    };
+
+    mock! {
+        pub DynamicPluginIdentityProvider {}
+
+        #[async_trait]
+        impl DynamicPluginIdentityApi for DynamicPluginIdentityProvider {
+            async fn create_or_resolve<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                plugin_name: &'a str,
+                external_id: &'a str,
+                user_id: &'a str,
+            ) -> Result<String, DynamicPluginIdentityProviderError>;
+
+            async fn find<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                plugin_name: &'a str,
+                external_id: &'a str,
+            ) -> Result<Option<String>, DynamicPluginIdentityProviderError>;
+
+            async fn purge<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                plugin_name: &'a str,
+                external_id: &'a str,
+            ) -> Result<(), DynamicPluginIdentityProviderError>;
+
+            async fn purge_by_user<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                user_id: &'a str,
+            ) -> Result<(), DynamicPluginIdentityProviderError>;
+        }
+    }
+}
+pub use dynamic_plugin_identity::MockDynamicPluginIdentityProvider;
+
 mod assignment {
     use super::*;
 

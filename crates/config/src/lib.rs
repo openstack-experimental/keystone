@@ -67,6 +67,7 @@ mod credential;
 mod database;
 mod default;
 mod distributed_storage;
+mod dynamic_plugin_identity;
 mod dynamic_plugins;
 mod ec2;
 mod federation;
@@ -100,6 +101,7 @@ pub use credential::*;
 pub use database::*;
 pub use default::*;
 pub use distributed_storage::*;
+pub use dynamic_plugin_identity::*;
 pub use dynamic_plugins::*;
 pub use ec2::*;
 pub use federation::*;
@@ -156,6 +158,10 @@ pub struct Config {
     /// Credential provider configuration.
     #[serde(default)]
     pub credential: CredentialProvider,
+
+    /// Dynamic plugin identity-binding index provider configuration.
+    #[serde(default)]
+    pub dynamic_plugin_identity: DynamicPluginIdentityProvider,
 
     /// Database configuration.
     //#[serde(default)]

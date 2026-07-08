@@ -4462,6 +4462,7 @@ dependencies = [
  "openstack-keystone-core-types",
  "openstack-keystone-credential-driver-sql",
  "openstack-keystone-distributed-storage",
+ "openstack-keystone-dynamic-plugin-identity-driver-raft",
  "openstack-keystone-federation-driver-sql",
  "openstack-keystone-identity-driver-sql",
  "openstack-keystone-idmapping-driver-sql",
@@ -4707,6 +4708,7 @@ dependencies = [
  "openstack-keystone-audit",
  "openstack-keystone-config",
  "openstack-keystone-core-types",
+ "openstack-keystone-dynamic-plugin-runtime",
  "openstack-keystone-storage-api",
  "rand 0.10.1",
  "regex",
@@ -4828,6 +4830,17 @@ dependencies = [
  "uuid",
  "x509-parser 0.18.1",
  "zeroize",
+]
+
+[[package]]
+name = "openstack-keystone-dynamic-plugin-identity-driver-raft"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "openstack-keystone-core",
+ "openstack-keystone-distributed-storage",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

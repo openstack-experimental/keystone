@@ -17,11 +17,13 @@
 //! verifies each against its pinned SHA-256 checksum, and compiles it via
 //! [`extism`]/`wasmtime` with each plugin's configured resource bounds
 //! (`fuel_limit`, `timeout_ms`, `memory_limit_mb`, ADR §7) baked into the
-//! compiled module. This crate implements ADR 0025 Phase 0 only
-//! (`doc/src/adr/0025-implementation-plan.md`): plugin loading, checksum
-//! verification, resource-bounded invocation. It does **not** yet register
-//! any host functions (§6) or dispatch real `authenticate`/`mapping`/
-//! `route` requests from an auth method - that's Phases 1-3.
+//! compiled module. Host functions [`HostFunctions::provision_user`]/
+//! [`HostFunctions::find_user`] (ADR §6 B/C) are registered per plugin,
+//! gated by that plugin's configured `capabilities` - `http_fetch` (§6.A)
+//! and `assign_role` (§6.D) are not implemented yet, and this crate does
+//! not dispatch real `authenticate`/`mapping`/`route` requests from an auth
+//! method - that's Phase 1's PR 1.2+
+//! (`doc/plans/0025-implementation-plan.md`).
 //!
 //! No WASI imports are ever registered on a loaded plugin, matching ADR
 //! 0025 §6.F ("Sandbox Baseline: No WASI"). Every call to
@@ -30,12 +32,19 @@
 //! §7 "Isolation between requests" - no state or resource budget survives
 //! from one invocation to the next.
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Duration;
 
 use extism::{CompiledPlugin, Manifest, Plugin, PluginBuilder, Wasm};
 use openstack_keystone_config::{DynamicPluginConfig, DynamicPluginsSection};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
+
+mod host_functions;
+pub use host_functions::{
+    AssignRoleRequest, GuestUserCreate, HostFunctions, HttpFetchRequest, HttpFetchResponse,
+    ProvisionUserRequest, ResolvedIdentityHandle, RoleAssignmentTarget,
+};
 
 /// WebAssembly linear memory page size, per the Wasm spec (64 KiB).
 const WASM_PAGE_BYTES: u64 = 64 * 1024;
@@ -112,11 +121,11 @@ impl InvokeError {
 }
 
 /// A plugin that loaded and checksum-verified successfully. Holds a
-/// *compiled* module plus its resource-limit configuration; no
-/// `wasmtime::Store` is created (and so no guest memory allocated, no fuel
-/// budget started) until [`LoadedPlugin::invoke`] is called. No host
-/// functions are registered on it yet (Phase 0 scope) - capability wiring
-/// is added in Phase 1 (ADR 0025 §6).
+/// *compiled* module - including whichever host functions its
+/// `capabilities` config granted it (ADR §6) - plus its resource-limit
+/// configuration; no `wasmtime::Store` is created (and so no guest memory
+/// allocated, no fuel budget started) until [`LoadedPlugin::invoke`] is
+/// called.
 pub struct LoadedPlugin {
     pub name: String,
     pub sha256: String,
@@ -159,6 +168,7 @@ impl WasmPluginRegistry {
     pub fn load(
         section: &DynamicPluginsSection,
         configs: &HashMap<String, DynamicPluginConfig>,
+        host_functions: Option<&Arc<dyn HostFunctions>>,
     ) -> (Self, Vec<(String, PluginLoadError)>) {
         let mut registry = Self::default();
         let mut errors = Vec::new();
@@ -173,7 +183,7 @@ impl WasmPluginRegistry {
                 continue;
             };
 
-            match Self::load_one(name, config) {
+            match Self::load_one(name, config, host_functions) {
                 Ok(loaded) => {
                     registry.plugins.insert(name.clone(), loaded);
                 }
@@ -193,7 +203,11 @@ impl WasmPluginRegistry {
         (registry, errors)
     }
 
-    fn load_one(name: &str, config: &DynamicPluginConfig) -> Result<LoadedPlugin, PluginLoadError> {
+    fn load_one(
+        name: &str,
+        config: &DynamicPluginConfig,
+        host_functions: Option<&Arc<dyn HostFunctions>>,
+    ) -> Result<LoadedPlugin, PluginLoadError> {
         let bytes = std::fs::read(&config.path).map_err(|source| PluginLoadError::ReadFile {
             path: config.path.display().to_string(),
             source,
@@ -223,12 +237,21 @@ impl WasmPluginRegistry {
             .with_memory_max(max_pages)
             .with_timeout(Duration::from_millis(config.timeout_ms));
 
+        // Host functions are baked into the *compiled* module (extism has
+        // no per-invocation function-registration hook - see
+        // `host_functions::build_functions`'s doc comment) - only the
+        // capabilities this plugin's config actually lists are registered,
+        // so an unlisted host function is structurally absent from the
+        // guest's import table (ADR 0025 §6 preamble).
+        let functions = host_functions::build_functions(name, &config.capabilities, host_functions);
+
         // `wasi(false)` is the `PluginBuilder` default - stated explicitly
         // here so this stays true even if that default ever changes
         // upstream (ADR 0025 §6.F: no WASI imports, ever).
         let compiled = PluginBuilder::new(manifest)
             .with_wasi(false)
             .with_fuel_limit(config.fuel_limit)
+            .with_functions(functions)
             .compile()
             .map_err(|source| PluginLoadError::Compile {
                 path: config.path.display().to_string(),
@@ -335,7 +358,7 @@ mod tests {
 
         let mut configs = HashMap::new();
         configs.insert("p".to_string(), config);
-        let (registry, errors) = WasmPluginRegistry::load(&section("p"), &configs);
+        let (registry, errors) = WasmPluginRegistry::load(&section("p"), &configs, None);
 
         assert!(errors.is_empty(), "unexpected load errors: {errors:?}");
         assert_eq!(registry.len(), 1);
@@ -352,7 +375,7 @@ mod tests {
 
         let mut configs = HashMap::new();
         configs.insert("p".to_string(), config);
-        let (registry, errors) = WasmPluginRegistry::load(&section("p"), &configs);
+        let (registry, errors) = WasmPluginRegistry::load(&section("p"), &configs, None);
 
         assert!(registry.is_empty());
         assert_eq!(errors.len(), 1);
@@ -368,7 +391,7 @@ mod tests {
 
         let mut configs = HashMap::new();
         configs.insert("p".to_string(), config);
-        let (registry, errors) = WasmPluginRegistry::load(&section("p"), &configs);
+        let (registry, errors) = WasmPluginRegistry::load(&section("p"), &configs, None);
 
         assert!(registry.is_empty());
         assert_eq!(errors.len(), 1);
@@ -388,7 +411,7 @@ mod tests {
         let section = DynamicPluginsSection {
             plugins: vec!["good".to_string(), "bad".to_string()],
         };
-        let (registry, errors) = WasmPluginRegistry::load(&section, &configs);
+        let (registry, errors) = WasmPluginRegistry::load(&section, &configs, None);
 
         assert_eq!(registry.len(), 1);
         assert!(registry.contains("good"));

@@ -33,6 +33,8 @@ use crate::catalog::backend::CatalogBackend;
 use crate::catalog::error::CatalogProviderError;
 use crate::credential::CredentialProviderError;
 use crate::credential::backend::CredentialBackend;
+use crate::dynamic_plugin_identity::DynamicPluginIdentityProviderError;
+use crate::dynamic_plugin_identity::backend::DynamicPluginIdentityBackend;
 use crate::federation::backend::FederationBackend;
 use crate::federation::error::FederationProviderError;
 use crate::identity::backend::IdentityBackend;
@@ -125,6 +127,19 @@ pub trait PluginManagerApi {
         &self,
         name: S,
     ) -> Result<&Arc<dyn CredentialBackend>, CredentialProviderError>;
+
+    /// Get registered dynamic plugin identity-binding index backend.
+    ///
+    /// # Parameters
+    /// - `name`: The name of the backend to retrieve.
+    ///
+    /// # Returns
+    /// - `Ok(&Arc<dyn DynamicPluginIdentityBackend>)` if found, otherwise
+    ///   `Err(DynamicPluginIdentityProviderError)`.
+    fn get_dynamic_plugin_identity_backend<S: AsRef<str>>(
+        &self,
+        name: S,
+    ) -> Result<&Arc<dyn DynamicPluginIdentityBackend>, DynamicPluginIdentityProviderError>;
 
     /// Get registered federation backend.
     ///
@@ -322,6 +337,17 @@ pub trait PluginManagerApi {
         &mut self,
         name: S,
         plugin: Arc<dyn CredentialBackend>,
+    );
+
+    /// Register dynamic plugin identity-binding index backend.
+    ///
+    /// # Parameters
+    /// - `name`: The name to register the backend under.
+    /// - `plugin`: The backend implementation.
+    fn register_dynamic_plugin_identity_backend<S: AsRef<str>>(
+        &mut self,
+        name: S,
+        plugin: Arc<dyn DynamicPluginIdentityBackend>,
     );
 
     /// Register assignment backend.

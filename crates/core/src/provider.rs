@@ -37,6 +37,9 @@ use crate::catalog::MockCatalogProvider;
 use crate::credential::CredentialApi;
 #[cfg(any(test, feature = "mock"))]
 use crate::credential::MockCredentialProvider;
+use crate::dynamic_plugin_identity::DynamicPluginIdentityApi;
+#[cfg(any(test, feature = "mock"))]
+use crate::dynamic_plugin_identity::MockDynamicPluginIdentityProvider;
 use crate::error::KeystoneError;
 use crate::federation::FederationApi;
 #[cfg(any(test, feature = "mock"))]
@@ -91,6 +94,8 @@ pub struct Provider {
     catalog: Box<dyn CatalogApi>,
     /// Credential provider.
     credential: Box<dyn CredentialApi>,
+    /// Dynamic plugin identity-binding index provider.
+    dynamic_plugin_identity: Box<dyn DynamicPluginIdentityApi>,
     /// Federation provider.
     federation: Box<dyn FederationApi>,
     /// Identity provider.
@@ -200,6 +205,15 @@ impl ProviderBuilder {
         new
     }
 
+    pub fn mock_dynamic_plugin_identity(
+        self,
+        value: impl DynamicPluginIdentityApi + 'static,
+    ) -> Self {
+        let mut new = self;
+        new.dynamic_plugin_identity = Some(Box::new(value));
+        new
+    }
+
     pub fn mock_scim_realm(self, value: impl ScimRealmApi + 'static) -> Self {
         let mut new = self;
         new.scim_realm = Some(Box::new(value));
@@ -245,6 +259,9 @@ impl Provider {
             cfg,
             plugin_manager,
         )?);
+        let dynamic_plugin_identity = Box::new(
+            crate::dynamic_plugin_identity::DynamicPluginIdentityService::new(cfg, plugin_manager)?,
+        );
         let federation = Box::new(crate::federation::FederationService::new(
             cfg,
             plugin_manager,
@@ -279,6 +296,7 @@ impl Provider {
             assignment,
             catalog,
             credential,
+            dynamic_plugin_identity,
             federation,
             identity,
             idmapping,
@@ -303,6 +321,7 @@ impl Provider {
             .mock_assignment(MockAssignmentProvider::default())
             .mock_catalog(MockCatalogProvider::default())
             .mock_credential(MockCredentialProvider::default())
+            .mock_dynamic_plugin_identity(MockDynamicPluginIdentityProvider::default())
             .mock_identity(MockIdentityProvider::default())
             .mock_idmapping(MockIdMappingProvider::default())
             .mock_mapping(MockMappingProvider::default())
@@ -380,6 +399,11 @@ impl Provider {
     /// Get the role provider.
     pub fn get_role_provider(&self) -> &dyn RoleApi {
         &*self.role
+    }
+
+    /// Get the dynamic plugin identity-binding index provider.
+    pub fn get_dynamic_plugin_identity_provider(&self) -> &dyn DynamicPluginIdentityApi {
+        &*self.dynamic_plugin_identity
     }
 
     /// Get the SCIM realm provider.

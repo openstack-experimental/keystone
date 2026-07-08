@@ -19,6 +19,7 @@ chrono = { workspace = true, default-features = false }
 crc32fast.workspace = true
 data-encoding.workspace = true
 derive_builder.workspace = true
+openstack-keystone-dynamic-plugin-runtime.workspace = true
 eyre.workspace = true
 governor.workspace = true
 hmac.workspace = true
@@ -42,7 +43,7 @@ serde.workspace = true
 serde_json.workspace = true
 serde_urlencoded.workspace = true
 thiserror.workspace = true
-tokio = { workspace = true, default-features = false }
+tokio = { workspace = true, default-features = false, features = ["net", "rt-multi-thread"] }
 tracing.workspace = true
 url = { workspace = true, features = ["serde"] }
 uuid = { workspace = true, features = ["v4"] }

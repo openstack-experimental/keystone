@@ -12,8 +12,54 @@
 //! for the `wasm32-unknown-unknown` target (`rustup target add
 //! wasm32-unknown-unknown`, then `cargo build --release --target
 //! wasm32-unknown-unknown`).
-use extism_pdk::{plugin_fn, FnResult, Json};
+use extism_pdk::{host_fn, plugin_fn, FnResult, Json};
 use serde::{Deserialize, Serialize};
+
+// Host functions §6 A-D (ADR 0025 Phase 1, PR 1.1). Declared as raw
+// `String` in/out (JSON text) rather than `Json<T>` here so this guest
+// never needs to depend on the host's own request/response types - it just
+// forwards/parses JSON text, exactly as a genuinely third-party plugin
+// author would since they can't import the host's Rust structs either.
+#[host_fn]
+extern "ExtismHost" {
+    fn provision_user(request_json: String) -> String;
+    fn find_user(external_id_json: String) -> String;
+    fn assign_role(request_json: String) -> String;
+    fn http_fetch(request_json: String) -> String;
+}
+
+/// Test-only entry point (not part of the ADR's guest contract) proving the
+/// `provision_user` host function is reachable and round-trips JSON
+/// correctly when this plugin's config grants the `provision_user`
+/// capability.
+#[plugin_fn]
+pub fn call_provision_user(request_json: String) -> FnResult<String> {
+    let handle = unsafe { provision_user(request_json)? };
+    Ok(handle)
+}
+
+/// Test-only entry point mirroring [`call_provision_user`] for `find_user`.
+#[plugin_fn]
+pub fn call_find_user(external_id_json: String) -> FnResult<String> {
+    let handle = unsafe { find_user(external_id_json)? };
+    Ok(handle)
+}
+
+/// Test-only entry point mirroring [`call_provision_user`] for
+/// `assign_role`.
+#[plugin_fn]
+pub fn call_assign_role(request_json: String) -> FnResult<String> {
+    let result = unsafe { assign_role(request_json)? };
+    Ok(result)
+}
+
+/// Test-only entry point mirroring [`call_provision_user`] for
+/// `http_fetch`.
+#[plugin_fn]
+pub fn call_http_fetch(request_json: String) -> FnResult<String> {
+    let result = unsafe { http_fetch(request_json)? };
+    Ok(result)
+}
 
 #[derive(Debug, Deserialize)]
 pub struct AuthRequest {

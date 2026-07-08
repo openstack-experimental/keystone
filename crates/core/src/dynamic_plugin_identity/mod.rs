@@ -11,35 +11,21 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+//! # Dynamic plugin identity-binding index provider (ADR 0025 §4)
+//!
+//! Tracks `(plugin_name, external_id) -> user_id` namespace-scoped mappings
+//! backing `provision_user`/`find_user` (§6.B/§6.C), decoupled from
+//! whichever `IdentityBackend` is configured.
 
-//! # OpenStack Keystone core provider types
-
-#![allow(clippy::module_inception)]
-#![deny(clippy::unwrap_used)]
-
-pub mod api_key;
-pub mod application_credential;
-pub mod assignment;
-pub mod auth;
-pub mod catalog;
-pub mod credential;
-pub mod dynamic_plugin_identity;
+pub mod backend;
 pub mod error;
-pub mod events;
-pub mod federation;
-pub mod identity;
-pub mod idmapping;
-pub mod k8s_auth;
-pub mod mapping;
-pub mod resource;
-pub mod revoke;
-pub mod role;
-pub mod scim;
-pub mod scope;
-pub mod token;
-pub mod trust;
+mod hook;
+mod provider_api;
+pub mod service;
 
-/// Return `true` to be used as a positive default for the serde macros.
-pub fn default_true() -> bool {
-    true
-}
+#[cfg(any(test, feature = "mock"))]
+pub use crate::mocks::MockDynamicPluginIdentityProvider;
+pub use error::DynamicPluginIdentityProviderError;
+pub use hook::DynamicPluginIdentityHook;
+pub use provider_api::DynamicPluginIdentityApi;
+pub use service::DynamicPluginIdentityService;
