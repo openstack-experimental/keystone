@@ -146,6 +146,7 @@ impl From<AuthenticationError> for KeystoneApiError {
             AuthenticationError::RoleConversionFailed => {
                 KeystoneApiError::InternalError(value.to_string())
             }
+            AuthenticationError::NoAuthorizationsFound => KeystoneApiError::forbidden(value),
             AuthenticationError::Validation(ref ve) => {
                 KeystoneApiError::BadRequest(format!("validation error: {ve}"))
             }

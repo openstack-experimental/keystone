@@ -25,6 +25,7 @@ use crate::keystone::ServiceState;
 
 mod create;
 mod list;
+mod purge;
 mod show;
 mod update;
 
@@ -40,4 +41,5 @@ pub(super) fn openapi_router() -> OpenApiRouter<ServiceState> {
     OpenApiRouter::new()
         .routes(routes!(list::list, create::create))
         .routes(routes!(show::show, update::update))
+        .routes(routes!(purge::purge))
 }

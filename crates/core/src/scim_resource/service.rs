@@ -135,4 +135,30 @@ impl ScimResourceApi for ScimResourceService {
             )
             .await
     }
+
+    async fn list_all_index<'a>(
+        &self,
+        ctx: &ExecutionContext<'a>,
+    ) -> Result<Vec<ScimResourceIndex>, ScimResourceProviderError> {
+        self.backend_driver.list_all(ctx.state()).await
+    }
+
+    async fn purge_index<'a>(
+        &self,
+        ctx: &ExecutionContext<'a>,
+        domain_id: &'a str,
+        provider_id: &'a str,
+        resource_type: ScimResourceType,
+        keystone_id: &'a str,
+    ) -> Result<(), ScimResourceProviderError> {
+        self.backend_driver
+            .purge(
+                ctx.state(),
+                domain_id,
+                provider_id,
+                resource_type,
+                keystone_id,
+            )
+            .await
+    }
 }

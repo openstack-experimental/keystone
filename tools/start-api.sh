@@ -9,6 +9,10 @@ SPIRE_SOCKET="/tmp/spire-ci-test-harness/agent.sock"
 SPIFFE_ENDPOINT_SOCKET="unix:///${SPIRE_SOCKET}"
 TMP_DIR=$(mktemp -d -t spire-test-XXXXXX)
 
+# 0. Aggressive cleanup of previous iterations
+tools/teardown-api.sh || true
+rm -rf "$STATE_DIR"
+
 mkdir -p "$STATE_DIR"
 mkdir -p "$STATE_DIR/etc/fernet-keys"
 
@@ -41,8 +45,6 @@ cleanup() {
 
 trap cleanup ERR INT TERM
 
-# 0. Aggressive cleanup of previous iterations
-tools/teardown-api.sh || true
 
 cat << EOF > "$CONFIG_FILE"
 
@@ -95,6 +97,9 @@ enabled = true
 relying_party_id = localhost
 relying_party_origin = http://localhost:8080
 
+[mapping]
+cluster_salt = "fbb27433d07ab307cc1fc899d0e174cf197fd398fbcff7285a63fe2f94eec2fe"
+
 [audit]
 spool_dir = ${STATE_DIR}/audit
 
@@ -108,6 +113,7 @@ cargo build --bins
 
 KEYSTONE_DEV_KEK=4242424242424242424242424242424242424242424242424242424242424242 KEYSTONE_ALLOW_ENV_KEK=1 SPIFFE_ENDPOINT_SOCKET=$SPIFFE_ENDPOINT_SOCKET ./target/debug/keystone --config "$CONFIG_FILE" &
 AXUM_PID=$!
+echo "✅ Keystone server is started and running in the background!"
 
 echo "$AXUM_PID" > "$STATE_DIR/keystone.pid"
 
@@ -115,11 +121,15 @@ echo "$AXUM_PID" > "$STATE_DIR/keystone.pid"
 URL="http://127.0.0.1:8080"
 for i in {1..30}; do
     if curl -s "$URL/health" > /dev/null; then
+        echo "✅ Keystone health url started responding!"
         # Wait for the admin socket to appear
         until [ -S "${STATE_DIR}/keystone.sock" ]; do
           sleep 0.5
         done
+        echo "✅ Keystone socket appeared!"
         KEYSTONE_DEV_KEK=4242424242424242424242424242424242424242424242424242424242424242 KEYSTONE_ALLOW_ENV_KEK=1 SPIFFE_ENDPOINT_SOCKET=${SPIFFE_ENDPOINT_SOCKET} ./target/debug/keystone-manage --config "${CONFIG_FILE}" bootstrap --bootstrap-password password
+
+        echo "✅ Keystone bootstrap completed!"
 
         # Export env vars for nextest to inject into test processes
         echo "KEYSTONE_URL=http://localhost:8080" >> "$NEXTEST_ENV"

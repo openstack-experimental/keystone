@@ -82,4 +82,25 @@ pub trait ScimResourceBackend: Send + Sync {
         data: ScimResourceIndexUpdate,
         expected_version: Option<u64>,
     ) -> Result<ScimResourceIndex, ScimResourceProviderError>;
+
+    /// List every ownership anchor across all realms and domains. Unlike
+    /// [`ScimResourceBackend::list`], this is not realm-scoped -- it is the
+    /// janitor purge sweep's input (ADR 0024 §6.C).
+    async fn list_all(
+        &self,
+        state: &ServiceState,
+    ) -> Result<Vec<ScimResourceIndex>, ScimResourceProviderError>;
+
+    /// Permanently remove the ownership anchor for `(domain_id,
+    /// provider_id, type, id)`, and its `externalId` claim, if any, in the
+    /// same transaction (ADR 0024 §6.C). A no-op if the anchor is already
+    /// gone.
+    async fn purge<'a>(
+        &self,
+        state: &ServiceState,
+        domain_id: &'a str,
+        provider_id: &'a str,
+        resource_type: ScimResourceType,
+        keystone_id: &'a str,
+    ) -> Result<(), ScimResourceProviderError>;
 }

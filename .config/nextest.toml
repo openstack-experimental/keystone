@@ -2,7 +2,7 @@ experimental = ["setup-scripts"]
 
 [profile.default]
 # exclude raft-only tests from the integration test binary only
-default-filter = 'not (binary(integration) and (test(/spiffe/) or test(/mapping/) or test(/test_cluster/) or test(/api_key/)))'
+default-filter = 'not (binary(integration) and (test(/spiffe/) or test(/mapping/) or test(/test_cluster/) or test(/api_key/) or test(/scim_realm/)))'
 # Global default settings
 #
 [scripts.setup.setup-pg]
@@ -89,13 +89,13 @@ store-failure-output = true
 #default-filter = "binary(integration_api_v3) + binary(integration_api_v4)"
 
 [[profile.api.scripts]]
-filter = "binary(integration_api_v3) + binary(integration_api_v4)"
+filter = "binary(integration_api_v3) + binary(integration_api_v4) + binary(scim_v2)"
 setup = "start-api"
 
 [profile.ci-api]
 inherits = "api"
 [[profile.ci-api.scripts]]
-filter = "binary(integration_api_v3) + binary(integration_api_v4)"
+filter = "binary(integration_api_v3) + binary(integration_api_v4) + binary(scim_v2)"
 setup = "start-api"
 [profile.ci-api.junit]
 path = "junit.xml"

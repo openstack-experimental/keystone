@@ -18,6 +18,7 @@
 
 pub mod backend;
 pub mod error;
+pub mod janitor;
 mod provider_api;
 pub mod service;
 

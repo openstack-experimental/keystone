@@ -11,14 +11,18 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+pub mod api_key;
 pub mod auth;
 pub mod common;
 pub mod credential;
+pub mod federation;
 pub mod guard;
 pub mod identity;
 pub mod mapping;
 pub mod resource;
 pub mod role;
+pub mod scim;
+pub mod scim_realm;
 pub mod token_restriction;
 pub mod webauthn;
 

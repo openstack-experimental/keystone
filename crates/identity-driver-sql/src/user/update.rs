@@ -13,14 +13,13 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Update user properties.
 
-use sea_orm::DatabaseConnection;
-use sea_orm::TransactionTrait;
-use sea_orm::entity::*;
-
 use openstack_keystone_config::Config;
 use openstack_keystone_core::error::DbContextExt;
 use openstack_keystone_core::identity::IdentityProviderError;
 use openstack_keystone_core_types::identity::{UserResponse, UserUpdate};
+use sea_orm::DatabaseConnection;
+use sea_orm::TransactionTrait;
+use sea_orm::entity::*;
 
 use crate::entity::{local_user as db_local_user, password as db_password, user as db_user};
 use crate::local_user::load_local_user_with_passwords;
@@ -78,20 +77,22 @@ pub async fn update(
     }
 
     // Update the main user record
-    let _ = update_model
+    let _updated = update_model
         .update(&txn)
         .await
         .context("updating user entry")?;
 
-    // Only load local user if we need to update name or password
-    if user.name.is_some() || user.password.is_some() {
-        // Load local user for name and password updates
+    // Handle password update: only local users have passwords
+    if let Some(ref new_password) = user.password {
         let (local_user, passwords) =
             load_local_user_with_passwords(&txn, Some(user_id), None::<&str>, None::<&str>)
                 .await?
-                .ok_or(IdentityProviderError::UserNotFound(user_id.to_string()))?;
+                .ok_or_else(|| {
+                    IdentityProviderError::Conflict(
+                        "cannot set password on nonlocal user".to_string(),
+                    )
+                })?;
 
-        // Update name if provided in the patch
         if let Some(ref name) = user.name {
             let mut lu_active: db_local_user::ActiveModel = local_user.clone().into();
             lu_active.name = Set(name.clone());
@@ -101,18 +102,40 @@ pub async fn update(
                 .context("updating local user entry")?;
         }
 
-        // Update password if provided in the patch
-        if let Some(ref new_password) = user.password {
-            // Load existing passwords for history check and set_new_password_with_existing
-            let passwords_vec: Vec<db_password::Model> = passwords.into_iter().collect();
-            crate::password::set_new_password(
-                &txn,
-                conf,
-                local_user.id,
-                secrecy::SecretString::from(new_password.as_str()),
-                passwords_vec,
-            )
-            .await?;
+        let passwords_vec: Vec<db_password::Model> = passwords.into_iter().collect();
+        crate::password::set_new_password(
+            &txn,
+            conf,
+            local_user.id,
+            secrecy::SecretString::from(new_password.as_str()),
+            passwords_vec,
+        )
+        .await?;
+    } else if let Some(ref new_name) = user.name {
+        // Try to update name on all applicable backend records:
+        // 1. local_user (if exists), 2. nonlocal_user (if exists)
+
+        match load_local_user_with_passwords(&txn, Some(user_id), None::<&str>, None::<&str>)
+            .await?
+        {
+            Some((local_user, _)) => {
+                let mut lu_active: db_local_user::ActiveModel = local_user.into();
+                lu_active.name = Set(new_name.clone());
+                lu_active
+                    .update(&txn)
+                    .await
+                    .context("updating local user entry")?;
+            }
+            None => {
+                // No local_user, fall back to nonlocal_user
+                crate::nonlocal_user::update_name(
+                    &txn,
+                    user_id,
+                    &existing_user.domain_id,
+                    new_name,
+                )
+                .await?;
+            }
         }
     }
 
@@ -132,6 +155,7 @@ pub async fn update(
 mod tests {
     use sea_orm::{DatabaseBackend, MockDatabase, MockExecResult};
 
+    use crate::entity::nonlocal_user as db_nonlocal_user;
     use crate::entity::password as db_password;
     use crate::entity::user_option as db_user_option;
     use openstack_keystone_config::Config;
@@ -142,6 +166,7 @@ mod tests {
         get_local_user_mock, get_local_user_with_password_mock, get_local_user_with_passwords_mock,
     };
 
+    use crate::nonlocal_user::tests::get_nonlocal_user_mock;
     use crate::user::tests::get_user_mock;
 
     fn make_pwd(id: i32, created_at_int: i64, expired: bool) -> db_password::Model {
@@ -212,6 +237,59 @@ mod tests {
             .append_query_results([Vec::<db_user_option::Model>::new()])
             // 7. Fetch local user with passwords
             .append_query_results([get_local_user_with_password_mock("1", 1)])
+            .into_connection();
+
+        let req = UserUpdate {
+            name: Some("new_name".to_string()),
+            ..Default::default()
+        };
+
+        let result = update(&Config::default(), &db, "1", req).await;
+        assert!(result.is_ok(), "update failed: {:?}", result.err());
+    }
+
+    #[tokio::test]
+    async fn test_update_name_nonlocal_user() {
+        // No local_user exists, so name update falls back to nonlocal_user
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            // 1. Fetch existing user for update
+            .append_query_results([vec![get_user_mock("1")]])
+            // 2. Update user entry
+            .append_query_results([vec![get_user_mock("1")]])
+            // 3. load_local_user_with_passwords returns None (no local user)
+            .append_query_results([
+                Vec::<(crate::entity::local_user::Model, db_password::Model)>::new(),
+            ])
+            // 4. nonlocal_user::update_name - find
+            .append_query_results([vec![get_nonlocal_user_mock("1")]])
+            // 5. nonlocal_user::update_name - delete old
+            .append_exec_results([MockExecResult {
+                rows_affected: 1,
+                last_insert_id: 0,
+                ..Default::default()
+            }])
+            // 6. nonlocal_user::update_name - insert new
+            .append_query_results([vec![db_nonlocal_user::Model {
+                domain_id: "foo_domain".into(),
+                name: "new_name".into(),
+                user_id: "1".into(),
+            }]])
+            // Commit
+            // Post-transaction:
+            // 7. Fetch user by ID
+            .append_query_results([vec![get_user_mock("1")]])
+            // 8. Fetch user options (empty)
+            .append_query_results([Vec::<db_user_option::Model>::new()])
+            // 9. Fetch local user with passwords (empty - no local user)
+            .append_query_results([
+                Vec::<(crate::entity::local_user::Model, db_password::Model)>::new(),
+            ])
+            // 10. Fetch nonlocal user data (user::get falls back to this when no local_user)
+            .append_query_results([vec![db_nonlocal_user::Model {
+                domain_id: "foo_domain".into(),
+                name: "new_name".into(),
+                user_id: "1".into(),
+            }]])
             .into_connection();
 
         let req = UserUpdate {
@@ -396,9 +474,9 @@ mod tests {
             .append_query_results([vec![get_user_mock("1")]])
             // 3. load_local_user_with_passwords (with 1 existing password)
             .append_query_results([get_local_user_with_password_mock("1", 1)])
-            // 4. Update local_user (name change)
+            // 3. Update local_user (name change)
             .append_query_results([vec![get_local_user_mock("1")]])
-            // 5. set_new_password -> check_history passes -> unique=0 -> delete 1 existing
+            // 4. set_new_password -> check_history passes -> unique=0 -> delete 1 existing
             .append_exec_results([MockExecResult {
                 rows_affected: 1,
                 ..Default::default()

@@ -263,6 +263,7 @@ impl SqlDriver for SqlBackend {
             crate::entity::prelude::FederatedAuthState,
         )
         .await?;
+        create_table(connection, schema, crate::entity::prelude::Mapping).await?;
         Ok(())
     }
 

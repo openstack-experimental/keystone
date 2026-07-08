@@ -1244,6 +1244,20 @@ mod scim_resource {
                 data: ScimResourceIndexUpdate,
                 expected_version: Option<u64>,
             ) -> Result<ScimResourceIndex, ScimResourceProviderError>;
+
+            async fn list_all_index<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+            ) -> Result<Vec<ScimResourceIndex>, ScimResourceProviderError>;
+
+            async fn purge_index<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                domain_id: &'a str,
+                provider_id: &'a str,
+                resource_type: ScimResourceType,
+                keystone_id: &'a str,
+            ) -> Result<(), ScimResourceProviderError>;
         }
     }
 }

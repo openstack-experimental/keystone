@@ -11,25 +11,19 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-//! # Integration tests
+//! `/SCIM/v2` live-HTTP, live-OPA functional tests (ADR 0021, ADR 0024).
 //!
-//! Test the functionality on the provider level (not through the API).
+//! A sibling of `/v3`/`/v4`, not nested under `api_v4/`: the SCIM ingress
+//! surface is a bespoke bearer-token protocol (ADR 0021 §4, Sub-Router
+//! Isolation), not part of the OpenStack-catalog API. Each submodule here is
+//! the live-HTTP-and-live-OPA counterpart of an existing mocked-state
+//! handler test file under `crates/keystone/src/scim/`.
 
-mod api_key;
-mod application_credential;
-mod assignment;
-mod audit;
-mod catalog;
-mod common;
-mod credential;
-mod identity;
-mod k8s_auth;
-mod mapping;
-mod resource;
-mod revoke;
-mod role;
-mod scim_realm;
-mod token;
-
-#[macro_use]
-mod macros;
+mod scim_v2 {
+    mod common;
+    mod etag;
+    mod filter;
+    mod group;
+    mod patch;
+    mod user;
+}

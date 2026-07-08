@@ -85,6 +85,7 @@ use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core::cadf_hook::CadfAuditHook;
 use openstack_keystone_core::db::sync_schema;
 use openstack_keystone_core::error::KeystoneError;
+use openstack_keystone_core::scim_resource::janitor as scim_resource_janitor;
 use openstack_keystone_credential_driver_sql::fernet::FernetKeyRepository;
 use openstack_keystone_distributed_storage::{StorageApi, app::Storage};
 use openstack_keystone_token_driver_fernet::utils::FernetUtils;
@@ -260,6 +261,11 @@ async fn main() -> Result<(), Report> {
     // tombstone purge (ADR 0021 §6.F). Runs on every node; gated to actually
     // do work only on the current Raft leader.
     api_key_janitor::spawn(shared_state.clone());
+
+    // SCIM resource janitor: permanent purge of tombstoned Users/Groups past
+    // the configured retention window (ADR 0024 §6.C). Same leader-gated
+    // pattern as the API Key janitor above.
+    scim_resource_janitor::spawn(shared_state.clone());
 
     // Reset the dummy-password-hash cache whenever the configuration is
     // hot-reloaded. The cache is keyed by (algorithm, rounds); if the operator

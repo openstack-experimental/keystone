@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-01
 
-**Last-revised:** 2026-07-06 (PR1+PR2+PR3+PR4 implementation note)
+**Last-revised:** 2026-07-08 (PR1+PR2+PR3+PR4+PR5 implementation note)
 
 ## Status
 
@@ -27,8 +27,36 @@ required fixing a latent bug in the storage driver's compare-and-swap path
 that predates PR4 (a concurrent-write violation was detected by the store but
 never surfaced to the caller) — `ScimResourceIndex.version` now bumps on
 every `PUT`/`PATCH`, not only ones that change `externalId`, so the ETag is
-meaningful on every write. The janitor purge phase (§6.C) and CLI parity
-(§12) remain unimplemented — this ADR stays `Proposed` until both land.
+meaningful on every write.
+
+**Implementation note (2026-07-08):** PR5 (Janitor Purge Phase, §6.C) has
+landed, matching the as-written design with one naming deviation: the
+retention config lives at `[scim_resource] janitor_deprovisioned_retention_days`
+(default 365) rather than a top-level `[keystone] scim_deprovisioned_retention_days`
+— this codebase nests janitor-tunable config on the owning provider's own
+config struct throughout (see `[api_key] janitor_tombstone_retention_days`,
+ADR 0021 §6.F), and PR5 follows that existing convention rather than
+introducing a new top-level config table. The sweep itself is a
+leader-gated hourly background task
+(`crates/core/src/scim_resource/janitor.rs`), mirroring the API Key
+janitor's structure exactly: for every tombstoned (`deprovisioned_at` set)
+`ScimResourceIndex` older than the retention window, it hard-deletes the
+underlying `User`/`Group` row via the existing `IdentityApi::delete_user`/
+`delete_group`, purges the `ScimResourceIndex` anchor and its `externalId`
+claim in one storage transaction, and emits a CADF `delete` event. Per-item
+failures are isolated and retried on the next pass, exactly like the API
+Key janitor. The operator-triggered `purge-now` erasure-request path (§6.C
+last paragraph) is a new authenticated endpoint,
+`DELETE /v4/scim-realms/{domain_id}/{provider_id}/purge/{resource_type}/{keystone_id}`,
+gated by a new `identity/scim_realm/purge` OPA policy (admin, or manager
+scoped to the realm's own domain — the same authorization boundary as
+`identity/scim_realm/disable`, since purging a realm's resource is at least
+as sensitive as disabling the realm). It refuses to purge a resource that
+is not already deprovisioned, since that would silently skip the role-
+stripping and session-revocation steps `DELETE /Users|Groups/{id}`
+performs — an operator must soft-delete first, then purge. This is the
+final phase in this ADR's implementation plan besides CLI parity (§12);
+this ADR stays `Proposed` until that lands.
 
 ## Reference
 

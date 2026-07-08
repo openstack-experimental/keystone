@@ -21,12 +21,26 @@ pub struct ScimResourceProvider {
     /// SCIM resource ownership index provider driver.
     #[serde(default = "default_raft_driver")]
     pub driver: String,
+
+    /// Number of days a tombstoned (`deprovisioned_at` set) SCIM `User`/
+    /// `Group` is retained before the janitor permanently purges it (ADR
+    /// 0024 §6.C). Deployer-controlled specifically so regulated
+    /// deployments can set it far below the 365-day default, including
+    /// near-zero, to satisfy a right-to-erasure request without waiting a
+    /// full year.
+    #[serde(default = "default_janitor_deprovisioned_retention_days")]
+    pub janitor_deprovisioned_retention_days: u32,
+}
+
+fn default_janitor_deprovisioned_retention_days() -> u32 {
+    365
 }
 
 impl Default for ScimResourceProvider {
     fn default() -> Self {
         Self {
             driver: default_raft_driver(),
+            janitor_deprovisioned_retention_days: default_janitor_deprovisioned_retention_days(),
         }
     }
 }

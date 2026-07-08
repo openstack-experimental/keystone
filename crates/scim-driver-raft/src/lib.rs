@@ -22,8 +22,32 @@ use openstack_keystone_core::scim_resource::backend::ScimResourceBackend;
 use openstack_keystone_core::scim_resource::error::ScimResourceProviderError;
 use openstack_keystone_core_types::scim::*;
 use openstack_keystone_distributed_storage::{
-    Metadata, StorageApi, StoreDataEnvelope, StoreError, store_command::Mutation,
+    ApiStoreError, Metadata, StorageApi, StoreDataEnvelope, StoreError, StoreResponse,
+    store_command::Mutation,
 };
+
+/// Bridges two different backend behaviors for the same semantic event.
+/// The real Raft-backed [`StorageApi`] impl (`Storage::write_command_to_
+/// storage`) converts the *first*
+/// [`Violation`](openstack_keystone_distributed_storage::Violation)
+/// on a `transaction`/`set_value` call into an immediate `Err(ApiStoreError::
+/// Conflict)`; `MockStorage`, used by this crate's own unit tests, instead
+/// returns every violation as data on an `Ok` response's `violations` field.
+/// Both call sites here need conflict detection to work identically against
+/// either backend, so this normalizes them into a single `Err(conflict())`
+/// on either shape, `Ok(response)` otherwise. Any other error passes through
+/// via the ordinary `StoreError::StorageApi` conversion.
+fn require_no_conflict(
+    result: Result<StoreResponse, ApiStoreError>,
+    conflict: impl FnOnce() -> StoreError,
+) -> Result<StoreResponse, StoreError> {
+    match result {
+        Ok(response) if response.violations.is_empty() => Ok(response),
+        Ok(_) => Err(conflict()),
+        Err(ApiStoreError::Conflict { .. }) => Err(conflict()),
+        Err(e) => Err(e.into()),
+    }
+}
 
 /// Raft Database SCIM realm backend.
 ///
@@ -89,6 +113,12 @@ impl RaftBackend {
         )
     }
 
+    /// Prefix covering every resource anchor across all domains/realms/
+    /// types (used by the janitor purge sweep, ADR 0024 §6.C). Distinct
+    /// from `scim_resource:external_id_claim:v1:...`, so a scan over this
+    /// prefix never picks up claim entries.
+    const RESOURCE_PREFIX: &'static str = "scim_resource:v1:";
+
     /// Realm-scoped `externalId` claim key: `scim_resource:external_id_
     /// claim:v1:<domain_id>:<provider_id>:<type>:<external_id>` → value:
     /// `keystone_id`. Written with `Mutation::create_if_absent` so a second
@@ -130,14 +160,24 @@ impl RaftBackend {
             created_at: now,
             updated_at: now,
         };
-        let mutations = vec![Mutation::set(
-            self.get_realm_key_name(&obj.domain_id, &obj.provider_id),
-            obj.clone(),
-            Metadata::new(),
-            None::<&str>,
-            None,
-        )?];
-        storage.transaction(mutations).await?;
+        let key = self.get_realm_key_name(&obj.domain_id, &obj.provider_id);
+        require_no_conflict(
+            storage
+                .transaction(vec![Mutation::create_if_absent(
+                    key.clone(),
+                    obj.clone(),
+                    Metadata::new(),
+                    None::<&str>,
+                )?])
+                .await,
+            || StoreError::Conflict {
+                subject: key.clone(),
+                description: format!(
+                    "SCIM realm already registered for provider `{}`",
+                    obj.provider_id
+                ),
+            },
+        )?;
         Ok(obj)
     }
 
@@ -223,9 +263,13 @@ impl ScimRealmBackend for RaftBackend {
             .storage
             .as_deref()
             .ok_or(ScimRealmProviderError::RaftNotAvailable)?;
-        self.create_impl(raft, data)
-            .await
-            .map_err(ScimRealmProviderError::raft)
+        match self.create_impl(raft, data).await {
+            Ok(obj) => Ok(obj),
+            Err(StoreError::Conflict { description, .. }) => {
+                Err(ScimRealmProviderError::Conflict(description))
+            }
+            Err(e) => Err(ScimRealmProviderError::raft(e)),
+        }
     }
 
     async fn get<'a>(
@@ -271,7 +315,7 @@ impl ScimRealmBackend for RaftBackend {
         match self.update_impl(raft, domain_id, provider_id, data).await {
             Ok(obj) => Ok(obj),
             Err(e) => {
-                if e.to_string().contains("NotFound") {
+                if e.to_string().contains("not found") {
                     Err(ScimRealmProviderError::NotFound(provider_id.to_string()))
                 } else {
                     Err(ScimRealmProviderError::raft(e))
@@ -333,61 +377,57 @@ impl RaftBackend {
                 obj.resource_type,
                 eid,
             );
-            let response = storage
-                .transaction(vec![Mutation::create_if_absent(
-                    key.clone(),
-                    obj.keystone_id.clone(),
-                    Metadata::new(),
-                    None::<&str>,
-                )?])
-                .await?;
-            if !response.violations.is_empty() {
-                return Err(StoreError::Conflict {
-                    subject: key,
+            require_no_conflict(
+                storage
+                    .transaction(vec![Mutation::create_if_absent(
+                        key.clone(),
+                        obj.keystone_id.clone(),
+                        Metadata::new(),
+                        None::<&str>,
+                    )?])
+                    .await,
+                || StoreError::Conflict {
+                    subject: key.clone(),
                     description: "externalId already claimed within this realm".to_string(),
-                });
-            }
+                },
+            )?;
             claim_key = Some(key);
         }
 
-        let primary_write = storage
-            .transaction(vec![Mutation::set(
-                self.get_resource_key_name(
-                    &obj.domain_id,
-                    &obj.provider_id,
-                    obj.resource_type,
-                    &obj.keystone_id,
-                ),
-                obj.clone(),
-                Metadata::new(),
-                None::<&str>,
-                None,
-            )?])
-            .await;
+        let primary_key = self.get_resource_key_name(
+            &obj.domain_id,
+            &obj.provider_id,
+            obj.resource_type,
+            &obj.keystone_id,
+        );
+        let primary_write = require_no_conflict(
+            storage
+                .transaction(vec![Mutation::set(
+                    primary_key.clone(),
+                    obj.clone(),
+                    Metadata::new(),
+                    None::<&str>,
+                    None,
+                )?])
+                .await,
+            || StoreError::Conflict {
+                subject: primary_key.clone(),
+                description: "failed to persist SCIM resource index".to_string(),
+            },
+        );
 
-        // The primary write can fail (transport error, or -- in principle --
-        // a violation) after the `externalId` claim above already committed.
-        // Without releasing it here, the claim would be orphaned: it points
-        // at an index record that was never written, permanently blocking
-        // reuse of this `externalId` within the realm (nothing else ever
-        // deletes a claim except a successful update/delete of the resource
-        // it's supposed to belong to).
+        // The primary write can fail (transport error, or a violation) after
+        // the `externalId` claim above already committed. Without releasing
+        // it here, the claim would be orphaned: it points at an index
+        // record that was never written, permanently blocking reuse of this
+        // `externalId` within the realm (nothing else ever deletes a claim
+        // except a successful update/delete of the resource it's supposed
+        // to belong to).
         match primary_write {
-            Ok(response) if response.violations.is_empty() => Ok(obj),
-            Ok(response) => {
-                self.release_external_id_claim(storage, claim_key).await;
-                Err(StoreError::Conflict {
-                    subject: response
-                        .violations
-                        .first()
-                        .map(|v| v.subject.clone())
-                        .unwrap_or_default(),
-                    description: "failed to persist SCIM resource index".to_string(),
-                })
-            }
+            Ok(_) => Ok(obj),
             Err(e) => {
                 self.release_external_id_claim(storage, claim_key).await;
-                Err(e.into())
+                Err(e)
             }
         }
     }
@@ -448,6 +488,51 @@ impl RaftBackend {
         Ok(res)
     }
 
+    /// List every resource anchor across all domains/realms/types (ADR 0024
+    /// §6.C janitor purge sweep input).
+    #[cfg_attr(not(test), allow(dead_code))]
+    async fn list_all_resource_impl(
+        &self,
+        storage: &dyn StorageApi,
+    ) -> Result<Vec<ScimResourceIndex>, StoreError> {
+        let mut res: Vec<ScimResourceIndex> = Vec::new();
+        for (_, envelope) in storage
+            .prefix(Self::RESOURCE_PREFIX.as_bytes(), None)
+            .await?
+        {
+            res.push(envelope.try_deserialize::<ScimResourceIndex>()?.data);
+        }
+        Ok(res)
+    }
+
+    /// Permanently remove the resource anchor and its `externalId` claim
+    /// (if any) in a single transaction (ADR 0024 §6.C). A no-op if the
+    /// anchor is already gone.
+    #[cfg_attr(not(test), allow(dead_code))]
+    async fn purge_resource_impl(
+        &self,
+        storage: &dyn StorageApi,
+        domain_id: &str,
+        provider_id: &str,
+        resource_type: ScimResourceType,
+        keystone_id: &str,
+    ) -> Result<(), StoreError> {
+        let key = self.get_resource_key_name(domain_id, provider_id, resource_type, keystone_id);
+        let Some(env) = storage.get_by_key(key.as_bytes(), None).await? else {
+            return Ok(());
+        };
+        let curr = env.try_deserialize::<ScimResourceIndex>()?.data;
+
+        let mut mutations = vec![Mutation::remove(key, None::<&str>, None)];
+        if let Some(eid) = curr.external_id {
+            let claim_key =
+                self.get_external_id_claim_key_name(domain_id, provider_id, resource_type, eid);
+            mutations.push(Mutation::remove(claim_key, None::<&str>, None));
+        }
+        storage.transaction(mutations).await?;
+        Ok(())
+    }
+
     #[cfg_attr(not(test), allow(dead_code))]
     #[allow(clippy::too_many_arguments)]
     async fn update_resource_impl(
@@ -504,49 +589,47 @@ impl RaftBackend {
             if let Some(eid) = new_eid {
                 let claim_key =
                     self.get_external_id_claim_key_name(domain_id, provider_id, resource_type, eid);
-                let response = storage
-                    .transaction(vec![Mutation::create_if_absent(
-                        claim_key.clone(),
-                        keystone_id.to_string(),
-                        Metadata::new(),
-                        None::<&str>,
-                    )?])
-                    .await?;
-                if !response.violations.is_empty() {
-                    return Err(StoreError::Conflict {
-                        subject: claim_key,
+                require_no_conflict(
+                    storage
+                        .transaction(vec![Mutation::create_if_absent(
+                            claim_key.clone(),
+                            keystone_id.to_string(),
+                            Metadata::new(),
+                            None::<&str>,
+                        )?])
+                        .await,
+                    || StoreError::Conflict {
+                        subject: claim_key.clone(),
                         description: "externalId already claimed within this realm".to_string(),
-                    });
-                }
+                    },
+                )?;
             }
         }
 
         let new = curr.data.with_update(data, Utc::now().timestamp());
         let new_meta = curr.metadata.new_revision();
-        let response = storage
-            .set_value(
-                key.clone(),
-                StoreDataEnvelope {
-                    data: rmp_serde::to_vec(&new)?,
-                    metadata: new_meta,
-                },
-                None,
-                Some(curr.metadata.revision),
-            )
-            .await?;
-        // `set_value`'s CAS mismatch surfaces as a `violations` entry on an
-        // `Ok` response, not an `Err` -- a concurrent writer that landed
-        // between our read above and this write must be treated the same as
-        // the up-front `expected_version` check, closing the race window
-        // ADR 0024 §5.E requires (this is what actually decides the race;
-        // the up-front check above only rejects the common, already-stale
-        // case cheaply).
-        if !response.violations.is_empty() {
-            return Err(StoreError::Conflict {
-                subject: key,
+        // A concurrent writer landing between our read above and this write
+        // must be rejected identically to the up-front `expected_version`
+        // check, closing the race window ADR 0024 §5.E requires (this is
+        // what actually decides the race; the up-front check above only
+        // rejects the common, already-stale case cheaply).
+        require_no_conflict(
+            storage
+                .set_value(
+                    key.clone(),
+                    StoreDataEnvelope {
+                        data: rmp_serde::to_vec(&new)?,
+                        metadata: new_meta,
+                    },
+                    None,
+                    Some(curr.metadata.revision),
+                )
+                .await,
+            || StoreError::Conflict {
+                subject: key.clone(),
                 description: "ETag precondition failed: version mismatch".to_string(),
-            });
-        }
+            },
+        )?;
         Ok(new)
     }
 }
@@ -661,13 +744,43 @@ impl ScimResourceBackend for RaftBackend {
                 Err(ScimResourceProviderError::Conflict(description))
             }
             Err(e) => {
-                if e.to_string().contains("NotFound") {
+                if e.to_string().contains("not found") {
                     Err(ScimResourceProviderError::NotFound(keystone_id.to_string()))
                 } else {
                     Err(ScimResourceProviderError::raft(e))
                 }
             }
         }
+    }
+
+    async fn list_all(
+        &self,
+        state: &ServiceState,
+    ) -> Result<Vec<ScimResourceIndex>, ScimResourceProviderError> {
+        let raft = state
+            .storage
+            .as_deref()
+            .ok_or(ScimResourceProviderError::RaftNotAvailable)?;
+        self.list_all_resource_impl(raft)
+            .await
+            .map_err(ScimResourceProviderError::raft)
+    }
+
+    async fn purge<'a>(
+        &self,
+        state: &ServiceState,
+        domain_id: &'a str,
+        provider_id: &'a str,
+        resource_type: ScimResourceType,
+        keystone_id: &'a str,
+    ) -> Result<(), ScimResourceProviderError> {
+        let raft = state
+            .storage
+            .as_deref()
+            .ok_or(ScimResourceProviderError::RaftNotAvailable)?;
+        self.purge_resource_impl(raft, domain_id, provider_id, resource_type, keystone_id)
+            .await
+            .map_err(ScimResourceProviderError::raft)
     }
 }
 
@@ -1357,5 +1470,96 @@ mod tests {
             )
             .await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_list_all_resource_spans_domains_and_realms() {
+        let backend = RaftBackend::default();
+        let storage = MockStorage::default();
+
+        backend
+            .create_resource_impl(
+                &storage,
+                make_resource_create("domain-1", "provider-1", "user-1", None),
+            )
+            .await
+            .unwrap();
+        backend
+            .create_resource_impl(
+                &storage,
+                make_resource_create("domain-2", "provider-9", "user-2", None),
+            )
+            .await
+            .unwrap();
+
+        let all = backend.list_all_resource_impl(&storage).await.unwrap();
+        let mut ids: Vec<_> = all.iter().map(|r| r.keystone_id.clone()).collect();
+        ids.sort();
+        assert_eq!(ids, vec!["user-1".to_string(), "user-2".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn test_purge_resource_removes_anchor_and_external_id_claim() {
+        let backend = RaftBackend::default();
+        let storage = MockStorage::default();
+
+        backend
+            .create_resource_impl(
+                &storage,
+                make_resource_create("domain-1", "provider-1", "user-1", Some("ext-1")),
+            )
+            .await
+            .unwrap();
+
+        backend
+            .purge_resource_impl(
+                &storage,
+                "domain-1",
+                "provider-1",
+                ScimResourceType::User,
+                "user-1",
+            )
+            .await
+            .unwrap();
+
+        assert!(
+            backend
+                .get_resource_impl(
+                    &storage,
+                    "domain-1",
+                    "provider-1",
+                    ScimResourceType::User,
+                    "user-1"
+                )
+                .await
+                .unwrap()
+                .is_none()
+        );
+
+        // The externalId claim was released too: a new resource can reuse it.
+        backend
+            .create_resource_impl(
+                &storage,
+                make_resource_create("domain-1", "provider-1", "user-2", Some("ext-1")),
+            )
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_purge_resource_missing_is_a_noop() {
+        let backend = RaftBackend::default();
+        let storage = MockStorage::default();
+
+        backend
+            .purge_resource_impl(
+                &storage,
+                "domain-1",
+                "provider-1",
+                ScimResourceType::User,
+                "nonexistent",
+            )
+            .await
+            .unwrap();
     }
 }

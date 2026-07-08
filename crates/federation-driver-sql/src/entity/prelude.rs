@@ -20,3 +20,4 @@ pub use super::federated_identity_provider::Entity as FederatedIdentityProvider;
 pub use super::federation_protocol::Entity as FederationProtocol;
 pub use super::identity_provider::Entity as IdentityProvider;
 pub use super::idp_remote_ids::Entity as IdpRemoteIds;
+pub use super::mapping::Entity as Mapping;

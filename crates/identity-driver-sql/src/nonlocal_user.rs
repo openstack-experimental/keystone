@@ -18,9 +18,11 @@ use crate::entity::nonlocal_user as db_nonlocal_user;
 
 mod create;
 mod get;
+mod update;
 
 pub use create::create;
 pub use get::*;
+pub use update::update_name;
 
 pub trait MergeNonlocalUserData {
     fn merge_nonlocal_user_data(&mut self, data: &db_nonlocal_user::Model) -> &mut Self;

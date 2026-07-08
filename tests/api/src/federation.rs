@@ -11,25 +11,4 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-//! # Integration tests
-//!
-//! Test the functionality on the provider level (not through the API).
-
-mod api_key;
-mod application_credential;
-mod assignment;
-mod audit;
-mod catalog;
-mod common;
-mod credential;
-mod identity;
-mod k8s_auth;
-mod mapping;
-mod resource;
-mod revoke;
-mod role;
-mod scim_realm;
-mod token;
-
-#[macro_use]
-mod macros;
+pub mod identity_provider;
