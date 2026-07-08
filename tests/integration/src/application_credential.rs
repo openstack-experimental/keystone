@@ -35,7 +35,7 @@ async fn create_application_credential(
     let res = state
         .provider
         .get_application_credential_provider()
-        .create_application_credential(&ExecutionContext::internal(&state), data)
+        .create_application_credential(&ExecutionContext::internal(state), data)
         .await?;
     Ok(res)
 }

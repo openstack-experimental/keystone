@@ -38,7 +38,7 @@ pub async fn create_role(
     let res = state
         .provider
         .get_role_provider()
-        .create_role(&ExecutionContext::internal(&state), data)
+        .create_role(&ExecutionContext::internal(state), data)
         .await
         .unwrap();
     Ok(AsyncResourceGuard::new(res, state.clone()))

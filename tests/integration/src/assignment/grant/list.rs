@@ -31,7 +31,7 @@ async fn list_grants(
     Ok(state
         .provider
         .get_assignment_provider()
-        .list_role_assignments(&ExecutionContext::internal(&state), params)
+        .list_role_assignments(&ExecutionContext::internal(state), params)
         .await?
         .into_iter()
         .map(|grant| grant.role_id)

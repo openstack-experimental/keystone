@@ -52,7 +52,7 @@ pub async fn create_ruleset(
     let res = state
         .provider
         .get_mapping_provider()
-        .create_ruleset(&ExecutionContext::internal(&state), data)
+        .create_ruleset(&ExecutionContext::internal(state), data)
         .await
         .unwrap();
     Ok(AsyncResourceGuard::new(res, state.clone()))

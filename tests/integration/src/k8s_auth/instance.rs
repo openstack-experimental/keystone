@@ -45,7 +45,7 @@ pub async fn create_k8s_auth_instance(
     let res = state
         .provider
         .get_k8s_auth_provider()
-        .create_auth_instance(&ExecutionContext::internal(&state), data)
+        .create_auth_instance(&ExecutionContext::internal(state), data)
         .await
         .unwrap();
     Ok(AsyncResourceGuard::new(res, state.clone()))

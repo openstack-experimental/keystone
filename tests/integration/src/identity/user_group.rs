@@ -28,7 +28,7 @@ where
     Ok(state
         .provider
         .get_identity_provider()
-        .list_groups_of_user(&ExecutionContext::internal(&state), user_id.as_ref())
+        .list_groups_of_user(&ExecutionContext::internal(state), user_id.as_ref())
         .await?
         .into_iter()
         .collect())
