@@ -21,6 +21,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use thiserror::Error;
 
@@ -197,6 +198,16 @@ pub struct DynamicPluginConfig {
     /// Concurrency cap on in-flight invocations for this plugin.
     #[serde(default = "default_max_concurrent_invocations")]
     pub max_concurrent_invocations: u32,
+
+    /// Tokens minted via this plugin before this timestamp are rejected at
+    /// verification time, forcing re-authentication against the currently
+    /// loaded plugin logic (ADR 0025 §4 "Plugin Version Binding"). An
+    /// operator sets/bumps this alongside `sha256` when deploying a plugin
+    /// change that should invalidate outstanding tokens (e.g. a security
+    /// fix) - left unchanged for a routine reload with no such
+    /// implication. `None` (the default) never rejects on this basis.
+    #[serde(default)]
+    pub valid_since: Option<DateTime<Utc>>,
 }
 
 fn default_timeout_ms() -> u64 {
@@ -468,6 +479,29 @@ assign_role_allowed = reader,member
         assert_eq!(plugin.mode, PluginMode::FullAuth);
         assert_eq!(plugin.timeout_ms, default_timeout_ms());
         section.validate_semantics(&plugins).unwrap();
+    }
+
+    #[test]
+    fn test_valid_since_absent_defaults_to_none() {
+        let (_, plugins) = parse(valid_full_auth_ini());
+        assert_eq!(plugins.get("acme_risk_sso").unwrap().valid_since, None);
+    }
+
+    #[test]
+    fn test_valid_since_parses_when_present() {
+        let ini = format!(
+            "{}\nvalid_since = 2026-01-15T00:00:00Z\n",
+            valid_full_auth_ini()
+        );
+        let (_, plugins) = parse(&ini);
+        assert_eq!(
+            plugins.get("acme_risk_sso").unwrap().valid_since,
+            Some(
+                DateTime::parse_from_rfc3339("2026-01-15T00:00:00Z")
+                    .unwrap()
+                    .with_timezone(&Utc)
+            )
+        );
     }
 
     #[test]

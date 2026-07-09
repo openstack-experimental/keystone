@@ -11,7 +11,7 @@ homepage.workspace = true
 exclude.workspace = true
 
 [dependencies]
-chrono = { workspace = true, features = ["now"] }
+chrono = { workspace = true, features = ["now", "serde"] }
 config = { workspace = true, features = ["async", "ini", "toml"] }
 derive_builder.workspace = true
 eyre.workspace = true

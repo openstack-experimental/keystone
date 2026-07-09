@@ -66,6 +66,8 @@ pub enum WasmPluginAuthError {
     MalformedResponse(String),
     #[error("resolved_identity handle failed verification")]
     InvalidHandle,
+    #[error("invocation rate/concurrency limit exceeded: {0}")]
+    RateLimited(&'static str),
     #[error("denied by plugin")]
     Denied(String),
     #[error("fetching the resolved user failed: {0}")]
@@ -99,6 +101,71 @@ pub async fn authenticate_via_wasm_plugin(
         return Err(WasmPluginAuthError::WrongMode);
     }
 
+    let Some(limiter) = state
+        .dynamic_plugin_limiters
+        .read()
+        .await
+        .get(plugin_name)
+        .cloned()
+    else {
+        // Registry and limiter map are always populated together by
+        // `load_dynamic_plugins` - reaching here means the plugin isn't
+        // actually loaded, same as an ordinary registry-lookup miss.
+        return Err(WasmPluginAuthError::NotFound);
+    };
+
+    let trusted_proxies = {
+        let cfg = state.config_manager.config.read().await;
+        cfg.dynamic_plugins.trusted_proxies.clone()
+    };
+    let remote_addr = resolve_client_ip(
+        request.xff_header.as_deref(),
+        request.peer_ip,
+        &trusted_proxies,
+    )
+    .map(|ip| ip.to_string());
+
+    // Rate/concurrency bounds (ADR §7), checked in order, cheapest and
+    // most-specific first, before the plugin is ever invoked - a single
+    // hammering source is rejected without ever touching the shared
+    // per-plugin budget or a concurrency slot.
+    if let Err(bound) = limiter.check_per_source(remote_addr.as_deref()) {
+        let _ = emit_wasm_plugin_audit(
+            state,
+            plugin_name,
+            "authenticate",
+            "rate_limited",
+            Some(bound.as_str().to_string()),
+        )
+        .await;
+        return Err(WasmPluginAuthError::RateLimited(bound.as_str()));
+    }
+    if let Err(bound) = limiter.check_per_plugin() {
+        let _ = emit_wasm_plugin_audit(
+            state,
+            plugin_name,
+            "authenticate",
+            "rate_limited",
+            Some(bound.as_str().to_string()),
+        )
+        .await;
+        return Err(WasmPluginAuthError::RateLimited(bound.as_str()));
+    }
+    let _permit = match limiter.try_acquire_concurrency_permit() {
+        Ok(permit) => permit,
+        Err(bound) => {
+            let _ = emit_wasm_plugin_audit(
+                state,
+                plugin_name,
+                "authenticate",
+                "rate_limited",
+                Some(bound.as_str().to_string()),
+            )
+            .await;
+            return Err(WasmPluginAuthError::RateLimited(bound.as_str()));
+        }
+    };
+
     // Allowlist down to `exposed_headers`, then defensively re-check none
     // of `HARD_DENYLISTED_HEADERS` survived - config-load already rejects
     // a plugin config listing one (`crates/config/src/dynamic_plugins.rs`),
@@ -115,17 +182,6 @@ pub async fn authenticate_via_wasm_plugin(
                 && !HARD_DENYLISTED_HEADERS.contains(&lower.as_str())
         })
         .collect();
-
-    let trusted_proxies = {
-        let cfg = state.config_manager.config.read().await;
-        cfg.dynamic_plugins.trusted_proxies.clone()
-    };
-    let remote_addr = resolve_client_ip(
-        request.xff_header.as_deref(),
-        request.peer_ip,
-        &trusted_proxies,
-    )
-    .map(|ip| ip.to_string());
 
     let auth_request = AuthPluginRequest {
         payload: request.payload,
@@ -332,36 +388,56 @@ mod acceptance_tests {
         identity_mock: MockIdentityProvider,
         dpi_mock: MockDynamicPluginIdentityProvider,
     ) -> ServiceState {
+        build_state_with_plugins(identity_mock, dpi_mock, &["p"], "").await
+    }
+
+    /// Like [`build_state`], but loads one `DynamicPluginConfig` per name in
+    /// `plugin_names` (all pointing at the same compiled reference plugin
+    /// binary) and appends `extra_ini` to every plugin's `[dynamic_plugin.*]`
+    /// section - used by the rate-limit/concurrency tests to override the
+    /// default (generous) bounds down to something a handful of calls can
+    /// trip.
+    async fn build_state_with_plugins(
+        identity_mock: MockIdentityProvider,
+        dpi_mock: MockDynamicPluginIdentityProvider,
+        plugin_names: &[&str],
+        extra_ini: &str,
+    ) -> ServiceState {
         let (path, sha256) = build_reference_plugin();
 
-        let plugin_config = {
-            use config::{Config as RawConfig, File, FileFormat};
-            use std::collections::HashMap as StdHashMap;
-
-            #[derive(serde::Deserialize)]
-            struct Wrapper {
-                dynamic_plugin: StdHashMap<String, openstack_keystone_config::DynamicPluginConfig>,
-            }
-
-            let ini = format!(
-                "[dynamic_plugin.p]\npath = {}\nsha256 = {}\nmode = full_auth\ncapabilities = provision_user\nprovision_domain_id = d\n",
-                path.display(),
-                sha256,
-            );
-            let c = RawConfig::builder()
-                .add_source(File::from_str(&ini, FileFormat::Ini))
-                .build()
-                .unwrap();
-            let wrapper: Wrapper = c.try_deserialize().unwrap();
-            wrapper.dynamic_plugin.into_iter().next().unwrap().1
-        };
-
-        let mut cfg = Config::default();
-        cfg.dynamic_plugins = DynamicPluginsSection {
-            plugins: vec!["p".to_string()],
+        let mut cfg = Config {
+            dynamic_plugins: DynamicPluginsSection {
+                plugins: plugin_names.iter().map(|n| n.to_string()).collect(),
+                ..Default::default()
+            },
             ..Default::default()
         };
-        cfg.dynamic_plugin.insert("p".to_string(), plugin_config);
+
+        for name in plugin_names {
+            let plugin_config = {
+                use config::{Config as RawConfig, File, FileFormat};
+                use std::collections::HashMap as StdHashMap;
+
+                #[derive(serde::Deserialize)]
+                struct Wrapper {
+                    dynamic_plugin:
+                        StdHashMap<String, openstack_keystone_config::DynamicPluginConfig>,
+                }
+
+                let ini = format!(
+                    "[dynamic_plugin.{name}]\npath = {}\nsha256 = {}\nmode = full_auth\ncapabilities = provision_user\nprovision_domain_id = d\n{extra_ini}\n",
+                    path.display(),
+                    sha256,
+                );
+                let c = RawConfig::builder()
+                    .add_source(File::from_str(&ini, FileFormat::Ini))
+                    .build()
+                    .unwrap();
+                let wrapper: Wrapper = c.try_deserialize().unwrap();
+                wrapper.dynamic_plugin.into_iter().next().unwrap().1
+            };
+            cfg.dynamic_plugin.insert(name.to_string(), plugin_config);
+        }
 
         let (audit_dispatcher, receivers) = AuditDispatcher::new(
             "test-node",
@@ -395,10 +471,12 @@ mod acceptance_tests {
         );
 
         load_dynamic_plugins(&state, Arc::new(UnreachableHttpFetcher)).await;
-        assert!(
-            state.dynamic_plugin_registry.read().await.contains("p"),
-            "reference plugin should have loaded"
-        );
+        for name in plugin_names {
+            assert!(
+                state.dynamic_plugin_registry.read().await.contains(name),
+                "reference plugin {name} should have loaded"
+            );
+        }
         state
     }
 
@@ -522,5 +600,166 @@ mod acceptance_tests {
         .await
         .expect_err("a plugin Deny response must be rejected");
         assert!(matches!(err, WasmPluginAuthError::Denied(_)));
+    }
+
+    /// Permissive identity mocks that tolerate an arbitrary number of
+    /// provisioning calls - the rate-limit tests below care only about
+    /// `authenticate_via_wasm_plugin`'s `Ok`/`Err` outcome, not identity
+    /// content or provisioning idempotency (already covered by
+    /// `test_provision_on_first_login_then_idempotent_second_login`).
+    fn permissive_mocks() -> (MockIdentityProvider, MockDynamicPluginIdentityProvider) {
+        let mut identity_mock = MockIdentityProvider::default();
+        identity_mock
+            .expect_create_user()
+            .returning(|_, _| Ok(user_response("u1", "d")));
+        identity_mock
+            .expect_get_user()
+            .returning(|_, _| Ok(Some(user_response("u1", "d"))));
+        identity_mock
+            .expect_get_user_domain_id()
+            .returning(|_, _| Ok("d".to_string()));
+
+        let mut dpi_mock = MockDynamicPluginIdentityProvider::default();
+        dpi_mock.expect_find().returning(|_, _, _| Ok(None));
+        dpi_mock
+            .expect_create_or_resolve()
+            .returning(|_, _, _, user_id| Ok(user_id.to_string()));
+
+        (identity_mock, dpi_mock)
+    }
+
+    fn request(external_id: &str, peer_ip: Option<std::net::IpAddr>) -> WasmPluginAuthRequest {
+        WasmPluginAuthRequest {
+            payload: serde_json::json!({"external_id": external_id}),
+            raw_headers: HashMap::new(),
+            xff_header: None,
+            peer_ip,
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_per_source_rate_limit_rejects() {
+        let (identity_mock, dpi_mock) = permissive_mocks();
+        let state = build_state_with_plugins(
+            identity_mock,
+            dpi_mock,
+            &["p"],
+            "invocation_rate_limit_per_source_per_minute = 1\n\
+             invocation_rate_limit_per_minute = 1000\n\
+             max_concurrent_invocations = 1000",
+        )
+        .await;
+
+        let addr = Some("203.0.113.9".parse().unwrap());
+        authenticate_via_wasm_plugin(&state, "p", request("alice", addr))
+            .await
+            .expect("first call within the per-source bucket should succeed");
+        let err = authenticate_via_wasm_plugin(&state, "p", request("bob", addr))
+            .await
+            .expect_err("second call from the same source should exceed the per-source bucket");
+        assert!(matches!(
+            err,
+            WasmPluginAuthError::RateLimited("per_source")
+        ));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_per_plugin_rate_limit_rejects() {
+        let (identity_mock, dpi_mock) = permissive_mocks();
+        let state = build_state_with_plugins(
+            identity_mock,
+            dpi_mock,
+            &["p"],
+            "invocation_rate_limit_per_source_per_minute = 1000\n\
+             invocation_rate_limit_per_minute = 1\n\
+             max_concurrent_invocations = 1000",
+        )
+        .await;
+
+        // Different source per call defeats bound 1, isolating bound 2.
+        authenticate_via_wasm_plugin(
+            &state,
+            "p",
+            request("alice", Some("203.0.113.1".parse().unwrap())),
+        )
+        .await
+        .expect("first call within the per-plugin bucket should succeed");
+        let err = authenticate_via_wasm_plugin(
+            &state,
+            "p",
+            request("bob", Some("203.0.113.2".parse().unwrap())),
+        )
+        .await
+        .expect_err("second call should exceed the shared per-plugin bucket");
+        assert!(matches!(
+            err,
+            WasmPluginAuthError::RateLimited("per_plugin")
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_concurrency_limit_rejects() {
+        use openstack_keystone_config::DynamicPluginConfig;
+
+        let ini = format!(
+            "[dynamic_plugin.p]\npath = /dev/null\nsha256 = {}\nmode = full_auth\nmax_concurrent_invocations = 1\n",
+            "0".repeat(64),
+        );
+        let config: DynamicPluginConfig = {
+            use config::{Config as RawConfig, File, FileFormat};
+            use std::collections::HashMap as StdHashMap;
+            #[derive(serde::Deserialize)]
+            struct Wrapper {
+                dynamic_plugin: StdHashMap<String, DynamicPluginConfig>,
+            }
+            let c = RawConfig::builder()
+                .add_source(File::from_str(&ini, FileFormat::Ini))
+                .build()
+                .unwrap();
+            let wrapper: Wrapper = c.try_deserialize().unwrap();
+            wrapper.dynamic_plugin.into_iter().next().unwrap().1
+        };
+
+        let limiter = crate::dynamic_plugin::PluginInvocationLimiter::new(&config);
+        let permit = limiter
+            .try_acquire_concurrency_permit()
+            .expect("first acquire should succeed");
+        let err = limiter
+            .try_acquire_concurrency_permit()
+            .expect_err("second acquire should be rejected while the slot is held");
+        assert_eq!(err, crate::dynamic_plugin::RateLimitBound::Concurrency);
+        drop(permit);
+        let _permit = limiter
+            .try_acquire_concurrency_permit()
+            .expect("acquire should succeed again once the permit is released");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_two_plugins_independent_budgets() {
+        let (identity_mock, dpi_mock) = permissive_mocks();
+        let state = build_state_with_plugins(
+            identity_mock,
+            dpi_mock,
+            &["p1", "p2"],
+            "invocation_rate_limit_per_source_per_minute = 1000\n\
+             invocation_rate_limit_per_minute = 1\n\
+             max_concurrent_invocations = 1000",
+        )
+        .await;
+
+        authenticate_via_wasm_plugin(&state, "p1", request("alice", None))
+            .await
+            .expect("p1's first call should succeed");
+        let err = authenticate_via_wasm_plugin(&state, "p1", request("bob", None))
+            .await
+            .expect_err("p1's second call should exceed its own per-plugin bucket");
+        assert!(matches!(
+            err,
+            WasmPluginAuthError::RateLimited("per_plugin")
+        ));
+
+        authenticate_via_wasm_plugin(&state, "p2", request("carol", None))
+            .await
+            .expect("p2's budget is independent of p1's exhausted budget");
     }
 }

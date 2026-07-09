@@ -240,6 +240,7 @@ mod tests {
             )),
             core_host_functions: tokio::sync::RwLock::new(None),
             rate_limiters: crate::rate_limit::RateLimitState::default(),
+            dynamic_plugin_limiters: tokio::sync::RwLock::new(std::collections::HashMap::new()),
             shutdown: false,
         };
         Arc::new(service)
@@ -354,6 +355,7 @@ mod tests {
             )),
             core_host_functions: tokio::sync::RwLock::new(None),
             rate_limiters: crate::rate_limit::RateLimitState::default(),
+            dynamic_plugin_limiters: tokio::sync::RwLock::new(std::collections::HashMap::new()),
             shutdown: false,
         });
 
@@ -462,6 +464,7 @@ mod tests {
             )),
             core_host_functions: tokio::sync::RwLock::new(None),
             rate_limiters: crate::rate_limit::RateLimitState::default(),
+            dynamic_plugin_limiters: tokio::sync::RwLock::new(std::collections::HashMap::new()),
             shutdown: false,
         });
 
@@ -534,6 +537,7 @@ mod tests {
             )),
             core_host_functions: tokio::sync::RwLock::new(None),
             rate_limiters: crate::rate_limit::RateLimitState::default(),
+            dynamic_plugin_limiters: tokio::sync::RwLock::new(std::collections::HashMap::new()),
             shutdown: false,
         });
 
@@ -605,6 +609,7 @@ mod tests {
             )),
             core_host_functions: tokio::sync::RwLock::new(None),
             rate_limiters: crate::rate_limit::RateLimitState::default(),
+            dynamic_plugin_limiters: tokio::sync::RwLock::new(std::collections::HashMap::new()),
             shutdown: false,
         });
 

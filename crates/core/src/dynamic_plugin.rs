@@ -29,9 +29,11 @@
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 
+use governor::{DefaultDirectRateLimiter, DefaultKeyedRateLimiter, Quota, RateLimiter};
 use hmac::{Hmac, KeyInit, Mac};
 use openstack_keystone_audit::{CadfEventPayload, Observer, Target};
 use sha2::Sha256;
+use tokio::sync::Semaphore;
 use uuid::Uuid;
 
 use openstack_keystone_config::DynamicPluginConfig;
@@ -155,6 +157,90 @@ pub(crate) async fn emit_wasm_plugin_audit(
     );
     let event = payload.sign(dispatcher);
     dispatcher.dispatch_critical(event).await.map_err(|_| ())
+}
+
+/// Why a `authenticate` invocation was rejected before ever reaching the
+/// plugin (ADR 0025 §7 "Invocation Rate Limiting & Concurrency").
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RateLimitBound {
+    PerSource,
+    PerPlugin,
+    Concurrency,
+}
+
+impl RateLimitBound {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::PerSource => "per_source",
+            Self::PerPlugin => "per_plugin",
+            Self::Concurrency => "concurrency",
+        }
+    }
+}
+
+/// Per-plugin invocation bounds (ADR 0025 §7): a source-scoped token bucket,
+/// a plugin-wide token bucket, and a concurrency semaphore, checked in that
+/// order before a plugin's `authenticate` entry point is ever invoked - a
+/// compromised or merely popular plugin cannot exhaust host resources or
+/// amplify DoS/SSRF traffic (via `http_fetch`) by being invoked without
+/// bound, and one plugin's exhausted budget never affects another's.
+pub struct PluginInvocationLimiter {
+    per_source: DefaultKeyedRateLimiter<String>,
+    per_plugin: DefaultDirectRateLimiter,
+    concurrency: Semaphore,
+}
+
+impl PluginInvocationLimiter {
+    pub(crate) fn new(config: &DynamicPluginConfig) -> Self {
+        let per_source_quota = Quota::per_minute(
+            config
+                .invocation_rate_limit_per_source_per_minute
+                .try_into()
+                .unwrap_or(std::num::NonZeroU32::MAX),
+        );
+        let per_plugin_quota = Quota::per_minute(
+            config
+                .invocation_rate_limit_per_minute
+                .try_into()
+                .unwrap_or(std::num::NonZeroU32::MAX),
+        );
+        Self {
+            per_source: RateLimiter::keyed(per_source_quota),
+            per_plugin: RateLimiter::direct(per_plugin_quota),
+            concurrency: Semaphore::new(config.max_concurrent_invocations as usize),
+        }
+    }
+
+    /// Bound 1 (only meaningful when `remote_addr` is known - a `None`
+    /// caller silently skips this bound, falling back to bounds 2/3, per
+    /// ADR §7's documented accepted gap for un-proxied deployments).
+    pub(crate) fn check_per_source(&self, remote_addr: Option<&str>) -> Result<(), RateLimitBound> {
+        match remote_addr {
+            Some(addr) => self
+                .per_source
+                .check_key(&addr.to_string())
+                .map_err(|_| RateLimitBound::PerSource),
+            None => Ok(()),
+        }
+    }
+
+    /// Bound 2.
+    pub(crate) fn check_per_plugin(&self) -> Result<(), RateLimitBound> {
+        self.per_plugin
+            .check()
+            .map_err(|_| RateLimitBound::PerPlugin)
+    }
+
+    /// Bound 3 - rejects immediately when saturated, never queues (ADR §7:
+    /// "to avoid building an unbounded backlog of pending authentications
+    /// under load").
+    pub(crate) fn try_acquire_concurrency_permit(
+        &self,
+    ) -> Result<tokio::sync::SemaphorePermit<'_>, RateLimitBound> {
+        self.concurrency
+            .try_acquire()
+            .map_err(|_| RateLimitBound::Concurrency)
+    }
 }
 
 /// `openstack_keystone_dynamic_plugin_runtime::HostFunctions` implementation

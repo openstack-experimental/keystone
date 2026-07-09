@@ -84,6 +84,11 @@ pub enum AuthenticationError {
     #[error("security context is not resolved")]
     SecurityContextNotResolved,
 
+    /// A dynamic auth plugin token was minted before the currently
+    /// configured `valid_since` cutoff for that plugin (ADR 0025 §4).
+    #[error("dynamic plugin `{0}` was updated since this token was issued")]
+    PluginVersionMismatch(String),
+
     /// Scope is not allowed with the current SecurityContext.
     #[error("target scope is not allowed with the current authentication context")]
     ScopeNotAllowed,

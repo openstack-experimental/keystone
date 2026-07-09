@@ -152,15 +152,38 @@ impl ValidatedSecurityContext {
             AuthenticationContext::Admin => {}
             AuthenticationContext::Ec2Credential => {}
             AuthenticationContext::Totp => {}
-            // No-op: the `resolved_identity` handle a dynamic auth plugin
+            // The `resolved_identity` handle a dynamic auth plugin
             // presented is already verified once, at dispatch time, in
             // `crate::dynamic_plugin_auth::authenticate_via_wasm_plugin`
             // (ADR 0025 §4 "Identity Binding") - by the time an
             // `AuthenticationContext::WasmPlugin` exists here, the real
             // user is already resolved and the handle itself was never
             // carried into this context (it expires with that invocation).
-            // This arm exists only to keep the match exhaustive.
-            AuthenticationContext::WasmPlugin { .. } => {}
+            //
+            // What *is* re-checked here is plugin version binding (ADR
+            // 0025 §4 "Plugin Version Binding"): `ctx.token()` is only
+            // `Some` when re-verifying an already-minted token (it is
+            // `None` during a fresh mint, per `SecurityContext::token`'s
+            // doc comment), so this never rejects a brand-new login. On
+            // reuse, if the operator has since bumped `valid_since` for
+            // this plugin (normally alongside a `sha256` bump) past the
+            // token's `issued_at`, the token is stale and rejected -
+            // forcing re-authentication against the current plugin logic.
+            AuthenticationContext::WasmPlugin { plugin_name, .. } => {
+                if let Some(token) = ctx.token() {
+                    let cfg = state.config_manager.config.read().await;
+                    if let Some(valid_since) = cfg
+                        .dynamic_plugin
+                        .get(plugin_name)
+                        .and_then(|p| p.valid_since)
+                        && *token.issued_at() < valid_since
+                    {
+                        return Err(AuthenticationError::PluginVersionMismatch(
+                            plugin_name.clone(),
+                        ));
+                    }
+                }
+            }
             AuthenticationContext::Trust { trust, .. } => {
                 // Validate the trust chain
                 state
@@ -3407,5 +3430,122 @@ mod tests {
             ValidatedSecurityContext::new_for_scope(ctx, make_project_scope("other_pid"), &state)
                 .await;
         assert!(matches!(result, Err(AuthenticationError::ScopeNotAllowed)));
+    }
+
+    /// Builds a `Config` with a single `[dynamic_plugin.<name>]` section
+    /// whose only fields under test are `valid_since` (ADR 0025 §4 "Plugin
+    /// Version Binding").
+    fn wasm_plugin_config(
+        name: &str,
+        valid_since: Option<chrono::DateTime<Utc>>,
+    ) -> openstack_keystone_config::Config {
+        use config::{Config as RawConfig, File, FileFormat};
+        use std::collections::HashMap as StdHashMap;
+
+        #[derive(serde::Deserialize)]
+        struct Wrapper {
+            dynamic_plugin: StdHashMap<String, openstack_keystone_config::DynamicPluginConfig>,
+        }
+
+        let mut ini = format!(
+            "[dynamic_plugin.{name}]\npath = /dev/null\nsha256 = {}\nmode = full_auth\n",
+            "0".repeat(64),
+        );
+        if let Some(vs) = valid_since {
+            ini.push_str(&format!("valid_since = {}\n", vs.to_rfc3339()));
+        }
+        let c = RawConfig::builder()
+            .add_source(File::from_str(&ini, FileFormat::Ini))
+            .build()
+            .unwrap();
+        let wrapper: Wrapper = c.try_deserialize().unwrap();
+        openstack_keystone_config::Config {
+            dynamic_plugin: wrapper.dynamic_plugin,
+            ..Default::default()
+        }
+    }
+
+    fn wasm_plugin_token(plugin_name: &str, issued_at: chrono::DateTime<Utc>) -> FernetToken {
+        FernetToken::Unscoped(openstack_keystone_core_types::token::UnscopedPayload {
+            user_id: "uid".to_string(),
+            methods: vec![plugin_name.to_string()],
+            audit_ids: vec![],
+            expires_at: issued_at + chrono::TimeDelta::hours(1),
+            issued_at,
+            user: None,
+        })
+    }
+
+    #[tokio::test]
+    async fn test_wasm_plugin_stale_token_is_rejected() {
+        let valid_since = Utc::now();
+        let issued_at = valid_since - chrono::TimeDelta::seconds(60);
+
+        let state = get_mocked_state(Some(wasm_plugin_config("p", Some(valid_since))), None).await;
+
+        let ctx = SecurityContextTestingBuilder::default()
+            .authentication_context(AuthenticationContext::WasmPlugin {
+                plugin_name: "p".to_string(),
+                plugin_sha256: [0u8; 32],
+                claims: HashMap::new(),
+                token: None,
+            })
+            .principal(make_user_identity("uid"))
+            .token(wasm_plugin_token("p", issued_at))
+            .build();
+
+        let result =
+            ValidatedSecurityContext::new_for_scope(ctx, ScopeInfo::Unscoped, &state).await;
+        assert!(matches!(
+            result,
+            Err(AuthenticationError::PluginVersionMismatch(ref name)) if name == "p"
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_wasm_plugin_fresh_token_after_cutoff_is_accepted() {
+        let valid_since = Utc::now();
+        let issued_at = valid_since + chrono::TimeDelta::seconds(60);
+
+        let state = get_mocked_state(Some(wasm_plugin_config("p", Some(valid_since))), None).await;
+
+        let ctx = SecurityContextTestingBuilder::default()
+            .authentication_context(AuthenticationContext::WasmPlugin {
+                plugin_name: "p".to_string(),
+                plugin_sha256: [0u8; 32],
+                claims: HashMap::new(),
+                token: None,
+            })
+            .principal(make_user_identity("uid"))
+            .token(wasm_plugin_token("p", issued_at))
+            .build();
+
+        let result =
+            ValidatedSecurityContext::new_for_scope(ctx, ScopeInfo::Unscoped, &state).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_wasm_plugin_fresh_mint_ignores_valid_since() {
+        // No `.token(..)` set - mirrors a brand-new mint, where
+        // `ctx.token()` is `None` (`SecurityContext::token`'s doc comment).
+        // A past `valid_since` must never reject a login that hasn't
+        // produced a token yet.
+        let valid_since = Utc::now();
+        let state = get_mocked_state(Some(wasm_plugin_config("p", Some(valid_since))), None).await;
+
+        let ctx = SecurityContextTestingBuilder::default()
+            .authentication_context(AuthenticationContext::WasmPlugin {
+                plugin_name: "p".to_string(),
+                plugin_sha256: [0u8; 32],
+                claims: HashMap::new(),
+                token: None,
+            })
+            .principal(make_user_identity("uid"))
+            .build();
+
+        let result =
+            ValidatedSecurityContext::new_for_scope(ctx, ScopeInfo::Unscoped, &state).await;
+        assert!(result.is_ok());
     }
 }

@@ -118,6 +118,9 @@ pub(super) async fn authenticate_request(
             {
                 Ok(auth_res) => res.push(auth_res),
                 Err(WasmPluginAuthError::NotFound | WasmPluginAuthError::WrongMode) => {}
+                Err(WasmPluginAuthError::RateLimited(_)) => {
+                    return Err(KeystoneApiError::TooManyRequests);
+                }
                 Err(_) => return Err(KeystoneApiError::UnauthorizedNoContext),
             }
         }

@@ -17,11 +17,12 @@
 //! already-built [`ServiceState`], so plugins can only be loaded *after*
 //! `Service::new` returns and the result is `Arc`-wrapped - not from inside
 //! `Service::new` itself.
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use openstack_keystone_dynamic_plugin_runtime::WasmPluginRegistry;
 
-use crate::dynamic_plugin::{CoreHostFunctions, as_host_functions};
+use crate::dynamic_plugin::{CoreHostFunctions, PluginInvocationLimiter, as_host_functions};
 use crate::dynamic_plugin_http::DynamicPluginHttpFetcher;
 use crate::keystone::ServiceState;
 
@@ -53,8 +54,15 @@ pub async fn load_dynamic_plugins(
         );
     }
 
+    let limiters: HashMap<String, Arc<PluginInvocationLimiter>> = configs
+        .iter()
+        .filter(|(name, _)| registry.contains(name))
+        .map(|(name, cfg)| (name.clone(), Arc::new(PluginInvocationLimiter::new(cfg))))
+        .collect();
+
     *state.dynamic_plugin_registry.write().await = Arc::new(registry);
     *state.core_host_functions.write().await = Some(core_host_functions);
+    *state.dynamic_plugin_limiters.write().await = limiters;
 }
 
 #[cfg(test)]

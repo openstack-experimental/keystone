@@ -12,6 +12,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //! # Keystone state
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use governor::{DefaultKeyedRateLimiter, Quota, RateLimiter};
@@ -24,7 +25,7 @@ use openstack_keystone_config::ConfigManager;
 use openstack_keystone_dynamic_plugin_runtime::WasmPluginRegistry;
 use openstack_keystone_storage_api::StorageApi;
 
-use crate::dynamic_plugin::CoreHostFunctions;
+use crate::dynamic_plugin::{CoreHostFunctions, PluginInvocationLimiter};
 use crate::error::KeystoneError;
 use crate::events::EventDispatcher;
 use crate::policy::PolicyEnforcer;
@@ -83,6 +84,12 @@ pub struct Service {
     /// mean the corresponding bucket is disabled in `keystone.conf` and
     /// requests bypass that check entirely.
     pub rate_limiters: RateLimitState,
+
+    /// Per-plugin invocation rate/concurrency limiters (ADR 0025 §7), keyed
+    /// by plugin name - populated alongside `dynamic_plugin_registry` by
+    /// `crate::dynamic_plugin_startup::load_dynamic_plugins`, one entry per
+    /// successfully loaded plugin.
+    pub dynamic_plugin_limiters: RwLock<HashMap<String, Arc<PluginInvocationLimiter>>>,
 
     /// Shutdown flag.
     pub shutdown: bool,
@@ -147,6 +154,7 @@ impl Service {
             dynamic_plugin_registry: RwLock::new(Arc::new(WasmPluginRegistry::default())),
             core_host_functions: RwLock::new(None),
             rate_limiters,
+            dynamic_plugin_limiters: RwLock::new(HashMap::new()),
             shutdown: false,
         })
     }
