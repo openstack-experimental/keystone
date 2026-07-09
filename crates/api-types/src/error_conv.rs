@@ -267,6 +267,7 @@ impl From<IdentityProviderError> for KeystoneApiError {
                 resource: "group".into(),
                 identifier: x,
             },
+            ref err @ IdentityProviderError::Conflict(..) => Self::Conflict(err.to_string()),
             ref err @ IdentityProviderError::SecurityCompliance(..) => {
                 Self::BadRequest(err.to_string())
             }
@@ -278,7 +279,7 @@ impl From<IdentityProviderError> for KeystoneApiError {
 impl From<ResourceProviderError> for KeystoneApiError {
     fn from(value: ResourceProviderError) -> Self {
         match value {
-            ref err @ ResourceProviderError::Conflict(..) => Self::BadRequest(err.to_string()),
+            ref err @ ResourceProviderError::Conflict(..) => Self::Conflict(err.to_string()),
             ResourceProviderError::DomainNotFound(x) => Self::NotFound {
                 resource: "domain".into(),
                 identifier: x,
@@ -291,7 +292,7 @@ impl From<ResourceProviderError> for KeystoneApiError {
 impl From<RevokeProviderError> for KeystoneApiError {
     fn from(value: RevokeProviderError) -> Self {
         match value {
-            ref err @ RevokeProviderError::Conflict(..) => Self::BadRequest(err.to_string()),
+            ref err @ RevokeProviderError::Conflict(..) => Self::Conflict(err.to_string()),
             other => Self::InternalError(other.to_string()),
         }
     }
@@ -434,6 +435,7 @@ impl From<TokenProviderError> for KeystoneApiError {
     fn from(value: TokenProviderError) -> Self {
         match value {
             TokenProviderError::Authentication(source) => source.into(),
+            TokenProviderError::Conflict { message, .. } => Self::Conflict(message),
             TokenProviderError::TrustorDomainDisabled
             | TokenProviderError::TrustorUserDisabled(_) => {
                 Self::unauthorized(value, None::<String>)
@@ -654,6 +656,65 @@ mod tests {
             api_err,
             KeystoneApiError::InternalError(msg) if msg.contains("bad")
         ));
+    }
+
+    #[test]
+    fn identity_provider_conflict_returns_409() {
+        let err = IdentityProviderError::Conflict("reason".to_string());
+        let api_err: KeystoneApiError = err.into();
+        assert!(matches!(
+            api_err,
+            KeystoneApiError::Conflict(ref msg) if msg.contains("reason")
+        ));
+        assert_eq!(
+            <KeystoneApiError as IntoResponse>::into_response(api_err).status(),
+            StatusCode::CONFLICT
+        );
+    }
+
+    #[test]
+    fn resource_provider_conflict_returns_409() {
+        let err = ResourceProviderError::Conflict("reason".to_string());
+        let api_err: KeystoneApiError = err.into();
+        assert!(matches!(
+            api_err,
+            KeystoneApiError::Conflict(ref msg) if msg.contains("reason")
+        ));
+        assert_eq!(
+            <KeystoneApiError as IntoResponse>::into_response(api_err).status(),
+            StatusCode::CONFLICT
+        );
+    }
+
+    #[test]
+    fn revoke_provider_conflict_returns_409() {
+        let err = RevokeProviderError::Conflict("reason".to_string());
+        let api_err: KeystoneApiError = err.into();
+        assert!(matches!(
+            api_err,
+            KeystoneApiError::Conflict(ref msg) if msg.contains("reason")
+        ));
+        assert_eq!(
+            <KeystoneApiError as IntoResponse>::into_response(api_err).status(),
+            StatusCode::CONFLICT
+        );
+    }
+
+    #[test]
+    fn token_provider_conflict_returns_409() {
+        let err = TokenProviderError::Conflict {
+            message: "reason".to_string(),
+            context: "".to_string(),
+        };
+        let api_err: KeystoneApiError = err.into();
+        assert!(matches!(
+            api_err,
+            KeystoneApiError::Conflict(ref msg) if msg == "reason"
+        ));
+        assert_eq!(
+            <KeystoneApiError as IntoResponse>::into_response(api_err).status(),
+            StatusCode::CONFLICT
+        );
     }
 
     #[test]

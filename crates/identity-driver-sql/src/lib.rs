@@ -655,14 +655,8 @@ impl IdentityBackend for SqlBackend {
         new_password: SecretString,
     ) -> Result<(), IdentityProviderError> {
         let config = state.config_manager.config.read().await;
-        Ok(local_user::update_password(
-            &state.db,
-            &config,
-            user_id,
-            original_password,
-            new_password,
-        )
-        .await?)
+        local_user::update_password(&state.db, &config, user_id, original_password, new_password)
+            .await
     }
 }
 

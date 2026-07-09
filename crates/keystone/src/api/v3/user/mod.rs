@@ -21,6 +21,7 @@ mod delete;
 mod groups;
 mod list;
 mod os_ec2;
+mod password;
 mod show;
 pub mod types;
 mod update;
@@ -30,6 +31,7 @@ pub(super) fn openapi_router() -> OpenApiRouter<ServiceState> {
         .routes(routes!(list::list, create::create))
         .routes(routes!(show::show, delete::delete))
         .routes(routes!(update::update))
+        .routes(routes!(password::change_password))
         .routes(routes!(groups::groups))
         .merge(os_ec2::openapi_router())
 }

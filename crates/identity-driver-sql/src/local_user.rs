@@ -57,7 +57,12 @@ pub async fn update_password(
     let (local_user, passwords) =
         load_local_user_with_passwords(db, Some(user_id), None::<&str>, None::<&str>)
             .await?
-            .ok_or(IdentityProviderError::UserNotFound(user_id.to_string()))?;
+            .ok_or_else(|| {
+                IdentityProviderError::Conflict(format!(
+                    "cannot update password for nonlocal user {}",
+                    user_id
+                ))
+            })?;
 
     // Get the latest password hash for verification
     let passwords_vec: Vec<db_password::Model> = passwords.into_iter().collect();
@@ -320,7 +325,7 @@ pub mod tests {
     }
 
     #[tokio::test]
-    async fn test_update_password_user_not_found() {
+    async fn test_update_password_nonlocal_user() {
         let config = get_config_none_hashing();
 
         let db = MockDatabase::new(DatabaseBackend::Postgres)
@@ -337,8 +342,8 @@ pub mod tests {
         .await;
 
         assert!(
-            matches!(result, Err(IdentityProviderError::UserNotFound(ref uid)) if uid == "nonexistent_user"),
-            "nonexistent user should return UserNotFound, got: {:?}",
+            matches!(result, Err(IdentityProviderError::Conflict(ref msg)) if msg.contains("cannot update password for nonlocal user")),
+            "nonlocal user should return Conflict, got: {:?}",
             result
         );
     }

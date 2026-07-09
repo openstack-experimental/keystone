@@ -304,6 +304,42 @@ pub struct UserUpdateRequest {
     pub user: UserUpdate,
 }
 
+/// Change user password data.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
+#[cfg_attr(
+    feature = "validate",
+    validate(schema(function = "validate_user_password_secret"))
+)]
+pub struct UserPassword {
+    /// The current password for the user.
+    #[cfg_attr(feature = "openapi", schema(value_type = String))]
+    #[serde(serialize_with = "crate::common::serialize_secret_string")]
+    pub original_password: SecretString,
+
+    /// The new password for the user.
+    #[cfg_attr(feature = "openapi", schema(value_type = String))]
+    #[serde(serialize_with = "crate::common::serialize_secret_string")]
+    pub password: SecretString,
+}
+
+#[cfg(feature = "validate")]
+fn validate_user_password_secret(value: &UserPassword) -> Result<(), validator::ValidationError> {
+    crate::common::validate_secret_length(&value.original_password, 72)
+        .and(crate::common::validate_secret_length(&value.password, 72))
+}
+
+/// Complete password change request.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
+pub struct UserPasswordRequest {
+    /// User object.
+    #[cfg_attr(feature = "validate", validate(nested))]
+    pub user: UserPassword,
+}
+
 /// User options.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
@@ -527,6 +563,62 @@ mod tests {
             .build()
             .unwrap();
         assert!(!sot.enabled, "user enabled flag defaults to `false`");
+    }
+
+    #[cfg(feature = "validate")]
+    #[test]
+    fn userpassword_validates_both_fields() {
+        use validator::Validate;
+
+        let valid: UserPassword =
+            serde_json::from_str(r#"{"original_password":"old","password":"new"}"#).unwrap();
+        assert!(valid.validate().is_ok());
+
+        let overlong_new: UserPassword = serde_json::from_str(&format!(
+            r#"{{"original_password":"old","password":"{}"}}"#,
+            "x".repeat(73)
+        ))
+        .unwrap();
+        assert!(overlong_new.validate().is_err());
+
+        let overlong_old: UserPassword = serde_json::from_str(&format!(
+            r#"{{"original_password":"{}","password":"new"}}"#,
+            "x".repeat(73)
+        ))
+        .unwrap();
+        assert!(overlong_old.validate().is_err());
+    }
+
+    #[test]
+    fn userpassword_debug_does_not_leak_secrets() {
+        let pw: UserPassword =
+            serde_json::from_str(r#"{"original_password":"OLDLEAK","password":"NEWLEAK"}"#)
+                .unwrap();
+        let debug_output = format!("{pw:?}");
+        assert!(
+            !debug_output.contains("OLDLEAK"),
+            "Debug leaked original_password: {debug_output}"
+        );
+        assert!(
+            !debug_output.contains("NEWLEAK"),
+            "Debug leaked password: {debug_output}"
+        );
+    }
+
+    #[test]
+    fn userpassword_request_roundtrip() {
+        let req: UserPasswordRequest =
+            serde_json::from_str(r#"{"user":{"original_password":"old","password":"new"}}"#)
+                .unwrap();
+        assert_eq!(req.user.original_password.expose_secret(), "old");
+        assert_eq!(req.user.password.expose_secret(), "new");
+
+        let rendered = serde_json::to_string(&req).unwrap();
+        assert!(
+            rendered.contains("old"),
+            "original_password not carried: {rendered}"
+        );
+        assert!(rendered.contains("new"), "password not carried: {rendered}");
     }
 
     #[test]
