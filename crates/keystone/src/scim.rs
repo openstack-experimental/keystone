@@ -23,17 +23,26 @@
 //! SCIM resource endpoints (Users, Groups per RFC 7644) are out of scope
 //! for ADR 0021, which specifies only the authentication ingress adapter.
 //! `whoami` exists to prove the ingress pipeline end-to-end.
-use axum::{Json, Router, extract::Path, routing::get};
+use axum::{
+    Json, Router,
+    extract::Path,
+    middleware,
+    routing::{get, post},
+};
 use serde::Serialize;
 
 use openstack_keystone_core::api::api_key_auth::ApiKeyAuth;
 use openstack_keystone_core::keystone::ServiceState;
 
+mod bulk;
+mod content_type;
 mod discovery;
 pub mod error;
 pub mod etag;
+mod extract;
 pub mod filter;
 mod group;
+mod location;
 pub mod patch;
 pub mod types;
 mod user;
@@ -60,7 +69,10 @@ async fn whoami(Path(_domain_id): Path<String>, ApiKeyAuth(vsc): ApiKeyAuth) -> 
 pub fn router() -> Router<ServiceState> {
     Router::new()
         .route("/{domain_id}/whoami", get(whoami))
+        .route("/{domain_id}/Bulk", post(bulk::bulk))
+        .route("/{domain_id}/Me", get(bulk::me))
         .nest("/{domain_id}/Users", user::router())
         .nest("/{domain_id}/Groups", group::router())
         .nest("/{domain_id}", discovery::router())
+        .route_layer(middleware::from_fn(content_type::enforce_scim_content_type))
 }

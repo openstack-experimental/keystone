@@ -52,6 +52,7 @@ pub struct ScimEmail {
 #[serde(rename_all = "camelCase")]
 pub struct ScimMeta {
     pub resource_type: String,
+    pub location: String,
     pub created: String,
     pub last_modified: String,
 }
@@ -216,6 +217,10 @@ pub struct ScimResponse {
 impl ScimResponse {
     pub fn etag(&self) -> Option<&str> {
         self.headers.get("etag").and_then(|v| v.to_str().ok())
+    }
+
+    pub fn location(&self) -> Option<&str> {
+        self.headers.get("location").and_then(|v| v.to_str().ok())
     }
 
     pub fn json<T: for<'de> Deserialize<'de>>(&self) -> Result<T> {
@@ -404,6 +409,43 @@ impl ScimTestClient {
 
     pub async fn schemas(&self) -> Result<ScimResponse> {
         self.send(reqwest::Method::GET, "Schemas", None, None).await
+    }
+
+    /// Sends an arbitrary method against a path with no body -- used to
+    /// probe routing behavior (e.g. unmapped-method 405s) that the
+    /// resource-specific helpers above can't express.
+    pub async fn raw(&self, method: reqwest::Method, path: &str) -> Result<ScimResponse> {
+        self.send(method, path, None, None).await
+    }
+
+    /// Sends a raw string body with an explicit (or absent) `Content-Type`
+    /// header -- used to probe content-type negotiation and malformed-JSON
+    /// handling, neither of which `send`'s `.json(&body)` can express (it
+    /// always sets `application/json` and always serializes valid JSON).
+    pub async fn raw_with_body(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+        content_type: Option<&str>,
+        body: &str,
+    ) -> Result<ScimResponse> {
+        let mut req = self
+            .client
+            .request(method, self.url(path)?)
+            .bearer_auth(self.token.expose_secret())
+            .body(body.to_string());
+        if let Some(content_type) = content_type {
+            req = req.header(reqwest::header::CONTENT_TYPE, content_type);
+        }
+        let rsp = req.send().await?;
+        let status = rsp.status();
+        let headers = rsp.headers().clone();
+        let body = rsp.bytes().await?;
+        Ok(ScimResponse {
+            status,
+            headers,
+            body,
+        })
     }
 }
 

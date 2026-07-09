@@ -20,10 +20,21 @@
 //! handler test file under `crates/keystone/src/scim/`.
 
 mod scim_v2 {
+    mod bulk_and_me;
     mod common;
+    mod content_type;
+    mod discovery;
+    mod error_scim_types;
     mod etag;
     mod filter;
+    mod filter_operators;
     mod group;
+    mod group_delete;
+    mod group_membership_patch;
+    mod meta_location;
+    mod method_routing;
+    mod pagination;
     mod patch;
+    mod schemas_validation;
     mod user;
 }

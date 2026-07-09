@@ -24,6 +24,7 @@ use openstack_keystone_core_types::scim::ScimResourceType;
 use crate::keystone::ServiceState;
 use crate::scim::error::ScimApiError;
 use crate::scim::etag::etag_header;
+use crate::scim::location::resource_location;
 use crate::scim::types::ScimUser;
 
 /// Fetch `(UserResponse, ScimResourceIndex)` for `id` under the caller's own
@@ -88,6 +89,7 @@ pub(super) async fn show(
         )
         .await?;
 
+    let location = resource_location(&state, &realm.domain_id, "Users", &id).await;
     let mut headers = HeaderMap::new();
     headers.insert(
         "etag",
@@ -95,7 +97,10 @@ pub(super) async fn show(
             .parse()
             .expect("weak etag is valid header value"),
     );
-    Ok((headers, Json(ScimUser::from_domain(&user, &index))))
+    Ok((
+        headers,
+        Json(ScimUser::from_domain(&user, &index, location)),
+    ))
 }
 
 #[cfg(test)]

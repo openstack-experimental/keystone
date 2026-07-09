@@ -92,9 +92,11 @@ async fn test_patch_rejects_path_outside_allowlist() -> Result<()> {
     )
     .await?;
 
-    // `id` is server-assigned and immutable; not on the ADR 0024 §5.C
-    // allowlist for User.
-    let patch = ScimPatchRequest::replace("id", json!("attacker-controlled"));
+    // `nickName` isn't a real/supported attribute at all -- not on the ADR
+    // 0024 §5.C allowlist for User. (`id`/`meta` are real-but-immutable
+    // attributes and get the more precise `mutability` scimType instead --
+    // see error_scim_types.rs.)
+    let patch = ScimPatchRequest::replace("nickName", json!("attacker-controlled"));
     let rsp = provisioned.client.patch_user(&created.id, &patch).await?;
     assert_eq!(rsp.status, StatusCode::BAD_REQUEST);
     assert_eq!(rsp.error()?.scim_type.as_deref(), Some("invalidPath"));

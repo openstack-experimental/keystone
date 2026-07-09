@@ -26,14 +26,17 @@ use openstack_keystone_core_types::scim::{
 use crate::keystone::ServiceState;
 use crate::scim::error::ScimApiError;
 use crate::scim::etag::etag_header;
+use crate::scim::extract::ScimJson;
 use crate::scim::group::membership::validate_members_owned_by_realm;
+use crate::scim::location::resource_location;
 use crate::scim::types::{MAX_GROUP_MEMBERS, ScimGroup, ScimGroupWrite};
 
 pub(super) async fn create(
     ScimRealmAuth { ctx, realm }: ScimRealmAuth,
     State(state): State<ServiceState>,
-    Json(req): Json<ScimGroupWrite>,
+    ScimJson(req): ScimJson<ScimGroupWrite>,
 ) -> Result<(StatusCode, HeaderMap, Json<ScimGroup>), ScimApiError> {
+    req.validate_schemas().map_err(ScimApiError::InvalidValue)?;
     if req.display_name.trim().is_empty() {
         return Err(KeystoneApiError::BadRequest("displayName is required".to_string()).into());
     }
@@ -138,6 +141,7 @@ pub(super) async fn create(
             .await?;
     }
 
+    let location = resource_location(&state, &realm.domain_id, "Groups", &group.id).await;
     let mut headers = HeaderMap::new();
     headers.insert(
         "etag",
@@ -145,10 +149,21 @@ pub(super) async fn create(
             .parse()
             .expect("weak etag is valid header value"),
     );
+    headers.insert(
+        "location",
+        location
+            .parse()
+            .expect("scim location is a valid header value"),
+    );
     Ok((
         StatusCode::CREATED,
         headers,
-        Json(ScimGroup::from_domain(&group, &index, &member_ids)),
+        Json(ScimGroup::from_domain(
+            &group,
+            &index,
+            &member_ids,
+            location,
+        )),
     ))
 }
 
@@ -206,7 +221,7 @@ mod tests {
 
     fn req(display_name: &str, members: Vec<&str>) -> ScimGroupWrite {
         ScimGroupWrite {
-            schemas: vec![],
+            schemas: vec![crate::scim::types::GROUP_SCHEMA.to_string()],
             external_id: Some("ext-1".to_string()),
             display_name: display_name.to_string(),
             members: members
@@ -261,7 +276,7 @@ mod tests {
         let (status, headers, Json(body)) = create(
             domain_scoped_auth("domain-1"),
             State(state),
-            Json(req("engineers", vec![])),
+            ScimJson(req("engineers", vec![])),
         )
         .await
         .unwrap();
@@ -334,7 +349,7 @@ mod tests {
         let (status, _headers, Json(body)) = create(
             domain_scoped_auth("domain-1"),
             State(state),
-            Json(req("engineers", vec!["user-1"])),
+            ScimJson(req("engineers", vec!["user-1"])),
         )
         .await
         .unwrap();
@@ -368,7 +383,7 @@ mod tests {
         let result = create(
             domain_scoped_auth("domain-1"),
             State(state),
-            Json(req("engineers", vec!["user-from-elsewhere"])),
+            ScimJson(req("engineers", vec!["user-from-elsewhere"])),
         )
         .await;
         assert!(matches!(result, Err(ScimApiError::InvalidValue(_))));
@@ -386,7 +401,12 @@ mod tests {
             })
             .collect();
 
-        let result = create(domain_scoped_auth("domain-1"), State(state), Json(write)).await;
+        let result = create(
+            domain_scoped_auth("domain-1"),
+            State(state),
+            ScimJson(write),
+        )
+        .await;
         assert!(matches!(result, Err(ScimApiError::InvalidValue(_))));
     }
 
@@ -407,7 +427,7 @@ mod tests {
         let result = create(
             domain_scoped_auth("domain-1"),
             State(state),
-            Json(req("engineers", vec![])),
+            ScimJson(req("engineers", vec![])),
         )
         .await;
         assert!(matches!(result, Err(ScimApiError::Uniqueness(_))));
@@ -447,7 +467,7 @@ mod tests {
         let result = create(
             domain_scoped_auth("domain-1"),
             State(state),
-            Json(req("engineers", vec![])),
+            ScimJson(req("engineers", vec![])),
         )
         .await;
         assert!(matches!(result, Err(ScimApiError::Uniqueness(_))));
@@ -460,7 +480,7 @@ mod tests {
         let result = create(
             domain_scoped_auth("domain-1"),
             State(state),
-            Json(req("engineers", vec![])),
+            ScimJson(req("engineers", vec![])),
         )
         .await;
         assert!(matches!(
@@ -476,7 +496,7 @@ mod tests {
         let result = create(
             domain_scoped_auth("domain-1"),
             State(state),
-            Json(req("   ", vec![])),
+            ScimJson(req("   ", vec![])),
         )
         .await;
         assert!(matches!(

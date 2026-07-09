@@ -32,6 +32,8 @@ use openstack_keystone_core_types::scim::{
 use crate::keystone::ServiceState;
 use crate::scim::error::ScimApiError;
 use crate::scim::etag::{etag_header, parse_if_match};
+use crate::scim::extract::ScimJson;
+use crate::scim::location::resource_location;
 use crate::scim::patch::{PatchOp, ScimPatchRequest, USER_PATCH_PATHS, validate_patch};
 use crate::scim::types::{EXTRA_DISPLAY_NAME, EXTRA_FAMILY_NAME, EXTRA_GIVEN_NAME, ScimUser};
 use crate::scim::user::show::fetch_owned;
@@ -48,8 +50,9 @@ pub(super) async fn patch(
     Path((_domain_id, id)): Path<(String, String)>,
     State(state): State<ServiceState>,
     headers: HeaderMap,
-    Json(req): Json<ScimPatchRequest>,
+    ScimJson(req): ScimJson<ScimPatchRequest>,
 ) -> Result<(HeaderMap, Json<ScimUser>), ScimApiError> {
+    req.validate_schemas().map_err(ScimApiError::InvalidValue)?;
     let ops = validate_patch(&req, USER_PATCH_PATHS)?;
     let expected_version = parse_if_match(&headers)?;
 
@@ -197,6 +200,7 @@ pub(super) async fn patch(
         )
         .await?;
 
+    let location = resource_location(&state, &realm.domain_id, "Users", &id).await;
     let mut response_headers = HeaderMap::new();
     response_headers.insert(
         "etag",
@@ -204,7 +208,10 @@ pub(super) async fn patch(
             .parse()
             .expect("weak etag is valid header value"),
     );
-    Ok((response_headers, Json(ScimUser::from_domain(&user, &index))))
+    Ok((
+        response_headers,
+        Json(ScimUser::from_domain(&user, &index, location)),
+    ))
 }
 
 #[cfg(test)]
@@ -274,7 +281,7 @@ mod tests {
 
     fn patch_req(op: &str, path: &str, value: Value) -> ScimPatchRequest {
         ScimPatchRequest {
-            schemas: vec![],
+            schemas: vec![crate::scim::patch::PATCH_OP_SCHEMA.to_string()],
             operations: vec![ScimPatchOperation {
                 op: op.to_string(),
                 path: Some(path.to_string()),
@@ -330,7 +337,7 @@ mod tests {
             Path(("domain-1".to_string(), "user-1".to_string())),
             State(state),
             HeaderMap::new(),
-            Json(patch_req("replace", "active", Value::Bool(false))),
+            ScimJson(patch_req("replace", "active", Value::Bool(false))),
         )
         .await
         .unwrap();
@@ -387,7 +394,7 @@ mod tests {
             Path(("domain-1".to_string(), "user-1".to_string())),
             State(state),
             HeaderMap::new(),
-            Json(patch_req(
+            ScimJson(patch_req(
                 "replace",
                 "userName",
                 Value::String("bob".to_string()),
@@ -445,8 +452,8 @@ mod tests {
             Path(("domain-1".to_string(), "user-1".to_string())),
             State(state),
             HeaderMap::new(),
-            Json(ScimPatchRequest {
-                schemas: vec![],
+            ScimJson(ScimPatchRequest {
+                schemas: vec![crate::scim::patch::PATCH_OP_SCHEMA.to_string()],
                 operations: vec![
                     ScimPatchOperation {
                         op: "replace".to_string(),
@@ -513,7 +520,7 @@ mod tests {
             Path(("domain-1".to_string(), "user-1".to_string())),
             State(state),
             HeaderMap::new(),
-            Json(patch_req("remove", "externalId", Value::Null)),
+            ScimJson(patch_req("remove", "externalId", Value::Null)),
         )
         .await;
         assert!(matches!(result, Err(ScimApiError::InvalidValue(_))));
@@ -528,7 +535,7 @@ mod tests {
             Path(("domain-1".to_string(), "user-1".to_string())),
             State(state),
             HeaderMap::new(),
-            Json(patch_req(
+            ScimJson(patch_req(
                 "replace",
                 r#"emails[type eq "work"].value"#,
                 Value::String("a@b.com".to_string()),
@@ -557,7 +564,7 @@ mod tests {
             Path(("domain-1".to_string(), "user-1".to_string())),
             State(state),
             HeaderMap::new(),
-            Json(patch_req("replace", "active", Value::Bool(false))),
+            ScimJson(patch_req("replace", "active", Value::Bool(false))),
         )
         .await;
         assert!(matches!(

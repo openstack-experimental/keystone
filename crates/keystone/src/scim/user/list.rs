@@ -25,6 +25,7 @@ use openstack_keystone_core_types::scim::ScimResourceType;
 use crate::keystone::ServiceState;
 use crate::scim::error::ScimApiError;
 use crate::scim::filter::{USER_FILTER_ATTRS, parse_filter};
+use crate::scim::location::resource_location;
 use crate::scim::types::{LIST_RESPONSE_SCHEMA, ScimListResponse, ScimUser};
 
 #[derive(Debug, Deserialize, Default)]
@@ -88,7 +89,8 @@ pub(super) async fn list(
         else {
             continue;
         };
-        let scim_user = ScimUser::from_domain(&user, &index);
+        let location = resource_location(&state, &realm.domain_id, "Users", &user.id).await;
+        let scim_user = ScimUser::from_domain(&user, &index, location);
         let matches = parsed_filter.as_ref().is_none_or(|f| {
             f.matches(|attr| match attr {
                 "username" => Some(scim_user.user_name.clone()),

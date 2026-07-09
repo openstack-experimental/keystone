@@ -26,6 +26,10 @@ use serde_json::Value;
 
 use crate::scim::error::ScimApiError;
 
+/// `urn:ietf:params:scim:api:messages:2.0:PatchOp` schema URI (RFC 7644
+/// §3.5.2).
+pub const PATCH_OP_SCHEMA: &str = "urn:ietf:params:scim:api:messages:2.0:PatchOp";
+
 /// ADR 0024 §5.C User `path` allowlist (lowercased).
 pub const USER_PATCH_PATHS: &[&str] = &[
     "active",
@@ -40,6 +44,13 @@ pub const USER_PATCH_PATHS: &[&str] = &[
 /// add/remove only -- enforced separately in `scim::group::patch`, not by
 /// this table.
 pub const GROUP_PATCH_PATHS: &[&str] = &["displayname", "externalid", "members"];
+
+/// RFC 7644-defined attributes that are always immutable regardless of
+/// resource type -- named separately from `{USER,GROUP}_PATCH_PATHS` so a
+/// `PATCH` naming one of these gets `scimType: "mutability"` (a real
+/// attribute, just not modifiable) rather than `"invalidPath"` (not a real
+/// attribute at all).
+const IMMUTABLE_PATHS: &[&str] = &["id", "meta"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PatchOp {
@@ -77,6 +88,18 @@ pub struct ScimPatchRequest {
     pub operations: Vec<ScimPatchOperation>,
 }
 
+impl ScimPatchRequest {
+    /// Rejects a request whose `schemas` array is missing or doesn't
+    /// declare the `PatchOp` messages schema (RFC 7644 §3.3, §3.5.2).
+    pub fn validate_schemas(&self) -> Result<(), String> {
+        if self.schemas.iter().any(|s| s == PATCH_OP_SCHEMA) {
+            Ok(())
+        } else {
+            Err(format!("schemas must include `{PATCH_OP_SCHEMA}`"))
+        }
+    }
+}
+
 /// A validated `ScimPatchOperation`, its `path` lowercased and its `op`
 /// resolved to a [`PatchOp`].
 pub struct ValidatedPatchOp {
@@ -107,6 +130,11 @@ pub fn validate_patch(
                 ));
             };
             let path = path.to_ascii_lowercase();
+            if IMMUTABLE_PATHS.contains(&path.as_str()) {
+                return Err(ScimApiError::Mutability(format!(
+                    "path `{path}` is immutable and cannot be modified via PATCH"
+                )));
+            }
             if !allowed_paths.contains(&path.as_str()) {
                 return Err(ScimApiError::InvalidPath(format!(
                     "path `{path}` is not patchable"
@@ -163,6 +191,16 @@ mod tests {
         };
         let result = validate_patch(&req, USER_PATCH_PATHS);
         assert!(matches!(result, Err(ScimApiError::InvalidPath(_))));
+    }
+
+    #[test]
+    fn test_validate_rejects_immutable_id_path_as_mutability() {
+        let req = ScimPatchRequest {
+            schemas: vec![],
+            operations: vec![op("replace", "id", Value::String("x".to_string()))],
+        };
+        let result = validate_patch(&req, USER_PATCH_PATHS);
+        assert!(matches!(result, Err(ScimApiError::Mutability(_))));
     }
 
     #[test]

@@ -29,6 +29,7 @@ mod create;
 mod gate;
 mod janitor;
 mod list;
+mod scim_ingress;
 mod show;
 mod update;
 

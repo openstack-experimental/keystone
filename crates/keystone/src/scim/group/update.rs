@@ -29,8 +29,10 @@ use openstack_keystone_core_types::scim::{
 use crate::keystone::ServiceState;
 use crate::scim::error::ScimApiError;
 use crate::scim::etag::{etag_header, parse_if_match};
+use crate::scim::extract::ScimJson;
 use crate::scim::group::membership::validate_members_owned_by_realm;
 use crate::scim::group::show::fetch_owned;
+use crate::scim::location::resource_location;
 use crate::scim::types::{MAX_GROUP_MEMBERS, ScimGroup, ScimGroupWrite};
 
 pub(super) async fn update(
@@ -38,8 +40,9 @@ pub(super) async fn update(
     Path((_domain_id, id)): Path<(String, String)>,
     State(state): State<ServiceState>,
     headers: HeaderMap,
-    Json(req): Json<ScimGroupWrite>,
+    ScimJson(req): ScimJson<ScimGroupWrite>,
 ) -> Result<(HeaderMap, Json<ScimGroup>), ScimApiError> {
+    req.validate_schemas().map_err(ScimApiError::InvalidValue)?;
     if req.display_name.trim().is_empty() {
         return Err(KeystoneApiError::BadRequest("displayName is required".to_string()).into());
     }
@@ -167,6 +170,7 @@ pub(super) async fn update(
             .await?;
     }
 
+    let location = resource_location(&state, &realm.domain_id, "Groups", &id).await;
     let mut response_headers = HeaderMap::new();
     response_headers.insert(
         "etag",
@@ -176,7 +180,12 @@ pub(super) async fn update(
     );
     Ok((
         response_headers,
-        Json(ScimGroup::from_domain(&group, &index, &new_member_ids)),
+        Json(ScimGroup::from_domain(
+            &group,
+            &index,
+            &new_member_ids,
+            location,
+        )),
     ))
 }
 
@@ -248,7 +257,7 @@ mod tests {
 
     fn write_req(display_name: &str, members: Vec<&str>) -> ScimGroupWrite {
         ScimGroupWrite {
-            schemas: vec![],
+            schemas: vec![crate::scim::types::GROUP_SCHEMA.to_string()],
             external_id: Some("ext-old".to_string()),
             display_name: display_name.to_string(),
             members: members
@@ -310,7 +319,7 @@ mod tests {
             Path(("domain-1".to_string(), "group-1".to_string())),
             State(state),
             HeaderMap::new(),
-            Json(write_req("new_name", vec![])),
+            ScimJson(write_req("new_name", vec![])),
         )
         .await
         .unwrap();
@@ -377,7 +386,7 @@ mod tests {
             Path(("domain-1".to_string(), "group-1".to_string())),
             State(state),
             HeaderMap::new(),
-            Json(write_req("engineers", vec!["user-new"])),
+            ScimJson(write_req("engineers", vec!["user-new"])),
         )
         .await
         .unwrap();
@@ -423,7 +432,7 @@ mod tests {
             Path(("domain-1".to_string(), "group-1".to_string())),
             State(state),
             HeaderMap::new(),
-            Json(write_req("engineers", vec!["user-from-elsewhere"])),
+            ScimJson(write_req("engineers", vec!["user-from-elsewhere"])),
         )
         .await;
         assert!(matches!(result, Err(ScimApiError::InvalidValue(_))));
@@ -448,7 +457,7 @@ mod tests {
             Path(("domain-1".to_string(), "group-1".to_string())),
             State(state),
             HeaderMap::new(),
-            Json(write_req("new_name", vec![])),
+            ScimJson(write_req("new_name", vec![])),
         )
         .await;
         assert!(matches!(
@@ -504,7 +513,7 @@ mod tests {
             Path(("domain-1".to_string(), "group-1".to_string())),
             State(state),
             headers,
-            Json(write_req("new_name", vec![])),
+            ScimJson(write_req("new_name", vec![])),
         )
         .await;
         assert!(matches!(result, Err(ScimApiError::PreconditionFailed(_))));

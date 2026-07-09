@@ -26,6 +26,8 @@ use openstack_keystone_core_types::scim::{
 use crate::keystone::ServiceState;
 use crate::scim::error::ScimApiError;
 use crate::scim::etag::{etag_header, parse_if_match};
+use crate::scim::extract::ScimJson;
+use crate::scim::location::resource_location;
 use crate::scim::types::{ScimUser, ScimUserWrite};
 use crate::scim::user::show::fetch_owned;
 
@@ -34,8 +36,9 @@ pub(super) async fn update(
     Path((_domain_id, id)): Path<(String, String)>,
     State(state): State<ServiceState>,
     headers: HeaderMap,
-    Json(req): Json<ScimUserWrite>,
+    ScimJson(req): ScimJson<ScimUserWrite>,
 ) -> Result<(HeaderMap, Json<ScimUser>), ScimApiError> {
+    req.validate_schemas().map_err(ScimApiError::InvalidValue)?;
     if req.user_name.trim().is_empty() {
         return Err(openstack_keystone_core::api::KeystoneApiError::BadRequest(
             "userName is required".to_string(),
@@ -117,6 +120,7 @@ pub(super) async fn update(
         .update_user(&exec, &id, req.to_user_update())
         .await?;
 
+    let location = resource_location(&state, &realm.domain_id, "Users", &id).await;
     let mut response_headers = HeaderMap::new();
     response_headers.insert(
         "etag",
@@ -124,7 +128,10 @@ pub(super) async fn update(
             .parse()
             .expect("weak etag is valid header value"),
     );
-    Ok((response_headers, Json(ScimUser::from_domain(&user, &index))))
+    Ok((
+        response_headers,
+        Json(ScimUser::from_domain(&user, &index, location)),
+    ))
 }
 
 #[cfg(test)]
@@ -194,7 +201,7 @@ mod tests {
 
     fn write_req(user_name: &str, external_id: Option<&str>) -> ScimUserWrite {
         ScimUserWrite {
-            schemas: vec![],
+            schemas: vec![crate::scim::types::USER_SCHEMA.to_string()],
             external_id: external_id.map(str::to_string),
             user_name: user_name.to_string(),
             name: None,
@@ -253,7 +260,7 @@ mod tests {
             Path(("domain-1".to_string(), "user-1".to_string())),
             State(state),
             HeaderMap::new(),
-            Json(write_req("new_name", Some("ext-old"))),
+            ScimJson(write_req("new_name", Some("ext-old"))),
         )
         .await
         .unwrap();
@@ -312,7 +319,7 @@ mod tests {
             Path(("domain-1".to_string(), "user-1".to_string())),
             State(state),
             HeaderMap::new(),
-            Json(write_req("BOB", Some("ext-old"))),
+            ScimJson(write_req("BOB", Some("ext-old"))),
         )
         .await
         .unwrap();
@@ -338,7 +345,7 @@ mod tests {
             Path(("domain-1".to_string(), "user-1".to_string())),
             State(state),
             HeaderMap::new(),
-            Json(write_req("new_name", None)),
+            ScimJson(write_req("new_name", None)),
         )
         .await;
         assert!(matches!(
@@ -396,7 +403,7 @@ mod tests {
             Path(("domain-1".to_string(), "user-1".to_string())),
             State(state),
             headers,
-            Json(write_req("new_name", Some("ext-old"))),
+            ScimJson(write_req("new_name", Some("ext-old"))),
         )
         .await;
         assert!(matches!(result, Err(ScimApiError::PreconditionFailed(_))));

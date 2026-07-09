@@ -27,13 +27,16 @@ use openstack_keystone_core_types::scim::{
 use crate::keystone::ServiceState;
 use crate::scim::error::ScimApiError;
 use crate::scim::etag::etag_header;
+use crate::scim::extract::ScimJson;
+use crate::scim::location::resource_location;
 use crate::scim::types::{ScimUser, ScimUserWrite};
 
 pub(super) async fn create(
     ScimRealmAuth { ctx, realm }: ScimRealmAuth,
     State(state): State<ServiceState>,
-    Json(req): Json<ScimUserWrite>,
+    ScimJson(req): ScimJson<ScimUserWrite>,
 ) -> Result<(StatusCode, HeaderMap, Json<ScimUser>), ScimApiError> {
+    req.validate_schemas().map_err(ScimApiError::InvalidValue)?;
     if req.user_name.trim().is_empty() {
         return Err(KeystoneApiError::BadRequest("userName is required".to_string()).into());
     }
@@ -128,6 +131,7 @@ pub(super) async fn create(
         }
     };
 
+    let location = resource_location(&state, &realm.domain_id, "Users", &user.id).await;
     let mut headers = HeaderMap::new();
     headers.insert(
         "etag",
@@ -135,10 +139,16 @@ pub(super) async fn create(
             .parse()
             .expect("weak etag is valid header value"),
     );
+    headers.insert(
+        "location",
+        location
+            .parse()
+            .expect("scim location is a valid header value"),
+    );
     Ok((
         StatusCode::CREATED,
         headers,
-        Json(ScimUser::from_domain(&user, &index)),
+        Json(ScimUser::from_domain(&user, &index, location)),
     ))
 }
 
@@ -239,7 +249,7 @@ mod tests {
         .await;
 
         let req = ScimUserWrite {
-            schemas: vec![],
+            schemas: vec![crate::scim::types::USER_SCHEMA.to_string()],
             external_id: Some("ext-1".to_string()),
             user_name: "alice".to_string(),
             name: None,
@@ -249,7 +259,7 @@ mod tests {
         };
 
         let (status, headers, Json(body)) =
-            create(domain_scoped_auth("domain-1"), State(state), Json(req))
+            create(domain_scoped_auth("domain-1"), State(state), ScimJson(req))
                 .await
                 .unwrap();
         assert_eq!(status, StatusCode::CREATED);
@@ -274,7 +284,7 @@ mod tests {
         .await;
 
         let req = ScimUserWrite {
-            schemas: vec![],
+            schemas: vec![crate::scim::types::USER_SCHEMA.to_string()],
             external_id: Some("ext-1".to_string()),
             user_name: "alice".to_string(),
             name: None,
@@ -283,7 +293,7 @@ mod tests {
             active: true,
         };
 
-        let result = create(domain_scoped_auth("domain-1"), State(state), Json(req)).await;
+        let result = create(domain_scoped_auth("domain-1"), State(state), ScimJson(req)).await;
         assert!(matches!(result, Err(ScimApiError::Uniqueness(_))));
     }
 
@@ -320,7 +330,7 @@ mod tests {
         .await;
 
         let req = ScimUserWrite {
-            schemas: vec![],
+            schemas: vec![crate::scim::types::USER_SCHEMA.to_string()],
             external_id: Some("ext-1".to_string()),
             user_name: "alice".to_string(),
             name: None,
@@ -329,7 +339,7 @@ mod tests {
             active: true,
         };
 
-        let result = create(domain_scoped_auth("domain-1"), State(state), Json(req)).await;
+        let result = create(domain_scoped_auth("domain-1"), State(state), ScimJson(req)).await;
         assert!(matches!(result, Err(ScimApiError::Uniqueness(_))));
     }
 
@@ -364,7 +374,7 @@ mod tests {
         .await;
 
         let req = ScimUserWrite {
-            schemas: vec![],
+            schemas: vec![crate::scim::types::USER_SCHEMA.to_string()],
             external_id: Some("ext-1".to_string()),
             user_name: "alice".to_string(),
             name: None,
@@ -373,7 +383,7 @@ mod tests {
             active: true,
         };
 
-        let result = create(domain_scoped_auth("domain-1"), State(state), Json(req)).await;
+        let result = create(domain_scoped_auth("domain-1"), State(state), ScimJson(req)).await;
         assert!(matches!(result, Err(ScimApiError::Uniqueness(_))));
     }
 
@@ -382,7 +392,7 @@ mod tests {
         let state = get_mocked_state(Provider::mocked_builder(), false, None).await;
 
         let req = ScimUserWrite {
-            schemas: vec![],
+            schemas: vec![crate::scim::types::USER_SCHEMA.to_string()],
             external_id: Some("ext-1".to_string()),
             user_name: "alice".to_string(),
             name: None,
@@ -391,7 +401,7 @@ mod tests {
             active: true,
         };
 
-        let result = create(domain_scoped_auth("domain-1"), State(state), Json(req)).await;
+        let result = create(domain_scoped_auth("domain-1"), State(state), ScimJson(req)).await;
         assert!(matches!(
             result,
             Err(ScimApiError::Api(KeystoneApiError::Forbidden { .. }))
@@ -403,7 +413,7 @@ mod tests {
         let state = get_mocked_state(Provider::mocked_builder(), true, None).await;
 
         let req = ScimUserWrite {
-            schemas: vec![],
+            schemas: vec![crate::scim::types::USER_SCHEMA.to_string()],
             external_id: None,
             user_name: "   ".to_string(),
             name: None,
@@ -412,7 +422,7 @@ mod tests {
             active: true,
         };
 
-        let result = create(domain_scoped_auth("domain-1"), State(state), Json(req)).await;
+        let result = create(domain_scoped_auth("domain-1"), State(state), ScimJson(req)).await;
         assert!(matches!(
             result,
             Err(ScimApiError::Api(KeystoneApiError::BadRequest(_)))
@@ -424,7 +434,7 @@ mod tests {
         let state = get_mocked_state(Provider::mocked_builder(), true, None).await;
 
         let req = ScimUserWrite {
-            schemas: vec![],
+            schemas: vec![crate::scim::types::USER_SCHEMA.to_string()],
             external_id: None,
             user_name: "alice".to_string(),
             name: None,
@@ -433,7 +443,7 @@ mod tests {
             active: true,
         };
 
-        let result = create(domain_scoped_auth("domain-1"), State(state), Json(req)).await;
+        let result = create(domain_scoped_auth("domain-1"), State(state), ScimJson(req)).await;
         assert!(matches!(
             result,
             Err(ScimApiError::Api(KeystoneApiError::BadRequest(_)))

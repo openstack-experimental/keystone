@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-DATABASE_URL="sqlite::memory:"
 STATE_DIR="/tmp/nextest/keystone"
 CONFIG_FILE="${STATE_DIR}/etc/keystone.conf"
 AXUM_PID=""

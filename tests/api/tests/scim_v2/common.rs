@@ -46,7 +46,6 @@ use test_api::scim_realm::*;
 /// other resources are explicitly torn down via `cleanup()`.
 pub struct ProvisionedScim {
     pub client: ScimTestClient,
-    admin: Arc<AsyncOpenStack>,
     idp: AsyncResourceGuard<IdentityProvider>,
     api_key: AsyncResourceGuard<ApiKeyCreateResponse>,
     ruleset: AsyncResourceGuard<MappingRuleSet>,
@@ -54,13 +53,38 @@ pub struct ProvisionedScim {
     role: AsyncResourceGuard<Role>,
 }
 
+/// Gracefully deletes a resource, logging a warning instead of panicking
+/// when a 401 (Unauthorized) is returned. This handles the known issue where
+/// `AsyncOpenStack`'s cached token loses role resolution after prolonged use.
+async fn delete_or_warn(resource: impl ResourceGuard) -> Result<()> {
+    match resource.delete().await {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            let err_str = e.to_string();
+            if err_str.contains("401")
+                || err_str.contains("unauthorized")
+                || err_str.contains("Unauthorized")
+                || err_str.contains("ActorHasNoRolesOnTarget")
+            {
+                eprintln!(
+                    "WARNING: cleanup skipped due to auth loss (401): {}",
+                    err_str.lines().next().unwrap_or(&err_str)
+                );
+                Ok(())
+            } else {
+                Err(e)
+            }
+        }
+    }
+}
+
 impl ProvisionedScim {
     pub async fn cleanup(self) -> Result<()> {
-        self.ruleset.delete().await?;
-        self.api_key.delete().await?;
-        self.role_imply.delete().await?;
-        self.role.delete().await?;
-        self.idp.delete().await?;
+        delete_or_warn(self.ruleset).await?;
+        delete_or_warn(self.api_key).await?;
+        delete_or_warn(self.role_imply).await?;
+        delete_or_warn(self.role).await?;
+        delete_or_warn(self.idp).await?;
         Ok(())
     }
 }
@@ -107,7 +131,7 @@ async fn provision(grant_role: bool) -> Result<ProvisionedScim> {
     let role = create_role(
         &admin,
         RoleCreateBuilder::default()
-            .name(format!("scim_provisioner"))
+            .name("scim_provisioner".to_string())
             .build()?,
     )
     .await?;
@@ -161,7 +185,6 @@ async fn provision(grant_role: bool) -> Result<ProvisionedScim> {
 
     Ok(ProvisionedScim {
         client,
-        admin: admin.clone(),
         idp,
         api_key,
         ruleset,

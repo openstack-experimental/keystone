@@ -69,6 +69,7 @@ pub struct ScimEmail {
 #[serde(rename_all = "camelCase")]
 pub struct ScimMeta {
     pub resource_type: String,
+    pub location: String,
     pub created: String,
     pub last_modified: String,
 }
@@ -94,8 +95,11 @@ pub struct ScimUser {
 
 impl ScimUser {
     /// Build the wire representation from the core Identity record plus its
-    /// SCIM ownership anchor.
-    pub fn from_domain(user: &UserResponse, index: &ScimResourceIndex) -> Self {
+    /// SCIM ownership anchor. `location` is the pre-built absolute
+    /// `meta.location` URL (RFC 7644 §3.1) -- built by the caller via
+    /// [`crate::scim::location::resource_location`] so this module stays
+    /// free of config/I-O concerns.
+    pub fn from_domain(user: &UserResponse, index: &ScimResourceIndex, location: String) -> Self {
         let given_name = extra_str(&user.extra, EXTRA_GIVEN_NAME);
         let family_name = extra_str(&user.extra, EXTRA_FAMILY_NAME);
         let name = if given_name.is_some() || family_name.is_some() {
@@ -126,6 +130,7 @@ impl ScimUser {
             active: user.enabled,
             meta: ScimMeta {
                 resource_type: "User".to_string(),
+                location,
                 created: epoch_to_rfc3339(index.created_at),
                 last_modified: epoch_to_rfc3339(index.updated_at),
             },
@@ -158,6 +163,16 @@ fn default_true() -> bool {
 }
 
 impl ScimUserWrite {
+    /// Rejects a request whose `schemas` array is missing or doesn't
+    /// declare the core `User` schema (RFC 7644 §3.3).
+    pub fn validate_schemas(&self) -> Result<(), String> {
+        if self.schemas.iter().any(|s| s == USER_SCHEMA) {
+            Ok(())
+        } else {
+            Err(format!("schemas must include `{USER_SCHEMA}`"))
+        }
+    }
+
     fn extra(&self) -> HashMap<String, Value> {
         let mut extra = HashMap::new();
         if let Some(name) = &self.name
@@ -263,7 +278,14 @@ pub struct ScimGroup {
 impl ScimGroup {
     /// Build the wire representation from the core Identity record, its SCIM
     /// ownership anchor, and its resolved membership (ADR 0024 §4, §7).
-    pub fn from_domain(group: &Group, index: &ScimResourceIndex, member_ids: &[String]) -> Self {
+    /// `location` is the pre-built absolute `meta.location` URL (RFC 7644
+    /// §3.1) -- see [`ScimUser::from_domain`]'s doc comment.
+    pub fn from_domain(
+        group: &Group,
+        index: &ScimResourceIndex,
+        member_ids: &[String],
+        location: String,
+    ) -> Self {
         Self {
             schemas: vec![GROUP_SCHEMA.to_string()],
             id: group.id.clone(),
@@ -275,6 +297,7 @@ impl ScimGroup {
                 .collect(),
             meta: ScimMeta {
                 resource_type: "Group".to_string(),
+                location,
                 created: epoch_to_rfc3339(index.created_at),
                 last_modified: epoch_to_rfc3339(index.updated_at),
             },
@@ -300,6 +323,16 @@ pub struct ScimGroupWrite {
 }
 
 impl ScimGroupWrite {
+    /// Rejects a request whose `schemas` array is missing or doesn't
+    /// declare the core `Group` schema (RFC 7644 §3.3).
+    pub fn validate_schemas(&self) -> Result<(), String> {
+        if self.schemas.iter().any(|s| s == GROUP_SCHEMA) {
+            Ok(())
+        } else {
+            Err(format!("schemas must include `{GROUP_SCHEMA}`"))
+        }
+    }
+
     /// The member `User.id`s this write requests, in request order.
     pub fn member_ids(&self) -> Vec<String> {
         self.members.iter().map(|m| m.value.clone()).collect()

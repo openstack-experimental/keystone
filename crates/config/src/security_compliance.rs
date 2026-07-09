@@ -232,9 +232,10 @@ impl SecurityComplianceProvider {
     ///
     /// An empty password is **always** rejected, regardless of configuration —
     /// this is the central guard for every write path (create/update/change),
-    /// and replaces the per-DTO `length(min = 1)` check that could not be kept on
-    /// the wrapped [`SecretString`] fields (validator's `custom`/`length` require
-    /// the field to be `Serialize`, which secrets deliberately are not).
+    /// and replaces the per-DTO `length(min = 1)` check that could not be kept
+    /// on the wrapped [`SecretString`] fields (validator's
+    /// `custom`/`length` require the field to be `Serialize`, which secrets
+    /// deliberately are not).
     ///
     /// Beyond that, returns `Ok(())` when the password matches the configured
     /// regex pattern (or when no pattern is configured), otherwise

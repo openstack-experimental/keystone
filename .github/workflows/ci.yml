@@ -157,6 +157,9 @@ jobs:
       - name: Run REST API v3 tests
         run: cargo nextest run -p test_api --profile ci-api --test integration_api_v3
 
+      - name: Run REST API SCIMv2 tests
+        run: cargo nextest run -p test_api --profile ci-api --test scim_v2
+
       - name: Run Doc tests
         run: cargo test --doc
 

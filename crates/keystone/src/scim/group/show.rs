@@ -24,6 +24,7 @@ use openstack_keystone_core_types::scim::ScimResourceType;
 use crate::keystone::ServiceState;
 use crate::scim::error::ScimApiError;
 use crate::scim::etag::etag_header;
+use crate::scim::location::resource_location;
 use crate::scim::types::ScimGroup;
 
 /// Fetch `(Group, ScimResourceIndex)` for `id` under the caller's own realm,
@@ -94,6 +95,7 @@ pub(super) async fn show(
         .list_users_of_group(&exec, &group.id)
         .await?;
 
+    let location = resource_location(&state, &realm.domain_id, "Groups", &id).await;
     let mut headers = HeaderMap::new();
     headers.insert(
         "etag",
@@ -103,7 +105,12 @@ pub(super) async fn show(
     );
     Ok((
         headers,
-        Json(ScimGroup::from_domain(&group, &index, &member_ids)),
+        Json(ScimGroup::from_domain(
+            &group,
+            &index,
+            &member_ids,
+            location,
+        )),
     ))
 }
 

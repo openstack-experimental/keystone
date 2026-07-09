@@ -25,6 +25,7 @@ use openstack_keystone_core_types::scim::ScimResourceType;
 use crate::keystone::ServiceState;
 use crate::scim::error::ScimApiError;
 use crate::scim::filter::{GROUP_FILTER_ATTRS, parse_filter};
+use crate::scim::location::resource_location;
 use crate::scim::types::{LIST_RESPONSE_SCHEMA, ScimGroup, ScimGroupListResponse};
 
 #[derive(Debug, Deserialize, Default)]
@@ -112,7 +113,13 @@ pub(super) async fn list(
             .get_identity_provider()
             .list_users_of_group(&exec, &group.id)
             .await?;
-        resources.push(ScimGroup::from_domain(&group, &index, &member_ids));
+        let location = resource_location(&state, &realm.domain_id, "Groups", &group.id).await;
+        resources.push(ScimGroup::from_domain(
+            &group,
+            &index,
+            &member_ids,
+            location,
+        ));
     }
 
     Ok(Json(ScimGroupListResponse {

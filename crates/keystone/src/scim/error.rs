@@ -61,6 +61,9 @@ pub enum ScimApiError {
     /// A `PATCH` `Operations[].path` outside the ADR 0024 §5.C allowlist
     /// (400, `scimType: "invalidPath"`).
     InvalidPath(String),
+    /// A `PATCH` `Operations[].path` naming a real but immutable attribute
+    /// (`id`, `meta`) (400, `scimType: "mutability"`, RFC 7644 §3.12).
+    Mutability(String),
     /// `If-Match` precondition failed against the resource's current ETag
     /// version (412, ADR 0024 §5.E). RFC 7644 §3.12 doesn't define a
     /// `scimType` for this status, so the body carries none.
@@ -108,6 +111,16 @@ impl IntoResponse for ScimApiError {
                     schemas: vec![SCIM_ERROR_SCHEMA.to_string()],
                     status: StatusCode::BAD_REQUEST.as_str().to_string(),
                     scim_type: Some("invalidPath".to_string()),
+                    detail,
+                }),
+            )
+                .into_response(),
+            Self::Mutability(detail) => (
+                StatusCode::BAD_REQUEST,
+                Json(ScimErrorBody {
+                    schemas: vec![SCIM_ERROR_SCHEMA.to_string()],
+                    status: StatusCode::BAD_REQUEST.as_str().to_string(),
+                    scim_type: Some("mutability".to_string()),
                     detail,
                 }),
             )

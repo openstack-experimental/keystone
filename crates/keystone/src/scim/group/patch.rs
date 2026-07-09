@@ -33,8 +33,10 @@ use openstack_keystone_core_types::scim::{
 use crate::keystone::ServiceState;
 use crate::scim::error::ScimApiError;
 use crate::scim::etag::{etag_header, parse_if_match};
+use crate::scim::extract::ScimJson;
 use crate::scim::group::membership::validate_members_owned_by_realm;
 use crate::scim::group::show::fetch_owned;
+use crate::scim::location::resource_location;
 use crate::scim::patch::{GROUP_PATCH_PATHS, PatchOp, ScimPatchRequest, validate_patch};
 use crate::scim::types::{MAX_GROUP_MEMBERS, ScimGroup, ScimGroupMember};
 
@@ -53,8 +55,9 @@ pub(super) async fn patch(
     Path((_domain_id, id)): Path<(String, String)>,
     State(state): State<ServiceState>,
     headers: HeaderMap,
-    Json(req): Json<ScimPatchRequest>,
+    ScimJson(req): ScimJson<ScimPatchRequest>,
 ) -> Result<(HeaderMap, Json<ScimGroup>), ScimApiError> {
+    req.validate_schemas().map_err(ScimApiError::InvalidValue)?;
     let ops = validate_patch(&req, GROUP_PATCH_PATHS)?;
     let expected_version = parse_if_match(&headers)?;
 
@@ -240,6 +243,7 @@ pub(super) async fn patch(
     }
 
     let member_ids: Vec<String> = resulting_member_ids.into_iter().collect();
+    let location = resource_location(&state, &realm.domain_id, "Groups", &id).await;
     let mut response_headers = HeaderMap::new();
     response_headers.insert(
         "etag",
@@ -249,7 +253,12 @@ pub(super) async fn patch(
     );
     Ok((
         response_headers,
-        Json(ScimGroup::from_domain(&group, &index, &member_ids)),
+        Json(ScimGroup::from_domain(
+            &group,
+            &index,
+            &member_ids,
+            location,
+        )),
     ))
 }
 
@@ -321,7 +330,7 @@ mod tests {
 
     fn patch_req(op: &str, path: &str, value: Value) -> ScimPatchRequest {
         ScimPatchRequest {
-            schemas: vec![],
+            schemas: vec![crate::scim::patch::PATCH_OP_SCHEMA.to_string()],
             operations: vec![ScimPatchOperation {
                 op: op.to_string(),
                 path: Some(path.to_string()),
@@ -385,7 +394,7 @@ mod tests {
             Path(("domain-1".to_string(), "group-1".to_string())),
             State(state),
             HeaderMap::new(),
-            Json(patch_req(
+            ScimJson(patch_req(
                 "replace",
                 "displayName",
                 Value::String("new_name".to_string()),
@@ -456,7 +465,7 @@ mod tests {
             Path(("domain-1".to_string(), "group-1".to_string())),
             State(state),
             HeaderMap::new(),
-            Json(patch_req(
+            ScimJson(patch_req(
                 "add",
                 "members",
                 serde_json::json!([{"value": "user-new"}]),
@@ -510,7 +519,7 @@ mod tests {
             Path(("domain-1".to_string(), "group-1".to_string())),
             State(state),
             HeaderMap::new(),
-            Json(patch_req(
+            ScimJson(patch_req(
                 "remove",
                 "members",
                 serde_json::json!([{"value": "user-old"}]),
@@ -542,7 +551,7 @@ mod tests {
             Path(("domain-1".to_string(), "group-1".to_string())),
             State(state),
             HeaderMap::new(),
-            Json(patch_req(
+            ScimJson(patch_req(
                 "replace",
                 "members",
                 serde_json::json!([{"value": "user-new"}]),
@@ -561,7 +570,7 @@ mod tests {
             Path(("domain-1".to_string(), "group-1".to_string())),
             State(state),
             HeaderMap::new(),
-            Json(patch_req(
+            ScimJson(patch_req(
                 "replace",
                 r#"emails[type eq "work"].value"#,
                 Value::String("a@b.com".to_string()),
@@ -590,7 +599,7 @@ mod tests {
             Path(("domain-1".to_string(), "group-1".to_string())),
             State(state),
             HeaderMap::new(),
-            Json(patch_req(
+            ScimJson(patch_req(
                 "replace",
                 "displayName",
                 Value::String("x".to_string()),
